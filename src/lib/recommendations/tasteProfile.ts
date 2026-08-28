@@ -44,6 +44,13 @@ export function preferenceWeight(item: TasteProfileSeedItem): number {
     : DEFAULT_IMPLICIT_WEIGHT;
 
   const base = ratingWeight ?? implicit;
+  if (item.status === "dropped") {
+    // A dropped item without an explicit rating is negative evidence. Do not
+    // multiply a negative rating by another negative value: that used to turn
+    // low-rated dropped works into positive taste signals.
+    const droppedBase = ratingWeight == null ? -Math.max(0.45, Math.abs(implicit)) : base;
+    return clampSigned(droppedBase * statusMultiplier, -1.4, 1.4);
+  }
   return clampSigned(base * statusMultiplier, -1.4, 1.4);
 }
 
@@ -72,7 +79,7 @@ function statusPreferenceMultiplier(status: TasteProfileSeedItem["status"]): num
     case "planning":
       return 0.45;
     case "dropped":
-      return -0.8;
+      return 0.85;
     default:
       return 1;
   }

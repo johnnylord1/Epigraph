@@ -22,6 +22,19 @@ export function recommendationCandidateTitleKeys(candidate: RecommendationCandid
   return [...new Set(titles)];
 }
 
+export function recommendationCandidateIdentityKeys(candidate: RecommendationCandidate): string[] {
+  const providerKeys = candidate.providers
+    .map((provider) => recommendationProviderRemoteKey(provider))
+    .filter((key): key is string => Boolean(key));
+  const candidateId = candidate.id.trim().toLowerCase();
+  const idKey = candidateId ? [`candidate:${candidateId}`] : [];
+  return [...new Set([
+    ...recommendationCandidateTitleKeys(candidate),
+    ...providerKeys,
+    ...idKey,
+  ])];
+}
+
 export function recommendationTrackerRemoteKey(
   providerId: string | number | null | undefined,
   remoteId: string | number | null | undefined,

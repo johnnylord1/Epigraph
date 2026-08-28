@@ -125,7 +125,7 @@
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("mousedown", onMouseDown, true);
-      document.body.classList.remove("aethon-library-search-engaged");
+      document.body.classList.remove("epigraph-library-search-engaged");
     };
   });
 </script>
@@ -138,7 +138,7 @@
         class="n-search__input"
         role="combobox"
         aria-expanded={store.searchOpen}
-        aria-controls="aethon-search-results"
+        aria-controls="epigraph-search-results"
         aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
         aria-autocomplete="list"
         placeholder={toolbar.searchPlaceholder}

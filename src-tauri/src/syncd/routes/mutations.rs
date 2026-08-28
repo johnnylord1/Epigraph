@@ -1,5 +1,6 @@
 use axum::extract::{Extension, State};
 use axum::response::Json;
+use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
@@ -8,14 +9,17 @@ use crate::syncd::db;
 use crate::syncd::middleware::validate_scope;
 use crate::syncd::models::{
     canonical_novel_category_assignment_id, canonical_novel_chapter_asset_id,
-    canonical_novel_plugin_id, canonical_novel_repository_id, canonicalize_novel_repository_url,
-    AppError, AuthenticatedSession, BookBookmarkPatch, BookCategoryAssignmentPatch,
-    BookCategoryPatch, BookEntryPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch,
-    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail, MutationEntityType, MutationInput,
-    MutationOperation, MutationReceiptContext, MutationResult, MutationResultStatus,
-    MutationsRequest, MutationsResponse, NovelBookmarkPatch, NovelCategoryAssignmentPatch,
-    NovelCategoryPatch, NovelChapterAssetPatch, NovelChapterPatch, NovelClassificationPatch,
-    NovelEntryPatch, NovelHistoryPatch, NovelPluginPatch, NovelProgressPatch, NovelRepositoryPatch,
+    canonical_novel_plugin_id, canonical_novel_repository_id, canonical_portable_chapter_id,
+    canonical_portable_work_id, canonicalize_novel_repository_url, AppError, AuthenticatedSession,
+    BookBookmarkPatch, BookCategoryAssignmentPatch, BookCategoryPatch, BookEntryPatch,
+    BookHighlightPatch, BookHistoryPatch, BookLibraryUiPatch, BookProgressPatch,
+    ComicCategoryAssignmentPatch, ComicCategoryPatch, ComicChapterStatePatch, ComicEntryPatch,
+    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorDetail, EventClock, MutationBase,
+    MutationEntityType, MutationInput, MutationOperation, MutationReceiptContext, MutationResult,
+    MutationResultStatus, MutationsRequest, MutationsResponse, NovelBookmarkPatch,
+    NovelCategoryAssignmentPatch, NovelCategoryPatch, NovelChapterAssetPatch, NovelChapterPatch,
+    NovelClassificationPatch, NovelEntryPatch, NovelHistoryPatch, NovelPluginPatch,
+    NovelProgressPatch, NovelRepositoryPatch, PortableChapterRefV3, PortableWorkRefV3,
     SharedAppState,
 };
 use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
@@ -65,6 +69,7 @@ pub async fn post_mutations(
             canonical_entity_id: None,
             scope_id: base.scope_id.clone(),
             op: base.op,
+            event_clock: base.event_clock.clone(),
         };
         if let Some(previous) = receipt_contexts.get(&base.client_mutation_id) {
             if previous.mutation_hash != receipt_context.mutation_hash {
@@ -79,6 +84,7 @@ pub async fn post_mutations(
             &session.device_id,
             &base.client_mutation_id,
             &receipt_context.mutation_hash,
+            &receipt_context.mutation_json,
         )
         .await
         .map_err(|error| AppError::Internal(format!("Failed to load mutation receipt: {error}")))?
@@ -102,6 +108,10 @@ pub async fn post_mutations(
         }
 
         session.mutation_receipt = Some(receipt_context);
+        if let Some(error) = validate_event_clock(base.event_clock.as_ref()) {
+            results.push(rejected_result(&mutation, error));
+            continue;
+        }
         if let Some(error) = validate_mutation_base(
             &session,
             entity_type,
@@ -128,11 +138,106 @@ pub async fn post_mutations(
                         ));
                         continue;
                     };
-                    if let Some(error) = validate_book_entry_patch(patch) {
+                    if let Some(error) = validate_book_entry_patch(&base.entity_id, patch) {
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
-                    db::apply_book_entry_mutation(
+                    match db::book_entry_identity_conflict(
+                        &state.pool,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                    )
+                    .await
+                    {
+                        Ok(Some(conflict)) => {
+                            results.push(rejected_result(
+                                &mutation,
+                                book_identity_conflict_error_detail(conflict),
+                            ));
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            return Err(AppError::Internal(format!(
+                                "Failed to validate immutable book identity: {error}"
+                            )));
+                        }
+                    }
+                    match (&patch.asset_fingerprint, patch.byte_size) {
+                        (Some(asset), Some(byte_size)) => {
+                            match validate_asset_reference(
+                                &state.config.data_dir,
+                                asset,
+                                &base.scope_id,
+                                byte_size as u64,
+                            )
+                            .await
+                            {
+                                Ok(()) => {}
+                                Err(error) => {
+                                    results.push(rejected_result(
+                                        &mutation,
+                                        book_asset_reference_error_detail(error),
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        (None, None) => {
+                            // Legacy metadata-only records remain readable and updatable. New
+                            // clients always publish immutable bytes before the book entry.
+                        }
+                        _ => {
+                            results.push(rejected_result(
+                                &mutation,
+                                error_detail(
+                                    "INCOMPLETE_BOOK_ASSET_REFERENCE",
+                                    "Book assetFingerprint and byteSize must be provided together.",
+                                    None,
+                                ),
+                            ));
+                            continue;
+                        }
+                    }
+                    match (
+                        &patch.cover_asset_sha256,
+                        patch.cover_asset_byte_size,
+                        &patch.cover_asset_mime_type,
+                    ) {
+                        (Some(asset), Some(byte_size), Some(_)) => {
+                            match validate_asset_reference(
+                                &state.config.data_dir,
+                                asset,
+                                &base.scope_id,
+                                byte_size as u64,
+                            )
+                            .await
+                            {
+                                Ok(()) => {}
+                                Err(error) => {
+                                    results.push(rejected_result(
+                                        &mutation,
+                                        book_cover_asset_reference_error_detail(error),
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        (None, None, None) => {}
+                        _ => {
+                            results.push(rejected_result(
+                                &mutation,
+                                error_detail(
+                                    "INCOMPLETE_BOOK_COVER_ASSET_REFERENCE",
+                                    "Book cover hash, byte size, and MIME type must be provided together.",
+                                    None,
+                                ),
+                            ));
+                            continue;
+                        }
+                    }
+                    match db::apply_book_entry_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
@@ -142,24 +247,42 @@ pub async fn post_mutations(
                         state.config.retention_window,
                     )
                     .await
-                    .map_err(|error| {
-                        AppError::Internal(format!(
-                            "Failed to persist book entry mutation: {error}"
-                        ))
-                    })?
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = book_entry_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to persist book entry mutation.".to_string(),
+                            ));
+                        }
+                    }
                 }
-                MutationOperation::Delete => db::delete_book_entry_mutation(
-                    &state.pool,
-                    &session,
-                    &base.scope_id,
-                    &base.entity_id,
-                    base.lamport,
-                    state.config.retention_window,
-                )
-                .await
-                .map_err(|error| {
-                    AppError::Internal(format!("Failed to delete book entry mutation: {error}"))
-                })?,
+                MutationOperation::Delete => {
+                    match db::delete_book_entry_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if let Some(error) = book_entry_persist_error_detail(error) {
+                                results.push(rejected_result(&mutation, error));
+                                continue;
+                            }
+                            return Err(AppError::Internal(
+                                "Failed to delete book entry mutation.".to_string(),
+                            ));
+                        }
+                    }
+                }
             },
             MutationInput::BookCategory { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -297,19 +420,45 @@ pub async fn post_mutations(
                     results.push(rejected_result(&mutation, error));
                     continue;
                 }
-                db::apply_book_progress_mutation(
+                let canonical_book_id = base.entity_id.trim_start_matches("book.progress::");
+                let canonical_entity_id = if base.entity_id.starts_with("book.progress::") {
+                    format!("book.progress::{canonical_book_id}")
+                } else {
+                    canonical_book_id.to_string()
+                };
+                set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
+                match db::apply_book_progress_mutation(
                     &state.pool,
                     &session,
                     &base.scope_id,
-                    &base.entity_id,
+                    &canonical_entity_id,
                     patch,
                     base.lamport,
+                    base.event_clock.as_ref(),
                     state.config.retention_window,
                 )
                 .await
                 .map_err(|error| {
                     AppError::Internal(format!("Failed to persist book progress mutation: {error}"))
-                })?
+                })? {
+                    db::CausalMutationWriteOutcome::Applied(outcome) => outcome,
+                    db::CausalMutationWriteOutcome::Superseded {
+                        record,
+                        winning_clock,
+                        server_version,
+                        applied_lamport,
+                    } => {
+                        current_server_version = current_server_version.max(server_version);
+                        results.push(superseded_result(
+                            &mutation,
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        ));
+                        continue;
+                    }
+                }
             }
             MutationInput::NovelProgress { base, patch } => {
                 if let Some(error) = validate_novel_progress_patch(patch) {
@@ -321,6 +470,10 @@ pub async fn post_mutations(
                     .strip_prefix("novel.progress::")
                     .map(|novel_id| ("novel.progress::", novel_id))
                     .unwrap_or(("", base.entity_id.as_str()));
+                if let Some(error) = validate_novel_portable_identity(requested_novel_id, patch) {
+                    results.push(rejected_result(&mutation, error));
+                    continue;
+                }
                 let canonical_novel_id =
                     db::resolve_novel_entity_id(&state.pool, &base.scope_id, requested_novel_id)
                         .await
@@ -331,13 +484,14 @@ pub async fn post_mutations(
                         })?;
                 let canonical_entity_id = format!("{prefix}{canonical_novel_id}");
                 set_canonical_receipt(&mut session, &base.entity_id, &canonical_entity_id);
-                db::apply_novel_progress_mutation(
+                match db::apply_novel_progress_mutation(
                     &state.pool,
                     &session,
                     &base.scope_id,
                     &canonical_entity_id,
                     patch,
                     base.lamport,
+                    base.event_clock.as_ref(),
                     state.config.retention_window,
                 )
                 .await
@@ -345,7 +499,25 @@ pub async fn post_mutations(
                     AppError::Internal(format!(
                         "Failed to persist novel progress mutation: {error}"
                     ))
-                })?
+                })? {
+                    db::CausalMutationWriteOutcome::Applied(outcome) => outcome,
+                    db::CausalMutationWriteOutcome::Superseded {
+                        record,
+                        winning_clock,
+                        server_version,
+                        applied_lamport,
+                    } => {
+                        current_server_version = current_server_version.max(server_version);
+                        results.push(superseded_result(
+                            &mutation,
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        ));
+                        continue;
+                    }
+                }
             }
             MutationInput::BookBookmark { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -422,6 +594,63 @@ pub async fn post_mutations(
                     }
                 }
             },
+            MutationInput::BookHighlight { base, patch } => match base.op {
+                MutationOperation::Merge => {
+                    let Some(patch) = patch.as_ref() else {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "MISSING_PATCH",
+                                "Highlight merge mutations must include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    };
+                    if let Some(error) = validate_book_highlight_patch(&base.entity_id, patch) {
+                        results.push(rejected_result(&mutation, error));
+                        continue;
+                    }
+                    db::apply_book_highlight_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        patch,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to persist book highlight mutation.".to_string())
+                    })?
+                }
+                MutationOperation::Delete => {
+                    if patch.is_some() {
+                        results.push(rejected_result(
+                            &mutation,
+                            error_detail(
+                                "DELETE_PATCH_NOT_ALLOWED",
+                                "Highlight delete mutations must not include a patch.",
+                                None,
+                            ),
+                        ));
+                        continue;
+                    }
+                    db::delete_book_highlight_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|_| {
+                        AppError::Internal("Failed to delete book highlight mutation.".to_string())
+                    })?
+                }
+            },
             MutationInput::BookHistory { base, patch } => match base.op {
                 MutationOperation::Merge => {
                     let Some(patch) = patch.as_ref() else {
@@ -496,7 +725,7 @@ pub async fn post_mutations(
                         ));
                         continue;
                     };
-                    if let Some(error) = validate_novel_entry_patch(patch) {
+                    if let Some(error) = validate_novel_entry_patch(&base.entity_id, patch) {
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
@@ -1120,23 +1349,11 @@ pub async fn post_mutations(
                     canonical_patch.name = canonical_patch.name.trim().to_string();
                     canonical_patch.version = canonical_patch.version.trim().to_string();
                     canonical_patch.lang = canonical_patch.lang.trim().to_string();
-                    match validate_asset_reference(
-                        &state.config.data_dir,
-                        &canonical_patch.artifact_sha256,
-                        &base.scope_id,
-                        canonical_patch.artifact_byte_length as u64,
-                    )
-                    .await
-                    {
-                        Ok(()) => {}
-                        Err(error) => {
-                            results.push(rejected_result(
-                                &mutation,
-                                novel_plugin_asset_error_detail(error),
-                            ));
-                            continue;
-                        }
-                    }
+                    // The record stores immutable dependency evidence. A client normally fetches
+                    // the declared repository artifact, but the same hash may also reference an
+                    // explicitly published, scope-granted Core asset when that exact version has
+                    // disappeared upstream. Activation still requires a client-side user action,
+                    // hash/size verification and runtime smoke test.
                     match db::apply_novel_plugin_mutation(
                         &state.pool,
                         &session,
@@ -1391,6 +1608,102 @@ pub async fn post_mutations(
                     }
                 }
             },
+            MutationInput::ComicEntry { base, patch } => {
+                let validation = patch.as_ref().and_then(|patch| {
+                    validate_comic_entry_patch(&base.scope_id, &base.entity_id, patch)
+                });
+                match persist_comic_sync_state(
+                    &state,
+                    &session,
+                    &mutation,
+                    base,
+                    patch.as_ref(),
+                    validation,
+                )
+                .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
+            MutationInput::ComicCategory { base, patch } => {
+                let validation = patch.as_ref().and_then(|patch| {
+                    validate_comic_category_patch(&base.scope_id, &base.entity_id, patch)
+                });
+                match persist_comic_sync_state(
+                    &state,
+                    &session,
+                    &mutation,
+                    base,
+                    patch.as_ref(),
+                    validation,
+                )
+                .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
+            MutationInput::ComicCategoryAssignment { base, patch } => {
+                let validation = patch.as_ref().and_then(|patch| {
+                    validate_comic_category_assignment_patch(&base.scope_id, &base.entity_id, patch)
+                });
+                match persist_comic_sync_state(
+                    &state,
+                    &session,
+                    &mutation,
+                    base,
+                    patch.as_ref(),
+                    validation,
+                )
+                .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
+            MutationInput::ComicChapterState { base, patch } => {
+                let validation = patch.as_ref().and_then(|patch| {
+                    validate_comic_chapter_state_patch(&base.scope_id, &base.entity_id, patch)
+                });
+                match persist_comic_sync_state(
+                    &state,
+                    &session,
+                    &mutation,
+                    base,
+                    patch.as_ref(),
+                    validation,
+                )
+                .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
             MutationInput::ComicHistory { base, patch } => match base.op {
                 MutationOperation::Merge => {
                     let Some(patch) = patch.as_ref() else {
@@ -1415,11 +1728,28 @@ pub async fn post_mutations(
                         &base.entity_id,
                         patch,
                         base.lamport,
+                        base.event_clock.as_ref(),
                         state.config.retention_window,
                     )
                     .await
                     {
-                        Ok(outcome) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Applied(outcome)) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Superseded {
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        }) => {
+                            current_server_version = current_server_version.max(server_version);
+                            results.push(superseded_result(
+                                &mutation,
+                                record,
+                                winning_clock,
+                                server_version,
+                                applied_lamport,
+                            ));
+                            continue;
+                        }
                         Err(error) => {
                             if let Some(error) = comic_state_persist_error_detail(error) {
                                 results.push(rejected_result(&mutation, error));
@@ -1557,13 +1887,14 @@ pub async fn post_mutations(
             status: MutationResultStatus::Applied,
             applied_server_version: Some(outcome.envelope.server_version),
             applied_lamport: Some(outcome.applied_lamport),
+            event_clock: base.event_clock.clone(),
             record: Some(outcome.record),
             error: None,
         });
     }
 
     for result in &mut results {
-        if result.status != MutationResultStatus::Rejected {
+        if result.status == MutationResultStatus::Applied {
             continue;
         }
         let Some(context) = receipt_contexts.get(&result.client_mutation_id) else {
@@ -1606,8 +1937,121 @@ fn canonical_mutation(mutation: &MutationInput) -> Result<(String, String), AppE
     let canonical = canonicalize_json(value);
     let mutation_json = serde_json::to_string(&canonical)
         .map_err(|error| AppError::Internal(format!("Failed to canonicalize mutation: {error}")))?;
-    let mutation_hash = format!("{:x}", Sha256::digest(mutation_json.as_bytes()));
+    // Lamport is transport ordering metadata and may be reallocated after a lost response.
+    // The persisted EventClock and command payload are the semantic idempotency identity.
+    let mut hash_value = canonical;
+    if let Some(object) = hash_value.as_object_mut() {
+        object.remove("lamport");
+    }
+    let hash_json = serde_json::to_string(&hash_value)
+        .map_err(|error| AppError::Internal(format!("Failed to hash mutation: {error}")))?;
+    let mutation_hash = format!("{:x}", Sha256::digest(hash_json.as_bytes()));
     Ok((mutation_json, mutation_hash))
+}
+
+enum ComicSyncRouteOutcome {
+    Applied(db::MutationWriteOutcome),
+    Result(MutationResult),
+}
+
+async fn persist_comic_sync_state<T: Serialize>(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    mutation: &MutationInput,
+    base: &MutationBase,
+    patch: Option<&T>,
+    validation: Option<ErrorDetail>,
+) -> Result<ComicSyncRouteOutcome, AppError> {
+    if let Some(error) = validation {
+        return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+            mutation, error,
+        )));
+    }
+    let outcome = match base.op {
+        MutationOperation::Merge => {
+            let Some(patch) = patch else {
+                return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation,
+                    error_detail(
+                        "MISSING_PATCH",
+                        "Comic state merge mutations must include a patch.",
+                        None,
+                    ),
+                )));
+            };
+            let record = serde_json::to_value(patch).map_err(|error| {
+                AppError::Internal(format!("Failed to encode comic state mutation: {error}"))
+            })?;
+            db::apply_comic_sync_state_mutation(
+                &state.pool,
+                session,
+                &base.scope_id,
+                mutation.entity_type().as_str(),
+                &base.entity_id,
+                &record,
+                base.lamport,
+                base.event_clock.as_ref(),
+                state.config.retention_window,
+            )
+            .await
+        }
+        MutationOperation::Delete => {
+            if patch.is_some() {
+                return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation,
+                    error_detail(
+                        "DELETE_PATCH_NOT_ALLOWED",
+                        "Comic state delete mutations must not include a patch.",
+                        None,
+                    ),
+                )));
+            }
+            db::delete_comic_sync_state_mutation(
+                &state.pool,
+                session,
+                &base.scope_id,
+                mutation.entity_type().as_str(),
+                &base.entity_id,
+                base.lamport,
+                base.event_clock.as_ref(),
+                state.config.retention_window,
+            )
+            .await
+        }
+    };
+    match outcome {
+        Ok(db::CausalMutationWriteOutcome::Applied(outcome)) => {
+            Ok(ComicSyncRouteOutcome::Applied(outcome))
+        }
+        Ok(db::CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        }) => Ok(ComicSyncRouteOutcome::Result(superseded_result(
+            mutation,
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        ))),
+        Err(error) => {
+            let diagnostic = error.to_string();
+            if let Some(error) = comic_state_persist_error_detail(error) {
+                Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation, error,
+                )))
+            } else {
+                tracing::error!(error = %diagnostic, "failed to persist canonical comic state mutation");
+                let message = if cfg!(test) {
+                    format!("Failed to persist canonical comic state mutation: {diagnostic}")
+                } else {
+                    "Failed to persist canonical comic state mutation.".to_string()
+                };
+                Err(AppError::Internal(message))
+            }
+        }
+    }
 }
 
 fn set_canonical_receipt(
@@ -1714,6 +2158,7 @@ fn validate_mutation_base(
         | MutationEntityType::BookLibraryUi
         | MutationEntityType::BookProgress
         | MutationEntityType::BookBookmark
+        | MutationEntityType::BookHighlight
         | MutationEntityType::BookHistory => {
             if scope_id != "books:global" {
                 return Some(error_detail(
@@ -1750,11 +2195,16 @@ fn validate_mutation_base(
                 ));
             }
         }
-        MutationEntityType::ComicHistory | MutationEntityType::ComicPageBookmark => {
+        MutationEntityType::ComicEntry
+        | MutationEntityType::ComicCategory
+        | MutationEntityType::ComicCategoryAssignment
+        | MutationEntityType::ComicChapterState
+        | MutationEntityType::ComicHistory
+        | MutationEntityType::ComicPageBookmark => {
             if !scope_id.starts_with("comics:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
-                    "Comic reader-state mutations must use comics:profile:<id>.",
+                    "Comic mutations must use comics:profile:<id>.",
                     Some(json!({
                         "entityType": entity_type.as_str(),
                         "expectedScopePattern": "comics:profile:<id>",
@@ -1813,18 +2263,134 @@ fn validate_book_progress_patch(patch: &BookProgressPatch) -> Option<ErrorDetail
         .or_else(|| validate_non_negative_timestamp(patch.last_read_at_ms, "lastReadAtMs"))
 }
 
-fn validate_book_entry_patch(patch: &BookEntryPatch) -> Option<ErrorDetail> {
+fn validate_book_entry_patch(entity_id: &str, patch: &BookEntryPatch) -> Option<ErrorDetail> {
+    for (field, value) in [
+        ("assetFingerprint", patch.asset_fingerprint.as_deref()),
+        ("coverAssetSha256", patch.cover_asset_sha256.as_deref()),
+    ] {
+        if let Some(value) = value {
+            if value.len() != 64
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Some(error_detail(
+                    "INVALID_ASSET_SHA256",
+                    "Book asset hashes must contain exactly 64 lowercase hexadecimal characters.",
+                    Some(json!({ "field": field })),
+                ));
+            }
+        }
+    }
+    if patch.byte_size.is_some_and(|size| size < 0) {
+        return Some(error_detail(
+            "INVALID_ASSET_BYTE_LENGTH",
+            "Book byteSize must be zero or greater.",
+            None,
+        ));
+    }
+    if patch.asset_fingerprint.is_some() && patch.byte_size == Some(0) {
+        return Some(error_detail(
+            "INVALID_ASSET_BYTE_LENGTH",
+            "Book assets must contain at least one byte.",
+            None,
+        ));
+    }
+    let complete_cover_reference = match (
+        patch.cover_asset_sha256.as_deref(),
+        patch.cover_asset_byte_size,
+        patch.cover_asset_mime_type.as_deref(),
+    ) {
+        (None, None, None) => false,
+        (Some(_), Some(size), Some(mime_type)) => {
+            if size <= 0 {
+                return Some(error_detail(
+                    "INVALID_BOOK_COVER_BYTE_LENGTH",
+                    "Book cover assets must contain at least one byte.",
+                    None,
+                ));
+            }
+            if !matches!(mime_type, "image/jpeg" | "image/png" | "image/webp") {
+                return Some(error_detail(
+                    "INVALID_BOOK_COVER_MIME_TYPE",
+                    "Book cover MIME type must be image/jpeg, image/png, or image/webp.",
+                    None,
+                ));
+            }
+            true
+        }
+        _ => {
+            return Some(error_detail(
+                "INCOMPLETE_BOOK_COVER_ASSET_REFERENCE",
+                "Book cover hash, byte size, and MIME type must be provided together.",
+                None,
+            ));
+        }
+    };
+    if patch.mime_type.as_deref().is_some_and(|value| {
+        value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control)
+    }) {
+        return Some(error_detail(
+            "INVALID_MIME_TYPE",
+            "Book mimeType must be a non-empty safe media type.",
+            None,
+        ));
+    }
+    let subtype = patch.subtype.trim().to_ascii_lowercase();
+    if subtype != "epub" && subtype != "pdf" {
+        return Some(error_detail(
+            "INVALID_SUBTYPE",
+            "Book subtype must be epub or pdf.",
+            None,
+        ));
+    }
+    if let Some(asset) = patch.asset_fingerprint.as_deref() {
+        let expected_id = format!("{subtype}:sha256:{asset}");
+        if entity_id != expected_id {
+            return Some(error_detail(
+                "BOOK_IDENTITY_MISMATCH",
+                "Book identity must match its immutable content type and SHA-256.",
+                None,
+            ));
+        }
+        let expected_mime = if subtype == "epub" {
+            "application/epub+zip"
+        } else {
+            "application/pdf"
+        };
+        if patch.mime_type.as_deref() != Some(expected_mime) {
+            return Some(error_detail(
+                "BOOK_MIME_MISMATCH",
+                "Book MIME type does not match its immutable subtype.",
+                None,
+            ));
+        }
+    }
+    for (field, value) in [
+        ("pageCount", patch.page_count),
+        ("tocCount", patch.toc_count),
+        ("spineCount", patch.spine_count),
+        ("sectionCount", patch.section_count),
+    ] {
+        if value.is_some_and(|count| count < 0) {
+            return Some(error_detail(
+                "INVALID_BOOK_COUNT",
+                "Book counts must be zero or greater.",
+                Some(json!({ "field": field })),
+            ));
+        }
+    }
+    if patch.has_cover != complete_cover_reference {
+        return Some(error_detail(
+            "INVALID_BOOK_COVER",
+            "Book hasCover must match its complete cover asset reference.",
+            None,
+        ));
+    }
     if patch.title.trim().is_empty() {
         return Some(error_detail(
             "INVALID_TITLE",
             "Book entry patch must include a non-empty title.",
-            None,
-        ));
-    }
-    if patch.subtype.trim().is_empty() {
-        return Some(error_detail(
-            "INVALID_SUBTYPE",
-            "Book entry patch must include a non-empty subtype.",
             None,
         ));
     }
@@ -1870,9 +2436,70 @@ fn validate_book_library_ui_patch(_patch: &BookLibraryUiPatch) -> Option<ErrorDe
 fn validate_novel_progress_patch(patch: &NovelProgressPatch) -> Option<ErrorDetail> {
     validate_progress_value(patch.progress_percent)
         .or_else(|| validate_non_negative_timestamp(patch.updated_at_ms, "updatedAtMs"))
+        .or_else(
+            || match (&patch.portable_work_ref, &patch.portable_chapter_ref) {
+                (None, None) => None,
+                (Some(work), Some(chapter)) => work
+                    .validate()
+                    .and_then(|_| chapter.validate())
+                    .err()
+                    .map(|_| {
+                        error_detail(
+                            "INVALID_PORTABLE_NOVEL_REFERENCE",
+                            "Portable novel progress references are invalid.",
+                            None,
+                        )
+                    }),
+                _ => Some(error_detail(
+                    "INCOMPLETE_PORTABLE_NOVEL_REFERENCE",
+                    "Portable novel progress requires both work and chapter references.",
+                    None,
+                )),
+            },
+        )
 }
 
-fn validate_novel_entry_patch(patch: &NovelEntryPatch) -> Option<ErrorDetail> {
+fn validate_novel_portable_identity(
+    requested_novel_id: &str,
+    patch: &NovelProgressPatch,
+) -> Option<ErrorDetail> {
+    let (Some(work), Some(chapter)) = (&patch.portable_work_ref, &patch.portable_chapter_ref)
+    else {
+        return None;
+    };
+    let PortableWorkRefV3::Novel { .. } = work else {
+        return Some(error_detail(
+            "PORTABLE_NOVEL_TYPE_MISMATCH",
+            "Portable novel progress must reference a novel work.",
+            None,
+        ));
+    };
+    let PortableChapterRefV3::Novel {
+        work: chapter_work, ..
+    } = chapter
+    else {
+        return Some(error_detail(
+            "PORTABLE_NOVEL_CHAPTER_TYPE_MISMATCH",
+            "Portable novel progress must reference a novel chapter.",
+            None,
+        ));
+    };
+    let expected_work_id = canonical_portable_work_id(work);
+    let expected_chapter_id = canonical_portable_chapter_id(chapter);
+    if chapter_work != work
+        || requested_novel_id != expected_work_id
+        || patch.chapter_id.as_deref() != Some(expected_chapter_id.as_str())
+    {
+        return Some(error_detail(
+            "PORTABLE_NOVEL_IDENTITY_MISMATCH",
+            "Portable novel IDs must match their provider-owned references.",
+            None,
+        ));
+    }
+    None
+}
+
+fn validate_novel_entry_patch(entity_id: &str, patch: &NovelEntryPatch) -> Option<ErrorDetail> {
     if patch.identity_key.trim().is_empty() {
         return Some(error_detail(
             "INVALID_IDENTITY_KEY",
@@ -1893,6 +2520,33 @@ fn validate_novel_entry_patch(patch: &NovelEntryPatch) -> Option<ErrorDetail> {
             "Novel entry patch must include a non-empty path.",
             None,
         ));
+    }
+    if let Some(reference) = patch.portable_work_ref.as_ref() {
+        if reference.validate().is_err() || !matches!(reference, PortableWorkRefV3::Novel { .. }) {
+            return Some(error_detail(
+                "INVALID_PORTABLE_REFERENCE",
+                "Portable novel reference is invalid.",
+                None,
+            ));
+        }
+        let expected = canonical_portable_work_id(reference);
+        if entity_id != expected || patch.identity_key != expected {
+            return Some(error_detail(
+                "PORTABLE_NOVEL_IDENTITY_MISMATCH",
+                "Novel identity must be derived from its portable reference.",
+                Some(json!({ "expectedNovelId": expected })),
+            ));
+        }
+        let PortableWorkRefV3::Novel { novel_key, .. } = reference else {
+            unreachable!()
+        };
+        if patch.path != *novel_key {
+            return Some(error_detail(
+                "PORTABLE_NOVEL_KEY_MISMATCH",
+                "Novel path must preserve the provider-owned portable key.",
+                None,
+            ));
+        }
     }
     validate_non_negative_timestamp(patch.added_at_ms, "addedAtMs")
         .or_else(|| validate_non_negative_timestamp(patch.updated_at_ms, "updatedAtMs"))
@@ -1995,8 +2649,70 @@ fn validate_book_bookmark_patch(patch: &BookBookmarkPatch) -> Option<ErrorDetail
             None,
         ));
     }
+    let created_at_ms = patch.effective_created_at_ms();
+    let updated_at_ms = patch.effective_updated_at_ms();
     validate_progress_value(patch.progress_percent)
+        .or_else(|| validate_non_negative_timestamp(created_at_ms, "createdAtMs"))
+        .or_else(|| validate_non_negative_timestamp(updated_at_ms, "updatedAtMs"))
         .or_else(|| validate_non_negative_timestamp(patch.saved_at_ms, "savedAtMs"))
+        .or_else(|| {
+            if updated_at_ms < created_at_ms {
+                Some(error_detail(
+                    "INVALID_TIMESTAMP_ORDER",
+                    "Book bookmark updatedAtMs must not precede createdAtMs.",
+                    None,
+                ))
+            } else {
+                None
+            }
+        })
+}
+
+fn validate_book_highlight_patch(
+    entity_id: &str,
+    patch: &BookHighlightPatch,
+) -> Option<ErrorDetail> {
+    if patch.highlight_id != entity_id {
+        return Some(error_detail(
+            "ENTITY_ID_MISMATCH",
+            "Book highlight patch highlightId must exactly match entityId.",
+            None,
+        ));
+    }
+    if patch.book_id.trim().is_empty() {
+        return Some(error_detail(
+            "INVALID_PARENT_ID",
+            "Book highlight patch must include a non-empty bookId.",
+            None,
+        ));
+    }
+    if !patch.start_locator_json.is_object() || !patch.end_locator_json.is_object() {
+        return Some(error_detail(
+            "INVALID_LOCATOR",
+            "Book highlight locators must be JSON objects.",
+            None,
+        ));
+    }
+    if patch.selected_text.len() > 65_536 {
+        return Some(error_detail(
+            "HIGHLIGHT_TEXT_TOO_LARGE",
+            "Book highlight selected text is too large.",
+            None,
+        ));
+    }
+    validate_non_negative_timestamp(patch.created_at_ms, "createdAtMs")
+        .or_else(|| validate_non_negative_timestamp(patch.updated_at_ms, "updatedAtMs"))
+        .or_else(|| {
+            if patch.updated_at_ms < patch.created_at_ms {
+                Some(error_detail(
+                    "INVALID_TIMESTAMP_ORDER",
+                    "Book highlight updatedAtMs must not precede createdAtMs.",
+                    None,
+                ))
+            } else {
+                None
+            }
+        })
 }
 
 fn validate_book_history_patch(entity_id: &str, patch: &BookHistoryPatch) -> Option<ErrorDetail> {
@@ -2363,7 +3079,14 @@ fn validate_identifier(field: &str, value: &str) -> Option<ErrorDetail> {
 
 fn validate_comic_history_patch(entity_id: &str, patch: &ComicHistoryPatch) -> Option<ErrorDetail> {
     validate_payload_identity("historyId", entity_id, &patch.history_id)
-        .or_else(|| validate_comic_media_key(&patch.comic_id))
+        .or_else(|| {
+            validate_comic_portable_or_legacy_identity(
+                &patch.comic_id,
+                &patch.chapter_id,
+                patch.portable_work_ref.as_ref(),
+                patch.portable_chapter_ref.as_ref(),
+            )
+        })
         .or_else(|| validate_comic_history_entity_id(entity_id, &patch.comic_id))
         .or_else(|| validate_bounded_identifier(&patch.chapter_id, "chapterId"))
         .or_else(|| validate_page_locator(patch.page_index, patch.page_count))
@@ -2371,12 +3094,165 @@ fn validate_comic_history_patch(entity_id: &str, patch: &ComicHistoryPatch) -> O
         .or_else(|| validate_non_negative_timestamp(patch.read_at_ms, "readAtMs"))
 }
 
+fn validate_comic_entry_patch(
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicEntryPatch,
+) -> Option<ErrorDetail> {
+    validate_payload_identity("comicId", entity_id, &patch.comic_id)
+        .or_else(|| {
+            validate_comic_work_or_legacy_identity(
+                scope_id,
+                &patch.comic_id,
+                patch.portable_work_ref.as_ref(),
+            )
+        })
+        .or_else(|| {
+            (!patch.in_library).then(|| {
+                error_detail(
+                    "INVALID_LIBRARY_MEMBERSHIP",
+                    "Comic entry merge requires inLibrary=true; use delete to remove membership.",
+                    None,
+                )
+            })
+        })
+}
+
+fn validate_comic_category_patch(
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicCategoryPatch,
+) -> Option<ErrorDetail> {
+    validate_payload_identity("categoryId", entity_id, &patch.category_id)
+        .or_else(|| validate_scoped_suwayomi_id(scope_id, &patch.category_id, ":category:"))
+        .or_else(|| {
+            let name = patch.name.trim();
+            (name.is_empty() || name != patch.name || name.len() > 256 || name.contains('\0'))
+                .then(|| {
+                    error_detail(
+                        "INVALID_CATEGORY_NAME",
+                        "Comic category name must be trimmed, non-empty, at most 256 bytes, and contain no NUL.",
+                        None,
+                    )
+                })
+        })
+        .or_else(|| {
+            (patch.order < 0).then(|| {
+                error_detail(
+                    "INVALID_CATEGORY_ORDER",
+                    "Comic category order must be zero or greater.",
+                    Some(json!({ "receivedOrder": patch.order })),
+                )
+            })
+        })
+}
+
+fn validate_comic_category_assignment_patch(
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicCategoryAssignmentPatch,
+) -> Option<ErrorDetail> {
+    validate_payload_identity("assignmentId", entity_id, &patch.assignment_id)
+        .or_else(|| {
+            validate_comic_work_or_legacy_identity(
+                scope_id,
+                &patch.comic_id,
+                patch.portable_work_ref.as_ref(),
+            )
+        })
+        .or_else(|| validate_scoped_suwayomi_id(scope_id, &patch.category_id, ":category:"))
+}
+
+fn validate_comic_work_or_legacy_identity(
+    scope_id: &str,
+    comic_id: &str,
+    work: Option<&PortableWorkRefV3>,
+) -> Option<ErrorDetail> {
+    let Some(work) = work else {
+        return validate_scoped_suwayomi_id(scope_id, comic_id, ":manga:");
+    };
+    if work.validate().is_err() || !matches!(work, PortableWorkRefV3::Comic { .. }) {
+        return Some(error_detail(
+            "INVALID_PORTABLE_REFERENCE",
+            "Portable comic reference is invalid.",
+            None,
+        ));
+    }
+    let expected = canonical_portable_work_id(work);
+    (comic_id != expected).then(|| {
+        error_detail(
+            "NON_CANONICAL_PORTABLE_ID",
+            "Comic ID must be derived from its portable reference.",
+            Some(json!({ "expectedComicId": expected, "receivedComicId": comic_id })),
+        )
+    })
+}
+
+fn validate_comic_chapter_state_patch(
+    scope_id: &str,
+    entity_id: &str,
+    patch: &ComicChapterStatePatch,
+) -> Option<ErrorDetail> {
+    validate_payload_identity("chapterStateId", entity_id, &patch.chapter_state_id)
+        .or_else(|| {
+            if patch.portable_work_ref.is_some() || patch.portable_chapter_ref.is_some() {
+                validate_comic_portable_or_legacy_identity(
+                    &patch.comic_id,
+                    &patch.chapter_id,
+                    patch.portable_work_ref.as_ref(),
+                    patch.portable_chapter_ref.as_ref(),
+                )
+            } else {
+                validate_scoped_suwayomi_id(scope_id, &patch.comic_id, ":manga:").or_else(|| {
+                    validate_scoped_suwayomi_id(scope_id, &patch.chapter_id, ":chapter:")
+                })
+            }
+        })
+        .or_else(|| {
+            let expected = format!(
+                "comic.chapter_state::{}::{}",
+                patch.comic_id, patch.chapter_id
+            );
+            (entity_id != expected).then(|| {
+                error_detail(
+                    "NON_CANONICAL_CHAPTER_STATE_ID",
+                    "Comic chapter state entityId must be derived from comicId and chapterId.",
+                    Some(json!({ "expectedEntityId": expected, "receivedEntityId": entity_id })),
+                )
+            })
+        })
+        .or_else(|| {
+            patch.last_page_read.and_then(|page| {
+                (page < 0).then(|| {
+                    error_detail(
+                        "INVALID_PAGE_INDEX",
+                        "Comic lastPageRead must be zero or greater.",
+                        Some(json!({ "receivedLastPageRead": page })),
+                    )
+                })
+            })
+        })
+        .or_else(|| {
+            patch
+                .last_read_at_ms
+                .and_then(|timestamp| validate_non_negative_timestamp(timestamp, "lastReadAtMs"))
+        })
+        .or_else(|| validate_non_negative_timestamp(patch.updated_at_ms, "updatedAtMs"))
+}
+
 fn validate_comic_page_bookmark_patch(
     entity_id: &str,
     patch: &ComicPageBookmarkPatch,
 ) -> Option<ErrorDetail> {
     validate_payload_identity("bookmarkId", entity_id, &patch.bookmark_id)
-        .or_else(|| validate_comic_media_key(&patch.comic_id))
+        .or_else(|| {
+            validate_comic_portable_or_legacy_identity(
+                &patch.comic_id,
+                &patch.chapter_id,
+                patch.portable_work_ref.as_ref(),
+                patch.portable_chapter_ref.as_ref(),
+            )
+        })
         .or_else(|| validate_bounded_identifier(&patch.chapter_id, "chapterId"))
         .or_else(|| validate_page_locator(patch.page_index, patch.page_count))
         .or_else(|| {
@@ -2393,6 +3269,62 @@ fn validate_comic_page_bookmark_patch(
             })
         })
         .or_else(|| validate_non_negative_timestamp(patch.saved_at_ms, "savedAtMs"))
+}
+
+fn validate_comic_portable_or_legacy_identity(
+    comic_id: &str,
+    chapter_id: &str,
+    work: Option<&PortableWorkRefV3>,
+    chapter: Option<&PortableChapterRefV3>,
+) -> Option<ErrorDetail> {
+    match (work, chapter) {
+        (None, None) => validate_comic_media_key(comic_id)
+            .or_else(|| validate_bounded_identifier(chapter_id, "chapterId")),
+        (Some(work), Some(chapter)) => {
+            if work.validate().is_err() || chapter.validate().is_err() {
+                return Some(error_detail(
+                    "INVALID_PORTABLE_REFERENCE",
+                    "Portable comic references are invalid.",
+                    None,
+                ));
+            }
+            let PortableChapterRefV3::Comic {
+                work: chapter_work, ..
+            } = chapter
+            else {
+                return Some(error_detail(
+                    "PORTABLE_REFERENCE_TYPE_MISMATCH",
+                    "Comic state requires comic portable references.",
+                    None,
+                ));
+            };
+            if !matches!(work, PortableWorkRefV3::Comic { .. }) || chapter_work != work {
+                return Some(error_detail(
+                    "PORTABLE_REFERENCE_PARENT_MISMATCH",
+                    "Portable chapter must belong to the supplied portable comic.",
+                    None,
+                ));
+            }
+            let expected_work = canonical_portable_work_id(work);
+            let expected_chapter = canonical_portable_chapter_id(chapter);
+            if comic_id != expected_work || chapter_id != expected_chapter {
+                return Some(error_detail(
+                    "NON_CANONICAL_PORTABLE_ID",
+                    "Comic and chapter IDs must be derived from their portable references.",
+                    Some(json!({
+                        "expectedComicId": expected_work,
+                        "expectedChapterId": expected_chapter,
+                    })),
+                ));
+            }
+            None
+        }
+        _ => Some(error_detail(
+            "INCOMPLETE_PORTABLE_REFERENCE",
+            "Portable work and chapter references must be supplied together.",
+            None,
+        )),
+    }
 }
 
 fn validate_payload_identity(field: &str, entity_id: &str, value: &str) -> Option<ErrorDetail> {
@@ -2441,6 +3373,9 @@ fn validate_bounded_identifier(value: &str, field: &str) -> Option<ErrorDetail> 
 }
 
 fn validate_comic_media_key(comic_id: &str) -> Option<ErrorDetail> {
+    if parse_scoped_suwayomi_id(comic_id, ":manga:").is_some() {
+        return None;
+    }
     let Some(rest) = comic_id.strip_prefix("suwayomi:") else {
         return Some(invalid_comic_id(comic_id));
     };
@@ -2516,6 +3451,97 @@ fn validate_non_negative_timestamp(value: i64, field: &str) -> Option<ErrorDetai
     None
 }
 
+fn validate_event_clock(clock: Option<&EventClock>) -> Option<ErrorDetail> {
+    let clock = clock?;
+    if clock.physical_ms < 0 || clock.logical < 0 {
+        return Some(error_detail(
+            "INVALID_EVENT_CLOCK",
+            "Mutation event clock values must be zero or greater.",
+            None,
+        ));
+    }
+    let generation = clock.device_generation_id.trim();
+    if generation.is_empty()
+        || generation.len() > 256
+        || generation != clock.device_generation_id
+        || generation.chars().any(char::is_control)
+    {
+        return Some(error_detail(
+            "INVALID_EVENT_CLOCK",
+            "Mutation device generation is invalid.",
+            None,
+        ));
+    }
+    None
+}
+
+fn validate_scoped_suwayomi_id(
+    scope_id: &str,
+    entity_id: &str,
+    marker: &str,
+) -> Option<ErrorDetail> {
+    let expected_profile = scope_id.strip_prefix("comics:profile:").unwrap_or_default();
+    match parse_scoped_suwayomi_id(entity_id, marker) {
+        Some((profile_id, _)) if profile_id == expected_profile => None,
+        _ => Some(error_detail(
+            "INVALID_SUWAYOMI_ENTITY_ID",
+            "Comic entity identity must belong to the authenticated Suwayomi profile.",
+            Some(json!({
+                "entityId": entity_id,
+                "scopeId": scope_id,
+                "expectedMarker": marker,
+            })),
+        )),
+    }
+}
+
+fn parse_scoped_suwayomi_id<'a>(entity_id: &'a str, marker: &str) -> Option<(&'a str, i64)> {
+    let profile_and_remote = if let Some(value) = entity_id.strip_prefix("suwayomi:profile:") {
+        value
+    } else {
+        let value = entity_id.strip_prefix("suwayomi:server:")?;
+        let profile_marker = value.find(":profile:")?;
+        if profile_marker == 0 {
+            return None;
+        }
+        &value[profile_marker + ":profile:".len()..]
+    };
+    let remote_marker = profile_and_remote.rfind(marker)?;
+    let profile_id = &profile_and_remote[..remote_marker];
+    if profile_id.is_empty() {
+        return None;
+    }
+    let remote_id = profile_and_remote[remote_marker + marker.len()..]
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value > 0 && *value <= i32::MAX as i64)?;
+    Some((profile_id, remote_id))
+}
+
+fn superseded_result(
+    mutation: &MutationInput,
+    record: Value,
+    winning_clock: EventClock,
+    server_version: i64,
+    applied_lamport: i64,
+) -> MutationResult {
+    let base = mutation.base();
+    MutationResult {
+        client_mutation_id: base.client_mutation_id.clone(),
+        entity_type: mutation.entity_type(),
+        entity_id: base.entity_id.clone(),
+        canonical_entity_id: None,
+        scope_id: base.scope_id.clone(),
+        op: base.op,
+        status: MutationResultStatus::Superseded,
+        applied_server_version: Some(server_version),
+        applied_lamport: Some(applied_lamport),
+        event_clock: Some(winning_clock),
+        record: Some(record),
+        error: None,
+    }
+}
+
 fn rejected_result(mutation: &MutationInput, error: ErrorDetail) -> MutationResult {
     let base = mutation.base();
     MutationResult {
@@ -2528,6 +3554,7 @@ fn rejected_result(mutation: &MutationInput, error: ErrorDetail) -> MutationResu
         status: MutationResultStatus::Rejected,
         applied_server_version: None,
         applied_lamport: None,
+        event_clock: base.event_clock.clone(),
         record: None,
         error: Some(error),
     }
@@ -2580,6 +3607,83 @@ fn novel_chapter_asset_reference_error_detail(error: AssetReferenceError) -> Err
     }
 }
 
+fn book_asset_reference_error_detail(error: AssetReferenceError) -> ErrorDetail {
+    match error {
+        AssetReferenceError::InvalidSha256 => error_detail(
+            "INVALID_ASSET_SHA256",
+            "Book assetFingerprint is invalid.",
+            None,
+        ),
+        AssetReferenceError::NotAvailableForScope => error_detail(
+            "BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            "The book file must be uploaded to this Books scope before publication.",
+            None,
+        ),
+        AssetReferenceError::SizeMismatch => error_detail(
+            "BOOK_ASSET_SIZE_MISMATCH",
+            "Book byteSize does not match the stored blob.",
+            None,
+        ),
+        AssetReferenceError::Storage => error_detail(
+            "ASSET_VALIDATION_UNAVAILABLE",
+            "The Core could not validate the stored book file.",
+            None,
+        ),
+    }
+}
+
+fn book_cover_asset_reference_error_detail(error: AssetReferenceError) -> ErrorDetail {
+    match error {
+        AssetReferenceError::InvalidSha256 => error_detail(
+            "INVALID_BOOK_COVER_ASSET_SHA256",
+            "Book cover asset SHA-256 is invalid.",
+            None,
+        ),
+        AssetReferenceError::NotAvailableForScope => error_detail(
+            "BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE",
+            "Book cover asset must be uploaded for the Books scope before its entry is published.",
+            None,
+        ),
+        AssetReferenceError::SizeMismatch => error_detail(
+            "BOOK_COVER_ASSET_SIZE_MISMATCH",
+            "Book cover asset size does not match the published blob.",
+            None,
+        ),
+        AssetReferenceError::Storage => error_detail(
+            "BOOK_COVER_ASSET_STORAGE_UNAVAILABLE",
+            "Book cover asset storage is temporarily unavailable.",
+            None,
+        ),
+    }
+}
+
+fn book_identity_conflict_error_detail(error: db::BookEntryIdentityConflict) -> ErrorDetail {
+    let field = match error {
+        db::BookEntryIdentityConflict::AssetFingerprint => "assetFingerprint",
+        db::BookEntryIdentityConflict::MimeType => "mimeType",
+        db::BookEntryIdentityConflict::ByteSize => "byteSize",
+        db::BookEntryIdentityConflict::Subtype => "subtype",
+    };
+    error_detail(
+        "BOOK_IDENTITY_IMMUTABLE",
+        "A synchronized book cannot change its immutable file identity.",
+        Some(json!({ "field": field })),
+    )
+}
+
+fn book_entry_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
+    let message = error.to_string();
+    if message.contains("stale book entry mutation rejected by tombstone lamport") {
+        Some(error_detail(
+            "STALE_BOOK_ENTRY_MUTATION",
+            "Book entry mutation is older than its deletion tombstone.",
+            None,
+        ))
+    } else {
+        None
+    }
+}
+
 fn novel_chapter_asset_persist_error_detail(error: anyhow::Error) -> Option<ErrorDetail> {
     let message = error.to_string();
     if message.contains("stale novel chapter asset mutation") {
@@ -2620,31 +3724,6 @@ fn novel_chapter_asset_persist_error_detail(error: anyhow::Error) -> Option<Erro
         ))
     } else {
         None
-    }
-}
-
-fn novel_plugin_asset_error_detail(error: AssetReferenceError) -> ErrorDetail {
-    match error {
-        AssetReferenceError::InvalidSha256 => error_detail(
-            "INVALID_ASSET_SHA256",
-            "Plugin artifactSha256 is invalid.",
-            None,
-        ),
-        AssetReferenceError::NotAvailableForScope => error_detail(
-            "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
-            "Plugin artifact must be uploaded and granted to this novel scope before publication.",
-            None,
-        ),
-        AssetReferenceError::SizeMismatch => error_detail(
-            "PLUGIN_ASSET_SIZE_MISMATCH",
-            "Plugin artifactByteLength does not match the stored blob.",
-            None,
-        ),
-        AssetReferenceError::Storage => error_detail(
-            "ASSET_VALIDATION_UNAVAILABLE",
-            "The Core could not validate the plugin artifact.",
-            None,
-        ),
     }
 }
 
@@ -2744,6 +3823,35 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
     use tower::ServiceExt;
+
+    #[test]
+    fn portable_novel_progress_requires_ids_derived_from_opaque_refs() {
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "lnreader.plugin".to_string(),
+            novel_key: "/Novel/KeepCase?token=A%2FB".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: "/Chapter/KeepCase".to_string(),
+        };
+        let patch = NovelProgressPatch {
+            chapter_id: Some(canonical_portable_chapter_id(&chapter)),
+            portable_work_ref: Some(work.clone()),
+            portable_chapter_ref: Some(chapter),
+            chapter_title: None,
+            chapter_order_key: Some(1.0),
+            progress_percent: 0.5,
+            locator: Some("block:1:2".to_string()),
+            locator_sort_key: Some(2.0),
+            updated_at_ms: 1,
+            reset: false,
+        };
+
+        assert!(
+            validate_novel_portable_identity(&canonical_portable_work_id(&work), &patch,).is_none()
+        );
+        assert!(validate_novel_portable_identity("novel:local-id", &patch).is_some());
+    }
 
     #[test]
     fn plugin_sync_v1_rejects_every_non_empty_public_settings_object() {
@@ -2968,13 +4076,342 @@ mod tests {
         panic!("timed out waiting for {expected_changes} SSE change events");
     }
 
+    fn book_entry_request(
+        client_mutation_id: &str,
+        asset_fingerprint: Option<&str>,
+        byte_size: Option<usize>,
+    ) -> Value {
+        json!({
+            "requestId": format!("request-{client_mutation_id}"),
+            "mutations": [{
+                "entityType": "book.entry",
+                "clientMutationId": client_mutation_id,
+                "scopeId": "books:global",
+                "entityId": asset_fingerprint
+                    .map(|sha256| format!("epub:sha256:{sha256}"))
+                    .unwrap_or_else(|| "legacy-book".to_string()),
+                "lamport": 1,
+                "patch": {
+                    "assetFingerprint": asset_fingerprint,
+                    "mimeType": "application/epub+zip",
+                    "byteSize": byte_size,
+                    "coverAssetSha256": null,
+                    "coverAssetByteSize": null,
+                    "coverAssetMimeType": null,
+                    "title": "Epigraph fixture book",
+                    "author": "Epigraph",
+                    "description": null,
+                    "subtype": "epub",
+                    "pageCount": null,
+                    "tocCount": null,
+                    "spineCount": null,
+                    "sectionCount": null,
+                    "sectionsSummaryJson": null,
+                    "hasCover": false,
+                    "createdAtMs": 1000,
+                    "bookUpdatedAtMs": 1000
+                }
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn book_entry_requires_complete_published_asset_reference() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let bytes = b"immutable epub bytes";
+        let sha256 = format!("{:x}", Sha256::digest(bytes));
+
+        let missing = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                book_entry_request("book-before-upload", Some(&sha256), Some(bytes.len())),
+            ))
+            .await
+            .unwrap();
+        let missing = json_body(missing).await;
+        assert_eq!(missing["results"][0]["status"], "rejected");
+        assert_eq!(
+            missing["results"][0]["error"]["code"],
+            "BOOK_ASSET_NOT_AVAILABLE_FOR_SCOPE"
+        );
+
+        let incomplete = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                book_entry_request("book-incomplete", Some(&sha256), None),
+            ))
+            .await
+            .unwrap();
+        let incomplete = json_body(incomplete).await;
+        assert_eq!(incomplete["results"][0]["status"], "rejected");
+        assert_eq!(
+            incomplete["results"][0]["error"]["code"],
+            "INCOMPLETE_BOOK_ASSET_REFERENCE"
+        );
+
+        let uploaded = upload_asset(&app, "main-token", "books%3Aglobal", bytes).await;
+        assert_eq!(uploaded, sha256);
+        let accepted = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                book_entry_request("book-after-upload", Some(&sha256), Some(bytes.len())),
+            ))
+            .await
+            .unwrap();
+        let accepted = json_body(accepted).await;
+        assert_eq!(accepted["results"][0]["status"], "applied");
+        assert_eq!(accepted["results"][0]["record"]["assetFingerprint"], sha256);
+
+        let mut metadata_only =
+            book_entry_request("book-metadata-only", Some(&sha256), Some(bytes.len()));
+        metadata_only["mutations"][0]["patch"]["assetFingerprint"] = Value::Null;
+        metadata_only["mutations"][0]["patch"]["mimeType"] = Value::Null;
+        metadata_only["mutations"][0]["patch"]["byteSize"] = Value::Null;
+        metadata_only["mutations"][0]["patch"]["title"] = json!("Updated title");
+        let metadata_only = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                metadata_only,
+            ))
+            .await
+            .unwrap();
+        let metadata_only = json_body(metadata_only).await;
+        assert_eq!(metadata_only["results"][0]["status"], "applied");
+        assert_eq!(
+            metadata_only["results"][0]["record"]["assetFingerprint"],
+            sha256
+        );
+
+        let mut conflicting =
+            book_entry_request("book-conflicting-subtype", Some(&sha256), Some(bytes.len()));
+        conflicting["mutations"][0]["patch"]["assetFingerprint"] = Value::Null;
+        conflicting["mutations"][0]["patch"]["mimeType"] = Value::Null;
+        conflicting["mutations"][0]["patch"]["byteSize"] = Value::Null;
+        conflicting["mutations"][0]["patch"]["subtype"] = json!("pdf");
+        let conflicting = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                conflicting,
+            ))
+            .await
+            .unwrap();
+        let conflicting = json_body(conflicting).await;
+        assert_eq!(conflicting["results"][0]["status"], "rejected");
+        assert_eq!(
+            conflicting["results"][0]["error"]["code"],
+            "BOOK_IDENTITY_IMMUTABLE"
+        );
+
+        let book_id = format!("epub:sha256:{sha256}");
+        let deleted = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "delete-book-entry",
+                    "mutations": [{
+                        "entityType": "book.entry",
+                        "clientMutationId": "delete-book-entry-1",
+                        "scopeId": "books:global",
+                        "entityId": book_id,
+                        "op": "delete",
+                        "lamport": 10
+                    }]
+                }),
+            ))
+            .await
+            .unwrap();
+        let deleted = json_body(deleted).await;
+        assert_eq!(deleted["results"][0]["status"], "applied");
+
+        let mut stale =
+            book_entry_request("stale-book-resurrection", Some(&sha256), Some(bytes.len()));
+        stale["mutations"][0]["lamport"] = json!(10);
+        let stale = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", stale))
+            .await
+            .unwrap();
+        let stale = json_body(stale).await;
+        assert_eq!(stale["results"][0]["status"], "rejected");
+        assert_eq!(
+            stale["results"][0]["error"]["code"],
+            "STALE_BOOK_ENTRY_MUTATION"
+        );
+
+        let mut newer =
+            book_entry_request("newer-book-resurrection", Some(&sha256), Some(bytes.len()));
+        newer["mutations"][0]["lamport"] = json!(11);
+        let newer = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", newer))
+            .await
+            .unwrap();
+        let newer = json_body(newer).await;
+        assert_eq!(newer["results"][0]["status"], "applied");
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=books%3Aglobal",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| {
+                entity["entityType"] == "book.entry" && entity["entityId"] == book_id
+            }));
+        assert!(!snapshot["tombstones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tombstone| {
+                tombstone["entityType"] == "book.entry" && tombstone["entityId"] == book_id
+            }));
+    }
+
+    #[tokio::test]
+    async fn book_cover_requires_atomic_supported_published_asset_reference() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let publication = b"immutable epub with a cover";
+        let publication_sha = upload_asset(&app, "main-token", "books%3Aglobal", publication).await;
+        let cover = b"\x89PNG\r\n\x1a\nminimal-cover";
+        let cover_sha = format!("{:x}", Sha256::digest(cover));
+
+        let mut incomplete = book_entry_request(
+            "book-cover-incomplete",
+            Some(&publication_sha),
+            Some(publication.len()),
+        );
+        incomplete["mutations"][0]["patch"]["coverAssetSha256"] = json!(cover_sha);
+        incomplete["mutations"][0]["patch"]["hasCover"] = json!(true);
+        let incomplete = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", incomplete))
+            .await
+            .unwrap();
+        let incomplete = json_body(incomplete).await;
+        assert_eq!(
+            incomplete["results"][0]["error"]["code"],
+            "INCOMPLETE_BOOK_COVER_ASSET_REFERENCE"
+        );
+
+        let mut unsupported = book_entry_request(
+            "book-cover-unsupported",
+            Some(&publication_sha),
+            Some(publication.len()),
+        );
+        unsupported["mutations"][0]["patch"]["coverAssetSha256"] = json!(cover_sha);
+        unsupported["mutations"][0]["patch"]["coverAssetByteSize"] = json!(cover.len());
+        unsupported["mutations"][0]["patch"]["coverAssetMimeType"] = json!("image/gif");
+        unsupported["mutations"][0]["patch"]["hasCover"] = json!(true);
+        let unsupported = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                unsupported,
+            ))
+            .await
+            .unwrap();
+        let unsupported = json_body(unsupported).await;
+        assert_eq!(
+            unsupported["results"][0]["error"]["code"],
+            "INVALID_BOOK_COVER_MIME_TYPE"
+        );
+
+        let mut missing = book_entry_request(
+            "book-cover-missing",
+            Some(&publication_sha),
+            Some(publication.len()),
+        );
+        missing["mutations"][0]["patch"]["coverAssetSha256"] = json!(cover_sha);
+        missing["mutations"][0]["patch"]["coverAssetByteSize"] = json!(cover.len());
+        missing["mutations"][0]["patch"]["coverAssetMimeType"] = json!("image/png");
+        missing["mutations"][0]["patch"]["hasCover"] = json!(true);
+        let missing = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", missing))
+            .await
+            .unwrap();
+        let missing = json_body(missing).await;
+        assert_eq!(
+            missing["results"][0]["error"]["code"],
+            "BOOK_COVER_ASSET_NOT_AVAILABLE_FOR_SCOPE"
+        );
+
+        let uploaded_cover = upload_asset(&app, "main-token", "books%3Aglobal", cover).await;
+        assert_eq!(uploaded_cover, cover_sha);
+        let mut wrong_size = book_entry_request(
+            "book-cover-wrong-size",
+            Some(&publication_sha),
+            Some(publication.len()),
+        );
+        wrong_size["mutations"][0]["patch"]["coverAssetSha256"] = json!(cover_sha);
+        wrong_size["mutations"][0]["patch"]["coverAssetByteSize"] = json!(cover.len() + 1);
+        wrong_size["mutations"][0]["patch"]["coverAssetMimeType"] = json!("image/png");
+        wrong_size["mutations"][0]["patch"]["hasCover"] = json!(true);
+        let wrong_size = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", wrong_size))
+            .await
+            .unwrap();
+        let wrong_size = json_body(wrong_size).await;
+        assert_eq!(
+            wrong_size["results"][0]["error"]["code"],
+            "BOOK_COVER_ASSET_SIZE_MISMATCH"
+        );
+
+        let mut accepted = book_entry_request(
+            "book-cover-accepted",
+            Some(&publication_sha),
+            Some(publication.len()),
+        );
+        accepted["mutations"][0]["patch"]["coverAssetSha256"] = json!(cover_sha);
+        accepted["mutations"][0]["patch"]["coverAssetByteSize"] = json!(cover.len());
+        accepted["mutations"][0]["patch"]["coverAssetMimeType"] = json!("image/png");
+        accepted["mutations"][0]["patch"]["hasCover"] = json!(true);
+        let accepted = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", accepted))
+            .await
+            .unwrap();
+        let accepted = json_body(accepted).await;
+        assert_eq!(accepted["results"][0]["status"], "applied");
+        let record = &accepted["results"][0]["record"];
+        assert_eq!(record["coverAssetSha256"], cover_sha);
+        assert_eq!(record["coverAssetByteSize"], cover.len());
+        assert_eq!(record["coverAssetMimeType"], "image/png");
+        assert!(record.get("coverPath").is_none());
+        assert!(record.get("assetPath").is_none());
+        assert!(record.get("privatePath").is_none());
+    }
+
     #[tokio::test]
     async fn novel_repository_plugin_alias_receipt_snapshot_and_parent_delete_contract() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state.clone());
         let artifact = b"module.exports = { id: 'synthetic' };";
-        let artifact_sha =
-            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", artifact).await;
+        let artifact_sha = format!("{:x}", Sha256::digest(artifact));
 
         let repository_request = json!({
             "requestId": "req-repository",
@@ -3218,7 +4655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn novel_plugin_artifact_requires_exact_hash_size_and_scope_grant() {
+    async fn novel_plugin_evidence_requires_exact_hash_size_and_is_immutable_per_version() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state.clone());
         let repository_id = canonical_novel_repository_id("https://example.com/repository.json");
@@ -3252,13 +4689,7 @@ mod tests {
             "applied"
         );
 
-        let scoped_bytes = b"scoped plugin";
-        let scoped_sha =
-            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", scoped_bytes).await;
-        let cross_scope_bytes = b"books-only plugin";
-        let cross_scope_sha =
-            upload_asset(&app, "main-token", "books%3Aglobal", cross_scope_bytes).await;
-        let missing_sha = "a".repeat(64);
+        let first_sha = format!("{:x}", Sha256::digest(b"scoped plugin"));
         let cases = [
             (
                 "invalid-hash",
@@ -3267,22 +4698,10 @@ mod tests {
                 "INVALID_ASSET_SHA256",
             ),
             (
-                "missing",
-                missing_sha,
-                1usize,
-                "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
-            ),
-            (
-                "wrong-scope",
-                cross_scope_sha,
-                cross_scope_bytes.len(),
-                "PLUGIN_ASSET_NOT_AVAILABLE_FOR_SCOPE",
-            ),
-            (
-                "wrong-size",
-                scoped_sha.clone(),
-                scoped_bytes.len() + 1,
-                "PLUGIN_ASSET_SIZE_MISMATCH",
+                "empty",
+                first_sha.clone(),
+                0usize,
+                "INVALID_PLUGIN_ARTIFACT_SIZE",
             ),
         ];
         for (suffix, sha, size, expected_code) in cases {
@@ -3354,32 +4773,18 @@ mod tests {
             .oneshot(request_with_json(
                 "/v1/mutations",
                 "main-token",
-                valid_patch(
-                    &scoped_sha,
-                    scoped_bytes.len(),
-                    "immutable-first",
-                    "1.0.0",
-                    2,
-                ),
+                valid_patch(&first_sha, 13, "immutable-first", "1.0.0", 2),
             ))
             .await
             .unwrap();
         assert_eq!(json_body(valid).await["results"][0]["status"], "applied");
-        let replacement = b"replacement plugin";
-        let replacement_sha =
-            upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", replacement).await;
+        let replacement_sha = format!("{:x}", Sha256::digest(b"replacement plugin"));
         let replaced = app
             .clone()
             .oneshot(request_with_json(
                 "/v1/mutations",
                 "main-token",
-                valid_patch(
-                    &replacement_sha,
-                    replacement.len(),
-                    "immutable-second",
-                    "1.0.0",
-                    3,
-                ),
+                valid_patch(&replacement_sha, 18, "immutable-second", "1.0.0", 3),
             ))
             .await
             .unwrap();
@@ -3393,13 +4798,7 @@ mod tests {
             .oneshot(request_with_json(
                 "/v1/mutations",
                 "main-token",
-                valid_patch(
-                    &replacement_sha,
-                    replacement.len(),
-                    "immutable-upgrade",
-                    "2.0.0",
-                    4,
-                ),
+                valid_patch(&replacement_sha, 18, "immutable-upgrade", "2.0.0", 4),
             ))
             .await
             .unwrap();
@@ -3409,32 +4808,19 @@ mod tests {
             .oneshot(request_with_json(
                 "/v1/mutations",
                 "main-token",
-                valid_patch(
-                    &scoped_sha,
-                    scoped_bytes.len(),
-                    "immutable-rollback",
-                    "1.0.0",
-                    5,
-                ),
+                valid_patch(&first_sha, 13, "immutable-rollback", "1.0.0", 5),
             ))
             .await
             .unwrap();
         assert_eq!(json_body(rollback).await["results"][0]["status"], "applied");
 
-        let forged = b"forged old version";
-        let forged_sha = upload_asset(&app, "main-token", "novels%3Aprofile%3Amain", forged).await;
+        let forged_sha = format!("{:x}", Sha256::digest(b"forged old version"));
         let forged_old_version = app
             .clone()
             .oneshot(request_with_json(
                 "/v1/mutations",
                 "main-token",
-                valid_patch(
-                    &forged_sha,
-                    forged.len(),
-                    "immutable-forged-old-version",
-                    "1.0.0",
-                    6,
-                ),
+                valid_patch(&forged_sha, 18, "immutable-forged-old-version", "1.0.0", 6),
             ))
             .await
             .unwrap();
@@ -5479,6 +6865,104 @@ mod tests {
                 }
             ]
         })
+    }
+
+    #[tokio::test]
+    async fn accepts_server_scoped_comic_catalog_state_and_queues_official_projections() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state.clone());
+        let comic_id = "suwayomi:server:desktop-a:profile:main:manga:42";
+        let category_id = "suwayomi:server:desktop-a:profile:main:category:3";
+        let chapter_id = "suwayomi:server:desktop-a:profile:main:chapter:7";
+        let chapter_state_id = format!("comic.chapter_state::{comic_id}::{chapter_id}");
+
+        let response = app
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                json!({
+                    "requestId": "canonical-comic-state",
+                    "mutations": [
+                        {
+                            "entityType": "comic.entry",
+                            "clientMutationId": "comic-entry-merge",
+                            "scopeId": "comics:profile:main",
+                            "entityId": comic_id,
+                            "lamport": 1,
+                            "eventClock": { "physicalMs": 100, "logical": 1, "deviceGenerationId": "mobile-a" },
+                            "patch": { "comicId": comic_id, "inLibrary": true }
+                        },
+                        {
+                            "entityType": "comic.category",
+                            "clientMutationId": "comic-category-merge",
+                            "scopeId": "comics:profile:main",
+                            "entityId": category_id,
+                            "lamport": 2,
+                            "eventClock": { "physicalMs": 101, "logical": 1, "deviceGenerationId": "mobile-a" },
+                            "patch": { "categoryId": category_id, "name": "Reading", "order": 1 }
+                        },
+                        {
+                            "entityType": "comic.category_assignment",
+                            "clientMutationId": "comic-assignment-merge",
+                            "scopeId": "comics:profile:main",
+                            "entityId": "comic-category-assignment:test",
+                            "lamport": 3,
+                            "eventClock": { "physicalMs": 102, "logical": 1, "deviceGenerationId": "mobile-a" },
+                            "patch": {
+                                "assignmentId": "comic-category-assignment:test",
+                                "comicId": comic_id,
+                                "categoryId": category_id
+                            }
+                        },
+                        {
+                            "entityType": "comic.chapter_state",
+                            "clientMutationId": "comic-chapter-state-merge",
+                            "scopeId": "comics:profile:main",
+                            "entityId": chapter_state_id,
+                            "lamport": 4,
+                            "eventClock": { "physicalMs": 103, "logical": 1, "deviceGenerationId": "mobile-a" },
+                            "patch": {
+                                "chapterStateId": chapter_state_id,
+                                "comicId": comic_id,
+                                "chapterId": chapter_id,
+                                "read": true,
+                                "bookmarked": false,
+                                "lastPageRead": 8,
+                                "lastReadAtMs": 103,
+                                "updatedAtMs": 103,
+                                "explicitProgressReset": false
+                            }
+                        }
+                    ]
+                }),
+            ))
+            .await
+            .unwrap();
+
+        let status = response.status();
+        let payload = json_body(response).await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert!(payload["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|result| result["status"] == "applied"));
+        let stored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM comic_sync_state")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, 4);
+        let projections: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM suwayomi_projection_outbox WHERE status = 'pending'",
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+        // Library membership, category rename/order, assignment and chapter state each
+        // produce an independently confirmed Suwayomi projection.  Keeping category name and
+        // order as separate operations mirrors Suwayomi's GraphQL API and makes a partial
+        // confirmation observable instead of silently dropping one field.
+        assert_eq!(projections, 5);
     }
 
     #[tokio::test]

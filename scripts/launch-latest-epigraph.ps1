@@ -5,7 +5,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $port = 1420
 
-. (Join-Path $scriptDir "AethonSessionTools.ps1")
+. (Join-Path $scriptDir "EpigraphSessionTools.ps1")
 
 function Get-PortListener {
   Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
@@ -13,7 +13,7 @@ function Get-PortListener {
     Select-Object -First 1
 }
 
-function Stop-StaleAethonViteListener {
+function Stop-StaleEpigraphViteListener {
   param(
     [Parameter(Mandatory)]
     $Listener
@@ -33,11 +33,11 @@ function Stop-StaleAethonViteListener {
   }
 
   $cmd = [string]$proc.CommandLine
-  $isAethonVite =
+  $isEpigraphVite =
     $proc.Name -eq "node.exe" -and
     $cmd -match "vite\.js --host 127\.0\.0\.1 --port 1420"
 
-  if (-not $isAethonVite) {
+  if (-not $isEpigraphVite) {
     return $false
   }
 
@@ -46,16 +46,16 @@ function Stop-StaleAethonViteListener {
   return $true
 }
 
-if (Focus-AethonWindow) {
+if (Focus-EpigraphWindow) {
   exit 0
 }
 
 $listener = Get-PortListener
-$devProcesses = @(Get-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds @("DevUi") -ExcludePids @($PID))
+$devProcesses = @(Get-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds @("DevUi") -ExcludePids @($PID))
 if ($listener -or $devProcesses) {
   $windowDeadline = (Get-Date).AddSeconds(12)
   do {
-    if (Focus-AethonWindow) {
+    if (Focus-EpigraphWindow) {
       exit 0
     }
     Start-Sleep -Milliseconds 600
@@ -63,21 +63,21 @@ if ($listener -or $devProcesses) {
 }
 
 $managedKinds = @("DevUi", "BuildAutomation", "SyncdPhaseGate", "SyncdHarness")
-$managedProcesses = @(Get-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID))
+$managedProcesses = @(Get-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID))
 if ($listener -or $managedProcesses) {
-  Stop-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID) | Out-Null
+  Stop-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID) | Out-Null
   Start-Sleep -Seconds 1
 }
 
 $listener = Get-PortListener
 if ($listener) {
-  if (Stop-StaleAethonViteListener -Listener $listener) {
+  if (Stop-StaleEpigraphViteListener -Listener $listener) {
     $listener = Get-PortListener
   }
 }
 
 if ($listener) {
-  throw "Port $port is still busy after cleaning the Aethon session."
+  throw "Port $port is still busy after cleaning the Epigraph session."
 }
 
 Start-Process `
@@ -97,12 +97,12 @@ do {
 } until ($listener -or (Get-Date) -gt $listenerDeadline)
 
 if (-not $listener) {
-  throw "Aethon dev server did not start on port $port."
+  throw "Epigraph dev server did not start on port $port."
 }
 
 $windowDeadline = (Get-Date).AddSeconds(90)
 do {
-  if (Focus-AethonWindow) {
+  if (Focus-EpigraphWindow) {
     exit 0
   }
   Start-Sleep -Seconds 2
@@ -110,7 +110,7 @@ do {
 
 $runningApp = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
-    $_.Name -eq "aethon.exe" -and
+    $_.Name -eq "epigraph.exe" -and
     ([string]$_.CommandLine) -notmatch "--webdriver-automation"
   } |
   Select-Object -First 1
@@ -119,4 +119,4 @@ if ($listener -or $runningApp) {
   exit 0
 }
 
-throw "Aethon did not start correctly."
+throw "Epigraph did not start correctly."

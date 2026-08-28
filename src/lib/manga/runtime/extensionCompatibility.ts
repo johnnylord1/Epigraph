@@ -25,7 +25,7 @@ export type ExtensionFailureOwner =
   | "antibot"
   | "authentication"
   | "network"
-  | "aethon"
+  | "epigraph"
   | "unknown";
 
 export type CompatibilityStageStatus =
@@ -170,7 +170,7 @@ function compatibilityStatus(value: unknown): ExtensionCompatibilityStatus {
 function failureOwner(value: unknown): ExtensionFailureOwner {
   return value === "runtime" || value === "extension" || value === "website"
     || value === "antibot" || value === "authentication" || value === "network"
-    || value === "aethon"
+    || value === "epigraph"
     ? value
     : "unknown";
 }

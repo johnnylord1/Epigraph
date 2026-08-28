@@ -93,7 +93,7 @@ test("requires installed content extension canaries to register sources in every
 });
 
 test("copies only the H2 database, extensions, and settings trees", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "aethon-migration-copy-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "epigraph-migration-copy-test-"));
   try {
     const source = path.join(root, "source");
     const destination = path.join(root, "destination");
@@ -142,6 +142,8 @@ test("pins the SR7 candidate as the exact maximum tested runtime", async () => {
     version: "v2.3.2243",
     asset: "Suwayomi-Server-v2.3.2243.jar",
     sha256: "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
+    compatibilityProfile: "V23",
+    transactionalExtensionUpdates: true,
     notes: "Certified on Windows x64 with Java 21, disposable H2 migration, Extension Stores, installed extension canaries, restart, and rollback.",
   });
   assert.ok(manifest.blockedVersions.some((entry) => entry.version === "v2.2.2100"));

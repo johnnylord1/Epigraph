@@ -212,7 +212,7 @@ describe("buildComicsSectionState", () => {
     expect(state.filteredManga.map((entry) => entry.title)).toEqual(["Alpha"]);
   });
 
-  it("builds Aethon comic card metadata from unread count and inferred state", () => {
+  it("builds Epigraph comic card metadata from unread count and inferred state", () => {
     const unknownUnread = manga({
       status: "UNKNOWN",
       unreadCount: 12,

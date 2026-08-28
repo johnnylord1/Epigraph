@@ -25,7 +25,7 @@ async function main() {
   const outputDirectory = path.resolve(
     args.out || path.join(projectRoot, "docs", "screenshots", "marco72b2-compatibility"),
   );
-  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aethon-compatibility-smoke-"));
+  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-compatibility-smoke-"));
   const capabilities = new Capabilities();
   capabilities.setBrowserName("wry");
   capabilities.set("tauri:options", {
@@ -49,9 +49,9 @@ async function main() {
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await driver.manage().window().setRect({ width: 1280, height: 800, x: 0, y: 0 });
     await driver.wait(async () => driver.executeScript(
-      "return Boolean(window.__aethonAudit)",
+      "return Boolean(window.__epigraphAudit)",
     ).catch(() => false), 120_000);
-    await driver.executeScript("window.__aethonAudit.bypassStartupSplash()");
+    await driver.executeScript("window.__epigraphAudit.bypassStartupSplash()");
     await driver.wait(async () => driver.executeScript(() => {
       if (document.querySelector(".browseSubtabs")) return true;
       document.querySelector('[data-nav-id="search"]')?.click();

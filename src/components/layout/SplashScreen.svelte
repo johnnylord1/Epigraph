@@ -2,7 +2,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { store } from "../../store/state.svelte";
-  import splashMarkUrl from "../../assets/aethon-splash-mark.png";
+  import splashMarkUrl from "../../assets/epigraph-splash-mark.png";
 
   interface Props {
     mode?: "loading" | "idle";
@@ -510,7 +510,7 @@
   onMount(() => {
     let mountedRaf = requestAnimationFrame(() => {
       mountedRaf = requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent("aethon:splash-mounted"));
+        window.dispatchEvent(new CustomEvent("epigraph:splash-mounted"));
       });
     });
 
@@ -521,13 +521,13 @@
 </script>
 
 {#snippet SplashContent()}
-  <div class="aethon-splash__sr" aria-live="polite" aria-atomic="true">{politeAnnouncement}</div>
+  <div class="epigraph-splash__sr" aria-live="polite" aria-atomic="true">{politeAnnouncement}</div>
   {#if assertiveAnnouncement}
-    <div class="aethon-splash__sr" role="alert">{assertiveAnnouncement}</div>
+    <div class="epigraph-splash__sr" role="alert">{assertiveAnnouncement}</div>
   {/if}
 
   {#if showFps && fpsText}
-    <span class="aethon-splash__fps">{fpsText}</span>
+    <span class="epigraph-splash__fps">{fpsText}</span>
   {/if}
 
   {#if showCards}
@@ -561,7 +561,7 @@
       <div class="state-value">{$_("ui_ready")}</div>
       <div class="line" aria-hidden="true"></div>
       {#if canDismissIdle}
-        <div class="aethon-splash__hint">{$_("ui_pressAnyKey")}</div>
+        <div class="epigraph-splash__hint">{$_("ui_pressAnyKey")}</div>
       {/if}
     </div>
 
@@ -574,7 +574,7 @@
       </div>
       <button
         type="button"
-        class="aethon-splash__hidden-submit"
+        class="epigraph-splash__hidden-submit"
         tabindex="-1"
         aria-label={$_("ui_submitPin")}
         onclick={submitPin}
@@ -599,7 +599,7 @@
 {#if canDismissIdle}
   <button
     type="button"
-    class="aethon-port--splash splash-stage"
+    class="epigraph-port--splash splash-stage"
     class:is-exiting={exiting}
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}
@@ -612,12 +612,12 @@
   </button>
 {:else}
   <div
-    class="aethon-port--splash splash-stage"
+    class="epigraph-port--splash splash-stage"
     class:is-exiting={exiting}
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}
     bind:this={splashRoot}
-    aria-label={$_("ui_aethonSplashScreen")}
+    aria-label={$_("ui_epigraphSplashScreen")}
   >
     {@render SplashContent()}
   </div>

@@ -1,17 +1,17 @@
 import JSZip from "jszip";
 import {
-  buildAethonBackupContainer,
-  inspectAethonBackupContainer,
-  type AethonBackupPayloadBuildInput,
-  type AethonBackupPayloadManifest,
-  type BuiltAethonBackupContainer,
-  type InspectedAethonBackupContainer,
-} from "./aethonBackup";
+  buildEpigraphBackupContainer,
+  inspectEpigraphBackupContainer,
+  type EpigraphBackupPayloadBuildInput,
+  type EpigraphBackupPayloadManifest,
+  type BuiltEpigraphBackupContainer,
+  type InspectedEpigraphBackupContainer,
+} from "./epigraphBackup";
 import { normalizeLocalProfileId, type LocalProfileId } from "../localProfiles";
 
-export const AETHON_APP_PAYLOAD_FILE_PATH = "profile.json";
+export const EPIGRAPH_APP_PAYLOAD_FILE_PATH = "profile.json";
 
-export interface AethonAppHistoryEntry {
+export interface EpigraphAppHistoryEntry {
   mangaId: number;
   mangaTitle: string;
   thumbnailUrl: string;
@@ -20,14 +20,14 @@ export interface AethonAppHistoryEntry {
   readAt: number;
 }
 
-export interface AethonAppReadLogEntry {
+export interface EpigraphAppReadLogEntry {
   mangaId: number;
   chapterId: number;
   readAt: number;
   minutes: number;
 }
 
-export interface AethonAppReadingStats {
+export interface EpigraphAppReadingStats {
   totalChaptersRead: number;
   totalMangaRead: number;
   totalMinutesRead: number;
@@ -38,25 +38,25 @@ export interface AethonAppReadingStats {
   lastStreakDate: string;
 }
 
-export interface AethonAppProfilePayload {
+export interface EpigraphAppProfilePayload {
   version: 1 | 2;
   defaultLocalProfileId: LocalProfileId;
-  history?: AethonAppHistoryEntry[];
-  readLog?: AethonAppReadLogEntry[];
-  readingStats?: AethonAppReadingStats;
+  history?: EpigraphAppHistoryEntry[];
+  readLog?: EpigraphAppReadLogEntry[];
+  readingStats?: EpigraphAppReadingStats;
 }
 
-export interface ParsedAethonAppPayload {
-  inspection: InspectedAethonBackupContainer;
-  payloadManifest: AethonBackupPayloadManifest;
-  profile: AethonAppProfilePayload;
+export interface ParsedEpigraphAppPayload {
+  inspection: InspectedEpigraphBackupContainer;
+  payloadManifest: EpigraphBackupPayloadManifest;
+  profile: EpigraphAppProfilePayload;
 }
 
 function jsonBytes(input: unknown): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(input, null, 2)}\n`);
 }
 
-function normalizeHistoryEntry(entry: unknown): AethonAppHistoryEntry | null {
+function normalizeHistoryEntry(entry: unknown): EpigraphAppHistoryEntry | null {
   if (!entry || typeof entry !== "object") return null;
   const record = entry as Record<string, unknown>;
   const mangaId = Number(record.mangaId);
@@ -73,7 +73,7 @@ function normalizeHistoryEntry(entry: unknown): AethonAppHistoryEntry | null {
   };
 }
 
-function normalizeReadLogEntry(entry: unknown): AethonAppReadLogEntry | null {
+function normalizeReadLogEntry(entry: unknown): EpigraphAppReadLogEntry | null {
   if (!entry || typeof entry !== "object") return null;
   const record = entry as Record<string, unknown>;
   const mangaId = Number(record.mangaId);
@@ -89,7 +89,7 @@ function normalizeReadLogEntry(entry: unknown): AethonAppReadLogEntry | null {
   };
 }
 
-function normalizeReadingStats(value: unknown): AethonAppReadingStats {
+function normalizeReadingStats(value: unknown): EpigraphAppReadingStats {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
     totalChaptersRead: Number(record.totalChaptersRead ?? 0) || 0,
@@ -103,17 +103,17 @@ function normalizeReadingStats(value: unknown): AethonAppReadingStats {
   };
 }
 
-export function buildAethonAppPayload(input: {
+export function buildEpigraphAppPayload(input: {
   defaultLocalProfileId: LocalProfileId;
-  history?: AethonAppHistoryEntry[];
-  readLog?: AethonAppReadLogEntry[];
-  readingStats?: AethonAppReadingStats;
-}): AethonBackupPayloadBuildInput {
+  history?: EpigraphAppHistoryEntry[];
+  readLog?: EpigraphAppReadLogEntry[];
+  readingStats?: EpigraphAppReadingStats;
+}): EpigraphBackupPayloadBuildInput {
   return {
     kind: "app",
     exportMode: "full",
     restoreModesSupported: ["full", "metadata-only"],
-    requiresRuntime: "aethon",
+    requiresRuntime: "epigraph",
     requiresRepositories: [],
     portableByDefault: false,
     metadata: {
@@ -122,14 +122,14 @@ export function buildAethonAppPayload(input: {
     },
     files: [
       {
-        path: AETHON_APP_PAYLOAD_FILE_PATH,
+        path: EPIGRAPH_APP_PAYLOAD_FILE_PATH,
         bytes: jsonBytes({
           version: 2,
           defaultLocalProfileId: input.defaultLocalProfileId,
           history: Array.isArray(input.history) ? input.history : [],
           readLog: Array.isArray(input.readLog) ? input.readLog : [],
           readingStats: normalizeReadingStats(input.readingStats),
-        } satisfies AethonAppProfilePayload),
+        } satisfies EpigraphAppProfilePayload),
         contentType: "application/json",
         role: "profile",
       },
@@ -137,24 +137,24 @@ export function buildAethonAppPayload(input: {
   };
 }
 
-export async function buildAethonAppBackupContainer(
+export async function buildEpigraphAppBackupContainer(
   input: {
     defaultLocalProfileId: LocalProfileId;
     appVersion?: string | null;
     platform?: string | null;
     sourceProfileId?: string | null;
-    history?: AethonAppHistoryEntry[];
-    readLog?: AethonAppReadLogEntry[];
-    readingStats?: AethonAppReadingStats;
+    history?: EpigraphAppHistoryEntry[];
+    readLog?: EpigraphAppReadLogEntry[];
+    readingStats?: EpigraphAppReadingStats;
   },
-): Promise<BuiltAethonBackupContainer> {
-  return buildAethonBackupContainer({
+): Promise<BuiltEpigraphBackupContainer> {
+  return buildEpigraphBackupContainer({
     appVersion: input.appVersion ?? null,
     platform: input.platform ?? null,
     sourceSurface: "desktop",
     sourceProfileId: input.sourceProfileId ?? null,
     payloads: [
-      buildAethonAppPayload({
+      buildEpigraphAppPayload({
         defaultLocalProfileId: input.defaultLocalProfileId,
         history: input.history,
         readLog: input.readLog,
@@ -164,33 +164,33 @@ export async function buildAethonAppBackupContainer(
   });
 }
 
-export async function parseAethonAppPayload(
+export async function parseEpigraphAppPayload(
   bytes: Uint8Array | ArrayBuffer,
-): Promise<ParsedAethonAppPayload> {
-  const inspection = await inspectAethonBackupContainer(bytes);
+): Promise<ParsedEpigraphAppPayload> {
+  const inspection = await inspectEpigraphBackupContainer(bytes);
   if (inspection.hasErrors) {
-    throw new Error("Aethon backup container failed inspection.");
+    throw new Error("Epigraph backup container failed inspection.");
   }
 
   const payloadManifest = inspection.payloadManifests.app;
   if (!payloadManifest) {
-    throw new Error("The selected Aethon backup does not contain an app payload.");
+    throw new Error("The selected Epigraph backup does not contain an app payload.");
   }
 
-  const fileRecord = payloadManifest.files.find((file) => file.path === AETHON_APP_PAYLOAD_FILE_PATH);
+  const fileRecord = payloadManifest.files.find((file) => file.path === EPIGRAPH_APP_PAYLOAD_FILE_PATH);
   if (!fileRecord) {
     throw new Error("App payload is missing profile.json.");
   }
 
   const zip = await JSZip.loadAsync(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-  const file = zip.file(`payloads/app/${AETHON_APP_PAYLOAD_FILE_PATH}`);
+  const file = zip.file(`payloads/app/${EPIGRAPH_APP_PAYLOAD_FILE_PATH}`);
   if (!file) {
     throw new Error("App payload is missing profile.json.");
   }
 
-  let parsed: AethonAppProfilePayload;
+  let parsed: EpigraphAppProfilePayload;
   try {
-    parsed = JSON.parse(await file.async("text")) as AethonAppProfilePayload;
+    parsed = JSON.parse(await file.async("text")) as EpigraphAppProfilePayload;
   } catch {
     throw new Error("App payload is not valid JSON.");
   }
@@ -211,10 +211,10 @@ export async function parseAethonAppPayload(
       version: parsed.version,
       defaultLocalProfileId,
       history: parsed.version >= 2 && Array.isArray(parsed.history)
-        ? parsed.history.map((entry) => normalizeHistoryEntry(entry)).filter((entry): entry is AethonAppHistoryEntry => Boolean(entry))
+        ? parsed.history.map((entry) => normalizeHistoryEntry(entry)).filter((entry): entry is EpigraphAppHistoryEntry => Boolean(entry))
         : undefined,
       readLog: parsed.version >= 2 && Array.isArray(parsed.readLog)
-        ? parsed.readLog.map((entry) => normalizeReadLogEntry(entry)).filter((entry): entry is AethonAppReadLogEntry => Boolean(entry))
+        ? parsed.readLog.map((entry) => normalizeReadLogEntry(entry)).filter((entry): entry is EpigraphAppReadLogEntry => Boolean(entry))
         : undefined,
       readingStats: parsed.version >= 2 ? normalizeReadingStats(parsed.readingStats) : undefined,
     },

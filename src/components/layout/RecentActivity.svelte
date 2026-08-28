@@ -289,7 +289,7 @@
       addToast({
         kind: "error",
         title: translate("ui_couldNotOpenChallenge"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotOpenTheSourceChallengePage"),
+        body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotOpenTheSourceChallengePage"),
       });
     }
   }
@@ -357,7 +357,7 @@
       addToast({
         kind: "error",
         title: translate("ui_couldNotRetrySource"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotRetryThisSource"),
+        body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotRetryThisSource"),
       });
     } finally {
       setLibraryUpdateInFlight(false);

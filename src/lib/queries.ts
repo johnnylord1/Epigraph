@@ -591,6 +591,7 @@ export const FETCH_SOURCE_MANGA = `
           thumbnailUrl
           inLibrary
           status
+          genre
           source {
             id
             name

@@ -624,7 +624,7 @@ exports.default = new DefaultCoverPlugin();
           flareSolverrEnabled: true,
           flareSolverrUrl: "http://localhost:8191",
           flareSolverrTimeout: 60,
-          flareSolverrSessionName: "aethon",
+          flareSolverrSessionName: "epigraph",
           flareSolverrSessionTtl: 15,
         },
       })),

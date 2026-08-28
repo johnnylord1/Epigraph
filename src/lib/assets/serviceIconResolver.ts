@@ -75,6 +75,6 @@ export function applyServiceIconFallback(event: Event, kind: ServiceIconKind = "
   const image = target as HTMLImageElement;
   const fallback = serviceIconFallbackUrl(kind);
   if (image.src === fallback) return;
-  image.dataset.aethonIconFailed = "true";
+  image.dataset.epigraphIconFailed = "true";
   image.src = fallback;
 }

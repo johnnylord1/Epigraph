@@ -3,14 +3,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import JSZip from "jszip";
-import { inspectAethonBackupContainer } from "./aethonBackup";
+import { inspectEpigraphBackupContainer } from "./epigraphBackup";
 import {
-  buildAethonBooksBackupContainer,
-  restoreAethonBooksPayload,
-  type AethonBooksSnapshot,
+  buildEpigraphBooksBackupContainer,
+  restoreEpigraphBooksPayload,
+  type EpigraphBooksSnapshot,
 } from "./booksBackup";
 
-const sampleSnapshot: AethonBooksSnapshot = {
+const sampleSnapshot: EpigraphBooksSnapshot = {
   books: [
     {
       id: "epub-alpha",
@@ -75,7 +75,7 @@ const SAMPLE_COVER_SVG = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="320" height="480" viewBox="0 0 320 480">
   <rect width="320" height="480" fill="#1a4f8b"/>
   <rect x="20" y="20" width="280" height="440" rx="20" fill="#7fd7ff"/>
-  <text x="160" y="170" text-anchor="middle" font-family="Arial" font-size="34" fill="#08263d">AETHON</text>
+  <text x="160" y="170" text-anchor="middle" font-family="Arial" font-size="34" fill="#08263d">EPIGRAPH</text>
   <text x="160" y="240" text-anchor="middle" font-family="Arial" font-size="24" fill="#0d3555">Books Restore</text>
   <text x="160" y="300" text-anchor="middle" font-family="Arial" font-size="20" fill="#0d3555">Phase 2B</text>
 </svg>`;
@@ -120,7 +120,7 @@ async function buildSampleEpub(title = "Phase 2B EPUB"): Promise<Uint8Array> {
     <package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId">
       <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
         <dc:title>${title}</dc:title>
-        <dc:creator>Aethon Tester</dc:creator>
+        <dc:creator>Epigraph Tester</dc:creator>
         <dc:description>Restored EPUB sample</dc:description>
       </metadata>
       <manifest>
@@ -167,7 +167,7 @@ function buildSamplePdf(text = "Phase 2B PDF"): Uint8Array {
 }
 
 async function createRoundTripFixture() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aethon-books-roundtrip-"));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-books-roundtrip-"));
   const epubPath = path.join(root, "sample.epub");
   const pdfPath = path.join(root, "sample.pdf");
   const coverPath = path.join(root, "cover.svg");
@@ -176,7 +176,7 @@ async function createRoundTripFixture() {
   await fs.writeFile(pdfPath, buildSamplePdf());
   await fs.writeFile(coverPath, SAMPLE_COVER_SVG);
 
-  const snapshot: AethonBooksSnapshot = {
+  const snapshot: EpigraphBooksSnapshot = {
     books: [
       {
         id: "audit-epub",
@@ -283,14 +283,14 @@ async function createRoundTripFixture() {
 }
 
 describe("books backup payload", () => {
-  it("builds a full books .aethonbk container with portable files and manifests", async () => {
+  it("builds a full books .epigraphbk container with portable files and manifests", async () => {
     const readBinaryFile = vi.fn(async (path: string) => {
       if (path.endsWith(".epub")) return new TextEncoder().encode("EPUB-BYTES").buffer;
       if (path.endsWith(".jpg")) return new TextEncoder().encode("JPEG-BYTES").buffer;
       throw new Error(`Unexpected path ${path}`);
     });
 
-    const built = await buildAethonBooksBackupContainer(
+    const built = await buildEpigraphBooksBackupContainer(
       sampleSnapshot,
       { exportMode: "full", appVersion: "0.0.1", platform: "windows", sourceProfileId: "main" },
       {
@@ -310,7 +310,7 @@ describe("books backup payload", () => {
       }),
     );
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.payloadManifests.books).toEqual(
       expect.objectContaining({
@@ -327,7 +327,7 @@ describe("books backup payload", () => {
   });
 
   it("restores a full books payload into managed storage paths", async () => {
-    const built = await buildAethonBooksBackupContainer(
+    const built = await buildEpigraphBooksBackupContainer(
       sampleSnapshot,
       { exportMode: "full" },
       {
@@ -341,7 +341,7 @@ describe("books backup payload", () => {
     const writeManagedBookCover = vi.fn(async (bookId: string, _base64: string, ext: string) =>
       `C:/managed/books/covers/${bookId}.${ext}`);
 
-    const restored = await restoreAethonBooksPayload(built.bytes, {
+    const restored = await restoreEpigraphBooksPayload(built.bytes, {
       writeManagedBookAsset,
       writeManagedBookCover,
     });
@@ -365,7 +365,7 @@ describe("books backup payload", () => {
   });
 
   it("restores metadata-only books payload with explicit issues instead of pretending files exist", async () => {
-    const built = await buildAethonBooksBackupContainer(
+    const built = await buildEpigraphBooksBackupContainer(
       sampleSnapshot,
       { exportMode: "metadata-only" },
       {
@@ -373,7 +373,7 @@ describe("books backup payload", () => {
       },
     );
 
-    const restored = await restoreAethonBooksPayload(built.bytes, {
+    const restored = await restoreEpigraphBooksPayload(built.bytes, {
       writeManagedBookAsset: vi.fn(),
       writeManagedBookCover: vi.fn(),
     });
@@ -400,19 +400,19 @@ describe("books backup payload", () => {
       const bytes = await fs.readFile(filePath);
       return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     };
-    const full = await buildAethonBooksBackupContainer(
+    const full = await buildEpigraphBooksBackupContainer(
       fixture.snapshot,
       { exportMode: "full", appVersion: "0.6.8", platform: "windows", sourceProfileId: "main" },
       { readBinaryFile },
     );
-    const metadataOnly = await buildAethonBooksBackupContainer(
+    const metadataOnly = await buildEpigraphBooksBackupContainer(
       fixture.snapshot,
       { exportMode: "metadata-only", appVersion: "0.6.8", platform: "windows", sourceProfileId: "main" },
       { readBinaryFile },
     );
 
     const managedRoot = path.join(fixture.root, "managed");
-    const restored = await restoreAethonBooksPayload(full.bytes, {
+    const restored = await restoreEpigraphBooksPayload(full.bytes, {
       writeManagedBookAsset: vi.fn(async (bookId: string, base64: string, ext: string) => {
         const dest = path.join(managedRoot, `${bookId}.${ext}`);
         await fs.mkdir(path.dirname(dest), { recursive: true });
@@ -436,11 +436,11 @@ describe("books backup payload", () => {
     expect(restored.bookProgress.map((entry) => entry.bookId).sort()).toEqual(["audit-epub", "audit-pdf"]);
     expect(restored.bookBookmarks.map((entry) => entry.bookId).sort()).toEqual(["audit-epub", "audit-pdf"]);
 
-    const outputDir = process.env.AETHON_BOOKS_PHASE2B_OUTPUT_DIR?.trim();
+    const outputDir = process.env.EPIGRAPH_BOOKS_PHASE2B_OUTPUT_DIR?.trim();
     if (outputDir) {
       await fs.mkdir(outputDir, { recursive: true });
-      await fs.writeFile(path.join(outputDir, "books-roundtrip-full.aethonbk"), Buffer.from(full.bytes));
-      await fs.writeFile(path.join(outputDir, "books-roundtrip-metadata-only.aethonbk"), Buffer.from(metadataOnly.bytes));
+      await fs.writeFile(path.join(outputDir, "books-roundtrip-full.epigraphbk"), Buffer.from(full.bytes));
+      await fs.writeFile(path.join(outputDir, "books-roundtrip-metadata-only.epigraphbk"), Buffer.from(metadataOnly.bytes));
       await fs.writeFile(path.join(outputDir, "books-roundtrip-source-epub.epub"), Buffer.from(await fs.readFile(fixture.epubPath)));
       await fs.writeFile(path.join(outputDir, "books-roundtrip-source-pdf.pdf"), Buffer.from(await fs.readFile(fixture.pdfPath)));
     }

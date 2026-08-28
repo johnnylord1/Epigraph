@@ -2,7 +2,7 @@
 
 ## Summary
 
-Aethon will expose one shared reader product surface for:
+Epigraph will expose one shared reader product surface for:
 - plugin-based novel text
 - EPUB
 - PDF
@@ -10,7 +10,7 @@ Aethon will expose one shared reader product surface for:
 The UX contract is shared.
 The rendering engines and content adapters remain separate.
 
-This document freezes what "shared reader" means in Aethon and what it does not mean.
+This document freezes what "shared reader" means in Epigraph and what it does not mean.
 
 ## Shared shell
 

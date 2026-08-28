@@ -52,9 +52,9 @@ import { DiscordPresenceService, type DiscordPresenceDriver } from "./discordPre
 import { mapGenericReadingPresence, mapNavigationPresence, mapReadingPresence, mapTtsPresence } from "./presenceStateMapper";
 import { extractAniListMangaId, extractMyAnimeListMangaId } from "./trackerCoverResolver";
 import {
-  AETHON_DISCORD_ACTIVITY_NAME,
-  AETHON_DISCORD_APPLICATION_ID,
-  AETHON_ICON_ASSET,
+  EPIGRAPH_DISCORD_ACTIVITY_NAME,
+  EPIGRAPH_DISCORD_APPLICATION_ID,
+  EPIGRAPH_ICON_ASSET,
   DISCORD_STATUS_DISPLAY_DETAILS,
   FALLBACK_COVER_ASSET,
   PRIVATE_DETAILS,
@@ -102,20 +102,20 @@ function progressPayload(bucket: number): DiscordPresencePayload {
     stateWithoutProgress: "Chapter 1",
     largeImage: "https://example.com/cover.png",
     largeText: "Visible Title",
-    smallImage: AETHON_ICON_ASSET,
-    smallText: "Aethon",
+    smallImage: EPIGRAPH_ICON_ASSET,
+    smallText: "Epigraph",
     progressBucket: bucket,
   };
 }
 
 describe("Discord Rich Presence", () => {
-  test("uses the official Aethon application id", async () => {
+  test("uses the official Epigraph application id", async () => {
     const { driver } = createDriver();
     const service = new DiscordPresenceService(driver);
 
     await service.start();
 
-    expect(driver.start).toHaveBeenCalledWith(AETHON_DISCORD_APPLICATION_ID);
+    expect(driver.start).toHaveBeenCalledWith(EPIGRAPH_DISCORD_APPLICATION_ID);
   });
 
   test("reports an absent Discord client and recovers on a later start", async () => {
@@ -189,8 +189,8 @@ describe("Discord Rich Presence", () => {
       state: "Chapter 99 - 95%",
       largeImage: "https://example.com/private-cover.png",
       largeText: "Very Private Manga",
-      smallImage: AETHON_ICON_ASSET,
-      smallText: "Aethon",
+      smallImage: EPIGRAPH_ICON_ASSET,
+      smallText: "Epigraph",
       progressBucket: 95,
     }, privateSettings, "work-change");
     const second = await service.setPresence({
@@ -199,8 +199,8 @@ describe("Discord Rich Presence", () => {
       state: "Chapter 1 - 5%",
       largeImage: "https://example.com/another-cover.png",
       largeText: "Another Private Manga",
-      smallImage: AETHON_ICON_ASSET,
-      smallText: "Aethon",
+      smallImage: EPIGRAPH_ICON_ASSET,
+      smallText: "Epigraph",
       progressBucket: 5,
     }, privateSettings, "work-change");
 
@@ -211,7 +211,7 @@ describe("Discord Rich Presence", () => {
     expect(serialized).not.toContain("Private Manga");
     expect(serialized).not.toContain("private-cover");
     expect(sent[0].details).toBe(PRIVATE_DETAILS);
-    expect(sent[0].name).toBe(AETHON_DISCORD_ACTIVITY_NAME);
+    expect(sent[0].name).toBe(EPIGRAPH_DISCORD_ACTIVITY_NAME);
     expect(sent[0].status_display_type).toBe(DISCORD_STATUS_DISPLAY_DETAILS);
   });
 
@@ -246,7 +246,7 @@ describe("Discord Rich Presence", () => {
     expect(canRunDiscordCoverImprovement({ ...enabledSettings, discordRpcShowCover: false, discordRpcImproveCovers: true })).toBe(false);
   });
 
-  test("maps reader payload with Aethon assets and progress buckets", () => {
+  test("maps reader payload with Epigraph assets and progress buckets", () => {
     const payload = mapReadingPresence(
       { id: 1, title: "A Manga", thumbnailUrl: "https://cdn.example.com/a.png" } as any,
       { id: 2, name: "Chapter 4", chapterNumber: 4 } as any,
@@ -254,7 +254,7 @@ describe("Discord Rich Presence", () => {
     );
 
     expect(payload.details).toBe("Reading A Manga");
-    expect(payload.activityName).toBe(AETHON_DISCORD_ACTIVITY_NAME);
+    expect(payload.activityName).toBe(EPIGRAPH_DISCORD_ACTIVITY_NAME);
     expect(payload.statusDisplayType).toBe(DISCORD_STATUS_DISPLAY_DETAILS);
     expect(payload.state).toBe("Chapter 4 - 35%");
     expect(payload.largeImage).toBe("https://cdn.example.com/a.png");
@@ -277,7 +277,7 @@ describe("Discord Rich Presence", () => {
     const withLocalCover = mapGenericReadingPresence("A Book", "Chapter 1", "file:///private/book.jpg");
 
     expect(withCover.details).toBe("Reading A Book");
-    expect(withCover.activityName).toBe(AETHON_DISCORD_ACTIVITY_NAME);
+    expect(withCover.activityName).toBe(EPIGRAPH_DISCORD_ACTIVITY_NAME);
     expect(withCover.statusDisplayType).toBe(DISCORD_STATUS_DISPLAY_DETAILS);
     expect(withCover.state).toBe("Chapter 1 - 40%");
     expect(withCover.stateWithoutProgress).toBe("Chapter 1");
@@ -319,7 +319,7 @@ describe("Discord Rich Presence", () => {
     );
 
     expect(sent[0].type).toBe(3);
-    expect(sent[0].name).toBe(AETHON_DISCORD_ACTIVITY_NAME);
+    expect(sent[0].name).toBe(EPIGRAPH_DISCORD_ACTIVITY_NAME);
     expect(sent[0].status_display_type).toBe(DISCORD_STATUS_DISPLAY_DETAILS);
   });
 
@@ -362,9 +362,9 @@ describe("Discord Rich Presence", () => {
   test("uses the app icon as the large image without a small overlay outside reading", () => {
     const payload = mapNavigationPresence("settings");
 
-    expect(payload.details).toBe("Customizing Aethon");
+    expect(payload.details).toBe("Customizing Epigraph");
     expect(payload.statusDisplayType).toBe(DISCORD_STATUS_DISPLAY_DETAILS);
-    expect(payload.largeImage).toBe(AETHON_ICON_ASSET);
+    expect(payload.largeImage).toBe(EPIGRAPH_ICON_ASSET);
     expect(payload.smallImage).toBeUndefined();
   });
 });

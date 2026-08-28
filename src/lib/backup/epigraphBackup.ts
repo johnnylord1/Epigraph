@@ -1,34 +1,38 @@
 import JSZip from "jszip";
 
-export const AETHON_BACKUP_EXTENSION = ".aethonbk";
-export const AETHON_BACKUP_FORMAT = "aethon-backup";
-export const AETHON_BACKUP_CONTAINER_VERSION = 1 as const;
-export const AETHON_BACKUP_MANIFEST_PATH = "manifest.json";
-export const AETHON_BACKUP_CHECKSUMS_PATH = "checksums/sha256.json";
-export const AETHON_BACKUP_MIME = "application/vnd.aethon.backup+zip";
+export const EPIGRAPH_BACKUP_EXTENSION = ".epigraphbk";
+export const EPIGRAPH_BACKUP_FORMAT = "epigraph-backup";
+export const EPIGRAPH_BACKUP_CONTAINER_VERSION = 1 as const;
+export const EPIGRAPH_BACKUP_MANIFEST_PATH = "manifest.json";
+export const EPIGRAPH_BACKUP_CHECKSUMS_PATH = "checksums/sha256.json";
+export const EPIGRAPH_BACKUP_MIME = "application/vnd.epigraph.backup+zip";
+/** Accepted only while importing containers created before the Epigraph rebrand. */
+export const LEGACY_AETHON_BACKUP_EXTENSION = ".aethonbk";
+export const LEGACY_AETHON_BACKUP_FORMAT = "aethon-backup";
+export const LEGACY_AETHON_BACKUP_MIME = "application/vnd.aethon.backup+zip";
 
-export type AethonBackupKnownPayloadKind = "manga" | "novels" | "books" | "app";
-export type AethonBackupSurface = "desktop" | "mobile" | "unknown";
-export type AethonBackupIssueLevel = "warning" | "error";
-export type AethonBackupRestoreMode = string;
+export type EpigraphBackupKnownPayloadKind = "manga" | "novels" | "books" | "app";
+export type EpigraphBackupSurface = "desktop" | "mobile" | "unknown";
+export type EpigraphBackupIssueLevel = "warning" | "error";
+export type EpigraphBackupRestoreMode = string;
 
-export interface AethonBackupPayloadCompatibility {
-  restoreModesSupported: AethonBackupRestoreMode[];
+export interface EpigraphBackupPayloadCompatibility {
+  restoreModesSupported: EpigraphBackupRestoreMode[];
   requiresRuntime: string | null;
   requiresRepositories: string[];
   portableByDefault: boolean;
 }
 
-export interface AethonBackupPayloadRegistryEntry {
-  kind: AethonBackupKnownPayloadKind;
+export interface EpigraphBackupPayloadRegistryEntry {
+  kind: EpigraphBackupKnownPayloadKind;
   label: string;
   currentVersion: number;
   manifestPath: string;
   rootPath: string;
-  compatibility: AethonBackupPayloadCompatibility;
+  compatibility: EpigraphBackupPayloadCompatibility;
 }
 
-export const AETHON_BACKUP_PAYLOAD_REGISTRY: Record<AethonBackupKnownPayloadKind, AethonBackupPayloadRegistryEntry> = {
+export const EPIGRAPH_BACKUP_PAYLOAD_REGISTRY: Record<EpigraphBackupKnownPayloadKind, EpigraphBackupPayloadRegistryEntry> = {
   manga: {
     kind: "manga",
     label: "Manga",
@@ -76,42 +80,42 @@ export const AETHON_BACKUP_PAYLOAD_REGISTRY: Record<AethonBackupKnownPayloadKind
     rootPath: "payloads/app",
     compatibility: {
       restoreModesSupported: ["metadata-only"],
-      requiresRuntime: "aethon",
+      requiresRuntime: "epigraph",
       requiresRepositories: [],
       portableByDefault: false,
     },
   },
 };
 
-export interface AethonBackupPayloadFileBuildInput {
+export interface EpigraphBackupPayloadFileBuildInput {
   path: string;
   bytes: Uint8Array | ArrayBuffer | string;
   contentType?: string | null;
   role?: string | null;
 }
 
-export interface AethonBackupPayloadBuildInput {
-  kind: AethonBackupKnownPayloadKind;
+export interface EpigraphBackupPayloadBuildInput {
+  kind: EpigraphBackupKnownPayloadKind;
   payloadVersion?: number;
   exportMode?: string | null;
   metadata?: Record<string, unknown>;
-  files?: AethonBackupPayloadFileBuildInput[];
-  restoreModesSupported?: AethonBackupRestoreMode[];
+  files?: EpigraphBackupPayloadFileBuildInput[];
+  restoreModesSupported?: EpigraphBackupRestoreMode[];
   requiresRuntime?: string | null;
   requiresRepositories?: string[];
   portableByDefault?: boolean;
 }
 
-export interface AethonBackupBuildInput {
+export interface EpigraphBackupBuildInput {
   createdAt?: string;
   appVersion?: string | null;
   platform?: string | null;
-  sourceSurface?: AethonBackupSurface;
+  sourceSurface?: EpigraphBackupSurface;
   sourceProfileId?: string | null;
-  payloads: AethonBackupPayloadBuildInput[];
+  payloads: EpigraphBackupPayloadBuildInput[];
 }
 
-export interface AethonBackupPayloadFileEntry {
+export interface EpigraphBackupPayloadFileEntry {
   path: string;
   sizeBytes: number;
   checksumSha256: string;
@@ -119,20 +123,20 @@ export interface AethonBackupPayloadFileEntry {
   role: string | null;
 }
 
-export interface AethonBackupPayloadManifest {
+export interface EpigraphBackupPayloadManifest {
   kind: string;
   payloadVersion: number;
   createdAt: string;
   exportMode: string | null;
-  restoreModesSupported: AethonBackupRestoreMode[];
+  restoreModesSupported: EpigraphBackupRestoreMode[];
   requiresRuntime: string | null;
   requiresRepositories: string[];
   portableByDefault: boolean;
   metadata: Record<string, unknown>;
-  files: AethonBackupPayloadFileEntry[];
+  files: EpigraphBackupPayloadFileEntry[];
 }
 
-export interface AethonBackupManifestPayloadEntry {
+export interface EpigraphBackupManifestPayloadEntry {
   kind: string;
   payloadVersion: number;
   payloadRoot: string;
@@ -140,46 +144,46 @@ export interface AethonBackupManifestPayloadEntry {
   checksumPath: string;
   exportMode: string | null;
   fileCount: number;
-  restoreModesSupported: AethonBackupRestoreMode[];
+  restoreModesSupported: EpigraphBackupRestoreMode[];
   requiresRuntime: string | null;
   requiresRepositories: string[];
   portableByDefault: boolean;
 }
 
-export interface AethonBackupManifest {
-  format: typeof AETHON_BACKUP_FORMAT;
-  formatVersion: typeof AETHON_BACKUP_CONTAINER_VERSION;
+export interface EpigraphBackupManifest {
+  format: typeof EPIGRAPH_BACKUP_FORMAT | typeof LEGACY_AETHON_BACKUP_FORMAT;
+  formatVersion: typeof EPIGRAPH_BACKUP_CONTAINER_VERSION;
   createdAt: string;
   packaging: "zip";
-  checksumsPath: typeof AETHON_BACKUP_CHECKSUMS_PATH;
+  checksumsPath: typeof EPIGRAPH_BACKUP_CHECKSUMS_PATH;
   createdBy: {
-    app: "Aethon";
+    app: "Epigraph" | "Aethon";
     version: string | null;
     platform: string | null;
   };
   source: {
-    surface: AethonBackupSurface;
+    surface: EpigraphBackupSurface;
     profileId: string | null;
   };
-  payloads: AethonBackupManifestPayloadEntry[];
+  payloads: EpigraphBackupManifestPayloadEntry[];
 }
 
-export interface AethonBackupChecksumsFile {
+export interface EpigraphBackupChecksumsFile {
   algorithm: "sha256";
   entries: Record<string, string>;
 }
 
-export interface BuiltAethonBackupContainer {
+export interface BuiltEpigraphBackupContainer {
   bytes: Uint8Array;
   filename: string;
-  mimeType: typeof AETHON_BACKUP_MIME;
-  manifest: AethonBackupManifest;
-  checksums: AethonBackupChecksumsFile;
-  payloadManifests: Record<string, AethonBackupPayloadManifest>;
+  mimeType: typeof EPIGRAPH_BACKUP_MIME;
+  manifest: EpigraphBackupManifest;
+  checksums: EpigraphBackupChecksumsFile;
+  payloadManifests: Record<string, EpigraphBackupPayloadManifest>;
 }
 
-export interface AethonBackupIssue {
-  level: AethonBackupIssueLevel;
+export interface EpigraphBackupIssue {
+  level: EpigraphBackupIssueLevel;
   code:
     | "missing-manifest"
     | "invalid-manifest"
@@ -198,15 +202,15 @@ export interface AethonBackupIssue {
   payloadKind?: string;
 }
 
-export interface InspectedAethonBackupContainer {
-  manifest: AethonBackupManifest | null;
-  checksums: AethonBackupChecksumsFile | null;
-  payloadManifests: Record<string, AethonBackupPayloadManifest>;
-  issues: AethonBackupIssue[];
+export interface InspectedEpigraphBackupContainer {
+  manifest: EpigraphBackupManifest | null;
+  checksums: EpigraphBackupChecksumsFile | null;
+  payloadManifests: Record<string, EpigraphBackupPayloadManifest>;
+  issues: EpigraphBackupIssue[];
   hasErrors: boolean;
 }
 
-const PAYLOAD_KIND_ORDER: AethonBackupKnownPayloadKind[] = ["manga", "novels", "books", "app"];
+const PAYLOAD_KIND_ORDER: EpigraphBackupKnownPayloadKind[] = ["manga", "novels", "books", "app"];
 
 function toUint8Array(bytes: Uint8Array | ArrayBuffer | string): Uint8Array {
   if (bytes instanceof Uint8Array) return bytes;
@@ -243,14 +247,14 @@ function normalizeRelativeArchivePath(raw: string): string {
   return parts.join("/");
 }
 
-function payloadRegistryEntry(kind: AethonBackupKnownPayloadKind): AethonBackupPayloadRegistryEntry {
-  return AETHON_BACKUP_PAYLOAD_REGISTRY[kind];
+function payloadRegistryEntry(kind: EpigraphBackupKnownPayloadKind): EpigraphBackupPayloadRegistryEntry {
+  return EPIGRAPH_BACKUP_PAYLOAD_REGISTRY[kind];
 }
 
 function resolvePayloadCompatibility(
-  payload: AethonBackupPayloadBuildInput,
-  registry: AethonBackupPayloadRegistryEntry,
-): AethonBackupPayloadCompatibility {
+  payload: EpigraphBackupPayloadBuildInput,
+  registry: EpigraphBackupPayloadRegistryEntry,
+): EpigraphBackupPayloadCompatibility {
   return {
     restoreModesSupported: payload.restoreModesSupported?.length
       ? [...new Set(payload.restoreModesSupported)]
@@ -263,30 +267,30 @@ function resolvePayloadCompatibility(
   };
 }
 
-function sortPayloads(payloads: AethonBackupPayloadBuildInput[]): AethonBackupPayloadBuildInput[] {
+function sortPayloads(payloads: EpigraphBackupPayloadBuildInput[]): EpigraphBackupPayloadBuildInput[] {
   return [...payloads].sort(
     (left, right) => PAYLOAD_KIND_ORDER.indexOf(left.kind) - PAYLOAD_KIND_ORDER.indexOf(right.kind),
   );
 }
 
-export function buildAethonBackupFilename(date = new Date()): string {
+export function buildEpigraphBackupFilename(date = new Date()): string {
   const stamp = date.toISOString().slice(0, 10);
-  return `aethon-backup-${stamp}${AETHON_BACKUP_EXTENSION}`;
+  return `epigraph-backup-${stamp}${EPIGRAPH_BACKUP_EXTENSION}`;
 }
 
-export async function buildAethonBackupContainer(input: AethonBackupBuildInput): Promise<BuiltAethonBackupContainer> {
+export async function buildEpigraphBackupContainer(input: EpigraphBackupBuildInput): Promise<BuiltEpigraphBackupContainer> {
   const createdAt = input.createdAt ?? new Date().toISOString();
   const zip = new JSZip();
   const checksums: Record<string, string> = {};
-  const payloadDescriptors: AethonBackupManifestPayloadEntry[] = [];
-  const payloadManifests: Record<string, AethonBackupPayloadManifest> = {};
+  const payloadDescriptors: EpigraphBackupManifestPayloadEntry[] = [];
+  const payloadManifests: Record<string, EpigraphBackupPayloadManifest> = {};
 
   for (const payload of sortPayloads(input.payloads)) {
     const registry = payloadRegistryEntry(payload.kind);
     const payloadVersion = payload.payloadVersion ?? registry.currentVersion;
     const compatibility = resolvePayloadCompatibility(payload, registry);
     const files = payload.files ?? [];
-    const fileEntries: AethonBackupPayloadFileEntry[] = [];
+    const fileEntries: EpigraphBackupPayloadFileEntry[] = [];
 
     for (const file of files) {
       const relativePath = normalizeRelativeArchivePath(file.path);
@@ -304,7 +308,7 @@ export async function buildAethonBackupContainer(input: AethonBackupBuildInput):
       });
     }
 
-    const payloadManifest: AethonBackupPayloadManifest = {
+    const payloadManifest: EpigraphBackupPayloadManifest = {
       kind: payload.kind,
       payloadVersion,
       createdAt,
@@ -337,14 +341,14 @@ export async function buildAethonBackupContainer(input: AethonBackupBuildInput):
     });
   }
 
-  const manifest: AethonBackupManifest = {
-    format: AETHON_BACKUP_FORMAT,
-    formatVersion: AETHON_BACKUP_CONTAINER_VERSION,
+  const manifest: EpigraphBackupManifest = {
+    format: EPIGRAPH_BACKUP_FORMAT,
+    formatVersion: EPIGRAPH_BACKUP_CONTAINER_VERSION,
     createdAt,
     packaging: "zip",
-    checksumsPath: AETHON_BACKUP_CHECKSUMS_PATH,
+    checksumsPath: EPIGRAPH_BACKUP_CHECKSUMS_PATH,
     createdBy: {
-      app: "Aethon",
+      app: "Epigraph",
       version: input.appVersion ?? null,
       platform: input.platform ?? null,
     },
@@ -356,16 +360,16 @@ export async function buildAethonBackupContainer(input: AethonBackupBuildInput):
   };
 
   const manifestBytes = toJsonBytes(manifest);
-  zip.file(AETHON_BACKUP_MANIFEST_PATH, manifestBytes);
-  checksums[AETHON_BACKUP_MANIFEST_PATH] = await sha256Hex(manifestBytes);
+  zip.file(EPIGRAPH_BACKUP_MANIFEST_PATH, manifestBytes);
+  checksums[EPIGRAPH_BACKUP_MANIFEST_PATH] = await sha256Hex(manifestBytes);
 
-  const checksumsFile: AethonBackupChecksumsFile = {
+  const checksumsFile: EpigraphBackupChecksumsFile = {
     algorithm: "sha256",
     entries: Object.fromEntries(
       Object.entries(checksums).sort(([left], [right]) => left.localeCompare(right)),
     ),
   };
-  zip.file(AETHON_BACKUP_CHECKSUMS_PATH, toJsonBytes(checksumsFile));
+  zip.file(EPIGRAPH_BACKUP_CHECKSUMS_PATH, toJsonBytes(checksumsFile));
 
   const bytes = await zip.generateAsync({
     type: "uint8array",
@@ -375,8 +379,8 @@ export async function buildAethonBackupContainer(input: AethonBackupBuildInput):
 
   return {
     bytes,
-    filename: buildAethonBackupFilename(new Date(createdAt)),
-    mimeType: AETHON_BACKUP_MIME,
+    filename: buildEpigraphBackupFilename(new Date(createdAt)),
+    mimeType: EPIGRAPH_BACKUP_MIME,
     manifest,
     checksums: checksumsFile,
     payloadManifests,
@@ -384,8 +388,8 @@ export async function buildAethonBackupContainer(input: AethonBackupBuildInput):
 }
 
 function pushIssue(
-  issues: AethonBackupIssue[],
-  issue: AethonBackupIssue,
+  issues: EpigraphBackupIssue[],
+  issue: EpigraphBackupIssue,
 ) {
   issues.push(issue);
 }
@@ -397,14 +401,14 @@ async function readJsonFile<T>(zip: JSZip, path: string): Promise<T | null> {
   return JSON.parse(text) as T;
 }
 
-export async function inspectAethonBackupContainer(
+export async function inspectEpigraphBackupContainer(
   bytes: Uint8Array | ArrayBuffer,
-): Promise<InspectedAethonBackupContainer> {
+): Promise<InspectedEpigraphBackupContainer> {
   const zip = await JSZip.loadAsync(toUint8Array(bytes));
-  const issues: AethonBackupIssue[] = [];
-  const payloadManifests: Record<string, AethonBackupPayloadManifest> = {};
+  const issues: EpigraphBackupIssue[] = [];
+  const payloadManifests: Record<string, EpigraphBackupPayloadManifest> = {};
 
-  const manifestEntry = zip.file(AETHON_BACKUP_MANIFEST_PATH);
+  const manifestEntry = zip.file(EPIGRAPH_BACKUP_MANIFEST_PATH);
   if (!manifestEntry) {
     return {
       manifest: null,
@@ -413,35 +417,35 @@ export async function inspectAethonBackupContainer(
       issues: [{
         level: "error",
         code: "missing-manifest",
-        message: "The Aethon backup container is missing manifest.json.",
-        path: AETHON_BACKUP_MANIFEST_PATH,
+        message: "The Epigraph backup container is missing manifest.json.",
+        path: EPIGRAPH_BACKUP_MANIFEST_PATH,
       }],
       hasErrors: true,
     };
   }
 
-  let manifest: AethonBackupManifest | null = null;
-  let checksums: AethonBackupChecksumsFile | null = null;
+  let manifest: EpigraphBackupManifest | null = null;
+  let checksums: EpigraphBackupChecksumsFile | null = null;
 
   try {
-    manifest = await readJsonFile<AethonBackupManifest>(zip, AETHON_BACKUP_MANIFEST_PATH);
+    manifest = await readJsonFile<EpigraphBackupManifest>(zip, EPIGRAPH_BACKUP_MANIFEST_PATH);
   } catch (error) {
     pushIssue(issues, {
       level: "error",
       code: "invalid-manifest",
       message: error instanceof Error ? error.message : "manifest.json is not valid JSON.",
-      path: AETHON_BACKUP_MANIFEST_PATH,
+      path: EPIGRAPH_BACKUP_MANIFEST_PATH,
     });
   }
 
   try {
-    checksums = await readJsonFile<AethonBackupChecksumsFile>(zip, AETHON_BACKUP_CHECKSUMS_PATH);
+    checksums = await readJsonFile<EpigraphBackupChecksumsFile>(zip, EPIGRAPH_BACKUP_CHECKSUMS_PATH);
     if (!checksums) {
       pushIssue(issues, {
         level: "error",
         code: "missing-checksums",
-        message: "The Aethon backup container is missing checksums/sha256.json.",
-        path: AETHON_BACKUP_CHECKSUMS_PATH,
+        message: "The Epigraph backup container is missing checksums/sha256.json.",
+        path: EPIGRAPH_BACKUP_CHECKSUMS_PATH,
       });
     }
   } catch (error) {
@@ -449,22 +453,31 @@ export async function inspectAethonBackupContainer(
       level: "error",
       code: "invalid-checksums",
       message: error instanceof Error ? error.message : "checksums/sha256.json is not valid JSON.",
-      path: AETHON_BACKUP_CHECKSUMS_PATH,
+      path: EPIGRAPH_BACKUP_CHECKSUMS_PATH,
     });
   }
 
-  if (manifest && manifest.formatVersion !== AETHON_BACKUP_CONTAINER_VERSION) {
+  if (manifest && manifest.formatVersion !== EPIGRAPH_BACKUP_CONTAINER_VERSION) {
     pushIssue(issues, {
       level: "error",
       code: "unsupported-container-version",
-      message: `Unsupported Aethon backup container version: ${manifest.formatVersion}.`,
-      path: AETHON_BACKUP_MANIFEST_PATH,
+      message: `Unsupported Epigraph backup container version: ${manifest.formatVersion}.`,
+      path: EPIGRAPH_BACKUP_MANIFEST_PATH,
+    });
+  }
+
+  if (manifest && manifest.format !== EPIGRAPH_BACKUP_FORMAT && manifest.format !== LEGACY_AETHON_BACKUP_FORMAT) {
+    pushIssue(issues, {
+      level: "error",
+      code: "invalid-manifest",
+      message: `Unsupported backup container format: ${String(manifest.format)}.`,
+      path: EPIGRAPH_BACKUP_MANIFEST_PATH,
     });
   }
 
   if (manifest) {
     for (const payload of manifest.payloads) {
-      const registry = (AETHON_BACKUP_PAYLOAD_REGISTRY as Record<string, AethonBackupPayloadRegistryEntry | undefined>)[payload.kind];
+      const registry = (EPIGRAPH_BACKUP_PAYLOAD_REGISTRY as Record<string, EpigraphBackupPayloadRegistryEntry | undefined>)[payload.kind];
       if (!registry) {
         pushIssue(issues, {
           level: "warning",
@@ -499,7 +512,7 @@ export async function inspectAethonBackupContainer(
       }
 
       try {
-        const payloadManifest = await readJsonFile<AethonBackupPayloadManifest>(zip, payload.manifestPath);
+        const payloadManifest = await readJsonFile<EpigraphBackupPayloadManifest>(zip, payload.manifestPath);
         if (!payloadManifest) {
           pushIssue(issues, {
             level: "error",

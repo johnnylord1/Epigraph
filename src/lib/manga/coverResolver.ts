@@ -44,7 +44,7 @@ export function mangaCoverPath(input: MangaCoverInput): string {
 function appendCoverParams(url: string, options: MangaCoverOptions): string {
   const generation = `${options.cacheGeneration ?? ""}`.trim();
   if (!generation) return url;
-  const params = [`aethon_cover_generation=${encodeURIComponent(generation)}`];
+  const params = [`epigraph_cover_generation=${encodeURIComponent(generation)}`];
   return `${url}${url.includes("?") ? "&" : "?"}${params.join("&")}`;
 }
 

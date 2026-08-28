@@ -117,9 +117,9 @@ describe("Nocturne port compatibility contract", () => {
   });
 
   test("keeps all four port sections attached to active hosts", () => {
-    expect(readProjectFile("src/components/layout/SplashScreen.svelte")).toContain("aethon-port--splash");
-    expect(readProjectFile("src/components/layout/Layout.svelte")).toContain("aethon-app-shell");
-    expect(readProjectFile("src/components/settings/Settings.svelte")).toContain("aethon-port--settings");
+    expect(readProjectFile("src/components/layout/SplashScreen.svelte")).toContain("epigraph-port--splash");
+    expect(readProjectFile("src/components/layout/Layout.svelte")).toContain("epigraph-app-shell");
+    expect(readProjectFile("src/components/settings/Settings.svelte")).toContain("epigraph-port--settings");
     expect(readProjectFile("src/components/library/LibraryCard.svelte")).toContain("source-metric-banner");
     expect(readProjectFile("src/components/pages/BrowseV3.svelte")).toContain("searchRecommendationCard");
   });
@@ -128,8 +128,8 @@ describe("Nocturne port compatibility contract", () => {
     const port = readProjectFile(PORT_PATH);
     const tokens = readProjectFile("src/styles/tokens.css");
     const nocturne = readProjectFile("src/styles/nocturne-theme.css");
-    const shellStart = port.indexOf(".aethon-app-shell {");
-    const settingsStart = port.indexOf(".aethon-port--settings {");
+    const shellStart = port.indexOf(".epigraph-app-shell {");
+    const settingsStart = port.indexOf(".epigraph-port--settings {");
     const metricsLabel = port.indexOf("Shared Source & Tracker Metric Banner");
     const metricsStart = port.lastIndexOf("/*", metricsLabel);
     const derivedSources = portDerivedSources(tokens);

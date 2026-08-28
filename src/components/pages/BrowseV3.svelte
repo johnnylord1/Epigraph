@@ -45,6 +45,7 @@
   import {
     buildSearchRecommendations,
     buildTasteProfile,
+    dedupeRecommendationItems,
     mangaToTasteProfileSeed,
     novelToTasteProfileSeed,
     bookToTasteProfileSeed,
@@ -582,6 +583,7 @@
   let activeContentType = $state<"manga" | "novels">("manga");
   let activeBrowseTab = $state<SearchTab>("keyword");
   let searchRecommendationsReady = $state(false);
+  const SEARCH_RECOMMENDATIONS_BOOT_DELAY_MS = 450;
   let searchQuery = $state("");
   let browseSearchInput: HTMLInputElement | null = null;
   let selectedSource = $state("");
@@ -718,7 +720,7 @@
         addToast({
           kind: "error",
           title: translate("ui_couldNotAddTheRecommendedRepo"),
-          body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
+          body: error instanceof Error ? error.message : translate("ui_epigraphCouldnTSaveTheRecommendedRepo"),
         });
       }
     } finally {
@@ -1577,25 +1579,35 @@
       dedupeMangaById([
         ...searchSourceSeedResults,
         ...searchFreshSourceSeedResults,
-      ]),
+      ]).filter((manga) => searchIncludeLibrary || !manga.inLibrary),
       store.settings.mangaLinks,
-    ).filter(shouldShowCatalogManga),
+    ),
   ));
 
   const searchFreshSourceMangaCandidates = $derived.by(() =>
-    searchFreshSourceSeedResults.map((manga) => {
-      const candidate = mangaToRecommendationCandidate(manga, { nowMs: searchSourceSeedFetchedAt ?? undefined });
-      return {
-        ...candidate,
-        updatedAtMs: searchSourceSeedFetchedAt,
-        providers: candidate.providers.map((provider) => provider.kind === "source"
-          ? {
-              ...provider,
-              recency: { value: 1, confidence: 0.72, method: "source-latest-feed" },
-            }
-          : provider),
-      };
-    }),
+    searchFreshSourceSeedResults
+      .filter((manga) => searchIncludeLibrary || !manga.inLibrary)
+      .map((manga, index) => {
+        const candidate = mangaToRecommendationCandidate(manga, { nowMs: searchSourceSeedFetchedAt ?? undefined });
+        const rankRatio = searchFreshSourceSeedResults.length <= 1
+          ? 1
+          : 1 - ((index / (searchFreshSourceSeedResults.length - 1)) * 0.8);
+        return {
+          ...candidate,
+          updatedAtMs: null,
+          providers: candidate.providers.map((provider) => provider.kind === "source"
+            ? {
+                ...provider,
+                recency: {
+                  value: Math.max(0.2, rankRatio),
+                  confidence: 0.84,
+                  method: "source-latest-feed-rank",
+                  sourceValue: String(index + 1),
+                },
+              }
+            : provider),
+        };
+      }),
   );
 
   const searchNovelSourceById = $derived.by(() =>
@@ -1963,16 +1975,13 @@
   });
 
   $effect(() => {
-    const nextOrders = new Map(untrack(() => searchRecommendationSectionOrder));
+    // The recommendation engine can receive tracker/source enrichment after the
+    // first render. Always adopt its current order so a late score update cannot
+    // leave a section stuck with the order from an earlier, less-informed pass.
+    const nextOrders = new Map<string, string[]>();
     for (const section of searchRecommendationResult.sections) {
       const key = searchRecommendationMoreKey(section.key);
-      const availableIds = section.items.map((item) => item.candidate.id);
-      const availableSet = new Set(availableIds);
-      const previous = nextOrders.get(key) ?? [];
-      const kept = previous.filter((id) => availableSet.has(id));
-      const keptSet = new Set(kept);
-      const appended = availableIds.filter((id) => !keptSet.has(id));
-      nextOrders.set(key, [...kept, ...appended]);
+      nextOrders.set(key, section.items.map((item) => item.candidate.id));
     }
     untrack(() => {
       searchRecommendationSectionOrder = nextOrders;
@@ -1980,21 +1989,14 @@
   });
 
   const searchRecommendationSections = $derived.by(() => {
-    const visibleRecommendationIds = new Set<string>();
     return searchRecommendationResult.sections.map((section) => {
       const itemById = new Map(section.items.map((item) => [item.candidate.id, item]));
       const orderedItems = (searchRecommendationSectionOrder.get(searchRecommendationMoreKey(section.key)) ?? [])
         .map((id) => itemById.get(id))
         .filter((item): item is RecommendationItem => Boolean(item));
       const baseItems = orderedItems.length > 0 ? orderedItems : section.items;
-      const uniqueItems = baseItems.filter((item) => !visibleRecommendationIds.has(item.candidate.id));
-      const items = uniqueItems.length >= Math.min(SEARCH_RECOMMENDATION_MIN_SECTION_FILL, baseItems.length)
-        ? uniqueItems
-        : baseItems;
-      const visibleItems = items.slice(0, searchRecommendationVisibleLimit(section.key));
-      if (visibleItems.length > 0) {
-        for (const item of visibleItems) visibleRecommendationIds.add(item.candidate.id);
-      }
+      const visibleItems = dedupeRecommendationItems(baseItems)
+        .slice(0, searchRecommendationVisibleLimit(section.key));
       return {
         ...section,
         items: visibleItems,
@@ -2059,12 +2061,17 @@
     if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
     if (searchRecommendationHydrating || searchSourceSeedLoading || searchMangaSeedAutofillLoading || searchMangaSeedAutofillExhausted) return;
     const underfilledSection = searchRecommendationSections.find((section) =>
-      (section.key === "highConfidence" || section.key === "trendingNearYourTaste")
+      (section.key === "highConfidence"
+        || section.key === "trendingNearYourTaste"
+        || section.key === "outsideYourUsualReads")
       && section.items.length > 0
-      && section.items.length < SEARCH_RECOMMENDATION_MIN_SECTION_FILL
+      && section.items.length < SEARCH_RECOMMENDATION_BASE_LIMIT
     );
     const needsCandidateDepth = searchSourceMangaPool.length > 0
-      && searchSourceMangaPool.length < SEARCH_RECOMMENDATION_AUTOFILL_TARGET;
+      && (
+        searchSourceMangaPool.length < SEARCH_RECOMMENDATION_AUTOFILL_TARGET
+        || underfilledSection?.key === "outsideYourUsualReads"
+      );
     if (!underfilledSection && !needsCandidateDepth) return;
     const key = [
       "search-source-seeds",
@@ -2520,7 +2527,7 @@
 
   function recommendationProviderLabel(item: RecommendationItem) {
     const provider = item.candidate.providers.find((entry) => entry.kind === "source") ?? item.candidate.providers[0];
-    return provider?.providerName ?? "Aethon";
+    return provider?.providerName ?? "Epigraph";
   }
 
   function recommendationStatusLabel(item: RecommendationItem) {
@@ -3198,7 +3205,7 @@
   onMount(() => {
     const recommendationsTimer = window.setTimeout(() => {
       searchRecommendationsReady = true;
-    }, 1_800);
+    }, SEARCH_RECOMMENDATIONS_BOOT_DELAY_MS);
     const handleServerReady = () => {
       void refreshSetupState();
       void refreshSources();
@@ -5185,12 +5192,12 @@
       const message = sourceBrowseErrorBody(error, "novels");
       const nextState = await refreshSetupState();
       if (nextState.kind === "server_offline" || nextState.kind === "server_initializing") {
-        src_browseError = message || translate("ui_aethonCouldnTOpenThisNovel");
+        src_browseError = message || translate("ui_epigraphCouldnTOpenThisNovel");
       } else {
         addToast({
           kind: "error",
           title: translate("novelSources_errors_openDetailTitle"),
-          body: message || translate("ui_aethonCouldnTOpenThisNovel"),
+          body: message || translate("ui_epigraphCouldnTOpenThisNovel"),
         });
       }
     } finally {
@@ -5208,7 +5215,7 @@
   onDestroy(() => {
     releaseBrowseTransientState();
     void shutdownInstalledNovelSourcesRuntime();
-    document.body.classList.remove("aethon-browse-search-engaged");
+    document.body.classList.remove("epigraph-browse-search-engaged");
   });
 </script>
 
@@ -5246,7 +5253,7 @@
             class="n-search__input"
             role="combobox"
             aria-expanded={store.searchOpen}
-            aria-controls="aethon-search-results"
+            aria-controls="epigraph-search-results"
             aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
             aria-autocomplete="list"
             placeholder={browseSearchPlaceholder()}

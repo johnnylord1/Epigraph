@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { store } from "../../store/state.svelte";
-  import type { AethonRestorePlan } from "../../lib/backup/aethonRestorePlanner";
+  import type { EpigraphRestorePlan } from "../../lib/backup/epigraphRestorePlanner";
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
   import Sidebar from "./Sidebar.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -11,7 +11,7 @@
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
-    backupAuditPlan?: AethonRestorePlan | null;
+    backupAuditPlan?: EpigraphRestorePlan | null;
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
 
@@ -215,7 +215,7 @@
   });
 </script>
 
-<div class="root aethon-app-shell">
+<div class="root epigraph-app-shell">
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"}>
     {#if libraryComponent}

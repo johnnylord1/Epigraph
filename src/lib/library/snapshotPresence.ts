@@ -1,6 +1,6 @@
 import { normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
 
-export const LIBRARY_SNAPSHOT_KEY = "aethon-library-snapshots";
+export const LIBRARY_SNAPSHOT_KEY = "epigraph-library-snapshots";
 
 export interface LibrarySnapshotScope {
   profileId?: string | null;

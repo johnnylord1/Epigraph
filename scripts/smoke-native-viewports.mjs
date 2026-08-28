@@ -51,7 +51,7 @@ async function createFakeCore() {
 
 async function callAudit(driver, method, ...args) {
   const result = await driver.executeAsyncScript(function auditCall(name, values, done) {
-    const bridge = window.__aethonAudit;
+    const bridge = window.__epigraphAudit;
     if (!bridge || typeof bridge[name] !== "function") return done({ error: `Missing audit method ${name}` });
     Promise.resolve(bridge[name](...values))
       .then((value) => done({ value }))
@@ -64,10 +64,10 @@ async function callAudit(driver, method, ...args) {
 async function waitForAuditBridge(driver) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    if (await driver.executeScript("return Boolean(window.__aethonAudit)").catch(() => false)) return;
+    if (await driver.executeScript("return Boolean(window.__epigraphAudit)").catch(() => false)) return;
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
-  throw new Error("Aethon audit bridge did not become ready.");
+  throw new Error("Epigraph audit bridge did not become ready.");
 }
 
 async function waitForSurface(driver, selector, name, blockedSelector = null) {
@@ -108,9 +108,9 @@ async function assertViewport(driver, surface, viewport) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "aethon.exe"));
+  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"));
   const outputDirectory = path.resolve(args.out || path.join(projectRoot, "docs", "screenshots", "marco67-native-viewports"));
-  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), `aethon-native-viewport-${Date.now()}-`));
+  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), `epigraph-native-viewport-${Date.now()}-`));
   const fakeCore = await createFakeCore();
   const capabilities = new Capabilities();
   capabilities.setBrowserName("wry");
@@ -132,8 +132,8 @@ async function main() {
   try {
     await fs.mkdir(outputDirectory, { recursive: true });
     driver = await new Builder().usingServer(args["driver-url"]).withCapabilities(capabilities).build();
-    const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
-    const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
+    const windowX = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_X);
+    const windowY = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_Y);
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await waitForAuditBridge(driver);
     await callAudit(driver, "bypassStartupSplash");

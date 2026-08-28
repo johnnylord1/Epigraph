@@ -1,17 +1,27 @@
-# Relatório de Bugs e Problemas — Aethon Desktop
+# Relatório de Bugs e Problemas — Epigraph Desktop
 
 [Matriz funcional](functional-audit.md) · [Guia do usuário](user-guide.md) · [Melhorias e dívidas](improvement-report.md)
 
 ## Resumo executivo
 
 - Funcionalidades analisadas: 63.
-- Funcionando: 29; funcionando parcialmente: 4; quebradas: 0.
+- Funcionando: 28; funcionando parcialmente: 5; quebradas: 0.
 - Somente interface: 0; implementadas mas inacessíveis: 1; não implementadas: 0.
 - Não foi possível testar: 9; dependem de configuração ausente: 5; dependem de serviço externo: 15.
 - Bugs registrados: **6** — todos resolvidos após revalidação.
 - O gate Svelte/TypeScript passou com 0 erros e 0 warnings em 21/07/2026. Os riscos abertos estão registrados como melhorias de certificação, acessibilidade, integrações e desempenho, não como bugs reproduzidos.
 
 Nenhum bug de severidade Crítica ou Alta foi reproduzido no caminho do usuário. Isso não significa ausência de risco: vários fluxos nativos e externos ficaram bloqueados pelas limitações registradas na auditoria.
+
+### Limitação de fronteira Core/Mobile
+
+O relatório desktop ainda não deve declarar certificação completa em aparelho
+físico. A bridge profile-scoped já materializa mais de 600 obras, categorias,
+capas, detalhes, capítulos e páginas no mobile; progresso, categorias e leitura
+offline foram confirmados em um emulador pareado com o perfil real. Permanecem
+como evidência ambiental um aparelho físico, uma mudança real no inventário de
+extensões e a recuperação da porta padrão após restart do Windows. Isso não é
+uma falha comprovada da UI desktop, do Core ou do Syncd já testado.
 
 ## Ambiente utilizado
 
@@ -299,7 +309,7 @@ Baixas; ainda assim, revisar diffs em Suwayomi updater e proxy Syncd antes de ac
 
 ### Descrição
 
-O provider publica o tipo mDNS canônico com ponto final, `_aethon-sync._tcp.local.`, coerente com as constantes e testes Rust. O gate PowerShell exige `_aethon-sync._tcp.local` e encerra com erro.
+O provider publica o tipo mDNS canônico com ponto final, `_epigraph-sync._tcp.local.`, coerente com as constantes e testes Rust. O gate PowerShell exige `_epigraph-sync._tcp.local` e encerra com erro.
 
 ### Passos para reproduzir
 
@@ -402,9 +412,10 @@ transacionais, fronteira do adapter e anti-bot passaram sem promover novo bug.
 O workflow controlado preservou identidades após restart, executou com uma JVM
 e uma source por vez e não acessou websites.
 
-Pendências não promovidas a bug: repetir `pnpm release:verify` no HEAD atual,
-exercitar Docker FlareSolverr quando disponível e executar as validações live,
-assinadas ou manuais já classificadas como condicionais.
+Pendências não promovidas a bug: exercitar Docker FlareSolverr quando
+disponível e executar as validações live, assinadas ou manuais já classificadas
+como condicionais. O `pnpm release:verify` foi repetido no HEAD atual em
+01/08/2026 e passou todos os gates bloqueantes.
 
 ## Atualização do Marco 72H
 
@@ -420,7 +431,33 @@ o primeiro frame estável e pelos custos app-owned, mediana global, long tasks,
 heap e lifecycle, enquanto o segundo frame do compositor permanece evidência
 observacional.
 
-A execução agregada foi interrompida durante a certificação de dados antes do
-resumo final, portanto o relatório não declara uma passagem única de
-`release:verify` neste HEAD. Isso permanece uma pendência operacional de
-reexecução, não um bug reproduzido do usuário.
+O registro acima descreve a execução interrompida de 29/07/2026 e permanece
+como evidência histórica da instabilidade operacional daquele lote. Ela foi
+reexecutada no HEAD atual em 01/08/2026; a execução completa terminou com
+sucesso, limpeza de temporários e worktree preservado. Isso não promoveu um
+novo bug de produto.
+
+## Revalidação final do release — 01/08/2026
+
+No commit `50f1c8f6ea6c91da2c19113a826a42d187b668f1`, `pnpm release:verify`
+passou os 16 gates bloqueantes: `svelte-check` 0/0, 189 arquivos de
+unit/jsdom com 1.119 testes aprovados e 1 skip, browser 10/10 com 48/48,
+temas, Suwayomi determinístico, integrações, bundles, Rust (349 Epigraph + 176
+Syncd), builds frontend/Tauri e os gates WebView2 de dados, viewport e
+navegação.
+
+A auditoria visual nativa adicional abriu a build no DISPLAY3 sem console
+auxiliar visível e validou Home, Library e Settings em 1280×800 e 800×600.
+Foram confirmados foco em controles visíveis, `scrollWidth` igual ao viewport e
+ausência de clipping horizontal. O perfil era descartável e vazio; por isso
+cards de Home e a mensagem de Library vazia são limitações do cenário, não
+falhas de carregamento. A evidência final versionada permanece em
+`docs/screenshots/marco72h-final/`; capturas transitórias da sessão foram
+removidas após a inspeção.
+
+O gate de navegação também confirmou Search sem dim residual, toast com a
+barra de vida em execução e ausência de crescimento monotônico de listeners ou
+observers. A mediana de startup total ficou acima da referência histórica,
+mas o resultado foi explicitamente não bloqueante porque a maior parcela ficou
+antes ou fora da ativação do shell; essa observação permanece como melhoria,
+não como bug reproduzido.

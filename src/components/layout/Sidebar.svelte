@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
-  import splashMark from "../../assets/aethon-splash-mark.png";
+  import splashMark from "../../assets/epigraph-splash-mark.png";
   import { store, setNavPage, setSettingsOpen, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
 

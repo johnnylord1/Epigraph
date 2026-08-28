@@ -10,9 +10,9 @@ interface ReadinessOptions {
 }
 
 const READINESS_QUERIES: Record<SuwayomiReadinessTarget, string> = {
-  graphql: `query AethonGraphqlReady { __typename }`,
+  graphql: `query EpigraphGraphqlReady { __typename }`,
   extensions: `
-    query AethonExtensionsReady {
+    query EpigraphExtensionsReady {
       extensions {
         nodes {
           pkgName
@@ -22,7 +22,7 @@ const READINESS_QUERIES: Record<SuwayomiReadinessTarget, string> = {
     }
   `,
   sources: `
-    query AethonSourcesReady {
+    query EpigraphSourcesReady {
       sources {
         nodes {
           id

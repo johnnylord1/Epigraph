@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import {
-  type AethonNovelBookmarkEntry,
-  type AethonNovelHistoryEntry,
-  type AethonNovelProgressEntry,
-  type AethonNovelSourceIdentity,
+  type EpigraphNovelBookmarkEntry,
+  type EpigraphNovelHistoryEntry,
+  type EpigraphNovelProgressEntry,
+  type EpigraphNovelSourceIdentity,
 } from "../backup/novelsBackup";
 import { resolveNovelsProfileScope } from "../backup/novelsProfileState";
 import { DEFAULT_LOCAL_PROFILE_ID, normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
@@ -26,7 +26,7 @@ import {
   type PersistedNovelLibraryState,
 } from "./domain";
 
-const NOVEL_LIBRARY_STATE_KEY = "aethon-novels-library-state";
+const NOVEL_LIBRARY_STATE_KEY = "epigraph-novels-library-state";
 const NOVEL_LIBRARY_STATE_VERSION = 1 as const;
 const novelLibraryStateCache = new Map<string, PersistedNovelLibraryState>();
 
@@ -75,7 +75,7 @@ function normalizeChapterEntry(value: unknown): PersistedNovelChapterEntry | nul
   };
 }
 
-function normalizeProgressEntry(value: unknown): AethonNovelProgressEntry | null {
+function normalizeProgressEntry(value: unknown): EpigraphNovelProgressEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const novelId = normalizeText(record.novelId);
@@ -93,7 +93,7 @@ function normalizeProgressEntry(value: unknown): AethonNovelProgressEntry | null
   };
 }
 
-function normalizeBookmarkEntry(value: unknown): AethonNovelBookmarkEntry | null {
+function normalizeBookmarkEntry(value: unknown): EpigraphNovelBookmarkEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const novelId = normalizeText(record.novelId);
@@ -109,7 +109,7 @@ function normalizeBookmarkEntry(value: unknown): AethonNovelBookmarkEntry | null
   };
 }
 
-function normalizeHistoryEntry(value: unknown): AethonNovelHistoryEntry | null {
+function normalizeHistoryEntry(value: unknown): EpigraphNovelHistoryEntry | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   const novelId = normalizeText(record.novelId);
@@ -124,7 +124,7 @@ function normalizeHistoryEntry(value: unknown): AethonNovelHistoryEntry | null {
   };
 }
 
-function normalizeSourceIdentity(value: unknown): AethonNovelSourceIdentity {
+function normalizeSourceIdentity(value: unknown): EpigraphNovelSourceIdentity {
   const record = value && typeof value === "object"
     ? value as Record<string, unknown>
     : {};
@@ -244,13 +244,13 @@ export function normalizeNovelLibraryState(
       ? record.chapters.map((entry) => normalizeChapterEntry(entry)).filter((entry): entry is PersistedNovelChapterEntry => Boolean(entry))
       : [],
     progress: Array.isArray(record.progress)
-      ? record.progress.map((entry) => normalizeProgressEntry(entry)).filter((entry): entry is AethonNovelProgressEntry => Boolean(entry))
+      ? record.progress.map((entry) => normalizeProgressEntry(entry)).filter((entry): entry is EpigraphNovelProgressEntry => Boolean(entry))
       : [],
     bookmarks: Array.isArray(record.bookmarks)
-      ? record.bookmarks.map((entry) => normalizeBookmarkEntry(entry)).filter((entry): entry is AethonNovelBookmarkEntry => Boolean(entry))
+      ? record.bookmarks.map((entry) => normalizeBookmarkEntry(entry)).filter((entry): entry is EpigraphNovelBookmarkEntry => Boolean(entry))
       : [],
     history: Array.isArray(record.history)
-      ? record.history.map((entry) => normalizeHistoryEntry(entry)).filter((entry): entry is AethonNovelHistoryEntry => Boolean(entry))
+      ? record.history.map((entry) => normalizeHistoryEntry(entry)).filter((entry): entry is EpigraphNovelHistoryEntry => Boolean(entry))
       : [],
     updatedAtMs: typeof record.updatedAtMs === "number" ? record.updatedAtMs : null,
   };
@@ -441,14 +441,14 @@ export function isNovelInLibrary(
 export function getNovelProgressEntry(
   state: PersistedNovelLibraryState,
   novelId: string,
-): AethonNovelProgressEntry | null {
+): EpigraphNovelProgressEntry | null {
   return state.progress.find((entry) => entry.novelId === novelId) ?? null;
 }
 
 export function getNovelBookmarkEntries(
   state: PersistedNovelLibraryState,
   novelId: string,
-): AethonNovelBookmarkEntry[] {
+): EpigraphNovelBookmarkEntry[] {
   return state.bookmarks
     .filter((entry) => entry.novelId === novelId)
     .sort((left, right) => right.savedAt - left.savedAt);
@@ -457,7 +457,7 @@ export function getNovelBookmarkEntries(
 export function getNovelHistoryEntries(
   state: PersistedNovelLibraryState,
   novelId: string,
-): AethonNovelHistoryEntry[] {
+): EpigraphNovelHistoryEntry[] {
   return state.history
     .filter((entry) => entry.novelId === novelId)
     .sort((left, right) => right.readAt - left.readAt);
@@ -537,7 +537,7 @@ export function toggleNovelChapterBookmark(
     label?: string | null;
   },
 ): PersistedNovelLibraryState {
-  const matchesBookmark = (entry: AethonNovelBookmarkEntry) => (
+  const matchesBookmark = (entry: EpigraphNovelBookmarkEntry) => (
     entry.novelId === input.novelId
     && (
       entry.chapterId === input.chapterId
@@ -596,7 +596,7 @@ export function markNovelChapterRead(
 
   const progressPercent = totalChapters > 0 ? readChapters / totalChapters : 0;
   const updatedAt = Date.now();
-  const progressEntry: AethonNovelProgressEntry = {
+  const progressEntry: EpigraphNovelProgressEntry = {
     novelId: input.novelId,
     chapterId: input.chapterId,
     chapterTitle: input.chapterTitle,
@@ -605,7 +605,7 @@ export function markNovelChapterRead(
     updatedAt,
   };
 
-  const historyEntry: AethonNovelHistoryEntry = {
+  const historyEntry: EpigraphNovelHistoryEntry = {
     novelId: input.novelId,
     chapterId: input.chapterId,
     chapterTitle: input.chapterTitle,
@@ -746,14 +746,14 @@ export function restoreNovelLibraryStateSlice(
     chapters: [...withoutNovel.chapters, ...slice.chapters.map((chapter) => ({ ...chapter }))].sort((left, right) => left.order - right.order),
     progress: [
       ...withoutNovel.progress,
-      ...slice.progress.map(normalizeProgressEntry).filter((entry): entry is AethonNovelProgressEntry => entry !== null),
+      ...slice.progress.map(normalizeProgressEntry).filter((entry): entry is EpigraphNovelProgressEntry => entry !== null),
     ],
     bookmarks: [
       ...withoutNovel.bookmarks,
-      ...slice.bookmarks.map(normalizeBookmarkEntry).filter((entry): entry is AethonNovelBookmarkEntry => entry !== null),
+      ...slice.bookmarks.map(normalizeBookmarkEntry).filter((entry): entry is EpigraphNovelBookmarkEntry => entry !== null),
     ],
     history: [
-      ...slice.history.map(normalizeHistoryEntry).filter((entry): entry is AethonNovelHistoryEntry => entry !== null),
+      ...slice.history.map(normalizeHistoryEntry).filter((entry): entry is EpigraphNovelHistoryEntry => entry !== null),
       ...withoutNovel.history,
     ].slice(0, 200),
     updatedAtMs: Date.now(),

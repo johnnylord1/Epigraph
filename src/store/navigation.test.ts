@@ -248,41 +248,41 @@ describe("navigation subscriptions", () => {
     });
 
     classList.add(
-      "aethon-settings-search-engaged",
-      "aethon-home-search-engaged",
-      "aethon-library-search-engaged",
-      "aethon-browse-search-engaged",
-      "aethon-downloads-search-engaged",
-      "aethon-search-engaged",
+      "epigraph-settings-search-engaged",
+      "epigraph-home-search-engaged",
+      "epigraph-library-search-engaged",
+      "epigraph-browse-search-engaged",
+      "epigraph-downloads-search-engaged",
+      "epigraph-search-engaged",
     );
     store.openSearchPalette("home", "stale query");
 
     setNavPage("downloads");
-    expect(classList.contains("aethon-settings-search-engaged")).toBe(false);
-    expect(classList.contains("aethon-home-search-engaged")).toBe(false);
-    expect(classList.contains("aethon-library-search-engaged")).toBe(false);
-    expect(classList.contains("aethon-browse-search-engaged")).toBe(false);
-    expect(classList.contains("aethon-downloads-search-engaged")).toBe(false);
-    expect(classList.contains("aethon-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-settings-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-home-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-library-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-browse-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-downloads-search-engaged")).toBe(false);
+    expect(classList.contains("epigraph-search-engaged")).toBe(false);
     expect(store.searchOpen).toBe(false);
     expect(store.searchQuery).toBe("");
     expect(store.searchRestoreFocusOnClose).toBe(false);
 
-    document.body.classList.add("aethon-browse-search-engaged");
+    document.body.classList.add("epigraph-browse-search-engaged");
     openHomeDashboard();
-    expect(document.body.classList.contains("aethon-browse-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("epigraph-browse-search-engaged")).toBe(false);
 
-    document.body.classList.add("aethon-home-search-engaged");
+    document.body.classList.add("epigraph-home-search-engaged");
     setNavPage("library");
-    expect(document.body.classList.contains("aethon-home-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("epigraph-home-search-engaged")).toBe(false);
 
-    document.body.classList.add("aethon-library-search-engaged");
+    document.body.classList.add("epigraph-library-search-engaged");
     setNavPage("search");
-    expect(document.body.classList.contains("aethon-library-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("epigraph-library-search-engaged")).toBe(false);
 
-    document.body.classList.add("aethon-browse-search-engaged");
-    classList.remove("aethon-browse-search-engaged");
-    expect(classList.contains("aethon-browse-search-engaged")).toBe(false);
+    document.body.classList.add("epigraph-browse-search-engaged");
+    classList.remove("epigraph-browse-search-engaged");
+    expect(classList.contains("epigraph-browse-search-engaged")).toBe(false);
 
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else Reflect.deleteProperty(globalThis, "document");

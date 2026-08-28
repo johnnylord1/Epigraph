@@ -17,7 +17,7 @@ import type {
   PersistedMigrationJournalState,
 } from "./types";
 
-const MIGRATION_JOURNAL_STORAGE_KEY = "aethon-migration-journal-state";
+const MIGRATION_JOURNAL_STORAGE_KEY = "epigraph-migration-journal-state";
 const MIGRATION_JOURNAL_STATE_VERSION = 2 as const;
 const DEFAULT_UNDO_WINDOW_MS = 5 * 60 * 1000;
 const MAX_JOURNAL_OPERATIONS = 200;

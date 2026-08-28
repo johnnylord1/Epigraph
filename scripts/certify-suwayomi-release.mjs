@@ -73,13 +73,13 @@ export const RUNTIME_CONTRACT = Object.freeze({
   ],
 });
 const QUERY_CHECKS = [
-  ["typename", "query AethonHealthTypename { __typename }"],
-  ["library", "query AethonHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }"],
-  ["sources", "query AethonHealthSources { sources(first: 1) { nodes { id displayName } } }"],
-  ["extensions", "query AethonHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }"],
+  ["typename", "query EpigraphHealthTypename { __typename }"],
+  ["library", "query EpigraphHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }"],
+  ["sources", "query EpigraphHealthSources { sources(first: 1) { nodes { id displayName } } }"],
+  ["extensions", "query EpigraphHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }"],
 ];
 const SCHEMA_QUERY = `
-  query AethonRuntimeSchema {
+  query EpigraphRuntimeSchema {
     __schema {
       queryType { name }
       mutationType { name }
@@ -401,7 +401,7 @@ async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/vnd.github+json",
-      "User-Agent": "Aethon-Suwayomi-Certification",
+      "User-Agent": "Epigraph-Suwayomi-Certification",
       "X-GitHub-Api-Version": "2022-11-28",
     },
   });
@@ -410,7 +410,7 @@ async function fetchJson(url) {
 }
 
 async function downloadBytes(url) {
-  const response = await fetch(url, { headers: { "User-Agent": "Aethon-Suwayomi-Certification" } });
+  const response = await fetch(url, { headers: { "User-Agent": "Epigraph-Suwayomi-Certification" } });
   if (!response.ok) throw new Error(`Release download returned HTTP ${response.status}.`);
   return Buffer.from(await response.arrayBuffer());
 }
@@ -636,7 +636,7 @@ async function collectRuntimeBaseline(endpoint, pid) {
   const canonicalSchema = canonicalizeSchema(payload);
   const evaluation = evaluateRuntimeSchema(payload);
   if (!evaluation.contract.passed) {
-    throw new Error("Runtime schema does not satisfy Aethon's baseline semantic contract.");
+    throw new Error("Runtime schema does not satisfy Epigraph's baseline semantic contract.");
   }
   return {
     schema: {
@@ -749,7 +749,7 @@ async function main() {
     if (actualSha256 !== expectedSha256) throw new Error("Downloaded JAR does not match the published checksum.");
     const jarVersion = normalizeVersion(await readJarVersion(jarBytes));
     if (jarVersion !== version) throw new Error(`JAR declares ${jarVersion}, expected ${version}.`);
-    runtimeRoot = await mkdtemp(path.join(tmpdir(), "aethon-suwayomi-certification-"));
+    runtimeRoot = await mkdtemp(path.join(tmpdir(), "epigraph-suwayomi-certification-"));
     const port = requestedPort ?? await allocateLoopbackPort();
     const jarPath = path.join(runtimeRoot, assetName);
     await writeFile(jarPath, jarBytes);

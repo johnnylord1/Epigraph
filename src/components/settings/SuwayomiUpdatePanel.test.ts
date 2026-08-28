@@ -1,8 +1,13 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { store } from "../../store/state.svelte";
-import { suwayomiUpdateUx } from "../../lib/suwayomiUpdateUx.svelte";
+import {
+  recordSuwayomiUpdateCheck,
+  suwayomiUpdateUx,
+} from "../../lib/suwayomiUpdateUx.svelte";
 import type { SuwayomiUpdateStageResult } from "../../lib/suwayomiRuntimeUpdate";
+import Toaster from "../layout/Toaster.svelte";
 import SuwayomiUpdatePanel from "./SuwayomiUpdatePanel.svelte";
 
 const {
@@ -29,9 +34,9 @@ function runtime(overrides = {}) {
     mode: "managed-bundled",
     version: "v2.1.1867",
     jarVersion: null,
-    jarPath: "C:/Aethon/Suwayomi-Server.jar",
+    jarPath: "C:/Epigraph/Suwayomi-Server.jar",
     profileId: "main",
-    rootDir: "C:/Aethon/aethon-main",
+    rootDir: "C:/Epigraph/epigraph-main",
     serverUrl: "http://127.0.0.1:4567",
     updateAllowed: true,
     blockReason: null,
@@ -55,12 +60,12 @@ describe("SuwayomiUpdatePanel", () => {
       releaseUrl: "https://github.com/Suwayomi/Suwayomi-Server/releases/tag/v2.2.2100",
       updateAllowed: true,
       blockReason: null,
-      notes: "Tested by Aethon.",
+      notes: "Tested by Epigraph.",
       releaseNotes: "## Changes\n\n- Safer runtime update.",
     });
     stageSuwayomiRuntimeUpdateMock.mockResolvedValue({
-      stagingPath: "C:/Aethon/suwayomi-runtime/staging/v2.2.2100",
-      jarPath: "C:/Aethon/suwayomi-runtime/staging/v2.2.2100/Suwayomi-Server.jar",
+      stagingPath: "C:/Epigraph/suwayomi-runtime/staging/v2.2.2100",
+      jarPath: "C:/Epigraph/suwayomi-runtime/staging/v2.2.2100/Suwayomi-Server.jar",
       version: "v2.2.2100",
       sha256: "a".repeat(64),
       assetName: "Suwayomi-Server-v2.2.2100.jar",
@@ -69,8 +74,8 @@ describe("SuwayomiUpdatePanel", () => {
       releaseUrl: "https://github.com/Suwayomi/Suwayomi-Server/releases/tag/v2.2.2100",
     });
     installSuwayomiRuntimeUpdateMock.mockResolvedValue({
-      currentPath: "C:/Aethon/suwayomi-runtime/current",
-      previousPath: "C:/Aethon/suwayomi-runtime/previous",
+      currentPath: "C:/Epigraph/suwayomi-runtime/current",
+      previousPath: "C:/Epigraph/suwayomi-runtime/previous",
       version: "v2.2.2100",
       rolledBack: false,
       restartedRuntime: true,
@@ -78,6 +83,7 @@ describe("SuwayomiUpdatePanel", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     vi.clearAllMocks();
     store.toasts = [];
@@ -91,14 +97,14 @@ describe("SuwayomiUpdatePanel", () => {
     getSuwayomiRuntimeStatusMock.mockResolvedValue(runtime({
       mode: "external",
       updateAllowed: false,
-      blockReason: "External Suwayomi servers are not updated by Aethon.",
+      blockReason: "External Suwayomi servers are not updated by Epigraph.",
     }));
 
     render(SuwayomiUpdatePanel);
 
     await waitFor(() => expect(screen.getByText("External server")).toBeTruthy());
     await openDetails();
-    expect(screen.getAllByText("External Suwayomi servers are not updated by Aethon.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("External Suwayomi servers are not updated by Epigraph.").length).toBeGreaterThan(0);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Check for updates" }).disabled).toBe(true);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Download update" }).disabled).toBe(true);
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install update" }).disabled).toBe(true);
@@ -109,7 +115,7 @@ describe("SuwayomiUpdatePanel", () => {
     getSuwayomiRuntimeStatusMock.mockResolvedValue(runtime({
       mode: "managed-user-binary",
       updateAllowed: false,
-      blockReason: "User-managed Suwayomi binaries are not updated by Aethon.",
+      blockReason: "User-managed Suwayomi binaries are not updated by Epigraph.",
     }));
 
     render(SuwayomiUpdatePanel);
@@ -147,7 +153,44 @@ describe("SuwayomiUpdatePanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
 
     await waitFor(() => expect(screen.getAllByText("Update available").length).toBeGreaterThan(0));
+    const toast = store.toasts.find((entry) => entry.id === "suwayomi-compatible-update");
+    expect(toast).toBeTruthy();
+    expect(toast?.duration).toBe(8_000);
+  });
+
+  test("deduplicates the updater notification and dismisses it after the standard lifetime", async () => {
+    vi.useFakeTimers();
+    render(Toaster);
+    const result = await checkSuwayomiRuntimeUpdateMock();
+
+    recordSuwayomiUpdateCheck(result, { notify: true });
+    await tick();
+    expect(store.toasts.filter((toast) => toast.id === "suwayomi-compatible-update")).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    recordSuwayomiUpdateCheck(result, { notify: true });
+    await tick();
+    expect(store.toasts.filter((toast) => toast.id === "suwayomi-compatible-update")).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(7_999);
     expect(store.toasts.some((toast) => toast.id === "suwayomi-compatible-update")).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await tick();
+    expect(store.toasts.some((toast) => toast.id === "suwayomi-compatible-update")).toBe(false);
+  });
+
+  test("dismisses a visible updater notification when the update is no longer available", async () => {
+    const result = await checkSuwayomiRuntimeUpdateMock();
+    recordSuwayomiUpdateCheck(result, { notify: true });
+    expect(store.toasts.some((toast) => toast.id === "suwayomi-compatible-update")).toBe(true);
+
+    recordSuwayomiUpdateCheck({
+      ...result,
+      status: "upToDate",
+      updateAllowed: false,
+    });
+
+    expect(store.toasts.some((toast) => toast.id === "suwayomi-compatible-update")).toBe(false);
   });
 
   test("remind later hides the toast for the session", async () => {
@@ -197,7 +240,7 @@ describe("SuwayomiUpdatePanel", () => {
     await waitFor(() => expect(screen.getAllByText("Ready to install").length).toBeGreaterThan(0));
     await fireEvent.click(screen.getByRole("button", { name: "Install update" }));
 
-    await waitFor(() => expect(screen.getAllByText("Aethon could not verify the downloaded Suwayomi update and could not restore the previous runtime automatically. Restart Aethon before trying again.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("Epigraph could not verify the downloaded Suwayomi update and could not restore the previous runtime automatically. Restart Epigraph before trying again.").length).toBeGreaterThan(0));
   });
 
   test("hides health-check internals after a safe rollback", async () => {
@@ -213,7 +256,7 @@ describe("SuwayomiUpdatePanel", () => {
     await waitFor(() => expect(screen.getAllByText("Ready to install").length).toBeGreaterThan(0));
     await fireEvent.click(screen.getByRole("button", { name: "Install update" }));
 
-    await waitFor(() => expect(screen.getAllByText("Aethon could not verify the downloaded Suwayomi update, so it kept the current runtime.").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("Epigraph could not verify the downloaded Suwayomi update, so it kept the current runtime.").length).toBeGreaterThan(0));
     expect(screen.queryByText(/GraphQL sources health check failed/)).toBeNull();
   });
 

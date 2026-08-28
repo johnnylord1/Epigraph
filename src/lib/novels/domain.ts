@@ -1,8 +1,8 @@
 import type {
-  AethonNovelBookmarkEntry,
-  AethonNovelHistoryEntry,
-  AethonNovelProgressEntry,
-  AethonNovelSourceIdentity,
+  EpigraphNovelBookmarkEntry,
+  EpigraphNovelHistoryEntry,
+  EpigraphNovelProgressEntry,
+  EpigraphNovelSourceIdentity,
 } from "../backup/novelsBackup";
 import type { NovelTrustState } from "./contracts";
 
@@ -53,7 +53,7 @@ export interface NovelDetailRecord {
   tags: string[];
   chapterCount: number;
   chapters: NovelDetailChapter[];
-  source: AethonNovelSourceIdentity;
+  source: EpigraphNovelSourceIdentity;
 }
 
 export interface PersistedNovelLibraryEntry {
@@ -65,7 +65,7 @@ export interface PersistedNovelLibraryEntry {
   path: string;
   status: string | null;
   tags: string[];
-  source: AethonNovelSourceIdentity;
+  source: EpigraphNovelSourceIdentity;
   chapterCount: number;
   addedAt: number;
   updatedAt: number;
@@ -87,9 +87,9 @@ export interface PersistedNovelLibraryState {
   scopeKey: string;
   entries: PersistedNovelLibraryEntry[];
   chapters: PersistedNovelChapterEntry[];
-  progress: AethonNovelProgressEntry[];
-  bookmarks: AethonNovelBookmarkEntry[];
-  history: AethonNovelHistoryEntry[];
+  progress: EpigraphNovelProgressEntry[];
+  bookmarks: EpigraphNovelBookmarkEntry[];
+  history: EpigraphNovelHistoryEntry[];
   updatedAtMs: number | null;
 }
 

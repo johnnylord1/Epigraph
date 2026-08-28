@@ -1,4 +1,4 @@
-# Aethon Roadmap
+# Epigraph Roadmap
 
 This roadmap records known development priorities without committing to dates or adding new scope.
 
@@ -34,26 +34,61 @@ This roadmap records known development priorities without committing to dates or
   Library lifecycle change was needed; the final native pass is green.
 - EPUB/PDF local-data round trips, backup/restore, integration contracts,
   accessibility focus isolation, bundle budgets, and aggregate release gates.
-- The 72H structural gate now pins browser providers to an isolated IPv4
-  loopback port, runs native evidence on DISPLAY3, executes the deterministic
-  Suwayomi workflow, and distinguishes app-owned navigation work from
+- The 72H structural gate pins browser providers to an isolated IPv4 loopback
+  port, runs native evidence on DISPLAY3, executes the deterministic Suwayomi
+  workflow, and distinguishes app-owned navigation work from
   environment-sensitive WebView2 frame scheduling.
-- The constituent 72H gates are green; the aggregate `pnpm release:verify`
-  still needs one uninterrupted run before the milestone is formally closed.
+- The aggregate `pnpm release:verify` passed all 16 blocking gates on the
+  current HEAD (`50f1c8f6`) on 2026-08-01. The milestone is closed; the
+  remaining items below are conditional release evidence or non-blocking
+  follow-up work.
 
 ## Short Term
 
-- Re-run `pnpm release:verify` uninterrupted on the current HEAD and close the
-  72H milestone only after its final summary and cleanup pass.
+- Keep `pnpm release:verify` as the pre-release gate. The current HEAD passed
+  its 16 blocking stages, including cleanup and worktree preservation.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;
   deterministic ownership and resource-policy tests remain the blocking gate.
 - Validate manga/fullscreen with an accessible catalog and complete a manual
   screen-reader pass.
+- Investigate the environment-sensitive startup wall-clock observation
+  separately from shell activation and route transitions; it is not currently
+  a blocking app-owned regression.
 - Keep source failure ownership clear: runtime, extension, website, anti-bot,
-  authentication, network, or Aethon.
+  authentication, network, or Epigraph.
+- Keep the i18n catalog contract green and extend translations by active
+  surface; preserve product names, URLs, formats, units, and protocol terms
+  instead of translating them mechanically.
+- Keep the desktop/Core documentation aligned with the Epigraph Mobile client;
+  the authoritative implementation plan is
+  [epigraph-mobile-core-implementation-plan.md](epigraph-mobile-core-implementation-plan.md).
+- The Suwayomi -> Core catalog bridge is implemented and advertised separately
+  from the generic GraphQL proxy. Mobile Library, remote category assignments,
+  chapter read/bookmark/last-page writes now use a durable official-GraphQL
+  queue with profile filtering, confirmatory reads and bounded retry. The
+  the real Desktop-to-Android smoke now proves pairing, more than 600 catalog
+  entries, cover resolution, typed progress/category mutations and explicit
+  offline download/read. Remaining release evidence is limited to a physical
+  device, a real extension-inventory change and Windows restart recovery of
+  the default Core port.
+- Portable Sync V3 now keeps provider-owned identities end to end: comics use
+  exact source IDs and opaque manga/chapter keys; novels use exact plugin IDs
+  and opaque novel/chapter paths. Trust remains device-local, dependencies may
+  resolve partially, reader state survives Core restart, full comic snapshots
+  no longer fail the desktop consumer, and desktop novel progress maps through
+  exact provider keys rather than shared local IDs. V2 remains available only
+  for Legacy sessions and identities that cannot be proven without guessing.
+  Provider keys that appear to embed credentials are refused instead of being
+  normalized or synchronized. Private LNReader repositories remain valid local
+  configuration but are intentionally omitted from portable provenance.
 
 ## Medium Term
 
+- Inventory remaining V2 sessions and `LEGACY_UNBOUND` rows before retiring
+  local-ID synchronization. Never backfill those rows by title matching.
+- Run a physical Android bootstrap with a real multi-source extension, one
+  untrusted Extension Store, one LNReader repository approval, an interrupted
+  hydration, and local IDs intentionally different on desktop and mobile.
 - Revalidate prioritized LNReader sources observationally and harden only
   reproducible runtime gaps.
 - Improve diagnostics for theme gates, frontend/Tauri command inventory,
@@ -65,14 +100,12 @@ This roadmap records known development priorities without committing to dates or
 
 ## Long Term
 
-- Aethon Core host: productize managed Suwayomi, Syncd, pairing, TLS, discovery, and secure LAN access so this desktop app can host the separate Aethon Mobile client.
-- Mobile boundary: keep all Flutter UI, Android/iOS packaging, device storage, and mobile release work in the separate Aethon Mobile repository; share only explicit protocols, schemas, design tokens, and compatibility fixtures.
+- Epigraph Core host: productize managed Suwayomi, Syncd, pairing, TLS, discovery, secure LAN access, and headless Suwayomi startup so this desktop app can host the separate Epigraph Mobile client while its window is closed.
+- Mobile boundary: keep all Kotlin/Compose Android UI, SQLDelight device storage, packaging, and release work in `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`; share only explicit protocols, schemas, design tokens, and compatibility fixtures. Do not create a branch in upstream Hayai.
+- Comics authority: keep catalog, library, categories, chapters, chapter progress, sources, extensions, and server downloads in the hosted Suwayomi profile. The desktop Core exposes a profile-scoped read-only catalog bridge alongside the authenticated GraphQL proxy; mobile materializes it locally and sends supported writes back through the official queue. Syncd complements the boundary mainly with history/page bookmarks and remains the authority for books/novels scopes.
 - Planned capabilities: expand migration, tracking, and source-management
   workflows only after release blockers stay stable.
 - Infrastructure: improve signed release packaging, updater evidence, runtime
   ownership, and cross-platform build automation.
 - Optimizations: preserve startup and navigation budgets while keeping
   downloads, imports, cache, and thumbnails isolated by ownership.
-- Keep the i18n catalog contract green and extend translations by active
-  surface; preserve product names, URLs, formats, units, and protocol terms
-  instead of translating them mechanically.

@@ -180,9 +180,9 @@
     const handleHardcoverStateChanged = () => {
       hardcoverStateVersion += 1;
     };
-    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    globalThis.addEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
     return () => {
-      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+      globalThis.removeEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
     };
   });
 
@@ -342,6 +342,7 @@
   let currentPdfDoc: any = null;
   let currentPdfJsLib: typeof import("pdfjs-dist") | null = null;
   let pdfRenderTask: any = null;
+  let pdfDocumentGeneration = $state(0);
   let pendingPdfPage: number | null = null;
   let reflowedPages = $state<ReflowedPage[]>([]);
   let reflowLoadingPages = $state<Set<number>>(new Set());
@@ -522,10 +523,10 @@
     for (const content of rendition.getContents?.() ?? []) {
       const doc = content.document;
       if (!doc) continue;
-      let style = doc.getElementById("aethon-epub-reader-theme");
+      let style = doc.getElementById("epigraph-epub-reader-theme");
       if (!style) {
         style = doc.createElement("style");
-        style.id = "aethon-epub-reader-theme";
+        style.id = "epigraph-epub-reader-theme";
         doc.head.appendChild(style);
       }
       style.textContent = themeCss;
@@ -1177,6 +1178,7 @@
     }
 
     currentPdfDoc = pdf;
+    pdfDocumentGeneration += 1;
     setStage("pdf.ready");
     auditReader("books.reader.pdf.ready", {
       stage: currentStage,
@@ -1595,7 +1597,7 @@
 
   function lazyRenderPdfPage(
     node: HTMLElement,
-    params: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode },
+    params: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode; documentGeneration: number },
   ) {
     let observer: IntersectionObserver | null = null;
     let localRenderTask: any = null;
@@ -1693,7 +1695,7 @@
     observer.observe(node);
 
     return {
-      update(nextParams: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode }) {
+      update(nextParams: { pageNum: number; zoom: number; pdfFitMode: PdfFitMode; documentGeneration: number }) {
         forgetPdfPageVisibility(pageNum);
         params = nextParams;
         pageNum = nextParams.pageNum;
@@ -2439,7 +2441,7 @@
       {:else if store.settings.bookReaderFlow === "scrolled"}
         <div class="pdf-scroll-stage">
           {#each Array.from({ length: totalPages }, (_, i) => i + 1) as pageNum}
-            <div class="pdf-page-wrapper" data-page={pageNum} use:lazyRenderPdfPage={{ pageNum, zoom, pdfFitMode }}>
+            <div class="pdf-page-wrapper" data-page={pageNum} use:lazyRenderPdfPage={{ pageNum, zoom, pdfFitMode, documentGeneration: pdfDocumentGeneration }}>
               <!-- Canvas is dynamically appended in the lazyRenderPdfPage action -->
             </div>
           {/each}

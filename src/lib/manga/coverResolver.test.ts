@@ -29,6 +29,6 @@ describe("manga cover resolver", () => {
     });
 
     expect(cover?.path).toBe("/thumbs/series-b");
-    expect(resolveMangaCoverUrl("/thumbs/series-b", { cacheGeneration: 7 })).toContain("aethon_cover_generation=7");
+    expect(resolveMangaCoverUrl("/thumbs/series-b", { cacheGeneration: 7 })).toContain("epigraph_cover_generation=7");
   });
 });

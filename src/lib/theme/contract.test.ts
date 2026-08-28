@@ -63,7 +63,7 @@ describe("canonical theme contract", () => {
     });
   });
 
-  test("keeps Aethon accents violet and AMOLED surfaces truly black", () => {
+  test("keeps Epigraph accents violet and AMOLED surfaces truly black", () => {
     expect(BUILTIN_THEME_CONTRACTS.dark.tokens).toMatchObject({
       "bg-base": "#0a0a0b",
       "bg-surface": "#111113",

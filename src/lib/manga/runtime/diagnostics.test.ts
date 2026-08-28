@@ -20,18 +20,18 @@ describe("source runtime diagnostics", () => {
       authorization: "Bearer secret",
       nested: {
         cookie: "session=secret",
-        path: "C:\\Users\\private-user\\AppData\\Local\\Aethon",
+        path: "C:\\Users\\private-user\\AppData\\Local\\Epigraph",
       },
     })).toEqual({
       query: "[REDACTED]",
       authorization: "[REDACTED]",
       nested: {
         cookie: "[REDACTED]",
-        path: "[PRIVATE_PATH]\\AppData\\Local\\Aethon",
+        path: "[PRIVATE_PATH]\\AppData\\Local\\Epigraph",
       },
     });
-    expect(redactDiagnosticText("/home/private-user/.config/aethon")).toBe(
-      "[PRIVATE_PATH]/.config/aethon",
+    expect(redactDiagnosticText("/home/private-user/.config/epigraph")).toBe(
+      "[PRIVATE_PATH]/.config/epigraph",
     );
     expect(redactDiagnosticText(
       "Authorization: Bearer secret-value token=private-value",

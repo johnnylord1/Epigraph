@@ -19,9 +19,9 @@ type AllowlistEntry = {
 };
 
 const ALLOWLIST: Record<string, AllowlistEntry> = {
-  "src/assets/aethon-icon-splash.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
-  "src/assets/aethon-icon-wordmark.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
-  "src/assets/aethon-icon.svg": { count: 2, status: "Active exception", reason: "Brand asset." },
+  "src/assets/epigraph-icon-splash.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
+  "src/assets/epigraph-icon-wordmark.svg": { count: 1, status: "Active exception", reason: "Brand asset." },
+  "src/assets/epigraph-icon.svg": { count: 2, status: "Active exception", reason: "Brand asset." },
   "src/components/pages/BrowseV3.svelte": { count: 16, status: "Active exception", reason: "External provider branding and inline provider SVG assets." },
   "src/components/pages/NovelDetail.svelte": { count: 5, status: "Active exception", reason: "Standalone exported HTML document palette." },
   "src/lib/reader/prosePalette.ts": { count: 27, status: "Active exception", reason: "Independent user-selectable prose palettes and swatches." },

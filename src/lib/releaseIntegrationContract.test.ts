@@ -13,11 +13,11 @@ describe("external integration release contracts", () => {
 
     expect(config.plugins.updater.pubkey).toMatch(/^[A-Za-z0-9+/=]+$/);
     expect(config.plugins.updater.endpoints).toEqual([
-      "https://github.com/johnnylord1/Aethon/releases/latest/download/latest.json",
+      "https://github.com/johnnylord1/Epigraph/releases/latest/download/latest.json",
     ]);
-    expect(app).toContain('invoke<AethonUpdateStatus>("check_aethon_update")');
+    expect(app).toContain('invoke<EpigraphUpdateStatus>("check_epigraph_update")');
     expect(app).not.toContain('invoke<Array<{ tag_name: string; html_url: string }>>("list_releases")');
-    expect(settings).toContain("isAuthorizedAethonUpdate(release, updateCheck)");
+    expect(settings).toContain("isAuthorizedEpigraphUpdate(release, updateCheck)");
     expect(settings).toContain("expectedVersion: updateCheck?.version ?? release.tag_name");
     expect(rust).toContain("Signed update check timed out after 10 seconds.");
     expect(rust).toContain("The signed updater endpoint no longer offers the selected version.");
@@ -27,7 +27,7 @@ describe("external integration release contracts", () => {
     const updater = read("src-tauri/src/suwayomi_update.rs");
     expect(updater).toContain("certified_release_checksum");
     expect(updater).toContain("rollback_promoted_runtime");
-    expect(updater).toContain("Target Suwayomi version is not in Aethon's allowlist.");
+    expect(updater).toContain("Target Suwayomi version is not in Epigraph's allowlist.");
   });
 
   it("does not add real integration credentials to fixtures", () => {

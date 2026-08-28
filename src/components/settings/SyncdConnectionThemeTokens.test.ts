@@ -52,14 +52,14 @@ describe("syncd connection theme tokens", () => {
     const unused = [...definitions].filter((token) => !consumed.has(token)).sort();
     const undefinedTokens = [...consumed].filter((token) => !definitions.has(token)).sort();
 
-    expect(definitions.size).toBe(98);
+    expect(definitions.size).toBe(99);
     for (const source of tokenSources) {
       const layerDefinitions = new Set(
         [...source.matchAll(/(--component-syncd-[\w-]+)\s*:/g)].map((match) => match[1]),
       );
       expect(layerDefinitions).toEqual(definitions);
     }
-    expect(consumed.size).toBe(98);
+    expect(consumed.size).toBe(99);
     expect(unused, "all Syncd component tokens should be consumed").toEqual([]);
     expect(undefinedTokens, "all consumed Syncd component tokens should be defined").toEqual([]);
     expect(readRepoFile("src/styles/nocturne-theme.css")).toContain(

@@ -3,8 +3,8 @@
   import { onMount } from "svelte";
   import { openActivityPanel, store } from "../../store/state.svelte";
 
-  const ACTIVITY_SEEN_STORAGE_KEY = "aethon.home.activity.lastSeenReadAt";
-  const ACTIVITY_SEEN_EVENT = "aethon:activity-seen";
+  const ACTIVITY_SEEN_STORAGE_KEY = "epigraph.home.activity.lastSeenReadAt";
+  const ACTIVITY_SEEN_EVENT = "epigraph:activity-seen";
 
   let lastActivitySeenAt = $state(0);
   const historyEntries = $derived(store.history ?? []);

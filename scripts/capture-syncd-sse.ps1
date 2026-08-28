@@ -26,8 +26,8 @@ $arguments = @(
   "-N",
   "-sS",
   "-H", "Authorization: Bearer $Token",
-  "-H", "X-Aethon-Client-Version: 0.1.0",
-  "-H", "X-Aethon-Client-Protocol-Version: 1"
+  "-H", "X-Epigraph-Client-Version: 0.1.0",
+  "-H", "X-Epigraph-Client-Protocol-Version: 1"
 )
 if ($LastEventId -ne "") {
   $arguments += @("-H", "Last-Event-ID: $LastEventId")

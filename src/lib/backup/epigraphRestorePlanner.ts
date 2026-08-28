@@ -1,21 +1,21 @@
 import JSZip from "jszip";
 import {
-  AETHON_BACKUP_PAYLOAD_REGISTRY,
-  inspectAethonBackupContainer,
-  type AethonBackupIssue,
-  type AethonBackupManifest,
-  type AethonBackupManifestPayloadEntry,
-  type AethonBackupPayloadManifest,
-} from "./aethonBackup";
-import { AETHON_MANGA_PAYLOAD_FILE_PATH } from "./mangaBackup";
-import { AETHON_APP_PAYLOAD_FILE_PATH } from "./appBackup";
+  EPIGRAPH_BACKUP_PAYLOAD_REGISTRY,
+  inspectEpigraphBackupContainer,
+  type EpigraphBackupIssue,
+  type EpigraphBackupManifest,
+  type EpigraphBackupManifestPayloadEntry,
+  type EpigraphBackupPayloadManifest,
+} from "./epigraphBackup";
+import { EPIGRAPH_MANGA_PAYLOAD_FILE_PATH } from "./mangaBackup";
+import { EPIGRAPH_APP_PAYLOAD_FILE_PATH } from "./appBackup";
 import {
-  AETHON_NOVELS_PAYLOAD_FILE_PATH,
-  classifyAethonNovelsSnapshot,
-  normalizeAethonNovelsSnapshot,
-  type AethonNovelRuntimeState,
-  type AethonNovelsExportMode,
-  type AethonNovelsSnapshot,
+  EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH,
+  classifyEpigraphNovelsSnapshot,
+  normalizeEpigraphNovelsSnapshot,
+  type EpigraphNovelRuntimeState,
+  type EpigraphNovelsExportMode,
+  type EpigraphNovelsSnapshot,
 } from "./novelsBackup";
 import { analyzeBackupReconciliation } from "../reconciliation/analyze";
 import { buildRestoreReadiness } from "../reconciliation/readiness";
@@ -35,10 +35,10 @@ const BOOKS_PROGRESS_FILE_PATH = "progress.json";
 const BOOKS_BOOKMARKS_FILE_PATH = "bookmarks.json";
 const BOOKS_CATEGORIES_FILE_PATH = "categories.json";
 
-type AethonRestoreDefaultTarget = "sandbox-profile";
+type EpigraphRestoreDefaultTarget = "sandbox-profile";
 
-export type AethonRestorePayloadStatus = "restorable" | "blocked" | "unsupported" | "warning-only" | "skipped";
-export type AethonRestoreReasonCode =
+export type EpigraphRestorePayloadStatus = "restorable" | "blocked" | "unsupported" | "warning-only" | "skipped";
+export type EpigraphRestoreReasonCode =
   | "unsupported-container-version"
   | "unsupported-payload-kind"
   | "unsupported-payload-version"
@@ -58,37 +58,37 @@ export type AethonRestoreReasonCode =
   | "portable-metadata-only"
   | "non-blocking-warning";
 
-export interface AethonRestoreReason {
-  code: AethonRestoreReasonCode;
+export interface EpigraphRestoreReason {
+  code: EpigraphRestoreReasonCode;
   message: string;
 }
 
-export interface AethonPayloadRestorePlan {
+export interface EpigraphPayloadRestorePlan {
   kind: string;
   present: boolean;
   selectedByDefault: boolean;
-  status: AethonRestorePayloadStatus;
+  status: EpigraphRestorePayloadStatus;
   canRestoreNow: boolean;
   needsUserAction: boolean;
   canExecuteRestore: boolean;
   defaultRestoreMode: string | null;
   availableRestoreModes: string[];
   summaryLabel: string;
-  reasons: AethonRestoreReason[];
-  warnings: AethonRestoreReason[];
+  reasons: EpigraphRestoreReason[];
+  warnings: EpigraphRestoreReason[];
   metadata: Record<string, unknown>;
 }
 
-export interface AethonTopLevelSkippedRestorePlan {
+export interface EpigraphTopLevelSkippedRestorePlan {
   kind: string;
   status: "skipped";
-  reason: AethonRestoreReasonCode;
+  reason: EpigraphRestoreReasonCode;
   summaryLabel: string;
   canRestoreNow: false;
   needsUserAction: false;
 }
 
-export interface AethonRestorePlanSummary {
+export interface EpigraphRestorePlanSummary {
   restorableKinds: string[];
   blockedKinds: string[];
   unsupportedKinds: string[];
@@ -99,21 +99,21 @@ export interface AethonRestorePlanSummary {
   summaryBody: string;
 }
 
-export interface AethonRestorePlan {
-  defaultTarget: AethonRestoreDefaultTarget;
+export interface EpigraphRestorePlan {
+  defaultTarget: EpigraphRestoreDefaultTarget;
   canProceedWithRecommendedSelection: boolean;
   hasBlockedPayloads: boolean;
   hasUnsupportedPayloads: boolean;
   executionBlockedReason: string | null;
-  payloads: AethonPayloadRestorePlan[];
-  topLevelSkipped: AethonTopLevelSkippedRestorePlan[];
+  payloads: EpigraphPayloadRestorePlan[];
+  topLevelSkipped: EpigraphTopLevelSkippedRestorePlan[];
   recommendedSelection: string[];
-  summary: AethonRestorePlanSummary;
-  containerIssues: AethonRestoreReason[];
-  manifest: AethonBackupManifest | null;
+  summary: EpigraphRestorePlanSummary;
+  containerIssues: EpigraphRestoreReason[];
+  manifest: EpigraphBackupManifest | null;
 }
 
-export interface AethonRestorePlannerRuntime {
+export interface EpigraphRestorePlannerRuntime {
   activeProfileId?: LocalProfileId | null;
   manga?: {
     supported?: boolean;
@@ -125,7 +125,7 @@ export interface AethonRestorePlannerRuntime {
   books?: {
     supported?: boolean;
   };
-  novels?: (AethonNovelRuntimeState & {
+  novels?: (EpigraphNovelRuntimeState & {
     supported?: boolean;
   });
   app?: {
@@ -133,10 +133,10 @@ export interface AethonRestorePlannerRuntime {
   };
 }
 
-export interface AethonRestorePlannerDeps {
+export interface EpigraphRestorePlannerDeps {
   analyzeManga?: (input: {
     payloadBytes: Uint8Array;
-    runtime: NonNullable<AethonRestorePlannerRuntime["manga"]>;
+    runtime: NonNullable<EpigraphRestorePlannerRuntime["manga"]>;
   }) => Promise<{
     parsedBackup: ParsedBackup;
     analysis: ReconciliationAnalysis;
@@ -175,17 +175,17 @@ interface BooksCategoriesFile {
 
 interface NovelsPayloadFile {
   version: 1;
-  exportMode: AethonNovelsExportMode;
-  entries: AethonNovelsSnapshot["entries"];
-  chapters: AethonNovelsSnapshot["chapters"];
-  progress: AethonNovelsSnapshot["progress"];
-  bookmarks: AethonNovelsSnapshot["bookmarks"];
-  history: AethonNovelsSnapshot["history"];
-  repositories: AethonNovelsSnapshot["repositories"];
-  plugins: AethonNovelsSnapshot["plugins"];
+  exportMode: EpigraphNovelsExportMode;
+  entries: EpigraphNovelsSnapshot["entries"];
+  chapters: EpigraphNovelsSnapshot["chapters"];
+  progress: EpigraphNovelsSnapshot["progress"];
+  bookmarks: EpigraphNovelsSnapshot["bookmarks"];
+  history: EpigraphNovelsSnapshot["history"];
+  repositories: EpigraphNovelsSnapshot["repositories"];
+  plugins: EpigraphNovelsSnapshot["plugins"];
 }
 
-interface AethonAppProfilePayload {
+interface EpigraphAppProfilePayload {
   version: 1;
   defaultLocalProfileId: LocalProfileId;
 }
@@ -206,7 +206,7 @@ function normalizeArchiveRelativePath(raw: string): string {
   return parts.join("/");
 }
 
-function isFatalContainerIssue(issue: AethonBackupIssue): boolean {
+function isFatalContainerIssue(issue: EpigraphBackupIssue): boolean {
   return issue.code === "missing-manifest"
     || issue.code === "invalid-manifest"
     || issue.code === "missing-checksums"
@@ -214,11 +214,11 @@ function isFatalContainerIssue(issue: AethonBackupIssue): boolean {
     || issue.code === "unsupported-container-version";
 }
 
-function toReason(code: AethonRestoreReasonCode, message: string): AethonRestoreReason {
+function toReason(code: EpigraphRestoreReasonCode, message: string): EpigraphRestoreReason {
   return { code, message };
 }
 
-function flagsForStatus(status: AethonRestorePayloadStatus): {
+function flagsForStatus(status: EpigraphRestorePayloadStatus): {
   selectedByDefault: boolean;
   canRestoreNow: boolean;
   needsUserAction: boolean;
@@ -242,8 +242,8 @@ function canExecuteRestoreForPayloadKind(kind: string): boolean {
 }
 
 function defaultRestoreModeForPayload(
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  payloadManifest: AethonBackupPayloadManifest | null,
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  payloadManifest: EpigraphBackupPayloadManifest | null,
 ): string | null {
   const available = payloadManifest?.restoreModesSupported ?? payloadEntry.restoreModesSupported ?? [];
   const exportMode = payloadManifest?.exportMode ?? payloadEntry.exportMode ?? null;
@@ -255,10 +255,10 @@ function defaultRestoreModeForPayload(
 
 function finalizePayloadPlan(
   input: Omit<
-    AethonPayloadRestorePlan,
+    EpigraphPayloadRestorePlan,
     "selectedByDefault" | "canRestoreNow" | "needsUserAction" | "canExecuteRestore"
   >,
-): AethonPayloadRestorePlan {
+): EpigraphPayloadRestorePlan {
   const flags = flagsForStatus(input.status);
   return {
     ...input,
@@ -269,7 +269,7 @@ function finalizePayloadPlan(
   };
 }
 
-function topLevelSkippedAppPayload(): AethonTopLevelSkippedRestorePlan {
+function topLevelSkippedAppPayload(): EpigraphTopLevelSkippedRestorePlan {
   return {
     kind: "app",
     status: "skipped",
@@ -280,7 +280,7 @@ function topLevelSkippedAppPayload(): AethonTopLevelSkippedRestorePlan {
   };
 }
 
-function reasonFromIssue(issue: AethonBackupIssue): AethonRestoreReason {
+function reasonFromIssue(issue: EpigraphBackupIssue): EpigraphRestoreReason {
   switch (issue.code) {
     case "unsupported-payload-version":
       return toReason("unsupported-payload-version", issue.message);
@@ -302,9 +302,9 @@ function reasonFromIssue(issue: AethonBackupIssue): AethonRestoreReason {
 }
 
 function payloadIssuesForEntry(
-  entry: AethonBackupManifestPayloadEntry,
-  issues: AethonBackupIssue[],
-): AethonBackupIssue[] {
+  entry: EpigraphBackupManifestPayloadEntry,
+  issues: EpigraphBackupIssue[],
+): EpigraphBackupIssue[] {
   return issues.filter((issue) =>
     issue.payloadKind === entry.kind
       || issue.path === entry.manifestPath
@@ -332,7 +332,7 @@ async function readArchiveJson<T>(zip: JSZip, path: string): Promise<T | null> {
 
 async function defaultAnalyzeManga(input: {
   payloadBytes: Uint8Array;
-  runtime: NonNullable<AethonRestorePlannerRuntime["manga"]>;
+  runtime: NonNullable<EpigraphRestorePlannerRuntime["manga"]>;
 }): Promise<{
   parsedBackup: ParsedBackup;
   analysis: ReconciliationAnalysis;
@@ -357,14 +357,14 @@ async function defaultAnalyzeManga(input: {
   };
 }
 
-export async function planAethonMangaRestore(
+export async function planEpigraphMangaRestore(
   bytes: Uint8Array | ArrayBuffer,
   zip: JSZip,
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  payloadManifest: AethonBackupPayloadManifest,
-  runtime: AethonRestorePlannerRuntime,
-  deps: AethonRestorePlannerDeps = {},
-): Promise<AethonPayloadRestorePlan> {
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  payloadManifest: EpigraphBackupPayloadManifest,
+  runtime: EpigraphRestorePlannerRuntime,
+  deps: EpigraphRestorePlannerDeps = {},
+): Promise<EpigraphPayloadRestorePlan> {
   void bytes;
   const availableRestoreModes = payloadManifest.restoreModesSupported ?? payloadEntry.restoreModesSupported ?? [];
   const defaultRestoreMode = defaultRestoreModeForPayload(payloadEntry, payloadManifest);
@@ -384,7 +384,7 @@ export async function planAethonMangaRestore(
     });
   }
 
-  const archivePath = `${payloadEntry.payloadRoot}/${AETHON_MANGA_PAYLOAD_FILE_PATH}`;
+  const archivePath = `${payloadEntry.payloadRoot}/${EPIGRAPH_MANGA_PAYLOAD_FILE_PATH}`;
   const payloadBytes = await readArchiveBytes(zip, archivePath);
   if (!payloadBytes) {
     return finalizePayloadPlan({
@@ -394,7 +394,7 @@ export async function planAethonMangaRestore(
       defaultRestoreMode,
       availableRestoreModes,
       summaryLabel: "Manga payload is missing its embedded backup file",
-      reasons: [toReason("missing-required-file", `Manga payload is missing ${AETHON_MANGA_PAYLOAD_FILE_PATH}.`)],
+      reasons: [toReason("missing-required-file", `Manga payload is missing ${EPIGRAPH_MANGA_PAYLOAD_FILE_PATH}.`)],
       warnings: [],
       metadata: {},
     });
@@ -504,13 +504,13 @@ export async function planAethonMangaRestore(
   });
 }
 
-export async function planAethonBooksRestore(
+export async function planEpigraphBooksRestore(
   zip: JSZip,
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  payloadManifest: AethonBackupPayloadManifest,
-  runtime: AethonRestorePlannerRuntime,
-  payloadIssues: AethonBackupIssue[],
-): Promise<AethonPayloadRestorePlan> {
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  payloadManifest: EpigraphBackupPayloadManifest,
+  runtime: EpigraphRestorePlannerRuntime,
+  payloadIssues: EpigraphBackupIssue[],
+): Promise<EpigraphPayloadRestorePlan> {
   const availableRestoreModes = payloadManifest.restoreModesSupported ?? payloadEntry.restoreModesSupported ?? [];
   const defaultRestoreMode = defaultRestoreModeForPayload(payloadEntry, payloadManifest);
 
@@ -638,7 +638,7 @@ export async function planAethonBooksRestore(
     });
   }
 
-  const warnings: AethonRestoreReason[] = [];
+  const warnings: EpigraphRestoreReason[] = [];
   if (missingCoverOnly) {
     warnings.push(...payloadIssues.map((issue) => toReason("non-blocking-warning", issue.message)));
   }
@@ -667,13 +667,13 @@ export async function planAethonBooksRestore(
   });
 }
 
-export async function planAethonNovelsRestore(
+export async function planEpigraphNovelsRestore(
   zip: JSZip,
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  payloadManifest: AethonBackupPayloadManifest,
-  runtime: AethonRestorePlannerRuntime,
-  payloadIssues: AethonBackupIssue[],
-): Promise<AethonPayloadRestorePlan> {
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  payloadManifest: EpigraphBackupPayloadManifest,
+  runtime: EpigraphRestorePlannerRuntime,
+  payloadIssues: EpigraphBackupIssue[],
+): Promise<EpigraphPayloadRestorePlan> {
   const availableRestoreModes = payloadManifest.restoreModesSupported ?? payloadEntry.restoreModesSupported ?? [];
   const defaultRestoreMode = defaultRestoreModeForPayload(payloadEntry, payloadManifest);
   const novelsRuntime = runtime.novels;
@@ -708,7 +708,7 @@ export async function planAethonNovelsRestore(
 
   const rawPayload = await readArchiveJson<NovelsPayloadFile>(
     zip,
-    `${payloadEntry.payloadRoot}/${AETHON_NOVELS_PAYLOAD_FILE_PATH}`,
+    `${payloadEntry.payloadRoot}/${EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH}`,
   ).catch(() => null);
 
   if (!rawPayload) {
@@ -719,7 +719,7 @@ export async function planAethonNovelsRestore(
       defaultRestoreMode,
       availableRestoreModes,
       summaryLabel: "Novels payload is missing its library data",
-      reasons: [toReason("missing-required-file", `Novels payload is missing ${AETHON_NOVELS_PAYLOAD_FILE_PATH}.`)],
+      reasons: [toReason("missing-required-file", `Novels payload is missing ${EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH}.`)],
       warnings: [],
       metadata: {},
     });
@@ -740,8 +740,8 @@ export async function planAethonNovelsRestore(
   }
 
   const exportMode = rawPayload.exportMode === "metadata-only" ? "metadata-only" : "repository-aware";
-  const classified = classifyAethonNovelsSnapshot(
-    normalizeAethonNovelsSnapshot({
+  const classified = classifyEpigraphNovelsSnapshot(
+    normalizeEpigraphNovelsSnapshot({
       entries: rawPayload.entries,
       chapters: Array.isArray(rawPayload.chapters) ? rawPayload.chapters : [],
       progress: Array.isArray(rawPayload.progress) ? rawPayload.progress : [],
@@ -758,7 +758,7 @@ export async function planAethonNovelsRestore(
     },
   );
 
-  const reasons: AethonRestoreReason[] = [];
+  const reasons: EpigraphRestoreReason[] = [];
   if (classified.summary.restoredNeedsRepositoryCount > 0) {
     reasons.push(toReason("missing-required-repository", `${classified.summary.restoredNeedsRepositoryCount} novel entr${classified.summary.restoredNeedsRepositoryCount === 1 ? "y needs" : "ies need"} a repository before restore can proceed.`));
   }
@@ -771,12 +771,12 @@ export async function planAethonNovelsRestore(
     reasons.push(toReason("missing-required-source", `${count} novel entr${count === 1 ? "y needs" : "ies need"} a source before restore can proceed.`));
   }
 
-  const warnings: AethonRestoreReason[] = [];
+  const warnings: EpigraphRestoreReason[] = [];
   if (classified.summary.restoredMetadataOnlyCount > 0) {
     warnings.push(toReason("metadata-only-limitation", `${classified.summary.restoredMetadataOnlyCount} novel entr${classified.summary.restoredMetadataOnlyCount === 1 ? "y" : "ies"} will restore as metadata-only.`));
   }
 
-  const status: AethonRestorePayloadStatus = reasons.length > 0
+  const status: EpigraphRestorePayloadStatus = reasons.length > 0
     ? "blocked"
     : warnings.length > 0
       ? "warning-only"
@@ -807,13 +807,13 @@ export async function planAethonNovelsRestore(
   });
 }
 
-export async function planAethonAppRestore(
+export async function planEpigraphAppRestore(
   zip: JSZip,
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  payloadManifest: AethonBackupPayloadManifest,
-  runtime: AethonRestorePlannerRuntime,
-  payloadIssues: AethonBackupIssue[],
-): Promise<AethonPayloadRestorePlan> {
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  payloadManifest: EpigraphBackupPayloadManifest,
+  runtime: EpigraphRestorePlannerRuntime,
+  payloadIssues: EpigraphBackupIssue[],
+): Promise<EpigraphPayloadRestorePlan> {
   const availableRestoreModes = payloadManifest.restoreModesSupported ?? payloadEntry.restoreModesSupported ?? [];
   const defaultRestoreMode = defaultRestoreModeForPayload(payloadEntry, payloadManifest);
 
@@ -825,7 +825,7 @@ export async function planAethonAppRestore(
       defaultRestoreMode,
       availableRestoreModes,
       summaryLabel: "App metadata support is unavailable",
-      reasons: [toReason("missing-runtime-support", "This backup needs Aethon app metadata support to inspect the app payload.")],
+      reasons: [toReason("missing-runtime-support", "This backup needs Epigraph app metadata support to inspect the app payload.")],
       warnings: [],
       metadata: {},
     });
@@ -845,9 +845,9 @@ export async function planAethonAppRestore(
     });
   }
 
-  const rawPayload = await readArchiveJson<AethonAppProfilePayload>(
+  const rawPayload = await readArchiveJson<EpigraphAppProfilePayload>(
     zip,
-    `${payloadEntry.payloadRoot}/${AETHON_APP_PAYLOAD_FILE_PATH}`,
+    `${payloadEntry.payloadRoot}/${EPIGRAPH_APP_PAYLOAD_FILE_PATH}`,
   ).catch(() => null);
 
   if (!rawPayload) {
@@ -858,7 +858,7 @@ export async function planAethonAppRestore(
       defaultRestoreMode,
       availableRestoreModes,
       summaryLabel: "App payload is missing its profile metadata",
-      reasons: [toReason("missing-required-file", `App payload is missing ${AETHON_APP_PAYLOAD_FILE_PATH}.`)],
+      reasons: [toReason("missing-required-file", `App payload is missing ${EPIGRAPH_APP_PAYLOAD_FILE_PATH}.`)],
       warnings: [],
       metadata: {},
     });
@@ -903,9 +903,9 @@ export async function planAethonAppRestore(
 }
 
 function makeUnsupportedPayloadPlan(
-  payloadEntry: AethonBackupManifestPayloadEntry,
-  issues: AethonBackupIssue[],
-): AethonPayloadRestorePlan {
+  payloadEntry: EpigraphBackupManifestPayloadEntry,
+  issues: EpigraphBackupIssue[],
+): EpigraphPayloadRestorePlan {
   return finalizePayloadPlan({
     kind: payloadEntry.kind,
     present: true,
@@ -922,10 +922,10 @@ function makeUnsupportedPayloadPlan(
 }
 
 function summarizePlan(
-  payloads: AethonPayloadRestorePlan[],
-  topLevelSkipped: AethonTopLevelSkippedRestorePlan[],
-  containerIssues: AethonRestoreReason[],
-): AethonRestorePlanSummary {
+  payloads: EpigraphPayloadRestorePlan[],
+  topLevelSkipped: EpigraphTopLevelSkippedRestorePlan[],
+  containerIssues: EpigraphRestoreReason[],
+): EpigraphRestorePlanSummary {
   const restorableKinds = payloads.filter((payload) => payload.status === "restorable").map((payload) => payload.kind);
   const blockedKinds = payloads.filter((payload) => payload.status === "blocked").map((payload) => payload.kind);
   const unsupportedKinds = payloads.filter((payload) => payload.status === "unsupported").map((payload) => payload.kind);
@@ -970,18 +970,18 @@ function summarizePlan(
   };
 }
 
-export async function buildAethonRestorePlan(
+export async function buildEpigraphRestorePlan(
   bytes: Uint8Array | ArrayBuffer,
-  runtime: AethonRestorePlannerRuntime,
+  runtime: EpigraphRestorePlannerRuntime,
   _options: Record<string, never> = {},
-  deps: AethonRestorePlannerDeps = {},
-): Promise<AethonRestorePlan> {
+  deps: EpigraphRestorePlannerDeps = {},
+): Promise<EpigraphRestorePlan> {
   let inspection;
   try {
-    inspection = await inspectAethonBackupContainer(bytes);
+    inspection = await inspectEpigraphBackupContainer(bytes);
   } catch (error) {
     const containerIssues = [
-      toReason("payload-integrity-error", error instanceof Error ? error.message : "Aethon backup container could not be inspected."),
+      toReason("payload-integrity-error", error instanceof Error ? error.message : "Epigraph backup container could not be inspected."),
     ];
     return {
       defaultTarget: "sandbox-profile",
@@ -1016,12 +1016,12 @@ export async function buildAethonRestorePlan(
   }
 
   const zip = await JSZip.loadAsync(toUint8Array(bytes));
-  const payloads: AethonPayloadRestorePlan[] = [];
+  const payloads: EpigraphPayloadRestorePlan[] = [];
 
   for (const payloadEntry of inspection.manifest.payloads) {
     const payloadManifest = inspection.payloadManifests[payloadEntry.kind] ?? null;
     const payloadIssues = payloadIssuesForEntry(payloadEntry, inspection.issues);
-    const registry = (AETHON_BACKUP_PAYLOAD_REGISTRY as Record<string, typeof AETHON_BACKUP_PAYLOAD_REGISTRY.books | undefined>)[payloadEntry.kind];
+    const registry = (EPIGRAPH_BACKUP_PAYLOAD_REGISTRY as Record<string, typeof EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.books | undefined>)[payloadEntry.kind];
 
     if (!registry) {
       payloads.push(makeUnsupportedPayloadPlan(payloadEntry, payloadIssues));
@@ -1077,22 +1077,22 @@ export async function buildAethonRestorePlan(
         }));
         continue;
       }
-      payloads.push(await planAethonMangaRestore(bytes, zip, payloadEntry, payloadManifest, runtime, deps));
+      payloads.push(await planEpigraphMangaRestore(bytes, zip, payloadEntry, payloadManifest, runtime, deps));
       continue;
     }
 
     if (payloadEntry.kind === "books") {
-      payloads.push(await planAethonBooksRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
+      payloads.push(await planEpigraphBooksRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
       continue;
     }
 
     if (payloadEntry.kind === "novels") {
-      payloads.push(await planAethonNovelsRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
+      payloads.push(await planEpigraphNovelsRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
       continue;
     }
 
     if (payloadEntry.kind === "app") {
-      payloads.push(await planAethonAppRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
+      payloads.push(await planEpigraphAppRestore(zip, payloadEntry, payloadManifest, runtime, payloadIssues));
       continue;
     }
   }

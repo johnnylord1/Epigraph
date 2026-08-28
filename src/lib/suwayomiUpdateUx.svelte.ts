@@ -54,7 +54,7 @@ export function recordSuwayomiUpdateCheck(result: SuwayomiUpdateCheckResult, opt
         current: result.currentVersion ?? translate("suwayomi.update.unknown"),
         next: result.latestCompatibleVersion,
       }),
-      duration: 0,
+      duration: 8_000,
       actions: [
         { label: translate("suwayomi.update.updateNow"), run: openSuwayomiUpdateSettings },
         { label: translate("suwayomi.update.remindLater"), run: dismissSuwayomiUpdateToast },

@@ -7,7 +7,7 @@ let desktopStateListener: ((payload: unknown) => void) | null = null;
 const hostState = {
   profileId: "main",
   sessionId: "pairing-1",
-  pairingCode: "AETHON42",
+  pairingCode: "EPIGRAPH42",
   syncdBaseUrl: "https://127.0.0.1:4877",
   localControlUrl: "http://127.0.0.1:4878",
   advertisedBaseUrl: "https://192.168.1.20:4877",
@@ -15,6 +15,7 @@ const hostState = {
   expiresAtMs: Date.now() + 60_000,
   status: "pending" as const,
   claimedDeviceId: null,
+  requestedScopes: ["comics:profile:main", "novels:profile:main", "books:global"],
   bootstrapBundle: JSON.stringify({ pairingSessionId: "pairing-1" }),
   hostReady: true,
   error: null,
@@ -69,12 +70,14 @@ vi.mock("../../lib/syncdDesktop", () => ({
   })),
   syncdForgetPersistedSession: vi.fn(),
   syncdListDiscoveryCandidates: vi.fn(async () => []),
+  syncdListPairedDevices: vi.fn(async () => []),
   syncdPauseReplication: vi.fn(),
   syncdResumeReplication: vi.fn(),
   syncdRevalidateSession: vi.fn(),
   syncdRevalidatePersistedSyncSessions: vi.fn(async () => []),
   syncdSetActiveReplicationSession: vi.fn(),
   syncdStartHostPairing: vi.fn(async () => hostState),
+  syncdUpdatePairedDeviceGrantedScopes: vi.fn(),
 }));
 
 import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
@@ -84,6 +87,8 @@ import {
   syncdGetActiveHostPairing,
   syncdGetRuntimeIdentity,
   syncdHostDecidePairing,
+  syncdListPairedDevices,
+  syncdUpdatePairedDeviceGrantedScopes,
 } from "../../lib/syncdDesktop";
 
 describe("SyncdConnectionPanel", () => {
@@ -97,6 +102,7 @@ describe("SyncdConnectionPanel", () => {
       ...hostState,
       status: decision === "approve" ? "approved" : "rejected",
     }));
+    vi.mocked(syncdListPairedDevices).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -121,7 +127,11 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(false);
     expect(within(dialog).getByText("Connection details")).toBeTruthy();
 
+    const modalBody = dialog.querySelector<HTMLElement>(".syncd-modal__body");
+    expect(modalBody).not.toBeNull();
+    modalBody!.scrollTop = 240;
     await fireEvent.click(within(dialog).getByTestId("syncd-modal-options"));
+    expect(modalBody!.scrollTop).toBe(0);
     expect(within(dialog).getByTestId("syncd-options-view").hidden).toBe(false);
     expect(within(dialog).getByTestId("syncd-bootstrap-bundle-input")).toBeTruthy();
 
@@ -234,6 +244,52 @@ describe("SyncdConnectionPanel", () => {
     await fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("shows requested domains before approval and updates paired device permissions", async () => {
+    const device = {
+      deviceId: "android-1",
+      deviceName: "Pixel",
+      platform: "android" as const,
+      profileId: "main",
+      grantedScopes: ["comics:profile:main", "books:global"],
+      lastSeenAtMs: Date.now(),
+    };
+    vi.mocked(syncdListPairedDevices).mockResolvedValue([device]);
+    vi.mocked(syncdUpdatePairedDeviceGrantedScopes).mockImplementation(async (
+      deviceId,
+      profileId,
+      grantedScopes,
+    ) => ({ ...device, deviceId, profileId, grantedScopes }));
+
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "android-1",
+      });
+    });
+    expect(within(dialog).getByTestId("syncd-requested-scopes").textContent).toContain("Comics");
+    expect(within(dialog).getByTestId("syncd-requested-scopes").textContent).toContain("Books");
+
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-options"));
+    const permission = await within(dialog).findByTestId("syncd-paired-device-permission");
+    const books = within(permission).getByRole("checkbox", { name: "Books" });
+    await fireEvent.click(books);
+
+    await waitFor(() => {
+      expect(syncdUpdatePairedDeviceGrantedScopes).toHaveBeenCalledWith(
+        "android-1",
+        "main",
+        ["comics:profile:main"],
+      );
+    });
   });
 
   test("releases the decision controls when the native decision times out", async () => {

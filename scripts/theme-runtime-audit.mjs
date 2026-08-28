@@ -85,12 +85,12 @@ export function computedContrastRatio(foregroundValue, backgroundValue, canvasVa
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-async function findAethonPage(browser) {
+async function findEpigraphPage(browser) {
   const pages = browser.contexts().flatMap((context) => context.pages());
   for (const page of pages) {
-    if ((await page.title()).startsWith("Aethon")) return page;
+    if ((await page.title()).startsWith("Epigraph")) return page;
   }
-  throw new Error("Aethon WebView2 page was not found on the CDP endpoint.");
+  throw new Error("Epigraph WebView2 page was not found on the CDP endpoint.");
 }
 
 async function setRuntimeTheme(page, theme) {
@@ -153,35 +153,35 @@ async function restoreRuntime(page, snapshot) {
     else document.documentElement.setAttribute("data-custom-theme", customTheme);
   }, snapshot.themeAttributes);
 
-  const audit = await page.evaluate(() => Boolean(globalThis.__aethonAudit));
+  const audit = await page.evaluate(() => Boolean(globalThis.__epigraphAudit));
   if (!audit) return;
-  const currentState = await page.evaluate(() => globalThis.__aethonAudit.getState());
+  const currentState = await page.evaluate(() => globalThis.__epigraphAudit.getState());
   const auditOpenedReader = !snapshot.state.activeBookReaderId
     && !snapshot.state.activeChapterId
     && (currentState.activeBookReaderId || currentState.activeChapterId);
   if (auditOpenedReader) {
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => {
-      const state = globalThis.__aethonAudit.getState();
+      const state = globalThis.__epigraphAudit.getState();
       return !state.activeBookReaderId && !state.activeChapterId;
     }, undefined, { timeout: 5_000 });
   }
   if (snapshot.state.activeBookReaderId) {
-    await page.evaluate((id) => globalThis.__aethonAudit.openFirstBookReader(id), snapshot.state.activeBookReaderId);
+    await page.evaluate((id) => globalThis.__epigraphAudit.openFirstBookReader(id), snapshot.state.activeBookReaderId);
     return;
   }
   if (snapshot.state.activeChapterId) {
-    await page.evaluate(({ mangaId, chapterId }) => globalThis.__aethonAudit.openFirstReader(mangaId, chapterId), {
+    await page.evaluate(({ mangaId, chapterId }) => globalThis.__epigraphAudit.openFirstReader(mangaId, chapterId), {
       mangaId: snapshot.state.activeMangaId,
       chapterId: snapshot.state.activeChapterId,
     });
     return;
   }
   if (snapshot.state.settingsOpen || snapshot.state.navPage === "settings") {
-    await page.evaluate(() => globalThis.__aethonAudit.openSettings());
+    await page.evaluate(() => globalThis.__epigraphAudit.openSettings());
   } else if (snapshot.state.navPage === "library") {
-    if (snapshot.state.librarySection === "books") await page.evaluate(() => globalThis.__aethonAudit.openBooksLibrary());
-    else await page.evaluate(() => globalThis.__aethonAudit.openLibrary());
+    if (snapshot.state.librarySection === "books") await page.evaluate(() => globalThis.__epigraphAudit.openBooksLibrary());
+    else await page.evaluate(() => globalThis.__epigraphAudit.openLibrary());
   } else {
     const navLabel = { home: "Home", search: "Browse", downloads: "Downloads" }[snapshot.state.navPage];
     if (navLabel) await page.getByRole("button", { name: navLabel, exact: true }).click();
@@ -192,17 +192,17 @@ export async function runThemeRuntimeAudit(options) {
   const outputDirectory = path.resolve(options.out);
   await mkdir(outputDirectory, { recursive: true });
   const browser = await chromium.connectOverCDP(options.cdp);
-  const page = await findAethonPage(browser);
+  const page = await findEpigraphPage(browser);
   await page.bringToFront();
 
   const snapshot = await page.evaluate(() => ({
-    state: globalThis.__aethonAudit?.getState?.() ?? null,
+    state: globalThis.__epigraphAudit?.getState?.() ?? null,
     themeAttributes: {
       theme: document.documentElement.getAttribute("data-theme"),
       customTheme: document.documentElement.getAttribute("data-custom-theme"),
     },
   }));
-  if (!snapshot.state) throw new Error("Aethon audit bridge is unavailable.");
+  if (!snapshot.state) throw new Error("Epigraph audit bridge is unavailable.");
   if (snapshot.themeAttributes.customTheme) {
     throw new Error("Runtime matrix requires a builtin theme; deactivate the custom theme before running it.");
   }
@@ -233,7 +233,7 @@ export async function runThemeRuntimeAudit(options) {
 
   try {
     await setRuntimeTheme(page, "nocturne");
-    await page.evaluate(() => globalThis.__aethonAudit.openBooksLibrary());
+    await page.evaluate(() => globalThis.__epigraphAudit.openBooksLibrary());
     await page.locator(".n-library-card").first().waitFor({ state: "visible", timeout: 20_000 });
     await capture("nocturne-library-books");
 
@@ -268,10 +268,10 @@ export async function runThemeRuntimeAudit(options) {
     }
 
     await page.getByRole("button", { name: "Downloads", exact: true }).click();
-    await page.locator(".aethon-port--downloads").waitFor({ state: "visible", timeout: 20_000 });
+    await page.locator(".epigraph-port--downloads").waitFor({ state: "visible", timeout: 20_000 });
     await capture("nocturne-downloads");
 
-    await page.evaluate(() => globalThis.__aethonAudit.openSettings());
+    await page.evaluate(() => globalThis.__epigraphAudit.openSettings());
     await page.locator(".settings-page").waitFor({ state: "visible", timeout: 25_000 });
     await capture("nocturne-settings");
 
@@ -302,11 +302,11 @@ export async function runThemeRuntimeAudit(options) {
 
     await setRuntimeTheme(page, "nocturne");
     const pdfId = await page.evaluate(async () => {
-      await globalThis.__aethonAudit.openFirstPdfBook();
-      return globalThis.__aethonAudit.getState().activeBookId;
+      await globalThis.__epigraphAudit.openFirstPdfBook();
+      return globalThis.__epigraphAudit.getState().activeBookId;
     });
     if (pdfId) {
-      await page.evaluate((id) => globalThis.__aethonAudit.openFirstBookReader(id), pdfId);
+      await page.evaluate((id) => globalThis.__epigraphAudit.openFirstBookReader(id), pdfId);
       await page.locator(".reader-viewport-wrapper").waitFor({ state: "visible", timeout: 25_000 });
       await page.waitForFunction(() => {
         const viewport = document.querySelector(".reader-viewport-wrapper");

@@ -17,7 +17,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
-use crate::syncd::middleware::validate_scope;
+use crate::syncd::middleware::{
+    validate_scope, ASSET_SHA256_HEADER, LEGACY_ASSET_SHA256_HEADER,
+};
 use crate::syncd::models::{AppError, AuthenticatedSession, SharedAppState};
 
 const ASSET_UPLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -221,7 +223,8 @@ fn asset_response(
         .header(CONTENT_TYPE, "application/octet-stream")
         .header(CONTENT_LENGTH, content_length.to_string())
         .header(ETAG, asset_id.etag())
-        .header("x-aethon-asset-sha256", asset_id.as_str());
+        .header(ASSET_SHA256_HEADER, asset_id.as_str())
+        .header(LEGACY_ASSET_SHA256_HEADER, asset_id.as_str());
     if let Some(range) = range {
         builder = builder.header(
             CONTENT_RANGE,
@@ -720,13 +723,13 @@ mod tests {
     #[tokio::test]
     async fn put_head_get_and_range_preserve_hash_and_headers() {
         let (_temp, app) = build_app(None).await;
-        let bytes = b"immutable aethon asset";
+        let bytes = b"immutable epigraph asset";
         let sha256 = sha256_hex(bytes);
 
         let put = put_bytes(&app, &sha256, "books%3Aglobal", TOKEN, bytes).await;
         assert_eq!(put.status(), StatusCode::CREATED);
         assert_eq!(put.headers()[ETAG], format!("\"{sha256}\""));
-        assert_eq!(put.headers()["x-aethon-asset-sha256"], sha256);
+        assert_eq!(put.headers()["x-epigraph-asset-sha256"], sha256);
 
         let duplicate = put_bytes(&app, &sha256, "books%3Aglobal", TOKEN, bytes).await;
         assert_eq!(duplicate.status(), StatusCode::NO_CONTENT);

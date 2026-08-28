@@ -18,7 +18,7 @@ const DEFAULT_PROTOCOL_VERSION: u32 = 1;
 // client still compares newer than this floor, while development APKs retain
 // their truthful semantic version instead of pretending to be a release.
 const DEFAULT_MIN_CLIENT_VERSION: &str = "0.1.0-alpha.1";
-const DEFAULT_MDNS_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
+const DEFAULT_MDNS_SERVICE_NAME: &str = "_epigraph-sync._tcp.local.";
 const DEFAULT_ASSET_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -262,38 +262,38 @@ pub struct SyncdConfig {
 
 impl SyncdConfig {
     pub fn from_env() -> Self {
-        let data_dir = std::env::var_os("AETHON_SYNCD_DATA_DIR")
+        let data_dir = std::env::var_os("EPIGRAPH_SYNCD_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(default_data_dir);
         let db_path = data_dir.join("syncd.sqlite");
         let cert_path = data_dir.join("cert.pem");
         let key_path = data_dir.join("key.pem");
 
-        let bind_ip = std::env::var("AETHON_SYNCD_BIND_HOST")
+        let bind_ip = std::env::var("EPIGRAPH_SYNCD_BIND_HOST")
             .ok()
             .and_then(|raw| raw.parse::<IpAddr>().ok())
             .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-        let port = std::env::var("AETHON_SYNCD_PORT")
+        let port = std::env::var("EPIGRAPH_SYNCD_PORT")
             .ok()
             .and_then(|raw| raw.parse::<u16>().ok())
             .unwrap_or(DEFAULT_PORT);
-        let discovery_provider_mode = std::env::var("AETHON_SYNCD_DISCOVERY_PROVIDER")
+        let discovery_provider_mode = std::env::var("EPIGRAPH_SYNCD_DISCOVERY_PROVIDER")
             .ok()
             .map(|raw| SyncdDiscoveryProviderMode::parse(&raw))
             .transpose()
-            .unwrap_or_else(|error| panic!("invalid AETHON_SYNCD_DISCOVERY_PROVIDER: {error}"))
+            .unwrap_or_else(|error| panic!("invalid EPIGRAPH_SYNCD_DISCOVERY_PROVIDER: {error}"))
             .unwrap_or(SyncdDiscoveryProviderMode::LanPublication);
-        let manual_discovery_provider_mode = std::env::var("AETHON_SYNCD_MANUAL_PROVIDER")
+        let manual_discovery_provider_mode = std::env::var("EPIGRAPH_SYNCD_MANUAL_PROVIDER")
             .ok()
             .map(|raw| SyncdManualDiscoveryProviderMode::parse(&raw))
             .transpose()
-            .unwrap_or_else(|error| panic!("invalid AETHON_SYNCD_MANUAL_PROVIDER: {error}"))
+            .unwrap_or_else(|error| panic!("invalid EPIGRAPH_SYNCD_MANUAL_PROVIDER: {error}"))
             .unwrap_or(SyncdManualDiscoveryProviderMode::Disabled);
-        let discovery_mdns_port = std::env::var("AETHON_SYNCD_DISCOVERY_MDNS_PORT")
+        let discovery_mdns_port = std::env::var("EPIGRAPH_SYNCD_DISCOVERY_MDNS_PORT")
             .ok()
             .and_then(|raw| raw.parse::<u16>().ok())
             .unwrap_or(DEFAULT_DISCOVERY_MDNS_PORT);
-        let manual_discovery_origins = std::env::var("AETHON_SYNCD_MANUAL_ORIGINS")
+        let manual_discovery_origins = std::env::var("EPIGRAPH_SYNCD_MANUAL_ORIGINS")
             .ok()
             .map(|raw| {
                 raw.split(',')
@@ -303,19 +303,19 @@ impl SyncdConfig {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let effective_discovery_policy = std::env::var("AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY")
+        let effective_discovery_policy = std::env::var("EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY")
             .ok()
             .map(|raw| SyncdEffectiveDiscoveryPolicy::parse(&raw))
             .transpose()
             .unwrap_or_else(|error| {
-                panic!("invalid AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY: {error}")
+                panic!("invalid EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY: {error}")
             })
             .unwrap_or(SyncdEffectiveDiscoveryPolicy::AdvertisedOnly);
-        let advertised_base_url = std::env::var("AETHON_SYNCD_ADVERTISED_BASE_URL")
+        let advertised_base_url = std::env::var("EPIGRAPH_SYNCD_ADVERTISED_BASE_URL")
             .ok()
             .map(|raw| raw.trim().to_string())
             .filter(|raw| !raw.is_empty());
-        let advertised_candidates = std::env::var("AETHON_SYNCD_ADVERTISED_CANDIDATES")
+        let advertised_candidates = std::env::var("EPIGRAPH_SYNCD_ADVERTISED_CANDIDATES")
             .ok()
             .map(|raw| {
                 raw.split(',')
@@ -326,14 +326,14 @@ impl SyncdConfig {
             })
             .unwrap_or_default();
 
-        let parent_pid = std::env::var("AETHON_SYNCD_PARENT_PID")
+        let parent_pid = std::env::var("EPIGRAPH_SYNCD_PARENT_PID")
             .ok()
             .and_then(|raw| raw.parse::<u32>().ok());
-        let ownership_mode = std::env::var("AETHON_SYNCD_OWNERSHIP")
+        let ownership_mode = std::env::var("EPIGRAPH_SYNCD_OWNERSHIP")
             .ok()
             .map(|raw| SyncdOwnershipMode::parse(&raw))
             .transpose()
-            .unwrap_or_else(|error| panic!("invalid AETHON_SYNCD_OWNERSHIP: {error}"))
+            .unwrap_or_else(|error| panic!("invalid EPIGRAPH_SYNCD_OWNERSHIP: {error}"))
             .unwrap_or_else(|| {
                 if parent_pid.is_some() {
                     SyncdOwnershipMode::EphemeralOwned
@@ -348,13 +348,13 @@ impl SyncdConfig {
             cert_path,
             key_path,
             bind_addr: SocketAddr::new(bind_ip, port),
-            min_client_version: std::env::var("AETHON_SYNCD_MIN_CLIENT_VERSION")
+            min_client_version: std::env::var("EPIGRAPH_SYNCD_MIN_CLIENT_VERSION")
                 .unwrap_or_else(|_| DEFAULT_MIN_CLIENT_VERSION.to_string()),
-            server_protocol_version: std::env::var("AETHON_SYNCD_PROTOCOL_VERSION")
+            server_protocol_version: std::env::var("EPIGRAPH_SYNCD_PROTOCOL_VERSION")
                 .ok()
                 .and_then(|raw| raw.parse::<u32>().ok())
                 .unwrap_or(DEFAULT_PROTOCOL_VERSION),
-            mdns_service_name: std::env::var("AETHON_SYNCD_MDNS_SERVICE_NAME")
+            mdns_service_name: std::env::var("EPIGRAPH_SYNCD_MDNS_SERVICE_NAME")
                 .ok()
                 .map(|raw| raw.trim().to_string())
                 .filter(|raw| !raw.is_empty())
@@ -369,20 +369,20 @@ impl SyncdConfig {
             ping_interval: Duration::from_secs(30),
             retention_window: Duration::from_secs(30 * 24 * 60 * 60),
             bootstrap_session_window: Duration::from_secs(
-                std::env::var("AETHON_SYNCD_BOOTSTRAP_TTL_SECONDS")
+                std::env::var("EPIGRAPH_SYNCD_BOOTSTRAP_TTL_SECONDS")
                     .ok()
                     .and_then(|raw| raw.parse::<u64>().ok())
                     .unwrap_or(120),
             ),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
-            asset_max_upload_bytes: std::env::var("AETHON_SYNCD_ASSET_MAX_BYTES")
+            asset_max_upload_bytes: std::env::var("EPIGRAPH_SYNCD_ASSET_MAX_BYTES")
                 .ok()
                 .map(|raw| {
                     raw.parse::<u64>()
                         .ok()
                         .filter(|value| *value > 0)
                         .unwrap_or_else(|| {
-                            panic!("AETHON_SYNCD_ASSET_MAX_BYTES must be a positive integer")
+                            panic!("EPIGRAPH_SYNCD_ASSET_MAX_BYTES must be a positive integer")
                         })
                 })
                 .unwrap_or(DEFAULT_ASSET_MAX_UPLOAD_BYTES),
@@ -440,7 +440,7 @@ fn default_data_dir() -> PathBuf {
         std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")))
-            .join("Aethon")
+            .join("Epigraph")
             .join("syncd")
     }
 
@@ -448,7 +448,7 @@ fn default_data_dir() -> PathBuf {
     {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("aethon")
+            .join("epigraph")
             .join("syncd")
     }
 }

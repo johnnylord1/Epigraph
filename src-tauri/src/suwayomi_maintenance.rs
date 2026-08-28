@@ -137,7 +137,7 @@ pub fn default_runtime_root() -> PathBuf {
     #[cfg(not(target_os = "windows"))]
     let data_root = dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
 
-    data_root.join("aethon").join("suwayomi-runtime")
+    data_root.join("epigraph").join("suwayomi-runtime")
 }
 
 pub fn update_journal_path(runtime_root: &Path) -> PathBuf {
@@ -179,7 +179,7 @@ fn acquire_exclusive_file_lease(
             Err(_) if started.elapsed() < timeout => thread::sleep(FILE_LOCK_RETRY_DELAY),
             Err(_) => {
                 return Err(
-                    "Suwayomi is busy in another Aethon session. Try the update again shortly."
+                    "Suwayomi is busy in another Epigraph session. Try the update again shortly."
                         .to_string(),
                 )
             }

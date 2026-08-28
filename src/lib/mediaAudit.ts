@@ -6,11 +6,11 @@ export type MediaAuditPayload = {
 };
 
 type MediaAuditWindow = Window & {
-  __aethonMediaAudit?: boolean;
+  __epigraphMediaAudit?: boolean;
 };
 
 export function mediaAuditEnabled(): boolean {
-  return typeof window !== "undefined" && Boolean((window as MediaAuditWindow).__aethonMediaAudit);
+  return typeof window !== "undefined" && Boolean((window as MediaAuditWindow).__epigraphMediaAudit);
 }
 
 export function traceMediaAudit(event: MediaAuditPayload): void {

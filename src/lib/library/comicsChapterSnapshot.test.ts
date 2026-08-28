@@ -72,7 +72,7 @@ describe("comics chapter snapshot", () => {
 
     expect(loadComicsChapterSnapshot({ profileId: "main", serverUrl: "http://127.0.0.1:4567" })?.mangas["7"]?.chapters).toHaveLength(1);
     expect(loadComicsChapterSnapshot({ profileId: "test", serverUrl: "http://127.0.0.1:4667" })).toBeNull();
-    expect(storage.get("aethon-comics-chapter-snapshots")).not.toContain("Chapter 1");
+    expect(storage.get("epigraph-comics-chapter-snapshots")).not.toContain("Chapter 1");
   });
 
   it("diffs new chapters by stable chapter id", () => {

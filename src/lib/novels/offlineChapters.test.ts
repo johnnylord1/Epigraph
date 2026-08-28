@@ -32,15 +32,15 @@ describe("novel offline chapter cache", () => {
     invokeMock.mockImplementation((command: string, args: any) => {
       if (command === "resolve_novel_storage_root") {
         expect(args).toEqual({ profileId: "main", serverUrl: "http://127.0.0.1:4567" });
-        return Promise.resolve("C:/Aethon/novels");
+        return Promise.resolve("C:/Epigraph/novels");
       }
       if (command === "write_file_base64") {
-        expect(args.path).toContain("C:/Aethon/novels/chapters/");
+        expect(args.path).toContain("C:/Epigraph/novels/chapters/");
         savedBase64 = args.bytesBase64;
         return Promise.resolve(args.path);
       }
       if (command === "read_file_base64") {
-        expect(args.path).toContain("C:/Aethon/novels/chapters/");
+        expect(args.path).toContain("C:/Epigraph/novels/chapters/");
         return Promise.resolve(savedBase64);
       }
       return Promise.reject(new Error(`Unexpected command ${command}`));

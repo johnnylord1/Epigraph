@@ -23,16 +23,16 @@ function createState(): PersistedBookLibraryState {
     books: [{
       id: "epub-demo",
       title: "Reader Contract",
-      author: "Aethon",
+      author: "Epigraph",
       description: null,
-      coverPath: "C:/Users/jhow-/AppData/Roaming/aethon/books/covers/reader-contract.jpg",
+      coverPath: "C:/Users/jhow-/AppData/Roaming/epigraph/books/covers/reader-contract.jpg",
       coverUrl: undefined,
       subtype: "epub",
       pageCount: null,
       createdAt: 1,
       updatedAt: 2,
       importPath: "D:/Books/reader-contract.epub",
-      assetPath: "C:/Users/jhow-/AppData/Roaming/aethon/books/epubs/reader-contract.epub",
+      assetPath: "C:/Users/jhow-/AppData/Roaming/epigraph/books/epubs/reader-contract.epub",
       tocCount: 2,
       spineCount: 2,
       sectionsSummary: [],
@@ -146,7 +146,7 @@ describe("book library state storage", () => {
   });
 
   it("persists updated book state to desktop storage", async () => {
-    invokeMock.mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/books/library-state.json");
+    invokeMock.mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/epigraph/books/library-state.json");
 
     const nextState = {
       ...createState(),

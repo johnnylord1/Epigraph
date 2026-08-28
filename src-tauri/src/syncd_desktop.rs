@@ -23,17 +23,19 @@ use uuid::Uuid;
 
 use crate::syncd::middleware::{
     CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+    LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
 };
 use crate::syncd::models::{
-    BootstrapPayloadResponse, ErrorBody, PairingClaimRequest, PairingClaimResponse,
-    PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
+    BootstrapPayloadResponse, ErrorBody, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
+    PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
     PairingHostDecisionResponse, PairingPlatform, PairingSessionStatus, PairingStatusEvent,
     PairingStatusEventType, SyncdClientDiscoveryContract, SyncdClientDiscoveryGuidanceContract,
-    SyncdClientDiscoveryUsageHint, SyncdEffectiveDiscoverySource,
+    SyncdClientDiscoveryUsageHint, SyncdEffectiveDiscoverySource, SyncdPairedDeviceView,
 };
 use crate::syncd_sidecar;
 
-const SYNCD_DISCOVERY_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
+const SYNCD_DISCOVERY_SERVICE_NAME: &str = "_epigraph-sync._tcp.local.";
+const LEGACY_SYNCD_DISCOVERY_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
 const EVENT_DESKTOP_STATE: &str = "syncd-desktop-state";
 const EVENT_PAIRING_STATUS: &str = "syncd-pairing-status";
@@ -96,6 +98,7 @@ pub struct SyncdHostPairingState {
     pub expires_at_ms: i64,
     pub status: PairingSessionStatus,
     pub claimed_device_id: Option<String>,
+    pub requested_scopes: Vec<String>,
     pub bootstrap_bundle: String,
     pub host_ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -293,7 +296,11 @@ pub async fn syncd_list_discovery_candidates() -> Result<Vec<SyncdDesktopDiscove
     let receiver = browser
         .browse(SYNCD_DISCOVERY_SERVICE_NAME)
         .map_err(|error| error.to_string())?;
-    let services = browse_mdns_services(receiver)?;
+    let legacy_receiver = browser
+        .browse(LEGACY_SYNCD_DISCOVERY_SERVICE_NAME)
+        .map_err(|error| error.to_string())?;
+    let mut services = browse_mdns_services(receiver)?;
+    services.extend(browse_mdns_services(legacy_receiver)?);
     let _ = browser.shutdown();
 
     let mut candidates = Vec::new();
@@ -395,6 +402,7 @@ pub async fn syncd_start_host_pairing(
         expires_at_ms: payload.expires_at_ms,
         status: PairingSessionStatus::Pending,
         claimed_device_id: None,
+        requested_scopes: Vec::new(),
         bootstrap_bundle,
         host_ready: true,
         error: None,
@@ -631,6 +639,7 @@ pub async fn syncd_host_decide_pairing(
         };
         current.status = response.status;
         current.claimed_device_id = response.claimed_device_id.clone();
+        current.requested_scopes = response.requested_scopes.clone();
         current.expires_at_ms = response.expires_at_ms;
         current.error = None;
         current.clone()
@@ -640,6 +649,45 @@ pub async fn syncd_host_decide_pairing(
         .map_err(|error| error.to_string())?;
     emit_desktop_state(&app, state.inner()).await?;
     Ok(next)
+}
+
+#[tauri::command]
+pub async fn syncd_list_paired_devices(
+    app: AppHandle,
+) -> Result<Vec<SyncdPairedDeviceView>, String> {
+    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let client = insecure_local_client()?;
+    let response = client
+        .get(format!("{}/v1/pairing/devices", runtime.local_base_url))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+    parse_json_response(response).await
+}
+
+#[tauri::command]
+pub async fn syncd_update_paired_device_granted_scopes(
+    device_id: String,
+    profile_id: String,
+    granted_scopes: Vec<String>,
+    app: AppHandle,
+) -> Result<SyncdPairedDeviceView, String> {
+    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let client = insecure_local_client()?;
+    send_json_request(
+        client.post(format!(
+            "{}/v1/pairing/devices/scopes",
+            runtime.local_base_url
+        )),
+        &PairedDeviceScopesUpdateRequest {
+            device_id,
+            profile_id,
+            granted_scopes,
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -780,6 +828,7 @@ fn spawn_host_pairing_listener(
                         };
                         current.status = event.status;
                         current.claimed_device_id = event.claimed_device_id.clone();
+                        current.requested_scopes = event.requested_scopes.clone();
                         current.expires_at_ms = event.expires_at_ms;
                         current.error = None;
                         current.clone()
@@ -1091,6 +1140,7 @@ where
                             status: PairingSessionStatus::Expired,
                             expires_at_ms: previous.expires_at_ms,
                             claimed_device_id: previous.claimed_device_id,
+                            requested_scopes: previous.requested_scopes,
                         })
                         .await?;
                     }
@@ -1220,6 +1270,7 @@ async fn claim_once(
             platform: PairingPlatform::Desktop,
             client_version: CURRENT_CLIENT_VERSION.to_string(),
             client_protocol_version: CLIENT_PROTOCOL_VERSION,
+            requested_scopes: None,
         },
     )
     .await?;
@@ -1313,8 +1364,13 @@ async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<
         .query(&[("scopeId", "books:global"), ("sinceVersion", "0")])
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -1616,13 +1672,13 @@ fn persisted_state_path() -> PathBuf {
 }
 
 pub(crate) fn desktop_state_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os("AETHON_SYNCD_DESKTOP_STATE_DIR") {
+    if let Some(path) = std::env::var_os("EPIGRAPH_SYNCD_DESKTOP_STATE_DIR") {
         return PathBuf::from(path);
     }
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("Aethon")
+        .join("Epigraph")
         .join("syncd-desktop")
 }
 
@@ -1644,8 +1700,8 @@ impl DesktopStateDirTestGuard {
         let lock = DESKTOP_STATE_DIR_ENV_MUTEX
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = std::env::var_os("AETHON_SYNCD_DESKTOP_STATE_DIR");
-        std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", path);
+        let previous = std::env::var_os("EPIGRAPH_SYNCD_DESKTOP_STATE_DIR");
+        std::env::set_var("EPIGRAPH_SYNCD_DESKTOP_STATE_DIR", path);
         Self {
             _lock: lock,
             previous,
@@ -1657,9 +1713,9 @@ impl DesktopStateDirTestGuard {
 impl Drop for DesktopStateDirTestGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {
-            std::env::set_var("AETHON_SYNCD_DESKTOP_STATE_DIR", previous);
+            std::env::set_var("EPIGRAPH_SYNCD_DESKTOP_STATE_DIR", previous);
         } else {
-            std::env::remove_var("AETHON_SYNCD_DESKTOP_STATE_DIR");
+            std::env::remove_var("EPIGRAPH_SYNCD_DESKTOP_STATE_DIR");
         }
     }
 }
@@ -1707,7 +1763,7 @@ fn local_device_name() -> String {
     std::env::var("COMPUTERNAME")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "Aethon Desktop".to_string())
+        .unwrap_or_else(|| "Epigraph Desktop".to_string())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

@@ -27,8 +27,8 @@ function cacheThumbnailUrl(scope: CoverCacheScope, manga: Manga) {
   const thumbnailUrl = manga.thumbnailUrl ?? "";
   const separator = thumbnailUrl.includes("?") ? "&" : "?";
   const marker = generation
-    ? `aethon_cover_generation=${encodeURIComponent(generation)}&aethon_cover_variant=${LIBRARY_COVER_CACHE_VARIANT}`
-    : `aethon_cover_variant=${LIBRARY_COVER_CACHE_VARIANT}`;
+    ? `epigraph_cover_generation=${encodeURIComponent(generation)}&epigraph_cover_variant=${LIBRARY_COVER_CACHE_VARIANT}`
+    : `epigraph_cover_variant=${LIBRARY_COVER_CACHE_VARIANT}`;
   return `${thumbnailUrl}${separator}${marker}`;
 }
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use axum::extract::{Request, State};
-use axum::http::header::{HeaderMap, HeaderName, AUTHORIZATION};
+use axum::http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use axum::middleware::Next;
 use axum::response::Response;
 use semver::Version;
@@ -11,9 +11,16 @@ use sqlx::Row;
 use super::db;
 use super::models::{AppError, AuthenticatedSession, SharedAppState};
 
-pub const CLIENT_VERSION_HEADER: HeaderName = HeaderName::from_static("x-aethon-client-version");
+pub const CLIENT_VERSION_HEADER: HeaderName = HeaderName::from_static("x-epigraph-client-version");
 pub const CLIENT_PROTOCOL_HEADER: HeaderName =
+    HeaderName::from_static("x-epigraph-client-protocol-version");
+pub const LEGACY_CLIENT_VERSION_HEADER: HeaderName =
+    HeaderName::from_static("x-aethon-client-version");
+pub const LEGACY_CLIENT_PROTOCOL_HEADER: HeaderName =
     HeaderName::from_static("x-aethon-client-protocol-version");
+pub const ASSET_SHA256_HEADER: HeaderName = HeaderName::from_static("x-epigraph-asset-sha256");
+pub const LEGACY_ASSET_SHA256_HEADER: HeaderName =
+    HeaderName::from_static("x-aethon-asset-sha256");
 pub const CURRENT_CLIENT_VERSION: &str = "0.1.0";
 
 pub async fn require_authenticated_session(
@@ -32,25 +39,48 @@ pub fn validate_client_headers(
     headers: &HeaderMap,
     state: &SharedAppState,
 ) -> Result<(), AppError> {
-    let client_version = headers
-        .get(CLIENT_VERSION_HEADER)
-        .ok_or_else(|| AppError::BadRequest("Missing X-Aethon-Client-Version header.".to_string()))?
+    let client_version = compatible_header(
+        headers,
+        CLIENT_VERSION_HEADER,
+        LEGACY_CLIENT_VERSION_HEADER,
+        "X-Epigraph-Client-Version",
+    )?
         .to_str()
-        .map_err(|_| AppError::BadRequest("Invalid X-Aethon-Client-Version header.".to_string()))?;
+        .map_err(|_| AppError::BadRequest("Invalid X-Epigraph-Client-Version header.".to_string()))?;
 
-    let client_protocol_version = headers
-        .get(CLIENT_PROTOCOL_HEADER)
-        .ok_or_else(|| {
-            AppError::BadRequest("Missing X-Aethon-Client-Protocol-Version header.".to_string())
-        })?
+    let client_protocol_version = compatible_header(
+        headers,
+        CLIENT_PROTOCOL_HEADER,
+        LEGACY_CLIENT_PROTOCOL_HEADER,
+        "X-Epigraph-Client-Protocol-Version",
+    )?
         .to_str()
         .map_err(|_| {
-            AppError::BadRequest("Invalid X-Aethon-Client-Protocol-Version header.".to_string())
+            AppError::BadRequest("Invalid X-Epigraph-Client-Protocol-Version header.".to_string())
         })?
         .parse::<u32>()
         .map_err(|_| AppError::BadRequest("Invalid client protocol version.".to_string()))?;
 
     validate_client_version_fields(client_version, client_protocol_version, state)
+}
+
+fn compatible_header<'a>(
+    headers: &'a HeaderMap,
+    canonical: HeaderName,
+    legacy: HeaderName,
+    display_name: &str,
+) -> Result<&'a HeaderValue, AppError> {
+    match (headers.get(canonical), headers.get(legacy)) {
+        (Some(canonical_value), Some(legacy_value)) if canonical_value != legacy_value => {
+            Err(AppError::BadRequest(format!(
+                "Conflicting {display_name} headers."
+            )))
+        }
+        (Some(value), _) | (None, Some(value)) => Ok(value),
+        (None, None) => Err(AppError::BadRequest(format!(
+            "Missing {display_name} header."
+        ))),
+    }
 }
 
 pub fn validate_client_version_fields(
@@ -327,6 +357,21 @@ mod tests {
 
         headers.insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
         assert!(validate_client_headers(&headers, &state).is_ok());
+
+        let mut legacy_headers = HeaderMap::new();
+        legacy_headers.insert(
+            LEGACY_CLIENT_VERSION_HEADER,
+            HeaderValue::from_static("0.1.0"),
+        );
+        legacy_headers.insert(
+            LEGACY_CLIENT_PROTOCOL_HEADER,
+            HeaderValue::from_static("1"),
+        );
+        assert!(validate_client_headers(&legacy_headers, &state).is_ok());
+
+        legacy_headers.insert(CLIENT_VERSION_HEADER, HeaderValue::from_static("0.1.0"));
+        legacy_headers.insert(LEGACY_CLIENT_VERSION_HEADER, HeaderValue::from_static("0.0.9"));
+        assert!(validate_client_headers(&legacy_headers, &state).is_err());
     }
 
     #[tokio::test]

@@ -37,7 +37,7 @@ describe("tracker UI flow contracts", () => {
   it("refreshes NovelReader cover resolution after Hardcover state changes", () => {
     const reader = readProjectFile("src/components/reader/NovelReader.svelte");
 
-    expect(reader).toContain('"aethon-hardcover-state-changed"');
+    expect(reader).toContain('"epigraph-hardcover-state-changed"');
     expect(reader).toContain("hardcoverStateVersion += 1");
     expect(reader).toContain("hardcoverStateVersion,");
   });

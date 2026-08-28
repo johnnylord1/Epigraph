@@ -82,7 +82,7 @@ export async function saveFlareSolverrConfig(patch: Partial<{
     enabled: patch.enabled ?? store.settings.flareSolverrEnabled,
     url: patch.url ?? store.settings.flareSolverrUrl ?? "http://localhost:8191",
     timeout: patch.timeout ?? store.settings.flareSolverrTimeout ?? 60,
-    sessionName: patch.sessionName ?? store.settings.flareSolverrSessionName ?? "aethon",
+    sessionName: patch.sessionName ?? store.settings.flareSolverrSessionName ?? "epigraph",
     sessionTtl: patch.sessionTtl ?? store.settings.flareSolverrSessionTtl ?? 15,
     fallback: patch.fallback ?? store.settings.flareSolverrFallback ?? false,
   };
@@ -118,7 +118,7 @@ async function startManagedFlareSolverrAndEnable(
     const ready = await waitForFlareSolverrEndpoint(url);
     if (!ready) throw new Error(unavailableMessage);
     const current = await invoke<FlareSolverrStartStatus>(statusCommand);
-    if (!current.endpointOwned) throw new Error("FlareSolverr is reachable, but the endpoint is not owned by this Aethon runtime.");
+    if (!current.endpointOwned) throw new Error("FlareSolverr is reachable, but the endpoint is not owned by this Epigraph runtime.");
     await saveFlareSolverrConfig({ ...configPatch, enabled: true, url, fallback: configPatch.fallback ?? true });
   } catch (error) {
     if (status.startedNow) {

@@ -361,9 +361,9 @@
       if (Number.isFinite(changedMangaId) && store.activeManga?.id !== changedMangaId) return;
       mangaTrackerStateVersion += 1;
     };
-    globalThis.addEventListener?.("aethon-tracker-state-changed", handleTrackerStateChanged);
+    globalThis.addEventListener?.("epigraph-tracker-state-changed", handleTrackerStateChanged);
     return () => {
-      globalThis.removeEventListener?.("aethon-tracker-state-changed", handleTrackerStateChanged);
+      globalThis.removeEventListener?.("epigraph-tracker-state-changed", handleTrackerStateChanged);
     };
   });
 

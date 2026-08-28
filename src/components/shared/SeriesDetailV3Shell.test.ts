@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 vi.mock("../../lib/serverLifecycle", () => ({
-  SERVER_READY_EVENT: "aethon:server-ready",
+  SERVER_READY_EVENT: "epigraph:server-ready",
 }));
 
 import SeriesDetailV3Shell from "./SeriesDetailV3Shell.svelte";
@@ -34,7 +34,7 @@ describe("SeriesDetailV3Shell", () => {
       expect(screen.getByText("Manga")).toBeTruthy();
     });
 
-    window.dispatchEvent(new CustomEvent("aethon:server-ready"));
+    window.dispatchEvent(new CustomEvent("epigraph:server-ready"));
 
     await waitFor(() => {
       expect(screen.getByAltText("Dangerous Dungeon Escape")).toBeTruthy();

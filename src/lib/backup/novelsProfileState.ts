@@ -5,12 +5,12 @@ import {
   type LocalProfileId,
 } from "../localProfiles";
 import {
-  normalizeAethonNovelsSnapshot,
-  type AethonNovelsSnapshot,
-  type RestoredAethonNovelsSnapshot,
+  normalizeEpigraphNovelsSnapshot,
+  type EpigraphNovelsSnapshot,
+  type RestoredEpigraphNovelsSnapshot,
 } from "./novelsBackup";
 
-const NOVELS_PROFILE_STATE_KEY = "aethon-novels-profile-state";
+const NOVELS_PROFILE_STATE_KEY = "epigraph-novels-profile-state";
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -34,22 +34,22 @@ export function resolveNovelsProfileScope(input: {
   return `profile:${DEFAULT_LOCAL_PROFILE_ID}`;
 }
 
-function readStateMap(storage = storageOrNull()): Record<string, AethonNovelsSnapshot> {
+function readStateMap(storage = storageOrNull()): Record<string, EpigraphNovelsSnapshot> {
   if (!storage) return {};
   const raw = storage.getItem(NOVELS_PROFILE_STATE_KEY);
   if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw) as Record<string, AethonNovelsSnapshot>;
+    const parsed = JSON.parse(raw) as Record<string, EpigraphNovelsSnapshot>;
     if (!parsed || typeof parsed !== "object") return {};
     return Object.fromEntries(
-      Object.entries(parsed).map(([scope, snapshot]) => [scope, normalizeAethonNovelsSnapshot(snapshot)]),
+      Object.entries(parsed).map(([scope, snapshot]) => [scope, normalizeEpigraphNovelsSnapshot(snapshot)]),
     );
   } catch {
     return {};
   }
 }
 
-function writeStateMap(next: Record<string, AethonNovelsSnapshot>, storage = storageOrNull()): void {
+function writeStateMap(next: Record<string, EpigraphNovelsSnapshot>, storage = storageOrNull()): void {
   if (!storage) return;
   storage.setItem(NOVELS_PROFILE_STATE_KEY, JSON.stringify(next));
 }
@@ -57,9 +57,9 @@ function writeStateMap(next: Record<string, AethonNovelsSnapshot>, storage = sto
 export function loadNovelsProfileSnapshot(
   scope: string,
   storage = storageOrNull(),
-): AethonNovelsSnapshot {
+): EpigraphNovelsSnapshot {
   const map = readStateMap(storage);
-  return normalizeAethonNovelsSnapshot(map[scope] ?? {
+  return normalizeEpigraphNovelsSnapshot(map[scope] ?? {
     entries: [],
     chapters: [],
     progress: [],
@@ -72,10 +72,10 @@ export function loadNovelsProfileSnapshot(
 
 export function saveNovelsProfileSnapshot(
   scope: string,
-  snapshot: AethonNovelsSnapshot,
+  snapshot: EpigraphNovelsSnapshot,
   storage = storageOrNull(),
-): AethonNovelsSnapshot {
-  const normalized = normalizeAethonNovelsSnapshot(snapshot);
+): EpigraphNovelsSnapshot {
+  const normalized = normalizeEpigraphNovelsSnapshot(snapshot);
   const next = readStateMap(storage);
   next[scope] = normalized;
   writeStateMap(next, storage);
@@ -84,9 +84,9 @@ export function saveNovelsProfileSnapshot(
 
 export function applyRestoredNovelsProfileSnapshot(
   scope: string,
-  restored: RestoredAethonNovelsSnapshot,
+  restored: RestoredEpigraphNovelsSnapshot,
   storage = storageOrNull(),
-): AethonNovelsSnapshot {
+): EpigraphNovelsSnapshot {
   if (restored.summary.restoredNeedsRepositoryCount > 0 || restored.summary.restoredNeedsPluginCount > 0) {
     throw new Error("Blocked novels payloads cannot be applied until repositories and plugins are available.");
   }

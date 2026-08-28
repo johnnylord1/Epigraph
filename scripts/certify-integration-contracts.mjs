@@ -38,7 +38,7 @@ run("deterministic TypeScript contracts", process.execPath, [
   "run",
   "--project",
   "unit",
-  "src/lib/aethonUpdater.test.ts",
+  "src/lib/epigraphUpdater.test.ts",
   "src/lib/releaseIntegrationContract.test.ts",
   "src/lib/trackerOAuth.test.ts",
   "src/lib/proxySettings.test.ts",
@@ -54,7 +54,7 @@ run("deterministic TypeScript contracts", process.execPath, [
   "--minWorkers=1",
 ]);
 
-if (process.env.AETHON_SKIP_SUWAYOMI_CERTIFICATION !== "1") {
+if (process.env.EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION !== "1") {
   run("Suwayomi updater certification", process.execPath, ["--test", "scripts/certify-suwayomi-release.test.mjs"]);
 } else {
   console.log("[release integrations] Suwayomi updater certification skipped by the aggregate gate (already certified separately)");

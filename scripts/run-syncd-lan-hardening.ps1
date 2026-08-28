@@ -106,9 +106,9 @@ $tmpRoot = Join-Path $projectRoot "tmp\syncd-lan-hardening"
 $mainRoot = Join-Path $tmpRoot "main-root"
 $testRoot = Join-Path $tmpRoot "test-root"
 $exitSentinel = Join-Path $tmpRoot "exit.sentinel"
-$stdoutPath = Join-Path $tmpRoot "aethon.stdout.log"
-$stderrPath = Join-Path $tmpRoot "aethon.stderr.log"
-$appBinaryPath = Join-Path $projectRoot "src-tauri\target\debug\aethon.exe"
+$stdoutPath = Join-Path $tmpRoot "epigraph.stdout.log"
+$stderrPath = Join-Path $tmpRoot "epigraph.stderr.log"
+$appBinaryPath = Join-Path $projectRoot "src-tauri\target\debug\epigraph.exe"
 
 Push-Location $projectRoot
 try {
@@ -118,15 +118,15 @@ try {
   Stop-LingeringRepoSuwayomi -ProjectRoot $projectRoot
 
   Write-Host "[lan-hardening] building desktop binary"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph
 
   Write-ServerConf -Root $mainRoot -ServerIp "0.0.0.0" -Port 4567
   Write-ServerConf -Root $testRoot -ServerIp "0.0.0.0" -Port 4667
 
   $baseEnv = @{
-    AETHON_LOCAL_SERVER_MAIN_ROOT = $mainRoot
-    AETHON_LOCAL_SERVER_TEST_ROOT = $testRoot
-    AETHON_SYNCD_PHASE_GATE_EXIT_SENTINEL = $exitSentinel
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = $mainRoot
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = $testRoot
+    EPIGRAPH_SYNCD_PHASE_GATE_EXIT_SENTINEL = $exitSentinel
   }
 
   Write-Host "[lan-hardening] verifying default startup collapses to loopback"
@@ -143,10 +143,10 @@ try {
 
   Write-Host "[lan-hardening] verifying temporary session enable + cleanup"
   $tempEnv = $baseEnv.Clone()
-  $tempEnv["AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE"] = "main"
-  $tempEnv["AETHON_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS"] = "3"
-  $tempEnv["AETHON_PHASE_GATE_TEMPORARY_LAN_HOST"] = "192.168.0.10"
-  $tempEnv["AETHON_PHASE_GATE_TEMPORARY_LAN_REASON"] = "phase-gate"
+  $tempEnv["EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_PROFILE"] = "main"
+  $tempEnv["EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS"] = "3"
+  $tempEnv["EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_HOST"] = "192.168.0.10"
+  $tempEnv["EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_REASON"] = "phase-gate"
 
   $app2 = Start-AppWithEnv `
     -ProjectRoot $projectRoot `

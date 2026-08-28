@@ -57,6 +57,7 @@ export interface SyncdHostPairingState {
   expiresAtMs: number;
   status: PairingSessionStatus;
   claimedDeviceId?: string | null;
+  requestedScopes: string[];
   bootstrapBundle: string;
   hostReady: boolean;
   error?: string | null;
@@ -166,6 +167,15 @@ export interface SyncdRuntimeIdentity {
   serverId?: string | null;
 }
 
+export interface SyncdPairedDeviceView {
+  deviceId: string;
+  deviceName: string;
+  platform: "android" | "desktop" | "unknown";
+  profileId: string;
+  grantedScopes: string[];
+  lastSeenAtMs?: number | null;
+}
+
 export interface SyncdDesktopSnapshot {
   host?: SyncdHostPairingState | null;
   connect?: SyncdConnectState | null;
@@ -213,6 +223,22 @@ export function syncdHostDecidePairing(
   decision: PairingHostDecision,
 ): Promise<SyncdHostPairingState> {
   return invoke("syncd_host_decide_pairing", { sessionId, decision });
+}
+
+export function syncdListPairedDevices(): Promise<SyncdPairedDeviceView[]> {
+  return invoke("syncd_list_paired_devices");
+}
+
+export function syncdUpdatePairedDeviceGrantedScopes(
+  deviceId: string,
+  profileId: string,
+  grantedScopes: string[],
+): Promise<SyncdPairedDeviceView> {
+  return invoke("syncd_update_paired_device_granted_scopes", {
+    deviceId,
+    profileId,
+    grantedScopes,
+  });
 }
 
 export function syncdListPersistedSyncSessions(

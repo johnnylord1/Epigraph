@@ -33,9 +33,17 @@ pub async fn get_capabilities(
         supports_novel_chapter_assets: true,
         supports_novel_plugin_sync: true,
         supports_suwayomi_proxy: true,
+        supports_causal_mutations_v3: true,
+        supports_portable_sync_v3: true,
+        supports_suwayomi_catalog: true,
+        supports_suwayomi_content: true,
+        supports_suwayomi_extension_inventory: true,
         supports_suwayomi_websocket_proxy: true,
         suwayomi_proxy_path_template:
             "/v1/suwayomi/{path}?scopeId=comics%3Aprofile%3A{pairedProfile}".to_string(),
+        comic_authority_mode: "suwayomi-confirmed-v1".to_string(),
+        supports_confirmed_suwayomi_commands_v1: true,
+        supports_sync_status_v1: true,
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()

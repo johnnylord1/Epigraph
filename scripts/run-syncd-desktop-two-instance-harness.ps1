@@ -19,7 +19,7 @@ function Remove-ProcessTree {
   }
 }
 
-function Start-AethonInstance {
+function Start-EpigraphInstance {
   param(
     [string]$Name,
     [int]$Port,
@@ -43,8 +43,8 @@ function Start-AethonInstance {
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.Environment["LOCALAPPDATA"] = $localAppData
-  $psi.Environment["AETHON_SYNCD_PORT"] = "$Port"
-  $psi.Environment["AETHON_SYNCD_DESKTOP_STATE_DIR"] = $desktopStateDir
+  $psi.Environment["EPIGRAPH_SYNCD_PORT"] = "$Port"
+  $psi.Environment["EPIGRAPH_SYNCD_DESKTOP_STATE_DIR"] = $desktopStateDir
 
   $stdoutWriter = [System.IO.StreamWriter]::new($stdoutPath, $false)
   $stderrWriter = [System.IO.StreamWriter]::new($stderrPath, $false)
@@ -94,8 +94,8 @@ $host = $null
 $joiner = $null
 
 try {
-  $host = Start-AethonInstance -Name "host" -Port 4877 -Root $hostRoot
-  $joiner = Start-AethonInstance -Name "joiner" -Port 4977 -Root $joinerRoot
+  $host = Start-EpigraphInstance -Name "host" -Port 4877 -Root $hostRoot
+  $joiner = Start-EpigraphInstance -Name "joiner" -Port 4977 -Root $joinerRoot
 
   $summary = [ordered]@{
     startedAt = (Get-Date).ToString("o")

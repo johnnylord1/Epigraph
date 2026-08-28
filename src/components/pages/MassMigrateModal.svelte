@@ -55,7 +55,7 @@
   type Step = "origin" | "target" | "review" | "migrating";
   type RuntimeStatus = "excluded" | "migrating" | "migrated" | "copied" | "failed";
 
-  const storagePrefix = "aethon-manga-mass-migration";
+  const storagePrefix = "epigraph-manga-mass-migration";
   const storageVersion = 4;
 
   interface MassMigrationDraft {

@@ -245,8 +245,8 @@ const {
     mangaSourcesMock,
     resetMangaSourcesMock,
     gqlMock: vi.fn(async (query: string, variables?: Record<string, unknown>) => {
-    if (query.includes("AethonGraphqlReady")) return { __typename: "Query" };
-    if (query.includes("AethonExtensionsReady")) return {
+    if (query.includes("EpigraphGraphqlReady")) return { __typename: "Query" };
+    if (query.includes("EpigraphExtensionsReady")) return {
       extensions: {
         nodes: mangaExtensionsMock.map((extension) => ({
           pkgName: extension.pkgName,
@@ -254,7 +254,7 @@ const {
         })),
       },
     };
-    if (query.includes("AethonSourcesReady")) return {
+    if (query.includes("EpigraphSourcesReady")) return {
       sources: {
         nodes: [{ id: "manga-src", displayName: "Manga Source" }],
       },
@@ -480,6 +480,7 @@ const {
               chapterCount: 12,
               unreadCount: 0,
               status: "ONGOING",
+              genre: variables?.type === "LATEST" ? ["Mystery"] : ["Action"],
               source: { id: "manga-src", displayName: "Manga Source" },
             },
           ],
@@ -616,7 +617,7 @@ vi.mock("../../lib/setupState", () => ({
 vi.mock("../../lib/serverLifecycle", () => ({
   ensureServerAwakeFor: ensureServerAwakeForMock,
   maybeStandbyLocalServer: vi.fn(async () => true),
-  SERVER_READY_EVENT: "aethon:server-ready",
+  SERVER_READY_EVENT: "epigraph:server-ready",
 }));
 
 vi.mock("../../lib/novels/sources", () => ({
@@ -718,12 +719,12 @@ describe("BrowseV3", () => {
 
     const searchInput = screen.getByPlaceholderText("Filter Discover...");
     await fireEvent.focus(searchInput);
-    expect(document.body.className).not.toContain("aethon-browse-search-engaged");
+    expect(document.body.className).not.toContain("epigraph-browse-search-engaged");
     await fireEvent.blur(searchInput);
-    expect(document.body.className).not.toContain("aethon-browse-search-engaged");
+    expect(document.body.className).not.toContain("epigraph-browse-search-engaged");
 
     await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
-    expect(document.body.className).not.toContain("aethon-browse-search-engaged");
+    expect(document.body.className).not.toContain("epigraph-browse-search-engaged");
 
     await waitFor(() => {
       expect(screen.getByText("Manage extensions")).toBeTruthy();
@@ -753,7 +754,7 @@ describe("BrowseV3", () => {
     expect(focusHandler).toContain("function openBrowseSearchPalette(query: string)");
     expect(focusHandler).toContain('if (activeBrowseTab !== "keyword" || !query.trim()) return');
     expect(focusHandler).toContain('browseSurface: "keyword"');
-    expect(focusHandler).not.toContain('document.body.classList.add("aethon-browse-search-engaged")');
+    expect(focusHandler).not.toContain('document.body.classList.add("epigraph-browse-search-engaged")');
   });
 
   test("keeps one independent horizontal result state per installed source", async () => {
@@ -1001,7 +1002,7 @@ describe("BrowseV3", () => {
 
     await fireEvent.click(screen.getByTitle("Install APK file"));
     await waitFor(() => {
-      expect(screen.getByText("Choose a local `.apk` extension package. Aethon will install it through the same extension manager used by repository installs.")).toBeTruthy();
+      expect(screen.getByText("Choose a local `.apk` extension package. Epigraph will install it through the same extension manager used by repository installs.")).toBeTruthy();
     });
 
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
@@ -1063,7 +1064,7 @@ describe("BrowseV3", () => {
       new Error("Suwayomi returned an empty GraphQL error."),
     );
 
-    window.dispatchEvent(new CustomEvent("aethon:server-ready"));
+    window.dispatchEvent(new CustomEvent("epigraph:server-ready"));
 
     await waitFor(() => {
       expect(screen.getByText("MangaDex")).toBeTruthy();
@@ -1181,7 +1182,7 @@ describe("BrowseV3", () => {
 
     try {
       render(BrowseV3);
-      await vi.advanceTimersByTimeAsync(1_900);
+      await vi.advanceTimersByTimeAsync(550);
       await tick();
       await vi.advanceTimersByTimeAsync(120);
 

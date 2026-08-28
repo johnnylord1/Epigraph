@@ -2,7 +2,7 @@
   "version": 1,
   "environment": "Tauri v2 / WebView2 / disposable profile / fake local Core",
   "build": {
-    "app": "src-tauri/target/release/aethon.exe",
+    "app": "src-tauri/target/release/epigraph.exe",
     "sha256": "f95ea1d81913d4ad2f52b3568498618393305bc448d339f0c52f9747109de89c",
     "commit": "1d3f9d51005fc8839711871964f2a423ffda72af",
     "dirty": true

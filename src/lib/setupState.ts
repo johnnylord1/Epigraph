@@ -146,7 +146,7 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
   switch (state.kind) {
     case "server_offline":
       return {
-        title: surface === "home" ? "Aethon can't reach Suwayomi yet" : "Suwayomi isn't reachable right now",
+        title: surface === "home" ? "Epigraph can't reach Suwayomi yet" : "Suwayomi isn't reachable right now",
         body: "The app is running, but the server is unavailable, so extensions, sources, and search can't load yet.",
         actions: [{ kind: "retry_connection", label: "Retry connection" }],
       };
@@ -171,7 +171,7 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
           ? " Helper extensions like the Suwayomi bridge do not unlock content browsing on their own."
           : "";
       return {
-        title: surface === "extensions" ? "Install your first content extension" : "Aethon still needs a content extension",
+        title: surface === "extensions" ? "Install your first content extension" : "Epigraph still needs a content extension",
         body: `A repository is configured, but there is still no installed content extension. Install one extension before search and browsing will feel useful.${helperHint}`,
         actions: surface === "extensions"
           ? [{ kind: "browse_available_extensions", label: "Browse available extensions" }]
@@ -184,7 +184,7 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
         : "";
       return {
         title: surface === "search" ? "Search isn't ready to use yet" : "No usable sources are available yet",
-        body: `Aethon can see installed extensions, but there are still no usable sources for browsing or search.${filterHint}`,
+        body: `Epigraph can see installed extensions, but there are still no usable sources for browsing or search.${filterHint}`,
         actions: surface === "extensions"
           ? [{ kind: "browse_available_extensions", label: "Browse available extensions" }]
           : [{ kind: "open_extensions", label: "Open Extensions" }],
@@ -194,7 +194,7 @@ export function getSetupStatePresentation(state: SetupState, surface: SetupSurfa
     default:
       return {
         title: "Setup complete",
-        body: "Aethon is configured enough for normal use.",
+        body: "Epigraph is configured enough for normal use.",
         actions: [],
       };
   }

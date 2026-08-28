@@ -2,7 +2,6 @@ use serde::Serialize;
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -17,6 +16,7 @@ use tauri_plugin_shell::ShellExt;
 
 use crate::syncd::config::SyncdOwnershipMode;
 use crate::syncd::models::SyncdDiscoveryDescriptor;
+use crate::syncd::network::detect_lan_ip;
 use crate::syncd::runtime_manifest::{
     read_runtime_manifest, runtime_manifest_path, SyncdRuntimeManifest,
 };
@@ -128,6 +128,11 @@ pub fn maybe_install_exit_sentinel(app: &AppHandle) {
             tick.tick().await;
             if path.exists() {
                 let _ = fs::remove_file(&path);
+                // The phase-gate process owns an ephemeral Core. Shut that
+                // child down before asking Tauri to exit instead of relying
+                // solely on RunEvent::Exit, which can race the WebView
+                // teardown on Windows and leave epigraph-syncd alive.
+                shutdown(&app);
                 app.exit(0);
                 break;
             }
@@ -144,7 +149,7 @@ pub async fn maybe_spawn_for_phase_gate(app: &AppHandle) -> Result<(), String> {
         data_dir: phase_gate_data_dir(),
         bind_host: phase_gate_bind_host(),
         port: phase_gate_port(),
-        advertised_base_url: std::env::var("AETHON_SYNCD_ADVERTISED_BASE_URL")
+        advertised_base_url: std::env::var("EPIGRAPH_SYNCD_ADVERTISED_BASE_URL")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
@@ -197,14 +202,72 @@ pub async fn ensure_host_mode(app: &AppHandle) -> Result<SyncdRuntimeInfo, Strin
         return ensure_for_desktop(app, SyncdLaunchMode::Loopback).await;
     }
 
-    let lan_ip = detect_lan_ip()?;
-    ensure_for_desktop(
-        app,
-        SyncdLaunchMode::LanHost {
-            advertised_base_url: format!("https://{}:{}", lan_ip, phase_gate_port()),
-        },
-    )
-    .await
+    match detect_lan_ip() {
+        Ok(lan_ip) => {
+            ensure_for_desktop(
+                app,
+                SyncdLaunchMode::LanHost {
+                    advertised_base_url: format!("https://{}:{}", lan_ip, phase_gate_port()),
+                },
+            )
+            .await
+        }
+        Err(_) => ensure_for_desktop(app, SyncdLaunchMode::Loopback).await,
+    }
+}
+
+/// Reattach the desktop UI to an already-initialized local Core without making
+/// first-run users start the service before they choose to pair a device.
+pub fn attach_existing_host_in_background(app: &AppHandle) {
+    // Phase gates own an ephemeral Core with an isolated data directory. Do
+    // not reattach the user's persistent Core while a gate is running: doing
+    // so races the gate's migrations and can terminate the ephemeral child.
+    if phase_gate_autostart_enabled() {
+        return;
+    }
+
+    let data_dir = desktop_syncd_data_dir();
+    if !has_persisted_core_identity(&data_dir) {
+        return;
+    }
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        match ensure_host_mode(&app).await {
+            Ok(_) => {
+                // `setup()` also starts the replication bootstrap, but the Core
+                // reattachment deliberately happens in the background.  On a
+                // normal desktop restart the first bootstrap can therefore run
+                // before `SyncdState` contains the persistent runtime and skip
+                // creation of the local-authority session entirely.  Repeat the
+                // idempotent bootstrap after the runtime is attached so books,
+                // novel dependencies, and reader state are published without
+                // requiring the user to reopen the pairing screen.
+                let replication_state = app
+                    .state::<crate::syncd_replication::SyncdReplicationState>()
+                    .inner()
+                    .clone();
+                if let Err(error) =
+                    crate::syncd_replication::bootstrap_runtime(app.clone(), replication_state)
+                        .await
+                {
+                    tracing::warn!(
+                        %error,
+                        "failed to bootstrap replication after reattaching Epigraph Core"
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to reattach the persisted Epigraph Core host");
+            }
+        }
+    });
+}
+
+fn has_persisted_core_identity(data_dir: &Path) -> bool {
+    data_dir.join("syncd.sqlite").is_file()
+        && data_dir.join("cert.pem").is_file()
+        && data_dir.join("key.pem").is_file()
 }
 
 fn automation_mode_enabled() -> bool {
@@ -237,9 +300,7 @@ pub fn shutdown(app: &AppHandle) {
                     &running.log_path,
                     &format!("[{}] ephemeral shutdown requested by app", running.pid),
                 );
-                if let Some(child) = running.child {
-                    let _ = child.kill();
-                }
+                terminate_ephemeral_syncd(running.child, running.pid);
             }
             SyncdOwnershipMode::PersistentAttached => {
                 let _ = append_line(
@@ -303,9 +364,7 @@ async fn ensure_spawned(
             let stale = state.runtime.lock().unwrap().take();
             if let Some(stale) = stale {
                 if stale.ownership == SyncdOwnershipMode::EphemeralOwned {
-                    if let Some(child) = stale.child {
-                        let _ = child.kill();
-                    }
+                    terminate_ephemeral_syncd(stale.child, stale.pid);
                 }
             }
         } else {
@@ -318,9 +377,7 @@ async fn ensure_spawned(
                             .to_string(),
                     );
                 }
-                if let Some(child) = existing.child {
-                    let _ = child.kill();
-                }
+                terminate_ephemeral_syncd(existing.child, existing.pid);
             }
         }
     }
@@ -346,26 +403,46 @@ async fn ensure_spawned(
 
     let command = app
         .shell()
-        .sidecar("aethon-syncd")
-        .map_err(|err| format!("failed to create syncd sidecar command: {err}"))?
+        .sidecar("epigraph-syncd")
+        .or_else(|canonical_error| {
+            app.shell().sidecar("aethon-syncd").map_err(|legacy_error| {
+                format!(
+                    "failed to create Epigraph syncd sidecar ({canonical_error}); legacy Aethon sidecar also unavailable ({legacy_error})"
+                )
+            })
+        })?
+        .env("EPIGRAPH_SYNCD_DATA_DIR", &request.data_dir)
         .env("AETHON_SYNCD_DATA_DIR", &request.data_dir)
+        .env("EPIGRAPH_SYNCD_BIND_HOST", &request.bind_host)
         .env("AETHON_SYNCD_BIND_HOST", &request.bind_host)
+        .env("EPIGRAPH_SYNCD_PORT", request.port.to_string())
         .env("AETHON_SYNCD_PORT", request.port.to_string())
+        .env("EPIGRAPH_SYNCD_OWNERSHIP", request.ownership.as_env_value())
         .env("AETHON_SYNCD_OWNERSHIP", request.ownership.as_env_value())
         .env(
-            "AETHON_SYNCD_ENABLE_AUDIT_ROUTES",
+            "EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES",
             if request.enable_audit_routes {
                 "1"
             } else {
                 "0"
             },
         )
+        .env(
+            "AETHON_SYNCD_ENABLE_AUDIT_ROUTES",
+            if request.enable_audit_routes { "1" } else { "0" },
+        )
+        .env("EPIGRAPH_SYNCD_ADVERTISED_BASE_URL", &advertised_base_url)
         .env("AETHON_SYNCD_ADVERTISED_BASE_URL", &advertised_base_url)
+        .env("EPIGRAPH_SYNCD_DISCOVERY_PROVIDER", "lan-publication")
         .env("AETHON_SYNCD_DISCOVERY_PROVIDER", "lan-publication")
+        .env("EPIGRAPH_SYNCD_MANUAL_PROVIDER", "disabled")
         .env("AETHON_SYNCD_MANUAL_PROVIDER", "disabled")
+        .env("EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY", "advertised-only")
         .env("AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY", "advertised-only");
     let command = if request.ownership == SyncdOwnershipMode::EphemeralOwned {
-        command.env("AETHON_SYNCD_PARENT_PID", std::process::id().to_string())
+        command
+            .env("EPIGRAPH_SYNCD_PARENT_PID", std::process::id().to_string())
+            .env("AETHON_SYNCD_PARENT_PID", std::process::id().to_string())
     } else {
         command
     };
@@ -379,7 +456,7 @@ async fn ensure_spawned(
     let running = match request.ownership {
         SyncdOwnershipMode::EphemeralOwned => {
             if let Err(err) = wait_for_ready(&local_base_url).await {
-                let _ = child.kill();
+                terminate_ephemeral_syncd(Some(child), pid);
                 return Err(format!("syncd sidecar failed readiness probe: {err}"));
             }
             let host_mode = request.bind_host != "127.0.0.1";
@@ -417,6 +494,23 @@ async fn ensure_spawned(
     Ok(info)
 }
 
+/// Stop an ephemeral sidecar through both ownership handles available on
+/// Windows. The shell plugin handle can disappear during WebView teardown,
+/// while the PID remains alive; the direct process fallback prevents phase
+/// gates and failed starts from leaking a Core process.
+fn terminate_ephemeral_syncd(child: Option<CommandChild>, pid: u32) {
+    if let Some(child) = child {
+        let _ = child.kill();
+    }
+
+    let process_pid = Pid::from_u32(pid);
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::Some(&[process_pid]), true);
+    if let Some(process) = system.process(process_pid) {
+        let _ = process.kill();
+    }
+}
+
 fn runtime_info_from_running(running: &RunningSyncd) -> SyncdRuntimeInfo {
     SyncdRuntimeInfo {
         pid: running.pid,
@@ -437,13 +531,18 @@ fn runtime_info_from_running(running: &RunningSyncd) -> SyncdRuntimeInfo {
 fn runtime_matches_request(runtime: &SyncdRuntimeInfo, request: &SpawnRequest) -> bool {
     if runtime.ownership != request.ownership
         || runtime.bind_host != request.bind_host
-        || runtime.port != request.port
         || !paths_identical(Path::new(&runtime.data_dir), &request.data_dir)
     {
         return false;
     }
     if request.ownership == SyncdOwnershipMode::PersistentAttached {
+        // A persistent Core may have selected a different free port during an earlier launch.
+        // Its live manifest plus process/server/certificate identity is authoritative; forcing
+        // the default launch port here prevents the desktop from reattaching after a restart.
         return true;
+    }
+    if runtime.port != request.port {
+        return false;
     }
     runtime.advertised_base_url
         == request
@@ -493,13 +592,6 @@ async fn validate_existing_persistent_runtime(
         Ok(manifest) => manifest,
         Err(error) => return Err(error),
     };
-
-    if manifest.port != request.port {
-        return Err(format!(
-            "persistent syncd runtime port {} does not match requested port {}",
-            manifest.port, request.port
-        ));
-    }
 
     if !runtime_process_matches(&manifest)? {
         let _ = fs::remove_file(runtime_manifest_path(&request.data_dir));
@@ -708,54 +800,42 @@ fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn detect_lan_ip() -> Result<IpAddr, String> {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).map_err(|err| err.to_string())?;
-    socket
-        .connect((Ipv4Addr::new(8, 8, 8, 8), 80))
-        .map_err(|err| err.to_string())?;
-    let ip = socket.local_addr().map_err(|err| err.to_string())?.ip();
-    if ip.is_loopback() || ip.is_unspecified() {
-        return Err("failed to resolve a LAN-reachable local IP address".to_string());
-    }
-    Ok(ip)
-}
-
 fn phase_gate_autostart_enabled() -> bool {
-    std::env::var("AETHON_SYNCD_PHASE_GATE_AUTOSTART").as_deref() == Ok("1")
+    std::env::var("EPIGRAPH_SYNCD_PHASE_GATE_AUTOSTART").as_deref() == Ok("1")
 }
 
 fn audit_routes_flag() -> bool {
-    std::env::var("AETHON_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1")
+    std::env::var("EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1")
 }
 
 fn phase_gate_status_path() -> Option<PathBuf> {
-    std::env::var_os("AETHON_SYNCD_PHASE_GATE_STATUS_PATH").map(PathBuf::from)
+    std::env::var_os("EPIGRAPH_SYNCD_PHASE_GATE_STATUS_PATH").map(PathBuf::from)
 }
 
 fn phase_gate_exit_sentinel() -> Option<PathBuf> {
-    std::env::var_os("AETHON_SYNCD_PHASE_GATE_EXIT_SENTINEL").map(PathBuf::from)
+    std::env::var_os("EPIGRAPH_SYNCD_PHASE_GATE_EXIT_SENTINEL").map(PathBuf::from)
 }
 
 fn phase_gate_data_dir() -> PathBuf {
-    std::env::var_os("AETHON_SYNCD_DATA_DIR")
+    std::env::var_os("EPIGRAPH_SYNCD_DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("aethon").join("syncd-phase-gate"))
+        .unwrap_or_else(|| std::env::temp_dir().join("epigraph").join("syncd-phase-gate"))
 }
 
 fn desktop_syncd_data_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")))
-        .join("Aethon")
+        .join("Epigraph")
         .join("syncd")
 }
 
 fn phase_gate_bind_host() -> String {
-    std::env::var("AETHON_SYNCD_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
+    std::env::var("EPIGRAPH_SYNCD_BIND_HOST").unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
 fn phase_gate_port() -> u16 {
-    std::env::var("AETHON_SYNCD_PORT")
+    std::env::var("EPIGRAPH_SYNCD_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(DEFAULT_SYNCD_PORT)
@@ -774,7 +854,7 @@ mod tests {
 
     fn request(ownership: SyncdOwnershipMode) -> SpawnRequest {
         SpawnRequest {
-            data_dir: PathBuf::from(r"C:\temp\aethon-syncd"),
+            data_dir: PathBuf::from(r"C:\temp\epigraph-syncd"),
             bind_host: "0.0.0.0".to_string(),
             port: 4777,
             advertised_base_url: Some("https://192.168.1.20:4777".to_string()),
@@ -816,10 +896,10 @@ mod tests {
             port: 4777,
             host_mode: true,
             ownership: SyncdOwnershipMode::PersistentAttached,
-            data_dir: r"C:\temp\aethon-syncd".to_string(),
-            db_path: r"C:\temp\aethon-syncd\syncd.sqlite".to_string(),
-            cert_path: r"C:\temp\aethon-syncd\cert.pem".to_string(),
-            log_path: r"C:\temp\aethon-syncd\syncd-sidecar.log".to_string(),
+            data_dir: r"C:\temp\epigraph-syncd".to_string(),
+            db_path: r"C:\temp\epigraph-syncd\syncd.sqlite".to_string(),
+            cert_path: r"C:\temp\epigraph-syncd\cert.pem".to_string(),
+            log_path: r"C:\temp\epigraph-syncd\syncd-sidecar.log".to_string(),
         };
 
         assert!(runtime_matches_request(
@@ -829,6 +909,19 @@ mod tests {
         assert!(!runtime_matches_request(
             &runtime,
             &request(SyncdOwnershipMode::EphemeralOwned)
+        ));
+
+        let mut restarted_request = request(SyncdOwnershipMode::PersistentAttached);
+        restarted_request.port = 4779;
+        assert!(runtime_matches_request(&runtime, &restarted_request));
+
+        let mut ephemeral_on_another_port = request(SyncdOwnershipMode::EphemeralOwned);
+        ephemeral_on_another_port.port = 4779;
+        let mut ephemeral_runtime = runtime;
+        ephemeral_runtime.ownership = SyncdOwnershipMode::EphemeralOwned;
+        assert!(!runtime_matches_request(
+            &ephemeral_runtime,
+            &ephemeral_on_another_port
         ));
     }
 
@@ -844,10 +937,10 @@ mod tests {
             port: 4777,
             host_mode: true,
             ownership: SyncdOwnershipMode::PersistentAttached,
-            data_dir: r"C:\temp\aethon-syncd".to_string(),
-            db_path: r"C:\temp\aethon-syncd\syncd.sqlite".to_string(),
-            cert_path: r"C:\temp\aethon-syncd\cert.pem".to_string(),
-            log_path: r"C:\temp\aethon-syncd\syncd-sidecar.log".to_string(),
+            data_dir: r"C:\temp\epigraph-syncd".to_string(),
+            db_path: r"C:\temp\epigraph-syncd\syncd.sqlite".to_string(),
+            cert_path: r"C:\temp\epigraph-syncd\cert.pem".to_string(),
+            log_path: r"C:\temp\epigraph-syncd\syncd-sidecar.log".to_string(),
         };
         let validated = |pid, server_id: &str| ValidatedPersistentRuntime {
             manifest: SyncdRuntimeManifest::new(

@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $tauriDriver = Join-Path $HOME ".cargo\bin\tauri-driver.exe"
-$appPath = if ($App) { $App } else { Join-Path $projectRoot "src-tauri\target\release\aethon.exe" }
+$appPath = if ($App) { $App } else { Join-Path $projectRoot "src-tauri\target\release\epigraph.exe" }
 
 function Get-FreePort {
   $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -21,7 +21,7 @@ function Get-FreePort {
 function Resolve-EdgeDriver {
   $candidates = [System.Collections.Generic.List[string]]::new()
   if ($NativeDriver) { $candidates.Add($NativeDriver) }
-  if ($env:AETHON_EDGE_DRIVER) { $candidates.Add($env:AETHON_EDGE_DRIVER) }
+  if ($env:EPIGRAPH_EDGE_DRIVER) { $candidates.Add($env:EPIGRAPH_EDGE_DRIVER) }
   $command = Get-Command "msedgedriver.exe" -ErrorAction SilentlyContinue
   if ($command -and $command.Source) { $candidates.Add($command.Source) }
   $wingetRoot = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
@@ -34,7 +34,7 @@ function Resolve-EdgeDriver {
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path $candidate)) { return (Resolve-Path $candidate).Path }
   }
-  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set AETHON_EDGE_DRIVER."
+  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set EPIGRAPH_EDGE_DRIVER."
 }
 
 if (-not (Test-Path $tauriDriver)) { throw "tauri-driver was not found at $tauriDriver" }
@@ -63,13 +63,13 @@ $completed = $false
 
 try {
   if ($ShowWindow) {
-    $env:AETHON_WEBDRIVER_SHOW_WINDOW = "1"
-    if (-not $env:AETHON_WEBDRIVER_WINDOW_X) { $env:AETHON_WEBDRIVER_WINDOW_X = "1980" }
-    if (-not $env:AETHON_WEBDRIVER_WINDOW_Y) { $env:AETHON_WEBDRIVER_WINDOW_Y = "80" }
-    if (-not $env:AETHON_WEBDRIVER_WINDOW_WIDTH) { $env:AETHON_WEBDRIVER_WINDOW_WIDTH = "1280" }
-    if (-not $env:AETHON_WEBDRIVER_WINDOW_HEIGHT) { $env:AETHON_WEBDRIVER_WINDOW_HEIGHT = "800" }
+    $env:EPIGRAPH_WEBDRIVER_SHOW_WINDOW = "1"
+    if (-not $env:EPIGRAPH_WEBDRIVER_WINDOW_X) { $env:EPIGRAPH_WEBDRIVER_WINDOW_X = "1980" }
+    if (-not $env:EPIGRAPH_WEBDRIVER_WINDOW_Y) { $env:EPIGRAPH_WEBDRIVER_WINDOW_Y = "80" }
+    if (-not $env:EPIGRAPH_WEBDRIVER_WINDOW_WIDTH) { $env:EPIGRAPH_WEBDRIVER_WINDOW_WIDTH = "1280" }
+    if (-not $env:EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT) { $env:EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT = "800" }
   } else {
-    Remove-Item Env:AETHON_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
+    Remove-Item Env:EPIGRAPH_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
   }
   $driverStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
   $driverStartInfo.FileName = $tauriDriver
@@ -96,8 +96,8 @@ try {
   $nodeScriptPath = Join-Path $scriptDir $NodeScript
   if (-not (Test-Path $nodeScriptPath)) { throw "Native smoke script was not found at $nodeScriptPath" }
   $nodeArguments = @($nodeScriptPath, "--driver-url=$driverUrl", "--app=$appPath")
-  if ($NodeScript -eq "smoke-native-viewports.mjs" -and $env:AETHON_NATIVE_SMOKE_OUTPUT_DIR) {
-    $nodeArguments += "--out=$env:AETHON_NATIVE_SMOKE_OUTPUT_DIR"
+  if ($NodeScript -eq "smoke-native-viewports.mjs" -and $env:EPIGRAPH_NATIVE_SMOKE_OUTPUT_DIR) {
+    $nodeArguments += "--out=$env:EPIGRAPH_NATIVE_SMOKE_OUTPUT_DIR"
   }
   & node @nodeArguments
   if ($LASTEXITCODE -ne 0) { throw "Native viewport smoke failed" }

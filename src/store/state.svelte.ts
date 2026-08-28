@@ -633,7 +633,7 @@ export const DEFAULT_SETTINGS: Settings = {
   flareSolverrEnabled:    false,
   flareSolverrUrl:        "http://localhost:8191",
   flareSolverrTimeout:    60,
-  flareSolverrSessionName: "aethon",
+  flareSolverrSessionName: "epigraph",
   flareSolverrSessionTtl: 15,
   flareSolverrFallback:   false,
   flareSolverrLocalAutoStart: false,
@@ -852,7 +852,7 @@ function cloneDefaultSettings(): Settings {
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 const STORE_VERSION = 7;
-const STORE_KEY = "aethon-store";
+const STORE_KEY = "epigraph-store";
 
 // Fields reset to their DEFAULT_SETTINGS value on each version bump.
 // Add a key here whenever its default changes meaning between releases.
@@ -1344,12 +1344,12 @@ function normalizePrimaryNavPage(savedNavPage: unknown): Exclude<NavPage, "setti
 function clearSearchEngagedBodyClasses() {
   if (typeof document === "undefined") return;
   document.body.classList.remove(
-    "aethon-settings-search-engaged",
-    "aethon-home-search-engaged",
-    "aethon-library-search-engaged",
-    "aethon-browse-search-engaged",
-    "aethon-downloads-search-engaged",
-    "aethon-search-engaged",
+    "epigraph-settings-search-engaged",
+    "epigraph-home-search-engaged",
+    "epigraph-library-search-engaged",
+    "epigraph-browse-search-engaged",
+    "epigraph-downloads-search-engaged",
+    "epigraph-search-engaged",
   );
 }
 
@@ -2269,7 +2269,7 @@ class Store {
       document
         .querySelectorAll(".n-search.is-search-focus-restored")
         .forEach((element) => element.classList.remove("is-search-focus-restored"));
-      document.body.classList.add("aethon-search-engaged");
+      document.body.classList.add("epigraph-search-engaged");
     }
   }
   disengageSearch() {

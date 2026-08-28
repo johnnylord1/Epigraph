@@ -86,7 +86,7 @@ describe("SplashScreen", () => {
         mode: "loading",
         failed: true,
         failureTitle: "Could not reach server",
-        failureDetail: "Aethon couldn't reach the selected local profile.",
+        failureDetail: "Epigraph couldn't reach the selected local profile.",
         showCards: false,
       },
     });

@@ -175,13 +175,13 @@ async function setAuditBookReadingState(input: {
 async function exportAuditBooksBackupToPath(path: string) {
   await assertWebdriverAutomation();
   const profileId = store.runtimeResolvedLocalProfileId;
-  const [{ reloadBookLibraryState }, { buildAethonBooksBackupContainer, buildAethonBooksSnapshotFromLibraryState }] = await Promise.all([
+  const [{ reloadBookLibraryState }, { buildEpigraphBooksBackupContainer, buildEpigraphBooksSnapshotFromLibraryState }] = await Promise.all([
     import("../books/libraryState"),
     import("../backup/booksBackup"),
   ]);
   const state = await reloadBookLibraryState({ profileId });
-  const container = await buildAethonBooksBackupContainer(
-    buildAethonBooksSnapshotFromLibraryState(state),
+  const container = await buildEpigraphBooksBackupContainer(
+    buildEpigraphBooksSnapshotFromLibraryState(state),
     { exportMode: "full", sourceProfileId: profileId },
   );
   const writtenPath = await invoke<string>("write_file_base64", {
@@ -200,12 +200,12 @@ async function exportAuditBooksBackupToPath(path: string) {
 
 async function restoreAuditBooksBackupFromPath(path: string) {
   await assertWebdriverAutomation();
-  const [{ restoreAethonBooksPayload }, { saveBookLibraryState }] = await Promise.all([
+  const [{ restoreEpigraphBooksPayload }, { saveBookLibraryState }] = await Promise.all([
     import("../backup/booksBackup"),
     import("../books/libraryState"),
   ]);
   const bytes = await readFileAsArrayBuffer(path);
-  const restored = await restoreAethonBooksPayload(bytes);
+  const restored = await restoreEpigraphBooksPayload(bytes);
   const profileId = store.runtimeResolvedLocalProfileId;
   const saved = await saveBookLibraryState({
     version: 1,
@@ -249,7 +249,7 @@ async function mutateSyncdAuditBookFixture(input?: {
         {
           id: AUDIT_SYNCD_BOOK_ID,
           title: "Audit Sync Book",
-          author: "Aethon",
+          author: "Epigraph",
           description: "Automation-only sync replication fixture.",
           coverPath: null,
           subtype: "epub" as const,
@@ -350,7 +350,7 @@ async function mutateSyncdAuditNovelFixture(input?: {
     title: "Audit Sync Novel",
     path: AUDIT_SYNCD_NOVEL_PATH,
     coverUrl: null,
-    author: "Aethon",
+    author: "Epigraph",
     description: "Automation-only sync replication fixture.",
     status: "ongoing",
     tags: ["audit", "syncd"],

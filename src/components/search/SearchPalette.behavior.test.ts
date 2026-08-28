@@ -99,7 +99,7 @@ import { store } from "../../store/state.svelte";
 const comic = {
   id: 17,
   title: "Moon Reader",
-  author: "Aethon Press",
+  author: "Epigraph Press",
   thumbnailUrl: "",
   genre: ["Fantasy"],
   inLibrary: true,
@@ -108,7 +108,7 @@ const comic = {
 const book = {
   id: "book-index",
   title: "Index Book",
-  author: "Aethon Press",
+  author: "Epigraph Press",
   subtype: "pdf",
   coverPath: null,
   genres: ["Fantasy"],
@@ -172,7 +172,7 @@ describe("SearchPalette behavior", () => {
     store.openSearchPalette("home", " ");
 
     expect(store.searchOpen).toBe(false);
-    expect(document.body.classList.contains("aethon-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("epigraph-search-engaged")).toBe(false);
   });
 
   test("shows the dim while engaged without rendering the palette", () => {
@@ -181,13 +181,13 @@ describe("SearchPalette behavior", () => {
 
     expect(store.searchEngaged).toBe(true);
     expect(store.searchOpen).toBe(false);
-    expect(document.body.classList.contains("aethon-search-engaged")).toBe(true);
+    expect(document.body.classList.contains("epigraph-search-engaged")).toBe(true);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("status").textContent).toMatch(/type a title to search/i);
 
     store.disengageSearch();
     expect(store.searchEngaged).toBe(false);
-    expect(document.body.classList.contains("aethon-search-engaged")).toBe(false);
+    expect(document.body.classList.contains("epigraph-search-engaged")).toBe(false);
   });
 
   test("keeps one polite live region while moving from empty to no results", async () => {
@@ -215,7 +215,7 @@ describe("SearchPalette behavior", () => {
     await waitFor(() => {
       expect(store.searchOpen).toBe(false);
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(document.body.classList.contains("aethon-search-engaged")).toBe(false);
+      expect(document.body.classList.contains("epigraph-search-engaged")).toBe(false);
       expect(document.activeElement).toBe(origin);
       expect(origin.closest(".n-search")?.classList.contains("is-search-focus-restored")).toBe(true);
     });
@@ -238,7 +238,7 @@ describe("SearchPalette behavior", () => {
       expect(store.searchOpen).toBe(false);
       expect(store.searchEngaged).toBe(true);
       expect(screen.queryByRole("dialog")).toBeNull();
-      expect(document.body.classList.contains("aethon-search-engaged")).toBe(true);
+      expect(document.body.classList.contains("epigraph-search-engaged")).toBe(true);
       expect(document.activeElement).toBe(origin);
     });
 
@@ -246,7 +246,7 @@ describe("SearchPalette behavior", () => {
 
     await waitFor(() => {
       expect(store.searchEngaged).toBe(false);
-      expect(document.body.classList.contains("aethon-search-engaged")).toBe(false);
+      expect(document.body.classList.contains("epigraph-search-engaged")).toBe(false);
       expect(document.activeElement).not.toBe(origin);
     });
   });

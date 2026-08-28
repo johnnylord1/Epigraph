@@ -74,7 +74,7 @@ function Assert-Status {
   }
 }
 
-function Start-AethonPhaseGateApp {
+function Start-EpigraphPhaseGateApp {
   param(
     [string]$ProjectRoot,
     [string]$AppBinaryPath,
@@ -87,13 +87,18 @@ function Start-AethonPhaseGateApp {
   )
 
   $envMap = @{
-    AETHON_SYNCD_PHASE_GATE_AUTOSTART = "1"
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $DataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $Port
-    AETHON_SYNCD_PHASE_GATE_STATUS_PATH = $StatusPath
-    AETHON_SYNCD_PHASE_GATE_EXIT_SENTINEL = $ExitSentinelPath
+    EPIGRAPH_SYNCD_PHASE_GATE_AUTOSTART = "1"
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $DataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $Port
+    EPIGRAPH_SYNCD_PHASE_GATE_STATUS_PATH = $StatusPath
+    EPIGRAPH_SYNCD_PHASE_GATE_EXIT_SENTINEL = $ExitSentinelPath
+    # Keep any Suwayomi runtime touched by the desktop phase gate isolated
+    # from the user's persistent profile. This prevents a test JVM from
+    # locking the bundled JRE or being mistaken for the user's instance.
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
 
   if (Test-Path $StatusPath) { Remove-Item $StatusPath -Force }
@@ -118,7 +123,7 @@ function Start-AethonPhaseGateApp {
   }
 }
 
-function Stop-AethonPhaseGateApp {
+function Stop-EpigraphPhaseGateApp {
   param(
     $Process,
     [string]$ExitSentinelPath,
@@ -126,10 +131,16 @@ function Stop-AethonPhaseGateApp {
   )
 
   New-Item -ItemType File -Force -Path $ExitSentinelPath | Out-Null
-  if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
-    Stop-Process -Id $Process.Id -Force
-    throw "Aethon phase-gate app did not exit after sentinel request"
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if ($Process.HasExited -or -not (Get-Process -Id $Process.Id -ErrorAction SilentlyContinue)) {
+      return
+    }
+    Start-Sleep -Milliseconds 250
   }
+
+  Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  throw "Epigraph phase-gate app did not exit after sentinel request"
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -137,10 +148,15 @@ $tmpRoot = Join-Path $projectRoot "tmp\syncd-phase-gate"
 $dataDir = Join-Path $tmpRoot "data"
 $statusPath = Join-Path $tmpRoot "status.json"
 $exitSentinel = Join-Path $tmpRoot "exit.sentinel"
-$stdoutPath = Join-Path $tmpRoot "aethon.stdout.log"
-$stderrPath = Join-Path $tmpRoot "aethon.stderr.log"
+$stdoutPath = Join-Path $tmpRoot "epigraph.stdout.log"
+$stderrPath = Join-Path $tmpRoot "epigraph.stderr.log"
 $port = "47771"
-$appBinaryPath = Join-Path $projectRoot "src-tauri\target\debug\aethon.exe"
+# Keep the phase-gate desktop binary in an isolated target directory. A normal
+# development desktop may be open while this audit runs, and Windows keeps its
+# executable locked; sharing src-tauri\target\debug would make the audit fail
+# before it can exercise the Core.
+$phaseGateTargetDir = Join-Path $tmpRoot "cargo-target"
+$appBinaryPath = Join-Path $phaseGateTargetDir "debug\epigraph.exe"
 
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
@@ -149,13 +165,22 @@ Push-Location $projectRoot
 try {
   Write-Host "[phase-gate] building frontend"
   node .\node_modules\vite\bin\vite.js build
+  if ($LASTEXITCODE -ne 0) {
+    throw "frontend build failed with exit code $LASTEXITCODE"
+  }
   Write-Host "[phase-gate] preparing sidecar"
   node .\scripts\prepare-syncd-sidecar.mjs
+  if ($LASTEXITCODE -ne 0) {
+    throw "syncd sidecar preparation failed with exit code $LASTEXITCODE"
+  }
   Write-Host "[phase-gate] building desktop binary"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon
+  cargo build --target-dir $phaseGateTargetDir --manifest-path src-tauri/Cargo.toml --bin epigraph
+  if ($LASTEXITCODE -ne 0) {
+    throw "desktop binary build failed with exit code $LASTEXITCODE"
+  }
 
   Write-Host "[phase-gate] starting desktop app"
-  $app = Start-AethonPhaseGateApp `
+  $app = Start-EpigraphPhaseGateApp `
     -ProjectRoot $projectRoot `
     -AppBinaryPath $appBinaryPath `
     -DataDir $dataDir `
@@ -174,22 +199,22 @@ try {
   Assert-Status $missingHeaders 400 "capabilities missing headers"
 
   $badProtocol = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/capabilities" -Headers @{
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "9"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "9"
   }
   Assert-Status $badProtocol 426 "capabilities bad protocol"
 
   $goodCapabilities = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/capabilities" -Headers @{
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $goodCapabilities 200 "capabilities ok"
   $fingerprint1 = $goodCapabilities.Json.tlsCertSha256
   Write-Host "[phase-gate] capabilities ok, fingerprint $fingerprint1"
 
   $auditHeaders = @{
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
 
   $null = Invoke-JsonRequest -Method Post -Uri "$endpoint/__audit/ensure-token" -Headers $auditHeaders -Body @{
@@ -223,29 +248,29 @@ try {
 
   $booksMain = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=0&scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $booksMain 200 "books scope with main profile"
 
   $booksTest = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=0&scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer test-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $booksTest 200 "books scope with test profile"
 
   $novelsMain = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=0&scopeId=novels%3Aprofile%3Amain" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $novelsMain 200 "novels main scope"
 
   $novelsForbidden = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=0&scopeId=novels%3Aprofile%3Atest" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $novelsForbidden 403 "novels profile isolation"
 
@@ -258,8 +283,8 @@ try {
   Write-Host "[phase-gate] auth and scope checks ok"
 
   $changesUnauthorized = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=0&scopeId=books%3Aglobal" -Headers @{
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $changesUnauthorized 401 "changes unauthorized"
 
@@ -268,8 +293,8 @@ try {
   }
   $revokedEvents = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/events?scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer revoked-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $revokedEvents 401 "revoked token events"
 
@@ -278,8 +303,8 @@ try {
   }
   $expiredEvents = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/events?scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer expired-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $expiredEvents 401 "expired token events"
 
@@ -382,27 +407,27 @@ try {
 
   $oldChanges = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?sinceVersion=3&scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $oldChanges 409 "expired replay window via changes"
 
   $oldEvents = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/events?scopeId=books%3Aglobal" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
     "Last-Event-ID" = "3"
   }
   Assert-Status $oldEvents 409 "expired replay window via events"
   Write-Host "[phase-gate] expired replay window enforcement ok"
 
-  Stop-AethonPhaseGateApp -Process $app -ExitSentinelPath $exitSentinel
+  Stop-EpigraphPhaseGateApp -Process $app -ExitSentinelPath $exitSentinel
   if (Get-Process -Id $status.pid -ErrorAction SilentlyContinue) {
     throw "syncd sidecar process $($status.pid) still alive after graceful app exit"
   }
   Write-Host "[phase-gate] first graceful shutdown ok"
 
-  $app2 = Start-AethonPhaseGateApp `
+  $app2 = Start-EpigraphPhaseGateApp `
     -ProjectRoot $projectRoot `
     -AppBinaryPath $appBinaryPath `
     -DataDir $dataDir `
@@ -414,8 +439,8 @@ try {
   Wait-ForPath -Path $statusPath -TimeoutSeconds 90
   $status2 = Get-Content $statusPath -Raw | ConvertFrom-Json
   $goodCapabilities2 = Invoke-JsonRequest -Method Get -Uri "$($status2.endpoint)/v1/capabilities" -Headers @{
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $goodCapabilities2 200 "capabilities after restart"
   $fingerprint2 = $goodCapabilities2.Json.tlsCertSha256
@@ -424,7 +449,7 @@ try {
   }
   Write-Host "[phase-gate] fingerprint stable across restart"
 
-  Stop-AethonPhaseGateApp -Process $app2 -ExitSentinelPath $exitSentinel
+  Stop-EpigraphPhaseGateApp -Process $app2 -ExitSentinelPath $exitSentinel
   if (Get-Process -Id $status2.pid -ErrorAction SilentlyContinue) {
     throw "syncd sidecar process $($status2.pid) still alive after second graceful app exit"
   }

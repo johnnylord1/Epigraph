@@ -404,9 +404,9 @@
       cacheGeneration: coverCacheGeneration,
     });
     const params = [
-      `aethon_cover_recovery=${coverRecoveryVersions.get(manga.id) ?? 0}`,
+      `epigraph_cover_recovery=${coverRecoveryVersions.get(manga.id) ?? 0}`,
     ];
-    if (retry > 0) params.push(`aethon_cover_retry=${retry}`);
+    if (retry > 0) params.push(`epigraph_cover_retry=${retry}`);
     return direct ? `${direct}${direct.includes("?") ? "&" : "?"}${params.join("&")}` : "";
   }
 

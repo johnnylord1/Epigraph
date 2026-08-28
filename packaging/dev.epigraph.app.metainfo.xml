@@ -1,27 +1,27 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>dev.aethon.app</id>
+  <id>dev.epigraph.app</id>
   <metadata_license>MIT</metadata_license>
   <project_license>Apache-2.0</project_license>
 
-  <name>Aethon</name>
-  <summary>Aethon manga reader powered by Suwayomi</summary>
+  <name>Epigraph</name>
+  <summary>Epigraph manga reader powered by Suwayomi</summary>
 
   <description>
     <p>
-      Aethon is a desktop manga reader built on top of Suwayomi-Server (Tachidesk),
+      Epigraph is a desktop manga reader built on top of Suwayomi-Server (Tachidesk),
       providing a clean native interface for browsing, reading, and managing your
       manga library across hundreds of sources.
     </p>
   </description>
 
-  <launchable type="desktop-id">dev.aethon.app.desktop</launchable>
+  <launchable type="desktop-id">dev.epigraph.app.desktop</launchable>
 
-  <url type="homepage">https://github.com/johnnylord1/Aethon</url>
-  <url type="bugtracker">https://github.com/johnnylord1/Aethon/issues</url>
+  <url type="homepage">https://github.com/johnnylord1/Epigraph</url>
+  <url type="bugtracker">https://github.com/johnnylord1/Epigraph/issues</url>
 
   <provides>
-    <binary>aethon</binary>
+    <binary>epigraph</binary>
   </provides>
 
   <content_rating type="oars-1.1" />

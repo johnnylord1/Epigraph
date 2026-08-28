@@ -41,9 +41,9 @@ function Test-NoResidualCandidates {
   $temporaryRoots = @(
     Get-ChildItem -LiteralPath ([System.IO.Path]::GetTempPath()) -Directory -ErrorAction SilentlyContinue |
       Where-Object {
-        $_.Name -like "aethon-suwayomi-certification-*" -or
-        $_.Name -like "aethon-suwayomi-migration-*" -or
-        $_.Name -like "aethon-suwayomi-workflow-*"
+        $_.Name -like "epigraph-suwayomi-certification-*" -or
+        $_.Name -like "epigraph-suwayomi-migration-*" -or
+        $_.Name -like "epigraph-suwayomi-workflow-*"
       }
   )
   if ($temporaryRoots.Count -gt 0) {
@@ -55,7 +55,7 @@ function Test-NoResidualCandidates {
       Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
           $_.Name -in @("java.exe", "javaw.exe") -and
-          $_.CommandLine -match "aethon-suwayomi-(certification|migration|workflow)-"
+          $_.CommandLine -match "epigraph-suwayomi-(certification|migration|workflow)-"
         }
     )
     if ($candidateProcesses.Count -gt 0) {
@@ -69,8 +69,8 @@ try {
   $env:CI = "true"
   $env:CARGO_BUILD_JOBS = "1"
   $env:NODE_OPTIONS = if ($env:NODE_OPTIONS) { $env:NODE_OPTIONS } else { "--max-old-space-size=3072" }
-  Remove-Item Env:AETHON_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
 
   Invoke-SourceRuntimeStep "Initial cleanup and whitespace" {
     Test-NoResidualCandidates

@@ -1,7 +1,8 @@
 # Syncd LAN Hardening
 
 ## Contract
-This document freezes the temporary-session LAN exposure contract for the current phase.
+This document freezes the temporary-session LAN exposure contract for the current
+phase. It is a runtime hardening contract, not the product pairing contract.
 
 ### Defaults
 - default state is **loopback only**
@@ -55,12 +56,12 @@ This document freezes the temporary-session LAN exposure contract for the curren
 
 ### Runtime-only harness hooks
 To avoid touching real user data during this phase gate, the app now supports harness overrides:
-- `AETHON_LOCAL_SERVER_MAIN_ROOT`
-- `AETHON_LOCAL_SERVER_TEST_ROOT`
-- `AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE`
-- `AETHON_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS`
-- `AETHON_PHASE_GATE_TEMPORARY_LAN_HOST`
-- `AETHON_PHASE_GATE_TEMPORARY_LAN_REASON`
+- `EPIGRAPH_LOCAL_SERVER_MAIN_ROOT`
+- `EPIGRAPH_LOCAL_SERVER_TEST_ROOT`
+- `EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_PROFILE`
+- `EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS`
+- `EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_HOST`
+- `EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_REASON`
 
 These are phase-gate hooks, not a user-facing product flow.
 
@@ -126,6 +127,13 @@ The harness also verified app shutdown still clears the temporary session state 
 - remote exposure
 - persistent always-on LAN mode
 - profile hot-switching
+
+The mobile pairing flow is now defined by the Epigraph Core contract and its
+TLS-pinned Syncd endpoint. Pairing does not expose the Suwayomi loopback port
+directly: after approval, the Epigraph Mobile client uses the authenticated Core
+proxy documented in
+[epigraph-mobile-core-implementation-plan.md](epigraph-mobile-core-implementation-plan.md).
+The list above remains true for this temporary LAN exposure harness.
 
 ## Gate Decision
 **Pass**

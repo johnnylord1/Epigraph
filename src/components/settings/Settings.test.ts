@@ -21,20 +21,20 @@ const {
         manga_bytes: 32_000_000,
         total_bytes: 256_000_000,
         free_bytes: 128_000_000,
-        path: "C:/Aethon",
+        path: "C:/Epigraph",
       };
     }
-    if (command === "get_default_downloads_path") return "C:/Aethon/Downloads";
+    if (command === "get_default_downloads_path") return "C:/Epigraph/Downloads";
     if (command === "list_releases") {
       return [{
         tag_name: "v4.2.0",
-        name: "Aethon 4.2.0",
+        name: "Epigraph 4.2.0",
         body: "Stable release.",
         published_at: "2026-07-21T00:00:00Z",
-        html_url: "https://github.com/johnnylord1/Aethon/releases/tag/v4.2.0",
+        html_url: "https://github.com/johnnylord1/Epigraph/releases/tag/v4.2.0",
       }];
     }
-    if (command === "check_aethon_update") {
+    if (command === "check_epigraph_update") {
       return { update_available: false, current_version: "4.2.0", version: null, body: null, published_at: null };
     }
     if (command === "restart_app") return null;
@@ -43,9 +43,9 @@ const {
         mode: "managed-bundled",
         version: "v2.1.1867",
         jarVersion: null,
-        jarPath: "C:/Aethon/Suwayomi-Server.jar",
+        jarPath: "C:/Epigraph/Suwayomi-Server.jar",
         profileId: "main",
-        rootDir: "C:/Aethon/aethon-main",
+        rootDir: "C:/Epigraph/epigraph-main",
         serverUrl: "http://127.0.0.1:4567",
         updateAllowed: true,
         blockReason: null,
@@ -60,7 +60,7 @@ const {
         releaseUrl: "https://github.com/Suwayomi/Suwayomi-Server/releases/tag/v2.2.2100",
         updateAllowed: true,
         blockReason: null,
-        notes: "Tested by Aethon.",
+        notes: "Tested by Epigraph.",
         releaseNotes: "Release notes.",
       };
     }
@@ -85,23 +85,23 @@ const {
   })),
   loadSettingsStorageRuntimeMock: vi.fn(async () => ({
     parseMihonBackup: vi.fn(async () => ({ trackerIds: [] })),
-    buildAethonBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
-    buildAethonRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
-    buildAethonAppPayload: vi.fn(() => ({})),
-    parseAethonAppPayload: vi.fn(async () => ({})),
-    buildAethonBooksSnapshotFromLibraryState: vi.fn((state) => state),
-    buildAethonBooksPayload: vi.fn(async () => ({})),
-    restoreAethonBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
-    extractAethonMangaPayloadFile: vi.fn(async () => new File([], "backup.tachibk")),
-    buildAethonMangaPayload: vi.fn(async () => ({})),
-    buildAethonNovelsPayload: vi.fn(async () => ({})),
-    restoreAethonNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
+    buildEpigraphBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
+    buildEpigraphRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
+    buildEpigraphAppPayload: vi.fn(() => ({})),
+    parseEpigraphAppPayload: vi.fn(async () => ({})),
+    buildEpigraphBooksSnapshotFromLibraryState: vi.fn((state) => state),
+    buildEpigraphBooksPayload: vi.fn(async () => ({})),
+    restoreEpigraphBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
+    extractEpigraphMangaPayloadFile: vi.fn(async () => new File([], "backup.tachibk")),
+    buildEpigraphMangaPayload: vi.fn(async () => ({})),
+    buildEpigraphNovelsPayload: vi.fn(async () => ({})),
+    restoreEpigraphNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
     buildLnReaderNovelsBackupZip: vi.fn(async () => new Uint8Array()),
     restoreLnReaderNovelsBackup: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0, restoredNeedsRepositoryCount: 0, restoredNeedsPluginCount: 0 } })),
     isLnReaderBackupZip: vi.fn(async () => true),
     extractLnReaderBackupPluginIds: vi.fn(async () => []),
     normalizeNativeMangaBackupBytes: vi.fn((bytes) => bytes),
-    buildAethonNovelsSnapshotFromAuthoritativeState: vi.fn((input) => input.libraryState),
+    buildEpigraphNovelsSnapshotFromAuthoritativeState: vi.fn((input) => input.libraryState),
     applyRestoredNovelsSnapshotToLibraryState: vi.fn(({ currentState }) => currentState),
     loadBookLibraryState: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, booksLibraryUi: { activeCategoryId: null, typeFilter: "all", statusFilter: "all", search: "", sortMode: "recentlyAdded", sortDir: "desc" } })),
     loadNovelLibraryState: vi.fn(async () => ({ entries: [], chapters: [], progress: [], bookmarks: [], history: [], scopeKey: "profile:test", version: 1 })),
@@ -125,7 +125,7 @@ const {
     if (normalized.includes("extensions")) return { extensions: { nodes: [] } };
     if (normalized.includes("trackers")) return { trackers: { nodes: [] as Tracker[] } };
     if (normalized.includes("settings")) {
-      return { settings: { downloadsPath: "C:/Aethon/Downloads", localSourcePath: "" } };
+      return { settings: { downloadsPath: "C:/Epigraph/Downloads", localSourcePath: "" } };
     }
     if (normalized.includes("serversecurity")) {
       return {
@@ -211,7 +211,7 @@ vi.mock("../../lib/client", () => ({
 }));
 
 vi.mock("./settingsStorageRuntime", () => ({
-  SETTINGS_AETHON_BACKUP_EXTENSION: ".aethonbk",
+  SETTINGS_EPIGRAPH_BACKUP_EXTENSION: ".epigraphbk",
   loadSettingsStorageRuntime: loadSettingsStorageRuntimeMock,
 }));
 
@@ -278,7 +278,7 @@ describe("Settings", () => {
   test("renders the approved grouped rails as a page-level shell without a redundant close button", async () => {
     const { container } = renderSettings();
 
-    expect(container.querySelector(".settings-page.aethon-port--settings")).toBeTruthy();
+    expect(container.querySelector(".settings-page.epigraph-port--settings")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("navigation", { name: "Settings groups" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reader & Library" })).toBeTruthy();

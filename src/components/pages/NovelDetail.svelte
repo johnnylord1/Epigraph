@@ -337,7 +337,7 @@
       addToast({
         kind: "error",
         title: translate("ui_novelDownloadFailed"),
-        body: error instanceof Error ? error.message : translate("ui_aethonCouldNotExportThisNovel"),
+        body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotExportThisNovel"),
       });
     } finally {
       downloadingNovel = false;

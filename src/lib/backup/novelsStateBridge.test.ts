@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyRestoredNovelsSnapshotToLibraryState, buildAethonNovelsSnapshotFromAuthoritativeState } from "./novelsStateBridge";
+import { applyRestoredNovelsSnapshotToLibraryState, buildEpigraphNovelsSnapshotFromAuthoritativeState } from "./novelsStateBridge";
 
 describe("novels backup state bridge", () => {
   it("builds a repository-aware novels snapshot from authoritative desktop state", () => {
-    const snapshot = buildAethonNovelsSnapshotFromAuthoritativeState({
+    const snapshot = buildEpigraphNovelsSnapshotFromAuthoritativeState({
       libraryState: {
         entries: [{
           id: "novel:ao3:%2Fworks%2F1",

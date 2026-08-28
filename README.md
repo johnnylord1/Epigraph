@@ -1,34 +1,34 @@
-# Aethon
+# Epigraph
 
 <p align="center">
-  <img src="docs/assets/aethon-splash.gif" alt="Aethon splash animation captured from the app" />
+  <img src="docs/assets/epigraph-splash.gif" alt="Epigraph splash animation captured from the app" />
 </p>
 
 <p align="center">
   <strong>A desktop reader, library manager, source manager, and safe Suwayomi runtime shell.</strong>
 </p>
 
-Aethon is a native desktop app for comics, manga, novels, and local books. It combines a Svelte 5 interface, Tauri v2 desktop integration, Suwayomi GraphQL for manga/comics, local book support, migration tools, downloads, TTS controls, backup/restore utilities, and a guarded runtime updater.
+Epigraph is a native desktop app for comics, manga, novels, and local books. It combines a Svelte 5 interface, Tauri v2 desktop integration, Suwayomi GraphQL for manga/comics, local book support, migration tools, downloads, TTS controls, backup/restore utilities, and a guarded runtime updater.
 
 <p align="center">
-  <img src="docs/assets/aethon-hero-banner.png" alt="Aethon desktop app banner" />
+  <img src="docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop app banner" />
 </p>
 
 ## Preview
 
 <p align="center">
-  <img src="docs/assets/aethon-app-tour.gif" alt="Aethon app tour using real app screenshots" width="78%" />
+  <img src="docs/assets/epigraph-app-tour.gif" alt="Epigraph app tour using real app screenshots" width="78%" />
 </p>
 
 <p align="center">
-  <img src="docs/assets/aethon-preview-grid.png" alt="Aethon screen preview grid" />
+  <img src="docs/assets/epigraph-preview-grid.png" alt="Epigraph screen preview grid" />
 </p>
 
 ### Readers
 
 <p align="center">
-  <img src="docs/screenshots/aethon-ComicReader.png" alt="Aethon comic reader with HUD" width="49%" />
-  <img src="docs/screenshots/aethon-BookReader.png" alt="Aethon book reader with HUD" width="49%" />
+  <img src="docs/screenshots/epigraph-ComicReader.png" alt="Epigraph comic reader with HUD" width="49%" />
+  <img src="docs/screenshots/epigraph-BookReader.png" alt="Epigraph book reader with HUD" width="49%" />
 </p>
 
 More real screenshots are available in [docs/screenshots](docs/screenshots).
@@ -81,18 +81,18 @@ More real screenshots are available in [docs/screenshots](docs/screenshots).
 - Paraglide localization with English, Portuguese, Spanish, Japanese, and Chinese catalogs.
 - Keyboard-oriented controls and accessible modal/toast patterns in the main surfaces.
 
-## Aethon-Specific Work
+## Epigraph-Specific Work
 
 - Managed bundled Suwayomi runtime with local profile ownership checks.
-- Safe Suwayomi runtime updater built for Aethon's desktop distribution model.
+- Safe Suwayomi runtime updater built for Epigraph's desktop distribution model.
 - Home is treated as an operational desktop hub, not a static landing page: it summarizes reading continuity, update pressure, downloads, source health, archive activity, and tracking state.
 - Browse combines installed manga sources, LNReader novel sources, trackers, Hardcover data, and the user's Library profile to rank recommendations instead of only showing raw source catalogs.
 - Recommendations expose why they were selected through provider signals, score breakdowns, profile tags, tracker/Hardcover signals, and source availability.
 - Book reading is first-class: source novels, EPUB imports, PDF native mode, and PDF reflow mode live alongside manga/comics without sharing unsafe data paths.
-- Single and mass migration flows designed around Aethon's Library and journal safety rules.
+- Single and mass migration flows designed around Epigraph's Library and journal safety rules.
 - Library split between comics/manga, source novels, and imported books without collapsing user data domains.
 - Restore/reconciliation tooling for imported state, manga backups, novels, books, categories, and progress.
-- Syncd groundwork for future device/session synchronization.
+- Epigraph Core/Syncd groundwork for real device/session synchronization. The Core remains hosted on the PC; Epigraph Mobile uses the authenticated Suwayomi proxy for comics and Syncd scopes for complementary state.
 - Nocturne visual identity, Settings architecture, source management UI, and desktop runtime policy.
 
 ## Planned
@@ -107,19 +107,20 @@ These items are planned work, not completed functionality:
   manga, prose, progress, keyboard, fullscreen, and offline contracts.
 - Keep source, extension, updater, bundle, navigation, storage, and Syncd
   certification gates current as their implementations evolve.
-- Productize the PC-hosted Core boundary consumed by the separate
-  Flutter/Sorayomi Aethon Mobile project without adding mobile UI or packaging
-  to this repository.
+- Complete the PC-hosted Core boundary consumed by the separate native Android
+  Hayai-based Epigraph Mobile project without adding mobile UI or packaging to
+  this repository. Comics continue to use Suwayomi through the Core proxy;
+  Syncd is not a replacement catalog.
 
 See [docs/roadmap.md](docs/roadmap.md) for the current roadmap.
 
 ## Install
 
-Release packaging is Windows-first. Download releases from the official Aethon repository when published:
+Release packaging is Windows-first. Download releases from the official Epigraph repository when published:
 
-[https://github.com/johnnylord1/Aethon/releases](https://github.com/johnnylord1/Aethon/releases)
+[https://github.com/johnnylord1/Epigraph/releases](https://github.com/johnnylord1/Epigraph/releases)
 
-Aethon can run with its managed bundled Suwayomi runtime or connect to an external Suwayomi server from Settings.
+Epigraph can run with its managed bundled Suwayomi runtime or connect to an external Suwayomi server from Settings.
 
 ## Development
 
@@ -216,14 +217,19 @@ git diff --check
 - `src/lib/manga` contains manga/source helpers.
 - `src/lib/migration` contains single and mass migration logic plus journal handling.
 - `src/lib/books` and `src/lib/novels` keep local books and novels separate from manga/comics.
-- `src-tauri/src` contains native Tauri commands, managed runtime lifecycle, syncd, backup/restore, and updater backend logic.
+- `src-tauri/src` contains native Tauri commands, managed runtime lifecycle, Syncd/Epigraph Core, backup/restore, and updater backend logic.
 - `messages` contains localized Paraglide messages.
+
+The mobile implementation is deliberately outside this repository at
+`C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`. Only explicit Core
+protocols, schemas, and compatibility fixtures are shared between the two
+workspaces.
 
 ## Credits
 
-Aethon is an independent app with its own identity, release infrastructure, UI direction, and runtime policy. It began as a fork of Moku; that origin is credited here only for legal attribution and license continuity.
+Epigraph is an independent app with its own identity, release infrastructure, UI direction, and runtime policy. It began as a fork of Moku; that origin is credited here only for legal attribution and license continuity.
 
-Aethon integrates with Suwayomi-Server:
+Epigraph integrates with Suwayomi-Server:
 
 [https://github.com/Suwayomi/Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)
 
@@ -233,4 +239,4 @@ This repository preserves the Apache License 2.0 terms in [LICENSE](LICENSE).
 
 ## Disclaimer
 
-Aethon does not host, provide, or distribute third-party content. Users are responsible for their own sources, servers, downloads, and local files.
+Epigraph does not host, provide, or distribute third-party content. Users are responsible for their own sources, servers, downloads, and local files.

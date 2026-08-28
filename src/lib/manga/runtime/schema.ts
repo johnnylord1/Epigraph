@@ -65,10 +65,10 @@ export const INTROSPECTION_OPERATION: GraphQLOperation<
   Readonly<Record<string, never>>,
   CanonicalGraphQLSchema
 > = {
-  name: "AethonRuntimeContract",
+  name: "EpigraphRuntimeContract",
   kind: "query",
   document: `
-    query AethonRuntimeContract {
+    query EpigraphRuntimeContract {
       __schema {
         queryType { name }
         mutationType { name }

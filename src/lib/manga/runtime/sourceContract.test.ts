@@ -26,7 +26,7 @@ const SOURCE = {
 const SEARCH_ITEM = {
   id: 7,
   sourceId: SOURCE.id,
-  title: "Aethon Certification",
+  title: "Epigraph Certification",
   thumbnailUrl: null,
   inLibrary: false,
   status: "ONGOING",
@@ -67,7 +67,7 @@ function profileFixtures(profile: CompatibilityProfile) {
           inLibrary: false,
           status: "ONGOING",
           description: "Deterministic fixture",
-          author: "Aethon",
+          author: "Epigraph",
           artist: null,
           genre: ["Certification"],
           realUrl: "/fixture",

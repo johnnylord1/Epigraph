@@ -1,6 +1,6 @@
 import {
-  AETHON_DISCORD_ACTIVITY_NAME,
-  AETHON_ICON_ASSET,
+  EPIGRAPH_DISCORD_ACTIVITY_NAME,
+  EPIGRAPH_ICON_ASSET,
   DISCORD_STATUS_DISPLAY_DETAILS,
   FALLBACK_COVER_ASSET,
   PRIVATE_DETAILS,
@@ -12,7 +12,7 @@ function cloneFiltered(payload: DiscordPresencePayload): DiscordPresencePayload 
   return {
     kind: payload.kind,
     details: payload.details,
-    activityName: AETHON_DISCORD_ACTIVITY_NAME,
+    activityName: EPIGRAPH_DISCORD_ACTIVITY_NAME,
     activityType: payload.activityType,
     statusDisplayType: payload.statusDisplayType,
     state: payload.state,
@@ -28,8 +28,8 @@ function cloneFiltered(payload: DiscordPresencePayload): DiscordPresencePayload 
 }
 
 function genericDetails(kind: DiscordPresencePayload["kind"]): string {
-  if (kind === "tts") return "Listening in Aethon";
-  if (kind === "reader") return "Reading in Aethon";
+  if (kind === "tts") return "Listening in Epigraph";
+  if (kind === "reader") return "Reading in Epigraph";
   return PRIVATE_DETAILS;
 }
 
@@ -41,10 +41,10 @@ export function applyPrivacyFilter(
     return {
       kind: "private",
       details: PRIVATE_DETAILS,
-      activityName: AETHON_DISCORD_ACTIVITY_NAME,
+      activityName: EPIGRAPH_DISCORD_ACTIVITY_NAME,
       statusDisplayType: payload.statusDisplayType ?? DISCORD_STATUS_DISPLAY_DETAILS,
-      largeImage: AETHON_ICON_ASSET,
-      largeText: "Aethon",
+      largeImage: EPIGRAPH_ICON_ASSET,
+      largeText: "Epigraph",
       startTimestamp: payload.startTimestamp,
       buttons: payload.buttons?.map((button) => ({ ...button })),
     };
@@ -54,7 +54,7 @@ export function applyPrivacyFilter(
 
   if (settings.discordRpcShowTitle === false && (filtered.kind === "reader" || filtered.kind === "tts")) {
     filtered.details = genericDetails(filtered.kind);
-    filtered.largeText = "Aethon";
+    filtered.largeText = "Epigraph";
   }
 
   if (settings.discordRpcShowProgress === false) {

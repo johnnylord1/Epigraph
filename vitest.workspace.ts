@@ -6,14 +6,14 @@ const BROWSER_SCREENSHOT_BASE_DIR = path.resolve(
   "src/test/browser/__screenshots__/custom"
 );
 const BROWSER_TRANSIENT_SCREENSHOT_DIR = path.resolve(
-  process.env.AETHON_BROWSER_SCREENSHOT_DIR
-    || path.join(tmpdir(), "aethon-vitest-browser", String(process.pid))
+  process.env.EPIGRAPH_BROWSER_SCREENSHOT_DIR
+    || path.join(tmpdir(), "epigraph-vitest-browser", String(process.pid))
 );
-const BROWSER_UPDATE_SCREENSHOTS = process.env.AETHON_UPDATE_SCREENSHOTS === "1";
-const browserApiPort = Number.parseInt(process.env.AETHON_VITEST_BROWSER_PORT || "0", 10);
+const BROWSER_UPDATE_SCREENSHOTS = process.env.EPIGRAPH_UPDATE_SCREENSHOTS === "1";
+const browserApiPort = Number.parseInt(process.env.EPIGRAPH_VITEST_BROWSER_PORT || "0", 10);
 
 if (!Number.isInteger(browserApiPort) || browserApiPort < 0 || browserApiPort > 65535) {
-  throw new Error("AETHON_VITEST_BROWSER_PORT must be zero or a valid TCP port");
+  throw new Error("EPIGRAPH_VITEST_BROWSER_PORT must be zero or a valid TCP port");
 }
 
 export default defineWorkspace([
@@ -89,10 +89,15 @@ export default defineWorkspace([
   },
   {
     extends: "./vite.config.ts",
+    server: {
+      fs: {
+        allow: [BROWSER_TRANSIENT_SCREENSHOT_DIR],
+      },
+    },
     define: {
-      __AETHON_BROWSER_SCREENSHOT_DIR__: JSON.stringify(BROWSER_SCREENSHOT_BASE_DIR),
-      __AETHON_BROWSER_ACTUAL_SCREENSHOT_DIR__: JSON.stringify(BROWSER_TRANSIENT_SCREENSHOT_DIR),
-      __AETHON_BROWSER_UPDATE_SCREENSHOTS__: JSON.stringify(BROWSER_UPDATE_SCREENSHOTS),
+      __EPIGRAPH_BROWSER_SCREENSHOT_DIR__: JSON.stringify(BROWSER_SCREENSHOT_BASE_DIR),
+      __EPIGRAPH_BROWSER_ACTUAL_SCREENSHOT_DIR__: JSON.stringify(BROWSER_TRANSIENT_SCREENSHOT_DIR),
+      __EPIGRAPH_BROWSER_UPDATE_SCREENSHOTS__: JSON.stringify(BROWSER_UPDATE_SCREENSHOTS),
     },
     test: {
       name: "browser-components",

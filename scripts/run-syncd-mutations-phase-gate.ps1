@@ -88,8 +88,18 @@ $stdoutPath = Join-Path $tmpRoot "syncd.stdout.log"
 $stderrPath = Join-Path $tmpRoot "syncd.stderr.log"
 $port = "47772"
 $endpoint = "https://127.0.0.1:$port"
-$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\aethon-syncd.exe"
+$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\epigraph-syncd.exe"
 $syncd = $null
+
+function Stop-SyncdProcessTree {
+  param($Process)
+  if ($null -eq $Process) { return }
+  try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch {}
+  if (-not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  }
+  try { $null = $Process.WaitForExit(5000) } catch {}
+}
 
 if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
@@ -98,20 +108,22 @@ if (Test-Path $stdoutPath) { Remove-Item $stdoutPath -Force }
 if (Test-Path $stderrPath) { Remove-Item $stderrPath -Force }
 
 $auditHeaders = @{
-  "X-Aethon-Client-Version" = "0.1.0"
-  "X-Aethon-Client-Protocol-Version" = "1"
+  "X-Epigraph-Client-Version" = "0.1.0"
+  "X-Epigraph-Client-Protocol-Version" = "1"
 }
 
 Push-Location $projectRoot
 try {
   Write-Host "[mutations-gate] building syncd"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon-syncd
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph-syncd
 
   $envMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $dataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $port
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $dataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $port
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
   $previous = @{}
   foreach ($key in $envMap.Keys) {
@@ -151,8 +163,8 @@ try {
 
   $bookAccepted = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-progress-1"
     mutations = @(@{
@@ -179,8 +191,8 @@ try {
 
   $bookRegress = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-progress-2"
     mutations = @(@{
@@ -204,8 +216,8 @@ try {
 
   $novelAccepted = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-novel-progress-1"
     mutations = @(@{
@@ -232,8 +244,8 @@ try {
 
   $novelRegress = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-novel-progress-2"
     mutations = @(@{
@@ -260,8 +272,8 @@ try {
 
   $invalidScope = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-invalid-scope"
     mutations = @(@{
@@ -298,8 +310,8 @@ try {
   Start-Sleep -Milliseconds 500
   $liveMutation = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-progress-live"
     mutations = @(@{
@@ -337,8 +349,8 @@ try {
 
   $bookBookmark = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-bookmark-1"
     mutations = @(@{
@@ -364,8 +376,8 @@ try {
 
   $bookBookmarkDelete = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-bookmark-delete"
     mutations = @(@{
@@ -385,8 +397,8 @@ try {
 
   $staleBookmarkMerge = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-bookmark-stale-merge"
     mutations = @(@{
@@ -411,8 +423,8 @@ try {
 
   $bookBookmarkResurrection = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-bookmark-resurrection"
     mutations = @(@{
@@ -439,8 +451,8 @@ try {
 
   $bookChangesSequence = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=$($bookmarkVersion - 1)" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $bookChangesSequence 200 "book bookmark resurrection change sequence"
   $bookChangesSequencePath = Join-Path $tmpRoot "changes-bookmark-book-sequence.json"
@@ -458,8 +470,8 @@ try {
 
   $bookChangesPostDelete = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=$bookmarkDeleteVersion" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $bookChangesPostDelete 200 "book bookmark post-delete resurrection state"
   $bookChangesPostDeletePath = Join-Path $tmpRoot "changes-bookmark-book-post-delete.json"
@@ -490,8 +502,8 @@ try {
 
   $wrongScopeResurrection = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-book-bookmark-wrong-scope-resurrection"
     mutations = @(@{
@@ -515,8 +527,8 @@ try {
 
   $bookLeakCheck = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=$($bookmarkVersion - 1)" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $bookLeakCheck 200 "book bookmark cross-scope leak check"
   $bookLeakCheckPath = Join-Path $tmpRoot "changes-cross-scope-book-into-novels.json"
@@ -527,8 +539,8 @@ try {
 
   $novelBookmark = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-novel-bookmark-1"
     mutations = @(@{
@@ -557,8 +569,8 @@ try {
 
   $novelBookmarkDelete = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-novel-bookmark-delete"
     mutations = @(@{
@@ -578,8 +590,8 @@ try {
 
   $novelBookmarkResurrection = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   } -Body @{
     requestId = "runtime-novel-bookmark-resurrection"
     mutations = @(@{
@@ -623,8 +635,8 @@ try {
 
   $novelChangesSequence = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=$($novelBookmarkVersion - 1)" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $novelChangesSequence 200 "novel bookmark resurrection change sequence"
   $novelChangesSequencePath = Join-Path $tmpRoot "changes-bookmark-novel-sequence.json"
@@ -642,8 +654,8 @@ try {
 
   $novelChangesPostDelete = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=$novelBookmarkDeleteVersion" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $novelChangesPostDelete 200 "novel bookmark post-delete resurrection state"
   $novelChangesPostDeletePath = Join-Path $tmpRoot "changes-bookmark-novel-post-delete.json"
@@ -674,8 +686,8 @@ try {
 
   $novelLeakCheck = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=$($novelBookmarkVersion - 1)" -Headers @{
     "Authorization" = "Bearer main-token"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $novelLeakCheck 200 "novel bookmark cross-scope leak check"
   $novelLeakCheckPath = Join-Path $tmpRoot "changes-cross-scope-novel-into-books.json"
@@ -699,8 +711,6 @@ catch {
   throw
 }
 finally {
-  if ($syncd -and -not $syncd.HasExited) {
-    Stop-Process -Id $syncd.Id -Force
-  }
+  Stop-SyncdProcessTree $syncd
   Pop-Location
 }

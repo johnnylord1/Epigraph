@@ -1,5 +1,9 @@
 import { clamp01, combineMetrics, normalizeRecency, normalizeToken } from "./normalization";
-import { recommendationCandidateTitleKeys, recommendationProviderRemoteKey } from "./identity";
+import {
+  recommendationCandidateIdentityKeys,
+  recommendationCandidateTitleKeys,
+  recommendationProviderRemoteKey,
+} from "./identity";
 import { isRecommendationMetadataTag } from "./metadata";
 import type {
   BuildRecommendationSectionsOptions,
@@ -14,6 +18,11 @@ import type {
 } from "./types";
 
 const DEFAULT_LIMIT = 18;
+const PROFILE_MATCH_MIN = 0.28;
+const HIGH_CONFIDENCE_PROFILE_MIN = 0.18;
+const TRENDING_PROFILE_MIN = 0.12;
+const OUTSIDE_PROFILE_OVERLAP_MAX = 0.16;
+const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.22;
 
 const SECTION_META: Record<RecommendationSectionKey, { title: string; reason: string }> = {
   becauseYouRatedHighly: {
@@ -43,18 +52,22 @@ export function scoreRecommendationCandidate(
   profile: TasteProfile,
   nowMs = Date.now(),
 ): RecommendationScoreBreakdown {
-  const normalizedTags = candidate.tags.map(normalizeToken).filter(Boolean);
+  const normalizedTags = [...new Set(candidate.tags.map(normalizeToken).filter(Boolean))];
+  const topicalTags = normalizedTags.filter((tag) => !isRecommendationMetadataTag(tag));
   const tagWeights = normalizedTags.map((tag) => profile.tagWeights.get(tag) ?? 0);
   const positiveWeight = tagWeights.filter((weight) => weight > 0).reduce((sum, weight) => sum + weight, 0);
   const negativeWeight = Math.abs(tagWeights.filter((weight) => weight < 0).reduce((sum, weight) => sum + weight, 0));
   const maxPositive = Math.max(1, [...profile.tagWeights.values()].filter((weight) => weight > 0).reduce((sum, weight) => sum + weight, 0));
   const personalRatingAffinity = clamp01((positiveWeight / maxPositive) - (negativeWeight / maxPositive));
 
-  const topTagSet = new Set(profile.topTags);
-  const overlap = normalizedTags.filter((tag) => topTagSet.has(tag)).length;
-  const overlapRatio = profile.topTags.length > 0 ? overlap / Math.min(profile.topTags.length, Math.max(1, normalizedTags.length)) : 0;
-  const contentTypeAffinity = clamp01(contentTypeWeightForCandidate(candidate.contentType, profile) / Math.max(1, maxMapValue(profile.contentTypeWeights)));
-  const contentSimilarity = clamp01((overlapRatio * 0.78) + (contentTypeAffinity * 0.22));
+  const profileTagOverlap = profileTagOverlapRatioForTags(topicalTags, profile);
+  const contentTypeFit = clamp01(contentTypeWeightForCandidate(candidate.contentType, profile) / Math.max(1, maxMapValue(profile.contentTypeWeights)));
+  const sourceAffinity = sourceAffinityScore(candidate, profile);
+  const contentSimilarity = clamp01(
+    (profileTagOverlap * 0.66)
+    + (contentTypeFit * 0.18)
+    + (sourceAffinity * 0.16),
+  );
 
   const trackerConsensus = combineMetrics(candidate.providers
     .filter((provider) => provider.kind === "tracker")
@@ -75,19 +88,23 @@ export function scoreRecommendationCandidate(
     .map((provider) => provider.availability))?.value
     ?? (candidate.providers.some((provider) => provider.kind === "source") ? 0.55 : 0);
 
-  const novelty = noveltyScore(overlapRatio, personalRatingAffinity);
+  const novelty = noveltyScore(profileTagOverlap, personalRatingAffinity, contentTypeFit);
   const finalScore = clamp01(
-    (personalRatingAffinity * 0.35)
-    + (contentSimilarity * 0.15)
-    + (trackerConsensus * 0.2)
+    (personalRatingAffinity * 0.34)
+    + (contentSimilarity * 0.16)
+    + (trackerConsensus * 0.18)
     + (trendingVelocity * 0.1)
     + (recency * 0.08)
-    + (sourceAvailability * 0.07)
-    + (novelty * 0.05),
+    + (sourceAvailability * 0.06)
+    + (sourceAffinity * 0.04)
+    + (novelty * 0.04),
   );
 
   return {
     personalRatingAffinity,
+    profileTagOverlap,
+    contentTypeFit,
+    sourceAffinity,
     contentSimilarity,
     trackerConsensus,
     trendingVelocity,
@@ -95,7 +112,7 @@ export function scoreRecommendationCandidate(
     sourceAvailability,
     novelty,
     finalScore,
-    diversityBucket: diversityBucket(overlapRatio, personalRatingAffinity),
+    diversityBucket: diversityBucket(profileTagOverlap, personalRatingAffinity),
   };
 }
 
@@ -114,69 +131,85 @@ export function buildRecommendationSections(
     }))
     .filter((item) => !isAffinityGroupMismatch(item, profile));
 
+  const becauseYouRatedHighly = buildCriterionSection("becauseYouRatedHighly", items, requestedLimit, (item) =>
+    (item.breakdown.personalRatingAffinity * 0.7)
+    + (item.breakdown.profileTagOverlap * 0.26)
+    + (item.breakdown.sourceAffinity * 0.04),
+    (item) => profile.seedCount > 0
+      && hasExternalProvider(item)
+      && matchesDominantComicFormat(item, profile)
+      && hasMeaningfulProfileSignal(item, profile)
+      && profileTasteSignalScore(item, profile) >= PROFILE_MATCH_MIN
+      && item.breakdown.diversityBucket !== "divergent",
+    profile,
+  );
+  const highConfidence = buildCriterionSection("highConfidence", rerankForDiversity(items), requestedLimit, (item) =>
+    (qualityScore(item) * 0.42)
+    + (item.breakdown.trackerConsensus * 0.2)
+    + (providerEvidenceScore(item) * 0.18)
+    + (profileAffinityScore(item) * 0.12)
+    + (item.breakdown.sourceAvailability * 0.08),
+    (item) => hasExternalProvider(item)
+      && (qualityScore(item) >= 0.52 || proseWarmStartCandidate(item, profile))
+      && (profile.seedCount === 0 || (
+        fitsProfileComicFormat(item, profile)
+        && (
+          profileTasteSignalScore(item, profile) >= HIGH_CONFIDENCE_PROFILE_MIN
+          || (
+            !hasTopicalTags(item)
+            && item.breakdown.trackerConsensus >= 0.82
+            && qualityScore(item) >= 0.72
+          )
+        )
+      )),
+    profile,
+  );
+  const trendingNearYourTaste = buildCriterionSection("trendingNearYourTaste", items, requestedLimit, (item) =>
+    (momentumScore(item) * 0.52)
+    + (item.breakdown.trendingVelocity * 0.18)
+    + (item.breakdown.recency * 0.1)
+    + (profileAffinityScore(item) * 0.1)
+    + (qualityScore(item) * 0.06)
+    + (item.breakdown.sourceAffinity * 0.04),
+    (item) => hasExternalProvider(item)
+      && (momentumScore(item) >= 0.08 || proseWarmStartCandidate(item, profile))
+      && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
+      && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile))
+      && (profile.seedCount === 0 || profileTasteSignalScore(item, profile) >= TRENDING_PROFILE_MIN),
+    profile,
+  );
+  const freshInYourSources = buildCriterionSection("freshInYourSources", items, requestedLimit, (item) =>
+    (freshnessScore(item) * 0.76)
+    + (item.breakdown.sourceAvailability * 0.1)
+    + (item.breakdown.sourceAffinity * 0.06)
+    + (item.breakdown.contentTypeFit * 0.04)
+    + (qualityScore(item) * 0.04),
+    (item) => hasExternalProvider(item)
+      && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
+      && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile)),
+    profile,
+  );
+
+  const outsideYourUsualReads = buildCriterionSection("outsideYourUsualReads", items, requestedLimit, (item) =>
+    (item.breakdown.novelty * 0.64)
+    + (qualityScore(item) * 0.18)
+    + (item.breakdown.sourceAvailability * 0.1)
+    + (freshnessScore(item) * 0.08),
+    (item) => profile.seedCount > 0
+      && hasExternalProvider(item)
+      && outsideUsualEligibility(item, profile)
+      && item.breakdown.diversityBucket === "divergent"
+      && item.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX
+      && item.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX,
+    profile,
+  );
+
   return [
-    buildCriterionSection("becauseYouRatedHighly", items, requestedLimit, (item) =>
-      (item.breakdown.personalRatingAffinity * 0.56)
-      + (item.breakdown.contentSimilarity * 0.24)
-      + (contentTypeFitScore(item, profile) * 0.2),
-      (item) => profile.seedCount > 0
-        && hasExternalProvider(item)
-        && matchesDominantComicFormat(item, profile)
-        && contentTypeFitScore(item, profile) >= 0.18
-        && profileTasteSignalScore(item, profile) >= 0.16,
-      profile,
-    ),
-    buildCriterionSection("highConfidence", rerankForDiversity(items), requestedLimit, (item) =>
-      (profileAffinityScore(item) * 0.32)
-      + (qualityScore(item) * 0.3)
-      + (contentTypeFitScore(item, profile) * 0.2)
-      + (item.breakdown.sourceAvailability * 0.12)
-      + (item.breakdown.finalScore * 0.06),
-      (item) => hasExternalProvider(item)
-        && (qualityScore(item) >= 0.52 || proseWarmStartCandidate(item, profile))
-        && (profile.seedCount === 0 || (
-          fitsProfileComicFormat(item, profile)
-          && profileTasteSignalScore(item, profile) >= 0.12
-          && contentTypeFitScore(item, profile) >= 0.18
-        )),
-      profile,
-    ),
-    buildCriterionSection("trendingNearYourTaste", items, requestedLimit, (item) =>
-      (momentumScore(item) * 0.42)
-      + (qualityScore(item) * 0.28)
-      + (profileAffinityScore(item) * 0.18)
-      + (contentTypeFitScore(item, profile) * 0.06)
-      + (item.breakdown.sourceAvailability * 0.06),
-      (item) => hasExternalProvider(item)
-        && (momentumScore(item) >= 0.08 || proseWarmStartCandidate(item, profile))
-        && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
-        && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile))
-        && (profile.seedCount === 0 || profileTasteSignalScore(item, profile) >= 0.1),
-      profile,
-    ),
-    buildCriterionSection("freshInYourSources", items, requestedLimit, (item) =>
-      (freshnessScore(item) * 0.68)
-      + (item.breakdown.sourceAvailability * 0.14)
-      + (contentTypeFitScore(item, profile) * 0.12)
-      + (qualityScore(item) * 0.08)
-      + (profileAffinityScore(item) * 0.06),
-      (item) => hasExternalProvider(item)
-        && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
-        && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile)),
-      profile,
-    ),
-    buildCriterionSection("outsideYourUsualReads", items, requestedLimit, (item) =>
-      (item.breakdown.novelty * 0.5)
-      + (qualityScore(item) * 0.22)
-      + (item.breakdown.sourceAvailability * 0.16)
-      + (freshnessScore(item) * 0.12),
-      (item) => profile.seedCount > 0
-        && hasExternalProvider(item)
-        && outsideUsualEligibility(item, profile)
-        && item.breakdown.diversityBucket !== "familiar"
-        && profileTagOverlapRatio(item, profile) < 0.35
-        && item.breakdown.personalRatingAffinity < 0.45,
-    ),
+    becauseYouRatedHighly,
+    highConfidence,
+    trendingNearYourTaste,
+    freshInYourSources,
+    outsideYourUsualReads,
   ];
 }
 
@@ -235,9 +268,10 @@ function buildCriterionSection(
   scoreFn: (item: RecommendationItem) => number,
   isEligible: (item: RecommendationItem) => boolean,
   profile?: TasteProfile,
+  excludedIdentityKeys: ReadonlySet<string> = new Set(),
 ): RecommendationSection {
   const meta = SECTION_META[key];
-  const ranked = rankSectionItems(items, limit, key, scoreFn, isEligible, profile);
+  const ranked = rankSectionItems(items, limit, key, scoreFn, isEligible, profile, excludedIdentityKeys);
   return { key, title: meta.title, reason: meta.reason, items: ranked };
 }
 
@@ -248,6 +282,7 @@ function rankSectionItems(
   scoreFn: (item: RecommendationItem) => number,
   isEligible: (item: RecommendationItem) => boolean,
   profile?: TasteProfile,
+  excludedIdentityKeys: ReadonlySet<string> = new Set(),
 ): RecommendationItem[] {
   if (limit <= 0) return [];
   const ranked = [...items]
@@ -256,11 +291,31 @@ function rankSectionItems(
       score: scoreFn(item),
     }))
     .filter((item) => {
-      return item.score > 0 && isEligible(item.item);
+      return item.score > 0
+        && isEligible(item.item)
+        && !recommendationCandidateIdentityKeys(item.item.candidate)
+          .some((key) => excludedIdentityKeys.has(key));
     })
     .sort((a, b) => (b.score - a.score) || (stableSectionJitter(b.item, sectionKey) - stableSectionJitter(a.item, sectionKey)))
     .map((entry) => entry.item);
-  return applyProfileComicMix(ranked, profile, limit).slice(0, limit);
+  const unique = dedupeRecommendationItems(ranked);
+  const shouldApplyProfileMix = sectionKey !== "freshInYourSources"
+    && sectionKey !== "outsideYourUsualReads";
+  return (shouldApplyProfileMix ? applyProfileComicMix(unique, profile, limit) : unique).slice(0, limit);
+}
+
+export function dedupeRecommendationItems(items: RecommendationItem[]): RecommendationItem[] {
+  const seenIdentityKeys = new Set<string>();
+  const unique: RecommendationItem[] = [];
+
+  for (const item of items) {
+    const identityKeys = recommendationCandidateIdentityKeys(item.candidate);
+    if (identityKeys.some((key) => seenIdentityKeys.has(key))) continue;
+    for (const key of identityKeys) seenIdentityKeys.add(key);
+    unique.push(item);
+  }
+
+  return unique;
 }
 
 function hasExternalProvider(item: RecommendationItem): boolean {
@@ -283,23 +338,50 @@ function proseSourceAvailabilityCandidate(item: RecommendationItem, profile: Tas
 }
 
 function profileAffinityScore(item: RecommendationItem): number {
-  return clamp01((item.breakdown.personalRatingAffinity * 0.65) + (item.breakdown.contentSimilarity * 0.35));
+  return clamp01(
+    (item.breakdown.personalRatingAffinity * 0.58)
+    + (item.breakdown.profileTagOverlap * 0.24)
+    + (item.breakdown.contentTypeFit * 0.1)
+    + (item.breakdown.sourceAffinity * 0.08),
+  );
 }
 
 function profileTasteSignalScore(item: RecommendationItem, profile: TasteProfile): number {
-  const explicitSignal = Math.max(item.breakdown.personalRatingAffinity, profileTagOverlapRatio(item, profile));
-  if (explicitSignal > 0) return explicitSignal;
-  if (hasTopicalTags(item)) return 0;
-  if (isProseContentType(item.candidate.contentType)) {
-    return contentTypeFitScore(item, profile) * 0.55;
-  }
-  return contentTypeFitScore(item, profile) * 0.18;
+  // Content type is useful for ordering, but it is not a personal taste
+  // signal. A source result with missing genres must not qualify as a profile
+  // recommendation merely because it is a comic or a novel.
+  return Math.max(
+    item.breakdown.personalRatingAffinity,
+    item.breakdown.profileTagOverlap,
+    profileTagOverlapRatio(item, profile),
+  );
+}
+
+function hasMeaningfulProfileSignal(item: RecommendationItem, profile: TasteProfile): boolean {
+  return profileTasteSignalScore(item, profile) > 0
+    && (item.breakdown.profileTagOverlap > 0 || item.breakdown.personalRatingAffinity > 0);
 }
 
 function contentTypeFitScore(item: RecommendationItem, profile: TasteProfile): number {
-  const maxWeight = maxMapValue(profile.contentTypeWeights);
-  if (maxWeight <= 0) return 1;
-  return clamp01(contentTypeWeightForCandidate(item.candidate.contentType, profile) / maxWeight);
+  return item.breakdown.contentTypeFit;
+}
+
+function sourceAffinityScore(candidate: RecommendationCandidate, profile: TasteProfile): number {
+  const positiveSourceWeights = [...profile.sourceWeights.entries()]
+    .filter(([, weight]) => weight > 0);
+  const maxSourceWeight = Math.max(0, ...positiveSourceWeights.map(([, weight]) => weight));
+  if (maxSourceWeight <= 0) return 0;
+
+  const candidateSourceKeys = candidate.providers.flatMap((provider) => {
+    if (provider.kind === "source") return [provider.providerId];
+    if (provider.kind === "tracker") return [`tracker:${provider.providerId}`];
+    return [];
+  });
+  const strongestMatch = candidateSourceKeys.reduce(
+    (strongest, key) => Math.max(strongest, profile.sourceWeights.get(key) ?? 0),
+    0,
+  );
+  return clamp01(strongestMatch / maxSourceWeight);
 }
 
 function contentTypeWeightForCandidate(
@@ -425,12 +507,22 @@ function isProseContentType(contentType: RecommendationCandidate["contentType"])
 }
 
 function profileTagOverlapRatio(item: RecommendationItem, profile: TasteProfile): number {
-  if (profile.topTags.length === 0) return 0;
-  const profileTags = new Set(profile.topTags);
-  const candidateTags = item.candidate.tags.map(normalizeToken).filter(Boolean);
-  if (candidateTags.length === 0) return 0;
-  const overlap = candidateTags.filter((tag) => profileTags.has(tag)).length;
-  return overlap / Math.min(profileTags.size, candidateTags.length);
+  return profileTagOverlapRatioForTags(
+    item.candidate.tags
+      .map(normalizeToken)
+      .filter((tag) => Boolean(tag) && !isRecommendationMetadataTag(tag)),
+    profile,
+  );
+}
+
+function profileTagOverlapRatioForTags(tags: string[], profile: TasteProfile): number {
+  const profileTags = new Set(profile.topTags.map(normalizeToken).filter(Boolean));
+  const candidateTags = new Set(tags.map(normalizeToken).filter(Boolean));
+  if (profileTags.size === 0 || candidateTags.size === 0) return 0;
+
+  const overlap = [...candidateTags].filter((tag) => profileTags.has(tag)).length;
+  const union = new Set([...profileTags, ...candidateTags]).size;
+  return union > 0 ? overlap / union : 0;
 }
 
 function hasTopicalTags(item: RecommendationItem): boolean {
@@ -455,6 +547,26 @@ function qualityScore(item: RecommendationItem): number {
     provider.score,
     provider.popularity,
   ]))?.value ?? 0;
+}
+
+function providerEvidenceScore(item: RecommendationItem): number {
+  const providers = item.candidate.providers.filter((provider) => provider.kind !== "library");
+  if (providers.length === 0) return 0;
+
+  const metrics = providers.flatMap((provider) => [
+    provider.score,
+    provider.popularity,
+    provider.trending,
+    provider.availability,
+  ]);
+  const confidence = combineMetrics(metrics)?.confidence ?? 0;
+  const kindCoverage = new Set(providers.map((provider) => provider.kind)).size / 2;
+  const providerCoverage = clamp01(providers.length / 3);
+  return clamp01(
+    (confidence * 0.5)
+    + (kindCoverage * 0.3)
+    + (providerCoverage * 0.2),
+  );
 }
 
 function momentumScore(item: RecommendationItem): number {
@@ -573,16 +685,20 @@ function isKnownCandidate(candidate: RecommendationCandidate, options: BuildReco
   });
 }
 
-function noveltyScore(overlapRatio: number, personalAffinity: number): number {
-  if (overlapRatio >= 0.75) return 0.18;
-  if (overlapRatio >= 0.45) return 0.45;
-  if (overlapRatio >= 0.18) return 0.95;
-  return personalAffinity > 0.55 ? 0.78 : 0.62;
+function noveltyScore(overlapRatio: number, personalAffinity: number, contentTypeFit: number): number {
+  const distance = clamp01(
+    ((1 - overlapRatio) * 0.5)
+    + ((1 - personalAffinity) * 0.35)
+    + ((1 - contentTypeFit) * 0.15),
+  );
+  if (overlapRatio >= 0.38 || personalAffinity >= 0.58) return clamp01(0.12 + (distance * 0.16));
+  if (overlapRatio >= 0.16 || personalAffinity >= 0.22) return clamp01(0.35 + (distance * 0.25));
+  return clamp01(0.65 + (distance * 0.35));
 }
 
 function diversityBucket(overlapRatio: number, personalAffinity: number): RecommendationDiversityBucket {
-  if (overlapRatio >= 0.45 || personalAffinity >= 0.62) return "familiar";
-  if (overlapRatio >= 0.18 || personalAffinity >= 0.22) return "adjacent";
+  if (overlapRatio >= 0.38 || personalAffinity >= 0.58) return "familiar";
+  if (overlapRatio >= 0.16 || personalAffinity >= 0.22) return "adjacent";
   return "divergent";
 }
 

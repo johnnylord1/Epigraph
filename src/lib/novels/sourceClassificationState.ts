@@ -4,7 +4,7 @@ import { normalizeLocalProfileId, normalizeServerUrl } from "../localProfiles";
 import type { NovelRepositoryScopeInput } from "./repositoryState";
 import type { NovelSourceClassificationStatus } from "./classificationModel";
 
-const NOVEL_SOURCE_CLASSIFICATION_STATE_KEY = "aethon-novels-source-classification-state";
+const NOVEL_SOURCE_CLASSIFICATION_STATE_KEY = "epigraph-novels-source-classification-state";
 const NOVEL_SOURCE_CLASSIFICATION_STATE_VERSION = 1 as const;
 const classificationStateCache = new Map<string, PersistedNovelSourceClassificationState>();
 

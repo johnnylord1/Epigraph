@@ -159,10 +159,12 @@ function Start-ManagedProcess {
 
 function Stop-ManagedProcess {
   param($Process)
-  if ($Process -and -not $Process.HasExited) {
-    Stop-Process -Id $Process.Id -Force
-    $Process.WaitForExit()
+  if ($null -eq $Process) { return }
+  try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch {}
+  if (-not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
   }
+  try { $null = $Process.WaitForExit(5000) } catch {}
 }
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -180,7 +182,7 @@ $manualEndpoint = "https://localhost:$port"
 $invalidPort = "47779"
 $invalidEndpoint = "https://127.0.0.1:$invalidPort"
 $invalidAdvertisedEndpoint = "https://127.0.0.1:$invalidPort"
-$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\aethon-syncd.exe"
+$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\epigraph-syncd.exe"
 $syncd = $null
 $currentStep = "initialization"
 
@@ -193,18 +195,20 @@ Push-Location $projectRoot
 try {
   $currentStep = "build syncd"
   Write-Host "[discovery-gate] building syncd"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon-syncd
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph-syncd
 
   $envMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $dataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $port
-    AETHON_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
-    AETHON_SYNCD_DISCOVERY_MDNS_PORT = "5460"
-    AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
-    AETHON_SYNCD_MANUAL_PROVIDER = "enabled"
-    AETHON_SYNCD_MANUAL_ORIGINS = "https://localhost:$port/,https://localhost:$port,https://[::1]:$port"
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $dataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $port
+    EPIGRAPH_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
+    EPIGRAPH_SYNCD_DISCOVERY_MDNS_PORT = "5460"
+    EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
+    EPIGRAPH_SYNCD_MANUAL_PROVIDER = "enabled"
+    EPIGRAPH_SYNCD_MANUAL_ORIGINS = "https://localhost:$port/,https://localhost:$port,https://[::1]:$port"
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
 
   $currentStep = "start syncd"
@@ -371,7 +375,7 @@ try {
   if ($discoveryStatus.Json.publication.providerKind -ne "lan-publication") {
     throw "discovery provider did not report lan publication metadata"
   }
-  $expectedServiceType = Normalize-MdnsServiceType "_aethon-sync._tcp.local."
+  $expectedServiceType = Normalize-MdnsServiceType "_epigraph-sync._tcp.local."
   $actualServiceType = Normalize-MdnsServiceType ([string]$discoveryStatus.Json.publication.serviceType)
   if ($actualServiceType -ne $expectedServiceType) {
     throw "discovery provider reported an unexpected service type: $($discoveryStatus.Json.publication.serviceType)"
@@ -458,15 +462,17 @@ try {
   Stop-ManagedProcess $syncd
   $syncd = $null
   $invalidEnvMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $invalidDataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $invalidPort
-    AETHON_SYNCD_ADVERTISED_BASE_URL = $invalidAdvertisedEndpoint
-    AETHON_SYNCD_DISCOVERY_MDNS_PORT = "5462"
-    AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
-    AETHON_SYNCD_MANUAL_PROVIDER = "enabled"
-    AETHON_SYNCD_MANUAL_ORIGINS = "http://localhost:$invalidPort"
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $invalidDataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $invalidPort
+    EPIGRAPH_SYNCD_ADVERTISED_BASE_URL = $invalidAdvertisedEndpoint
+    EPIGRAPH_SYNCD_DISCOVERY_MDNS_PORT = "5462"
+    EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
+    EPIGRAPH_SYNCD_MANUAL_PROVIDER = "enabled"
+    EPIGRAPH_SYNCD_MANUAL_ORIGINS = "http://localhost:$invalidPort"
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-invalid-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-invalid-test"
   }
   $syncd = Start-ManagedProcess `
     -FilePath $syncdBinary `

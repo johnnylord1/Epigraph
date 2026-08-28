@@ -53,7 +53,7 @@ describe("migration journal state", () => {
   it("persists the migration journal to desktop storage", async () => {
     invokeMock
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/migration/journal-state.json");
+      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/epigraph/migration/journal-state.json");
 
     const payload: MangaMigrationUndoPayload = {
       oldState: {
@@ -133,8 +133,8 @@ describe("migration journal state", () => {
     });
 
     invokeMock
-      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/migration/journal-state.json")
-      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/aethon/migration/journal-state.json");
+      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/epigraph/migration/journal-state.json")
+      .mockResolvedValueOnce("C:/Users/jhow-/AppData/Roaming/epigraph/migration/journal-state.json");
 
     await saveMigrationJournalState({
       version: 1,
@@ -256,7 +256,7 @@ describe("migration journal state", () => {
   it("rejects a stale operation revision before persisting a conflicting update", async () => {
     invokeMock
       .mockResolvedValueOnce(null)
-      .mockResolvedValue("C:/Users/jhow-/AppData/Roaming/aethon/migration/journal-state.json");
+      .mockResolvedValue("C:/Users/jhow-/AppData/Roaming/epigraph/migration/journal-state.json");
     const entry = buildMigrationJournalEntry({
       contentKind: "manga",
       sourceFrom: "1",

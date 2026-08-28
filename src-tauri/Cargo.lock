@@ -9,57 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "aethon"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "async-stream",
- "axum",
- "axum-server",
- "base64 0.22.1",
- "dirs 5.0.1",
- "fs2",
- "futures-util",
- "http-body-util",
- "image",
- "kamadak-exif",
- "mdns-sd",
- "pem",
- "percent-encoding",
- "rcgen",
- "reqwest 0.12.28",
- "rpcdiscord",
- "rustls",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-http",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-updater",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid 1.23.0",
- "walkdir",
- "windows-sys 0.59.0",
- "winreg",
- "zip",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1209,6 +1158,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "epigraph"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "async-stream",
+ "axum",
+ "axum-server",
+ "base64 0.22.1",
+ "dirs 5.0.1",
+ "fs2",
+ "futures-util",
+ "http-body-util",
+ "if-addrs",
+ "image",
+ "kamadak-exif",
+ "mdns-sd",
+ "pem",
+ "percent-encoding",
+ "rcgen",
+ "reqwest 0.12.28",
+ "rpcdiscord",
+ "rustls",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-http",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-updater",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid 1.23.0",
+ "walkdir",
+ "windows-sys 0.59.0",
+ "winreg",
+ "zip",
 ]
 
 [[package]]

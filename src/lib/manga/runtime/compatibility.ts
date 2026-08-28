@@ -112,10 +112,10 @@ export interface CompatibilityProfile {
 }
 
 const RUNTIME_INFO: CompatibilityProfileOperations["runtimeInfo"] = {
-  name: "AethonRuntimeInfo",
+  name: "EpigraphRuntimeInfo",
   kind: "query",
   document: `
-    query AethonRuntimeInfo {
+    query EpigraphRuntimeInfo {
       aboutServer {
         name
         version
@@ -345,10 +345,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
   return {
     runtimeInfo: RUNTIME_INFO,
     listExtensions: {
-      name: "AethonExtensions",
+      name: "EpigraphExtensions",
       kind: "query",
       document: `
-        query AethonExtensions {
+        query EpigraphExtensions {
           extensions {
             nodes { ${extensionFields(v23)} }
           }
@@ -360,10 +360,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     refreshExtensions: {
-      name: "AethonRefreshExtensions",
+      name: "EpigraphRefreshExtensions",
       kind: "mutation",
       document: `
-        mutation AethonRefreshExtensions {
+        mutation EpigraphRefreshExtensions {
           fetchExtensions(input: {}) {
             extensions { ${extensionFields(v23)} }
           }
@@ -385,10 +385,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     listSources: {
-      name: "AethonSources",
+      name: "EpigraphSources",
       kind: "query",
       document: `
-        query AethonSources {
+        query EpigraphSources {
           sources {
             nodes {
               id name lang displayName iconUrl isNsfw supportsLatest isConfigurable
@@ -405,10 +405,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     sourcePreferences: {
-      name: "AethonSourcePreferences",
+      name: "EpigraphSourcePreferences",
       kind: "query",
       document: `
-        query AethonSourcePreferences($id: LongString!) {
+        query EpigraphSourcePreferences($id: LongString!) {
           source(id: $id) {
             preferences { ${SOURCE_PREFERENCE_FIELDS} }
           }
@@ -424,10 +424,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     updateSourcePreference: {
-      name: "AethonUpdateSourcePreference",
+      name: "EpigraphUpdateSourcePreference",
       kind: "mutation",
       document: `
-        mutation AethonUpdateSourcePreference($input: UpdateSourcePreferenceInput!) {
+        mutation EpigraphUpdateSourcePreference($input: UpdateSourcePreferenceInput!) {
           updateSourcePreference(input: $input) {
             preferences { ${SOURCE_PREFERENCE_FIELDS} }
           }
@@ -445,14 +445,14 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
         );
       },
     },
-    installExtension: extensionAction("AethonInstallExtension", "install", v23),
-    updateExtension: extensionAction("AethonUpdateExtension", "update", v23),
-    uninstallExtension: extensionAction("AethonUninstallExtension", "uninstall", v23),
+    installExtension: extensionAction("EpigraphInstallExtension", "install", v23),
+    updateExtension: extensionAction("EpigraphUpdateExtension", "update", v23),
+    uninstallExtension: extensionAction("EpigraphUninstallExtension", "uninstall", v23),
     search: {
-      name: "AethonSourceSearch",
+      name: "EpigraphSourceSearch",
       kind: "mutation",
       document: `
-        mutation AethonSourceSearch(
+        mutation EpigraphSourceSearch(
           $source: LongString!
           $type: FetchSourceMangaType!
           $page: Int!
@@ -493,10 +493,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     details: {
-      name: "AethonSourceDetails",
+      name: "EpigraphSourceDetails",
       kind: "mutation",
       document: `
-        mutation AethonSourceDetails($id: Int!) {
+        mutation EpigraphSourceDetails($id: Int!) {
           fetchManga(input: { id: $id }) {
             manga {
               id title thumbnailUrl inLibrary status description author artist genre realUrl
@@ -529,10 +529,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     chapters: {
-      name: "AethonSourceChapters",
+      name: "EpigraphSourceChapters",
       kind: "mutation",
       document: `
-        mutation AethonSourceChapters($mangaId: Int!) {
+        mutation EpigraphSourceChapters($mangaId: Int!) {
           fetchChapters(input: { mangaId: $mangaId }) {
             chapters {
               id name chapterNumber sourceOrder isRead isDownloaded isBookmarked pageCount
@@ -568,10 +568,10 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
       },
     },
     pages: {
-      name: "AethonSourcePages",
+      name: "EpigraphSourcePages",
       kind: "mutation",
       document: `
-        mutation AethonSourcePages($chapterId: Int!) {
+        mutation EpigraphSourcePages($chapterId: Int!) {
           fetchChapterPages(input: { chapterId: $chapterId }) {
             pages
           }
@@ -709,10 +709,10 @@ export class CompatibilityProfileV21 implements CompatibilityProfile {
   readonly operations: CompatibilityProfileOperations = {
     ...commonOperations(false),
     listStores: {
-      name: "AethonLegacyExtensionStores",
+      name: "EpigraphLegacyExtensionStores",
       kind: "query",
       document: `
-        query AethonLegacyExtensionStores {
+        query EpigraphLegacyExtensionStores {
           settings { extensionRepos }
         }
       `,
@@ -738,10 +738,10 @@ export class CompatibilityProfileV21 implements CompatibilityProfile {
       },
     },
     addStore: {
-      name: "AethonLegacyAddExtensionStore",
+      name: "EpigraphLegacyAddExtensionStore",
       kind: "mutation",
       document: `
-        mutation AethonLegacyAddExtensionStore($repos: [String!]!) {
+        mutation EpigraphLegacyAddExtensionStore($repos: [String!]!) {
           setSettings(input: { settings: { extensionRepos: $repos } }) {
             settings { extensionRepos }
           }
@@ -767,10 +767,10 @@ export class CompatibilityProfileV21 implements CompatibilityProfile {
       },
     },
     removeStore: {
-      name: "AethonLegacyRemoveExtensionStore",
+      name: "EpigraphLegacyRemoveExtensionStore",
       kind: "mutation",
       document: `
-        mutation AethonLegacyRemoveExtensionStore($repos: [String!]!) {
+        mutation EpigraphLegacyRemoveExtensionStore($repos: [String!]!) {
           setSettings(input: { settings: { extensionRepos: $repos } }) {
             settings { extensionRepos }
           }
@@ -789,10 +789,10 @@ export class CompatibilityProfileV23 implements CompatibilityProfile {
   readonly operations: CompatibilityProfileOperations = {
     ...commonOperations(true),
     listStores: {
-      name: "AethonExtensionStores",
+      name: "EpigraphExtensionStores",
       kind: "query",
       document: `
-        query AethonExtensionStores {
+        query EpigraphExtensionStores {
           extensionStores {
             nodes {
               name badgeLabel signingKey contactWebsite contactDiscord
@@ -824,10 +824,10 @@ export class CompatibilityProfileV23 implements CompatibilityProfile {
       },
     },
     addStore: {
-      name: "AethonAddExtensionStore",
+      name: "EpigraphAddExtensionStore",
       kind: "mutation",
       document: `
-        mutation AethonAddExtensionStore($indexUrl: String!) {
+        mutation EpigraphAddExtensionStore($indexUrl: String!) {
           addExtensionStore(input: { indexUrl: $indexUrl }) {
             extensionStore {
               name badgeLabel signingKey contactWebsite contactDiscord
@@ -846,10 +846,10 @@ export class CompatibilityProfileV23 implements CompatibilityProfile {
       },
     },
     removeStore: {
-      name: "AethonRemoveExtensionStore",
+      name: "EpigraphRemoveExtensionStore",
       kind: "mutation",
       document: `
-        mutation AethonRemoveExtensionStore($indexUrl: String!) {
+        mutation EpigraphRemoveExtensionStore($indexUrl: String!) {
           removeExtensionStore(input: { indexUrl: $indexUrl }) {
             extensionStore {
               name badgeLabel signingKey contactWebsite contactDiscord

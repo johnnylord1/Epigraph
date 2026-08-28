@@ -145,7 +145,7 @@ describe("novel library state storage", () => {
 
   it("migrates legacy localStorage novels state into desktop storage when no file exists yet", async () => {
     const legacy = createState();
-    localStorage.setItem("aethon-novels-library-state", JSON.stringify({
+    localStorage.setItem("epigraph-novels-library-state", JSON.stringify({
       [SCOPE_KEY]: legacy,
     }));
 
@@ -165,7 +165,7 @@ describe("novel library state storage", () => {
       serverUrl: null,
       contents: expect.stringContaining("\"title\": \"MANACLED\""),
     }));
-    expect(localStorage.getItem("aethon-novels-library-state")).toBeNull();
+    expect(localStorage.getItem("epigraph-novels-library-state")).toBeNull();
   });
 
   it("persists updated state to desktop storage", async () => {

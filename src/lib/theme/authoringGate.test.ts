@@ -64,7 +64,7 @@ describe("theme authoring gate", () => {
     const provider = readFileSync(resolve(ROOT, "src/lib/theme/provider.ts"), "utf8");
 
     expect(app).toContain("applyCustomTheme(root, custom)");
-    expect(app).not.toContain("aethon-custom-theme");
+    expect(app).not.toContain("epigraph-custom-theme");
     expect(app).not.toContain("document.createElement(\"style\")");
     expect(editor).toContain("use:themePreview={{ tokens, hud, motion }}");
     expect(editor).not.toContain("toCssVars");

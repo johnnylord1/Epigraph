@@ -1,3 +1,4 @@
+use std::path::{Path as FilePath, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ const MAX_GRAPHQL_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WEBSOCKET_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WEBSOCKET_FRAME_BYTES: usize = 1024 * 1024;
 const MAX_WEBSOCKET_PROTOCOL_BYTES: usize = 1024;
+const MAX_CACHED_THUMBNAIL_BYTES: u64 = 32 * 1024 * 1024;
 
 static PROXY_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -104,12 +106,20 @@ async fn proxy_http(
         Err(response) => return response,
     };
 
+    // The mobile replica must never make an uncached cover request wake up an extension.
+    // Older Tachiyomi extensions can be binary-incompatible with the OkHttp version used
+    // by the managed Suwayomi server. Its thumbnail endpoint treats `useCache=true` as a
+    // cache preference, not as cache-only, and falls back to extension network code when
+    // the file is absent. Serve the owned profile's cache directly and fail closed instead.
+    if let Some(manga_id) = cached_thumbnail_manga_id(&path) {
+        return serve_cached_thumbnail(manga_id, request.method() == Method::HEAD).await;
+    }
+
     let (parts, body) = request.into_parts();
     let method = parts.method;
     let client = proxy_client();
     let mut upstream_request = client.request(method.clone(), upstream_url);
     upstream_request = copy_request_headers(upstream_request, &parts.headers, include_body);
-    let mut operation_lease = None;
     if include_body {
         let bytes = match to_bytes(body, MAX_GRAPHQL_BODY_BYTES).await {
             Ok(bytes) => bytes,
@@ -123,19 +133,12 @@ async fn proxy_http(
             }
         };
         if graphql_body_is_mutation(&bytes) {
-            operation_lease = match crate::suwayomi_maintenance::try_acquire_shared_file_lease(
-                &crate::suwayomi_maintenance::default_runtime_root(),
-            ) {
-                Ok(lease) => Some(lease),
-                Err(_) => {
-                    return proxy_error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "SUWAYOMI_MAINTENANCE",
-                        "The comics runtime is being maintained. Try again shortly.",
-                        true,
-                    )
-                }
-            };
+            return proxy_error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "SUWAYOMI_PROXY_MUTATION_NOT_ALLOWED",
+                "Suwayomi mutations must use the authenticated typed command API.",
+                false,
+            );
         }
         upstream_request = upstream_request.body(bytes);
     }
@@ -171,9 +174,113 @@ async fn proxy_http(
         );
     }
 
-    let response = stream_upstream_response(upstream_response, method == Method::HEAD);
-    drop(operation_lease);
-    response
+    stream_upstream_response(upstream_response, method == Method::HEAD)
+}
+
+fn cached_thumbnail_manga_id(path: &str) -> Option<u64> {
+    let path = path.trim_matches('/');
+    let manga_id = path
+        .strip_prefix("api/v1/manga/")?
+        .strip_suffix("/thumbnail")?;
+    if manga_id.is_empty() || !manga_id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    manga_id.parse().ok()
+}
+
+async fn serve_cached_thumbnail(manga_id: u64, head_only: bool) -> Response {
+    let root = crate::syncd::extension_store_seed::active_profile_root();
+    let Some(path) = find_cached_thumbnail(&root, manga_id).await else {
+        return proxy_error(
+            StatusCode::NOT_FOUND,
+            "SUWAYOMI_THUMBNAIL_NOT_CACHED",
+            "The cover is not cached in the owned Suwayomi profile.",
+            false,
+        );
+    };
+    let metadata = match tokio::fs::metadata(&path).await {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_CACHED_THUMBNAIL_BYTES => {
+            metadata
+        }
+        Ok(_) => {
+            return proxy_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "SUWAYOMI_THUMBNAIL_CACHE_INVALID",
+                "The cached cover is not a valid bounded file.",
+                false,
+            )
+        }
+        Err(_) => {
+            return proxy_error(
+                StatusCode::NOT_FOUND,
+                "SUWAYOMI_THUMBNAIL_NOT_CACHED",
+                "The cover is not cached in the owned Suwayomi profile.",
+                false,
+            )
+        }
+    };
+
+    let content_type = thumbnail_content_type(&path);
+    let body = if head_only {
+        Body::empty()
+    } else {
+        match tokio::fs::read(&path).await {
+            Ok(bytes) => Body::from(bytes),
+            Err(_) => {
+                return proxy_error(
+                    StatusCode::NOT_FOUND,
+                    "SUWAYOMI_THUMBNAIL_NOT_CACHED",
+                    "The cached cover could not be read.",
+                    false,
+                )
+            }
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(CONTENT_LENGTH, metadata.len().to_string())
+        .header(CACHE_CONTROL, "private, max-age=86400")
+        .body(body)
+        .unwrap_or_else(|_| {
+            proxy_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SUWAYOMI_THUMBNAIL_CACHE_INVALID",
+                "The cached cover response could not be created.",
+                false,
+            )
+        })
+}
+
+async fn find_cached_thumbnail(root: &FilePath, manga_id: u64) -> Option<PathBuf> {
+    const EXTENSIONS: &[&str] = &["webp", "jpg", "jpeg", "png", "gif", "avif"];
+    let directory = root.join("downloads").join("thumbnails");
+    for extension in EXTENSIONS {
+        let candidate = directory.join(format!("{manga_id}.{extension}"));
+        if tokio::fs::metadata(&candidate)
+            .await
+            .is_ok_and(|metadata| metadata.is_file())
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn thumbnail_content_type(path: &FilePath) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("webp") => "image/webp",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("avif") => "image/avif",
+        _ => "application/octet-stream",
+    }
 }
 
 fn graphql_body_is_mutation(bytes: &[u8]) -> bool {
@@ -531,7 +638,7 @@ fn websocket_error_class(error: &tokio_tungstenite::tungstenite::Error) -> &'sta
     }
 }
 
-fn proxy_client() -> &'static reqwest::Client {
+pub(crate) fn proxy_client() -> &'static reqwest::Client {
     PROXY_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .no_proxy()
@@ -619,7 +726,10 @@ fn stream_upstream_response(upstream: reqwest::Response, is_head: bool) -> Respo
     })
 }
 
-fn resolve_upstream_base(_state: &SharedAppState, profile_id: &str) -> Result<Url, String> {
+pub(crate) fn resolve_upstream_base(
+    _state: &SharedAppState,
+    profile_id: &str,
+) -> Result<Url, String> {
     #[cfg(test)]
     if let Some(raw) = _state
         .config
@@ -636,7 +746,7 @@ fn resolve_upstream_base(_state: &SharedAppState, profile_id: &str) -> Result<Ur
         .into_iter()
         .filter(|instance| instance.profile_key == profile_id);
     let instance = matching.next().ok_or_else(|| {
-        "No running Aethon-owned Suwayomi instance is available for the paired profile.".to_string()
+        "No running Epigraph-owned Suwayomi instance is available for the paired profile.".to_string()
     })?;
     if matching.next().is_some() {
         return Err(
@@ -673,7 +783,11 @@ fn validate_loopback_base_url(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-fn build_upstream_url(mut base: Url, path: &str, query: Option<&str>) -> Result<Url, String> {
+pub(crate) fn build_upstream_url(
+    mut base: Url,
+    path: &str,
+    query: Option<&str>,
+) -> Result<Url, String> {
     if path.is_empty() || path.len() > MAX_PROXY_PATH_BYTES {
         return Err("Suwayomi proxy path is empty or too long.".to_string());
     }
@@ -721,7 +835,7 @@ fn extract_scope_query(raw: &str) -> Result<(Option<String>, Option<String>), St
     ))
 }
 
-fn proxy_reqwest_error_class(error: &reqwest::Error) -> &'static str {
+pub(crate) fn proxy_reqwest_error_class(error: &reqwest::Error) -> &'static str {
     if error.is_timeout() {
         "timeout"
     } else if error.is_connect() {
@@ -833,6 +947,38 @@ mod tests {
     }
 
     #[test]
+    fn cache_only_thumbnail_route_accepts_only_the_exact_numeric_path() {
+        assert_eq!(
+            cached_thumbnail_manga_id("api/v1/manga/12/thumbnail"),
+            Some(12)
+        );
+        assert_eq!(
+            cached_thumbnail_manga_id("/api/v1/manga/12/thumbnail/"),
+            Some(12)
+        );
+        assert_eq!(cached_thumbnail_manga_id("api/v1/manga/12/chapter"), None);
+        assert_eq!(cached_thumbnail_manga_id("api/v1/manga/../thumbnail"), None);
+        assert_eq!(
+            cached_thumbnail_manga_id("api/v1/manga/12.png/thumbnail"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn cached_thumbnail_lookup_ignores_partial_files() {
+        let temp = tempdir().unwrap();
+        let thumbnails = temp.path().join("downloads").join("thumbnails");
+        std::fs::create_dir_all(&thumbnails).unwrap();
+        std::fs::write(thumbnails.join("12.tmp"), b"partial").unwrap();
+        assert!(find_cached_thumbnail(temp.path(), 12).await.is_none());
+
+        std::fs::write(thumbnails.join("12.webp"), b"complete").unwrap();
+        let found = find_cached_thumbnail(temp.path(), 12).await.unwrap();
+        assert_eq!(found, thumbnails.join("12.webp"));
+        assert_eq!(thumbnail_content_type(&found), "image/webp");
+    }
+
+    #[test]
     fn scope_query_is_removed_before_forwarding() {
         let (scope, query) =
             extract_scope_query("scopeId=comics%3Aprofile%3Amain&foo=hello+world&foo=again")
@@ -907,8 +1053,34 @@ mod tests {
                 .get("host")
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or_default();
+            let document = body
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let variables = body.get("variables").cloned().unwrap_or(Value::Null);
+            let mut data = body.clone();
+            if document.contains("EpigraphCatalogLibrary") {
+                let offset = variables.get("offset").and_then(Value::as_i64).unwrap_or(0);
+                data["mangas"] = json!({
+                    "totalCount": offset,
+                    "pageInfo": { "hasNextPage": false },
+                    "nodes": [],
+                });
+            } else if document.contains("EpigraphCatalogCategories") {
+                data["categories"] = json!({
+                    "totalCount": 0,
+                    "pageInfo": { "hasNextPage": false },
+                    "nodes": [],
+                });
+            } else if document.contains("EpigraphCatalogChapters") {
+                data["chapters"] = json!({
+                    "totalCount": 0,
+                    "pageInfo": { "hasNextPage": false },
+                    "nodes": [],
+                });
+            }
             Json(json!({
-                "data": body,
+                "data": data,
                 "authorizationWasForwarded": authorization_was_forwarded,
                 "hostWasLoopback": host.starts_with("127.0.0.1:")
             }))
@@ -1055,6 +1227,31 @@ mod tests {
         let wrong_profile = app.clone().oneshot(wrong_profile_request).await.unwrap();
         assert_eq!(wrong_profile.status(), StatusCode::FORBIDDEN);
 
+        let mut mutation_request = core_request(
+            Method::POST,
+            "/v1/suwayomi/api/graphql?scopeId=comics%3Aprofile%3Amain",
+            Some(raw_token),
+            Body::from(r#"{"query":"mutation Update { updateManga { id } }"}"#),
+        );
+        mutation_request
+            .headers_mut()
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let mutation_response = app.clone().oneshot(mutation_request).await.unwrap();
+        assert_eq!(mutation_response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let mutation_payload: Value = serde_json::from_slice(
+            &mutation_response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            mutation_payload["error"]["code"],
+            "SUWAYOMI_PROXY_MUTATION_NOT_ALLOWED"
+        );
+
         let mut request = core_request(
             Method::POST,
             "/v1/suwayomi/api/graphql?scopeId=comics%3Aprofile%3Amain",
@@ -1075,6 +1272,125 @@ mod tests {
         assert_eq!(payload["authorizationWasForwarded"], false);
         assert_eq!(payload["hostWasLoopback"], true);
         assert_eq!(payload["data"]["query"], "query { __typename }");
+        upstream_task.abort();
+    }
+
+    #[tokio::test]
+    async fn catalog_bridge_exposes_allowlisted_library_categories_and_chapters() {
+        let (upstream_url, upstream_task) = spawn_upstream().await;
+        let (_temp, state) = build_test_state(&upstream_url).await;
+        let raw_token = "catalog-token";
+        db::ensure_test_token(
+            &state.pool,
+            "android-catalog",
+            "main",
+            &token_hash(raw_token),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = crate::syncd::app::build_test_router(state);
+
+        let library = app
+            .clone()
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=comics%3Aprofile%3Amain&operation=library&pageSize=25&offset=50",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(library.status(), StatusCode::OK);
+        let library: Value =
+            serde_json::from_slice(&library.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(library["schemaVersion"], 1);
+        assert_eq!(library["operation"], "library");
+        assert_eq!(library["scopeId"], "comics:profile:main");
+        assert_eq!(library["page"]["pageSize"], 25);
+        assert_eq!(library["page"]["offset"], 50);
+        assert_eq!(library["data"]["variables"]["first"], 25);
+        assert_eq!(library["data"]["variables"]["offset"], 50);
+        assert!(library["data"]["query"]
+            .as_str()
+            .is_some_and(|query| query.contains("EpigraphCatalogLibrary")));
+
+        let categories = app
+            .clone()
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=comics%3Aprofile%3Amain&operation=categories",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(categories.status(), StatusCode::OK);
+        let categories: Value =
+            serde_json::from_slice(&categories.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(categories["operation"], "categories");
+        assert!(categories["data"]["query"]
+            .as_str()
+            .is_some_and(|query| query.contains("EpigraphCatalogCategories")));
+
+        let chapters = app
+            .clone()
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=comics%3Aprofile%3Amain&operation=chapters&mangaId=42",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(chapters.status(), StatusCode::OK);
+        let chapters: Value =
+            serde_json::from_slice(&chapters.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(chapters["operation"], "chapters");
+        assert!(chapters["data"]["query"]
+            .as_str()
+            .is_some_and(|query| query.contains("EpigraphCatalogChapters")));
+        assert_eq!(chapters["data"]["variables"]["mangaId"], 42);
+        assert_eq!(chapters["data"]["variables"]["first"], 100);
+        assert_eq!(chapters["data"]["variables"]["offset"], 0);
+
+        let missing_manga_id = app
+            .clone()
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=comics%3Aprofile%3Amain&operation=chapters",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(missing_manga_id.status(), StatusCode::BAD_REQUEST);
+
+        let invalid_page_size = app
+            .clone()
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=comics%3Aprofile%3Amain&operation=library&pageSize=0",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid_page_size.status(), StatusCode::BAD_REQUEST);
+
+        let wrong_scope = app
+            .oneshot(core_request(
+                Method::GET,
+                "/v1/suwayomi/catalog?scopeId=novels%3Aprofile%3Amain&operation=library",
+                Some(raw_token),
+                Body::empty(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(wrong_scope.status(), StatusCode::FORBIDDEN);
         upstream_task.abort();
     }
 

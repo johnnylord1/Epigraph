@@ -5,7 +5,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $port = 1420
 
-. (Join-Path $scriptDir "AethonSessionTools.ps1")
+. (Join-Path $scriptDir "EpigraphSessionTools.ps1")
 
 function Get-PortListener {
   Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
@@ -14,12 +14,12 @@ function Get-PortListener {
 }
 
 function Stop-OrphanRuntimeIfNeeded {
-  if (Get-AethonWindowProcess) {
+  if (Get-EpigraphWindowProcess) {
     return
   }
 
   $candidatePorts = @(1420, 4667, 9223)
-  $allowedNames = @("node.exe", "java.exe", "aethon.exe", "cargo.exe")
+  $allowedNames = @("node.exe", "java.exe", "javaw.exe", "epigraph.exe", "cargo.exe")
 
   Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
     Where-Object { $_.LocalPort -in $candidatePorts } |
@@ -46,12 +46,12 @@ function Stop-OrphanRuntimeIfNeeded {
   Start-Sleep -Seconds 1
 }
 
-if (Focus-AethonWindow) {
+if (Focus-EpigraphWindow) {
   exit 0
 }
 
 $managedKinds = @("DevUi", "BuildAutomation", "SyncdPhaseGate", "SyncdHarness")
-Stop-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID) | Out-Null
+Stop-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds $managedKinds -ExcludePids @($PID) | Out-Null
 Start-Sleep -Seconds 1
 Stop-OrphanRuntimeIfNeeded
 

@@ -11,7 +11,7 @@ const { httpFetch, invoke, gql, updateSettings, settings } = vi.hoisted(() => ({
     flareSolverrUrl: "http://localhost:8191",
     flareSolverrEnabled: false,
     flareSolverrTimeout: 60,
-    flareSolverrSessionName: "aethon",
+    flareSolverrSessionName: "epigraph",
     flareSolverrSessionTtl: 15,
     flareSolverrFallback: false,
   },

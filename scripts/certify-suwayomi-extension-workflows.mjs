@@ -29,7 +29,7 @@ import {
   waitForHealth,
 } from "./certify-suwayomi-release.mjs";
 
-const ARTIFACT_CACHE_PREFIX = "aethon-suwayomi-artifact-";
+const ARTIFACT_CACHE_PREFIX = "epigraph-suwayomi-artifact-";
 
 export const WORKFLOW_CANDIDATE = Object.freeze({
   version: "v2.3.2243",
@@ -72,7 +72,7 @@ const PNG_1X1 = Buffer.from(
 function installExternalExtensionMutation(v23) {
   const versionField = v23 ? "versionCodeLong" : "versionCode";
   return `
-  mutation AethonInstallCertificationExtension($extensionFile: Upload!) {
+  mutation EpigraphInstallCertificationExtension($extensionFile: Upload!) {
     installExternalExtension(input: { extensionFile: $extensionFile }) {
       extension { pkgName versionName ${versionField} isInstalled }
     }
@@ -80,13 +80,13 @@ function installExternalExtensionMutation(v23) {
 `;
 }
 const INVENTORY_QUERY = `
-  query AethonCertificationInventory {
+  query EpigraphCertificationInventory {
     extensions { nodes { pkgName versionName versionCodeLong isInstalled } }
     sources { nodes { id name lang displayName extension { pkgName } } }
   }
 `;
 const LOCAL_SEARCH = `
-  mutation AethonCertificationSearch($source: LongString!) {
+  mutation EpigraphCertificationSearch($source: LongString!) {
     fetchSourceManga(input: { source: $source, type: POPULAR, page: 1 }) {
       mangas { id title sourceId }
       hasNextPage
@@ -94,33 +94,33 @@ const LOCAL_SEARCH = `
   }
 `;
 const LOCAL_DETAILS = `
-  mutation AethonCertificationDetails($id: Int!) {
+  mutation EpigraphCertificationDetails($id: Int!) {
     fetchManga(input: { id: $id }) {
       manga { id title description author artist genre realUrl sourceId }
     }
   }
 `;
 const LOCAL_CHAPTERS = `
-  mutation AethonCertificationChapters($mangaId: Int!) {
+  mutation EpigraphCertificationChapters($mangaId: Int!) {
     fetchChapters(input: { mangaId: $mangaId }) {
       chapters { id mangaId name sourceOrder pageCount }
     }
   }
 `;
 const LOCAL_PAGES = `
-  mutation AethonCertificationPages($chapterId: Int!) {
+  mutation EpigraphCertificationPages($chapterId: Int!) {
     fetchChapterPages(input: { chapterId: $chapterId }) { pages }
   }
 `;
 const REFRESH_EXTENSIONS = `
-  mutation AethonRefreshCertificationExtensions {
+  mutation EpigraphRefreshCertificationExtensions {
     fetchExtensions(input: {}) {
       extensions { pkgName versionName versionCodeLong isInstalled jarUrl }
     }
   }
 `;
 const INSTALL_STORE_EXTENSION = `
-  mutation AethonInstallCertificationStoreExtension($id: String!) {
+  mutation EpigraphInstallCertificationStoreExtension($id: String!) {
     updateExtension(input: { id: $id, patch: { install: true } }) {
       extension { pkgName versionName versionCodeLong isInstalled }
     }
@@ -219,8 +219,8 @@ export async function ensurePinnedFile(explicitPath, _root, descriptor) {
     return resolved;
   }
   const cacheRoot = path.resolve(
-    process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE
-      || path.join(tmpdir(), "aethon-suwayomi-artifact-cache-v1"),
+    process.env.EPIGRAPH_SUWAYOMI_ARTIFACT_CACHE
+      || path.join(tmpdir(), "epigraph-suwayomi-artifact-cache-v1"),
   );
   await mkdir(cacheRoot, { recursive: true });
   const extension = path.extname(descriptor.fileName ?? new URL(descriptor.url).pathname);
@@ -357,7 +357,7 @@ export async function startFixtureStoreServer(artifactPath, descriptor) {
   const baseUrl = `http://127.0.0.1:${address.port}`;
   const jarUrl = `${baseUrl}/fixture.jar`;
   indexJson = `${JSON.stringify({
-    name: "Aethon Certification",
+    name: "Epigraph Certification",
     badgeLabel: "Fixture",
     signingKey: "",
     contact: {
@@ -475,9 +475,9 @@ export async function findGeneratedCanaryJar(root) {
 }
 
 async function defaultJavaExecutable() {
-  if (process.env.AETHON_SUWAYOMI_JAVA) return process.env.AETHON_SUWAYOMI_JAVA;
+  if (process.env.EPIGRAPH_SUWAYOMI_JAVA) return process.env.EPIGRAPH_SUWAYOMI_JAVA;
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    const bundled = path.join(process.env.LOCALAPPDATA, "aethon", "binaries", "suwayomi-bundle", "jre", "bin", "java.exe");
+    const bundled = path.join(process.env.LOCALAPPDATA, "epigraph", "binaries", "suwayomi-bundle", "jre", "bin", "java.exe");
     try {
       await access(bundled);
       return bundled;
@@ -489,11 +489,11 @@ async function defaultJavaExecutable() {
 }
 
 async function defaultBaselineJar() {
-  if (process.env.AETHON_SUWAYOMI_BASELINE_JAR) return process.env.AETHON_SUWAYOMI_BASELINE_JAR;
+  if (process.env.EPIGRAPH_SUWAYOMI_BASELINE_JAR) return process.env.EPIGRAPH_SUWAYOMI_BASELINE_JAR;
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
     const bundled = path.join(
       process.env.LOCALAPPDATA,
-      "aethon",
+      "epigraph",
       "binaries",
       "suwayomi-bundle",
       "bin",
@@ -510,16 +510,16 @@ async function defaultBaselineJar() {
 }
 
 export async function createLocalSourceFixture(root) {
-  const mangaRoot = path.join(root, "local", "Aethon Certification");
+  const mangaRoot = path.join(root, "local", "Epigraph Certification");
   const chapterRoot = path.join(mangaRoot, "Chapter 01");
   await mkdir(chapterRoot, { recursive: true });
   await Promise.all([
     writeFile(path.join(mangaRoot, "cover.jpg"), PNG_1X1),
     writeFile(path.join(chapterRoot, "page01.png"), PNG_1X1),
     writeFile(path.join(mangaRoot, "details.json"), `${JSON.stringify({
-      title: "Aethon Certification",
-      author: "Aethon",
-      artist: "Aethon",
+      title: "Epigraph Certification",
+      author: "Epigraph",
+      artist: "Epigraph",
       description: "Deterministic local source certification fixture.",
       genre: ["Certification"],
       status: "2",
@@ -540,8 +540,8 @@ export function summarizeDeterministicWorkflow({ inventory, search, details, cha
   const chapter = chapters?.fetchChapters?.chapters?.[0];
   const pageList = pages?.fetchChapterPages?.pages;
   if (!extension?.isInstalled || extensionSources.length === 0) throw new Error("Pinned extension canary did not register a source.");
-  if (!localSource || manga?.title !== "Aethon Certification") throw new Error("Deterministic Local Source search failed.");
-  if (detail?.title !== manga.title || detail?.author !== "Aethon") throw new Error("Deterministic Local Source details failed.");
+  if (!localSource || manga?.title !== "Epigraph Certification") throw new Error("Deterministic Local Source search failed.");
+  if (detail?.title !== manga.title || detail?.author !== "Epigraph") throw new Error("Deterministic Local Source details failed.");
   if (!chapter || chapter.mangaId !== manga.id) throw new Error("Deterministic Local Source chapters failed.");
   if (!Array.isArray(pageList) || pageList.length !== 1) throw new Error("Deterministic Local Source pages failed.");
   return {
@@ -589,7 +589,7 @@ async function assertNoRuntimeForRoot(root) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const tempRoot = await mkdtemp(path.join(tmpdir(), "aethon-suwayomi-workflow-"));
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "epigraph-suwayomi-workflow-"));
   const runtimeRoot = path.join(tempRoot, "profile");
   const artifactDir = options["artifact-dir"] ? path.resolve(options["artifact-dir"]) : null;
   const timeoutMs = Number.parseInt(options["timeout-ms"] ?? "120000", 10);

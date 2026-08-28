@@ -1,10 +1,10 @@
 # Runtime Session Policy
 
-This document defines the approved entry points for opening Aethon during manual verification, UI audits, and Syncd protocol gates.
+This document defines the approved entry points for opening Epigraph during manual verification, UI audits, and Syncd protocol gates.
 
 ## Goals
 
-- avoid orphaned `aethon`, `node`, `cargo`, and sidecar processes
+- avoid orphaned `epigraph`, `node`, `cargo`, and sidecar processes
 - avoid opening the wrong gate for the wrong purpose
 - keep normal desktop launches silent
 - keep Syncd test flows isolated from the normal desktop session
@@ -15,8 +15,8 @@ This document defines the approved entry points for opening Aethon during manual
 
 Use one of these only:
 
-- Desktop shortcut: `C:\Users\jhow-\Desktop\Aethon.lnk`
-- Launcher script: `scripts/launch-desktop-aethon.ps1`
+- Desktop shortcut: `C:\Users\jhow-\Desktop\Epigraph.lnk`
+- Launcher script: `scripts/launch-desktop-epigraph.ps1`
 - Managed theme audit: `pnpm theme:audit-runtime`
 
 These are the only approved entry points for:
@@ -28,8 +28,8 @@ These are the only approved entry points for:
 
 They are designed to:
 
-- focus an existing Aethon window if one already exists
-- clean managed Aethon sessions before relaunch when needed
+- focus an existing Epigraph window if one already exists
+- clean managed Epigraph sessions before relaunch when needed
 - open silently without a visible console window in the normal desktop path
 
 Do not open raw `tauri:dev:gate` for routine manual UI inspection.
@@ -38,14 +38,14 @@ Do not open raw `tauri:dev:gate` for routine manual UI inspection.
 
 Use:
 
-- `scripts/stop-aethon-orphans.ps1`
+- `scripts/stop-epigraph-orphans.ps1`
 
 This is the approved cleanup path when:
 
 - a prior dev gate is stuck
 - a Syncd gate left processes behind
 - a release/build audit was interrupted
-- the machine is lagging because old Aethon sessions were not cleaned up
+- the machine is lagging because old Epigraph sessions were not cleaned up
 
 ### Syncd phase gates
 
@@ -77,7 +77,7 @@ Do not use them as substitutes for the normal desktop launcher.
 - Do not use the two-instance harness unless the test really requires two desktop instances.
 - Do not open raw `tauri:dev` or raw `tauri:dev:gate` for ordinary manual UI checks when the managed launcher exists.
 - Do not keep multiple gate families alive at the same time unless the test explicitly requires it.
-- Before switching from one gate family to another, run `stop-aethon-orphans.ps1` or use the managed launcher that already performs cleanup.
+- Before switching from one gate family to another, run `stop-epigraph-orphans.ps1` or use the managed launcher that already performs cleanup.
 
 ## Session Model
 

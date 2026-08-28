@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Activity, ActivityType, Assets, Button, Timestamps } from "tauri-plugin-drpc/activity";
 import { applyPrivacyFilter } from "./privacyFilter";
 import {
-  AETHON_DISCORD_APPLICATION_ID,
+  EPIGRAPH_DISCORD_APPLICATION_ID,
   NON_IMMEDIATE_UPDATE_INTERVAL_MS,
   PROGRESS_UPDATE_INTERVAL_MS,
   type DiscordPresencePayload,
@@ -117,7 +117,7 @@ export class DiscordPresenceService {
       this.lastSentSignature = null;
       this.lastProgressSentAt = 0;
       this.lastProgressBucket = null;
-      this.driverReady = await this.driver.start(AETHON_DISCORD_APPLICATION_ID)
+      this.driverReady = await this.driver.start(EPIGRAPH_DISCORD_APPLICATION_ID)
         .then(() => true)
         .catch(() => false);
     });

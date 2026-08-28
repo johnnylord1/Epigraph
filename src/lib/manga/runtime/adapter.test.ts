@@ -228,8 +228,8 @@ class FixtureTransport implements GraphQLTransport {
 describe("SuwayomiAdapter", () => {
   test("shares contract inspection across runtime info and capabilities", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: compatibleSchema(),
-      AethonRuntimeInfo: {
+      EpigraphRuntimeContract: compatibleSchema(),
+      EpigraphRuntimeInfo: {
         aboutServer: {
           name: "Suwayomi",
           version: "v2.1.1867",
@@ -253,13 +253,13 @@ describe("SuwayomiAdapter", () => {
     });
     expect(info.schemaHash).toMatch(/^[a-f0-9]{64}$/);
     expect(capabilities.sourcePreferences).toBe(true);
-    expect(transport.calls.filter((name) => name === "AethonRuntimeContract")).toHaveLength(1);
+    expect(transport.calls.filter((name) => name === "EpigraphRuntimeContract")).toHaveLength(1);
   });
 
   test("builds a stable runtime fingerprint without using process identity", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: compatibleSchema(),
-      AethonRuntimeInfo: {
+      EpigraphRuntimeContract: compatibleSchema(),
+      EpigraphRuntimeInfo: {
         aboutServer: {
           name: "Suwayomi",
           version: "v2.1.1867",
@@ -293,8 +293,8 @@ describe("SuwayomiAdapter", () => {
       (item) => item.name !== "sources",
     );
     const transport = new FixtureTransport({
-      AethonRuntimeContract: incomplete,
-      AethonLegacyExtensionStores: {
+      EpigraphRuntimeContract: incomplete,
+      EpigraphLegacyExtensionStores: {
         settings: { extensionRepos: [] },
       },
     });
@@ -304,13 +304,13 @@ describe("SuwayomiAdapter", () => {
       code: "RUNTIME_INCOMPATIBLE",
       details: { missingQueries: "sources" },
     });
-    expect(transport.calls).not.toContain("AethonLegacyExtensionStores");
+    expect(transport.calls).not.toContain("EpigraphLegacyExtensionStores");
   });
 
   test("delegates typed extension actions without exposing GraphQL to callers", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: compatibleSchema(),
-      AethonInstallExtension: {
+      EpigraphRuntimeContract: compatibleSchema(),
+      EpigraphInstallExtension: {
         updateExtension: {
           extension: {
             pkgName: "eu.kanade.tachiyomi.extension.en.demo",
@@ -337,7 +337,7 @@ describe("SuwayomiAdapter", () => {
 
     expect(executeSpy).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ name: "AethonInstallExtension", kind: "mutation" }),
+      expect.objectContaining({ name: "EpigraphInstallExtension", kind: "mutation" }),
       { id: "eu.kanade.tachiyomi.extension.en.demo" },
       { signal: undefined, timeoutMs: 60_000 },
     );
@@ -355,11 +355,11 @@ describe("SuwayomiAdapter", () => {
       switchCurrent: true,
     };
     const transport = new FixtureTransport({
-      AethonRuntimeContract: writablePreferencesSchema(),
-      AethonSourcePreferences: {
+      EpigraphRuntimeContract: writablePreferencesSchema(),
+      EpigraphSourcePreferences: {
         source: { preferences: [preference] },
       },
-      AethonUpdateSourcePreference: {
+      EpigraphUpdateSourcePreference: {
         updateSourcePreference: { preferences: [preference] },
       },
     });
@@ -379,7 +379,7 @@ describe("SuwayomiAdapter", () => {
       currentValue: true,
     });
     expect(executeSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "AethonUpdateSourcePreference" }),
+      expect.objectContaining({ name: "EpigraphUpdateSourcePreference" }),
       {
         input: {
           source: "7",
@@ -388,12 +388,12 @@ describe("SuwayomiAdapter", () => {
       },
       expect.objectContaining({ timeoutMs: 60_000 }),
     );
-    expect(transport.calls.filter((name) => name === "AethonSourcePreferences")).toHaveLength(2);
+    expect(transport.calls.filter((name) => name === "EpigraphSourcePreferences")).toHaveLength(2);
   });
 
   test("keeps source preferences read-only when the official mutation is unavailable", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: compatibleSchema(),
+      EpigraphRuntimeContract: compatibleSchema(),
     });
     const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
 
@@ -404,13 +404,13 @@ describe("SuwayomiAdapter", () => {
       expectedType: "SwitchPreference",
       value: true,
     })).rejects.toMatchObject({ code: "PREFERENCE_UNSUPPORTED" });
-    expect(transport.calls).not.toContain("AethonUpdateSourcePreference");
+    expect(transport.calls).not.toContain("EpigraphUpdateSourcePreference");
   });
 
   test("rejects a stale preference position before sending the mutation", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: writablePreferencesSchema(),
-      AethonSourcePreferences: {
+      EpigraphRuntimeContract: writablePreferencesSchema(),
+      EpigraphSourcePreferences: {
         source: {
           preferences: [{
             __typename: "SwitchPreference",
@@ -434,7 +434,7 @@ describe("SuwayomiAdapter", () => {
       expectedType: "SwitchPreference",
       value: true,
     })).rejects.toMatchObject({ code: "PREFERENCE_VALIDATION_FAILED" });
-    expect(transport.calls).not.toContain("AethonUpdateSourcePreference");
+    expect(transport.calls).not.toContain("EpigraphUpdateSourcePreference");
   });
 
   test("accepts an ambiguous mutation response only after a fresh query confirms the value", async () => {
@@ -454,9 +454,9 @@ describe("SuwayomiAdapter", () => {
       },
     });
     const transport = new FixtureTransport({
-      AethonRuntimeContract: writablePreferencesSchema(),
-      AethonSourcePreferences: () => preference(queryCount++ > 0),
-      AethonUpdateSourcePreference: () => {
+      EpigraphRuntimeContract: writablePreferencesSchema(),
+      EpigraphSourcePreferences: () => preference(queryCount++ > 0),
+      EpigraphUpdateSourcePreference: () => {
         throw new Error("The response was lost after Suwayomi accepted the mutation.");
       },
     });
@@ -472,21 +472,21 @@ describe("SuwayomiAdapter", () => {
       type: "SwitchPreference",
       currentValue: true,
     }]);
-    expect(transport.calls.filter((name) => name === "AethonSourcePreferences")).toHaveLength(2);
+    expect(transport.calls.filter((name) => name === "EpigraphSourcePreferences")).toHaveLength(2);
   });
 
   test("manages legacy repositories through the runtime boundary", async () => {
     const transport = new FixtureTransport({
-      AethonRuntimeContract: compatibleSchema(),
-      AethonLegacyExtensionStores: {
+      EpigraphRuntimeContract: compatibleSchema(),
+      EpigraphLegacyExtensionStores: {
         settings: { extensionRepos: ["https://old.example/repo.json"] },
       },
-      AethonLegacyAddExtensionStore: {
+      EpigraphLegacyAddExtensionStore: {
         setSettings: {
           settings: { extensionRepos: ["https://old.example/repo.json", "https://new.example/repo.json"] },
         },
       },
-      AethonLegacyRemoveExtensionStore: {
+      EpigraphLegacyRemoveExtensionStore: {
         setSettings: {
           settings: { extensionRepos: ["https://new.example/repo.json"] },
         },
@@ -499,11 +499,11 @@ describe("SuwayomiAdapter", () => {
     const removed = await runtime.removeStore("https://old.example/repo.json");
     expect(removed?.indexUrl).toBe("https://old.example/repo.json");
     expect(transport.calls).toEqual([
-      "AethonRuntimeContract",
-      "AethonLegacyExtensionStores",
-      "AethonLegacyAddExtensionStore",
-      "AethonLegacyExtensionStores",
-      "AethonLegacyRemoveExtensionStore",
+      "EpigraphRuntimeContract",
+      "EpigraphLegacyExtensionStores",
+      "EpigraphLegacyAddExtensionStore",
+      "EpigraphLegacyExtensionStores",
+      "EpigraphLegacyRemoveExtensionStore",
     ]);
   });
 });

@@ -110,30 +110,44 @@ $stdoutPath = Join-Path $tmpRoot "syncd.stdout.log"
 $stderrPath = Join-Path $tmpRoot "syncd.stderr.log"
 $port = "47773"
 $endpoint = "https://127.0.0.1:$port"
-$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\aethon-syncd.exe"
+$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\epigraph-syncd.exe"
 $syncd = $null
 $currentStep = "initialization"
+
+function Stop-SyncdProcessTree {
+  param($Process)
+  if ($null -eq $Process) { return }
+  try {
+    & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null
+  } catch {}
+  if (-not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  }
+  try { $null = $Process.WaitForExit(5000) } catch {}
+}
 
 if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 
 $authHeaders = @{
-  "X-Aethon-Client-Version" = "0.1.0"
-  "X-Aethon-Client-Protocol-Version" = "1"
+  "X-Epigraph-Client-Version" = "0.1.0"
+  "X-Epigraph-Client-Protocol-Version" = "1"
 }
 
 Push-Location $projectRoot
 try {
   $currentStep = "build syncd"
   Write-Host "[pairing-gate] building syncd"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon-syncd
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph-syncd
 
   $envMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $dataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $port
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $dataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $port
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
   $currentStep = "start syncd"
   Write-Host "[pairing-gate] starting syncd"
@@ -195,22 +209,22 @@ try {
 
   $mainBooks = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $mainAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $mainBooks 200 "main token books scope"
 
   $mainNovelsAllowed = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $mainAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $mainNovelsAllowed 200 "main token novels:profile:main"
 
   $mainNovelsForbidden = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Atest&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $mainAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $mainNovelsForbidden 403 "main token forbidden novels:profile:test"
 
@@ -320,22 +334,22 @@ try {
 
   $testBooks = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $testAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $testBooks 200 "trusted-pool token books scope"
 
   $testNovelsAllowed = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Atest&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $testAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $testNovelsAllowed 200 "trusted-pool token novels:profile:test"
 
   $testNovelsForbidden = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $testAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $testNovelsForbidden 403 "trusted-pool token forbidden novels:profile:main"
 
@@ -347,8 +361,8 @@ try {
 
   $revokedUse = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $testAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $revokedUse 401 "revoked token denied"
   Set-Content -Path (Join-Path $tmpRoot "revoked-token-use.json") -Value $revokedUse.Raw -NoNewline
@@ -361,8 +375,8 @@ try {
 
   $expiredUse = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=books%3Aglobal&sinceVersion=0" -Headers @{
     "Authorization" = "Bearer $mainAccessToken"
-    "X-Aethon-Client-Version" = "0.1.0"
-    "X-Aethon-Client-Protocol-Version" = "1"
+    "X-Epigraph-Client-Version" = "0.1.0"
+    "X-Epigraph-Client-Protocol-Version" = "1"
   }
   Assert-Status $expiredUse 401 "expired token denied"
   Set-Content -Path (Join-Path $tmpRoot "expired-token-use.json") -Value $expiredUse.Raw -NoNewline
@@ -379,8 +393,6 @@ catch {
   throw
 }
 finally {
-  if ($syncd -and -not $syncd.HasExited) {
-    Stop-Process -Id $syncd.Id -Force
-  }
+  Stop-SyncdProcessTree $syncd
   Pop-Location
 }

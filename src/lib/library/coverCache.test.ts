@@ -45,14 +45,14 @@ describe("library cover cache", () => {
     await getCachedLibraryCoverUrl(refreshedScope, manga);
     expect(invokeMock).toHaveBeenLastCalledWith("get_cached_library_cover", expect.objectContaining({
       mangaId: 42,
-      thumbnailUrl: "/api/v1/manga/42/thumbnail?aethon_cover_generation=3&aethon_cover_variant=thumb-v2-edge420",
+      thumbnailUrl: "/api/v1/manga/42/thumbnail?epigraph_cover_generation=3&epigraph_cover_variant=thumb-v2-edge420",
     }));
 
     await cacheLibraryCoverFromServer(refreshedScope, manga);
     expect(invokeMock).toHaveBeenLastCalledWith("cache_library_cover", expect.objectContaining({
       mangaId: 42,
-      thumbnailUrl: "/api/v1/manga/42/thumbnail?aethon_cover_generation=3&aethon_cover_variant=thumb-v2-edge420",
-      coverUrl: "http://127.0.0.1:4567/thumb//api/v1/manga/42/thumbnail?aethon_cover_generation=3",
+      thumbnailUrl: "/api/v1/manga/42/thumbnail?epigraph_cover_generation=3&epigraph_cover_variant=thumb-v2-edge420",
+      coverUrl: "http://127.0.0.1:4567/thumb//api/v1/manga/42/thumbnail?epigraph_cover_generation=3",
     }));
   });
 

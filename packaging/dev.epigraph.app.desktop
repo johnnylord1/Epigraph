@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Epigraph
+Comment=Epigraph manga reader powered by Suwayomi
+Exec=epigraph
+Icon=dev.epigraph.app
+Terminal=false
+Type=Application
+Categories=Graphics;Viewer;
+Keywords=manga;comics;reader;
+StartupWMClass=epigraph

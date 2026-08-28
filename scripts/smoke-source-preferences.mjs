@@ -31,7 +31,7 @@ async function main() {
   const outputDirectory = path.resolve(
     args.out || path.join(projectRoot, "docs", "screenshots", "marco72c-preferences"),
   );
-  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aethon-preferences-smoke-"));
+  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-preferences-smoke-"));
   const capabilities = new Capabilities();
   capabilities.setBrowserName("wry");
   capabilities.set("tauri:options", {
@@ -57,14 +57,14 @@ async function main() {
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await driver.manage().window().setRect({ width: 1280, height: 800, x: 0, y: 0 });
     await driver.wait(
-      async () => driver.executeScript("return Boolean(window.__aethonAudit)").catch(() => false),
+      async () => driver.executeScript("return Boolean(window.__epigraphAudit)").catch(() => false),
       120_000,
     );
     step("automation audit bridge ready");
-    await driver.executeScript("window.__aethonAudit.bypassStartupSplash()");
+    await driver.executeScript("window.__epigraphAudit.bypassStartupSplash()");
     await settle(driver, 1_000);
     const startupState = await driver.executeScript(
-      "return window.__aethonAudit.getState()",
+      "return window.__epigraphAudit.getState()",
     );
     step(`startup state ${JSON.stringify(startupState)}`);
     const startupDom = await driver.executeScript(() => ({
@@ -94,11 +94,11 @@ async function main() {
     );
     await searchNavigation.click();
     await driver.wait(async () => driver.executeScript(
-      "return window.__aethonAudit.getState().navPage === 'search'",
+      "return window.__epigraphAudit.getState().navPage === 'search'",
     ).catch(() => false), 30_000);
     await settle(driver, 5_000);
     const searchDom = await driver.executeScript(() => ({
-      state: window.__aethonAudit.getState(),
+      state: window.__epigraphAudit.getState(),
       browseSubtabs: Boolean(document.querySelector(".browseSubtabs")),
       pageState: document.querySelector(".main > .page-state")?.textContent?.trim() ?? null,
       mainChildren: [...document.querySelectorAll(".main > *")].map((element) => element.className),

@@ -115,7 +115,7 @@
   import LibraryShell from "../library/LibraryShell.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
 
-  const DT_TAB = "application/x-aethon-tab";
+  const DT_TAB = "application/x-epigraph-tab";
   const CATEGORY_MEMBERS_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:members`;
   const LEGACY_CATEGORIES_WITH_MANGA_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:with-manga`;
   const LIBRARY_CHAPTER_COUNTS_CACHE_KEY = `${CACHE_KEYS.LIBRARY}:chapter-counts`;
@@ -1584,7 +1584,7 @@
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
-        body: translate("ui_aethonIsAlreadyCheckingYourLibrary"),
+        body: translate("ui_epigraphIsAlreadyCheckingYourLibrary"),
         duration: 2400,
       });
       return;
@@ -1618,7 +1618,7 @@
       addToast({
         kind: "info",
         title: translate("ui_comicsUpdateStopped"),
-        body: translate("ui_aethonKeptTheTitlesThatSuwayomiAlreadyRefreshed"),
+        body: translate("ui_epigraphKeptTheTitlesThatSuwayomiAlreadyRefreshed"),
       });
       return updateRun;
     }
@@ -1643,7 +1643,7 @@
         sourceId: String(manga?.source?.id ?? manga?.sourceId ?? "unknown"),
         sourceName,
         extensionName: sourceName,
-        message: "Aethon could not verify this title's chapter list after the update.",
+        message: "Epigraph could not verify this title's chapter list after the update.",
         errorType: "unknown" as const,
       };
     });
@@ -1660,7 +1660,7 @@
         ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update across ${new Set(issues.map((issue) => issue.sourceId)).size} source${new Set(issues.map((issue) => issue.sourceId)).size === 1 ? "" : "s"}.`
         : entries.length > 0
           ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-          : translate("ui_aethonRefreshedYourComicsLibrary"),
+          : translate("ui_epigraphRefreshedYourComicsLibrary"),
       createdAt: updatedAt,
     });
     addToast({
@@ -1670,7 +1670,7 @@
         ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update. See Recent Activity.`
         : entries.length > 0
           ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
-          : translate("ui_aethonRefreshedYourComicsLibrary"),
+          : translate("ui_epigraphRefreshedYourComicsLibrary"),
     });
     return updateRun;
   }
@@ -1770,7 +1770,7 @@
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
-        body: translate("ui_aethonIsAlreadyCheckingYourLibrary"),
+        body: translate("ui_epigraphIsAlreadyCheckingYourLibrary"),
         duration: 2400,
       });
       return;
@@ -1795,12 +1795,12 @@
       addToast({
         kind: "error",
         title: translate("ui_couldNotUpdateLibrary"),
-        body: refreshError instanceof Error ? refreshError.message : translate("ui_aethonCouldNotReachSuwayomi"),
+        body: refreshError instanceof Error ? refreshError.message : translate("ui_epigraphCouldNotReachSuwayomi"),
       });
       addSystemNotification({
         kind: "error",
         title: translate("ui_couldNotUpdateLibrary"),
-        body: refreshError instanceof Error ? refreshError.message : translate("ui_aethonCouldNotReachSuwayomi"),
+        body: refreshError instanceof Error ? refreshError.message : translate("ui_epigraphCouldNotReachSuwayomi"),
       });
     } finally {
       manualRefreshInFlight = false;
@@ -1985,7 +1985,7 @@
     const handleHardcoverStateChanged = () => {
       reloadHardcoverTrackingRecords();
     };
-    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    globalThis.addEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
 
     if (store.settings.defaultLibrarySection !== "last-used") {
       setLibrarySection(store.settings.defaultLibrarySection);
@@ -1997,7 +1997,7 @@
     }
 
     return () => {
-      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+      globalThis.removeEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
       if (libraryLoadRetryTimer) {
         clearTimeout(libraryLoadRetryTimer);
         libraryLoadRetryTimer = null;

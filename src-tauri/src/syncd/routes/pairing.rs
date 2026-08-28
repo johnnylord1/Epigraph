@@ -11,10 +11,10 @@ use std::net::SocketAddr;
 use crate::syncd::db::{self, PairingClaimError, PairingClaimOutcome};
 use crate::syncd::middleware::validate_client_version_fields;
 use crate::syncd::models::{
-    AppError, ErrorDetail, PairingClaimRequest, PairingClaimResponse, PairingClaimStatus,
-    PairingHostDecision, PairingHostDecisionRequest, PairingHostDecisionResponse,
-    PairingSessionStatus, PairingStatusEvent, PairingStatusEventType, PairingStatusSubscribeQuery,
-    PairingTokenResponse, SharedAppState,
+    AppError, ErrorDetail, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
+    PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
+    PairingHostDecisionResponse, PairingSessionStatus, PairingStatusEvent, PairingStatusEventType,
+    PairingStatusSubscribeQuery, PairingTokenResponse, SharedAppState, SyncdPairedDeviceView,
 };
 
 pub async fn post_pairing_claim(
@@ -28,6 +28,10 @@ pub async fn post_pairing_claim(
         &state,
     )?;
 
+    // Pairing claims update the same SQLite database used by the mirror and projection workers.
+    // Serialize the write transaction so a WAL read transaction cannot be upgraded concurrently
+    // and surface SQLITE_BUSY_SNAPSHOT to a first-time mobile client.
+    let _writer_guard = state.mutation_gate.lock().await;
     let outcome = db::claim_pairing_session(
         &state.pool,
         &state.config,
@@ -36,6 +40,7 @@ pub async fn post_pairing_claim(
         &request.device_id,
         &request.device_name,
         request.platform,
+        request.requested_scopes.as_deref(),
     )
     .await
     .map_err(map_pairing_claim_error)?;
@@ -48,38 +53,48 @@ pub async fn post_pairing_claim(
             if just_claimed {
                 publish_pairing_transition(&state, &session, true);
             }
+            let requested_scopes = requested_scopes_for_response(&session)?;
             PairingClaimResponse {
                 status: PairingClaimStatus::PendingApproval,
                 session_id: session.session_id,
                 profile_id: session.profile_id,
                 claimed_device_id: session.claimed_device_id,
                 expires_at_ms: session.expires_at_ms,
+                requested_scopes,
                 token: None,
             }
         }
-        PairingClaimOutcome::Approved { session, token } => PairingClaimResponse {
-            status: PairingClaimStatus::Approved,
-            session_id: session.session_id,
-            profile_id: session.profile_id,
-            claimed_device_id: session.claimed_device_id,
-            expires_at_ms: session.expires_at_ms,
-            token: Some(PairingTokenResponse {
-                access_token: token.access_token,
-                token_id: token.token_id,
-                profile_id: token.profile_id,
-                scopes: token.scopes,
-                inactivity_expires_at_ms: token.inactivity_expires_at_ms,
-                granted_via: token.granted_via,
-            }),
-        },
-        PairingClaimOutcome::Rejected(session) => PairingClaimResponse {
-            status: PairingClaimStatus::Rejected,
-            session_id: session.session_id,
-            profile_id: session.profile_id,
-            claimed_device_id: session.claimed_device_id,
-            expires_at_ms: session.expires_at_ms,
-            token: None,
-        },
+        PairingClaimOutcome::Approved { session, token } => {
+            let requested_scopes = requested_scopes_for_response(&session)?;
+            PairingClaimResponse {
+                status: PairingClaimStatus::Approved,
+                session_id: session.session_id,
+                profile_id: session.profile_id,
+                claimed_device_id: session.claimed_device_id,
+                expires_at_ms: session.expires_at_ms,
+                requested_scopes,
+                token: Some(PairingTokenResponse {
+                    access_token: token.access_token,
+                    token_id: token.token_id,
+                    profile_id: token.profile_id,
+                    scopes: token.scopes,
+                    inactivity_expires_at_ms: token.inactivity_expires_at_ms,
+                    granted_via: token.granted_via,
+                }),
+            }
+        }
+        PairingClaimOutcome::Rejected(session) => {
+            let requested_scopes = requested_scopes_for_response(&session)?;
+            PairingClaimResponse {
+                status: PairingClaimStatus::Rejected,
+                session_id: session.session_id,
+                profile_id: session.profile_id,
+                claimed_device_id: session.claimed_device_id,
+                expires_at_ms: session.expires_at_ms,
+                requested_scopes,
+                token: None,
+            }
+        }
     }))
 }
 
@@ -100,12 +115,9 @@ pub async fn post_pairing_host_decision(
     Path(session_id): Path<String>,
     Json(request): Json<PairingHostDecisionRequest>,
 ) -> Result<Json<PairingHostDecisionResponse>, AppError> {
-    if !remote_addr.ip().is_loopback() {
-        return Err(AppError::Forbidden(
-            "Pairing host decision is only available from loopback.".to_string(),
-        ));
-    }
+    require_loopback_control(remote_addr, "Pairing host decision")?;
 
+    let _writer_guard = state.mutation_gate.lock().await;
     let session = match request.decision {
         PairingHostDecision::Approve => db::approve_pairing_session(&state.pool, &session_id)
             .await
@@ -129,12 +141,73 @@ pub async fn post_pairing_host_decision(
     publish_pairing_transition(&state, &session, true);
 
     let status = pairing_session_status(&session);
+    let requested_scopes = requested_scopes_for_response(&session)?;
     Ok(Json(PairingHostDecisionResponse {
         session_id: session.session_id,
         status,
         claimed_device_id: session.claimed_device_id,
         expires_at_ms: session.expires_at_ms,
+        requested_scopes,
     }))
+}
+
+pub async fn get_paired_devices(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<Vec<SyncdPairedDeviceView>>, AppError> {
+    require_loopback_control(remote_addr, "Paired device catalog")?;
+    let devices = db::list_paired_devices(&state.pool)
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to list paired devices: {error}")))?;
+    Ok(Json(devices))
+}
+
+pub async fn post_paired_device_scopes(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<PairedDeviceScopesUpdateRequest>,
+) -> Result<Json<SyncdPairedDeviceView>, AppError> {
+    require_loopback_control(remote_addr, "Paired device scope update")?;
+    if request.device_id.trim().is_empty() || request.profile_id.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "Paired device id and profile id must not be empty.".to_string(),
+        ));
+    }
+    db::canonicalize_pairing_scopes(&request.profile_id, &request.granted_scopes, false)
+        .map_err(AppError::BadRequest)?;
+
+    let device = db::update_paired_device_granted_scopes(
+        &state.pool,
+        &request.device_id,
+        &request.profile_id,
+        &request.granted_scopes,
+    )
+    .await
+    .map_err(|error| AppError::Internal(format!("Failed to update paired device scopes: {error}")))?
+    .ok_or_else(|| {
+        AppError::not_found(
+            "PAIRED_DEVICE_NOT_FOUND",
+            "Paired device was not found for the requested profile.",
+            None,
+        )
+    })?;
+    Ok(Json(device))
+}
+
+fn require_loopback_control(remote_addr: SocketAddr, action: &str) -> Result<(), AppError> {
+    if remote_addr.ip().is_loopback() {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(format!(
+            "{action} is only available from loopback."
+        )))
+    }
+}
+
+fn requested_scopes_for_response(session: &db::PairingSessionRow) -> Result<Vec<String>, AppError> {
+    db::pairing_session_requested_scopes(session).map_err(|error| {
+        AppError::Internal(format!("Failed to load pairing session scopes: {error}"))
+    })
 }
 
 pub(crate) fn publish_pairing_transition(
@@ -211,6 +284,14 @@ fn pairing_status_event(
     session: &db::PairingSessionRow,
     event_type: PairingStatusEventType,
 ) -> PairingStatusEvent {
+    let requested_scopes = db::pairing_session_requested_scopes(session).unwrap_or_else(|error| {
+        tracing::error!(
+            session_id = %session.session_id,
+            error = %error,
+            "failed to resolve pairing scopes for status event"
+        );
+        Vec::new()
+    });
     PairingStatusEvent {
         event_type,
         session_id: session.session_id.clone(),
@@ -218,6 +299,7 @@ fn pairing_status_event(
         status: pairing_session_status(session),
         expires_at_ms: session.expires_at_ms,
         claimed_device_id: session.claimed_device_id.clone(),
+        requested_scopes,
     }
 }
 
@@ -470,6 +552,17 @@ fn map_pairing_claim_error(error: PairingClaimError) -> AppError {
             required_action: None,
             details: None,
         }),
+        PairingClaimError::InvalidRequestedScopes(message) => AppError::BadRequest(message),
+        PairingClaimError::RequestedScopesMismatch => AppError::Conflict(ErrorDetail {
+            code: "PAIRING_REQUESTED_SCOPES_MISMATCH".to_string(),
+            message: "Pairing requested scopes changed after the session was claimed.".to_string(),
+            retryable: Some(false),
+            min_client_version: None,
+            current_server_version: None,
+            min_replayable_server_version: None,
+            required_action: None,
+            details: None,
+        }),
         PairingClaimError::InvalidStatus(status) => AppError::Conflict(ErrorDetail {
             code: "PAIRING_SESSION_INVALID_STATUS".to_string(),
             message: format!("Pairing session is in unsupported status '{status}'."),
@@ -568,23 +661,49 @@ mod tests {
         device_id: &str,
         device_name: &str,
     ) -> Request<Body> {
+        claim_request_with_scopes(session_id, pairing_code, device_id, device_name, None)
+    }
+
+    fn claim_request_with_scopes(
+        session_id: &str,
+        pairing_code: &str,
+        device_id: &str,
+        device_name: &str,
+        requested_scopes: Option<&[&str]>,
+    ) -> Request<Body> {
+        let mut payload = json!({
+            "sessionId": session_id,
+            "pairingCode": pairing_code,
+            "deviceId": device_id,
+            "deviceName": device_name,
+            "platform": "android",
+            "clientVersion": "0.1.0",
+            "clientProtocolVersion": 1
+        });
+        if let Some(requested_scopes) = requested_scopes {
+            payload["requestedScopes"] = json!(requested_scopes);
+        }
         Request::builder()
             .method("POST")
             .uri("/v1/pairing/claim")
             .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "sessionId": session_id,
-                    "pairingCode": pairing_code,
-                    "deviceId": device_id,
-                    "deviceName": device_name,
-                    "platform": "android",
-                    "clientVersion": "0.1.0",
-                    "clientProtocolVersion": 1
-                })
-                .to_string(),
-            ))
+            .body(Body::from(payload.to_string()))
             .unwrap()
+    }
+
+    fn loopback_request(method: &str, uri: &str, payload: Option<Value>) -> Request<Body> {
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                payload.map(|value| value.to_string()).unwrap_or_default(),
+            ))
+            .unwrap();
+        request
+            .extensions_mut()
+            .insert(ConnectInfo::<SocketAddr>("127.0.0.1:4777".parse().unwrap()));
+        request
     }
 
     fn host_decision_request(
@@ -751,6 +870,259 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(novels_test.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn requested_scopes_are_persisted_emitted_and_granted_exactly() {
+        let (_temp, state) = build_state().await;
+        create_pairing_session(
+            &state.pool,
+            "session-scoped",
+            "main",
+            "123456",
+            "fingerprint",
+            db::now_ms() + 60_000,
+        )
+        .await
+        .unwrap();
+        let mut receiver = state.pairing_status_sender.subscribe();
+        let app = build_test_router(state.clone());
+        let requested = ["comics:profile:main", "books:global"];
+
+        let pending = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-scoped",
+                "123456",
+                "android-scoped",
+                "Scoped Pixel",
+                Some(&requested),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(pending.status(), StatusCode::OK);
+        let pending_payload = json_body(pending).await;
+        assert_eq!(
+            pending_payload["requestedScopes"],
+            json!(["books:global", "comics:profile:main"])
+        );
+        let claimed_event = receiver.recv().await.unwrap();
+        assert_eq!(
+            claimed_event.requested_scopes,
+            vec!["books:global", "comics:profile:main"]
+        );
+
+        approve_pairing_session(&state.pool, "session-scoped")
+            .await
+            .unwrap();
+        let approved = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-scoped",
+                "123456",
+                "android-scoped",
+                "Scoped Pixel",
+                Some(&requested),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(approved.status(), StatusCode::OK);
+        let approved_payload = json_body(approved).await;
+        assert_eq!(
+            approved_payload["token"]["scopes"],
+            json!(["books:global", "comics:profile:main"])
+        );
+        let access_token = approved_payload["token"]["accessToken"].as_str().unwrap();
+
+        let books = app
+            .clone()
+            .oneshot(authorized_get(
+                "/v1/changes?scopeId=books%3Aglobal&sinceVersion=0",
+                access_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(books.status(), StatusCode::OK);
+        let novels = app
+            .oneshot(authorized_get(
+                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
+                access_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(novels.status(), StatusCode::FORBIDDEN);
+
+        let stored = db::load_pairing_session(&state.pool, "session-scoped")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db::pairing_session_requested_scopes(&stored).unwrap(),
+            vec!["books:global", "comics:profile:main"]
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_or_changed_requested_scopes_are_rejected() {
+        let (_temp, state) = build_state().await;
+        create_pairing_session(
+            &state.pool,
+            "session-invalid-scopes",
+            "main",
+            "123456",
+            "fingerprint",
+            db::now_ms() + 60_000,
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+
+        let invalid = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-invalid-scopes",
+                "123456",
+                "android-scoped",
+                "Scoped Pixel",
+                Some(&["novels:profile:other"]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let initial = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-invalid-scopes",
+                "123456",
+                "android-scoped",
+                "Scoped Pixel",
+                Some(&["books:global"]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(initial.status(), StatusCode::OK);
+
+        let changed = app
+            .oneshot(claim_request_with_scopes(
+                "session-invalid-scopes",
+                "123456",
+                "android-scoped",
+                "Scoped Pixel",
+                Some(&["comics:profile:main"]),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(changed.status(), StatusCode::CONFLICT);
+        let payload = json_body(changed).await;
+        assert_eq!(
+            payload["error"]["code"],
+            "PAIRING_REQUESTED_SCOPES_MISMATCH"
+        );
+    }
+
+    #[tokio::test]
+    async fn loopback_catalog_updates_granted_scopes_immediately() {
+        let (_temp, state) = build_state().await;
+        create_pairing_session(
+            &state.pool,
+            "session-catalog",
+            "main",
+            "123456",
+            "fingerprint",
+            db::now_ms() + 60_000,
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+        let requested = ["books:global", "comics:profile:main"];
+        let pending = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-catalog",
+                "123456",
+                "android-catalog",
+                "Catalog Pixel",
+                Some(&requested),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(pending.status(), StatusCode::OK);
+        approve_pairing_session(&state.pool, "session-catalog")
+            .await
+            .unwrap();
+        let approved = app
+            .clone()
+            .oneshot(claim_request_with_scopes(
+                "session-catalog",
+                "123456",
+                "android-catalog",
+                "Catalog Pixel",
+                Some(&requested),
+            ))
+            .await
+            .unwrap();
+        let approved_payload = json_body(approved).await;
+        let access_token = approved_payload["token"]["accessToken"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let catalog = app
+            .clone()
+            .oneshot(loopback_request("GET", "/v1/pairing/devices", None))
+            .await
+            .unwrap();
+        assert_eq!(catalog.status(), StatusCode::OK);
+        let catalog_payload = json_body(catalog).await;
+        let device = catalog_payload
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["deviceId"] == "android-catalog")
+            .unwrap();
+        assert_eq!(
+            device["grantedScopes"],
+            json!(["books:global", "comics:profile:main"])
+        );
+
+        let updated = app
+            .clone()
+            .oneshot(loopback_request(
+                "POST",
+                "/v1/pairing/devices/scopes",
+                Some(json!({
+                    "deviceId": "android-catalog",
+                    "profileId": "main",
+                    "grantedScopes": ["novels:profile:main"]
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated_payload = json_body(updated).await;
+        assert_eq!(
+            updated_payload["grantedScopes"],
+            json!(["novels:profile:main"])
+        );
+
+        let books = app
+            .clone()
+            .oneshot(authorized_get(
+                "/v1/changes?scopeId=books%3Aglobal&sinceVersion=0",
+                &access_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(books.status(), StatusCode::FORBIDDEN);
+        let novels = app
+            .oneshot(authorized_get(
+                "/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=0",
+                &access_token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(novels.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -1232,6 +1604,10 @@ mod tests {
         let payload = json_body(response).await;
         assert_eq!(payload["status"], "approved");
         assert_eq!(payload["claimedDeviceId"], "desktop-joiner");
+        assert_eq!(
+            payload["requestedScopes"],
+            json!(["books:global", "novels:profile:main", "comics:profile:main"])
+        );
 
         let first = receiver.recv().await.unwrap();
         let second = receiver.recv().await.unwrap();

@@ -87,7 +87,7 @@ describe("Home theme tokens", () => {
     expect(app).toContain('searchPalette: () => import("./components/search/SearchPalette.svelte")');
     expect(app).toContain("<SearchPaletteView />");
     expect(home).not.toContain("home-search-dim");
-    expect(home).toContain("aethon-home-search-engaged");
+    expect(home).toContain("epigraph-home-search-engaged");
     expect(home).toContain("home-continue-grid");
   });
 

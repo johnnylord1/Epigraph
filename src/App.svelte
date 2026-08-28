@@ -55,9 +55,9 @@
     setSettingsOpen,
   } from "./store/state.svelte";
   import { applyCustomTheme, clearCustomThemeProperties } from "./lib/theme/provider";
-  import type { AethonRestorePlan, AethonRestorePlannerRuntime } from "./lib/backup/aethonRestorePlanner";
+  import type { EpigraphRestorePlan, EpigraphRestorePlannerRuntime } from "./lib/backup/epigraphRestorePlanner";
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
-  import type { AethonNovelRuntimeState } from "./lib/backup/novelsBackup";
+  import type { EpigraphNovelRuntimeState } from "./lib/backup/novelsBackup";
   import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
@@ -81,7 +81,7 @@
   import type { ActiveDownload } from "./store/state.svelte";
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCacheIfLoaded } from "./lib/imageCacheMetrics";
-  import type { AethonUpdateStatus } from "./lib/aethonUpdater";
+  import type { EpigraphUpdateStatus } from "./lib/epigraphUpdater";
   import { _, applyAppLanguage } from "./lib/i18n/runtime";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
@@ -241,7 +241,7 @@
   let failed        = $state(false);
   let notConfigured = $state(false);
   let startupFailureTitle = $state("Could not reach server");
-  let startupFailureDetail = $state("Aethon couldn't reach the selected local profile.");
+  let startupFailureDetail = $state("Epigraph couldn't reach the selected local profile.");
   let startupStatusText = $state("Initializing profile");
   let startupHealthWatchInFlight = false;
   let startupFailsafeTimer: number | null = null;
@@ -809,7 +809,7 @@
           sourceId: String(manga?.source?.id ?? manga?.sourceId ?? "unknown"),
           sourceName,
           extensionName: sourceName,
-          message: "Aethon could not verify this title's chapter list after the update.",
+          message: "Epigraph could not verify this title's chapter list after the update.",
           errorType: "unknown" as const,
         };
       });
@@ -871,7 +871,7 @@
         addSystemNotification({
           kind: "error",
           title: "Automatic library update failed",
-          body: error instanceof Error ? error.message : "Aethon could not refresh your library.",
+          body: error instanceof Error ? error.message : "Epigraph could not refresh your library.",
         });
         updateRuntime.showLibraryUpdateProgress("Automatic library update failed.", 2200);
       })
@@ -972,13 +972,13 @@
   }
 
   function updateRuntimeDiagnosticsBridge() {
-    (globalThis as typeof globalThis & { __AETHON_DIAGNOSTICS__?: RuntimeDiagnosticsBridge }).__AETHON_DIAGNOSTICS__ = {
+    (globalThis as typeof globalThis & { __EPIGRAPH_DIAGNOSTICS__?: RuntimeDiagnosticsBridge }).__EPIGRAPH_DIAGNOSTICS__ = {
       getSnapshot: getRuntimeDiagnosticsSnapshot,
       getBackendSnapshot: () => invoke("get_runtime_diagnostics"),
     };
   }
 
-  type AethonAuditBridge = {
+  type EpigraphAuditBridge = {
     showSplash: () => void;
     hideSplash: () => void;
     toggleSplash: () => void;
@@ -1081,10 +1081,10 @@
     showPerformanceToast: () => Promise<void>;
   };
 
-  type AethonAuditWindow = globalThis.Window & {
-    __aethonShowSplash?: () => void;
-    __aethonAudit?: AethonAuditBridge;
-    __aethonMediaAudit?: boolean;
+  type EpigraphAuditWindow = globalThis.Window & {
+    __epigraphShowSplash?: () => void;
+    __epigraphAudit?: EpigraphAuditBridge;
+    __epigraphMediaAudit?: boolean;
   };
 
   function showAuditSplash() {
@@ -1283,11 +1283,11 @@
   }
 
   function enableMediaAudit() {
-    (window as AethonAuditWindow).__aethonMediaAudit = true;
+    (window as EpigraphAuditWindow).__epigraphMediaAudit = true;
   }
 
   function disableMediaAudit() {
-    (window as AethonAuditWindow).__aethonMediaAudit = false;
+    (window as EpigraphAuditWindow).__epigraphMediaAudit = false;
   }
 
   async function showPerformanceToast() {
@@ -1312,9 +1312,9 @@
   }
 
   function installAuditBridge() {
-    const auditWindow = window as AethonAuditWindow;
-    auditWindow.__aethonShowSplash = showAuditSplash;
-    auditWindow.__aethonAudit = {
+    const auditWindow = window as EpigraphAuditWindow;
+    auditWindow.__epigraphShowSplash = showAuditSplash;
+    auditWindow.__epigraphAudit = {
       showSplash: showAuditSplash,
       hideSplash: hideAuditSplash,
       toggleSplash: toggleAuditSplash,
@@ -1349,9 +1349,9 @@
   }
 
   function uninstallAuditBridge() {
-    const auditWindow = window as AethonAuditWindow;
-    delete auditWindow.__aethonShowSplash;
-    delete auditWindow.__aethonAudit;
+    const auditWindow = window as EpigraphAuditWindow;
+    delete auditWindow.__epigraphShowSplash;
+    delete auditWindow.__epigraphAudit;
   }
 
   function handleAuditShortcut(event: KeyboardEvent) {
@@ -1592,7 +1592,7 @@
 
   async function checkForUpdateSilently() {
     try {
-      const status = await invoke<AethonUpdateStatus>("check_aethon_update");
+      const status = await invoke<EpigraphUpdateStatus>("check_epigraph_update");
       if (status.update_available && status.version) {
         addToast({
           kind: "info",
@@ -1612,12 +1612,12 @@
   let pendingAuditMangaBackupPath: string | null = null;
   let pendingAuditBooksBackupPath: string | null = null;
   let pendingAuditNovelsBackupPath: string | null = null;
-  let pendingAuditAethonBackupPath: string | null = null;
+  let pendingAuditEpigraphBackupPath: string | null = null;
   let pendingRestoreMangaBackupPath: string | null = null;
-  let pendingRestoreAethonBackupPath: string | null = null;
+  let pendingRestoreEpigraphBackupPath: string | null = null;
   let pendingRestoreHandoff = false;
   let pendingRestoreSourceProfileId: LocalProfileId | null = null;
-  let backupAuditPlan = $state<AethonRestorePlan | null>(null);
+  let backupAuditPlan = $state<EpigraphRestorePlan | null>(null);
   let backupRestoreLaunchIntent = $state<BackupLaunchIntent | null>(null);
   let runtimeAttachOnly = $state(false);
 
@@ -1628,9 +1628,9 @@
     auditMangaBackupOverride?: string | null;
     auditBooksBackupOverride?: string | null;
     auditNovelsBackupOverride?: string | null;
-    auditAethonBackupOverride?: string | null;
+    auditEpigraphBackupOverride?: string | null;
     restoreMangaBackupOverride?: string | null;
-    restoreAethonBackupOverride?: string | null;
+    restoreEpigraphBackupOverride?: string | null;
     restoreHandoffOverride?: boolean | null;
     restoreSourceProfileOverride?: string | null;
   }
@@ -1647,7 +1647,7 @@
       ? `Attaching to ${prefix} profile`
       : `Initializing ${prefix} profile`;
     startupFailureTitle = `Could not start ${prefix} profile`;
-    startupFailureDetail = `Aethon couldn't reach the ${prefix} profile for this session.`;
+    startupFailureDetail = `Epigraph couldn't reach the ${prefix} profile for this session.`;
   }
 
   function applyLaunchTarget(launchTarget: LaunchTargetInfo | null) {
@@ -1658,13 +1658,13 @@
     pendingAuditMangaBackupPath = launchTarget?.auditMangaBackupOverride ?? null;
     pendingAuditBooksBackupPath = launchTarget?.auditBooksBackupOverride ?? null;
     pendingAuditNovelsBackupPath = launchTarget?.auditNovelsBackupOverride ?? null;
-    pendingAuditAethonBackupPath = launchTarget?.auditAethonBackupOverride ?? null;
+    pendingAuditEpigraphBackupPath = launchTarget?.auditEpigraphBackupOverride ?? null;
     pendingRestoreMangaBackupPath = launchTarget?.restoreMangaBackupOverride ?? null;
-    pendingRestoreAethonBackupPath = launchTarget?.restoreAethonBackupOverride ?? null;
+    pendingRestoreEpigraphBackupPath = launchTarget?.restoreEpigraphBackupOverride ?? null;
     pendingRestoreHandoff = Boolean(launchTarget?.restoreHandoffOverride);
     pendingRestoreSourceProfileId = normalizeLocalProfileIdFromSession(launchTarget?.restoreSourceProfileOverride);
     runtimeAttachOnly = Boolean(launchTarget?.attachOnlyOverride);
-    (window as AethonAuditWindow).__aethonMediaAudit = Boolean(launchTarget?.auditOpenOverride);
+    (window as EpigraphAuditWindow).__epigraphMediaAudit = Boolean(launchTarget?.auditOpenOverride);
 
     const resolved = resolveSessionProfileFromLocalProfiles(
       launchTarget,
@@ -1721,9 +1721,9 @@
     });
 
     try {
-      const { restoreAethonBooksPayload } = await import("./lib/backup/booksBackup");
+      const { restoreEpigraphBooksPayload } = await import("./lib/backup/booksBackup");
       const bytes = await readFileAsArrayBuffer(path);
-      const restored = await restoreAethonBooksPayload(bytes);
+      const restored = await restoreEpigraphBooksPayload(bytes);
       replaceBooksState({
         books: restored.books,
         bookProgress: restored.bookProgress,
@@ -1831,7 +1831,7 @@
     return String(error || "Manga restore audit failed.");
   }
 
-  async function loadNovelAuditRuntimeState(): Promise<AethonNovelRuntimeState> {
+  async function loadNovelAuditRuntimeState(): Promise<EpigraphNovelRuntimeState> {
     const { loadNovelRepositoryState } = await import("./lib/novels/repositoryState");
     const state = await loadNovelRepositoryState({
       profileId: store.runtimeResolvedLocalProfileId,
@@ -1847,7 +1847,7 @@
     };
   }
 
-  async function loadRestorePlannerRuntime(): Promise<AethonRestorePlannerRuntime> {
+  async function loadRestorePlannerRuntime(): Promise<EpigraphRestorePlannerRuntime> {
     const [{ loadSourceInventory }, { readOverlayFile }] = await Promise.all([
       import("./lib/reconciliation/sourceInventory"),
       import("./lib/reconciliation/overlay"),
@@ -1897,10 +1897,10 @@
     ].join(" · ");
   }
 
-  async function applyPendingAuditAethonBackupPlan() {
-    const path = pendingAuditAethonBackupPath?.trim();
+  async function applyPendingAuditEpigraphBackupPlan() {
+    const path = pendingAuditEpigraphBackupPath?.trim();
     if (!path) return;
-    pendingAuditAethonBackupPath = null;
+    pendingAuditEpigraphBackupPath = null;
 
     traceMediaAudit({
       event: "backup.plan.audit.started",
@@ -1908,10 +1908,10 @@
     });
 
     try {
-      const { buildAethonRestorePlan } = await import("./lib/backup/aethonRestorePlanner");
+      const { buildEpigraphRestorePlan } = await import("./lib/backup/epigraphRestorePlanner");
       const rawBytes = await readFileAsArrayBuffer(path);
       const runtime = await loadRestorePlannerRuntime();
-      const plan = await buildAethonRestorePlan(rawBytes, runtime);
+      const plan = await buildEpigraphRestorePlan(rawBytes, runtime);
       backupAuditPlan = plan;
       setRuntimeSettingsTab("storage");
 
@@ -1967,18 +1967,18 @@
   }
 
   function applyPendingRestoreLaunchIntent() {
-    const aethonPath = pendingRestoreAethonBackupPath?.trim();
+    const epigraphPath = pendingRestoreEpigraphBackupPath?.trim();
     const mangaPath = pendingRestoreMangaBackupPath?.trim();
-    if (!aethonPath && !mangaPath) return;
+    if (!epigraphPath && !mangaPath) return;
 
     backupRestoreLaunchIntent = {
-      kind: aethonPath ? "aethon" : "manga",
-      path: aethonPath ?? mangaPath!,
+      kind: epigraphPath ? "epigraph" : "manga",
+      path: epigraphPath ?? mangaPath!,
       handoff: pendingRestoreHandoff,
       sourceProfileId: pendingRestoreSourceProfileId,
     };
 
-    pendingRestoreAethonBackupPath = null;
+    pendingRestoreEpigraphBackupPath = null;
     pendingRestoreMangaBackupPath = null;
     pendingRestoreHandoff = false;
     pendingRestoreSourceProfileId = null;
@@ -2005,7 +2005,7 @@
     });
 
     try {
-      const [{ restoreAethonNovelsPayload }, { isLnReaderBackupZip, restoreLnReaderNovelsBackup }] = await Promise.all([
+      const [{ restoreEpigraphNovelsPayload }, { isLnReaderBackupZip, restoreLnReaderNovelsBackup }] = await Promise.all([
         import("./lib/backup/novelsBackup"),
         import("./lib/backup/lnreaderBackup"),
       ]);
@@ -2013,7 +2013,7 @@
       const runtime = await loadNovelAuditRuntimeState();
       const restored = await isLnReaderBackupZip(rawBytes)
         ? await restoreLnReaderNovelsBackup(rawBytes, runtime)
-        : await restoreAethonNovelsPayload(rawBytes, runtime);
+        : await restoreEpigraphNovelsPayload(rawBytes, runtime);
 
       traceMediaAudit({
         event: "novels.restore.audit.classified",
@@ -2240,7 +2240,7 @@
     startupSplashVisible = false;
     notifyServerReady(store.runtimeServerUrl);
     applyStartupLandingPage();
-    await applyPendingAuditAethonBackupPlan().catch((error) => {
+    await applyPendingAuditEpigraphBackupPlan().catch((error) => {
       console.warn("Unified backup planning audit failed:", error);
     });
     await applyPendingAuditBooksRestore().catch((error) => {
@@ -2292,7 +2292,7 @@
         : `Could not start ${activeProfileLabel()} profile`;
       startupFailureDetail = runtimeAttachOnly
         ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
-        : `Aethon is still waiting for the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}. You can retry, or enter the app while the profile reconnects.`;
+        : `Epigraph is still waiting for the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}. You can retry, or enter the app while the profile reconnects.`;
     }, STARTUP_FAILSAFE_MS);
   }
 
@@ -2310,7 +2310,7 @@
           "Content-Type": "application/json",
           ...(authHeader ? { Authorization: authHeader } : {}),
         },
-        body: JSON.stringify({ query: "query AethonStartupReady { __typename }" }),
+        body: JSON.stringify({ query: "query EpigraphStartupReady { __typename }" }),
         signal: controller.signal,
       });
       if (!response.ok) return false;
@@ -2389,7 +2389,7 @@
             : `Could not start ${activeProfileLabel()} profile`;
           startupFailureDetail = runtimeAttachOnly
             ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
-            : `Aethon couldn't reach the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}.`;
+            : `Epigraph couldn't reach the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}.`;
         }
         setTimeout(probe, 4000);
         return;
@@ -2492,9 +2492,9 @@
       ensureProbeStarted();
 
       const initialTarget = getServerTargetInfo();
-      document.title = `Aethon [${initialTarget.title}]`;
+      document.title = `Epigraph [${initialTarget.title}]`;
       if (win) {
-        await win.setTitle(`Aethon [${initialTarget.title}]`).catch(() => {});
+        await win.setTitle(`Epigraph [${initialTarget.title}]`).catch(() => {});
       }
       if (cancelled) return;
       installAuditBridge();
@@ -2650,7 +2650,7 @@
       unlistenSyncdReplicationError?.();
       window.removeEventListener("keydown", handleAuditShortcut, true);
       uninstallAuditBridge();
-      delete (globalThis as typeof globalThis & { __AETHON_DIAGNOSTICS__?: unknown }).__AETHON_DIAGNOSTICS__;
+      delete (globalThis as typeof globalThis & { __EPIGRAPH_DIAGNOSTICS__?: unknown }).__EPIGRAPH_DIAGNOSTICS__;
     };
   });
 
@@ -2759,7 +2759,7 @@
 
   $effect(() => {
     const target = getServerTargetInfo();
-    const title = `Aethon [${target.title}]`;
+    const title = `Epigraph [${target.title}]`;
     document.title = title;
     if (win) {
       void win.setTitle(title).catch(() => {});
@@ -2804,10 +2804,10 @@
   });
 
   $effect(() => {
-    document.documentElement.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
-    document.body.dataset.aethonMotion = uiMotionActive ? "active" : "idle";
-    document.documentElement.dataset.aethonIdle = idle ? "true" : "false";
-    document.body.dataset.aethonIdle = idle ? "true" : "false";
+    document.documentElement.dataset.epigraphMotion = uiMotionActive ? "active" : "idle";
+    document.body.dataset.epigraphMotion = uiMotionActive ? "active" : "idle";
+    document.documentElement.dataset.epigraphIdle = idle ? "true" : "false";
+    document.body.dataset.epigraphIdle = idle ? "true" : "false";
   });
 
   $effect(() => {
@@ -2999,7 +2999,7 @@
       startupSplashVisible = false;
     }
     queueMicrotask(() => {
-      window.dispatchEvent(new CustomEvent("aethon:boot-ready"));
+      window.dispatchEvent(new CustomEvent("epigraph:boot-ready"));
     });
   });
   </script>
@@ -3012,7 +3012,7 @@
       <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true} />
     {/if}
   {:else}
-    <div id="app-shell" class="root aethon-app-shell" class:aethon-motion-idle={!uiMotionActive}>
+    <div id="app-shell" class="root epigraph-app-shell" class:epigraph-motion-idle={!uiMotionActive}>
       {#if showIdleSplash}
         <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true}
           onDismiss={() => { idle = false; resetIdle(); }} />
@@ -3073,7 +3073,7 @@
         {/if}
       </div>
       <button
-        class="aethon-search-dim-layer"
+        class="epigraph-search-dim-layer"
         type="button"
         tabindex="-1"
         aria-label={$_("ui_close")}
@@ -3184,39 +3184,39 @@
     background: var(--component-app-fullscreen-exit-hover-bg);
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__tile),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .anim-branch) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .settings-theme-preview__tile),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .settings-theme-preview__glow),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .anim-branch) {
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette)) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette)) {
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .anim-spin) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .anim-spin) {
     animation-play-state: paused !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .toast.toast.toast.toast *),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .search-palette) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .toast.toast.toast.toast),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .toast.toast.toast.toast *),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .search-palette) {
     animation-play-state: running !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .n-topbar),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .n-sidebar),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .n-search),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .n-popover),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .content-header),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .repoOverlayBackdrop),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .modal),
-  :global([data-aethon-motion="idle"] .aethon-app-shell .backdrop) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-topbar),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-sidebar),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-search),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-popover),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .content-header),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .repoOverlayBackdrop),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .modal),
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .backdrop) {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
 
-  :global([data-aethon-motion="idle"] .aethon-app-shell .settings-theme-preview__glow) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell .settings-theme-preview__glow) {
     filter: none !important;
   }
 </style>

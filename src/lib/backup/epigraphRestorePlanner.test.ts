@@ -2,19 +2,19 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
-import { buildAethonBackupContainer } from "./aethonBackup";
-import { buildAethonAppPayload } from "./appBackup";
-import { buildAethonBooksPayload, type AethonBooksSnapshot } from "./booksBackup";
-import { buildAethonMangaPayload } from "./mangaBackup";
-import { buildAethonNovelsPayload, type AethonNovelsSnapshot } from "./novelsBackup";
+import { buildEpigraphBackupContainer } from "./epigraphBackup";
+import { buildEpigraphAppPayload } from "./appBackup";
+import { buildEpigraphBooksPayload, type EpigraphBooksSnapshot } from "./booksBackup";
+import { buildEpigraphMangaPayload } from "./mangaBackup";
+import { buildEpigraphNovelsPayload, type EpigraphNovelsSnapshot } from "./novelsBackup";
 import {
-  buildAethonRestorePlan,
-  type AethonRestorePlannerRuntime,
-} from "./aethonRestorePlanner";
+  buildEpigraphRestorePlan,
+  type EpigraphRestorePlannerRuntime,
+} from "./epigraphRestorePlanner";
 
 const SAMPLE_MANGA_BYTES = new TextEncoder().encode("PHASE5-MANGA-BACKUP");
 
-const SAMPLE_BOOKS_SNAPSHOT: AethonBooksSnapshot = {
+const SAMPLE_BOOKS_SNAPSHOT: EpigraphBooksSnapshot = {
   books: [
     {
       id: "book-1",
@@ -67,7 +67,7 @@ const SAMPLE_BOOKS_SNAPSHOT: AethonBooksSnapshot = {
   },
 };
 
-const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
+const SAMPLE_NOVELS_SNAPSHOT: EpigraphNovelsSnapshot = {
   entries: [
     {
       id: "novel-1",
@@ -104,7 +104,7 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
   ],
 };
 
-const PLANNER_RUNTIME: AethonRestorePlannerRuntime = {
+const PLANNER_RUNTIME: EpigraphRestorePlannerRuntime = {
   manga: {
     supported: true,
     inventory: [],
@@ -127,7 +127,7 @@ const PLANNER_RUNTIME: AethonRestorePlannerRuntime = {
 };
 
 async function buildBooksPayload(exportMode: "full" | "metadata-only" = "full") {
-  return buildAethonBooksPayload(
+  return buildEpigraphBooksPayload(
     SAMPLE_BOOKS_SNAPSHOT,
     { exportMode },
     {
@@ -202,7 +202,7 @@ function mangaDeps(options: {
 }
 
 async function buildUnknownPayloadContainer() {
-  const built = await buildAethonBackupContainer({
+  const built = await buildEpigraphBackupContainer({
     payloads: [await buildBooksPayload("full")],
   });
   const zip = await JSZip.loadAsync(built.bytes);
@@ -214,17 +214,17 @@ async function buildUnknownPayloadContainer() {
   return zip.generateAsync({ type: "uint8array" });
 }
 
-describe("aethon restore planner", () => {
+describe("epigraph restore planner", () => {
   it("builds a mixed restore plan with explicit statuses, booleans, and top-level skipped app payload", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [
-        await buildAethonMangaPayload(SAMPLE_MANGA_BYTES),
-        await buildAethonNovelsPayload(SAMPLE_NOVELS_SNAPSHOT),
+        await buildEpigraphMangaPayload(SAMPLE_MANGA_BYTES),
+        await buildEpigraphNovelsPayload(SAMPLE_NOVELS_SNAPSHOT),
         await buildBooksPayload("full"),
       ],
     });
 
-    const plan = await buildAethonRestorePlan(built.bytes, PLANNER_RUNTIME, {}, mangaDeps());
+    const plan = await buildEpigraphRestorePlan(built.bytes, PLANNER_RUNTIME, {}, mangaDeps());
 
     expect(plan.defaultTarget).toBe("sandbox-profile");
     expect(plan.recommendedSelection).toEqual(["manga", "novels", "books"]);
@@ -250,11 +250,11 @@ describe("aethon restore planner", () => {
     [{ unresolved: 1 }, "warning-only", true, false, "manga-unresolved-source"],
     [{ warnings: 1 }, "warning-only", true, false, "non-blocking-warning"],
   ])("maps manga planner outcomes mechanically: %j", async (options, status, canRestoreNow, needsUserAction, reasonCode) => {
-    const built = await buildAethonBackupContainer({
-      payloads: [await buildAethonMangaPayload(SAMPLE_MANGA_BYTES)],
+    const built = await buildEpigraphBackupContainer({
+      payloads: [await buildEpigraphMangaPayload(SAMPLE_MANGA_BYTES)],
     });
 
-    const plan = await buildAethonRestorePlan(built.bytes, PLANNER_RUNTIME, {}, mangaDeps(options));
+    const plan = await buildEpigraphRestorePlan(built.bytes, PLANNER_RUNTIME, {}, mangaDeps(options));
     const manga = plan.payloads[0];
 
     expect(manga.kind).toBe("manga");
@@ -265,11 +265,11 @@ describe("aethon restore planner", () => {
   });
 
   it("marks books metadata-only payloads as warning-only and keeps them selected by default", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [await buildBooksPayload("metadata-only")],
     });
 
-    const plan = await buildAethonRestorePlan(built.bytes, PLANNER_RUNTIME);
+    const plan = await buildEpigraphRestorePlan(built.bytes, PLANNER_RUNTIME);
     const books = plan.payloads[0];
 
     expect(books.kind).toBe("books");
@@ -281,14 +281,14 @@ describe("aethon restore planner", () => {
   });
 
   it("marks missing full books assets as blocked", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [await buildBooksPayload("full")],
     });
     const zip = await JSZip.loadAsync(built.bytes);
     zip.remove("payloads/books/files/book-1.epub");
     const mutated = await zip.generateAsync({ type: "uint8array" });
 
-    const plan = await buildAethonRestorePlan(mutated, PLANNER_RUNTIME);
+    const plan = await buildEpigraphRestorePlan(mutated, PLANNER_RUNTIME);
     const books = plan.payloads[0];
 
     expect(books.status).toBe("blocked");
@@ -297,8 +297,8 @@ describe("aethon restore planner", () => {
   });
 
   it("marks novels missing repositories or plugins as blocked and metadata-only entries as warning-only", async () => {
-    const missingRepoBuilt = await buildAethonBackupContainer({
-      payloads: [await buildAethonNovelsPayload({
+    const missingRepoBuilt = await buildEpigraphBackupContainer({
+      payloads: [await buildEpigraphNovelsPayload({
         ...SAMPLE_NOVELS_SNAPSHOT,
         entries: [{
           ...SAMPLE_NOVELS_SNAPSHOT.entries[0],
@@ -311,7 +311,7 @@ describe("aethon restore planner", () => {
       })],
     });
 
-    const missingRepoPlan = await buildAethonRestorePlan(missingRepoBuilt.bytes, PLANNER_RUNTIME);
+    const missingRepoPlan = await buildEpigraphRestorePlan(missingRepoBuilt.bytes, PLANNER_RUNTIME);
     expect(missingRepoPlan.payloads[0]).toEqual(
       expect.objectContaining({
         status: "blocked",
@@ -320,8 +320,8 @@ describe("aethon restore planner", () => {
       }),
     );
 
-    const metadataOnlyBuilt = await buildAethonBackupContainer({
-      payloads: [await buildAethonNovelsPayload({
+    const metadataOnlyBuilt = await buildEpigraphBackupContainer({
+      payloads: [await buildEpigraphNovelsPayload({
         ...SAMPLE_NOVELS_SNAPSHOT,
         entries: [{
           ...SAMPLE_NOVELS_SNAPSHOT.entries[0],
@@ -331,7 +331,7 @@ describe("aethon restore planner", () => {
       })],
     });
 
-    const metadataOnlyPlan = await buildAethonRestorePlan(metadataOnlyBuilt.bytes, PLANNER_RUNTIME);
+    const metadataOnlyPlan = await buildEpigraphRestorePlan(metadataOnlyBuilt.bytes, PLANNER_RUNTIME);
     expect(metadataOnlyPlan.payloads[0]).toEqual(
       expect.objectContaining({
         status: "warning-only",
@@ -342,11 +342,11 @@ describe("aethon restore planner", () => {
   });
 
   it("keeps a valid minimal app payload executable as warning-only portable metadata", async () => {
-    const built = await buildAethonBackupContainer({
-      payloads: [buildAethonAppPayload({ defaultLocalProfileId: "main" })],
+    const built = await buildEpigraphBackupContainer({
+      payloads: [buildEpigraphAppPayload({ defaultLocalProfileId: "main" })],
     });
 
-    const plan = await buildAethonRestorePlan(built.bytes, PLANNER_RUNTIME);
+    const plan = await buildEpigraphRestorePlan(built.bytes, PLANNER_RUNTIME);
     const app = plan.payloads[0];
 
     expect(app.kind).toBe("app");
@@ -359,7 +359,7 @@ describe("aethon restore planner", () => {
   });
 
   it("surfaces unsupported payload versions and unknown payload kinds safely", async () => {
-    const unsupportedVersion = await buildAethonBackupContainer({
+    const unsupportedVersion = await buildEpigraphBackupContainer({
       payloads: [
         {
           kind: "novels",
@@ -369,7 +369,7 @@ describe("aethon restore planner", () => {
       ],
     });
 
-    const unsupportedPlan = await buildAethonRestorePlan(unsupportedVersion.bytes, PLANNER_RUNTIME);
+    const unsupportedPlan = await buildEpigraphRestorePlan(unsupportedVersion.bytes, PLANNER_RUNTIME);
     expect(unsupportedPlan.payloads[0]).toEqual(
       expect.objectContaining({
         kind: "novels",
@@ -379,7 +379,7 @@ describe("aethon restore planner", () => {
       }),
     );
 
-    const unknownPlan = await buildAethonRestorePlan(await buildUnknownPayloadContainer(), PLANNER_RUNTIME);
+    const unknownPlan = await buildEpigraphRestorePlan(await buildUnknownPayloadContainer(), PLANNER_RUNTIME);
     expect(unknownPlan.payloads[0]).toEqual(
       expect.objectContaining({
         kind: "mystery",
@@ -389,22 +389,22 @@ describe("aethon restore planner", () => {
   });
 
   it("can emit real phase-5 audit artifacts when env vars are provided", async () => {
-    const outputDir = process.env.AETHON_PHASE5_OUTPUT_DIR?.trim();
-    const sourceTachibkPath = process.env.AETHON_MANGA_PHASE3_SOURCE_TACHIBK_PATH?.trim();
+    const outputDir = process.env.EPIGRAPH_PHASE5_OUTPUT_DIR?.trim();
+    const sourceTachibkPath = process.env.EPIGRAPH_MANGA_PHASE3_SOURCE_TACHIBK_PATH?.trim();
     if (!outputDir || !sourceTachibkPath) {
       expect(true).toBe(true);
       return;
     }
 
-    const presentRepo = process.env.AETHON_NOVELS_PHASE4_PRESENT_REPO?.trim() || "https://plugins.example.com/index.json";
-    const presentPlugin = process.env.AETHON_NOVELS_PHASE4_PRESENT_PLUGIN?.trim() || "app.lnreader.sources.example";
-    const presentSource = process.env.AETHON_NOVELS_PHASE4_PRESENT_SOURCE?.trim() || "example-source";
+    const presentRepo = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_REPO?.trim() || "https://plugins.example.com/index.json";
+    const presentPlugin = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_PLUGIN?.trim() || "app.lnreader.sources.example";
+    const presentSource = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_SOURCE?.trim() || "example-source";
     const sourceBytes = await fs.readFile(sourceTachibkPath);
     const booksPayload = await buildBooksPayload("full");
-    const mangaPayload = await buildAethonMangaPayload(sourceBytes, {
+    const mangaPayload = await buildEpigraphMangaPayload(sourceBytes, {
       sourceFilename: path.basename(sourceTachibkPath),
     });
-    const novelsPayload = await buildAethonNovelsPayload({
+    const novelsPayload = await buildEpigraphNovelsPayload({
       ...SAMPLE_NOVELS_SNAPSHOT,
       entries: [{
         ...SAMPLE_NOVELS_SNAPSHOT.entries[0],
@@ -417,18 +417,18 @@ describe("aethon restore planner", () => {
       repositories: [{ url: presentRepo, name: "Audit Repo" }],
       plugins: [{ id: presentPlugin, repositoryUrl: presentRepo }],
     });
-    const appPayload = buildAethonAppPayload({ defaultLocalProfileId: "test" });
+    const appPayload = buildEpigraphAppPayload({ defaultLocalProfileId: "test" });
 
-    const booksManga = await buildAethonBackupContainer({
+    const booksManga = await buildEpigraphBackupContainer({
       payloads: [mangaPayload, booksPayload],
     });
-    const mangaNovels = await buildAethonBackupContainer({
+    const mangaNovels = await buildEpigraphBackupContainer({
       payloads: [mangaPayload, novelsPayload],
     });
-    const booksNovels = await buildAethonBackupContainer({
+    const booksNovels = await buildEpigraphBackupContainer({
       payloads: [novelsPayload, booksPayload],
     });
-    const unsupported = await buildAethonBackupContainer({
+    const unsupported = await buildEpigraphBackupContainer({
       payloads: [
         booksPayload,
         {
@@ -438,17 +438,17 @@ describe("aethon restore planner", () => {
         },
       ],
     });
-    const appPresent = await buildAethonBackupContainer({
+    const appPresent = await buildEpigraphBackupContainer({
       payloads: [booksPayload, appPayload],
     });
 
     await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(path.join(outputDir, "phase5-books-manga.aethonbk"), Buffer.from(booksManga.bytes));
-    await fs.writeFile(path.join(outputDir, "phase5-manga-novels.aethonbk"), Buffer.from(mangaNovels.bytes));
-    await fs.writeFile(path.join(outputDir, "phase5-books-novels.aethonbk"), Buffer.from(booksNovels.bytes));
-    await fs.writeFile(path.join(outputDir, "phase5-unsupported-version.aethonbk"), Buffer.from(unsupported.bytes));
-    await fs.writeFile(path.join(outputDir, "phase5-app-present.aethonbk"), Buffer.from(appPresent.bytes));
+    await fs.writeFile(path.join(outputDir, "phase5-books-manga.epigraphbk"), Buffer.from(booksManga.bytes));
+    await fs.writeFile(path.join(outputDir, "phase5-manga-novels.epigraphbk"), Buffer.from(mangaNovels.bytes));
+    await fs.writeFile(path.join(outputDir, "phase5-books-novels.epigraphbk"), Buffer.from(booksNovels.bytes));
+    await fs.writeFile(path.join(outputDir, "phase5-unsupported-version.epigraphbk"), Buffer.from(unsupported.bytes));
+    await fs.writeFile(path.join(outputDir, "phase5-app-present.epigraphbk"), Buffer.from(appPresent.bytes));
 
-    expect((await fs.stat(path.join(outputDir, "phase5-books-manga.aethonbk"))).size).toBeGreaterThan(0);
+    expect((await fs.stat(path.join(outputDir, "phase5-books-manga.epigraphbk"))).size).toBeGreaterThan(0);
   });
 });

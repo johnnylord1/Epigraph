@@ -5,13 +5,13 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $cdpEndpoint = "http://127.0.0.1:9223"
 
-& (Join-Path $scriptDir "launch-desktop-aethon.ps1")
+& (Join-Path $scriptDir "launch-desktop-epigraph.ps1")
 
 $deadline = (Get-Date).AddSeconds(120)
 do {
   try {
     $targets = Invoke-RestMethod "$cdpEndpoint/json" -TimeoutSec 2
-    if ($targets | Where-Object { $_.type -eq "page" -and $_.title -like "Aethon*" }) {
+    if ($targets | Where-Object { $_.type -eq "page" -and $_.title -like "Epigraph*" }) {
       break
     }
   } catch {
@@ -20,7 +20,7 @@ do {
 } while ((Get-Date) -lt $deadline)
 
 if ((Get-Date) -ge $deadline) {
-  throw "Aethon did not expose a stable WebView2 CDP page within 120 seconds."
+  throw "Epigraph did not expose a stable WebView2 CDP page within 120 seconds."
 }
 
 Push-Location $projectRoot

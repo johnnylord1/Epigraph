@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 $tauriDriver = Join-Path $HOME ".cargo\bin\tauri-driver.exe"
-$appPath = if ($App) { $App } else { Join-Path $projectRoot "src-tauri\target\release\aethon.exe" }
+$appPath = if ($App) { $App } else { Join-Path $projectRoot "src-tauri\target\release\epigraph.exe" }
 
 function Get-FreePort {
   $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -20,7 +20,7 @@ function Get-FreePort {
 function Resolve-EdgeDriver {
   $candidates = [System.Collections.Generic.List[string]]::new()
   if ($NativeDriver) { $candidates.Add($NativeDriver) }
-  if ($env:AETHON_EDGE_DRIVER) { $candidates.Add($env:AETHON_EDGE_DRIVER) }
+  if ($env:EPIGRAPH_EDGE_DRIVER) { $candidates.Add($env:EPIGRAPH_EDGE_DRIVER) }
   $command = Get-Command "msedgedriver.exe" -ErrorAction SilentlyContinue
   if ($command -and $command.Source) { $candidates.Add($command.Source) }
   $wingetRoot = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
@@ -33,7 +33,7 @@ function Resolve-EdgeDriver {
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path $candidate)) { return (Resolve-Path $candidate).Path }
   }
-  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set AETHON_EDGE_DRIVER."
+  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set EPIGRAPH_EDGE_DRIVER."
 }
 
 if (-not (Test-Path $tauriDriver)) { throw "tauri-driver was not found at $tauriDriver" }
@@ -43,7 +43,7 @@ $edgeDriver = Resolve-EdgeDriver
 $driverPort = Get-FreePort
 $nativePort = Get-FreePort
 $driverUrl = "http://127.0.0.1:$driverPort"
-$logRoot = Join-Path ([System.IO.Path]::GetTempPath()) "aethon-release-driver"
+$logRoot = Join-Path ([System.IO.Path]::GetTempPath()) "epigraph-release-driver"
 New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
 $stdout = Join-Path $logRoot "tauri-driver-$driverPort.stdout.log"
 $stderr = Join-Path $logRoot "tauri-driver-$driverPort.stderr.log"

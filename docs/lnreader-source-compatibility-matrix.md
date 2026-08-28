@@ -4,7 +4,7 @@ Historical live observation date: `2026-04-12`
 
 Documentation review date: `2026-07-28`
 
-This matrix tracks real Aethon runtime compatibility against official LNReader sources.
+This matrix tracks real Epigraph runtime compatibility against official LNReader sources.
 
 The rows below preserve the last live observations and must not be interpreted
 as a current guarantee that an external website is available. Current blocking
@@ -14,13 +14,13 @@ observational and update a row only when the complete action is reproduced.
 Rules:
 
 - multisrc remains build-time only in the upstream ecosystem
-- Aethon targets the final generated plugin artifact published in `plugins.min.json`
-- this matrix records only what has actually been observed in Aethon
+- Epigraph targets the final generated plugin artifact published in `plugins.min.json`
+- this matrix records only what has actually been observed in Epigraph
 - `working` means the source has been proven on the listed actions
 - `migration-safe` means the source is proven on install, open, search, details, and chapter, and can safely participate in novels migration
 - `working-with-known-limitations` means the source works on the listed actions but still has a known quality issue
 - `blocked-by-site` means the current blocker is external site behavior such as redirect, anti-bot, or rate limit
-- `runtime-gap` means the blocker is in Aethon's current runtime/helper boundary
+- `runtime-gap` means the blocker is in Epigraph's current runtime/helper boundary
 - `pending` means the source has not been exercised enough yet
 
 ## English Priority

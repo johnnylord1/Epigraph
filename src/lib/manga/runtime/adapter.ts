@@ -322,7 +322,7 @@ export class SuwayomiAdapter implements SourceRuntime {
       case "UnsupportedPreference":
         throw new SourceRuntimeError(
           "PREFERENCE_UNSUPPORTED",
-          `Preference type ${preference.upstreamType} is not supported by this Aethon version.`,
+          `Preference type ${preference.upstreamType} is not supported by this Epigraph version.`,
           { details: { position, key: preference.key } },
         );
     }

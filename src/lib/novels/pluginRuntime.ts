@@ -374,7 +374,7 @@ function normalizeDetailTagList(detailRecord: Record<string, unknown>): string[]
 
 function getDefaultUserAgent(): string {
   const browserAgent = normalizeText(globalThis.navigator?.userAgent);
-  return browserAgent ?? "Aethon Novel Runtime";
+  return browserAgent ?? "Epigraph Novel Runtime";
 }
 
 interface RuntimeFlareSolverrSettings {
@@ -391,13 +391,13 @@ function readRuntimeFlareSolverrSettings(): RuntimeFlareSolverrSettings {
     enabled: false,
     url: "http://localhost:8191",
     timeoutSeconds: 60,
-    sessionName: "aethon",
+    sessionName: "epigraph",
     sessionTtlMinutes: 15,
     responseFallback: false,
   };
 
   try {
-    const raw = globalThis.localStorage?.getItem("aethon-store");
+    const raw = globalThis.localStorage?.getItem("epigraph-store");
     const parsed = raw ? JSON.parse(raw) : null;
     const settings = parsed?.settings ?? {};
     return {
@@ -908,7 +908,7 @@ function createFilterInputsShim() {
     CheckboxGroup,
     Switch,
     ExcludableCheckboxGroup,
-    // Compatibility aliases for older Aethon tests and partial shims.
+    // Compatibility aliases for older Epigraph tests and partial shims.
     Input: TextInput,
     Checkbox: CheckboxGroup,
     ExcludableCheckbox: ExcludableCheckboxGroup,

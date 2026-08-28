@@ -2,7 +2,7 @@
 
 ## Contract
 
-Aethon theme authoring follows one dependency direction:
+Epigraph theme authoring follows one dependency direction:
 
 ```text
 Primitive tokens

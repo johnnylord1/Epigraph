@@ -21,7 +21,7 @@ describe("suwayomiReadiness", () => {
 
     await expect(waitForSuwayomiGraphqlReady("graphql", { attempts: 1 })).resolves.toBe(true);
     expect(gqlMock).toHaveBeenCalledWith(
-      expect.stringContaining("AethonGraphqlReady"),
+      expect.stringContaining("EpigraphGraphqlReady"),
       undefined,
       undefined,
       4000,

@@ -25,7 +25,7 @@ const HELPER_EXTENSION_PACKAGES = new Set(["eu.kanade.tachiyomi.extension.all.ta
 const PROFILE_ROOT_FILES = ["database.mv.db"];
 const PROFILE_TREES = ["extensions", "settings"];
 const COMMON_STATE_QUERY = `
-  query AethonMigrationState {
+  query EpigraphMigrationState {
     library: mangas(condition: { inLibrary: true }) {
       nodes { id sourceId inLibrary downloadCount unreadCount }
     }
@@ -42,7 +42,7 @@ const COMMON_STATE_QUERY = `
   }
 `;
 const V21_EXTENSIONS_QUERY = `
-  query AethonMigrationExtensionsV21 {
+  query EpigraphMigrationExtensionsV21 {
     extensions {
       nodes { pkgName versionCode isInstalled isObsolete hasUpdate }
     }
@@ -50,7 +50,7 @@ const V21_EXTENSIONS_QUERY = `
   }
 `;
 const V23_EXTENSIONS_QUERY = `
-  query AethonMigrationExtensionsV23 {
+  query EpigraphMigrationExtensionsV23 {
     extensions {
       nodes { pkgName versionCodeLong isInstalled isObsolete hasUpdate storeIndexUrl }
     }
@@ -293,7 +293,7 @@ async function main() {
   try {
     const before = await fileManifest(profileSource);
     if (!before.some((entry) => entry.path === "database.mv.db")) throw new Error("Profile source has no H2 database.");
-    root = await mkdtemp(path.join(tmpdir(), "aethon-suwayomi-migration-"));
+    root = await mkdtemp(path.join(tmpdir(), "epigraph-suwayomi-migration-"));
     const baselineRoot = path.join(root, "baseline");
     const candidateRoot = path.join(root, "candidate");
     const rollbackRoot = path.join(root, "rollback");

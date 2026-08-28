@@ -1,5 +1,6 @@
 mod discord_cover;
 mod discord_rpc;
+mod compat;
 mod migration_journal;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
@@ -9,6 +10,8 @@ pub mod syncd;
 mod syncd_desktop;
 mod syncd_replication;
 mod syncd_sidecar;
+
+pub use compat::{migrate_legacy_storage, promote_legacy_environment};
 
 use base64::Engine;
 use fs2::FileExt;
@@ -91,7 +94,7 @@ const READER_WEBVIEW_INIT_SCRIPT: &str = r#"
   const SAME_HOST = location.hostname;
   const AD_HOST_RE = /doubleclick|googlesyndication|googleadservices|adsystem|adnxs|taboola|outbrain|exoclick|popads|propellerads|adsterra|trafficjunky|juicyads|hilltopads|clickadu|onesignal|histats|analytics/i;
   const AD_ATTR_RE = /(ad-|ads-|_ad|banner|popup|popunder|sticky-ad|advert|sponsor|promo)/i;
-  const AD_STYLE_ID = "aethon-reader-webview-cleanup";
+  const AD_STYLE_ID = "epigraph-reader-webview-cleanup";
   const SELECTORS = [
     "iframe[src*='doubleclick']",
     "iframe[src*='googlesyndication']",
@@ -206,9 +209,11 @@ const LIBRARY_COVER_MAX_DOWNLOAD_BYTES: u64 = 5 * 1024 * 1024;
 const LIBRARY_COVER_THUMB_MAX_EDGE: u32 = 420;
 const LIBRARY_COVER_THUMB_JPEG_QUALITY: u8 = 82;
 const NOVEL_RUNTIME_HOST_LABEL: &str = "novel-runtime-host";
-const DEFAULT_AETHON_GITHUB_REPO: &str = "johnnylord1/Aethon";
-const AETHON_GITHUB_REPO: Option<&str> = option_env!("AETHON_GITHUB_REPO");
-const VITE_AETHON_GITHUB_REPO: Option<&str> = option_env!("VITE_AETHON_GITHUB_REPO");
+const DEFAULT_EPIGRAPH_GITHUB_REPO: &str = "johnnylord1/Epigraph";
+const EPIGRAPH_GITHUB_REPO: Option<&str> = option_env!("EPIGRAPH_GITHUB_REPO");
+const VITE_EPIGRAPH_GITHUB_REPO: Option<&str> = option_env!("VITE_EPIGRAPH_GITHUB_REPO");
+const LEGACY_AETHON_GITHUB_REPO: Option<&str> = option_env!("AETHON_GITHUB_REPO");
+const LEGACY_VITE_AETHON_GITHUB_REPO: Option<&str> = option_env!("VITE_AETHON_GITHUB_REPO");
 
 struct RunningServer {
     child: CommandChild,
@@ -236,9 +241,9 @@ pub(crate) struct LaunchTargetInfo {
     audit_manga_backup_override: Option<String>,
     audit_books_backup_override: Option<String>,
     audit_novels_backup_override: Option<String>,
-    audit_aethon_backup_override: Option<String>,
+    audit_epigraph_backup_override: Option<String>,
     restore_manga_backup_override: Option<String>,
-    restore_aethon_backup_override: Option<String>,
+    restore_epigraph_backup_override: Option<String>,
     restore_handoff_override: Option<bool>,
     restore_source_profile_override: Option<String>,
 }
@@ -459,12 +464,12 @@ struct LocalFlareSolverrJob {
     handle: usize,
 }
 
-const FLARESOLVERR_CONTAINER_NAME: &str = "aethon-flaresolverr";
+const FLARESOLVERR_CONTAINER_NAME: &str = "epigraph-flaresolverr";
 const FLARESOLVERR_IMAGE: &str = "ghcr.io/flaresolverr/flaresolverr@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e";
 const FLARESOLVERR_LOCAL_VERSION: &str = "v3.4.6";
-const FLARESOLVERR_DOCKER_OWNER_LABEL: &str = "com.aethon.managed";
+const FLARESOLVERR_DOCKER_OWNER_LABEL: &str = "com.epigraph.managed";
 const FLARESOLVERR_DOCKER_OWNER_VALUE: &str = "flaresolverr";
-const FLARESOLVERR_DOCKER_LEASE_LABEL: &str = "com.aethon.owner";
+const FLARESOLVERR_DOCKER_LEASE_LABEL: &str = "com.epigraph.owner";
 const FLARESOLVERR_DOCKER_MEMORY_BYTES: u64 = 1024 * 1024 * 1024;
 const FLARESOLVERR_DOCKER_NANO_CPUS: u64 = 1_000_000_000;
 const FLARESOLVERR_DOCKER_PIDS_LIMIT: u64 = 256;
@@ -631,7 +636,7 @@ fn local_flaresolverr_exe_path() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
-    base.join("Aethon")
+    base.join("Epigraph")
         .join("tools")
         .join("flaresolverr")
         .join(FLARESOLVERR_LOCAL_VERSION)
@@ -643,7 +648,7 @@ fn local_flaresolverr_tools_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
-    base.join("Aethon").join("tools").join("flaresolverr")
+    base.join("Epigraph").join("tools").join("flaresolverr")
 }
 
 fn local_flaresolverr_logs_dir() -> PathBuf {
@@ -654,7 +659,7 @@ fn app_logs_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from(".")));
-    base.join("Aethon").join("logs")
+    base.join("Epigraph").join("logs")
 }
 
 #[cfg(all(debug_assertions, windows))]
@@ -912,7 +917,7 @@ fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
     };
     if !terminated {
         return Err(
-            "Could not terminate the Aethon-managed FlareSolverr process tree.".to_string(),
+            "Could not terminate the Epigraph-managed FlareSolverr process tree.".to_string(),
         );
     }
     Ok(())
@@ -957,7 +962,7 @@ fn validated_owned_local_flaresolverr_pid() -> Option<u32> {
         ) {
             LocalFlareSolverrOwnerState::CurrentInstance => return Some(owner.pid),
             LocalFlareSolverrOwnerState::OtherInstance => {
-                // Another Aethon instance may own the in-memory Job Object.
+                // Another Epigraph instance may own the in-memory Job Object.
                 // Preserve its lease so only the creating instance can stop it.
                 return None;
             }
@@ -983,7 +988,7 @@ fn get_flaresolverr_local_status_unlocked() -> LocalFlareSolverrStatus {
         path: installed.then(|| path.to_string_lossy().to_string()),
         message: if discovered_pid.is_some() && owned_pid.is_none() {
             Some(
-                "A matching FlareSolverr process is running without an Aethon ownership lease."
+                "A matching FlareSolverr process is running without an Epigraph ownership lease."
                     .to_string(),
             )
         } else if installed {
@@ -1020,7 +1025,7 @@ fn start_flaresolverr_local() -> Result<LocalFlareSolverrStatus, String> {
         let system = System::new_all();
         if discovered_local_flaresolverr_pid(&system, &path).is_some() {
             return Err(
-                "A matching FlareSolverr process is already running without an Aethon ownership lease."
+                "A matching FlareSolverr process is already running without an Epigraph ownership lease."
                     .to_string(),
             );
         }
@@ -1071,7 +1076,7 @@ fn stop_flaresolverr_local() -> Result<LocalFlareSolverrStatus, String> {
         let system = System::new_all();
         if discovered_local_flaresolverr_pid(&system, &local_flaresolverr_exe_path()).is_some() {
             return Err(
-                "Refusing to stop a FlareSolverr process without an Aethon ownership lease."
+                "Refusing to stop a FlareSolverr process without an Epigraph ownership lease."
                     .to_string(),
             );
         }
@@ -1164,12 +1169,12 @@ fn get_flaresolverr_docker_status_unlocked() -> DockerFlareSolverrStatus {
         version,
         message: if named_container_running && !owned {
             Some(
-                "A Docker container with the Aethon FlareSolverr name is not owned by Aethon."
+                "A Docker container with the Epigraph FlareSolverr name is not owned by Epigraph."
                     .to_string(),
             )
         } else if named_container_running && !policy_compliant {
             Some(
-                "The Aethon-owned FlareSolverr container does not match the current safety policy."
+                "The Epigraph-owned FlareSolverr container does not match the current safety policy."
                     .to_string(),
             )
         } else {
@@ -1198,21 +1203,21 @@ fn start_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
     let mut existing_container = inspect_flaresolverr_container_exists();
     if existing_container && !inspect_flaresolverr_owned() {
         return Err(
-            "Refusing to reuse a Docker container without the Aethon ownership label.".to_string(),
+            "Refusing to reuse a Docker container without the Epigraph ownership label.".to_string(),
         );
     }
 
     if existing_container && !inspect_flaresolverr_policy_compliant() {
         if inspect_flaresolverr_running() {
             return Err(
-                "Stop the Aethon-owned FlareSolverr container before applying the current safety policy."
+                "Stop the Epigraph-owned FlareSolverr container before applying the current safety policy."
                     .to_string(),
             );
         }
         let output = run_docker(&["rm", FLARESOLVERR_CONTAINER_NAME])?;
         if !output.status.success() {
             return Err(
-                "Docker could not replace the outdated Aethon FlareSolverr container.".to_string(),
+                "Docker could not replace the outdated Epigraph FlareSolverr container.".to_string(),
             );
         }
         existing_container = false;
@@ -1272,7 +1277,7 @@ fn stop_flaresolverr_docker() -> Result<DockerFlareSolverrStatus, String> {
         return Ok(get_flaresolverr_docker_status_unlocked());
     }
     if !inspect_flaresolverr_owned() {
-        return Err("Refusing to stop a Docker container not owned by Aethon.".to_string());
+        return Err("Refusing to stop a Docker container not owned by Epigraph.".to_string());
     }
     let output = run_docker(&["stop", FLARESOLVERR_CONTAINER_NAME])?;
     if !output.status.success() {
@@ -1539,7 +1544,7 @@ async fn novel_runtime_host_is_open(app: tauri::AppHandle) -> Result<bool, Strin
 }
 
 pub(crate) fn books_data_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("AETHON_BOOKS_DATA_DIR_OVERRIDE") {
+    if let Ok(path) = std::env::var("EPIGRAPH_BOOKS_DATA_DIR_OVERRIDE") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             return PathBuf::from(trimmed);
@@ -2030,7 +2035,7 @@ mod tests {
     #[test]
     fn decodes_percent_encoded_windows_book_asset_paths() {
         let request = Request::builder()
-            .uri("http://book.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Caethon%5Cbooks%5Ccovers%5Ccover.jpg")
+            .uri("http://book.localhost/C%3A%5CUsers%5Cjhow-%5CAppData%5CRoaming%5Cepigraph%5Cbooks%5Ccovers%5Ccover.jpg")
             .body(Vec::<u8>::new())
             .unwrap();
 
@@ -2040,7 +2045,7 @@ mod tests {
 
         assert_eq!(
             decoded_path,
-            r"C:\Users\jhow-\AppData\Roaming\aethon\books\covers\cover.jpg"
+            r"C:\Users\jhow-\AppData\Roaming\epigraph\books\covers\cover.jpg"
         );
     }
 
@@ -2082,13 +2087,13 @@ mod tests {
             FLARESOLVERR_IMAGE,
             "ghcr.io/flaresolverr/flaresolverr@sha256:7962759d99d7e125e108e0f5e7f3cdbcd36161776d058d1d9b7153b92ef1af9e"
         );
-        assert_eq!(FLARESOLVERR_DOCKER_OWNER_LABEL, "com.aethon.managed");
+        assert_eq!(FLARESOLVERR_DOCKER_OWNER_LABEL, "com.epigraph.managed");
         assert_eq!(FLARESOLVERR_DOCKER_OWNER_VALUE, "flaresolverr");
 
         let owner = LocalFlareSolverrOwner {
             pid: 42,
             process_creation_time: 100,
-            executable_path: r"C:\Aethon\tools\flaresolverr.exe".to_string(),
+            executable_path: r"C:\Epigraph\tools\flaresolverr.exe".to_string(),
             job_bound: true,
         };
         let serialized = serde_json::to_string(&owner).unwrap();
@@ -2120,8 +2125,8 @@ mod tests {
             "Config": {
                 "Image": FLARESOLVERR_IMAGE,
                 "Labels": {
-                    "com.aethon.managed": FLARESOLVERR_DOCKER_OWNER_VALUE,
-                    "com.aethon.owner": lease,
+                    "com.epigraph.managed": FLARESOLVERR_DOCKER_OWNER_VALUE,
+                    "com.epigraph.owner": lease,
                 }
             },
             "HostConfig": {
@@ -2278,7 +2283,7 @@ mod tests {
 
     #[test]
     fn writes_server_owner_atomically_without_leaving_tmp_file() {
-        let temp = std::env::temp_dir().join(format!("aethon-owner-atomic-{}", std::process::id()));
+        let temp = std::env::temp_dir().join(format!("epigraph-owner-atomic-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);
         std::fs::create_dir_all(&temp).unwrap();
 
@@ -2382,9 +2387,9 @@ server.maxSourcesInParallel = 6
             audit_manga_backup_override: None,
             audit_books_backup_override: None,
             audit_novels_backup_override: None,
-            audit_aethon_backup_override: None,
+            audit_epigraph_backup_override: None,
             restore_manga_backup_override: None,
-            restore_aethon_backup_override: None,
+            restore_epigraph_backup_override: None,
             restore_handoff_override: None,
             restore_source_profile_override: None,
             attach_only_override: None,
@@ -2409,9 +2414,9 @@ server.maxSourcesInParallel = 6
             audit_manga_backup_override: None,
             audit_books_backup_override: None,
             audit_novels_backup_override: None,
-            audit_aethon_backup_override: None,
+            audit_epigraph_backup_override: None,
             restore_manga_backup_override: None,
-            restore_aethon_backup_override: None,
+            restore_epigraph_backup_override: None,
             restore_handoff_override: None,
             restore_source_profile_override: None,
             attach_only_override: Some(true),
@@ -2438,9 +2443,9 @@ server.maxSourcesInParallel = 6
             audit_manga_backup_override: None,
             audit_books_backup_override: None,
             audit_novels_backup_override: None,
-            audit_aethon_backup_override: None,
+            audit_epigraph_backup_override: None,
             restore_manga_backup_override: None,
-            restore_aethon_backup_override: None,
+            restore_epigraph_backup_override: None,
             restore_handoff_override: None,
             restore_source_profile_override: None,
             attach_only_override: None,
@@ -2489,9 +2494,9 @@ server.maxSourcesInParallel = 6
             audit_manga_backup_override: None,
             audit_books_backup_override: None,
             audit_novels_backup_override: None,
-            audit_aethon_backup_override: None,
+            audit_epigraph_backup_override: None,
             restore_manga_backup_override: None,
-            restore_aethon_backup_override: None,
+            restore_epigraph_backup_override: None,
             restore_handoff_override: None,
             restore_source_profile_override: None,
             attach_only_override: None,
@@ -2554,9 +2559,9 @@ server.maxSourcesInParallel = 6
             audit_manga_backup_override: None,
             audit_books_backup_override: None,
             audit_novels_backup_override: None,
-            audit_aethon_backup_override: None,
+            audit_epigraph_backup_override: None,
             restore_manga_backup_override: None,
-            restore_aethon_backup_override: None,
+            restore_epigraph_backup_override: None,
             restore_handoff_override: None,
             restore_source_profile_override: None,
             attach_only_override: None,
@@ -2570,7 +2575,7 @@ server.maxSourcesInParallel = 6
     #[test]
     fn automation_launch_overrides_parse_local_app_data_dir_and_syncd_port() {
         let overrides = parse_automation_launch_overrides_from_args([
-            "--local-app-data-dir=C:\\Temp\\AethonHost",
+            "--local-app-data-dir=C:\\Temp\\EpigraphHost",
             "--syncd-port=4988",
             "--syncd-bootstrap-ttl-seconds=9",
             "--webdriver-automation",
@@ -2578,7 +2583,7 @@ server.maxSourcesInParallel = 6
 
         assert_eq!(
             overrides.local_app_data_dir,
-            Some(PathBuf::from("C:\\Temp\\AethonHost"))
+            Some(PathBuf::from("C:\\Temp\\EpigraphHost"))
         );
         assert_eq!(overrides.syncd_port, Some(4988));
         assert_eq!(overrides.syncd_bootstrap_ttl_seconds, Some(9));
@@ -2588,14 +2593,14 @@ server.maxSourcesInParallel = 6
     #[test]
     fn automation_launch_overrides_ignore_invalid_syncd_port() {
         let overrides = parse_automation_launch_overrides_from_args([
-            "--local-app-data-dir=C:\\Temp\\AethonJoiner",
+            "--local-app-data-dir=C:\\Temp\\EpigraphJoiner",
             "--syncd-port=not-a-port",
             "--syncd-bootstrap-ttl-seconds=still-bad",
         ]);
 
         assert_eq!(
             overrides.local_app_data_dir,
-            Some(PathBuf::from("C:\\Temp\\AethonJoiner"))
+            Some(PathBuf::from("C:\\Temp\\EpigraphJoiner"))
         );
         assert_eq!(overrides.syncd_port, None);
         assert_eq!(overrides.syncd_bootstrap_ttl_seconds, None);
@@ -2604,23 +2609,23 @@ server.maxSourcesInParallel = 6
 
     #[test]
     fn automation_launch_overrides_roaming_neighbor_is_deterministic() {
-        let local = PathBuf::from(r"C:\Temp\AethonHost\LocalAppData");
+        let local = PathBuf::from(r"C:\Temp\EpigraphHost\LocalAppData");
         let roaming = automation_roaming_app_data_path(&local);
 
-        assert_eq!(roaming, PathBuf::from(r"C:\Temp\AethonHost\RoamingAppData"));
+        assert_eq!(roaming, PathBuf::from(r"C:\Temp\EpigraphHost\RoamingAppData"));
     }
 
     #[test]
     fn automation_launch_overrides_local_server_roots_are_isolated_per_profile() {
-        let local = PathBuf::from(r"C:\Temp\AethonHost\LocalAppData");
+        let local = PathBuf::from(r"C:\Temp\EpigraphHost\LocalAppData");
 
         assert_eq!(
             automation_local_server_root(&local, LocalServerProfile::Main),
-            PathBuf::from(r"C:\Temp\AethonHost\LocalServerMain")
+            PathBuf::from(r"C:\Temp\EpigraphHost\LocalServerMain")
         );
         assert_eq!(
             automation_local_server_root(&local, LocalServerProfile::Test),
-            PathBuf::from(r"C:\Temp\AethonHost\LocalServerTest")
+            PathBuf::from(r"C:\Temp\EpigraphHost\LocalServerTest")
         );
     }
 
@@ -2641,7 +2646,7 @@ server.maxSourcesInParallel = 6
     #[test]
     fn validate_server_owner_rejects_dead_java_pid() {
         let temp =
-            std::env::temp_dir().join(format!("aethon-owner-validate-{}", std::process::id()));
+            std::env::temp_dir().join(format!("epigraph-owner-validate-{}", std::process::id()));
         let target = LocalServerTarget {
             profile: LocalServerProfile::Test,
             profile_key: "test".to_string(),
@@ -2689,8 +2694,8 @@ server.maxSourcesInParallel = 6
     #[test]
     fn rootdir_flag_matches_exact_profile_root_only() {
         let test_flag =
-            r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon";
-        let main_flag = r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\aethon-main";
+            r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\epigraph";
+        let main_flag = r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\jhow-\AppData\Roaming\epigraph-main";
 
         assert!(rootdir_flag_matches_arg(test_flag, test_flag));
         assert!(rootdir_flag_matches_arg(main_flag, main_flag));
@@ -2948,7 +2953,7 @@ pub struct ReleaseInfo {
 }
 
 #[derive(Serialize, Clone)]
-pub struct AethonUpdateStatus {
+pub struct EpigraphUpdateStatus {
     pub update_available: bool,
     pub current_version: String,
     pub version: Option<String>,
@@ -3324,7 +3329,7 @@ fn backup_local_server_files(data_dir: &Path) -> std::io::Result<Option<PathBuf>
     }
 
     let backup_dir = data_dir
-        .join("aethon-backups")
+        .join("epigraph-backups")
         .join(format!("preflight-{}", unix_now_secs()));
     std::fs::create_dir_all(&backup_dir)?;
     for source in existing {
@@ -3348,20 +3353,20 @@ fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
             {
                 dirs::data_dir()
                     .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-                    .join("aethon-main")
+                    .join("epigraph-main")
             }
             #[cfg(target_os = "macos")]
             {
                 dirs::data_dir()
                     .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-                    .join("aethon-main")
+                    .join("epigraph-main")
             }
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             {
                 let base = std::env::var("XDG_DATA_HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-                base.join("aethon-main")
+                base.join("epigraph-main")
             }
         }
     }
@@ -3369,7 +3374,7 @@ fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
 
 fn local_server_custom_profile_root(profile_key: &str) -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| suwayomi_data_dir());
-    base.join(format!("aethon-profile-{profile_key}"))
+    base.join(format!("epigraph-profile-{profile_key}"))
 }
 
 fn local_server_root_for_profile_key(profile_key: &str) -> PathBuf {
@@ -3766,7 +3771,7 @@ async fn download_server_file_to_downloads(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("aethon-backup.tachibk");
+        .unwrap_or("epigraph-backup.tachibk");
     let safe_name: String = raw_name
         .chars()
         .map(|c| match c {
@@ -3904,7 +3909,7 @@ fn novels_scope_root_for_target(
     local_server_profile_root(LocalServerProfile::Test)
 }
 
-fn novel_repository_state_path_for_target(
+pub(crate) fn novel_repository_state_path_for_target(
     launch_target: &LaunchTargetInfo,
     profile_id: Option<&str>,
     server_url: Option<&str>,
@@ -3943,7 +3948,7 @@ fn extension_compatibility_state_path_for_target(
             .unwrap_or_else(|| "main".to_string());
         suwayomi_data_dir().join("runtime-scopes").join(scope)
     };
-    let metadata_dir = scope_root.join(".aethon");
+    let metadata_dir = scope_root.join(".epigraph");
     std::fs::create_dir_all(&metadata_dir).map_err(|error| error.to_string())?;
     Ok(metadata_dir.join("extension-compatibility.json"))
 }
@@ -4035,7 +4040,7 @@ fn read_novel_repository_state(
 }
 
 #[tauri::command]
-fn write_novel_repository_state(
+async fn write_novel_repository_state(
     contents: String,
     profile_id: Option<String>,
     server_url: Option<String>,
@@ -4047,7 +4052,24 @@ fn write_novel_repository_state(
         profile_id.as_deref(),
         server_url.as_deref(),
     )?;
-    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    let previous_contents = if path.exists() {
+        Some(std::fs::read_to_string(&path).map_err(|err| err.to_string())?)
+    } else {
+        None
+    };
+    write_text_file_atomic(&path, &contents)?;
+    if server_url.as_deref().is_none_or(str::is_empty) {
+        if let Err(error) = syncd_replication::notify_novel_repository_state_written(
+            &app,
+            profile_id.as_deref(),
+            previous_contents,
+            &contents,
+        )
+        .await
+        {
+            eprintln!("Failed to publish LNReader repository state to Syncd: {error}");
+        }
+    }
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -4494,14 +4516,14 @@ fn sanitize_suwayomi_lan_state() {
 
 fn local_server_profile_root_override(profile: LocalServerProfile) -> Option<PathBuf> {
     let var_name = match profile {
-        LocalServerProfile::Main => "AETHON_LOCAL_SERVER_MAIN_ROOT",
-        LocalServerProfile::Test => "AETHON_LOCAL_SERVER_TEST_ROOT",
+        LocalServerProfile::Main => "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
+        LocalServerProfile::Test => "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
     };
     std::env::var_os(var_name).map(PathBuf::from)
 }
 
 fn maybe_start_phase_gate_temporary_lan_session() {
-    let Some(raw_profile) = std::env::var_os("AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE") else {
+    let Some(raw_profile) = std::env::var_os("EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_PROFILE") else {
         return;
     };
 
@@ -4509,17 +4531,17 @@ fn maybe_start_phase_gate_temporary_lan_session() {
         "main" => LocalServerProfile::Main,
         "test" => LocalServerProfile::Test,
         other => {
-            eprintln!("Ignoring invalid AETHON_PHASE_GATE_TEMPORARY_LAN_PROFILE: {other}");
+            eprintln!("Ignoring invalid EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_PROFILE: {other}");
             return;
         }
     };
 
-    let ttl_seconds = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS")
+    let ttl_seconds = std::env::var("EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_TTL_SECONDS")
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .unwrap_or(60);
-    let advertised_host = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_HOST").ok();
-    let reason = std::env::var("AETHON_PHASE_GATE_TEMPORARY_LAN_REASON")
+    let advertised_host = std::env::var("EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_HOST").ok();
+    let reason = std::env::var("EPIGRAPH_PHASE_GATE_TEMPORARY_LAN_REASON")
         .unwrap_or_else(|_| "phase-gate".to_string());
     let root = local_server_profile_root(profile);
 
@@ -4609,20 +4631,20 @@ fn suwayomi_data_dir() -> PathBuf {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| PathBuf::from("C:\\ProgramData")))
-            .join("aethon")
+            .join("epigraph")
     }
     #[cfg(target_os = "macos")]
     {
         dirs::data_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-            .join("aethon")
+            .join("epigraph")
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let base = std::env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-        base.join("aethon")
+        base.join("epigraph")
     }
 }
 
@@ -4633,35 +4655,12 @@ fn managed_suwayomi_runtime_jar_path() -> PathBuf {
         .join("Suwayomi-Server.jar")
 }
 
-fn legacy_suwayomi_data_dirs() -> Vec<PathBuf> {
-    Vec::new()
-}
-
 fn ensure_suwayomi_data_dir(profile: LocalServerProfile) -> PathBuf {
     let canonical = local_server_profile_root(profile);
 
-    if canonical.exists() {
-        return canonical;
+    if !canonical.exists() {
+        compat::migrate_legacy_storage();
     }
-
-    if profile != LocalServerProfile::Test {
-        return canonical;
-    }
-
-    for legacy in legacy_suwayomi_data_dirs() {
-        if !legacy.exists() || legacy == canonical {
-            continue;
-        }
-
-        if let Some(parent) = canonical.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        if std::fs::rename(&legacy, &canonical).is_ok() {
-            return canonical;
-        }
-    }
-
     canonical
 }
 
@@ -4735,7 +4734,7 @@ fn command_event_preview(bytes: &[u8]) -> String {
 
 fn startup_diagnostics_enabled() -> bool {
     matches!(
-        std::env::var("AETHON_STARTUP_DIAGNOSTICS"),
+        std::env::var("EPIGRAPH_STARTUP_DIAGNOSTICS"),
         Ok(value)
             if matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -5049,7 +5048,7 @@ fn resolve_server_binary(
 }
 
 #[tauri::command]
-fn spawn_server(
+async fn spawn_server(
     binary: String,
     server_url: String,
     profile_id: Option<String>,
@@ -5057,6 +5056,37 @@ fn spawn_server(
     update_intensity: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let target = resolve_local_server_target(
+        &launch_target,
+        Some(server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    )?;
+    if target.profile_key == "main" && target.port == 4567 && !target.attach_only {
+        let instance = syncd::suwayomi_process::ensure_main_owned_instance()
+            .await
+            .map_err(SpawnError::SpawnFailed)?;
+        match instance {
+            syncd::suwayomi_process::HeadlessSuwayomiOutcome::Attached(instance)
+            | syncd::suwayomi_process::HeadlessSuwayomiOutcome::Started(instance) => {
+                set_runtime_status(
+                    &app,
+                    suwayomi_runtime::RuntimeLifecycleState::Ready,
+                    Some(instance.profile_key),
+                    Some(instance.server_url),
+                    Some(instance.java_pid),
+                    None,
+                );
+                return Ok(());
+            }
+            syncd::suwayomi_process::HeadlessSuwayomiOutcome::NotConfigured => {
+                return Err(SpawnError::NotConfigured(
+                    "Managed Suwayomi is not configured for the main profile.".to_string(),
+                ));
+            }
+        }
+    }
     spawn_server_unlocked(
         binary,
         server_url,
@@ -5134,7 +5164,7 @@ fn spawn_server_unlocked(
     let main_startup_diagnostic_path =
         Some(data_dir.join(format!("{}-app-driven-startup.log", target.profile_key)));
 
-    let log_path = data_dir.join("aethon-spawn.log");
+    let log_path = data_dir.join("epigraph-spawn.log");
     let _ = std::fs::create_dir_all(&data_dir);
     let mut log = std::fs::OpenOptions::new()
         .create(true)
@@ -5839,14 +5869,16 @@ fn kill_server(server_url: Option<String>, app: tauri::AppHandle) -> Result<(), 
 async fn list_releases() -> Result<Vec<ReleaseInfo>, String> {
     use tauri_plugin_http::reqwest;
 
-    let repo = AETHON_GITHUB_REPO
-        .or(VITE_AETHON_GITHUB_REPO)
+    let repo = EPIGRAPH_GITHUB_REPO
+        .or(VITE_EPIGRAPH_GITHUB_REPO)
+        .or(LEGACY_AETHON_GITHUB_REPO)
+        .or(LEGACY_VITE_AETHON_GITHUB_REPO)
         .map(str::trim)
         .filter(|repo| !repo.is_empty())
-        .unwrap_or(DEFAULT_AETHON_GITHUB_REPO);
+        .unwrap_or(DEFAULT_EPIGRAPH_GITHUB_REPO);
 
     let client = reqwest::Client::builder()
-        .user_agent("Aethon")
+        .user_agent("Epigraph")
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -5901,7 +5933,7 @@ fn is_public_stable_release(tag_name: &str, draft: bool, prerelease: bool) -> bo
 /// Check only the configured signed updater endpoint. GitHub release history is
 /// informational and must never be used to announce or authorize installation.
 #[tauri::command]
-async fn check_aethon_update(app: tauri::AppHandle) -> Result<AethonUpdateStatus, String> {
+async fn check_epigraph_update(app: tauri::AppHandle) -> Result<EpigraphUpdateStatus, String> {
     use tauri_plugin_updater::UpdaterExt;
 
     let updater = app.updater().map_err(|e| e.to_string())?;
@@ -5912,14 +5944,14 @@ async fn check_aethon_update(app: tauri::AppHandle) -> Result<AethonUpdateStatus
     let current_version = app.package_info().version.to_string();
 
     Ok(match update {
-        Some(update) => AethonUpdateStatus {
+        Some(update) => EpigraphUpdateStatus {
             update_available: true,
             current_version,
             version: Some(update.version.to_string()),
             body: update.body,
             published_at: update.date.map(|date| date.to_string()),
         },
-        None => AethonUpdateStatus {
+        None => EpigraphUpdateStatus {
             update_available: false,
             current_version,
             version: None,
@@ -5927,6 +5959,12 @@ async fn check_aethon_update(app: tauri::AppHandle) -> Result<AethonUpdateStatus
             published_at: None,
         },
     })
+}
+
+/// Compatibility alias kept for older frontend bundles and automation scripts.
+#[tauri::command]
+async fn check_aethon_update(app: tauri::AppHandle) -> Result<EpigraphUpdateStatus, String> {
+    check_epigraph_update(app).await
 }
 
 /// Download and install the latest update using tauri-plugin-updater.
@@ -6014,14 +6052,14 @@ fn parse_launch_target() -> LaunchTargetInfo {
     let mut audit_manga_backup_override = None;
     let mut audit_books_backup_override = None;
     let mut audit_novels_backup_override = None;
-    let mut audit_aethon_backup_override = None;
+    let mut audit_epigraph_backup_override = None;
     let mut restore_manga_backup_override = None;
-    let mut restore_aethon_backup_override = None;
+    let mut restore_epigraph_backup_override = None;
     let mut restore_handoff_override = None;
     let mut restore_source_profile_override = None;
     let mut attach_only_override = None;
 
-    match std::env::var("AETHON_LAUNCH_PROFILE")
+    match std::env::var("EPIGRAPH_LAUNCH_PROFILE")
         .ok()
         .as_deref()
         .map(str::trim)
@@ -6137,10 +6175,13 @@ fn parse_launch_target() -> LaunchTargetInfo {
             continue;
         }
 
-        if let Some(value) = arg.strip_prefix("--audit-aethon-backup=") {
+        if let Some(value) = arg
+            .strip_prefix("--audit-epigraph-backup=")
+            .or_else(|| arg.strip_prefix("--audit-aethon-backup="))
+        {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                audit_aethon_backup_override = Some(trimmed.to_string());
+                audit_epigraph_backup_override = Some(trimmed.to_string());
             }
             continue;
         }
@@ -6153,10 +6194,13 @@ fn parse_launch_target() -> LaunchTargetInfo {
             continue;
         }
 
-        if let Some(value) = arg.strip_prefix("--restore-aethon-backup=") {
+        if let Some(value) = arg
+            .strip_prefix("--restore-epigraph-backup=")
+            .or_else(|| arg.strip_prefix("--restore-aethon-backup="))
+        {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                restore_aethon_backup_override = Some(trimmed.to_string());
+                restore_epigraph_backup_override = Some(trimmed.to_string());
             }
             continue;
         }
@@ -6201,9 +6245,9 @@ fn parse_launch_target() -> LaunchTargetInfo {
         audit_manga_backup_override,
         audit_books_backup_override,
         audit_novels_backup_override,
-        audit_aethon_backup_override,
+        audit_epigraph_backup_override,
         restore_manga_backup_override,
-        restore_aethon_backup_override,
+        restore_epigraph_backup_override,
         restore_handoff_override,
         restore_source_profile_override,
         attach_only_override,
@@ -6276,22 +6320,22 @@ fn apply_automation_launch_overrides() {
         std::env::set_var("LOCALAPPDATA", &path);
         std::env::set_var("APPDATA", &roaming_path);
         std::env::set_var(
-            "AETHON_LOCAL_SERVER_MAIN_ROOT",
+            "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
             automation_local_server_root(&path, LocalServerProfile::Main),
         );
         std::env::set_var(
-            "AETHON_LOCAL_SERVER_TEST_ROOT",
+            "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
             automation_local_server_root(&path, LocalServerProfile::Test),
         );
     }
 
     if let Some(port) = overrides.syncd_port {
-        std::env::set_var("AETHON_SYNCD_PORT", port.to_string());
+        std::env::set_var("EPIGRAPH_SYNCD_PORT", port.to_string());
     }
 
     if let Some(ttl_seconds) = overrides.syncd_bootstrap_ttl_seconds {
         std::env::set_var(
-            "AETHON_SYNCD_BOOTSTRAP_TTL_SECONDS",
+            "EPIGRAPH_SYNCD_BOOTSTRAP_TTL_SECONDS",
             ttl_seconds.to_string(),
         );
     }
@@ -6336,17 +6380,17 @@ fn configure_webdriver_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             .unwrap_or(fallback)
     };
 
-    let x = parse_dimension("AETHON_WEBDRIVER_WINDOW_X", 0.0);
-    let y = parse_dimension("AETHON_WEBDRIVER_WINDOW_Y", 0.0);
-    let width = parse_dimension("AETHON_WEBDRIVER_WINDOW_WIDTH", 1280.0).max(800.0);
-    let height = parse_dimension("AETHON_WEBDRIVER_WINDOW_HEIGHT", 800.0).max(600.0);
+    let x = parse_dimension("EPIGRAPH_WEBDRIVER_WINDOW_X", 0.0);
+    let y = parse_dimension("EPIGRAPH_WEBDRIVER_WINDOW_Y", 0.0);
+    let width = parse_dimension("EPIGRAPH_WEBDRIVER_WINDOW_WIDTH", 1280.0).max(800.0);
+    let height = parse_dimension("EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT", 800.0).max(600.0);
 
     // Automation windows are hidden by configuration. Position them before the
     // optional show so a visible capture never flashes on the primary monitor.
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
     let _ = window.set_size(tauri::PhysicalSize::new(width, height));
 
-    let show_window = std::env::var("AETHON_WEBDRIVER_SHOW_WINDOW")
+    let show_window = std::env::var("EPIGRAPH_WEBDRIVER_SHOW_WINDOW")
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -6371,7 +6415,7 @@ fn end_suwayomi_runtime_operation(token: String) -> bool {
 
 #[tauri::command]
 fn record_media_audit_event(event: String) -> Result<(), String> {
-    let path = match std::env::var("AETHON_MEDIA_AUDIT_LOG") {
+    let path = match std::env::var("EPIGRAPH_MEDIA_AUDIT_LOG") {
         Ok(path) if !path.trim().is_empty() => PathBuf::from(path),
         _ => return Ok(()),
     };
@@ -6393,6 +6437,7 @@ fn record_media_audit_event(event: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    compat::promote_legacy_environment();
     apply_automation_launch_overrides();
     ensure_process_rustls_crypto_provider();
     ensure_dev_webview2_debug_port();
@@ -6428,6 +6473,8 @@ pub fn run() {
             syncd_desktop::syncd_get_runtime_identity,
             syncd_desktop::syncd_connect_with_bootstrap,
             syncd_desktop::syncd_host_decide_pairing,
+            syncd_desktop::syncd_list_paired_devices,
+            syncd_desktop::syncd_update_paired_device_granted_scopes,
             syncd_desktop::syncd_list_persisted_sync_sessions,
             syncd_desktop::syncd_revalidate_persisted_sync_sessions,
             syncd_desktop::syncd_disconnect_persisted_session,
@@ -6497,6 +6544,7 @@ pub fn run() {
             start_flaresolverr_docker,
             stop_flaresolverr_docker,
             list_releases,
+            check_epigraph_update,
             check_aethon_update,
             suwayomi_update::get_suwayomi_runtime_status,
             suwayomi_update::check_suwayomi_runtime_update,
@@ -6516,6 +6564,11 @@ pub fn run() {
             relaunch_with_args,
         ])
         .setup(|app| {
+            // Do not hold the first paint hostage to a potentially large legacy
+            // data tree. The merge is idempotent and conflict-safe; running it
+            // in the Tauri blocking pool lets the Epigraph window become usable
+            // while old Aethon data is copied in the background.
+            tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
             configure_webdriver_window(app.handle());
             maybe_start_phase_gate_temporary_lan_session();
             sanitize_suwayomi_lan_state();
@@ -6523,6 +6576,7 @@ pub fn run() {
             syncd_sidecar::maybe_install_exit_sentinel(app.handle());
             tauri::async_runtime::block_on(syncd_sidecar::maybe_spawn_for_phase_gate(app.handle()))
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+            syncd_sidecar::attach_existing_host_in_background(app.handle());
             tauri::async_runtime::block_on(syncd_replication::bootstrap_runtime(
                 app.handle().clone(),
                 app.state::<syncd_replication::SyncdReplicationState>()
@@ -6534,7 +6588,7 @@ pub fn run() {
         })
         .on_window_event(|_window, _event| {})
         .build(tauri::generate_context!())
-        .expect("error while building aethon");
+        .expect("error while building epigraph");
 
     app.run(|app_handle, event| {
         syncd_sidecar::handle_run_event(app_handle, &event);

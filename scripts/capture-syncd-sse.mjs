@@ -41,8 +41,8 @@ try {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      "X-Aethon-Client-Version": "0.1.0",
-      "X-Aethon-Client-Protocol-Version": "1",
+      "X-Epigraph-Client-Version": "0.1.0",
+      "X-Epigraph-Client-Protocol-Version": "1",
       ...(lastEventId ? { "Last-Event-ID": lastEventId } : {}),
     },
     signal: controller.signal,

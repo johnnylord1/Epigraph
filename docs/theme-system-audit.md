@@ -1,6 +1,6 @@
-# Aethon Theme System Audit
+# Epigraph Theme System Audit
 
-Status: Marco 1 - infraestrutura.
+Status: sistema consolidado até o gate 72H; revalidado em 01/08/2026.
 
 Este relatório acompanha a migração incremental do sistema de temas. O contrato deste marco é preparar a base sem criar temas novos, sem remover tokens e sem migrar componentes visuais em massa.
 
@@ -8,7 +8,9 @@ Este relatório acompanha a migração incremental do sistema de temas. O contra
 
 - `src/styles/global.css` importa, nesta ordem, `tokens.css`, `nocturne-theme.css`, `animations.css` e `nocturne-port.css`.
 - `src/styles/tokens.css` define os tokens base e temas antigos por `data-theme`.
-- `src/styles/nocturne-theme.css` define a identidade Nocturne e tokens `--n-*` usados pela UI portada.
+- `src/styles/nocturne-theme.css` define a identidade Nocturne e os tokens
+  canônicos do tema; a camada de compatibilidade `--n-*` foi removida no Marco
+  60C e não possui declarações ou consumidores ativos.
 - `src/styles/nocturne-port.css` concentra grande parte do CSS visual da shell Nocturne e ainda contém muitos valores diretos.
 - `src/App.svelte` aplica `data-theme` no elemento raiz e injeta CSS para temas customizados.
 - `src/store/state.svelte.ts` mantém `ThemeTokens`, `HudThemeTokens`, defaults e presets.
@@ -298,7 +300,7 @@ Componentes/seletores alterados neste marco:
 - `src/components/layout/ActivityOverlay.svelte`
 - `src/components/layout/TitleBar.svelte`
 - `src/components/layout/WindowControlsInline.svelte`
-- Bloco global de shell/layout em `src/styles/nocturne-port.css`, de `.aethon-app-shell` ate antes de `.n-btn`.
+- Bloco global de shell/layout em `src/styles/nocturne-port.css`, de `.epigraph-app-shell` ate antes de `.n-btn`.
 
 Areas cobertas:
 
@@ -313,7 +315,7 @@ Areas cobertas:
 
 Nao foram migrados neste marco:
 
-- Settings e seus seletores `.aethon-port--settings`;
+- Settings e seus seletores `.epigraph-port--settings`;
 - Reader/Reader HUD;
 - Library cards/toolbars internos;
 - Downloads/Sources/Mass Migration/Updater;
@@ -357,7 +359,7 @@ Ocorrencias migradas para tokens:
 
 ### Excecoes Mantidas
 
-- `src/styles/nocturne-port.css` antes de `.aethon-app-shell`: splash/branding visual. Mantido por ser branding e fora do layout app-shell.
+- `src/styles/nocturne-port.css` antes de `.epigraph-app-shell`: splash/branding visual. Mantido por ser branding e fora do layout app-shell.
 - `src/styles/nocturne-port.css` depois de `.n-btn`: base buttons, settings, cards, readers, fixtures e componentes de telas futuras. Mantido por escopo.
 - `src/components/layout/RecentActivity.svelte`: conteudo do painel de atividade, nao toolbar/sidebar/topbar. Mantido para evitar expandir o marco.
 - Variaveis `--n-*` de dimensao/motion ainda aparecem como camada ativa de compatibilidade no CSS portado. As cores/surfaces/blur/shadow/z-index migrados neste marco passam por component/semantic tokens; a remocao completa de metricas `--n-*` deve ser feita em marco proprio para nao alterar densidade visual.
@@ -376,7 +378,7 @@ Nao houve alteracao de contraste visual pretendida neste marco. A migracao prese
 
 ### Screenshots Reais
 
-Screenshots capturados da janela real do Aethon:
+Screenshots capturados da janela real do Epigraph:
 
 - Antes: `docs/screenshots/theme-marco3-before-layout.png`
 - Depois: `docs/screenshots/theme-marco3-after-layout.png`
@@ -427,7 +429,7 @@ Foram adicionados tokens `--component-settings-*` em `src/styles/tokens.css`, co
 
 ### Cores diretas removidas
 - `Settings.svelte`: controles `step-btn`, `select-btn`, `select-menu`, storage meter, `path-input-error`, `folder-update-excluded`, overlay/painel de backup.
-- `nocturne-port.css`: bloco principal `.aethon-port--settings` e regras centrais de modal, topbar, rail, nav, subnav, cards, rows, toggles, chips, botoes e notices.
+- `nocturne-port.css`: bloco principal `.epigraph-port--settings` e regras centrais de modal, topbar, rail, nav, subnav, cards, rows, toggles, chips, botoes e notices.
 
 ### Excecoes mantidas
 - `Settings.svelte`: swatches dos temas e `input[type=color]` do leitor prose continuam com cores diretas por serem valores editaveis/fixtures visuais, nao tokens do shell.
@@ -534,7 +536,7 @@ Correcoes feitas:
 - hover/active/focus usam tokens de componente em vez de valores diretos.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco5-reader-hud/reader-hud-before-main.png`
@@ -672,7 +674,7 @@ Validado visualmente no app real:
 Nao houve alteracao pretendida de contraste ou layout. Os valores Nocturne existentes foram preservados por tokens de tema.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco6-library/library-before-comics-grid.png`
@@ -687,7 +689,7 @@ Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
 
 Notas de captura:
 
-- A primeira tentativa de captura "depois" atingiu timeout porque o CDP listou primeiro a pagina auxiliar `novelRuntimeHost`, que nao possui `window.__aethonAudit`. A captura final selecionou explicitamente a pagina principal com a ponte de auditoria.
+- A primeira tentativa de captura "depois" atingiu timeout porque o CDP listou primeiro a pagina auxiliar `novelRuntimeHost`, que nao possui `window.__epigraphAudit`. A captura final selecionou explicitamente a pagina principal com a ponte de auditoria.
 - A comparacao Comics antes/depois ficou visualmente equivalente. O badge de notificacao da topbar variou por estado runtime real do app, nao por mudanca de tema.
 
 ### Validacao
@@ -777,7 +779,7 @@ Validado visualmente no app real:
 Nao houve alteracao pretendida de layout, comportamento ou identidade visual. Os valores Nocturne existentes foram preservados por tokens de componente.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco7-sources/sources-before-main.png`
@@ -873,7 +875,7 @@ Risco registrado sem alterar comportamento:
 - com o modal aberto, a ordem de tabulacao ainda pode alcancar elementos atras do overlay. Corrigir exige focus trap/inert e alteraria comportamento de modal, entao deve ser tratado em marco especifico de acessibilidade/modal behavior.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco8-mass-migration/mass-migration-before-sources.png`
@@ -969,7 +971,7 @@ Contraste computado no app real:
 Nao houve correcao funcional de focus trap/inert neste marco. O `dialog.showModal()` existente permanece responsavel pelo comportamento modal.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco9-updater/updater-before-summary.png`
@@ -999,7 +1001,7 @@ Notas de captura:
 ### Escopo executado
 - Migrada exclusivamente a camada visual ativa de Downloads:
   - `src/components/pages/Downloads.svelte`.
-- A superficie ativa foi confirmada no app real via WebView2/CDP em `http://tauri.localhost/`: sidebar `Downloads` abre `.aethon-port--downloads`, heading `Download Queue`, estado real `0 Items` e empty state `No downloads queued.`.
+- A superficie ativa foi confirmada no app real via WebView2/CDP em `http://tauri.localhost/`: sidebar `Downloads` abre `.epigraph-port--downloads`, heading `Download Queue`, estado real `0 Items` e empty state `No downloads queued.`.
 - Nao foram alteradas regras de fila, pause/resume, remove, reorder, open folder, GraphQL, stores, persistencia, Layout, Sidebar, Topbar, Reader, Library, Sources, Settings, Updater, Mass Migration, Discord/Rich Presence, Tauri/Cargo ou i18n.
 - Nao foram removidos tokens Legacy nem a camada `--n-*`.
 
@@ -1053,7 +1055,7 @@ Corrigido neste marco:
 - foco visivel local de botoes de summary e row actions passa por `--component-downloads-focus-ring`.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco10-downloads/downloads-before-main.png`
@@ -1146,7 +1148,7 @@ Validado visualmente no app real em Nocturne via WebView2/CDP:
 - filtros/dropdown local de Discover.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes, a partir do baseline `6918aa6e7a4ee5515486d616f2ff6ef14d038bf6`:
   - `docs/screenshots/marco11-browsev3/browse-before-real-main.png`
@@ -1244,7 +1246,7 @@ Limitacao:
 - `NovelMigrateModal.svelte` nao foi reproduzido visualmente no estado real atual sem criar/alterar dados ou classificacao de fontes. O modal segue coberto por token test e por varredura de valores diretos, mas precisa de smoke visual manual quando houver uma novel migravel no runtime.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes, a partir do baseline anterior ao Marco 12:
   - `docs/screenshots/marco12-migration-modals/migrate-modal-before-source.png`
@@ -1330,7 +1332,7 @@ Limitacao:
 - Nao havia sessao Syncd persistida no runtime real (`persistedCount: 0`), portanto o popover visual de `SyncdSessionDetails.svelte` nao foi capturado com dados reais. O comportamento e render do popover seguem cobertos por teste unitario.
 
 ### Screenshots reais
-Screenshots capturados da janela real do Aethon em Nocturne via WebView2/CDP:
+Screenshots capturados da janela real do Epigraph em Nocturne via WebView2/CDP:
 
 - Antes:
   - `docs/screenshots/marco13-syncd/syncd-before-panel.png`
@@ -1548,7 +1550,7 @@ Screenshots capturados/registrados em Nocturne:
   - `docs/screenshots/marco16-nocturne-state/nocturne-state-after-books-empty.png`
   - `docs/screenshots/marco16-nocturne-state/nocturne-state-after-element.png`
 
-Comparacao visual: Books Library empty state manteve geometria, surfaces, rail, icon, borda, sombra, tipografia e hierarquia equivalentes. Um toast real do updater apareceu em algumas capturas como ruido runtime externo e nao pertence ao componente auditado. Uma captura intermediaria ficou escura por estado global de foco da busca (`aethon-library-search-engaged`) e foi sobrescrita apos blur do input, mantendo a busca e o estado vazio.
+Comparacao visual: Books Library empty state manteve geometria, surfaces, rail, icon, borda, sombra, tipografia e hierarquia equivalentes. Um toast real do updater apareceu em algumas capturas como ruido runtime externo e nao pertence ao componente auditado. Uma captura intermediaria ficou escura por estado global de foco da busca (`epigraph-library-search-engaged`) e foi sobrescrita apos blur do input, mantendo a busca e o estado vazio.
 
 ### Limitacoes de estado
 - Tons warning/danger/success e acoes com foco/disabled nao foram forcados no app real para evitar alterar estados de erro ou dados do usuario; ficam cobertos pelo teste focado de render/contrato.
@@ -1723,7 +1725,7 @@ Categorias cobertas:
 - Regras estruturais de layout, dimensoes de pagina/canvas e media queries permanecem como geometria local, nao identidade visual por tema.
 
 ### Screenshots reais
-- Validacao concluida no app desktop real em Nocturne, com WebView2/CDP estavel em `127.0.0.1:9223` e a pagina principal `Aethon [MAIN :4567]` expondo `window.__aethonAudit`.
+- Validacao concluida no app desktop real em Nocturne, com WebView2/CDP estavel em `127.0.0.1:9223` e a pagina principal `Epigraph [MAIN :4567]` expondo `window.__epigraphAudit`.
 - `docs/screenshots/marco19-reader-core/after-manga-reader.png`: Reader de manga no estado real de erro `HTTP 404`, com surface de erro, acoes e HUD.
 - `docs/screenshots/marco19-reader-core/after-manga-reader-rendered-mangadex.png`: Reader de manga com paginas reais renderizadas a partir de uma obra MangaDex; 28 imagens detectadas e 12 carregadas no viewport/lazy load no momento da captura, sem erro.
 - `docs/screenshots/marco19-reader-core/after-manga-download-modal.png`: modal local de download, settings popover e HUD sobre o mesmo estado real.
@@ -1842,7 +1844,7 @@ Categorias cobertas:
 
 ### Validacao
 - Computed style no app desktop real em Nocturne: 74 tokens encontrados e 0 valores vazios.
-- A busca focada manteve `body.aethon-home-search-engaged`, search com `position: relative` e dim com `pointer-events: auto`, sem alterar a logica de entrada/saida.
+- A busca focada manteve `body.epigraph-home-search-engaged`, search com `position: relative` e dim com `pointer-events: auto`, sem alterar a logica de entrada/saida.
 - `npm exec vitest run -- --project shell-jsdom src/components/pages/HomeThemeTokens.test.ts`: passou, 1 arquivo e 4 testes.
 - `npm exec vitest run -- --project shell-jsdom src/components/pages/HomeThemeTokens.test.ts src/components/shared/MangaPreviewThemeTokens.test.ts`: passou, 2 arquivos e 8 testes.
 - `pnpm build`: passou com 6294 modulos transformados; permaneceu apenas o aviso conhecido de chunk maior que 500 kB.
@@ -2382,7 +2384,7 @@ Categorias cobertas:
 
 #### Aplicacao e persistencia
 
-- O antigo `<style id="aethon-custom-theme">` construido por concatenacao foi removido. O provider aplica exclusivamente os 47 ThemeTokens, 15 HudThemeTokens, 3 motion vars e o alias de sidebar via `style.setProperty`; a troca para builtin remove a mesma allowlist via `removeProperty`.
+- O antigo `<style id="epigraph-custom-theme">` construido por concatenacao foi removido. O provider aplica exclusivamente os 47 ThemeTokens, 15 HudThemeTokens, 3 motion vars e o alias de sidebar via `style.setProperty`; a troca para builtin remove a mesma allowlist via `removeProperty`.
 - O `data-theme` permanece no builtin base do documento, preservando toda a camada de component tokens derivada daquele tema. `data-custom-theme` registra apenas o documento ativo; nenhum componente depende dele.
 - O ThemeEditor continua sendo a interface oficial. A aba Colors mantem primitives e o grupo avancado Semantic; HUD mantem presets, geometria, cores e motion. Preview e swatches tambem passaram a usar `setProperty`, sem CSS gerado como string.
 - O save persiste o V4 completo antes de trocar o estado em memoria e antes de ativa-lo. Se `localStorage` falhar, o documento antigo e a selecao anterior permanecem intactos e o editor mostra erro em vez de `Saved`.
@@ -2499,7 +2501,7 @@ Categorias cobertas:
 
 ### Bootstrap e navegacao ativos
 
-- O caminho de bootstrap comprovado e `src-tauri/src/main.rs -> aethon_lib::run() -> index.html -> src/main.ts -> App.svelte -> Layout.svelte`.
+- O caminho de bootstrap comprovado e `src-tauri/src/main.rs -> epigraph_lib::run() -> index.html -> src/main.ts -> App.svelte -> Layout.svelte`.
 - `Layout.svelte` continua sendo o router efetivo do shell, com `home`, `library`, `search`, `downloads` e `settings`; detalhes e readers sao carregados pelos loaders ativos de `Layout.svelte`/`App.svelte`.
 - A navegacao inicial vem do estado persistido normalizado. Os aliases `explore`, `extensions` e `sources` convergem para `search`; pathname, hash e History API nao alimentam `NavPage`.
 - O argumento interno `--audit-open=` aceita somente `library`, `manga`, `reader`, `books`, `book`, `book-reader`, `settings` e `settings-security`. Nenhum alvo Legacy pode ser aberto por esse caminho.
@@ -2618,7 +2620,7 @@ Categorias cobertas:
 - App Tauri real em Nocturne, WebView2/CDP estavel em `127.0.0.1:9223`, viewport 1280x800 e dados persistidos reais. Nenhuma fixture ou dado do usuario foi criado ou alterado.
 - O baseline foi capturado com reversao temporaria apenas do patch de `nocturne-port.css`, recompilado pelo Vite/HMR na posicao original da cascata; o patch foi reaplicado em `finally` antes das capturas after.
 - Evidencias em `docs/screenshots/marco34-nocturne-port/`: `before/after-library.png`, `before/after-search-dim.png`, `before/after-settings.png` e `before/after-splash.png`.
-- Search dim: body `aethon-browse-search-engaged` confirmado nos dois lados; diferenca acima de 2 niveis RGB: **0,000%**, media **0,000**.
+- Search dim: body `epigraph-browse-search-engaged` confirmado nos dois lados; diferenca acima de 2 niveis RGB: **0,000%**, media **0,000**.
 - Library: header, filtros, chips e toolbar (faixa y=0..259) tiveram **0,000%** de pixels acima de 2 niveis RGB. A diferenca no frame completo veio de covers que terminaram de carregar entre capturas, nao de CSS.
 - Settings: **0,005%** acima de 2 niveis RGB, media **0,001**; diferenca residual restrita a antialias/estado temporal, sem mudanca aparente.
 - Splash: **0,060%** acima de 2 niveis RGB, media **0,167**; diferenca residual corresponde a stars/FPS e fase da animacao. Background, logo, aura, tipografia e hierarquia permaneceram equivalentes.
@@ -2660,7 +2662,7 @@ Categorias cobertas:
 - App Tauri real em Nocturne builtin, launcher gerenciado, WebView2/CDP `127.0.0.1:9223`, viewport 1280x800 e dados persistidos reais. Nenhum tema ou fixture foi salvo.
 - Evidencias em `docs/screenshots/marco35-custom-port-derivation/`: `before/after-library.png`, `before/after-search-dim.png`, `before/after-settings.png` e `before/after-splash.png`.
 - Os arquivos `before-*` reutilizam os `after-*` estáveis do Marco 34, imediatamente anteriores a esta alteração. As novas capturas foram feitas na mesma superfície Nocturne após a mudança de seletor.
-- Search manteve a barra acima do dim e `aethon-browse-search-engaged` ativo durante a captura. Settings manteve surfaces, cards, toggles, tipografia, borders e hierarquia. Splash manteve background, logo, aura e estados. Library preservou shell, toolbar, cards e geometria; capas/ordenação e contagem de atividade variaram por dados runtime.
+- Search manteve a barra acima do dim e `epigraph-browse-search-engaged` ativo durante a captura. Settings manteve surfaces, cards, toggles, tipografia, borders e hierarquia. Splash manteve background, logo, aura e estados. Library preservou shell, toolbar, cards e geometria; capas/ordenação e contagem de atividade variaram por dados runtime.
 - A comparação visual não encontrou regressão aparente. Diferenças residuais correspondem a scroll/data loading, badge de atividade e animação/FPS do Splash.
 
 ### Testes e riscos restantes
@@ -2937,7 +2939,7 @@ Categorias cobertas:
 
 - Baselines before reais foram capturadas no app Tauri/WebView2 em Nocturne builtin, `data-theme="nocturne"` e sem `data-custom-theme`: `docs/screenshots/marco43-builtin-registry/before-settings-appearance.png` e `before-theme-editor.png`.
 - A primeira sessao CDP expunha apenas o target `novelRuntimeHost=1`, produzindo tela preta; esses artefatos foram descartados.
-- A sessao principal foi reiniciada com `pnpm tauri:dev:gate` direto e voltou a expor `Aethon [MAIN :4567]`. O DOM confirmou Appearance montado com 29 cards, `data-theme="nocturne"` e `data-custom-theme=null`, mas o compositor do WebView2 nao pintou a area central nas capturas after. Como o build e os testes focados passaram e este marco nao toca CSS de Settings/ThemeEditor, a evidencia after ficou registrada como limitacao ambiental de captura, nao como comparacao visual conclusiva.
+- A sessao principal foi reiniciada com `pnpm tauri:dev:gate` direto e voltou a expor `Epigraph [MAIN :4567]`. O DOM confirmou Appearance montado com 29 cards, `data-theme="nocturne"` e `data-custom-theme=null`, mas o compositor do WebView2 nao pintou a area central nas capturas after. Como o build e os testes focados passaram e este marco nao toca CSS de Settings/ThemeEditor, a evidencia after ficou registrada como limitacao ambiental de captura, nao como comparacao visual conclusiva.
 
 ### Resultados e riscos restantes
 
@@ -3241,7 +3243,7 @@ Categorias cobertas:
 
 ### Problema e contrato corrigido
 
-- O contrato Dark/fallback e os builtins High Contrast, Light e Light Contrast ainda usavam verde como `accent`, focus, outline e selecao HUD. Esses valores propagavam verde para toggles, navegacao, progresso e controles ativos, contrariando a identidade violeta do Aethon.
+- O contrato Dark/fallback e os builtins High Contrast, Light e Light Contrast ainda usavam verde como `accent`, focus, outline e selecao HUD. Esses valores propagavam verde para toggles, navegacao, progresso e controles ativos, contrariando a identidade violeta do Epigraph.
 - Os quatro contratos agora usam acentos violetas. Dark foi neutralizado para uma escala de grafite/preto (`#050505` a `#242429`) e reserva o violeta neon para foco, selecao e acoes ativas.
 - Verde permanece somente em papeis semanticos de sucesso/online. Error, warning e info preservam suas identidades; Midnight continua azul e Warm continua ambar por serem paletas intencionalmente especializadas.
 - O inventario de valores autoraveis em `contract.ts` passou de **237 para 262** ocorrencias, todas classificadas como excecao Ativa de contratos builtin/swatches. Nenhum component token, alias Legacy ou `--n-*` foi removido.
@@ -3371,7 +3373,7 @@ Categorias cobertas:
 #### Evidencia runtime real
 
 - O harness nativo WebView2 executou duas instancias com `LOCALAPPDATA` isolado e concluiu **7/7 cenarios**: descoberta mDNS, claim/aprovacao, replicacao bidirecional de progresso e bookmark, restart com sessao persistida, pause/resume, reconnect, troca e esquecimento de sessao ativa, rejeicao manual, host indisponivel, expiracao e importacao por QR.
-- A automacao passou a aceitar o Edge WebDriver por parametro ou `AETHON_EDGE_DRIVER`, evitando dependencia de uma versao WinGet fixa. O minimo de cliente do harness usa a versao de `package.json` somente no processo de teste; defaults e regras do produto nao foram alterados.
+- A automacao passou a aceitar o Edge WebDriver por parametro ou `EPIGRAPH_EDGE_DRIVER`, evitando dependencia de uma versao WinGet fixa. O minimo de cliente do harness usa a versao de `package.json` somente no processo de teste; defaults e regras do produto nao foram alterados.
 - O sucesso de aprovacao e comprovado pela sessao persistida e pela replicacao `Live`, em vez de depender do card transitorio de conexao. Durante o preflight, esse card chegou a reportar `Access denied (os error 5)` apos a sessao ja estar persistida e replicando; a automacao agora mede o estado duravel correto sem mascarar falha de replicacao.
 
 #### Tokens e contrato
@@ -3524,7 +3526,7 @@ Categorias cobertas:
 - O fluxo real revelou que dois clientes internos ainda enviavam `CARGO_PKG_VERSION` (`0.0.1`), enquanto o contrato Syncd exige cliente `0.1.0`. Pairing, replication e maintenance agora consomem uma unica constante `CURRENT_CLIENT_VERSION`, sem alterar a versao do aplicativo ou o updater.
 - Um erro de versao antigo podia permanecer persistido depois que todas as sessoes eram removidas. O bootstrap agora reconcilia perfis sem sessao ativa para `Idle` e limpa apenas o erro obsoleto, preservando explicitamente o estado pausado. A build final recuperou o perfil MAIN de `degraded` para `idle` sem edicao manual do arquivo e sem remocao de dados.
 - Tres testes Rust focados cobrem a compatibilidade da versao atual, a limpeza do erro sem sessoes e a preservacao de pause.
-- A matriz nativa foi repetida com os binarios release finais. Na primeira execucao, cenarios 1-5 passaram novamente e o `tauri-driver` encerrou a porta local antes do cenario de expiracao. Depois da atualizacao do EdgeDriver 146 para 150 e limpeza gerenciada, a repeticao confirmou novamente pairing, aprovacao e replication bidirecional `Live`, mas o WebView2 falhou ao recriar o perfil do joiner com `failed to write prefs file`. Esses bloqueios sao do driver/perfil temporario; nenhuma resposta funcional do Aethon falhou. Expiracao e QR permanecem cobertos pela execucao 7/7 anterior e nao tiveram sua logica alterada neste lote.
+- A matriz nativa foi repetida com os binarios release finais. Na primeira execucao, cenarios 1-5 passaram novamente e o `tauri-driver` encerrou a porta local antes do cenario de expiracao. Depois da atualizacao do EdgeDriver 146 para 150 e limpeza gerenciada, a repeticao confirmou novamente pairing, aprovacao e replication bidirecional `Live`, mas o WebView2 falhou ao recriar o perfil do joiner com `failed to write prefs file`. Esses bloqueios sao do driver/perfil temporario; nenhuma resposta funcional do Epigraph falhou. Expiracao e QR permanecem cobertos pela execucao 7/7 anterior e nao tiveram sua logica alterada neste lote.
 
 ### Riscos restantes
 
@@ -3552,7 +3554,7 @@ Categorias cobertas:
 
 - A build release atual foi exercitada pelo harness nativo de duas instancias com `LOCALAPPDATA` isolado. Resultado: **7/7 cenarios verdes**, cobrindo mDNS, aprovacao, replication bidirecional, restart/persistencia, pause/resume/reconnect, troca/forget de sessao, rejeicao, host indisponivel, expiracao e QR.
 - A sessao desktop comum foi reiniciada pelo gate gerenciado e aberta por `Settings -> System -> Security -> Manage`. Pairing, Details e Options foram navegados no modal real; nenhuma fixture ou sessao do usuario foi criada.
-- O primeiro reinicio do dev gate encontrou o Suwayomi orphan mantendo o bundle debug bloqueado. Depois da limpeza do processo pertencente ao Aethon, a mesma build iniciou normalmente em `Aethon [MAIN :4567]`; isso foi um bloqueio ambiental de arquivo, nao uma falha do modal ou do Syncd.
+- O primeiro reinicio do dev gate encontrou o Suwayomi orphan mantendo o bundle debug bloqueado. Depois da limpeza do processo pertencente ao Epigraph, a mesma build iniciou normalmente em `Epigraph [MAIN :4567]`; isso foi um bloqueio ambiental de arquivo, nao uma falha do modal ou do Syncd.
 - Testes focados, build, builtin gate e `git diff --check` permanecem gates obrigatorios do commit deste marco.
 
 ### Riscos restantes
@@ -3567,3 +3569,27 @@ Categorias cobertas:
 - A validação visual atual reutilizou as baselines versionadas dos Marcos 60 e 66-70. A build corrente foi exercitada em perfis descartáveis com validação de estado e geometria, não com comparação pixel nativa automatizada: Search completou 20 ciclos sem dim residual; Comics/Books permaneceram estáveis; a barra de vida do toast continuou animada; seis checks de viewport passaram sem clipping.
 - As capturas transitórias do Marco 71 foram gravadas em `%TEMP%` e removidas depois do gate. Não foram versionadas duplicatas nem perfis/logs de automação.
 - Gates condicionais que não redefinem o contrato de tema: instalação assinada do updater, integrações reais opt-in, manga/fullscreen dependente de source e auditoria manual com leitor de tela.
+
+## Revalidação visual e de release — 01/08/2026
+
+- No commit `50f1c8f6ea6c91da2c19113a826a42d187b668f1`, `pnpm release:verify`
+  passou os 16 gates bloqueantes, incluindo `theme:check-builtins`,
+  `theme:test-runtime-audit`, browser 48/48, build frontend/Tauri e os smokes
+  WebView2 de dados, viewport e navegação.
+- O contrato de temas permanece em **2.637/2.637 component tokens ativos**,
+  zero Legacy, zero `--n-*` e zero `--activity-*`. Nenhum CSS, token ou tema
+  foi alterado nesta revalidação.
+- A auditoria visual real adicional abriu a build em Nocturne no DISPLAY3 e
+  capturou Home, Library e Settings em 1280×800 e 800×600. O relatório nativo
+  confirmou `scrollWidth` igual à largura do viewport, foco visível em controle
+  interativo e ausência de clipping horizontal. O perfil descartável vazio
+  deixa placeholders em Home e Library sem títulos; isso foi mantido explícito
+  e não tratado como regressão.
+- O gate de navegação confirmou Search acima do dim sem estado residual e toast
+  com `toastLife` em execução. A mediana de startup total acima da referência
+  histórica é observacional e pertence a uma melhoria de desempenho; não altera
+  o contrato visual nem reprova a cobertura de temas.
+- As capturas finais versionadas continuam em
+  `docs/screenshots/marco72h-final/`. As capturas transitórias usadas nesta
+  inspeção foram removidas após a revisão para não acumular artefatos de
+  diagnóstico.

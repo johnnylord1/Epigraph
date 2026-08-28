@@ -8,11 +8,11 @@ Set-StrictMode -Version Latest
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
 
-. (Join-Path $scriptDir "AethonSessionTools.ps1")
+. (Join-Path $scriptDir "EpigraphSessionTools.ps1")
 
-$targets = @(Get-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds $Kinds -ExcludePids @($PID))
+$targets = @(Get-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds $Kinds -ExcludePids @($PID))
 if (-not $targets) {
-  Write-Host "No managed Aethon session processes found."
+  Write-Host "No managed Epigraph session processes found."
   exit 0
 }
 
@@ -20,7 +20,7 @@ $targets |
   Select-Object ProcessId, ParentProcessId, Name, CommandLine |
   Format-Table -Wrap -AutoSize
 
-Stop-AethonManagedProcesses -ProjectRoot $projectRoot -Kinds $Kinds -ExcludePids @($PID) | Out-Null
+Stop-EpigraphManagedProcesses -ProjectRoot $projectRoot -Kinds $Kinds -ExcludePids @($PID) | Out-Null
 
 $extraTargets = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
   Where-Object { $_.LocalPort -in 1420, 4667, 9223 } |
@@ -33,4 +33,4 @@ foreach ($targetPid in $extraTargets) {
 }
 
 Write-Host ""
-Write-Host "Stopped $($targets.Count) managed Aethon session process(es)."
+Write-Host "Stopped $($targets.Count) managed Epigraph session process(es)."

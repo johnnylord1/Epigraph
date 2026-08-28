@@ -135,37 +135,49 @@ $wsReadyPath = Join-Path $tmpRoot "pairing-live-ready.txt"
 $port = "47776"
 $endpoint = "https://127.0.0.1:$port"
 $advertisedEndpoint = "https://127.0.0.1:$port"
-$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\aethon-syncd.exe"
+$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\epigraph-syncd.exe"
 $wsScript = Join-Path $projectRoot "scripts\capture-syncd-pairing-ws.mjs"
 $syncd = $null
 $wsCapture = $null
 $currentStep = "initialization"
+
+function Stop-SyncdProcessTree {
+  param($Process)
+  if ($null -eq $Process) { return }
+  try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch {}
+  if (-not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  }
+  try { $null = $Process.WaitForExit(5000) } catch {}
+}
 
 if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
 
 $authHeaders = @{
-  "X-Aethon-Client-Version" = "0.1.0"
-  "X-Aethon-Client-Protocol-Version" = "1"
+  "X-Epigraph-Client-Version" = "0.1.0"
+  "X-Epigraph-Client-Protocol-Version" = "1"
 }
 
 Push-Location $projectRoot
 try {
   $currentStep = "build syncd"
   Write-Host "[live-pairing-gate] building syncd"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon-syncd
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph-syncd
 
   $envMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $dataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $port
-    AETHON_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
-    AETHON_SYNCD_DISCOVERY_MDNS_PORT = "5461"
-    AETHON_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
-    AETHON_SYNCD_MANUAL_PROVIDER = "enabled"
-    AETHON_SYNCD_MANUAL_ORIGINS = "https://localhost:$port/,https://[::1]:$port"
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $dataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $port
+    EPIGRAPH_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
+    EPIGRAPH_SYNCD_DISCOVERY_MDNS_PORT = "5461"
+    EPIGRAPH_SYNCD_EFFECTIVE_DISCOVERY_POLICY = "manual-preferred"
+    EPIGRAPH_SYNCD_MANUAL_PROVIDER = "enabled"
+    EPIGRAPH_SYNCD_MANUAL_ORIGINS = "https://localhost:$port/,https://[::1]:$port"
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
 
   $currentStep = "start syncd"
@@ -301,8 +313,6 @@ finally {
   if ($wsCapture -and -not $wsCapture.HasExited) {
     Stop-Process -Id $wsCapture.Id -Force
   }
-  if ($syncd -and -not $syncd.HasExited) {
-    Stop-Process -Id $syncd.Id -Force
-  }
+  Stop-SyncdProcessTree $syncd
   Pop-Location
 }

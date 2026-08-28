@@ -625,7 +625,7 @@ export async function waitForLibraryUpdateToSettle(
   return null;
 }
 
-export async function ensureAethonLibraryUpdateRules() {
+export async function ensureEpigraphLibraryUpdateRules() {
   await gql(SET_LIBRARY_UPDATE_RULES, {
     excludeCompleted: false,
     excludeEntryWithUnreadChapters: false,
@@ -727,8 +727,8 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
       });
       if (!awake) throw new Error("Suwayomi is not reachable.");
 
-      showLibraryUpdateProgress("Applying Aethon update rules.");
-      await ensureAethonLibraryUpdateRules();
+      showLibraryUpdateProgress("Applying Epigraph update rules.");
+      await ensureEpigraphLibraryUpdateRules();
       showLibraryUpdateProgress("Suwayomi is checking your library.");
 
       const sourceQueueResult = await runComicsSourceQueueUpdate(options, runId);

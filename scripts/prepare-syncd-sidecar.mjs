@@ -26,11 +26,11 @@ function hostTuple() {
 }
 
 const targetTriple = hostTuple();
-const sourceBinary = path.join(srcTauriDir, "target", profile, `aethon-syncd${extension}`);
+const sourceBinary = path.join(srcTauriDir, "target", profile, `epigraph-syncd${extension}`);
 const binariesDir = path.join(srcTauriDir, "binaries");
 const targetBinary = path.join(
   binariesDir,
-  `aethon-syncd-${targetTriple}${extension}`,
+  `epigraph-syncd-${targetTriple}${extension}`,
 );
 
 fs.mkdirSync(binariesDir, { recursive: true });
@@ -46,7 +46,7 @@ execFileSync(
     "--manifest-path",
     path.join(srcTauriDir, "Cargo.toml"),
     "--bin",
-    "aethon-syncd",
+    "epigraph-syncd",
   ],
   { cwd: projectRoot, stdio: "inherit" },
 );

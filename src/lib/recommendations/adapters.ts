@@ -2,7 +2,7 @@ import type { Manga, TrackRecord, TrackSearch } from "../types";
 import type { BookEntry, BookProgress } from "../books/types";
 import type { InstalledNovelSourceDescriptor, NovelSourceSearchResult, PersistedNovelLibraryEntry } from "../novels/domain";
 import { normalizeLogCount, normalizeRank, normalizeRecency, normalizeScore } from "./normalization";
-import { recommendationTitleKey } from "./identity";
+import { recommendationCandidateIdentityKeys } from "./identity";
 import type {
   RecommendationCandidate,
   RecommendationContentType,
@@ -249,30 +249,50 @@ function trackRecordToProviderSignal(
 export function mergeRecommendationCandidates(
   candidates: RecommendationCandidate[],
 ): RecommendationCandidate[] {
-  const merged = new Map<string, RecommendationCandidate>();
+  const records: Array<{
+    candidate: RecommendationCandidate;
+    identityKeys: Set<string>;
+    active: boolean;
+  }> = [];
+  const identityToRecord = new Map<string, number>();
+
   for (const candidate of candidates) {
-    const key = canonicalCandidateKey(candidate);
-    const existing = merged.get(key);
-    if (!existing) {
-      merged.set(key, cloneRecommendationCandidate(candidate));
+    const incoming = cloneRecommendationCandidate(candidate);
+    const matchingRecords = new Set<number>();
+    for (const key of recommendationCandidateIdentityKeys(incoming)) {
+      const recordIndex = identityToRecord.get(key);
+      if (recordIndex !== undefined && records[recordIndex]?.active) {
+        matchingRecords.add(recordIndex);
+      }
+    }
+
+    if (matchingRecords.size === 0) {
+      const recordIndex = records.length;
+      const identityKeys = new Set(recommendationCandidateIdentityKeys(incoming));
+      records.push({ candidate: incoming, identityKeys, active: true });
+      for (const key of identityKeys) identityToRecord.set(key, recordIndex);
       continue;
     }
 
-    merged.set(key, {
-      ...existing,
-      providers: mergeProviders(existing.providers, candidate.providers),
-      tags: [...new Set([...existing.tags, ...candidate.tags])],
-      inLibrary: existing.inLibrary || candidate.inLibrary,
-      coverUrl: chooseCoverUrl(existing.coverUrl, candidate.coverUrl),
-      alternativeTitles: mergeAlternativeTitles(existing, candidate),
-      contentType: chooseContentType(existing, candidate),
-      status: existing.status || candidate.status,
-      updatedAtMs: Math.max(existing.updatedAtMs ?? 0, candidate.updatedAtMs ?? 0) || existing.updatedAtMs,
-      publishedAtMs: existing.publishedAtMs ?? candidate.publishedAtMs,
-    });
+    const targetIndex = Math.min(...matchingRecords);
+    let mergedCandidate = records[targetIndex].candidate;
+    for (const recordIndex of [...matchingRecords].sort((a, b) => a - b)) {
+      if (recordIndex === targetIndex) continue;
+      mergedCandidate = mergeCandidateValues(mergedCandidate, records[recordIndex].candidate);
+      records[recordIndex].active = false;
+    }
+    mergedCandidate = mergeCandidateValues(mergedCandidate, incoming);
+
+    for (const [key, recordIndex] of identityToRecord) {
+      if (matchingRecords.has(recordIndex)) identityToRecord.delete(key);
+    }
+
+    const identityKeys = new Set(recommendationCandidateIdentityKeys(mergedCandidate));
+    records[targetIndex] = { candidate: mergedCandidate, identityKeys, active: true };
+    for (const key of identityKeys) identityToRecord.set(key, targetIndex);
   }
 
-  return [...merged.values()];
+  return records.filter((record) => record.active).map((record) => record.candidate);
 }
 
 function cloneRecommendationCandidate(candidate: RecommendationCandidate): RecommendationCandidate {
@@ -284,8 +304,22 @@ function cloneRecommendationCandidate(candidate: RecommendationCandidate): Recom
   };
 }
 
-function canonicalCandidateKey(candidate: RecommendationCandidate): string {
-  return recommendationTitleKey(candidate.title, candidate.contentType);
+function mergeCandidateValues(
+  existing: RecommendationCandidate,
+  candidate: RecommendationCandidate,
+): RecommendationCandidate {
+  return {
+    ...existing,
+    providers: mergeProviders(existing.providers, candidate.providers),
+    tags: [...new Set([...existing.tags, ...candidate.tags])],
+    inLibrary: existing.inLibrary || candidate.inLibrary,
+    coverUrl: chooseCoverUrl(existing.coverUrl, candidate.coverUrl),
+    alternativeTitles: mergeAlternativeTitles(existing, candidate),
+    contentType: chooseContentType(existing, candidate),
+    status: existing.status || candidate.status,
+    updatedAtMs: Math.max(existing.updatedAtMs ?? 0, candidate.updatedAtMs ?? 0) || existing.updatedAtMs,
+    publishedAtMs: existing.publishedAtMs ?? candidate.publishedAtMs,
+  };
 }
 
 function chooseCoverUrl(current: string | null | undefined, incoming: string | null | undefined): string | null | undefined {
@@ -331,9 +365,14 @@ function mergeProviders(
   current: RecommendationProviderSignal[],
   incoming: RecommendationProviderSignal[],
 ): RecommendationProviderSignal[] {
-  const byId = new Map(current.map((provider) => [`${provider.kind}:${provider.providerId}`, provider]));
+  const providerKey = (provider: RecommendationProviderSignal) => [
+    provider.kind,
+    provider.providerId,
+    provider.kind === "tracker" ? (provider.remoteId ?? "") : "",
+  ].join(":");
+  const byId = new Map(current.map((provider) => [providerKey(provider), provider]));
   for (const provider of incoming) {
-    const key = `${provider.kind}:${provider.providerId}`;
+    const key = providerKey(provider);
     const existing = byId.get(key);
     byId.set(key, existing ? mergeProviderSignal(existing, provider) : provider);
   }

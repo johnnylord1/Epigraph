@@ -8,7 +8,7 @@ import type { NovelRepositoryScopeInput } from "./repositoryState";
 
 const HARDCOVER_GRAPHQL_URL = "https://api.hardcover.app/v1/graphql";
 const HARDCOVER_STATE_VERSION = 1;
-const HARDCOVER_STORAGE_KEY = "aethon-hardcover-tracking-state";
+const HARDCOVER_STORAGE_KEY = "epigraph-hardcover-tracking-state";
 const HARDCOVER_RATING_MAX = 5;
 const OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVER_TIMEOUT_MS = 2500;
@@ -43,7 +43,7 @@ function writeBrowserStorage(key: string, value: string): boolean {
 
 function notifyHardcoverStateChanged(scopeKey: string): void {
   try {
-    globalThis.dispatchEvent?.(new CustomEvent("aethon-hardcover-state-changed", { detail: { scopeKey } }));
+    globalThis.dispatchEvent?.(new CustomEvent("epigraph-hardcover-state-changed", { detail: { scopeKey } }));
   } catch {}
 }
 
@@ -294,7 +294,7 @@ export async function validateHardcoverToken(token: string): Promise<{ userId: n
   const data = await hardcoverGraphql<{
     me?: { id?: unknown; username?: unknown } | Array<{ id?: unknown; username?: unknown }>;
   }>(normalizedToken, `
-    query AethonHardcoverMe {
+    query EpigraphHardcoverMe {
       me {
         id
         username
@@ -347,7 +347,7 @@ export async function searchHardcoverBooks(
     };
     books?: RawHardcoverBook[];
   }>(normalizeHardcoverAuthToken(token), `
-    query AethonHardcoverSearch(
+    query EpigraphHardcoverSearch(
       $query: String!
       $limit: Int!
       $page: Int!
@@ -409,7 +409,7 @@ export async function getHardcoverUserBooks(
   const data = await hardcoverGraphql<{
     user_books?: RawHardcoverUserBook[];
   }>(normalizedToken, `
-    query AethonHardcoverUserBooks($userId: Int!) {
+    query EpigraphHardcoverUserBooks($userId: Int!) {
       user_books(
         where: { user_id: { _eq: $userId } }
         distinct_on: book_id
@@ -723,7 +723,7 @@ async function enrichHardcoverBookResults(
     const data = await hardcoverGraphql<{
       books?: RawHardcoverBook[];
     }>(token, `
-      query AethonHardcoverBookDetails($ids: [Int!]!) {
+      query EpigraphHardcoverBookDetails($ids: [Int!]!) {
         books(where: { id: { _in: $ids } }) {
           id
           title
@@ -795,7 +795,7 @@ async function fetchHardcoverCoverPatches(token: string, ids: number[]): Promise
 
   const queries = [
     `
-      query AethonHardcoverBookCoverUrls($ids: [Int!]!) {
+      query EpigraphHardcoverBookCoverUrls($ids: [Int!]!) {
         books(where: { id: { _in: $ids } }) {
           id
           cached_image_url
@@ -805,7 +805,7 @@ async function fetchHardcoverCoverPatches(token: string, ids: number[]): Promise
       }
     `,
     `
-      query AethonHardcoverBookDefaultCoverEdition($ids: [Int!]!) {
+      query EpigraphHardcoverBookDefaultCoverEdition($ids: [Int!]!) {
         books(where: { id: { _in: $ids } }) {
           id
           default_cover_edition {
@@ -817,7 +817,7 @@ async function fetchHardcoverCoverPatches(token: string, ids: number[]): Promise
       }
     `,
     `
-      query AethonHardcoverBookCoverObjects($ids: [Int!]!) {
+      query EpigraphHardcoverBookCoverObjects($ids: [Int!]!) {
         books(where: { id: { _in: $ids } }) {
           id
           image { url }
@@ -825,7 +825,7 @@ async function fetchHardcoverCoverPatches(token: string, ids: number[]): Promise
       }
     `,
     `
-      query AethonHardcoverBookCoverScalars($ids: [Int!]!) {
+      query EpigraphHardcoverBookCoverScalars($ids: [Int!]!) {
         books(where: { id: { _in: $ids } }) {
           id
           cached_image
@@ -1015,7 +1015,7 @@ async function sendHardcoverGraphql<T>(
     headers: {
       "Content-Type": "application/json",
       Authorization: authorization,
-      "User-Agent": "Aethon/0.0.1 Hardcover Novel Tracking",
+      "User-Agent": "Epigraph/0.0.1 Hardcover Novel Tracking",
     },
     body: JSON.stringify({ query, variables }),
   });
@@ -1086,7 +1086,7 @@ async function writeHardcoverUserBook(
 
   if (!userBookId && input.userId) {
     const existing = await hardcoverGraphql<{ user_books?: Array<{ id?: unknown }> }>(token, `
-      query AethonHardcoverFindUserBook($userId: Int!, $bookId: Int!) {
+      query EpigraphHardcoverFindUserBook($userId: Int!, $bookId: Int!) {
         user_books(
           where: {
             user_id: { _eq: $userId }
@@ -1108,7 +1108,7 @@ async function writeHardcoverUserBook(
     const updated = await hardcoverGraphql<{
       update_user_book?: { id?: unknown; error?: unknown };
     }>(token, `
-      mutation AethonHardcoverUpdateUserBook($id: Int!, $statusId: Int!, $rating: numeric) {
+      mutation EpigraphHardcoverUpdateUserBook($id: Int!, $statusId: Int!, $rating: numeric) {
         update_user_book(id: $id, object: { status_id: $statusId, rating: $rating }) {
           id
           error
@@ -1127,7 +1127,7 @@ async function writeHardcoverUserBook(
   const inserted = await hardcoverGraphql<{
     insert_user_book?: { id?: unknown; error?: unknown };
   }>(token, `
-    mutation AethonHardcoverInsertUserBook($bookId: Int!, $statusId: Int!, $rating: numeric) {
+    mutation EpigraphHardcoverInsertUserBook($bookId: Int!, $statusId: Int!, $rating: numeric) {
       insert_user_book(object: { book_id: $bookId, status_id: $statusId, rating: $rating }) {
         id
         error

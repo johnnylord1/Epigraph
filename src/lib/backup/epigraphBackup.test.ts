@@ -1,20 +1,20 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import {
-  AETHON_BACKUP_CHECKSUMS_PATH,
-  AETHON_BACKUP_CONTAINER_VERSION,
-  AETHON_BACKUP_EXTENSION,
-  AETHON_BACKUP_FORMAT,
-  AETHON_BACKUP_MANIFEST_PATH,
-  AETHON_BACKUP_PAYLOAD_REGISTRY,
-  buildAethonBackupContainer,
-  buildAethonBackupFilename,
-  inspectAethonBackupContainer,
-} from "./aethonBackup";
+  EPIGRAPH_BACKUP_CHECKSUMS_PATH,
+  EPIGRAPH_BACKUP_CONTAINER_VERSION,
+  EPIGRAPH_BACKUP_EXTENSION,
+  EPIGRAPH_BACKUP_FORMAT,
+  EPIGRAPH_BACKUP_MANIFEST_PATH,
+  EPIGRAPH_BACKUP_PAYLOAD_REGISTRY,
+  buildEpigraphBackupContainer,
+  buildEpigraphBackupFilename,
+  inspectEpigraphBackupContainer,
+} from "./epigraphBackup";
 
-describe("aethon unified backup container", () => {
-  it("builds a canonical .aethonbk container with manifest, payload registry, and checksums", async () => {
-    const built = await buildAethonBackupContainer({
+describe("epigraph unified backup container", () => {
+  it("builds a canonical .epigraphbk container with manifest, payload registry, and checksums", async () => {
+    const built = await buildEpigraphBackupContainer({
       appVersion: "0.0.1",
       platform: "windows",
       sourceSurface: "desktop",
@@ -54,15 +54,15 @@ describe("aethon unified backup container", () => {
       ],
     });
 
-    expect(built.filename.endsWith(AETHON_BACKUP_EXTENSION)).toBe(true);
-    expect(built.manifest.format).toBe(AETHON_BACKUP_FORMAT);
-    expect(built.manifest.formatVersion).toBe(AETHON_BACKUP_CONTAINER_VERSION);
+    expect(built.filename.endsWith(EPIGRAPH_BACKUP_EXTENSION)).toBe(true);
+    expect(built.manifest.format).toBe(EPIGRAPH_BACKUP_FORMAT);
+    expect(built.manifest.formatVersion).toBe(EPIGRAPH_BACKUP_CONTAINER_VERSION);
     expect(built.manifest.payloads.map((payload) => payload.kind)).toEqual(["books", "app"]);
-    expect(built.manifest.payloads[0].manifestPath).toBe(AETHON_BACKUP_PAYLOAD_REGISTRY.books.manifestPath);
-    expect(built.checksums.entries[AETHON_BACKUP_MANIFEST_PATH]).toBeTypeOf("string");
-    expect(built.checksums.entries[AETHON_BACKUP_CHECKSUMS_PATH]).toBeUndefined();
+    expect(built.manifest.payloads[0].manifestPath).toBe(EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.books.manifestPath);
+    expect(built.checksums.entries[EPIGRAPH_BACKUP_MANIFEST_PATH]).toBeTypeOf("string");
+    expect(built.checksums.entries[EPIGRAPH_BACKUP_CHECKSUMS_PATH]).toBeUndefined();
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
 
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.issues).toEqual([]);
@@ -75,7 +75,7 @@ describe("aethon unified backup container", () => {
   });
 
   it("supports subsystem-only containers without forcing every payload family", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [
         {
           kind: "manga",
@@ -93,13 +93,13 @@ describe("aethon unified backup container", () => {
     expect(built.manifest.payloads).toHaveLength(1);
     expect(built.manifest.payloads[0].kind).toBe("manga");
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.payloadManifests.manga?.files[0]?.path).toBe("library.tachibk");
   });
 
   it("warns on a future payload version without breaking container inspection", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [
         {
           kind: "novels",
@@ -109,7 +109,7 @@ describe("aethon unified backup container", () => {
       ],
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.issues).toEqual([
       expect.objectContaining({
@@ -121,7 +121,7 @@ describe("aethon unified backup container", () => {
   });
 
   it("detects checksum mismatches in packaged files", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [
         {
           kind: "books",
@@ -134,7 +134,7 @@ describe("aethon unified backup container", () => {
     zip.file("payloads/books/library.json", '{"books":[{"id":"mutated"}]}');
     const mutated = await zip.generateAsync({ type: "uint8array" });
 
-    const inspected = await inspectAethonBackupContainer(mutated);
+    const inspected = await inspectEpigraphBackupContainer(mutated);
     expect(inspected.hasErrors).toBe(true);
     expect(inspected.issues).toContainEqual(
       expect.objectContaining({
@@ -146,7 +146,32 @@ describe("aethon unified backup container", () => {
   });
 
   it("builds a stable default filename", () => {
-    const filename = buildAethonBackupFilename(new Date("2026-04-08T12:00:00.000Z"));
-    expect(filename).toBe("aethon-backup-2026-04-08.aethonbk");
+    const filename = buildEpigraphBackupFilename(new Date("2026-04-08T12:00:00.000Z"));
+    expect(filename).toBe("epigraph-backup-2026-04-08.epigraphbk");
+  });
+
+  it("imports the legacy Aethon container format without rewriting its payload contract", async () => {
+    const zip = new JSZip();
+    const manifest = {
+      format: "aethon-backup",
+      formatVersion: 1,
+      createdAt: "2026-04-08T12:00:00.000Z",
+      packaging: "zip",
+      checksumsPath: "checksums/sha256.json",
+      createdBy: { app: "Aethon", version: "0.9.0", platform: "windows" },
+      source: { surface: "desktop", profileId: "main" },
+      payloads: [],
+    };
+    const manifestBytes = new TextEncoder().encode(`${JSON.stringify(manifest)}\n`);
+    const digest = await crypto.subtle.digest("SHA-256", manifestBytes);
+    const checksum = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    zip.file("manifest.json", manifestBytes);
+    zip.file("checksums/sha256.json", JSON.stringify({ algorithm: "sha256", entries: { "manifest.json": checksum } }));
+
+    const inspected = await inspectEpigraphBackupContainer(await zip.generateAsync({ type: "uint8array" }));
+
+    expect(inspected.hasErrors).toBe(false);
+    expect(inspected.manifest?.format).toBe("aethon-backup");
+    expect(inspected.manifest?.createdBy.app).toBe("Aethon");
   });
 });

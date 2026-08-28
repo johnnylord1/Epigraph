@@ -1,11 +1,13 @@
-# Aethon Working Rules
+# Epigraph Working Rules
 
 ## Project Shape
 
-- Aethon is a Tauri v2 desktop app, not Electron: Svelte 5 + TypeScript + Vite in `src/`, Rust/Tauri in `src-tauri/`, and WebView2 on Windows.
-- Aethon Mobile lives only in the separate Flutter/Sorayomi workspace at `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile`. Do not add Android/iOS UI, packaging, or bootstrap code to this desktop repository.
-- This desktop repository may keep PC-hosted Core services and contracts used by mobile, including managed Suwayomi, syncd, pairing, TLS, discovery, and temporary LAN exposure.
+- Epigraph is a Tauri v2 desktop app, not Electron: Svelte 5 + TypeScript + Vite in `src/`, Rust/Tauri in `src-tauri/`, and WebView2 on Windows.
+- Epigraph Mobile lives only in the separate native Android Hayai workspace at `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`. It is Kotlin/Compose/SQLDelight-based and is not built, packaged, or branched from this repository. Do not add Android/iOS UI, packaging, or bootstrap code to this desktop repository.
+- The Hayai workspace is consumed as a working tree/fork chosen by the user. Do not create a branch in the upstream Hayai repository or push to it without explicit authorization.
+- This desktop repository may keep PC-hosted Core services and contracts used by mobile, including managed Suwayomi, Syncd, pairing, TLS, discovery, and secure LAN exposure.
 - Manga/comics are backed by Suwayomi-Server over GraphQL. Books/novels have separate local/library paths; do not collapse those domains.
+- For comics, Suwayomi is the catalog/library/chapter-state authority. Epigraph Core provides the authenticated, profile-scoped Suwayomi GraphQL proxy; Syncd stores complementary cross-device state such as comic history and page bookmarks. Do not create a second catalog by reading Suwayomi H2 or treating internal Suwayomi IDs as global Epigraph identities.
 - Core UI pages live in `src/components/pages/`; shared library UI in `src/components/library/`; reader UI in `src/components/reader/`.
 - Core app state and clients live under `src/store/` and `src/lib/`: manga/Suwayomi in `src/lib/manga/`, migration in `src/lib/migration/`, books in `src/lib/books/`, novels in `src/lib/novels/`, reader/TTS/offline manga in `src/lib/reader/`.
 - Runtime/session scripts and policy live in `scripts/` and `docs/runtime-session-policy.md`. Use the managed runtime entry points there; do not open raw gates for routine UI inspection.
@@ -32,6 +34,7 @@
 - Never expand scope, rewrite stable systems, or redesign flows unless explicitly requested.
 - Preserve upstream Apache-2.0 license files and attribution.
 - Preserve local user changes. If the worktree is dirty, touch only files required for the task.
+- Keep desktop UI changes out of Core/mobile work. Backend, protocol, lifecycle, and invisible bridge changes are allowed only when they preserve the existing desktop surface.
 - Update `docs/roadmap.md` or focused docs only when the task materially changes release status, project decisions, or documented milestones.
 
 ## Product And Default-User Experience

@@ -36,7 +36,7 @@ async function inspectCompatibility(
 
   throw new SourceRuntimeError(
     "RUNTIME_INCOMPATIBLE",
-    "Suwayomi does not satisfy a supported Aethon runtime contract.",
+    "Suwayomi does not satisfy a supported Epigraph runtime contract.",
   );
 }
 

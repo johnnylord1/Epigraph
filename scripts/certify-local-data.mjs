@@ -99,7 +99,7 @@ async function createFakeCore() {
 }
 
 async function emitFixtures(directory) {
-  const env = { ...process.env, AETHON_BOOKS_PHASE2B_OUTPUT_DIR: directory };
+  const env = { ...process.env, EPIGRAPH_BOOKS_PHASE2B_OUTPUT_DIR: directory };
   await execFileAsync(process.execPath, [
     path.join(projectRoot, "node_modules", "vitest", "vitest.mjs"),
     "run", "--project", "unit", "src/lib/backup/booksBackup.test.ts",
@@ -109,7 +109,7 @@ async function emitFixtures(directory) {
 
 async function callAudit(driver, method, ...args) {
   const result = await driver.executeAsyncScript(function auditCall(name, values, done) {
-    const bridge = window.__aethonAudit;
+    const bridge = window.__epigraphAudit;
     if (!bridge || typeof bridge[name] !== "function") {
       done({ error: `Audit method ${name} is unavailable.` });
       return;
@@ -164,10 +164,10 @@ async function launchDesktop({ appPath, driverUrl, profileRoot, serverUrl, name 
     },
   });
   const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
-  const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
-  const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
-  const windowWidth = Number(process.env.AETHON_WEBDRIVER_WINDOW_WIDTH || 1280);
-  const windowHeight = Number(process.env.AETHON_WEBDRIVER_WINDOW_HEIGHT || 800);
+  const windowX = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_X);
+  const windowY = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_Y);
+  const windowWidth = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_WIDTH || 1280);
+  const windowHeight = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT || 800);
   if ([windowX, windowY, windowWidth, windowHeight].every(Number.isFinite)) {
     await driver.manage().window().setRect({
       x: windowX,
@@ -178,7 +178,7 @@ async function launchDesktop({ appPath, driverUrl, profileRoot, serverUrl, name 
   }
   await driver.manage().setTimeouts({ implicit: 0, pageLoad: DEFAULT_TIMEOUT_MS, script: DEFAULT_TIMEOUT_MS });
   await waitFor(
-    () => driver.executeScript("return Boolean(window.__aethonAudit)"),
+    () => driver.executeScript("return Boolean(window.__epigraphAudit)"),
     `Audit bridge did not become ready for ${name}`,
   );
   await callAudit(driver, "bypassStartupSplash");
@@ -214,9 +214,9 @@ async function main() {
   const fixtures = path.join(root, "fixtures");
   const profileA = path.join(root, "profile-a");
   const profileB = path.join(root, "profile-b");
-  const backupPath = path.join(root, "books-release.aethonbk");
-  const corruptedPath = path.join(root, "books-release-corrupted.aethonbk");
-  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "aethon.exe"));
+  const backupPath = path.join(root, "books-release.epigraphbk");
+  const corruptedPath = path.join(root, "books-release-corrupted.epigraphbk");
+  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"));
   const driverUrl = args["driver-url"] || "http://127.0.0.1:4554";
   const keepArtifacts = args["keep-artifacts"] === "true";
   let fakeCore;

@@ -7,7 +7,7 @@ export const DISCORD_PUBLIC_COVER_RESOLVER_VERSION = "tracker-cover-first-v6";
 export const DISCORD_PUBLIC_COVER_CACHE_TTL_MS = 70 * 60 * 60 * 1000;
 export const DISCORD_PUBLIC_WORKER_COVER_CACHE_TTL_MS = 2 * 60 * 60 * 1000 + 45 * 60 * 1000;
 
-const CACHE_PREFIX = `aethon.discord.publicCover.${DISCORD_PUBLIC_COVER_RESOLVER_VERSION}.`;
+const CACHE_PREFIX = `epigraph.discord.publicCover.${DISCORD_PUBLIC_COVER_RESOLVER_VERSION}.`;
 
 export type DiscordPublicCoverSource = "existing" | "tracker" | "worker";
 

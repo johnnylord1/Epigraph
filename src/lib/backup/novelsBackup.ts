@@ -1,36 +1,36 @@
 import JSZip from "jszip";
 import {
-  AETHON_BACKUP_PAYLOAD_REGISTRY,
-  buildAethonBackupContainer,
-  inspectAethonBackupContainer,
-  type AethonBackupPayloadBuildInput,
-  type AethonBackupPayloadManifest,
-  type BuiltAethonBackupContainer,
-  type InspectedAethonBackupContainer,
-} from "./aethonBackup";
+  EPIGRAPH_BACKUP_PAYLOAD_REGISTRY,
+  buildEpigraphBackupContainer,
+  inspectEpigraphBackupContainer,
+  type EpigraphBackupPayloadBuildInput,
+  type EpigraphBackupPayloadManifest,
+  type BuiltEpigraphBackupContainer,
+  type InspectedEpigraphBackupContainer,
+} from "./epigraphBackup";
 
-export const AETHON_NOVELS_PAYLOAD_FILE_PATH = "novels.json";
+export const EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH = "novels.json";
 
-export type AethonNovelsExportMode = "repository-aware" | "metadata-only";
-export type AethonNovelsRestoreOutcome =
+export type EpigraphNovelsExportMode = "repository-aware" | "metadata-only";
+export type EpigraphNovelsRestoreOutcome =
   | "restored-usable"
   | "restored-needs-repository"
   | "restored-needs-plugin"
   | "restored-metadata-only";
 
-export interface AethonNovelRepositoryReference {
+export interface EpigraphNovelRepositoryReference {
   url: string;
   name?: string | null;
 }
 
-export interface AethonNovelPluginReference {
+export interface EpigraphNovelPluginReference {
   id: string;
   name?: string | null;
   version?: string | null;
   repositoryUrl?: string | null;
 }
 
-export interface AethonNovelSourceIdentity {
+export interface EpigraphNovelSourceIdentity {
   repositoryUrl: string | null;
   repositoryName?: string | null;
   pluginId: string | null;
@@ -41,7 +41,7 @@ export interface AethonNovelSourceIdentity {
   lang?: string | null;
 }
 
-export interface AethonNovelEntry {
+export interface EpigraphNovelEntry {
   id: string;
   title: string;
   path: string;
@@ -53,12 +53,12 @@ export interface AethonNovelEntry {
   externalUrl?: string | null;
   status?: string | null;
   tags?: string[];
-  source: AethonNovelSourceIdentity | null;
+  source: EpigraphNovelSourceIdentity | null;
   addedAt: number;
   updatedAt: number;
 }
 
-export interface AethonNovelProgressEntry {
+export interface EpigraphNovelProgressEntry {
   novelId: string;
   chapterId?: string | null;
   chapterTitle?: string | null;
@@ -67,7 +67,7 @@ export interface AethonNovelProgressEntry {
   updatedAt: number;
 }
 
-export interface AethonNovelBookmarkEntry {
+export interface EpigraphNovelBookmarkEntry {
   novelId: string;
   chapterId?: string | null;
   chapterTitle?: string | null;
@@ -76,7 +76,7 @@ export interface AethonNovelBookmarkEntry {
   savedAt: number;
 }
 
-export interface AethonNovelHistoryEntry {
+export interface EpigraphNovelHistoryEntry {
   novelId: string;
   chapterId?: string | null;
   chapterTitle?: string | null;
@@ -84,7 +84,7 @@ export interface AethonNovelHistoryEntry {
   readAt: number;
 }
 
-export interface AethonNovelChapterEntry {
+export interface EpigraphNovelChapterEntry {
   id: string;
   novelId: string;
   path: string;
@@ -95,51 +95,51 @@ export interface AethonNovelChapterEntry {
   updatedAt?: number | null;
 }
 
-export interface AethonNovelsSnapshot {
-  entries: AethonNovelEntry[];
-  chapters: AethonNovelChapterEntry[];
-  progress: AethonNovelProgressEntry[];
-  bookmarks: AethonNovelBookmarkEntry[];
-  history: AethonNovelHistoryEntry[];
-  repositories?: AethonNovelRepositoryReference[];
-  plugins?: AethonNovelPluginReference[];
+export interface EpigraphNovelsSnapshot {
+  entries: EpigraphNovelEntry[];
+  chapters: EpigraphNovelChapterEntry[];
+  progress: EpigraphNovelProgressEntry[];
+  bookmarks: EpigraphNovelBookmarkEntry[];
+  history: EpigraphNovelHistoryEntry[];
+  repositories?: EpigraphNovelRepositoryReference[];
+  plugins?: EpigraphNovelPluginReference[];
 }
 
 interface NovelsPayloadFile {
   version: 1;
-  exportMode: AethonNovelsExportMode;
-  entries: AethonNovelEntry[];
-  chapters: AethonNovelChapterEntry[];
-  progress: AethonNovelProgressEntry[];
-  bookmarks: AethonNovelBookmarkEntry[];
-  history: AethonNovelHistoryEntry[];
-  repositories: AethonNovelRepositoryReference[];
-  plugins: AethonNovelPluginReference[];
+  exportMode: EpigraphNovelsExportMode;
+  entries: EpigraphNovelEntry[];
+  chapters: EpigraphNovelChapterEntry[];
+  progress: EpigraphNovelProgressEntry[];
+  bookmarks: EpigraphNovelBookmarkEntry[];
+  history: EpigraphNovelHistoryEntry[];
+  repositories: EpigraphNovelRepositoryReference[];
+  plugins: EpigraphNovelPluginReference[];
 }
 
-export interface ParsedAethonNovelsPayload {
-  inspection: InspectedAethonBackupContainer;
-  payloadManifest: AethonBackupPayloadManifest;
-  exportMode: AethonNovelsExportMode;
-  snapshot: AethonNovelsSnapshot;
+export interface ParsedEpigraphNovelsPayload {
+  inspection: InspectedEpigraphBackupContainer;
+  payloadManifest: EpigraphBackupPayloadManifest;
+  exportMode: EpigraphNovelsExportMode;
+  snapshot: EpigraphNovelsSnapshot;
 }
 
-export interface AethonNovelRuntimeState {
+export interface EpigraphNovelRuntimeState {
   repositoryUrls: string[];
   installedPluginIds: string[];
   availableSourceIds: string[];
 }
 
-export interface AethonNovelRestoreClassification {
+export interface EpigraphNovelRestoreClassification {
   novelId: string;
   title: string;
-  outcome: AethonNovelsRestoreOutcome;
+  outcome: EpigraphNovelsRestoreOutcome;
   requiredRepositoryUrl: string | null;
   requiredPluginId: string | null;
   requiredSourceId: string | null;
 }
 
-export type AethonNovelsRestoreIssueCode =
+export type EpigraphNovelsRestoreIssueCode =
   | "missing-novels-payload"
   | "invalid-novels-payload"
   | "missing-required-repository"
@@ -147,16 +147,16 @@ export type AethonNovelsRestoreIssueCode =
   | "missing-required-source"
   | "metadata-only-novel";
 
-export interface AethonNovelsRestoreIssue {
-  code: AethonNovelsRestoreIssueCode;
+export interface EpigraphNovelsRestoreIssue {
+  code: EpigraphNovelsRestoreIssueCode;
   message: string;
   novelId?: string;
 }
 
-export interface RestoredAethonNovelsSnapshot extends AethonNovelsSnapshot {
-  exportMode: AethonNovelsExportMode;
-  classifications: AethonNovelRestoreClassification[];
-  issues: AethonNovelsRestoreIssue[];
+export interface RestoredEpigraphNovelsSnapshot extends EpigraphNovelsSnapshot {
+  exportMode: EpigraphNovelsExportMode;
+  classifications: EpigraphNovelRestoreClassification[];
+  issues: EpigraphNovelsRestoreIssue[];
   summary: {
     totalEntries: number;
     restoredUsableCount: number;
@@ -194,7 +194,7 @@ function normalizeTags(tags: unknown): string[] {
   return uniqueStrings(tags as Array<string | null | undefined>);
 }
 
-function normalizeRepository(record: AethonNovelRepositoryReference): AethonNovelRepositoryReference {
+function normalizeRepository(record: EpigraphNovelRepositoryReference): EpigraphNovelRepositoryReference {
   const url = normalizeUrl(record?.url);
   if (!url) {
     throw new Error("Novel repository references must include a URL.");
@@ -206,7 +206,7 @@ function normalizeRepository(record: AethonNovelRepositoryReference): AethonNove
   };
 }
 
-function normalizePlugin(record: AethonNovelPluginReference): AethonNovelPluginReference {
+function normalizePlugin(record: EpigraphNovelPluginReference): EpigraphNovelPluginReference {
   const id = normalizeText(record?.id);
   if (!id) {
     throw new Error("Novel plugin references must include an id.");
@@ -220,7 +220,7 @@ function normalizePlugin(record: AethonNovelPluginReference): AethonNovelPluginR
   };
 }
 
-function normalizeSourceIdentity(source: AethonNovelSourceIdentity | null | undefined): AethonNovelSourceIdentity | null {
+function normalizeSourceIdentity(source: EpigraphNovelSourceIdentity | null | undefined): EpigraphNovelSourceIdentity | null {
   if (!source) return null;
 
   const repositoryUrl = normalizeUrl(source.repositoryUrl);
@@ -243,7 +243,7 @@ function normalizeSourceIdentity(source: AethonNovelSourceIdentity | null | unde
   };
 }
 
-function normalizeEntry(entry: AethonNovelEntry, index: number): AethonNovelEntry {
+function normalizeEntry(entry: EpigraphNovelEntry, index: number): EpigraphNovelEntry {
   const id = normalizeText(entry?.id) ?? `novel-${index + 1}`;
   const title = normalizeText(entry?.title) ?? `Novel ${index + 1}`;
   const path = normalizeText(entry?.path) ?? normalizeText(entry?.externalUrl) ?? `/${id}`;
@@ -266,7 +266,7 @@ function normalizeEntry(entry: AethonNovelEntry, index: number): AethonNovelEntr
   };
 }
 
-function normalizeProgress(entry: AethonNovelProgressEntry): AethonNovelProgressEntry {
+function normalizeProgress(entry: EpigraphNovelProgressEntry): EpigraphNovelProgressEntry {
   return {
     novelId: normalizeText(entry?.novelId) ?? "",
     chapterId: normalizeText(entry?.chapterId),
@@ -279,7 +279,7 @@ function normalizeProgress(entry: AethonNovelProgressEntry): AethonNovelProgress
   };
 }
 
-function normalizeBookmark(entry: AethonNovelBookmarkEntry): AethonNovelBookmarkEntry {
+function normalizeBookmark(entry: EpigraphNovelBookmarkEntry): EpigraphNovelBookmarkEntry {
   return {
     novelId: normalizeText(entry?.novelId) ?? "",
     chapterId: normalizeText(entry?.chapterId),
@@ -290,7 +290,7 @@ function normalizeBookmark(entry: AethonNovelBookmarkEntry): AethonNovelBookmark
   };
 }
 
-function normalizeHistoryEntry(entry: AethonNovelHistoryEntry): AethonNovelHistoryEntry {
+function normalizeHistoryEntry(entry: EpigraphNovelHistoryEntry): EpigraphNovelHistoryEntry {
   return {
     novelId: normalizeText(entry?.novelId) ?? "",
     chapterId: normalizeText(entry?.chapterId),
@@ -300,7 +300,7 @@ function normalizeHistoryEntry(entry: AethonNovelHistoryEntry): AethonNovelHisto
   };
 }
 
-function normalizeChapterEntry(entry: AethonNovelChapterEntry): AethonNovelChapterEntry {
+function normalizeChapterEntry(entry: EpigraphNovelChapterEntry): EpigraphNovelChapterEntry {
   return {
     id: normalizeText(entry?.id) ?? "",
     novelId: normalizeText(entry?.novelId) ?? "",
@@ -313,7 +313,7 @@ function normalizeChapterEntry(entry: AethonNovelChapterEntry): AethonNovelChapt
   };
 }
 
-export function normalizeAethonNovelsSnapshot(snapshot: AethonNovelsSnapshot): AethonNovelsSnapshot {
+export function normalizeEpigraphNovelsSnapshot(snapshot: EpigraphNovelsSnapshot): EpigraphNovelsSnapshot {
   return {
     entries: Array.isArray(snapshot.entries) ? snapshot.entries.map((entry, index) => normalizeEntry(entry, index)) : [],
     chapters: Array.isArray(snapshot.chapters)
@@ -339,7 +339,7 @@ export function normalizeAethonNovelsSnapshot(snapshot: AethonNovelsSnapshot): A
   };
 }
 
-function collectRequiredRepositories(snapshot: AethonNovelsSnapshot): string[] {
+function collectRequiredRepositories(snapshot: EpigraphNovelsSnapshot): string[] {
   return uniqueStrings([
     ...snapshot.repositories?.map((repository) => repository.url) ?? [],
     ...snapshot.plugins?.map((plugin) => plugin.repositoryUrl ?? null) ?? [],
@@ -347,7 +347,7 @@ function collectRequiredRepositories(snapshot: AethonNovelsSnapshot): string[] {
   ].map((value) => normalizeUrl(value)));
 }
 
-function toPayloadFile(snapshot: AethonNovelsSnapshot, exportMode: AethonNovelsExportMode): NovelsPayloadFile {
+function toPayloadFile(snapshot: EpigraphNovelsSnapshot, exportMode: EpigraphNovelsExportMode): NovelsPayloadFile {
   return {
     version: 1,
     exportMode,
@@ -361,14 +361,14 @@ function toPayloadFile(snapshot: AethonNovelsSnapshot, exportMode: AethonNovelsE
   };
 }
 
-export async function buildAethonNovelsPayload(
-  snapshot: AethonNovelsSnapshot,
+export async function buildEpigraphNovelsPayload(
+  snapshot: EpigraphNovelsSnapshot,
   options: {
-    exportMode?: AethonNovelsExportMode;
+    exportMode?: EpigraphNovelsExportMode;
   } = {},
-): Promise<AethonBackupPayloadBuildInput> {
+): Promise<EpigraphBackupPayloadBuildInput> {
   const exportMode = options.exportMode ?? "repository-aware";
-  const normalizedSnapshot = normalizeAethonNovelsSnapshot(snapshot);
+  const normalizedSnapshot = normalizeEpigraphNovelsSnapshot(snapshot);
   const requiredRepositories = collectRequiredRepositories(normalizedSnapshot);
 
   return {
@@ -391,7 +391,7 @@ export async function buildAethonNovelsPayload(
     },
     files: [
       {
-        path: AETHON_NOVELS_PAYLOAD_FILE_PATH,
+        path: EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH,
         bytes: jsonBytes(toPayloadFile(normalizedSnapshot, exportMode)),
         contentType: "application/json",
         role: "library",
@@ -400,20 +400,20 @@ export async function buildAethonNovelsPayload(
   };
 }
 
-export async function buildAethonNovelsBackupContainer(
-  snapshot: AethonNovelsSnapshot,
+export async function buildEpigraphNovelsBackupContainer(
+  snapshot: EpigraphNovelsSnapshot,
   options: {
-    exportMode?: AethonNovelsExportMode;
+    exportMode?: EpigraphNovelsExportMode;
     appVersion?: string | null;
     platform?: string | null;
     sourceProfileId?: string | null;
   } = {},
-): Promise<BuiltAethonBackupContainer> {
-  const payload = await buildAethonNovelsPayload(snapshot, {
+): Promise<BuiltEpigraphBackupContainer> {
+  const payload = await buildEpigraphNovelsPayload(snapshot, {
     exportMode: options.exportMode,
   });
 
-  return buildAethonBackupContainer({
+  return buildEpigraphBackupContainer({
     appVersion: options.appVersion ?? null,
     platform: options.platform ?? null,
     sourceSurface: "desktop",
@@ -422,25 +422,25 @@ export async function buildAethonNovelsBackupContainer(
   });
 }
 
-export async function parseAethonNovelsPayload(
+export async function parseEpigraphNovelsPayload(
   bytes: Uint8Array | ArrayBuffer,
-): Promise<ParsedAethonNovelsPayload> {
-  const inspection = await inspectAethonBackupContainer(bytes);
+): Promise<ParsedEpigraphNovelsPayload> {
+  const inspection = await inspectEpigraphBackupContainer(bytes);
   if (inspection.hasErrors) {
-    throw new Error("Aethon backup container failed inspection.");
+    throw new Error("Epigraph backup container failed inspection.");
   }
 
   const payloadManifest = inspection.payloadManifests.novels;
   if (!payloadManifest) {
-    throw new Error("The selected Aethon backup does not contain a novels payload.");
+    throw new Error("The selected Epigraph backup does not contain a novels payload.");
   }
 
-  const registry = AETHON_BACKUP_PAYLOAD_REGISTRY.novels;
-  const archivePath = `${registry.rootPath}/${AETHON_NOVELS_PAYLOAD_FILE_PATH}`;
+  const registry = EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.novels;
+  const archivePath = `${registry.rootPath}/${EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH}`;
   const zip = await JSZip.loadAsync(toUint8Array(bytes));
   const file = zip.file(archivePath);
   if (!file) {
-    throw new Error(`Novels payload is missing ${AETHON_NOVELS_PAYLOAD_FILE_PATH}.`);
+    throw new Error(`Novels payload is missing ${EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH}.`);
   }
 
   let parsed: NovelsPayloadFile;
@@ -458,7 +458,7 @@ export async function parseAethonNovelsPayload(
     inspection,
     payloadManifest,
     exportMode: parsed.exportMode === "metadata-only" ? "metadata-only" : "repository-aware",
-    snapshot: normalizeAethonNovelsSnapshot({
+    snapshot: normalizeEpigraphNovelsSnapshot({
       entries: parsed.entries,
       chapters: Array.isArray(parsed.chapters) ? parsed.chapters : [],
       progress: Array.isArray(parsed.progress) ? parsed.progress : [],
@@ -471,9 +471,9 @@ export async function parseAethonNovelsPayload(
 }
 
 function classifyNovelEntry(
-  entry: AethonNovelEntry,
-  runtime: AethonNovelRuntimeState,
-): AethonNovelRestoreClassification {
+  entry: EpigraphNovelEntry,
+  runtime: EpigraphNovelRuntimeState,
+): EpigraphNovelRestoreClassification {
   const repositorySet = new Set(runtime.repositoryUrls.map((value) => normalizeUrl(value)).filter((value): value is string => Boolean(value)));
   const pluginSet = new Set(runtime.installedPluginIds.map((value) => normalizeText(value)).filter((value): value is string => Boolean(value)));
   const sourceSet = new Set(runtime.availableSourceIds.map((value) => normalizeText(value)).filter((value): value is string => Boolean(value)));
@@ -482,7 +482,7 @@ function classifyNovelEntry(
   const requiredPluginId = normalizeText(entry.source?.pluginId);
   const requiredSourceId = normalizeText(entry.source?.sourceId);
 
-  let outcome: AethonNovelsRestoreOutcome = "restored-usable";
+  let outcome: EpigraphNovelsRestoreOutcome = "restored-usable";
 
   if (!requiredRepositoryUrl && !requiredPluginId && !requiredSourceId) {
     outcome = "restored-metadata-only";
@@ -505,14 +505,14 @@ function classifyNovelEntry(
   };
 }
 
-export function classifyAethonNovelsSnapshot(
-  snapshot: AethonNovelsSnapshot,
-  exportMode: AethonNovelsExportMode,
-  runtime: AethonNovelRuntimeState,
-): RestoredAethonNovelsSnapshot {
-  const normalizedSnapshot = normalizeAethonNovelsSnapshot(snapshot);
+export function classifyEpigraphNovelsSnapshot(
+  snapshot: EpigraphNovelsSnapshot,
+  exportMode: EpigraphNovelsExportMode,
+  runtime: EpigraphNovelRuntimeState,
+): RestoredEpigraphNovelsSnapshot {
+  const normalizedSnapshot = normalizeEpigraphNovelsSnapshot(snapshot);
   const classifications = normalizedSnapshot.entries.map((entry) => classifyNovelEntry(entry, runtime));
-  const issues: AethonNovelsRestoreIssue[] = [];
+  const issues: EpigraphNovelsRestoreIssue[] = [];
 
   for (const item of classifications) {
     if (item.outcome === "restored-needs-repository") {
@@ -553,10 +553,10 @@ export function classifyAethonNovelsSnapshot(
   };
 }
 
-export async function restoreAethonNovelsPayload(
+export async function restoreEpigraphNovelsPayload(
   bytes: Uint8Array | ArrayBuffer,
-  runtime: AethonNovelRuntimeState,
-): Promise<RestoredAethonNovelsSnapshot> {
-  const parsed = await parseAethonNovelsPayload(bytes);
-  return classifyAethonNovelsSnapshot(parsed.snapshot, parsed.exportMode, runtime);
+  runtime: EpigraphNovelRuntimeState,
+): Promise<RestoredEpigraphNovelsSnapshot> {
+  const parsed = await parseEpigraphNovelsPayload(bytes);
+  return classifyEpigraphNovelsSnapshot(parsed.snapshot, parsed.exportMode, runtime);
 }

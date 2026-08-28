@@ -814,7 +814,7 @@ mod tests {
         assert_eq!(payload["publication"]["port"], 9443);
         assert_eq!(
             payload["publication"]["hostName"],
-            "aethon-syncd-syncd-se.local."
+            "epigraph-syncd-syncd-se.local."
         );
         assert_eq!(
             payload["publication"]["descriptor"]["advertisedOrigin"]["baseUrl"],

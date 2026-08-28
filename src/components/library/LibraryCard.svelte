@@ -884,10 +884,10 @@
     to { mask-position: -132px 0; }
   }
 
-  :global([data-aethon-idle="true"]) .cover-progress-fill,
-  :global([data-aethon-idle="true"]) .cover-progress-fill::before,
-  :global([data-aethon-idle="true"]) .cover-progress-fill::after,
-  :global([data-aethon-idle="true"]) .cover-progress-wave {
+  :global([data-epigraph-idle="true"]) .cover-progress-fill,
+  :global([data-epigraph-idle="true"]) .cover-progress-fill::before,
+  :global([data-epigraph-idle="true"]) .cover-progress-fill::after,
+  :global([data-epigraph-idle="true"]) .cover-progress-wave {
     animation-play-state: paused !important;
   }
 

@@ -1,19 +1,19 @@
 import JSZip from "jszip";
 import {
-  AETHON_BACKUP_PAYLOAD_REGISTRY,
-  buildAethonBackupContainer,
-  inspectAethonBackupContainer,
-  type AethonBackupPayloadBuildInput,
-  type AethonBackupPayloadManifest,
-  type BuiltAethonBackupContainer,
-  type InspectedAethonBackupContainer,
-} from "./aethonBackup";
+  EPIGRAPH_BACKUP_PAYLOAD_REGISTRY,
+  buildEpigraphBackupContainer,
+  inspectEpigraphBackupContainer,
+  type EpigraphBackupPayloadBuildInput,
+  type EpigraphBackupPayloadManifest,
+  type BuiltEpigraphBackupContainer,
+  type InspectedEpigraphBackupContainer,
+} from "./epigraphBackup";
 
-export const AETHON_MANGA_PAYLOAD_FILE_PATH = "library.tachibk";
+export const EPIGRAPH_MANGA_PAYLOAD_FILE_PATH = "library.tachibk";
 
-export interface ParsedAethonMangaPayload {
-  inspection: InspectedAethonBackupContainer;
-  payloadManifest: AethonBackupPayloadManifest;
+export interface ParsedEpigraphMangaPayload {
+  inspection: InspectedEpigraphBackupContainer;
+  payloadManifest: EpigraphBackupPayloadManifest;
   exportMode: "pipeline";
   payloadBytes: Uint8Array;
   payloadFilename: string;
@@ -36,13 +36,13 @@ function ensureTachibkFilename(filename: string | null | undefined): string {
   return /\.tachibk$/i.test(base) ? base : `${base}.tachibk`;
 }
 
-export async function buildAethonMangaPayload(
+export async function buildEpigraphMangaPayload(
   backupBytes: Uint8Array | ArrayBuffer,
   options: {
     sourceFilename?: string | null;
     metadata?: Record<string, unknown>;
   } = {},
-): Promise<AethonBackupPayloadBuildInput> {
+): Promise<EpigraphBackupPayloadBuildInput> {
   return {
     kind: "manga",
     exportMode: "pipeline",
@@ -58,7 +58,7 @@ export async function buildAethonMangaPayload(
     },
     files: [
       {
-        path: AETHON_MANGA_PAYLOAD_FILE_PATH,
+        path: EPIGRAPH_MANGA_PAYLOAD_FILE_PATH,
         bytes: toUint8Array(backupBytes),
         contentType: "application/octet-stream",
         role: "backup",
@@ -67,7 +67,7 @@ export async function buildAethonMangaPayload(
   };
 }
 
-export async function buildAethonMangaBackupContainer(
+export async function buildEpigraphMangaBackupContainer(
   backupBytes: Uint8Array | ArrayBuffer,
   options: {
     sourceFilename?: string | null;
@@ -76,13 +76,13 @@ export async function buildAethonMangaBackupContainer(
     sourceProfileId?: string | null;
     metadata?: Record<string, unknown>;
   } = {},
-): Promise<BuiltAethonBackupContainer> {
-  const payload = await buildAethonMangaPayload(backupBytes, {
+): Promise<BuiltEpigraphBackupContainer> {
+  const payload = await buildEpigraphMangaPayload(backupBytes, {
     sourceFilename: options.sourceFilename,
     metadata: options.metadata,
   });
 
-  return buildAethonBackupContainer({
+  return buildEpigraphBackupContainer({
     appVersion: options.appVersion ?? null,
     platform: options.platform ?? null,
     sourceSurface: "desktop",
@@ -91,25 +91,25 @@ export async function buildAethonMangaBackupContainer(
   });
 }
 
-export async function parseAethonMangaPayload(
+export async function parseEpigraphMangaPayload(
   bytes: Uint8Array | ArrayBuffer,
-): Promise<ParsedAethonMangaPayload> {
-  const inspection = await inspectAethonBackupContainer(bytes);
+): Promise<ParsedEpigraphMangaPayload> {
+  const inspection = await inspectEpigraphBackupContainer(bytes);
   if (inspection.hasErrors) {
-    throw new Error("Aethon backup container failed inspection.");
+    throw new Error("Epigraph backup container failed inspection.");
   }
 
   const payloadManifest = inspection.payloadManifests.manga;
   if (!payloadManifest) {
-    throw new Error("The selected Aethon backup does not contain a manga payload.");
+    throw new Error("The selected Epigraph backup does not contain a manga payload.");
   }
 
-  const registry = AETHON_BACKUP_PAYLOAD_REGISTRY.manga;
-  const archivePath = `${registry.rootPath}/${AETHON_MANGA_PAYLOAD_FILE_PATH}`;
+  const registry = EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.manga;
+  const archivePath = `${registry.rootPath}/${EPIGRAPH_MANGA_PAYLOAD_FILE_PATH}`;
   const zip = await JSZip.loadAsync(toUint8Array(bytes));
   const file = zip.file(archivePath);
   if (!file) {
-    throw new Error(`Manga payload is missing ${AETHON_MANGA_PAYLOAD_FILE_PATH}.`);
+    throw new Error(`Manga payload is missing ${EPIGRAPH_MANGA_PAYLOAD_FILE_PATH}.`);
   }
 
   const payloadBytes = await file.async("uint8array");
@@ -128,10 +128,10 @@ export async function parseAethonMangaPayload(
   };
 }
 
-export async function extractAethonMangaPayloadFile(
+export async function extractEpigraphMangaPayloadFile(
   bytes: Uint8Array | ArrayBuffer,
 ): Promise<File> {
-  const parsed = await parseAethonMangaPayload(bytes);
+  const parsed = await parseEpigraphMangaPayload(bytes);
   const payloadBuffer = new Uint8Array(parsed.payloadBytes.byteLength);
   payloadBuffer.set(parsed.payloadBytes);
   return new File([payloadBuffer.buffer], parsed.payloadFilename, {

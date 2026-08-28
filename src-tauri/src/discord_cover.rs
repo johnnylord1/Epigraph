@@ -31,8 +31,8 @@ const COVER_UPLOAD_TIMEOUT_SECONDS: u64 = 15;
 const MAX_UPLOAD_TTL_MS: u64 = 72 * 60 * 60 * 1000;
 const UGUU_TTL_MS: u64 = 3 * 60 * 60 * 1000;
 const UGUU_UPLOAD_URL: &str = "https://uguu.se/upload.php";
-const COVER_HTTP_USER_AGENT: &str = "Aethon/DiscordRichPresence";
-const DISCORD_COVER_UPLOAD_URL_ENV: &str = "AETHON_DISCORD_COVER_UPLOAD_URL";
+const COVER_HTTP_USER_AGENT: &str = "Epigraph/DiscordRichPresence";
+const DISCORD_COVER_UPLOAD_URL_ENV: &str = "EPIGRAPH_DISCORD_COVER_UPLOAD_URL";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -503,7 +503,7 @@ fn parse_public_https_url(raw: &str, error_prefix: &str) -> Result<Url, String> 
 fn discord_cover_upload_target() -> Result<DiscordCoverUploadTarget, String> {
     if let Some(upload_url) = select_custom_discord_cover_upload_url(
         std::env::var(DISCORD_COVER_UPLOAD_URL_ENV).ok(),
-        option_env!("AETHON_DISCORD_COVER_UPLOAD_URL"),
+        option_env!("EPIGRAPH_DISCORD_COVER_UPLOAD_URL"),
     ) {
         return parse_public_https_url(&upload_url, "Discord cover upload endpoint")
             .map(DiscordCoverUploadTarget::JsonEndpoint);
@@ -617,7 +617,7 @@ async fn upload_discord_cover(
 
 fn build_uguu_upload_form(bytes: Vec<u8>) -> Result<multipart::Form, String> {
     let part = multipart::Part::bytes(bytes)
-        .file_name("aethon-discord-cover.jpg")
+        .file_name("epigraph-discord-cover.jpg")
         .mime_str("image/jpeg")
         .map_err(|err| err.to_string())?;
     Ok(multipart::Form::new().part("files[]", part))
@@ -625,7 +625,7 @@ fn build_uguu_upload_form(bytes: Vec<u8>) -> Result<multipart::Form, String> {
 
 fn build_json_upload_form(bytes: Vec<u8>) -> Result<multipart::Form, String> {
     let part = multipart::Part::bytes(bytes)
-        .file_name("aethon-discord-cover.jpg")
+        .file_name("epigraph-discord-cover.jpg")
         .mime_str("image/jpeg")
         .map_err(|err| err.to_string())?;
     Ok(multipart::Form::new().part("file", part))
@@ -719,23 +719,23 @@ mod tests {
         let now = 1_000;
         let response = validate_json_upload_response(
             JsonCoverUploadResponse {
-                url: "https://1.1.1.1/aethon-cover.jpg".to_string(),
+                url: "https://1.1.1.1/epigraph-cover.jpg".to_string(),
                 expires_at: Some(now + MAX_UPLOAD_TTL_MS + 10_000),
             },
             now,
         )
         .unwrap();
 
-        assert_eq!(response.url, "https://1.1.1.1/aethon-cover.jpg");
+        assert_eq!(response.url, "https://1.1.1.1/epigraph-cover.jpg");
         assert_eq!(response.expires_at, now + MAX_UPLOAD_TTL_MS);
     }
 
     #[test]
     fn rejects_unsafe_upload_response_urls() {
         for url in [
-            "http://example.com/aethon-cover.jpg",
-            "https://127.0.0.1/aethon-cover.jpg",
-            "https://192.168.1.2/aethon-cover.jpg",
+            "http://example.com/epigraph-cover.jpg",
+            "https://127.0.0.1/epigraph-cover.jpg",
+            "https://192.168.1.2/epigraph-cover.jpg",
         ] {
             let response = validate_json_upload_response(
                 JsonCoverUploadResponse {
@@ -783,14 +783,14 @@ mod tests {
             UguuUploadResponse {
                 success: true,
                 files: vec![UguuUploadedFile {
-                    url: "https://n.uguu.se/aethon.jpg".to_string(),
+                    url: "https://n.uguu.se/epigraph.jpg".to_string(),
                 }],
             },
             now,
         )
         .unwrap();
 
-        assert_eq!(response.url, "https://n.uguu.se/aethon.jpg");
+        assert_eq!(response.url, "https://n.uguu.se/epigraph.jpg");
         assert_eq!(response.expires_at, now + UGUU_TTL_MS);
     }
 

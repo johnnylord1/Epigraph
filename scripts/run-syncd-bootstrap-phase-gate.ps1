@@ -138,9 +138,19 @@ $stderrPath = Join-Path $tmpRoot "syncd.stderr.log"
 $port = "47774"
 $endpoint = "https://127.0.0.1:$port"
 $advertisedEndpoint = "https://localhost:$port"
-$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\aethon-syncd.exe"
+$syncdBinary = Join-Path $projectRoot "src-tauri\target\debug\epigraph-syncd.exe"
 $syncd = $null
 $currentStep = "initialization"
+
+function Stop-SyncdProcessTree {
+  param($Process)
+  if ($null -eq $Process) { return }
+  try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch {}
+  if (-not $Process.HasExited) {
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  }
+  try { $null = $Process.WaitForExit(5000) } catch {}
+}
 
 if (Test-Path $tmpRoot) { Remove-Item $tmpRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
@@ -150,14 +160,16 @@ Push-Location $projectRoot
 try {
   $currentStep = "build syncd"
   Write-Host "[bootstrap-gate] building syncd"
-  cargo build --manifest-path src-tauri/Cargo.toml --bin aethon-syncd
+  cargo build --manifest-path src-tauri/Cargo.toml --bin epigraph-syncd
 
   $envMap = @{
-    AETHON_SYNCD_ENABLE_AUDIT_ROUTES = "1"
-    AETHON_SYNCD_DATA_DIR = $dataDir
-    AETHON_SYNCD_BIND_HOST = "127.0.0.1"
-    AETHON_SYNCD_PORT = $port
-    AETHON_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
+    EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES = "1"
+    EPIGRAPH_SYNCD_DATA_DIR = $dataDir
+    EPIGRAPH_SYNCD_BIND_HOST = "127.0.0.1"
+    EPIGRAPH_SYNCD_PORT = $port
+    EPIGRAPH_SYNCD_ADVERTISED_BASE_URL = $advertisedEndpoint
+    EPIGRAPH_LOCAL_SERVER_MAIN_ROOT = Join-Path $tmpRoot "suwayomi-main"
+    EPIGRAPH_LOCAL_SERVER_TEST_ROOT = Join-Path $tmpRoot "suwayomi-test"
   }
 
   $currentStep = "start syncd"
@@ -288,8 +300,6 @@ catch {
   throw
 }
 finally {
-  if ($syncd -and -not $syncd.HasExited) {
-    Stop-Process -Id $syncd.Id -Force
-  }
+  Stop-SyncdProcessTree $syncd
   Pop-Location
 }

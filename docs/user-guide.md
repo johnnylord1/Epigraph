@@ -1,15 +1,15 @@
-# Guia do Usuário — Aethon Desktop
+# Guia do Usuário — Epigraph Desktop
 
 ## Visão geral
 
-Aethon Desktop organiza comics, novels e livros locais em uma interface para Windows. As áreas principais são Home, Library, Browse, Downloads e Settings. O aplicativo pode usar um servidor Suwayomi local, sources e integrações externas; não é necessário cadastro no Aethon para abrir um perfil local.
+Epigraph Desktop organiza comics, novels e livros locais em uma interface para Windows. As áreas principais são Home, Library, Browse, Downloads e Settings. O aplicativo pode usar um servidor Suwayomi local, sources e integrações externas; não é necessário cadastro no Epigraph para abrir um perfil local.
 
-Este guia descreve os principais fluxos do Aethon Desktop e as configurações necessárias para recursos locais e integrações externas.
+Este guia descreve os principais fluxos do Epigraph Desktop e as configurações necessárias para recursos locais e integrações externas.
 
 ## Requisitos
 
 - Windows com WebView2 disponível.
-- Um perfil local do Aethon.
+- Um perfil local do Epigraph.
 - Suwayomi e sources configurados para pesquisar, atualizar ou abrir conteúdo remoto.
 - Credenciais próprias para trackers, Hardcover ou outras integrações que as solicitarem.
 - Acesso à rede para releases, updater e catálogos externos.
@@ -18,7 +18,7 @@ Não coloque tokens, senhas ou chaves em screenshots ou relatórios de suporte.
 
 ## Primeiros passos
 
-1. Abra o Aethon Desktop pelo atalho ou instalador disponibilizado para Windows.
+1. Abra o Epigraph Desktop pelo atalho ou instalador disponibilizado para Windows.
 2. Aguarde a inicialização do perfil local.
 3. Se o servidor local não puder iniciar, use **Try again** depois de verificar o serviço. A tela também pode oferecer entrada no shell sem o servidor; Browse e atualização de conteúdo continuarão limitados.
 4. Use a barra lateral para alternar entre **Home**, **Library**, **Browse**, **Downloads** e **Settings**.
@@ -181,16 +181,24 @@ About apresenta build, releases, GitHub e status do Suwayomi. Histórico e atual
 
 O updater e o histórico dependem de rede, endpoint de releases e assinatura válida do pacote.
 
-## Syncd Desktop
+## Syncd e Epigraph Mobile
 
-Syncd conecta duas instâncias do Aethon Desktop para replicar biblioteca, progresso, bookmarks, categorias e demais dados compatíveis. A conexão pode ser criada por QR, descoberta na rede local ou endereço manual.
+O Epigraph Core fica hospedado no PC e continua funcionando com a janela do
+desktop fechada. Ele mantém o Suwayomi que é a autoridade dos comics e expõe
+uma conexão autenticada para o Epigraph Mobile. Syncd replica estado de novels,
+books e os complementos de comics (histórico e bookmarks de página).
 
-### Criar uma conexão
+O PC precisa estar ligado, com o usuário do Windows conectado e com o Core e o
+Suwayomi em execução para pesquisar comics, abrir capítulos remotos ou aplicar
+mutações online. O celular continua lendo arquivos e capítulos explicitamente
+baixados quando o PC estiver desligado.
+
+### Criar uma conexão desktop ou mobile
 
 1. No desktop que hospedará a sessão, abra **Settings > Security > Syncd**.
 2. Selecione **Pairing** e clique em **Create pairing QR**.
-3. O Aethon prepara automaticamente a conexão e exibe o QR.
-4. No segundo desktop, abra o mesmo painel e escolha o host descoberto ou importe o QR.
+3. O Epigraph prepara automaticamente a conexão e exibe o QR.
+4. No segundo desktop ou no Epigraph Mobile, escolha o host descoberto ou importe o QR.
 5. Confirme a solicitação no desktop host.
 6. Aguarde os dois painéis exibirem a sessão como **Connected** e a replicação como **Live**.
 
@@ -204,9 +212,33 @@ Se a descoberta automática não localizar o host, informe manualmente o endere�
 4. Use **Resume** para continuar ou **Reconnect now** para restabelecer uma conexão interrompida.
 5. Use **Forget** somente quando quiser remover permanentemente uma sessão daquele desktop.
 
+### Ordem planejada da primeira sincronização móvel
+
+O fluxo abaixo descreve a ordem planejada para depois da conclusão da bridge
+Suwayomi -> Core. No estado atual, o Core não publica catálogo, categorias ou
+capítulos de comics para o mobile; a sincronização disponível permanece focada
+em histórico e bookmarks de página.
+
+Quando a bridge estiver disponível, o bootstrap deverá seguir esta ordem:
+
+1. negocia protocolo, capabilities, perfil e fingerprint TLS;
+2. confirma os repositórios/extensões e plugins necessários, sem instalar APK
+   silenciosamente;
+3. inventaria categorias, obras, bindings, capítulos e downloads;
+4. cria/atualiza categorias antes das associações;
+5. consulta a biblioteca e o estado de capítulos pelo Suwayomi através do Core;
+6. aplica progresso, bookmarks, histórico e tracking;
+7. transfere somente EPUB/PDF e outros assets explicitamente compartilhados;
+8. reconcilia conjuntos completos e só exibe **Synced** quando a outbox estiver
+   vazia.
+
+Mangás, capítulos de comics e novels não são baixados automaticamente durante
+o pairing. Falha temporária, resposta parcial ou Suwayomi em manutenção nunca
+remove uma obra da réplica local.
+
 ### Múltiplas instâncias
 
-O Aethon gerencia automaticamente os recursos necessários para cada instância. Não é preciso escolher portas, editar arquivos internos ou encerrar processos manualmente. Se outra instância estiver aberta no mesmo computador, cada uma permanece isolada e pode ser fechada sem interromper as demais.
+O Epigraph gerencia automaticamente os recursos necessários para cada instância. Não é preciso escolher portas, editar arquivos internos ou encerrar processos manualmente. Se outra instância estiver aberta no mesmo computador, cada uma permanece isolada e pode ser fechada sem interromper as demais.
 
 ## Funcionalidades que exigem configuração
 
@@ -215,7 +247,7 @@ O Aethon gerencia automaticamente os recursos necessários para cada instância.
 - Discord Rich Presence: depende do Discord e configuração local.
 - FlareSolverr: é opcional e desativado por padrão. Pode ser habilitado em
   **Settings > Security** quando uma source apresentar proteção anti-bot
-  confirmada. O Aethon pode gerenciar uma instância local ou Docker; ele não
+  confirmada. O Epigraph pode gerenciar uma instância local ou Docker; ele não
   corrige source obsoleta, login obrigatório, parser quebrado ou extensão
   incompatível.
 - Updater: depende de release, rede e assinatura.
@@ -241,7 +273,7 @@ Aguarde a leitura dos caminhos e do uso de disco. Se o estado persistir, reabra 
 
 ## Perguntas frequentes
 
-### Preciso de conta Aethon?
+### Preciso de conta Epigraph?
 
 Não para um perfil local. Integrações externas podem exigir conta/token próprios.
 
@@ -251,13 +283,13 @@ Sim. Conteúdo local ou previamente baixado permanece disponível; catálogos, a
 
 ### Posso conectar o Syncd a um celular?
 
-Este guia cobre Syncd entre instâncias do Aethon Desktop. Use outro Aethon Desktop como host ou participante da sessão.
+Este guia cobre Syncd entre instâncias do Epigraph Desktop. Use outro Epigraph Desktop como host ou participante da sessão.
 
 ## Glossário
 
 - **Source:** provedor de catálogo/conteúdo.
 - **Suwayomi:** serviço local usado por fluxos de manga do desktop.
-- **Syncd:** sincronização entre instâncias Aethon Desktop.
+- **Syncd:** sincronização entre instâncias Epigraph Desktop.
 - **Profile:** workspace local com preferências e dados próprios.
 - **Tombstone:** registro de exclusão usado para convergir sincronização.
 - **Replay:** reaplicação de eventos Syncd após reconexão.

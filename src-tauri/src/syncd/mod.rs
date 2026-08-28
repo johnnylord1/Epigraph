@@ -3,13 +3,17 @@ pub mod autostart;
 pub mod config;
 pub mod db;
 pub mod discovery;
+pub mod extension_store_seed;
 pub mod lifecycle;
 pub mod middleware;
 pub mod models;
+pub mod network;
 pub mod replay;
 pub mod routes;
 pub mod runtime_manifest;
 pub mod suwayomi_process;
+pub mod suwayomi_progress_mirror;
+pub mod suwayomi_projection;
 pub mod tls;
 
 pub async fn run_command_line() -> anyhow::Result<()> {

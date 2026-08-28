@@ -9,13 +9,13 @@ rede foi removido seletivamente. Ele falhou no primeiro requisito funcional:
 o Suwayomi oficial nao iniciou de forma confiavel dentro do AppContainer cru,
 porque a resolucao de `AppDirs` depende de Known Folders do Windows antes de
 ler o `server.rootDir`. Isso nao e um motivo para alterar o Suwayomi ou impor
-um pacote MSIX ao Aethon.
+um pacote MSIX ao Epigraph.
 
 O supervisor atual usa o modelo convencional observado no ecossistema:
 
 ```text
-Aethon UI
-  -> Aethon Core
+Epigraph UI
+  -> Epigraph Core
   -> SourceRuntime / SuwayomiAdapter
   -> RuntimeSupervisor local
   -> JRE 21 empacotado
@@ -33,7 +33,7 @@ As referencias foram clonadas em perfil temporario e analisadas no commit
 indicado. Nenhum bloco de codigo foi copiado; foram adaptados somente conceitos
 de lifecycle e empacotamento.
 
-| Repositorio | Commit | Licenca | Arquivos relevantes | Observacao | Decisao no Aethon |
+| Repositorio | Commit | Licenca | Arquivos relevantes | Observacao | Decisao no Epigraph |
 | --- | --- | --- | --- | --- | --- |
 | `moku-project/Moku` | `f6f59524529a9eac6c165c51e1254f667441c1da` | LICENSE do repositorio | `src-tauri/src/commands/server.rs`, `src-tauri/src/server/mod.rs`, `src-tauri/src/server/resolve.rs`, `src-tauri/src/server/conf.rs`, `src-tauri/src/commands/updater.rs`, `src-tauri/tauri.windows.conf.json` | Empacota JRE + JAR, define `server.rootDir`, usa loopback, perfil local e shutdown do processo iniciado pelo app. | Preservar JRE/JAR empacotados, root explicito, attach remoto e lifecycle local; nao copiar o gerenciamento destrutivo por nome global de `java.exe`. |
 | `Suwayomi/Suwayomi-JUI` | `d98ae70c91bea02b10d2410e4d0ad3f63f8d1343` | LICENSE do repositorio | fontes do launcher e lifecycle local | Referencia oficial de cliente desktop e de separacao entre servidor local e servidor remoto. | Usar como referencia comportamental, sem importar arquitetura Compose/Java para Rust. |
@@ -46,7 +46,7 @@ Fontes oficiais consultadas:
 - https://github.com/moku-project/Moku
 - https://github.com/Suwayomi/Suwayomi-JUI
 
-## Arquitetura atual do Aethon
+## Arquitetura atual do Epigraph
 
 - O bundle Windows declara `binaries/suwayomi-bundle/bin/Suwayomi-Server.jar`
   e `binaries/suwayomi-bundle/jre/**/*` em `src-tauri/tauri.windows.conf.json`.
@@ -82,7 +82,7 @@ Fontes oficiais consultadas:
   continuam legiveis por campos `serde(default)`.
 - Logs de lifecycle removem quebras de linha, credenciais e valores de
   `authorization`, `cookie`, `token`, `password` e `api-key`.
-- O fechamento do Aethon encerra apenas o alvo local administrado pelo app.
+- O fechamento do Epigraph encerra apenas o alvo local administrado pelo app.
 - O novo modulo possui testes para layout, loopback, hash e redacao de logs.
 
 ### Validacao real
@@ -134,10 +134,15 @@ ou reset de bookmark. Isso permanece como gate dos proximos marcos.
 Conclusao: **IMPACTO LIMITADO E CORRIGIDO**.
 
 O Syncd possui SQLite proprio e trabalha com envelopes normalizados de livros,
-novels do fluxo LNReader, comics, categorias, progresso, bookmarks, historico,
-repositories/plugins de novels e assets. A
-replicacao passa por `src-tauri/src/syncd_replication.rs`; nao ha leitura de H2
-nem uso de IDs internos do Suwayomi como identidade global no fluxo normal.
+novels do fluxo LNReader, estado complementar de comics, progresso, bookmarks,
+historico, repositories/plugins de novels e assets. Para comics, a autoridade
+do catalogo, biblioteca, categorias, capitulos, fontes, extensoes e estado de
+capitulos continua sendo o perfil Suwayomi hospedado pelo Core. O Core desktop
+agora oferece uma bridge read-only profile-scoped em `/v1/suwayomi/catalog`;
+a replicacao atual de comics permanece principalmente em historico e bookmarks,
+e a materializacao no cliente mobile ainda esta pendente.
+Nao ha leitura de H2 nem uso de IDs internos do Suwayomi como identidade global
+no fluxo normal.
 
 `src-tauri/src/syncd/app.rs` registra um proxy GraphQL para clientes autorizados,
 mas isso e uma superficie HTTP de transporte e nao uma dependencia do Syncd em
@@ -146,17 +151,36 @@ persiste a propria identidade, porta, fingerprint e executavel.
 
 | Dado | Autoridade | Persistencia | Consumidores | Sincronizado | Risco no restart/update |
 | --- | --- | --- | --- | --- | --- |
-| biblioteca comics/books | Core/Suwayomi normalizado | Core + snapshot Syncd | Library, Details, Syncd | sim, normalizado | indisponibilidade nao pode emitir exclusao |
+| catalogo/biblioteca comics | Suwayomi via proxy/bridge autenticado do Core | perfil Suwayomi + cache/replica local do cliente | Library, Details, Mobile | bridge desktop disponivel; publicacao/materializacao mobile pendente | indisponibilidade nao pode emitir exclusao |
+| biblioteca books | Core/Syncd | Core + snapshot Syncd | Library, Details, Mobile | sim, normalizado | indisponibilidade nao pode emitir exclusao |
 | biblioteca novels/LNReader | Core/LNReader normalizado | estado de novels + Syncd | Novel Library, Details, Syncd | sim, normalizado | indisponibilidade do Suwayomi nao pode remover novels |
-| categorias | Core | Suwayomi/Core + Syncd | Library, Syncd | sim | merge/tombstone ja tratado no Syncd |
-| progresso | Core | Suwayomi/Core + Syncd | Reader, Dashboard, Syncd | sim | preservar durante maintenance |
-| bookmarks | Core | Core + Syncd | Reader, Syncd | sim | nao depender do PID/porta |
-| historico | Core | Core + Syncd | Dashboard, Syncd | sim | replay idempotente |
+| categorias | Suwayomi via Core para o desktop | Suwayomi; bridge mobile | Library, Syncd, Mobile | endpoint read-only disponivel; materializacao mobile pendente | merge/tombstone ja tratado no Syncd |
+| progresso de capitulos comics | Suwayomi; Syncd complementa a posicao do reader | Suwayomi + `comic.history` quando aplicavel | Reader, Dashboard, Mobile | historico/bookmarks complementares ativos; estado completo de capitulos mobile pendente | preservar durante maintenance |
+| bookmarks de pagina comics | Syncd/Epigraph Core | Core + snapshot Syncd | Reader, Mobile | sim | nao depender do PID/porta |
+| historico | Core/Syncd | Core + snapshot Syncd | Dashboard, Syncd, Mobile | sim | replay idempotente |
 | downloads | Core/Suwayomi | runtime local | Downloads | limitado ao escopo local | nao apagar por runtime offline |
 | repositories/plugins de novels | Core/LNReader | estado de novels + Syncd quando aplicavel | Novel Sources/Settings | sim quando parte do estado normalizado | runtime de comics nao pode limitar esse fluxo |
 | stores/extensoes Suwayomi | Suwayomi | perfil do runtime | Sources/Settings | nao como estado de leitura | update deve preservar package/origem |
 | source IDs/URLs | adapter/Core | estado normalizado | Browse/Details/Syncd | URL/identidade normalizada | investigar mudanca de sourceId antes de SR4 |
 | PID/porta/caminho/cache | supervisor | local | supervisor | nao | nunca enviados ao Syncd |
+
+### Caminho de comics para o mobile
+
+O cliente Android Epigraph Mobile pareia com o Core e usa a capability
+`supports_suwayomi_proxy`. O proxy GraphQL continua disponível, e o Core agora
+também expõe a ponte read-only versionada em `/v1/suwayomi/catalog` para
+`library`, `categories` e `chapters`. O endpoint consulta somente o runtime
+Suwayomi do perfil, não lê H2 e não grava catálogo no Syncd.
+
+A biblioteca ainda não é materializada automaticamente no Epigraph Mobile: o gateway
+móvel precisa consumir essa ponte, comparar conjuntos completos e tratar falhas
+como retryable, nunca como remoção.
+
+Mutacoes de biblioteca, categorias e estado de capitulos seguem o mesmo proxy,
+com a lease de manutencao do Core e confirmacao por releitura. A outbox local
+fica pendente quando o Core esta indisponivel; uma resposta parcial nunca e
+tratada como remocao. `comic.history` e `comic.page_bookmark` continuam sendo
+entidades Syncd para o estado que o Suwayomi nao modela completamente.
 
 ## Sistema de extensoes
 
@@ -167,7 +191,7 @@ Extension Store -> metadados -> Suwayomi -> artefato oficial
 -> Extension Manager -> source registrada -> GraphQL -> SourceRuntime
 ```
 
-O Aethon nao converte APK em JAR, nao possui classloader paralelo e nao deve
+O Epigraph nao converte APK em JAR, nao possui classloader paralelo e nao deve
 manter uma allowlist por package. O runtime moderno `v2.3.2243` expoe
 Extension Stores e a mutation `installExternalExtension`, mas o teste de SR3
 nao declara nenhuma source de website como permanentemente suportada.
@@ -182,7 +206,7 @@ externas.
 
 Existem dois fluxos distintos:
 
-1. updater do Aethon, configurado pelo plugin Tauri;
+1. updater do Epigraph, configurado pelo plugin Tauri;
 2. updater controlado do Suwayomi em `src-tauri/src/suwayomi_update.rs`.
 
 O segundo ja possui allowlist, checksum, staging, lock, snapshot e health checks,
@@ -251,7 +275,7 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 - Cobertura automatizada: correlacao estrutural, helper, inventario stale,
   classificacao ABI/serialization/rede/autenticacao, cache, expiracao, timeout,
   cancelamento e smoke opcional contra runtime descartavel via
-  `AETHON_SUWAYOMI_LIVE_ENDPOINT`.
+  `EPIGRAPH_SUWAYOMI_LIVE_ENDPOINT`.
 - Nenhuma tela, fluxo Syncd, novel/LNReader ou teste automatico em massa contra
   websites foi adicionado neste marco.
 - Commit: `feat(sources): add structural extension health`.
@@ -267,7 +291,7 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
   Library e restore de backup mantem uma lease durante a operacao completa.
 - No proxy Syncd, somente documentos GraphQL `mutation` recebem a lease.
   Queries, replicacao Syncd, snapshots normalizados, novels/LNReader,
-  repositories de novels e demais rotas do AethonCore nao sao bloqueados.
+  repositories de novels e demais rotas do EpigraphCore nao sao bloqueados.
 - O snapshot passou ao schema 2 e inclui recursivamente banco, configuracao,
   `extensions/` e `settings/`, com tamanho e SHA-256 por arquivo. Downloads,
   backups, caches, covers, imports e conteudo local permanecem excluidos.
@@ -368,7 +392,7 @@ checks explicitos, sem alterar a compatibilidade estrutural do runtime.
 - O candidate e o runtime principal nunca executam simultaneamente. O H2 e
   copiado apenas depois de shutdown, porta livre e lock exclusivo comprovados.
 - O journal separado de extensoes permite restaurar o snapshot no startup se o
-  Aethon for encerrado durante certificacao ou ativacao. Runtime, configuracao e
+  Epigraph for encerrado durante certificacao ou ativacao. Runtime, configuracao e
   perfil voltam como uma unidade antes de novas mutacoes.
 - O registro de compatibilidade e atomico, versionado e escopado por perfil. A
   identidade inclui hashes do artefato e do runtime, evitando considerar dois
@@ -411,9 +435,9 @@ checks explicitos, sem alterar a compatibilidade estrutural do runtime.
 
 ### SR13 - Anti-bot delegado e gate final
 
-- O Aethon gerencia somente instalacao, configuracao, disponibilidade e
+- O Epigraph gerencia somente instalacao, configuracao, disponibilidade e
   lifecycle do FlareSolverr. No dominio manga/Suwayomi, o unico request direto
-  do Aethon ao servico e o health check local `sessions.list`; websites,
+  do Epigraph ao servico e o health check local `sessions.list`; websites,
   cookies, sessoes e parsing continuam exclusivamente sob Suwayomi e suas
   extensoes.
 - FlareSolverr so e elegivel quando a classificacao normalizada for
@@ -475,11 +499,11 @@ Entregas concluidas:
   journal, rollback e validacao sequencial, sem duas JVMs sobre o mesmo H2.
 - `ExtensionUpdateCoordinator` apenas orquestra operacoes oficiais do
   Extension Manager. Nao existem classloader, scraper, conversor APK->JAR ou
-  instalador paralelo no Aethon.
+  instalador paralelo no Epigraph.
 - Extension Stores usam canonicalizacao conservadora e preservam stores
   distintas. Proveniencia e registros de compatibilidade incluem hashes do
   runtime e do artefato.
-- FlareSolverr continua opcional e desativado por padrao. Para manga, o Aethon
+- FlareSolverr continua opcional e desativado por padrao. Para manga, o Epigraph
   configura o endpoint e o Suwayomi continua responsavel pelas requisicoes das
   extensions. Para novels, o runtime LNReader separado possui recuperacao
   propria no fetch shim quando identifica um desafio anti-bot.
@@ -496,10 +520,9 @@ Entregas concluidas:
 
 ### Gate local obrigatorio
 
-- Reexecutar `pnpm release:verify` no HEAD atual para consolidar todos os gates
-  de release depois dos commits SR9-SR13. Os testes proporcionais dos marcos
-  passaram, mas esta execucao agregada final ainda deve produzir a evidencia
-  unica do estado atual.
+- `pnpm release:verify` foi reexecutado no HEAD `50f1c8f6` em 01/08/2026 e
+  passou os 16 gates bloqueantes, com limpeza de perfis/temporarios e worktree
+  preservado. O comando permanece obrigatorio antes de uma publicacao.
 
 ### Validacoes condicionais ou observacionais
 
@@ -517,6 +540,11 @@ Entregas concluidas:
 - Validar manga/fullscreen com catalogo acessivel e completar auditoria manual
   com leitor de tela.
 
+- O startup total observado pelo gate ficou acima da referencia historica, mas
+  a maior parcela ocorreu antes ou fora da ativacao do shell. O resultado nao
+  reprova o runtime; acompanhar como observacao de desempenho separada, sem
+  aumentar os budgets app-owned.
+
 ### Melhorias futuras nao bloqueantes
 
 - Reduzir o tempo dos testes Rust de composicao de capas Discord sem perder
@@ -525,8 +553,8 @@ Entregas concluidas:
   capability report.
 - Continuar a politica de crescimento limitado de logs, caches, locks e
   manifests.
-- Manter a concorrencia do harness Syncd como trabalho futuro, sem limitar a
-  replicacao de comics, books e repositorios LNReader pelo AethonCore.
+- Manter a concorrencia do harness Syncd como trabalho futuro, sem limitar o
+  estado complementar de comics, books e repositorios LNReader pelo EpigraphCore.
 
 ### Publicacao Git
 
@@ -547,7 +575,7 @@ Implementado em 29/07/2026:
   processos locais no supervisor nativo.
 - A geracao local e incrementada quando o lifecycle explicito invalida o
   adapter. Endpoints remotos ou compartilhados nao recebem essa geracao e
-  continuam usando apenas a renovacao limitada por TTL; o Aethon nao controla
+  continuam usando apenas a renovacao limitada por TTL; o Epigraph nao controla
   restart, shutdown ou quantidade de JVMs nesses endpoints.
 - O transporte possui tracing estritamente opt-in com request ID, attempt,
   stage, duracao, status HTTP, tamanho da resposta e erros GraphQL
@@ -561,7 +589,7 @@ Implementado em 29/07/2026:
   continua dependendo de diagnostico tecnico solicitado explicitamente.
 - O GraphQL oficial nao expoe redirects internos, cookies, cache ou etapas do
   parser da extension. Esses dados permanecerao `NOT_OBSERVED` nos relatorios
-  futuros, sem proxy ou scraper paralelo no Aethon.
+  futuros, sem proxy ou scraper paralelo no Epigraph.
 
 Evidencia do lote:
 
@@ -632,7 +660,7 @@ Implementado em 29/07/2026:
   inventario oficial de extensions.
 - HTTP interno, cookies, redirects e parser da extension nao sao expostos pela
   API oficial. O relatorio registra esses dados como `NOT_OBSERVED`, sem proxy,
-  parser ou scraper paralelo no Aethon.
+  parser ou scraper paralelo no Epigraph.
 - Sources mostra somente o resumo mais recente. Runtime, adapter e estagios
   ficam dentro do painel progressivo de configuracao da extension. Nenhum
   stack trace, payload, token, cookie ou caminho privado e mostrado no fluxo
@@ -911,7 +939,7 @@ Validacao:
   compensacao, categorias em uniao, links simetricos, CAS, relink Hardcover,
   conflito de edicao, restart-safe journal e Undo.
 - `svelte-check`: zero erros e zero warnings.
-- Nenhum CSS, token, layout, Reader, Syncd ou protocolo AethonCore foi
+- Nenhum CSS, token, layout, Reader, Syncd ou protocolo EpigraphCore foi
   alterado.
 
 Riscos encaminhados:
@@ -945,8 +973,8 @@ Implementado:
 - Snapshots manga agora carregam um manifesto para cada capitulo baixado com
   mapeamento comprovado. Como o arquivo pertence ao Suwayomi, o manifesto
   preserva a referencia de origem e marca o destino como `pending`; nenhum CBZ
-  e movido, copiado, apagado ou inspecionado em base64 pelo Aethon.
-- O cache offline de novel pertence ao Aethon. Conteudo de capitulos
+  e movido, copiado, apagado ou inspecionado em base64 pelo Epigraph.
+- O cache offline de novel pertence ao Epigraph. Conteudo de capitulos
   comprovadamente pareados e copiado para a identidade de destino, relido e
   validado por SHA-256 e tamanho. Ausencia, erro de storage ou divergencia
   preservam a origem e registram `pending`/`corrupt` sem bloquear a migracao.
@@ -969,7 +997,7 @@ Validacao:
 - Mass manga e Mass novel continuam preservando os resultados e Undo
   anteriores, agora com estados terminais verificaveis para cada filho.
 - `svelte-check`: zero erros e zero warnings.
-- Nenhum CSS, layout, Reader, protocolo Syncd/AethonCore ou lifecycle de
+- Nenhum CSS, layout, Reader, protocolo Syncd/EpigraphCore ou lifecycle de
   runtime remoto foi alterado.
 
 Limites e riscos encaminhados:

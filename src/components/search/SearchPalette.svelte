@@ -662,7 +662,7 @@
           addToast({
             kind: "error",
             title: translate("novelSources_errors_openDetailTitle"),
-            body: cause instanceof Error ? cause.message : translate("ui_aethonCouldnTOpenThisNovel"),
+            body: cause instanceof Error ? cause.message : translate("ui_epigraphCouldnTOpenThisNovel"),
           });
         }
         break;
@@ -889,7 +889,7 @@
         browseCanGoBack = false;
         browseContentType = store.searchBrowseContentType;
       }
-      document.body.classList.add("aethon-search-engaged");
+      document.body.classList.add("epigraph-search-engaged");
       updateQuery(store.searchQuery);
     } else {
       if (localSearchTimer) clearTimeout(localSearchTimer);
@@ -930,7 +930,7 @@
       if (searchTimer) clearTimeout(searchTimer);
       activeController?.cancel();
       browseAbortController?.abort();
-      document.body.classList.remove("aethon-search-engaged");
+      document.body.classList.remove("epigraph-search-engaged");
     };
   });
 </script>
@@ -986,7 +986,7 @@
         <X size={16} weight="bold" aria-hidden="true" />
       </button>
     </div>
-    <div id="aethon-search-results" class="search-palette__results" role="listbox" aria-label={$_("ui_searchTitles")}>
+    <div id="epigraph-search-results" class="search-palette__results" role="listbox" aria-label={$_("ui_searchTitles")}>
       {#if paletteView === "browse"}
         {#if browseLoadError}
           <div class="search-palette__state">{browseLoadError}</div>

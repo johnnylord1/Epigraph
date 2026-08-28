@@ -1,20 +1,20 @@
 import JSZip from "jszip";
 import {
-  AETHON_BACKUP_PAYLOAD_REGISTRY,
-  buildAethonBackupContainer,
-  inspectAethonBackupContainer,
-  type AethonBackupPayloadBuildInput,
-  type BuiltAethonBackupContainer,
-  type InspectedAethonBackupContainer,
-} from "./aethonBackup";
+  EPIGRAPH_BACKUP_PAYLOAD_REGISTRY,
+  buildEpigraphBackupContainer,
+  inspectEpigraphBackupContainer,
+  type EpigraphBackupPayloadBuildInput,
+  type BuiltEpigraphBackupContainer,
+  type InspectedEpigraphBackupContainer,
+} from "./epigraphBackup";
 import { reconcileBookIdentityState } from "../books/identity";
 import type { PersistedBookLibraryState, PersistedBooksLibraryUiState } from "../books/libraryState";
 import { normalizeBookBookmark, normalizeBookProgress } from "../books/progress";
 import { readFileAsArrayBuffer, writeBookAsset, writeBookCover } from "../books/storage";
 import type { BookBookmarkEntry, BookEntry, BookProgress, BookSectionSummaryItem, BookSubtype } from "../books/types";
 
-export type AethonBooksExportMode = "full" | "metadata-only";
-export type AethonBooksRestoreIssueCode =
+export type EpigraphBooksExportMode = "full" | "metadata-only";
+export type EpigraphBooksRestoreIssueCode =
   | "missing-books-payload"
   | "invalid-books-payload"
   | "missing-library-file"
@@ -25,17 +25,17 @@ export type AethonBooksRestoreIssueCode =
   | "missing-cover-file"
   | "metadata-only-book";
 
-export interface AethonBooksCategoryRecord {
+export interface EpigraphBooksCategoryRecord {
   id: string;
   name: string;
   order: number;
 }
 
-export interface AethonBooksSnapshot {
+export interface EpigraphBooksSnapshot {
   books: BookEntry[];
   bookProgress: BookProgress[];
   bookBookmarks: BookBookmarkEntry[];
-  booksCategories?: AethonBooksCategoryRecord[];
+  booksCategories?: EpigraphBooksCategoryRecord[];
   booksCategoryAssignments?: Record<string, string[]>;
   booksLibraryUi?: PersistedBooksLibraryUiState;
 }
@@ -76,33 +76,33 @@ interface BooksBookmarksFile {
 
 interface BooksCategoriesFile {
   version: 1;
-  categories: AethonBooksCategoryRecord[];
+  categories: EpigraphBooksCategoryRecord[];
   assignments: Record<string, string[]>;
   ui: PersistedBooksLibraryUiState;
 }
 
-export interface AethonBooksRestoreIssue {
-  code: AethonBooksRestoreIssueCode;
+export interface EpigraphBooksRestoreIssue {
+  code: EpigraphBooksRestoreIssueCode;
   message: string;
   bookId?: string;
   path?: string;
 }
 
-export interface ParsedAethonBooksPayload {
-  exportMode: AethonBooksExportMode;
+export interface ParsedEpigraphBooksPayload {
+  exportMode: EpigraphBooksExportMode;
   library: BooksLibraryFile;
   progress: BooksProgressFile;
   bookmarks: BooksBookmarksFile;
   categories: BooksCategoriesFile;
-  inspection: InspectedAethonBackupContainer;
+  inspection: InspectedEpigraphBackupContainer;
 }
 
-export interface RestoredAethonBooksSnapshot extends AethonBooksSnapshot {
-  exportMode: AethonBooksExportMode;
-  booksCategories: AethonBooksCategoryRecord[];
+export interface RestoredEpigraphBooksSnapshot extends EpigraphBooksSnapshot {
+  exportMode: EpigraphBooksExportMode;
+  booksCategories: EpigraphBooksCategoryRecord[];
   booksCategoryAssignments: Record<string, string[]>;
   booksLibraryUi: PersistedBooksLibraryUiState;
-  issues: AethonBooksRestoreIssue[];
+  issues: EpigraphBooksRestoreIssue[];
 }
 
 type BooksBackupReadDeps = {
@@ -159,8 +159,8 @@ function jsonBytes(input: unknown): Uint8Array {
 }
 
 function normalizeCategories(
-  categories: AethonBooksCategoryRecord[] | undefined,
-): AethonBooksCategoryRecord[] {
+  categories: EpigraphBooksCategoryRecord[] | undefined,
+): EpigraphBooksCategoryRecord[] {
   return Array.isArray(categories)
     ? [...categories]
         .map((category, index) => ({
@@ -235,12 +235,12 @@ function normalizeBooksLibraryUi(
   };
 }
 
-export function buildAethonBooksSnapshotFromLibraryState(
+export function buildEpigraphBooksSnapshotFromLibraryState(
   state: Pick<
     PersistedBookLibraryState,
     "books" | "bookProgress" | "bookBookmarks" | "booksCategories" | "booksCategoryAssignments" | "booksLibraryUi"
   >,
-): AethonBooksSnapshot {
+): EpigraphBooksSnapshot {
   return {
     books: [...state.books],
     bookProgress: [...state.bookProgress],
@@ -251,7 +251,7 @@ export function buildAethonBooksSnapshotFromLibraryState(
   };
 }
 
-function toPortableBookRecord(book: BookEntry, exportMode: AethonBooksExportMode): PortableBookRecord {
+function toPortableBookRecord(book: BookEntry, exportMode: EpigraphBooksExportMode): PortableBookRecord {
   const normalized = {
     ...book,
     pageCount: typeof book.pageCount === "number" ? book.pageCount : null,
@@ -316,20 +316,20 @@ async function readArchiveBinary(zip: JSZip, path: string): Promise<Uint8Array |
   return entry.async("uint8array");
 }
 
-export async function buildAethonBooksPayload(
-  snapshot: AethonBooksSnapshot,
+export async function buildEpigraphBooksPayload(
+  snapshot: EpigraphBooksSnapshot,
   options: {
-    exportMode?: AethonBooksExportMode;
+    exportMode?: EpigraphBooksExportMode;
   } = {},
   deps: BooksBackupReadDeps = defaultReadDeps,
-): Promise<AethonBackupPayloadBuildInput> {
+): Promise<EpigraphBackupPayloadBuildInput> {
   const exportMode = options.exportMode ?? "full";
   const categories = normalizeCategories(snapshot.booksCategories);
   const assignments = normalizeCategoryAssignments(snapshot.booksCategoryAssignments);
   const booksLibraryUi = normalizeBooksLibraryUi(snapshot.booksLibraryUi);
   const libraryRecords = snapshot.books.map((book) => toPortableBookRecord(book, exportMode));
 
-  const files: AethonBackupPayloadBuildInput["files"] = [
+  const files: EpigraphBackupPayloadBuildInput["files"] = [
     {
       path: BOOKS_LIBRARY_FILE_PATH,
       bytes: jsonBytes({ version: 1, books: libraryRecords } satisfies BooksLibraryFile),
@@ -412,18 +412,18 @@ export async function buildAethonBooksPayload(
   };
 }
 
-export async function buildAethonBooksBackupContainer(
-  snapshot: AethonBooksSnapshot,
+export async function buildEpigraphBooksBackupContainer(
+  snapshot: EpigraphBooksSnapshot,
   options: {
-    exportMode?: AethonBooksExportMode;
+    exportMode?: EpigraphBooksExportMode;
     appVersion?: string | null;
     platform?: string | null;
     sourceProfileId?: string | null;
   } = {},
   deps: BooksBackupReadDeps = defaultReadDeps,
-): Promise<BuiltAethonBackupContainer> {
-  const payload = await buildAethonBooksPayload(snapshot, { exportMode: options.exportMode }, deps);
-  return buildAethonBackupContainer({
+): Promise<BuiltEpigraphBackupContainer> {
+  const payload = await buildEpigraphBooksPayload(snapshot, { exportMode: options.exportMode }, deps);
+  return buildEpigraphBackupContainer({
     appVersion: options.appVersion ?? null,
     platform: options.platform ?? null,
     sourceSurface: "desktop",
@@ -432,22 +432,22 @@ export async function buildAethonBooksBackupContainer(
   });
 }
 
-export async function parseAethonBooksPayload(
+export async function parseEpigraphBooksPayload(
   bytes: Uint8Array | ArrayBuffer,
-): Promise<ParsedAethonBooksPayload> {
-  const inspection = await inspectAethonBackupContainer(bytes);
+): Promise<ParsedEpigraphBooksPayload> {
+  const inspection = await inspectEpigraphBackupContainer(bytes);
   if (inspection.hasErrors) {
-    throw new Error("Aethon backup container failed inspection.");
+    throw new Error("Epigraph backup container failed inspection.");
   }
 
   const booksManifest = inspection.payloadManifests.books;
   if (!booksManifest) {
-    throw new Error("The selected Aethon backup does not contain a books payload.");
+    throw new Error("The selected Epigraph backup does not contain a books payload.");
   }
 
   const exportMode = booksManifest.exportMode === "metadata-only" ? "metadata-only" : "full";
   const zip = await JSZip.loadAsync(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-  const registry = AETHON_BACKUP_PAYLOAD_REGISTRY.books;
+  const registry = EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.books;
 
   const library = await loadJsonFromZip<BooksLibraryFile>(zip, `${registry.rootPath}/${BOOKS_LIBRARY_FILE_PATH}`);
   const progress = await loadJsonFromZip<BooksProgressFile>(zip, `${registry.rootPath}/${BOOKS_PROGRESS_FILE_PATH}`);
@@ -473,13 +473,13 @@ export async function parseAethonBooksPayload(
   };
 }
 
-export async function restoreAethonBooksPayload(
+export async function restoreEpigraphBooksPayload(
   bytes: Uint8Array | ArrayBuffer,
   deps: BooksBackupWriteDeps = defaultWriteDeps,
-): Promise<RestoredAethonBooksSnapshot> {
-  const parsed = await parseAethonBooksPayload(bytes);
+): Promise<RestoredEpigraphBooksSnapshot> {
+  const parsed = await parseEpigraphBooksPayload(bytes);
   const zip = await JSZip.loadAsync(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
-  const issues: AethonBooksRestoreIssue[] = [];
+  const issues: EpigraphBooksRestoreIssue[] = [];
   const restoredBooks: BookEntry[] = [];
 
   for (const record of parsed.library.books) {
@@ -488,7 +488,7 @@ export async function restoreAethonBooksPayload(
     let coverPath: string | null = null;
 
     if (record.assetArchivePath) {
-      const archivePath = `${AETHON_BACKUP_PAYLOAD_REGISTRY.books.rootPath}/${normalizeArchiveRelativePath(record.assetArchivePath)}`;
+      const archivePath = `${EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.books.rootPath}/${normalizeArchiveRelativePath(record.assetArchivePath)}`;
       const assetBytes = await readArchiveBinary(zip, archivePath);
       if (!assetBytes) {
         issues.push({
@@ -511,7 +511,7 @@ export async function restoreAethonBooksPayload(
     }
 
     if (record.coverArchivePath) {
-      const archivePath = `${AETHON_BACKUP_PAYLOAD_REGISTRY.books.rootPath}/${normalizeArchiveRelativePath(record.coverArchivePath)}`;
+      const archivePath = `${EPIGRAPH_BACKUP_PAYLOAD_REGISTRY.books.rootPath}/${normalizeArchiveRelativePath(record.coverArchivePath)}`;
       const coverBytes = await readArchiveBinary(zip, archivePath);
       if (!coverBytes) {
         issues.push({

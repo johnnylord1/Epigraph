@@ -5,7 +5,7 @@ import type {
   PersistedNovelChapterEntry,
   PersistedNovelLibraryEntry,
 } from "./domain";
-import type { AethonNovelProgressEntry } from "../backup/novelsBackup";
+import type { EpigraphNovelProgressEntry } from "../backup/novelsBackup";
 import type { HardcoverNovelTrackRecord } from "./hardcover";
 
 export interface NovelShelfCard extends LibraryCardVM {
@@ -14,14 +14,14 @@ export interface NovelShelfCard extends LibraryCardVM {
 
 export interface NovelShelfCardContext {
   readCounts: ReadonlyMap<string, { total: number; read: number }>;
-  progressByNovelId: ReadonlyMap<string, AethonNovelProgressEntry | undefined>;
+  progressByNovelId: ReadonlyMap<string, EpigraphNovelProgressEntry | undefined>;
   hardcoverRecordByNovelId: ReadonlyMap<string, HardcoverNovelTrackRecord>;
 }
 
 export interface BuildNovelShelfInput {
   entries: PersistedNovelLibraryEntry[];
   chapters: PersistedNovelChapterEntry[];
-  progress: AethonNovelProgressEntry[];
+  progress: EpigraphNovelProgressEntry[];
   search: string;
   sortMode: BooksLibrarySortMode;
   sortDir: LibrarySortDir;
@@ -74,7 +74,7 @@ function buildNovelSourceLabel(entry: PersistedNovelLibraryEntry): string {
   return entry.source?.sourceName ?? entry.source?.pluginName ?? "Source";
 }
 
-function getProgressByNovelId(progress: AethonNovelProgressEntry[]): ReadonlyMap<string, AethonNovelProgressEntry | undefined> {
+function getProgressByNovelId(progress: EpigraphNovelProgressEntry[]): ReadonlyMap<string, EpigraphNovelProgressEntry | undefined> {
   return new Map(progress.map((entry) => [entry.novelId, entry]));
 }
 
@@ -93,7 +93,7 @@ function matchesStatus(
   entry: PersistedNovelLibraryEntry,
   statusFilter: BooksLibraryStatusFilter,
   readCounts: ReadonlyMap<string, { total: number; read: number }>,
-  progressByNovelId: ReadonlyMap<string, AethonNovelProgressEntry | undefined>,
+  progressByNovelId: ReadonlyMap<string, EpigraphNovelProgressEntry | undefined>,
 ): boolean {
   if (statusFilter === "all") return true;
   const counts = readCounts.get(entry.id) ?? { total: entry.chapterCount, read: 0 };
@@ -125,7 +125,7 @@ function filterBySearch(entries: PersistedNovelLibraryEntry[], search: string): 
 
 function sortEntries(
   entries: PersistedNovelLibraryEntry[],
-  progressByNovelId: ReadonlyMap<string, AethonNovelProgressEntry | undefined>,
+  progressByNovelId: ReadonlyMap<string, EpigraphNovelProgressEntry | undefined>,
   sortMode: BooksLibrarySortMode,
   sortDir: LibrarySortDir,
 ): PersistedNovelLibraryEntry[] {
@@ -156,7 +156,7 @@ function sortEntries(
 export function buildNovelLibraryCards(input: {
   entries: PersistedNovelLibraryEntry[];
   chapters: PersistedNovelChapterEntry[];
-  progress: AethonNovelProgressEntry[];
+  progress: EpigraphNovelProgressEntry[];
   search: string;
   sortMode: BooksLibrarySortMode;
   sortDir: LibrarySortDir;

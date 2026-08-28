@@ -5,7 +5,7 @@
   "coveringLayers": [
     {
       "background": "color(srgb 0 0 0 / 0.54)",
-      "className": "aethon-search-dim-layer",
+      "className": "epigraph-search-dim-layer",
       "opacity": "0",
       "pointerEvents": "none",
       "zIndex": "90"

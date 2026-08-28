@@ -20,7 +20,7 @@ describe("ThemeEditor theme tokens", () => {
     expect(app).toContain('themeEditor: () => import("./components/settings/ThemeEditor.svelte")');
     expect(settings).toContain("onOpenThemeEditor?.(null)");
     expect(app).toContain("applyCustomTheme(root, custom)");
-    expect(app).not.toContain("aethon-custom-theme");
+    expect(app).not.toContain("epigraph-custom-theme");
     expect(app).not.toContain("themeStyleEl.textContent");
   });
 

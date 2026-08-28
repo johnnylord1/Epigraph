@@ -28,25 +28,25 @@ async function collectProcessMemory() {
   const command = `
 $rows = @()
 $allProcs = @(Get-CimInstance Win32_Process)
-$aethonSuwayomiPids = @{}
+$epigraphSuwayomiPids = @{}
 foreach ($p in $allProcs) {
   $cmd = [string]$p.CommandLine
-  if ($p.Name -eq 'java.exe' -and $cmd -match 'aethon-main|suwayomi') {
-    $aethonSuwayomiPids[[int]$p.ProcessId] = $true
+  if ($p.Name -eq 'java.exe' -and $cmd -match 'epigraph-main|suwayomi') {
+    $epigraphSuwayomiPids[[int]$p.ProcessId] = $true
   }
 }
 
-$procs = $allProcs | Where-Object { $_.Name -in @('aethon.exe','java.exe','jcef_helper.exe','msedgewebview2.exe') }
+$procs = $allProcs | Where-Object { $_.Name -in @('epigraph.exe','java.exe','jcef_helper.exe','msedgewebview2.exe') }
 foreach ($p in $procs) {
   $gp = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
   if (-not $gp) { continue }
   $cmd = [string]$p.CommandLine
-  $isAethonWebView = $cmd -match 'dev\\.aethon\\.app|webview-exe-name=aethon\\.exe'
-  $isSuwayomi = $cmd -match 'aethon-main|suwayomi'
-  $isSuwayomiChild = $p.Name -eq 'jcef_helper.exe' -and $aethonSuwayomiPids.ContainsKey([int]$p.ParentProcessId)
-  if ($p.Name -eq 'aethon.exe' -or $isAethonWebView -or $isSuwayomi -or $isSuwayomiChild) {
-    $role = if ($p.Name -eq 'aethon.exe') {
-      'aethon-rust'
+  $isEpigraphWebView = $cmd -match 'dev\\.epigraph\\.app|webview-exe-name=epigraph\\.exe'
+  $isSuwayomi = $cmd -match 'epigraph-main|suwayomi'
+  $isSuwayomiChild = $p.Name -eq 'jcef_helper.exe' -and $epigraphSuwayomiPids.ContainsKey([int]$p.ParentProcessId)
+  if ($p.Name -eq 'epigraph.exe' -or $isEpigraphWebView -or $isSuwayomi -or $isSuwayomiChild) {
+    $role = if ($p.Name -eq 'epigraph.exe') {
+      'epigraph-rust'
     } elseif ($isSuwayomiChild) {
       'suwayomi-jcef'
     } elseif ($isSuwayomi) {
@@ -107,17 +107,17 @@ async function collectWebViewDiagnostics() {
     }
 
     const diagnostics = await page.evaluate(async () => {
-      const runtime = window.__AETHON_DIAGNOSTICS__?.getSnapshot?.() ?? null;
+      const runtime = window.__EPIGRAPH_DIAGNOSTICS__?.getSnapshot?.() ?? null;
       let backend = null;
       let libraryUpdateStatus = null;
 
       try {
-        backend = await window.__AETHON_DIAGNOSTICS__?.getBackendSnapshot?.();
+        backend = await window.__EPIGRAPH_DIAGNOSTICS__?.getBackendSnapshot?.();
       } catch (error) {
         backend = { error: error instanceof Error ? error.message : String(error) };
       }
 
-      const serverUrl = runtime?.serverUrl ?? window.__aethonAudit?.getState?.()?.serverUrl;
+      const serverUrl = runtime?.serverUrl ?? window.__epigraphAudit?.getState?.()?.serverUrl;
       if (serverUrl) {
         try {
           const response = await fetch(`${serverUrl}/api/graphql`, {
@@ -153,7 +153,7 @@ async function collectWebViewDiagnostics() {
       return {
         title: document.title,
         url: location.href,
-        state: window.__aethonAudit?.getState?.() ?? null,
+        state: window.__epigraphAudit?.getState?.() ?? null,
         runtime,
         backend,
         libraryUpdateStatus,

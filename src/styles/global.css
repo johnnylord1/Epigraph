@@ -44,20 +44,20 @@ body {
   transform: translateZ(0);
 }
 
-body[data-app-shell-mode="standard"] .aethon-app-shell .main > .root {
+body[data-app-shell-mode="standard"] .epigraph-app-shell .main > .root {
   height: auto;
   min-height: 100%;
 }
 
-body[data-app-shell-mode="standard"] .aethon-app-shell .main > .root {
+body[data-app-shell-mode="standard"] .epigraph-app-shell .main > .root {
   min-width: 0;
 }
 
-body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .aethon-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) {
+body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .epigraph-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) {
   justify-items: center;
 }
 
-body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .aethon-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) > * {
+body[data-app-shell-mode="standard"][data-app-resolution-tier="compact"] .epigraph-app-shell .main > .root :is(.home-continue-grid, .home-quick-actions) > * {
   width: min(100%, var(--app-shell-card-max-inline));
 }
 

@@ -15,7 +15,7 @@ describe("offline manga release contract", () => {
   beforeEach(() => {
     invokeMock.mockReset();
     vi.stubGlobal("URL", {
-      createObjectURL: vi.fn((blob: Blob) => `blob:aethon-${blob.type}-${blob.size}`),
+      createObjectURL: vi.fn((blob: Blob) => `blob:epigraph-${blob.type}-${blob.size}`),
       revokeObjectURL: vi.fn(),
     });
   });
@@ -39,8 +39,8 @@ describe("offline manga release contract", () => {
       scanlator: null,
     }));
     expect(urls).toEqual([
-      "blob:aethon-image/jpeg-1",
-      "blob:aethon-image/png-1",
+      "blob:epigraph-image/jpeg-1",
+      "blob:epigraph-image/png-1",
     ]);
 
     revokeOfflineMangaPages(urls);

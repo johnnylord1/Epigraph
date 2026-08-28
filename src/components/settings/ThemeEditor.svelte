@@ -173,7 +173,7 @@
     {
       id: "default",
       label: $_("ui_defaultHud"),
-      description: $_("ui_matchesTheCurrentCompactAethonShell"),
+      description: $_("ui_matchesTheCurrentCompactEpigraphShell"),
       hud: DEFAULT_HUD_THEME_TOKENS,
       motion: "soft",
     },
@@ -538,7 +538,7 @@
               <div class="prv-win-dots">
                 <span></span><span></span><span></span>
               </div>
-              <div class="prv-win-title">Aethon</div>
+              <div class="prv-win-title">Epigraph</div>
             </div>
             <div class="prv-content">
               <div class="prv-row">

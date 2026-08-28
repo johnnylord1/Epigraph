@@ -6,9 +6,9 @@ import {
   isLnReaderBackupZip,
   parseLnReaderNovelsBackup,
 } from "./lnreaderBackup";
-import type { AethonNovelsSnapshot } from "./novelsBackup";
+import type { EpigraphNovelsSnapshot } from "./novelsBackup";
 
-const snapshot: AethonNovelsSnapshot = {
+const snapshot: EpigraphNovelsSnapshot = {
   entries: [{
     id: "novel-1",
     title: "Sample Novel",

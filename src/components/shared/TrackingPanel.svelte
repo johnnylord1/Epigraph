@@ -84,7 +84,7 @@
   const loggedInTrackers = $derived(trackers.filter(t => t.isLoggedIn));
 
   function notifyTrackingStateChanged(trackerId: number | null = null) {
-    globalThis.dispatchEvent?.(new CustomEvent("aethon-tracker-state-changed", {
+    globalThis.dispatchEvent?.(new CustomEvent("epigraph-tracker-state-changed", {
       detail: { kind: "comic", mangaId, trackerId },
     }));
   }

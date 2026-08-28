@@ -20,7 +20,7 @@ describe("GraphQL client errors", () => {
     store.runtimeResolvedLocalProfileMeta = {
       id: "main",
       label: "MAIN",
-      title: "Aethon [MAIN :4567]",
+      title: "Epigraph [MAIN :4567]",
       serverUrl: "http://127.0.0.1:4567",
       port: 4567,
       local: true,
@@ -34,7 +34,7 @@ describe("GraphQL client errors", () => {
     store.settings.serverUrl = "http://127.0.0.1:4667";
     store.runtimeServerUrl = null;
     store.runtimeResolvedLocalProfileMeta = null;
-    vi.stubGlobal("document", { title: "Aethon [MAIN :4567]" });
+    vi.stubGlobal("document", { title: "Epigraph [MAIN :4567]" });
 
     expect(getServerUrl()).toBe("http://127.0.0.1:4567");
   });
@@ -43,7 +43,7 @@ describe("GraphQL client errors", () => {
     store.settings.serverUrl = "http://127.0.0.1:4667";
     store.runtimeServerUrl = null;
     store.runtimeResolvedLocalProfileMeta = null;
-    vi.stubGlobal("document", { title: "Aethon [TEST :4667]" });
+    vi.stubGlobal("document", { title: "Epigraph [TEST :4667]" });
 
     expect(getServerUrl()).toBe("http://127.0.0.1:4567");
   });

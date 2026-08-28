@@ -4,7 +4,10 @@ import {
   buildTasteProfile,
   normalizeRecency,
   normalizeScore,
+  recommendationCandidateIdentityKeys,
+  scoreRecommendationCandidate,
   type RecommendationCandidate,
+  type RecommendationSection,
 } from ".";
 
 const NOW = Date.parse("2026-04-27T12:00:00.000Z");
@@ -62,7 +65,8 @@ describe("taste profile", () => {
 
     expect(profile.tagWeights.get("action")).toBeGreaterThan(1);
     expect(profile.tagWeights.get("dungeon")).toBeGreaterThan(1);
-    expect(profile.tagWeights.get("romance")).toBeGreaterThan(0);
+    expect(profile.tagWeights.get("romance")).toBeLessThan(0);
+    expect(profile.topTags).not.toContain("romance");
     expect(profile.topTags).toContain("action");
   });
 
@@ -161,6 +165,43 @@ describe("recommendation sections", () => {
       "freshInYourSources",
       "outsideYourUsualReads",
     ]);
+  });
+
+  it("does not treat the content format alone as a library-profile match", () => {
+    const scored = scoreRecommendationCandidate(candidate("missing-genres", {
+      contentType: "manhwa",
+      tags: [],
+      providers: [
+        { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+      ],
+    }), profile, NOW);
+    const sections = buildRecommendationSections([
+      candidate("missing-genres", {
+        contentType: "manhwa",
+        tags: [],
+        providers: [
+          { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        ],
+      }),
+    ], profile, { nowMs: NOW });
+
+    expect(scored.personalRatingAffinity).toBe(0);
+    expect(scored.profileTagOverlap).toBe(0);
+    expect(scored.contentTypeFit).toBeGreaterThan(0);
+    expect(sections.find((section) => section.key === "becauseYouRatedHighly")?.items)
+      .toHaveLength(0);
+  });
+
+  it("uses the full profile/tag union when measuring overlap", () => {
+    const scored = scoreRecommendationCandidate(candidate("single-tag-match", {
+      tags: ["Action"],
+      providers: [
+        { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+      ],
+    }), profile, NOW);
+
+    expect(scored.profileTagOverlap).toBeGreaterThan(0);
+    expect(scored.profileTagOverlap).toBeLessThan(0.3);
   });
 
   it("prioritizes candidates that match high-rated taste and tracker consensus", () => {
@@ -438,6 +479,151 @@ describe("recommendation sections", () => {
     expect(highIds.some((id) => becauseIds.includes(id))).toBe(true);
   });
 
+  it("orders overlapping candidates by each category's primary signal", () => {
+    const sections = buildRecommendationSections([
+      candidate("profile-first", {
+        tags: ["Action", "Dungeon", "Regression"],
+        providers: [
+          { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+          {
+            providerId: "anilist",
+            providerName: "AniList",
+            kind: "tracker",
+            score: normalizeScore(72, 100, 0.9),
+          },
+        ],
+      }),
+      candidate("consensus-first", {
+        tags: ["Action"],
+        providers: [
+          { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+          {
+            providerId: "anilist",
+            providerName: "AniList",
+            kind: "tracker",
+            score: normalizeScore(98, 100, 0.9),
+            trending: normalizeScore(15, 100, 0.8),
+          },
+        ],
+      }),
+      candidate("trend-first", {
+        tags: ["Action"],
+        providers: [
+          {
+            providerId: "anilist",
+            providerName: "AniList",
+            kind: "tracker",
+            score: normalizeScore(72, 100, 0.9),
+            trending: normalizeScore(99, 100, 0.9),
+          },
+        ],
+      }),
+      candidate("fresh-first", {
+        tags: ["Action"],
+        providers: [
+          {
+            providerId: "source",
+            providerName: "Source",
+            kind: "source",
+            availability: normalizeScore(1, 1, 0.8),
+            recency: normalizeRecency(NOW, NOW, 14, 0.9),
+          },
+        ],
+      }),
+      candidate("fresh-second", {
+        tags: ["Action"],
+        providers: [
+          {
+            providerId: "source",
+            providerName: "Source",
+            kind: "source",
+            availability: normalizeScore(1, 1, 0.8),
+            recency: normalizeRecency(NOW - (7 * 86_400_000), NOW, 14, 0.9),
+          },
+        ],
+      }),
+    ], profile, { nowMs: NOW, limitPerSection: 18 });
+
+    const idsFor = (key: RecommendationSection["key"]) =>
+      sections.find((section) => section.key === key)?.items.map((item) => item.candidate.id) ?? [];
+
+    expect(idsFor("becauseYouRatedHighly")[0]).toBe("profile-first");
+    expect(idsFor("highConfidence")[0]).toBe("consensus-first");
+    expect(idsFor("trendingNearYourTaste")[0]).toBe("trend-first");
+    expect(idsFor("freshInYourSources").slice(0, 2)).toEqual(["fresh-first", "fresh-second"]);
+  });
+
+  it("deduplicates within each section while allowing the same work across sections", () => {
+    const sharedWork = candidate("shared-work", {
+      title: "Shared Work",
+      tags: ["Action", "Dungeon", "Regression"],
+      providers: [
+        { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        {
+          providerId: "anilist",
+          providerName: "AniList",
+          kind: "tracker",
+          score: normalizeScore(92, 100, 0.9),
+          trending: normalizeScore(90, 100, 0.8),
+        },
+      ],
+    });
+    const sharedWorkAlias = candidate("shared-work-alias", {
+      title: "Isekai Shared Work",
+      alternativeTitles: ["Shared Work"],
+      tags: ["Action", "Dungeon", "Regression"],
+      providers: [
+        { providerId: "source-2", providerName: "Another Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+      ],
+    });
+
+    const sections = buildRecommendationSections([sharedWork, sharedWorkAlias], profile, {
+      nowMs: NOW,
+      limitPerSection: 18,
+    });
+
+    for (const section of sections) {
+      const seenKeys = new Set<string>();
+      for (const item of section.items) {
+        const identityKeys = recommendationCandidateIdentityKeys(item.candidate);
+        expect(identityKeys.some((key) => seenKeys.has(key))).toBe(false);
+        for (const key of identityKeys) seenKeys.add(key);
+      }
+    }
+
+    const sectionsContainingSharedWork = sections.filter((section) =>
+      section.items.some((item) => recommendationCandidateIdentityKeys(item.candidate).includes("comic:shared work")),
+    );
+    expect(sectionsContainingSharedWork.length).toBeGreaterThan(1);
+  });
+
+  it("keeps a profile match out of outside usual reads", () => {
+    const profileMatch = candidate("shepherd-wizard", {
+      title: "The Shepherd Wizard",
+      tags: ["Action", "Fantasy", "Adventure"],
+      providers: [
+        { providerId: "flame", providerName: "Flame Scans", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        {
+          providerId: "anilist",
+          providerName: "AniList",
+          kind: "tracker",
+          score: normalizeScore(76, 100, 0.9),
+          trending: normalizeScore(90, 100, 0.8),
+        },
+      ],
+    });
+
+    const sections = buildRecommendationSections([profileMatch], profile, {
+      nowMs: NOW,
+      limitPerSection: 18,
+    });
+    const because = sections.find((section) => section.key === "becauseYouRatedHighly");
+    const outside = sections.find((section) => section.key === "outsideYourUsualReads");
+
+    expect(because?.items.map((item) => item.candidate.id)).toContain("shepherd-wizard");
+    expect(outside?.items.map((item) => item.candidate.id)).not.toContain("shepherd-wizard");
+  });
+
   it("keeps profile and confidence categories aligned with the dominant comic format", () => {
     const manhwaProfile = buildTasteProfile([
       {
@@ -540,7 +726,7 @@ describe("recommendation sections", () => {
     const becauseIds = sections.find((section) => section.key === "becauseYouRatedHighly")?.items.map((item) => item.candidate.id) ?? [];
     const highIds = sections.find((section) => section.key === "highConfidence")?.items.map((item) => item.candidate.id) ?? [];
 
-    expect(becauseIds).toContain("source-only-no-tags-yet");
+    expect(becauseIds).not.toContain("source-only-no-tags-yet");
     expect(highIds).toContain("source-only-no-tags-yet");
     expect(becauseIds).not.toContain("unrelated-bl");
     expect(highIds).not.toContain("unrelated-bl");

@@ -30,9 +30,9 @@ const SUWAYOMI_COMPATIBILITY_MANIFEST: &str =
     include_str!("../resources/suwayomi-compatibility.json");
 const SUWAYOMI_RELEASES_API_URL: &str =
     "https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases?per_page=50";
-const SUWAYOMI_RELEASES_USER_AGENT: &str = "Aethon-Suwayomi-Updater";
+const SUWAYOMI_RELEASES_USER_AGENT: &str = "Epigraph-Suwayomi-Updater";
 const SUWAYOMI_RELEASES_CACHE_TTL: Duration = Duration::from_secs(60);
-const SUWAYOMI_SNAPSHOT_DIR: &str = "aethon-update-snapshots";
+const SUWAYOMI_SNAPSHOT_DIR: &str = "epigraph-update-snapshots";
 const SUWAYOMI_SNAPSHOT_MANIFEST: &str = "snapshot-manifest.json";
 const SUWAYOMI_SNAPSHOT_VERSION: &str = "2";
 const SUWAYOMI_SNAPSHOT_SPACE_MARGIN_BYTES: u64 = 1024 * 1024;
@@ -209,7 +209,16 @@ struct SuwayomiAllowedVersion {
     version: String,
     asset: String,
     sha256: String,
+    compatibility_profile: SuwayomiCompatibilityProfile,
+    transactional_extension_updates: bool,
     notes: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum SuwayomiCompatibilityProfile {
+    V21,
+    V23,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -422,13 +431,13 @@ fn update_error(kind: SuwayomiUpdateErrorKind, message: impl Into<String>) -> St
 }
 
 fn log_update_start(step: &str) -> Instant {
-    eprintln!("[aethon-suwayomi-update] start step={step}");
+    eprintln!("[epigraph-suwayomi-update] start step={step}");
     Instant::now()
 }
 
 fn log_update_success(step: &str, started: Instant) {
     eprintln!(
-        "[aethon-suwayomi-update] success step={step} duration_ms={}",
+        "[epigraph-suwayomi-update] success step={step} duration_ms={}",
         started.elapsed().as_millis()
     );
 }
@@ -436,7 +445,7 @@ fn log_update_success(step: &str, started: Instant) {
 fn log_update_failure(step: &str, started: Instant, error: &str) {
     let sanitized = error.replace('\n', " ");
     eprintln!(
-        "[aethon-suwayomi-update] failure step={step} duration_ms={} reason={sanitized}",
+        "[epigraph-suwayomi-update] failure step={step} duration_ms={} reason={sanitized}",
         started.elapsed().as_millis()
     );
 }
@@ -496,7 +505,7 @@ pub fn get_suwayomi_runtime_status(
             None,
             None,
             None,
-            "External Suwayomi servers are not managed by Aethon.",
+            "External Suwayomi servers are not managed by Epigraph.",
         );
     }
 
@@ -532,7 +541,7 @@ pub fn get_suwayomi_runtime_status(
             root_dir,
             None,
             None,
-            "This session is attach-only; Aethon will not update its Suwayomi server.",
+            "This session is attach-only; Epigraph will not update its Suwayomi server.",
         );
     }
 
@@ -545,11 +554,11 @@ pub fn get_suwayomi_runtime_status(
             root_dir,
             Some(user_binary),
             None,
-            "A user-provided Suwayomi binary is not updated by Aethon.",
+            "A user-provided Suwayomi binary is not updated by Epigraph.",
         );
     }
 
-    let java_pid = match prove_aethon_runtime_ownership(&target) {
+    let java_pid = match prove_epigraph_runtime_ownership(&target) {
         Ok(java_pid) => java_pid,
         Err(reason) => {
             return blocked_status(
@@ -582,9 +591,9 @@ pub fn get_suwayomi_runtime_status(
         None
     };
     let reason = if fallback_jar.is_some() {
-        "Aethon owns the local server, but the effective Suwayomi JAR is not a managed Aethon JAR."
+        "Epigraph owns the local server, but the effective Suwayomi JAR is not a managed Epigraph JAR."
     } else {
-        "Aethon could not find a managed Suwayomi JAR."
+        "Epigraph could not find a managed Suwayomi JAR."
     };
     blocked_status(
         SuwayomiRuntimeMode::Unknown,
@@ -645,7 +654,7 @@ fn create_suwayomi_update_snapshot_unlocked(
     if !runtime.update_allowed {
         return Err(runtime
             .block_reason
-            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Epigraph.".to_string()));
     }
 
     let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
@@ -709,7 +718,7 @@ pub async fn stage_suwayomi_runtime_update(
         if let Some(blocked) = runtime_update_preflight_block(&runtime) {
             return Err(blocked
                 .block_reason
-                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Epigraph.".to_string()));
         }
 
         let manifest = load_compatibility_manifest()?;
@@ -867,7 +876,7 @@ async fn promote_suwayomi_runtime_update_unlocked(
         if !runtime.update_allowed {
             return Err(runtime
                 .block_reason
-                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()));
+                .unwrap_or_else(|| "This Suwayomi runtime is not managed by Epigraph.".to_string()));
         }
     }
 
@@ -1384,7 +1393,7 @@ fn load_compatibility_manifest() -> Result<SuwayomiCompatibilityManifest, String
 fn validate_compatibility_manifest(
     manifest: SuwayomiCompatibilityManifest,
 ) -> Result<SuwayomiCompatibilityManifest, String> {
-    if manifest.schema_version != 2 {
+    if manifest.schema_version != 3 {
         return Err(format!(
             "Unsupported Suwayomi compatibility manifest schema {}.",
             manifest.schema_version
@@ -1427,7 +1436,15 @@ fn validate_compatibility_manifest(
                 .map_or(true, |ordering| ordering == std::cmp::Ordering::Greater)
         {
             return Err(format!(
-                "Allowed Suwayomi version {} is outside Aethon's tested range.",
+                "Allowed Suwayomi version {} is outside Epigraph's tested range.",
+                allowed.version
+            ));
+        }
+        if allowed.transactional_extension_updates
+            && allowed.compatibility_profile != SuwayomiCompatibilityProfile::V23
+        {
+            return Err(format!(
+                "Allowed Suwayomi version {} enables transactional extension updates with an incompatible profile.",
                 allowed.version
             ));
         }
@@ -1534,7 +1551,7 @@ fn stop_managed_runtime_for_snapshot(
     app: &AppHandle,
     target: &LocalServerTarget,
 ) -> Result<bool, String> {
-    let java_pid = prove_aethon_runtime_ownership(target)?;
+    let java_pid = prove_epigraph_runtime_ownership(target)?;
     kill_tachidesk_target(app, target);
     wait_for_managed_runtime_stop(&target.root_dir, java_pid)?;
     assert_local_port_released(target.port)?;
@@ -2008,7 +2025,7 @@ fn runtime_update_preflight_block(
         runtime
             .block_reason
             .clone()
-            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Aethon.".to_string()),
+            .unwrap_or_else(|| "This Suwayomi runtime is not managed by Epigraph.".to_string()),
     ))
 }
 
@@ -2025,7 +2042,7 @@ fn manifest_preflight_block(
     if let Some(blocked) = manifest.blocked_reason(current) {
         return Some(blocked_update_check(
             runtime.version.clone(),
-            format!("Current Suwayomi version is blocked by Aethon: {blocked}"),
+            format!("Current Suwayomi version is blocked by Epigraph: {blocked}"),
         ));
     }
     if compare_versions(current, &manifest.min_supported_version)
@@ -2034,7 +2051,7 @@ fn manifest_preflight_block(
         return Some(blocked_update_check(
             runtime.version.clone(),
             format!(
-                "Current Suwayomi version is below Aethon's minimum supported version {}.",
+                "Current Suwayomi version is below Epigraph's minimum supported version {}.",
                 manifest.min_supported_version
             ),
         ));
@@ -2045,7 +2062,7 @@ fn manifest_preflight_block(
         return Some(blocked_update_check(
             runtime.version.clone(),
             format!(
-                "Current Suwayomi version is newer than Aethon's maximum tested version {}.",
+                "Current Suwayomi version is newer than Epigraph's maximum tested version {}.",
                 manifest.max_tested_version
             ),
         ));
@@ -2068,7 +2085,7 @@ fn calculate_update_check(
     let Some(latest) = latest_compatible_release(manifest, releases) else {
         return blocked_update_check(
             Some(current_version),
-            "No compatible Suwayomi release from Aethon's allowlist was found.".to_string(),
+            "No compatible Suwayomi release from Epigraph's allowlist was found.".to_string(),
         );
     };
 
@@ -2186,7 +2203,7 @@ fn select_staging_candidate(
         latest_compatible_release(manifest, releases)
     }
     .ok_or_else(|| {
-        "No compatible Suwayomi release from Aethon's allowlist was found.".to_string()
+        "No compatible Suwayomi release from Epigraph's allowlist was found.".to_string()
     })?;
 
     match compare_versions(&compatible.allowed.version, current) {
@@ -2280,13 +2297,13 @@ fn certified_release_checksum(
 ) -> Result<String, String> {
     let allowed = manifest
         .allowed_version(version)
-        .ok_or_else(|| "Target Suwayomi version is not in Aethon's allowlist.".to_string())?;
+        .ok_or_else(|| "Target Suwayomi version is not in Epigraph's allowlist.".to_string())?;
     if allowed.asset != asset_name {
-        return Err("Target Suwayomi asset does not match Aethon's allowlist.".to_string());
+        return Err("Target Suwayomi asset does not match Epigraph's allowlist.".to_string());
     }
     if !allowed.sha256.eq_ignore_ascii_case(published_sha256) {
         return Err(
-            "Published Suwayomi checksum does not match Aethon's certified SHA-256.".to_string(),
+            "Published Suwayomi checksum does not match Epigraph's certified SHA-256.".to_string(),
         );
     }
     Ok(allowed.sha256.to_ascii_lowercase())
@@ -2542,15 +2559,15 @@ fn validate_staging_candidate(
 ) -> Result<(), String> {
     let allowed = manifest
         .allowed_version(&candidate.version)
-        .ok_or_else(|| "Target Suwayomi version is not in Aethon's allowlist.".to_string())?;
+        .ok_or_else(|| "Target Suwayomi version is not in Epigraph's allowlist.".to_string())?;
     if manifest.blocked_reason(&candidate.version).is_some() {
-        return Err("Target Suwayomi version is blocked by Aethon.".to_string());
+        return Err("Target Suwayomi version is blocked by Epigraph.".to_string());
     }
     if !manifest.version_within_tested_range(&candidate.version) {
-        return Err("Target Suwayomi version is outside Aethon's tested range.".to_string());
+        return Err("Target Suwayomi version is outside Epigraph's tested range.".to_string());
     }
     if allowed.asset != candidate.asset_name {
-        return Err("Target Suwayomi asset does not match Aethon's allowlist.".to_string());
+        return Err("Target Suwayomi asset does not match Epigraph's allowlist.".to_string());
     }
     Ok(())
 }
@@ -2634,12 +2651,12 @@ fn validate_staging_dir(
     let certified_sha256 = manifest
         .allowed_version(&staging_manifest.version)
         .map(|allowed| allowed.sha256.as_str())
-        .ok_or_else(|| "Staged Suwayomi version is not in Aethon's allowlist.".to_string())?;
+        .ok_or_else(|| "Staged Suwayomi version is not in Epigraph's allowlist.".to_string())?;
     if !staging_manifest
         .sha256
         .eq_ignore_ascii_case(certified_sha256)
     {
-        return Err("Staged Suwayomi JAR does not match Aethon's certified SHA-256.".to_string());
+        return Err("Staged Suwayomi JAR does not match Epigraph's certified SHA-256.".to_string());
     }
     validate_staged_jar(
         &staging_dir.join(SUWAYOMI_SERVER_JAR),
@@ -2835,7 +2852,7 @@ fn wait_for_runtime_jar(
     expected_jar: &Path,
     min_alive: Duration,
 ) -> Result<(), String> {
-    let java_pid = prove_aethon_runtime_ownership(target)?;
+    let java_pid = prove_epigraph_runtime_ownership(target)?;
     if !java_pid_uses_jar(java_pid, expected_jar) {
         return Err("Suwayomi process is not using the expected managed JAR.".to_string());
     }
@@ -3016,8 +3033,8 @@ async fn upload_exact_extension_artifact(
         .map_err(|error| format!("Could not open staged extension artifact: {error}"))?
         .file_name(artifact.file_name.clone());
     let operations = json!({
-        "operationName": "AethonInstallExactExtension",
-        "query": "mutation AethonInstallExactExtension($extensionFile: Upload!) { installExternalExtension(input: { extensionFile: $extensionFile }) { extension { pkgName versionName versionCodeLong isInstalled } } }",
+        "operationName": "EpigraphInstallExactExtension",
+        "query": "mutation EpigraphInstallExactExtension($extensionFile: Upload!) { installExternalExtension(input: { extensionFile: $extensionFile }) { extension { pkgName versionName versionCodeLong isInstalled } } }",
         "variables": { "extensionFile": Value::Null }
     });
     let form = reqwest::multipart::Form::new()
@@ -3083,7 +3100,7 @@ async fn query_extension_source_ids_once(
 ) -> Result<Vec<String>, String> {
     let endpoint = graphql_endpoint(server_url)?;
     let mut request = client.post(endpoint).json(&json!({
-        "query": "query AethonExtensionIdentity { extensions { nodes { pkgName versionCodeLong isInstalled } } sources { nodes { id extension { pkgName } } } }"
+        "query": "query EpigraphExtensionIdentity { extensions { nodes { pkgName versionCodeLong isInstalled } } sources { nodes { id extension { pkgName } } } }"
     }));
     if let Some(auth) = auth_header.filter(|value| !value.trim().is_empty()) {
         request = request.header(reqwest::header::AUTHORIZATION, auth);
@@ -3403,11 +3420,17 @@ pub async fn certify_suwayomi_extension_update_batch(
         }));
     }
     let runtime_version = runtime.version.clone().unwrap_or_default();
-    if normalize_version_tag(&runtime_version) != "v2.3.2243" {
-        return Err(
-            "Transactional extension updates require the certified Suwayomi v2.3.2243 runtime."
-                .to_string(),
-        );
+    let compatibility_manifest = load_compatibility_manifest()?;
+    let allowed_runtime = compatibility_manifest
+        .allowed_version(&runtime_version)
+        .ok_or_else(|| {
+            "Transactional extension updates require an allowlisted Suwayomi runtime.".to_string()
+        })?;
+    if !allowed_runtime.transactional_extension_updates {
+        return Err(format!(
+            "Transactional extension updates are not certified for Suwayomi {} ({:?}).",
+            allowed_runtime.version, allowed_runtime.compatibility_profile
+        ));
     }
     let runtime_jar = runtime
         .jar_path
@@ -3415,6 +3438,12 @@ pub async fn certify_suwayomi_extension_update_batch(
         .map(PathBuf::from)
         .ok_or_else(|| "Managed Suwayomi JAR path is unavailable.".to_string())?;
     let runtime_artifact_sha256 = sha256_file(&runtime_jar)?;
+    if !runtime_artifact_sha256.eq_ignore_ascii_case(&allowed_runtime.sha256) {
+        return Err(
+            "The active Suwayomi runtime does not match its certified artifact SHA-256."
+                .to_string(),
+        );
+    }
     let batch_id = Uuid::new_v4().to_string();
     let batch_root = suwayomi_data_dir()
         .join(EXTENSION_BATCH_ROOT)
@@ -3721,22 +3750,22 @@ async fn run_suwayomi_graphql_health_check(
     let checks = [
         (
             "typename",
-            "query AethonHealthTypename { __typename }",
+            "query EpigraphHealthTypename { __typename }",
             "GraphQL typename check failed.",
         ),
         (
             "library",
-            "query AethonHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }",
+            "query EpigraphHealthLibrary { library: mangas(condition: { inLibrary: true }, first: 1) { nodes { id } } }",
             "Library health check failed.",
         ),
         (
             "sources",
-            "query AethonHealthSources { sources(first: 1) { nodes { id displayName } } }",
+            "query EpigraphHealthSources { sources(first: 1) { nodes { id displayName } } }",
             "Sources health check failed.",
         ),
         (
             "extensions",
-            "query AethonHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }",
+            "query EpigraphHealthExtensions { extensions(first: 1) { nodes { pkgName isInstalled } } }",
             "Extensions health check failed.",
         ),
     ];
@@ -3798,17 +3827,17 @@ async fn run_suwayomi_graphql_health_check(
     };
     match write_suwayomi_health_diagnostic_report(&report) {
         Ok(path) => eprintln!(
-            "[aethon-suwayomi-update] health_diagnostic path={}",
+            "[epigraph-suwayomi-update] health_diagnostic path={}",
             path.display()
         ),
         Err(error) => eprintln!(
-            "[aethon-suwayomi-update] health_diagnostic_failed reason={}",
+            "[epigraph-suwayomi-update] health_diagnostic_failed reason={}",
             error.replace('\n', " ")
         ),
     }
     Err(update_error(
         SuwayomiUpdateErrorKind::HealthCheckError,
-        "The downloaded Suwayomi runtime could not be verified safely. Aethon kept the current runtime.",
+        "The downloaded Suwayomi runtime could not be verified safely. Epigraph kept the current runtime.",
     ))
 }
 
@@ -4202,11 +4231,11 @@ fn bundled_jar_candidates(app: &AppHandle) -> Vec<PathBuf> {
     }
 }
 
-fn prove_aethon_runtime_ownership(target: &LocalServerTarget) -> Result<u32, String> {
+fn prove_epigraph_runtime_ownership(target: &LocalServerTarget) -> Result<u32, String> {
     let spawn_lock = server_spawn_lock_path(&target.root_dir);
     if spawn_lock.exists() {
         return Err(
-            "Aethon is still starting or reconciling this Suwayomi runtime; update is blocked."
+            "Epigraph is still starting or reconciling this Suwayomi runtime; update is blocked."
                 .to_string(),
         );
     }
@@ -4214,7 +4243,7 @@ fn prove_aethon_runtime_ownership(target: &LocalServerTarget) -> Result<u32, Str
     let owner_path = server_owner_path(&target.root_dir);
     let Some(owner) = read_server_owner(&owner_path) else {
         return Err(
-            "Aethon has not published ownership for this local Suwayomi runtime.".to_string(),
+            "Epigraph has not published ownership for this local Suwayomi runtime.".to_string(),
         );
     };
 
@@ -4224,7 +4253,7 @@ fn prove_aethon_runtime_ownership(target: &LocalServerTarget) -> Result<u32, Str
             Err("The local Suwayomi ownership record is stale; update is blocked.".to_string())
         }
         OwnerReuseDecision::ConflictingLiveProcess => Err(
-            "A local Suwayomi process is alive but failed Aethon ownership health checks."
+            "A local Suwayomi process is alive but failed Epigraph ownership health checks."
                 .to_string(),
         ),
     }
@@ -4515,6 +4544,8 @@ mod tests {
             version: "v2.2.2100".to_string(),
             asset: "Suwayomi-Server-v2.2.2100.jar".to_string(),
             sha256: "a".repeat(64),
+            compatibility_profile: SuwayomiCompatibilityProfile::V21,
+            transactional_extension_updates: false,
             notes: Some("Test-only allowed Suwayomi 2.2 release.".to_string()),
         });
         manifest
@@ -4560,7 +4591,7 @@ mod tests {
             jar_version: None,
             jar_path: None,
             profile_id: Some("main".to_string()),
-            root_dir: Some("C:/aethon-main".to_string()),
+            root_dir: Some("C:/epigraph-main".to_string()),
             server_url: "http://127.0.0.1:4567".to_string(),
             update_allowed,
             block_reason: None,
@@ -4596,9 +4627,9 @@ mod tests {
 
     #[test]
     fn effective_managed_jar_requires_process_match() {
-        let runtime = PathBuf::from("C:/aethon/runtime/current/Suwayomi-Server.jar");
+        let runtime = PathBuf::from("C:/epigraph/runtime/current/Suwayomi-Server.jar");
         let bundled =
-            PathBuf::from("C:/aethon/resources/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar");
+            PathBuf::from("C:/epigraph/resources/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar");
 
         assert_eq!(
             select_effective_managed_jar(&runtime, &bundled, |_| true),
@@ -4630,9 +4661,9 @@ mod tests {
 
     #[test]
     fn jar_path_comparison_normalizes_slashes() {
-        let path = PathBuf::from("C:/aethon/Suwayomi-Server.jar");
+        let path = PathBuf::from("C:/epigraph/Suwayomi-Server.jar");
         assert!(jar_arg_matches_path(
-            "C:\\aethon\\Suwayomi-Server.jar",
+            "C:\\epigraph\\Suwayomi-Server.jar",
             &path
         ));
     }
@@ -4642,7 +4673,18 @@ mod tests {
         let manifest = test_manifest();
 
         assert_eq!(manifest.repository, "Suwayomi/Suwayomi-Server");
-        assert!(manifest.allowed_version("v2.1.1867").is_some());
+        let baseline = manifest.allowed_version("v2.1.1867").unwrap();
+        assert_eq!(
+            baseline.compatibility_profile,
+            SuwayomiCompatibilityProfile::V21
+        );
+        assert!(!baseline.transactional_extension_updates);
+        let modern = manifest.allowed_version("v2.3.2243").unwrap();
+        assert_eq!(
+            modern.compatibility_profile,
+            SuwayomiCompatibilityProfile::V23
+        );
+        assert!(modern.transactional_extension_updates);
         assert!(manifest.blocked_reason("v2.0.1727").is_some());
         assert!(manifest.blocked_reason("v2.2.2100").is_some());
     }
@@ -4661,6 +4703,10 @@ mod tests {
         let mut invalid_hash = test_manifest();
         invalid_hash.allowed_versions[0].sha256 = "not-a-sha256".to_string();
         assert!(validate_compatibility_manifest(invalid_hash).is_err());
+
+        let mut incompatible_capability = test_manifest();
+        incompatible_capability.allowed_versions[0].transactional_extension_updates = true;
+        assert!(validate_compatibility_manifest(incompatible_capability).is_err());
     }
 
     #[test]

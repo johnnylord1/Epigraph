@@ -24,7 +24,7 @@ const NATIVE_TRACKING_PROVIDER_REGISTRY: readonly NativeTrackingProviderDefiniti
   {
     id: "hardcover",
     name: "Hardcover",
-    stateEvents: ["aethon-hardcover-state-changed"],
+    stateEvents: ["epigraph-hardcover-state-changed"],
     resolveConnected: (scope) => loadHardcoverState(scope).auth.connected,
   },
 ];

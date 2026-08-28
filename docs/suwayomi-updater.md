@@ -2,7 +2,7 @@
 
 ## Scope
 
-Aethon updates only the Suwayomi runtime it can prove it owns. The updater never updates external servers, attach-only sessions, or a user-provided `serverBinary`.
+Epigraph updates only the Suwayomi runtime it can prove it owns. The updater never updates external servers, attach-only sessions, or a user-provided `serverBinary`.
 
 The current flow is manual from Settings. There is no silent update, scheduler, background update, telemetry, or analytics.
 
@@ -27,11 +27,11 @@ The install command holds the native updater lock for snapshot, promotion, healt
 Update is allowed only when all of these are true:
 
 - The server URL is loopback.
-- The local profile/root can be resolved by Aethon.
+- The local profile/root can be resolved by Epigraph.
 - The session is not attach-only.
 - `serverBinary` is empty.
-- The owner file and spawn lock state prove Aethon owns the Java process.
-- The running Java process uses the bundled JAR or Aethon-managed runtime JAR.
+- The owner file and spawn lock state prove Epigraph owns the Java process.
+- The running Java process uses the bundled JAR or Epigraph-managed runtime JAR.
 
 If ownership is not proven, status is `external`, `managed-user-binary`, or `unknown`, and update is blocked.
 
@@ -46,7 +46,7 @@ The compatibility manifest is the only source of truth for installable versions.
 - published in `Suwayomi/Suwayomi-Server`;
 - carrying the expected JAR asset and `Checksums.sha256`.
 
-Schema 2 pins the exact SHA-256 of every allowed JAR. During staging, Aethon requires the checksum published by Suwayomi to match this certified hash before it downloads or promotes the runtime. A replaced release asset or checksum therefore fails closed even when the version and asset name remain unchanged.
+Schema 3 pins the exact SHA-256, compatibility profile, and certified runtime capabilities of every allowed JAR. During staging, Epigraph requires the checksum published by Suwayomi to match this certified hash before it downloads or promotes the runtime. Transactional extension updates additionally require the active JAR to match the allowlisted SHA and explicitly opt into that capability. A replaced release asset, checksum, or unknown future version therefore fails closed even when the version and asset name appear compatible.
 
 Checksum validation is integrity only. If Suwayomi publishes a verifiable signature later, the updater should add signature verification before relaxing any rule.
 
@@ -67,7 +67,7 @@ Each runner:
 1. resolves the exact stable release from `Suwayomi/Suwayomi-Server`;
 2. downloads the expected JAR and `Checksums.sha256` from official HTTPS release URLs;
 3. verifies the JAR checksum and its internal `Specification-Version`;
-4. starts the JAR with Aethon's headless memory/configuration profile in an isolated temporary root;
+4. starts the JAR with Epigraph's headless memory/configuration profile in an isolated temporary root;
 5. validates typename, Library, Sources, and Extensions GraphQL queries;
 6. records a canonical, description-free schema hash and evaluates the required GraphQL fields as a semantic contract;
 7. records observed capabilities and best-effort process memory, CPU, thread, and startup metrics;
@@ -125,7 +125,7 @@ suwayomi-runtime/
 Snapshots live inside the Suwayomi profile root:
 
 ```text
-aethon-update-snapshots/
+epigraph-update-snapshots/
   snapshot-<timestamp>-<uuid>/
     snapshot-manifest.json
     server.conf
@@ -161,9 +161,9 @@ Invalid staging is removed and never promoted.
 
 ## Promotion And Rollback
 
-Promotion validates staging, stops only the Aethon-managed runtime, moves `current` to `previous`, then moves staging to `current`. Existing `previous` is kept as a temporary backup until success.
+Promotion validates staging, stops only the Epigraph-managed runtime, moves `current` to `previous`, then moves staging to `current`. Existing `previous` is kept as a temporary backup until success.
 
-When promoting to V23 or newer, Aethon migrates the allowlisted legacy
+When promoting to V23 or newer, Epigraph migrates the allowlisted legacy
 `server.extensionRepos` value into `server.extensionStores`, deduplicates the
 URLs and publishes `server.conf` atomically. The pre-promotion snapshot includes
 the original configuration, so any parse, write, startup or health failure
@@ -188,17 +188,17 @@ always restored as one logical unit.
 Maintenance drains active Suwayomi operations before stopping the runtime and
 holds an exclusive cross-process lease until promotion or rollback has been
 revalidated. New UI mutations and remote Syncd Suwayomi-proxy mutations are
-rejected with a retryable maintenance result before Aethon accepts or forwards
+rejected with a retryable maintenance result before Epigraph accepts or forwards
 them. Reads cached outside Suwayomi and Core/Syncd replication remain available.
 
-Aethon intentionally does not persist arbitrary GraphQL requests as an outbox:
+Epigraph intentionally does not persist arbitrary GraphQL requests as an outbox:
 many Suwayomi mutations do not expose an idempotency key, so replaying them
 could duplicate downloads or destructive actions. Mutations already accepted
 by Core remain in Core's durable state and are not interpreted as deletions
 while Suwayomi is unavailable. Maintenance ends only after the selected runtime
 has passed its final health check.
 
-On the next managed startup, Aethon prefers `suwayomi-runtime/current/Suwayomi-Server.jar` when it exists and otherwise falls back to the bundled JAR. Windows uses the bundled `javaw.exe` when available so the managed server remains background-only.
+On the next managed startup, Epigraph prefers `suwayomi-runtime/current/Suwayomi-Server.jar` when it exists and otherwise falls back to the bundled JAR. Windows uses the bundled `javaw.exe` when available so the managed server remains background-only.
 
 The managed-current selection path was smoke-tested with a copied baseline JAR: the process command line selected `current/Suwayomi-Server.jar`, ownership was published, and the Library, Sources, and Extensions GraphQL health query completed without errors.
 
@@ -213,7 +213,7 @@ Startup alone is not success. After promotion the updater validates GraphQL:
 
 The check validates payload shape and absence of GraphQL errors. It does not require identical Library counts immediately after startup.
 
-The readiness window is intentionally longer than a normal launch because a promoted server can run database or extension migrations before GraphQL becomes stable. If verification still fails, Aethon writes an internal diagnostic report under:
+The readiness window is intentionally longer than a normal launch because a promoted server can run database or extension migrations before GraphQL becomes stable. If verification still fails, Epigraph writes an internal diagnostic report under:
 
 ```text
 suwayomi-runtime/
@@ -225,7 +225,7 @@ The report records each attempted GraphQL check, duration and sanitized error, b
 
 ## Logs And Errors
 
-Native updater commands log start, success/failure, duration, and sanitized failure reason using the `aethon-suwayomi-update` prefix.
+Native updater commands log start, success/failure, duration, and sanitized failure reason using the `epigraph-suwayomi-update` prefix.
 
 Command errors are categorized:
 
@@ -240,7 +240,7 @@ Command errors are categorized:
 
 The UI strips these prefixes for friendly user-facing messages.
 
-Promotion or health-check failures are normalized in the Settings UI to explain only the outcome: Aethon could not verify the downloaded update and kept the current runtime. If automatic rollback itself fails, the UI asks the user to restart Aethon before retrying. Query names, migration details and diagnostic paths remain in logs/diagnostic files so regular users do not need to understand the internal certification process.
+Promotion or health-check failures are normalized in the Settings UI to explain only the outcome: Epigraph could not verify the downloaded update and kept the current runtime. If automatic rollback itself fails, the UI asks the user to restart Epigraph before retrying. Query names, migration details and diagnostic paths remain in logs/diagnostic files so regular users do not need to understand the internal certification process.
 
 ## Limitations
 

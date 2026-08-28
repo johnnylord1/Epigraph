@@ -1,17 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildAethonBackupContainer, inspectAethonBackupContainer } from "./aethonBackup";
+import { buildEpigraphBackupContainer, inspectEpigraphBackupContainer } from "./epigraphBackup";
 import {
-  AETHON_NOVELS_PAYLOAD_FILE_PATH,
-  buildAethonNovelsBackupContainer,
-  buildAethonNovelsPayload,
-  parseAethonNovelsPayload,
-  restoreAethonNovelsPayload,
-  type AethonNovelsSnapshot,
+  EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH,
+  buildEpigraphNovelsBackupContainer,
+  buildEpigraphNovelsPayload,
+  parseEpigraphNovelsPayload,
+  restoreEpigraphNovelsPayload,
+  type EpigraphNovelsSnapshot,
 } from "./novelsBackup";
 
-const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
+const SAMPLE_NOVELS_SNAPSHOT: EpigraphNovelsSnapshot = {
   entries: [
     {
       id: "novel-1",
@@ -96,13 +96,13 @@ const SAMPLE_NOVELS_SNAPSHOT: AethonNovelsSnapshot = {
 
 describe("novels backup payload", () => {
   it("embeds a first-class novels payload with repository-aware compatibility metadata", async () => {
-    const built = await buildAethonNovelsBackupContainer(SAMPLE_NOVELS_SNAPSHOT, {
+    const built = await buildEpigraphNovelsBackupContainer(SAMPLE_NOVELS_SNAPSHOT, {
       appVersion: "0.6.9",
       platform: "windows",
       sourceProfileId: "main",
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.payloadManifests.novels).toEqual(
       expect.objectContaining({
@@ -113,10 +113,10 @@ describe("novels backup payload", () => {
       }),
     );
 
-    const parsed = await parseAethonNovelsPayload(built.bytes);
+    const parsed = await parseEpigraphNovelsPayload(built.bytes);
     expect(parsed.payloadManifest.files).toEqual([
       expect.objectContaining({
-        path: AETHON_NOVELS_PAYLOAD_FILE_PATH,
+        path: EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH,
         role: "library",
       }),
     ]);
@@ -127,8 +127,8 @@ describe("novels backup payload", () => {
   });
 
   it("supports subsystem-only and mixed containers while keeping novels payload separated", async () => {
-    const novelsPayload = await buildAethonNovelsPayload(SAMPLE_NOVELS_SNAPSHOT);
-    const built = await buildAethonBackupContainer({
+    const novelsPayload = await buildEpigraphNovelsPayload(SAMPLE_NOVELS_SNAPSHOT);
+    const built = await buildEpigraphBackupContainer({
       payloads: [
         novelsPayload,
         {
@@ -146,17 +146,17 @@ describe("novels backup payload", () => {
       ],
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.manifest?.payloads.map((payload) => payload.kind)).toEqual(["novels", "books"]);
 
-    const parsed = await parseAethonNovelsPayload(built.bytes);
+    const parsed = await parseEpigraphNovelsPayload(built.bytes);
     expect(parsed.snapshot.entries).toHaveLength(1);
     expect(inspected.payloadManifests.books?.files[0]?.path).toBe("library.json");
   });
 
   it("classifies repository, plugin, and metadata-only restore outcomes safely", async () => {
-    const built = await buildAethonNovelsBackupContainer({
+    const built = await buildEpigraphNovelsBackupContainer({
       ...SAMPLE_NOVELS_SNAPSHOT,
       entries: [
         ...SAMPLE_NOVELS_SNAPSHOT.entries,
@@ -188,7 +188,7 @@ describe("novels backup payload", () => {
       ],
     });
 
-    const restored = await restoreAethonNovelsPayload(built.bytes, {
+    const restored = await restoreEpigraphNovelsPayload(built.bytes, {
       repositoryUrls: ["https://plugins.example.com/index.json"],
       installedPluginIds: ["app.lnreader.sources.example"],
       availableSourceIds: ["example-source"],
@@ -210,17 +210,17 @@ describe("novels backup payload", () => {
   });
 
   it("warns on unsupported novels payload versions without breaking container inspection", async () => {
-    const built = await buildAethonBackupContainer({
+    const built = await buildEpigraphBackupContainer({
       payloads: [
         {
           kind: "novels",
           payloadVersion: 99,
-          files: [{ path: AETHON_NOVELS_PAYLOAD_FILE_PATH, bytes: JSON.stringify({ version: 1, entries: [] }) }],
+          files: [{ path: EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH, bytes: JSON.stringify({ version: 1, entries: [] }) }],
         },
       ],
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.issues).toContainEqual(
       expect.objectContaining({
@@ -232,15 +232,15 @@ describe("novels backup payload", () => {
   });
 
   it("can emit real novels audit artifacts when env vars are provided", async () => {
-    const outputDir = process.env.AETHON_NOVELS_PHASE4_OUTPUT_DIR?.trim();
+    const outputDir = process.env.EPIGRAPH_NOVELS_PHASE4_OUTPUT_DIR?.trim();
     if (!outputDir) {
       expect(true).toBe(true);
       return;
     }
 
-    const presentRepo = process.env.AETHON_NOVELS_PHASE4_PRESENT_REPO?.trim() || "https://plugins.example.com/index.json";
-    const presentPlugin = process.env.AETHON_NOVELS_PHASE4_PRESENT_PLUGIN?.trim() || "app.lnreader.sources.example";
-    const presentSource = process.env.AETHON_NOVELS_PHASE4_PRESENT_SOURCE?.trim() || "example-source";
+    const presentRepo = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_REPO?.trim() || "https://plugins.example.com/index.json";
+    const presentPlugin = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_PLUGIN?.trim() || "app.lnreader.sources.example";
+    const presentSource = process.env.EPIGRAPH_NOVELS_PHASE4_PRESENT_SOURCE?.trim() || "example-source";
 
     const baseEntry = {
       ...SAMPLE_NOVELS_SNAPSHOT.entries[0],
@@ -252,14 +252,14 @@ describe("novels backup payload", () => {
       },
     };
 
-    const usable = await buildAethonNovelsBackupContainer({
+    const usable = await buildEpigraphNovelsBackupContainer({
       ...SAMPLE_NOVELS_SNAPSHOT,
       entries: [{ ...baseEntry, id: "usable-1", title: "Usable Novel" }],
       repositories: [{ url: presentRepo, name: "Audit Repo" }],
       plugins: [{ id: presentPlugin, name: "Audit Plugin", repositoryUrl: presentRepo }],
     });
 
-    const missingRepository = await buildAethonNovelsBackupContainer({
+    const missingRepository = await buildEpigraphNovelsBackupContainer({
       ...SAMPLE_NOVELS_SNAPSHOT,
       entries: [{
         ...baseEntry,
@@ -270,7 +270,7 @@ describe("novels backup payload", () => {
       repositories: [{ url: "https://missing.repo.invalid/index.json", name: "Missing Repo" }],
     });
 
-    const missingPlugin = await buildAethonNovelsBackupContainer({
+    const missingPlugin = await buildEpigraphNovelsBackupContainer({
       ...SAMPLE_NOVELS_SNAPSHOT,
       entries: [{
         ...baseEntry,
@@ -287,11 +287,11 @@ describe("novels backup payload", () => {
     });
 
     await fs.mkdir(outputDir, { recursive: true });
-    await fs.writeFile(path.join(outputDir, "novels-usable.aethonbk"), Buffer.from(usable.bytes));
-    await fs.writeFile(path.join(outputDir, "novels-needs-repository.aethonbk"), Buffer.from(missingRepository.bytes));
-    await fs.writeFile(path.join(outputDir, "novels-needs-plugin.aethonbk"), Buffer.from(missingPlugin.bytes));
+    await fs.writeFile(path.join(outputDir, "novels-usable.epigraphbk"), Buffer.from(usable.bytes));
+    await fs.writeFile(path.join(outputDir, "novels-needs-repository.epigraphbk"), Buffer.from(missingRepository.bytes));
+    await fs.writeFile(path.join(outputDir, "novels-needs-plugin.epigraphbk"), Buffer.from(missingPlugin.bytes));
 
-    const parsed = await parseAethonNovelsPayload(usable.bytes);
+    const parsed = await parseEpigraphNovelsPayload(usable.bytes);
     expect(parsed.snapshot.entries[0]?.source?.pluginId).toBe(presentPlugin);
   });
 });

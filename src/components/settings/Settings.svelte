@@ -27,12 +27,12 @@
     type LocalProfileId,
   } from "../../lib/localProfiles";
   import { getEffectiveServerUrl } from "../../lib/serverTarget";
-  import type { AethonBackupPayloadBuildInput } from "../../lib/backup/aethonBackup";
+  import type { EpigraphBackupPayloadBuildInput } from "../../lib/backup/epigraphBackup";
   import type {
-    AethonPayloadRestorePlan,
-    AethonRestorePlan,
-    AethonRestorePlannerRuntime,
-  } from "../../lib/backup/aethonRestorePlanner";
+    EpigraphPayloadRestorePlan,
+    EpigraphRestorePlan,
+    EpigraphRestorePlannerRuntime,
+  } from "../../lib/backup/epigraphRestorePlanner";
   import {
     buildRestoreRelaunchArgs,
     currentProfileSupportsOtherLocalTarget,
@@ -51,7 +51,7 @@
     type BackupLaunchIntent,
     type RestoreTargetMode,
   } from "../../lib/backup/backupRollout";
-  import type { AethonNovelRuntimeState } from "../../lib/backup/novelsBackup";
+  import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
@@ -83,7 +83,7 @@
     sortBooksCategories,
     toggleBooksCategoryUpdateRule,
   } from "../../lib/library/domainCategories";
-  import splashMark from "../../assets/aethon-splash-mark.png";
+  import splashMark from "../../assets/epigraph-splash-mark.png";
   import hardcoverLogo from "../../assets/service-icons/hardcover.png";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
@@ -97,14 +97,14 @@
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
   import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
-  import { SETTINGS_AETHON_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
+  import { SETTINGS_EPIGRAPH_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
   import { APP_LANGUAGE_OPTIONS, appLanguageLabel, resolveAppLocale, type AppLanguageCode } from "../../lib/i18n/languages";
   import {
-    isAuthorizedAethonUpdate,
-    sortAethonReleaseHistory,
-    type AethonReleaseInfo,
-    type AethonUpdateStatus,
-  } from "../../lib/aethonUpdater";
+    isAuthorizedEpigraphUpdate,
+    sortEpigraphReleaseHistory,
+    type EpigraphReleaseInfo,
+    type EpigraphUpdateStatus,
+  } from "../../lib/epigraphUpdater";
   import { normalizeSocksProxyInput } from "../../lib/proxySettings";
   import {
     startDockerFlareSolverrAndEnable,
@@ -112,13 +112,13 @@
   } from "../../lib/flaresolverr";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
-    backupAuditPlan?: AethonRestorePlan | null;
+    backupAuditPlan?: EpigraphRestorePlan | null;
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
   }
   let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
-  const DEFAULT_AETHON_GITHUB_REPO = "johnnylord1/Aethon";
-  const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim() || DEFAULT_AETHON_GITHUB_REPO;
-  const AETHON_GITHUB_URL = `https://github.com/${AETHON_GITHUB_REPO}`;
+  const DEFAULT_EPIGRAPH_GITHUB_REPO = "johnnylord1/Epigraph";
+  const EPIGRAPH_GITHUB_REPO = (import.meta.env.VITE_EPIGRAPH_GITHUB_REPO ?? "").trim() || DEFAULT_EPIGRAPH_GITHUB_REPO;
+  const EPIGRAPH_GITHUB_URL = `https://github.com/${EPIGRAPH_GITHUB_REPO}`;
   type Tab = "general" | "appearance" | "reader" | "library" | "performance" | "keybinds" | "storage" | "categories" | "tracking" | "security" | "content" | "about" | "devtools";
   type SettingsGroupId = "app" | "reader-library" | "content" | "system" | "advanced";
   type SettingsNavItem = { id: Tab; labelKey: string; descKey: string; icon: any };
@@ -633,9 +633,9 @@
     const engaged = store.navPage === "settings"
       && store.searchOpen
       && store.searchContext === "settings";
-    document.body.classList.toggle("aethon-settings-search-engaged", engaged);
+    document.body.classList.toggle("epigraph-settings-search-engaged", engaged);
     return () => {
-      document.body.classList.remove("aethon-settings-search-engaged");
+      document.body.classList.remove("epigraph-settings-search-engaged");
     };
   });
   async function getStorageRuntime() {
@@ -719,7 +719,7 @@
         kind: "success",
         title: "Profile data reset",
         body: currentRuntimeProfileId === normalized
-          ? "Restart Aethon to start this profile from a clean workspace."
+          ? "Restart Epigraph to start this profile from a clean workspace."
           : "The profile workspace will be recreated cleanly next time it starts.",
       });
       profileDataDeleteConfirmId = null;
@@ -1128,7 +1128,7 @@
   let backupUnifiedIncludeNovels = $state(true);
   let backupUnifiedIncludeApp = $state(true);
   let backupBooksOnlyMetadataOnly = $state(false);
-  let backupUnifiedPlan = $state<AethonRestorePlan | null>(null);
+  let backupUnifiedPlan = $state<EpigraphRestorePlan | null>(null);
   let backupUnifiedSelection = $state<BackupExecutionSelection>({});
   let backupRestoreTargetMode = $state<RestoreTargetMode>("current-profile");
   let backupRestoreCurrentProfileConfirmed = $state(false);
@@ -1195,7 +1195,7 @@
     if (backupRestoreTargetMode === "other-local-profile") {
       return !backupSelectedFilePath || !backupCanUseOtherProfileTarget || backupRestoring || backupValidating;
     }
-    if (backupImportKind === "aethon") {
+    if (backupImportKind === "epigraph") {
       return !backupUnifiedPlan || !backupHasExecutableSelection || backupRestoring || backupValidating;
     }
     return backupRestoreBlocked;
@@ -1237,7 +1237,7 @@
     }
   }
 
-  function backupPayloadStatusLabel(status: AethonPayloadRestorePlan["status"] | "success" | "warning" | "failed"): string {
+  function backupPayloadStatusLabel(status: EpigraphPayloadRestorePlan["status"] | "success" | "warning" | "failed"): string {
     switch (status) {
       case "restorable":
         return translate("settings_inline_restorable");
@@ -1267,9 +1267,9 @@
         : "Continue in other profile";
     }
     if (backupRestoring) {
-      return backupImportKind === "aethon" ? translate("settings_inline_restoring") : translate("settings_inline_restoringManga");
+      return backupImportKind === "epigraph" ? translate("settings_inline_restoring") : translate("settings_inline_restoringManga");
     }
-    return backupImportKind === "aethon" ? translate("settings_inline_restoreSelectedPayloads") : translate("settings_inline_restoreMangaBackup");
+    return backupImportKind === "epigraph" ? translate("settings_inline_restoreSelectedPayloads") : translate("settings_inline_restoreMangaBackup");
   }
 
   function resetLegacyBackupState() {
@@ -1305,7 +1305,7 @@
     resetUnifiedBackupState();
   }
 
-  async function loadNovelRuntimeState(): Promise<AethonNovelRuntimeState> {
+  async function loadNovelRuntimeState(): Promise<EpigraphNovelRuntimeState> {
     const storageRuntime = await getStorageRuntime();
     const state = await storageRuntime.loadNovelRepositoryState({
       profileId: currentRuntimeProfileId,
@@ -1321,7 +1321,7 @@
     };
   }
 
-  async function loadAethonRestoreRuntime(): Promise<AethonRestorePlannerRuntime> {
+  async function loadEpigraphRestoreRuntime(): Promise<EpigraphRestorePlannerRuntime> {
     const storageRuntime = await getStorageRuntime();
     const [inventory, trackersData, novelsRuntime, overlay] = await Promise.all([
       storageRuntime.loadSourceInventory(),
@@ -1355,22 +1355,22 @@
   function backupFilenameFromUrl(path: string): string {
     const cleaned = path.split("?")[0];
     const file = cleaned.split("/").pop()?.trim();
-    return file || `aethon-backup-${new Date().toISOString().slice(0, 10)}.tachibk`;
+    return file || `epigraph-backup-${new Date().toISOString().slice(0, 10)}.tachibk`;
   }
 
   function defaultExportFilename(): string {
     const stamp = new Date().toISOString().slice(0, 10);
     switch (backupExportMode) {
       case "manga":
-        return `aethon-manga-${stamp}.tachibk`;
+        return `epigraph-manga-${stamp}.tachibk`;
       case "books":
-        return `aethon-books-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
+        return `epigraph-books-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
       case "novels":
-        return `aethon-novels-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
+        return `epigraph-novels-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
       case "app":
-        return `aethon-profile-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
+        return `epigraph-profile-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
       default:
-        return `aethon-unified-${stamp}${SETTINGS_AETHON_BACKUP_EXTENSION}`;
+        return `epigraph-unified-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
     }
   }
 
@@ -1416,14 +1416,14 @@
 
     if (backupExportMode === "books") {
       const booksLibraryState = await storageRuntime.loadBookLibraryState();
-      const built = await storageRuntime.buildAethonBackupContainer({
+      const built = await storageRuntime.buildEpigraphBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          await storageRuntime.buildAethonBooksPayload(
-            storageRuntime.buildAethonBooksSnapshotFromLibraryState(booksLibraryState),
+          await storageRuntime.buildEpigraphBooksPayload(
+            storageRuntime.buildEpigraphBooksSnapshotFromLibraryState(booksLibraryState),
             {
             exportMode: backupBooksOnlyMetadataOnly ? "metadata-only" : "full",
             },
@@ -1447,14 +1447,14 @@
           serverUrl: currentRuntimeServerUrl,
         }),
       ]);
-      const built = await storageRuntime.buildAethonBackupContainer({
+      const built = await storageRuntime.buildEpigraphBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          await storageRuntime.buildAethonNovelsPayload(
-            storageRuntime.buildAethonNovelsSnapshotFromAuthoritativeState({
+          await storageRuntime.buildEpigraphNovelsPayload(
+            storageRuntime.buildEpigraphNovelsSnapshotFromAuthoritativeState({
               libraryState: novelLibraryState,
               repositoryState: novelRepositoryState,
             }),
@@ -1468,13 +1468,13 @@
     }
 
     if (backupExportMode === "app") {
-      const built = await storageRuntime.buildAethonBackupContainer({
+      const built = await storageRuntime.buildEpigraphBackupContainer({
         appVersion,
         platform: browserPlatform(),
         sourceSurface: "desktop",
         sourceProfileId,
         payloads: [
-          storageRuntime.buildAethonAppPayload({
+          storageRuntime.buildEpigraphAppPayload({
             defaultLocalProfileId: persistedDefaultProfileId,
             history: store.history,
             readLog: store.readLog,
@@ -1488,17 +1488,17 @@
       };
     }
 
-    const payloads: AethonBackupPayloadBuildInput[] = [];
+    const payloads: EpigraphBackupPayloadBuildInput[] = [];
     if (backupUnifiedIncludeManga) {
       const manga = await fetchCurrentMangaBackup();
-      payloads.push(await storageRuntime.buildAethonMangaPayload(manga.bytes, {
+      payloads.push(await storageRuntime.buildEpigraphMangaPayload(manga.bytes, {
         sourceFilename: manga.sourceFilename,
       }));
     }
     if (backupUnifiedIncludeBooks) {
       const booksLibraryState = await storageRuntime.loadBookLibraryState();
-      payloads.push(await storageRuntime.buildAethonBooksPayload(
-        storageRuntime.buildAethonBooksSnapshotFromLibraryState(booksLibraryState),
+      payloads.push(await storageRuntime.buildEpigraphBooksPayload(
+        storageRuntime.buildEpigraphBooksSnapshotFromLibraryState(booksLibraryState),
         {
           exportMode: "full",
         },
@@ -1516,8 +1516,8 @@
         }),
       ]);
       payloads.push(
-        await storageRuntime.buildAethonNovelsPayload(
-          storageRuntime.buildAethonNovelsSnapshotFromAuthoritativeState({
+        await storageRuntime.buildEpigraphNovelsPayload(
+          storageRuntime.buildEpigraphNovelsSnapshotFromAuthoritativeState({
             libraryState: novelLibraryState,
             repositoryState: novelRepositoryState,
           }),
@@ -1525,7 +1525,7 @@
       );
     }
     if (backupUnifiedIncludeApp) {
-      payloads.push(storageRuntime.buildAethonAppPayload({
+      payloads.push(storageRuntime.buildEpigraphAppPayload({
         defaultLocalProfileId: persistedDefaultProfileId,
         history: store.history,
         readLog: store.readLog,
@@ -1537,7 +1537,7 @@
       throw new Error("Select at least one payload to export.");
     }
 
-    const built = await storageRuntime.buildAethonBackupContainer({
+    const built = await storageRuntime.buildEpigraphBackupContainer({
       appVersion,
       platform: browserPlatform(),
       sourceSurface: "desktop",
@@ -1556,7 +1556,7 @@
       multiple: false,
       directory: false,
       filters: [
-        { name: "Aethon backups", extensions: ["aethonbk"] },
+        { name: "Epigraph backups (including legacy Aethon)", extensions: ["epigraphbk", "aethonbk"] },
         { name: "Manga backups", extensions: ["tachibk", "proto", "gz"] },
       ],
     });
@@ -1575,10 +1575,19 @@
   async function loadUnifiedBackupPlan(path: string) {
     const storageRuntime = await getStorageRuntime();
     const bytes = await storageRuntime.readFileAsArrayBuffer(path);
-    const runtime = await loadAethonRestoreRuntime();
-    const plan = await storageRuntime.buildAethonRestorePlan(bytes, runtime);
+    const runtime = await loadEpigraphRestoreRuntime();
+    const plan = await storageRuntime.buildEpigraphRestorePlan(bytes, runtime);
     backupUnifiedPlan = plan;
     backupUnifiedSelection = defaultExecutionSelection(plan);
+  }
+
+  function isZipContainer(bytes: ArrayBuffer): boolean {
+    const header = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 4));
+    return header.length >= 4
+      && header[0] === 0x50
+      && header[1] === 0x4b
+      && (header[2] === 0x03 || header[2] === 0x05 || header[2] === 0x07)
+      && (header[3] === 0x04 || header[3] === 0x06 || header[3] === 0x08);
   }
 
   async function loadLegacyBackupPath(path: string) {
@@ -1604,7 +1613,7 @@
     backupRestoreSourceProfileId = options.sourceProfileId ?? null;
     backupRestoreTargetMode = options.handoff
       ? "current-profile"
-      : backupImportKind === "aethon"
+      : backupImportKind === "epigraph"
         ? "current-profile"
         : "current-profile";
 
@@ -1613,7 +1622,16 @@
       return;
     }
 
-    if (backupImportKind === "aethon") {
+    // Android's native protobuf backup now uses the canonical .epigraphbk suffix too.
+    // Classify by bytes so a mobile backup is still accepted by the desktop manga restore,
+    // while the ZIP container keeps the richer cross-surface restore planner.
+    if (!forcedKind && backupImportKind === "epigraph") {
+      const storageRuntime = await getStorageRuntime();
+      const bytes = await storageRuntime.readFileAsArrayBuffer(path);
+      if (!isZipContainer(bytes)) backupImportKind = "manga";
+    }
+
+    if (backupImportKind === "epigraph") {
       await loadUnifiedBackupPlan(path);
       return;
     }
@@ -1711,12 +1729,12 @@
         defaultPath: defaultExportFilename(),
         filters: backupExportMode === "manga"
           ? [{ name: "Manga backups", extensions: ["tachibk"] }]
-          : [{ name: "Aethon backups", extensions: ["aethonbk"] }],
+          : [{ name: "Epigraph backups", extensions: ["epigraphbk"] }],
       });
       if (typeof savePath !== "string" || !savePath.trim()) return;
       const normalizedPath = normalizeBackupSavePath(
         savePath,
-        backupExportMode === "manga" ? ".tachibk" : SETTINGS_AETHON_BACKUP_EXTENSION,
+        backupExportMode === "manga" ? ".tachibk" : SETTINGS_EPIGRAPH_BACKUP_EXTENSION,
       );
       const savedPath = await saveBytesToPath(normalizedPath, built.bytes);
       backupSavedPath = savedPath;
@@ -1801,7 +1819,7 @@
       addToast({
         kind: "success",
         title: "Extension installed",
-        body: `${extension.name} was sent to Suwayomi. Aethon will refresh restore readiness once the source inventory catches up.`,
+        body: `${extension.name} was sent to Suwayomi. Epigraph will refresh restore readiness once the source inventory catches up.`,
       });
       if (refreshAfter && backupSelectedFile) {
         await refreshBackupReadiness();
@@ -1933,7 +1951,7 @@
   async function applyCurrentProfileNovelsRestore(bytes: ArrayBuffer) {
     const storageRuntime = await getStorageRuntime();
     const runtime = await loadNovelRuntimeState();
-    const restored = await storageRuntime.restoreAethonNovelsPayload(bytes, runtime);
+    const restored = await storageRuntime.restoreEpigraphNovelsPayload(bytes, runtime);
     const scopeInput = {
       profileId: currentRuntimeProfileId,
       serverUrl: currentRuntimeServerUrl,
@@ -2200,7 +2218,7 @@
 
   async function applyUnifiedRestore() {
     if (!backupUnifiedPlan || !backupSelectedFilePath) {
-      throw new Error(translate("settings_inline_chooseAethonBackupFirst"));
+      throw new Error(translate("settings_inline_chooseEpigraphBackupFirst"));
     }
     const selectedKinds = selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection);
     if (selectedKinds.length === 0) {
@@ -2215,7 +2233,7 @@
       if (!selectedKinds.includes(kind)) continue;
       try {
         if (kind === "manga") {
-          const extracted = await storageRuntime.extractAethonMangaPayloadFile(bytes);
+          const extracted = await storageRuntime.extractEpigraphMangaPayloadFile(bytes);
           backupSelectedFile = extracted;
           await analyzeSelectedBackupFile(extracted);
           const outcome = await restoreBackup();
@@ -2231,7 +2249,7 @@
         }
 
         if (kind === "books") {
-          const restored = await storageRuntime.restoreAethonBooksPayload(bytes);
+          const restored = await storageRuntime.restoreEpigraphBooksPayload(bytes);
           replaceBooksState({
             books: restored.books,
             bookProgress: restored.bookProgress,
@@ -2264,7 +2282,7 @@
         }
 
         if (kind === "app") {
-          const restored = await storageRuntime.parseAethonAppPayload(new Uint8Array(bytes));
+          const restored = await storageRuntime.parseEpigraphAppPayload(new Uint8Array(bytes));
           updateSettings({
             defaultLocalProfileId: restored.profile.defaultLocalProfileId,
           });
@@ -2334,7 +2352,7 @@
       return;
     }
 
-    if (backupImportKind === "aethon") {
+    if (backupImportKind === "epigraph") {
       await applyUnifiedRestore();
       return;
     }
@@ -2696,7 +2714,7 @@
   let flareEnabled     = $state(store.settings.flareSolverrEnabled ?? false);
   let flareUrl         = $state(store.settings.flareSolverrUrl ?? "http://localhost:8191");
   let flareTimeout     = $state(store.settings.flareSolverrTimeout ?? 60);
-  let flareSession     = $state(store.settings.flareSolverrSessionName ?? "aethon");
+  let flareSession     = $state(store.settings.flareSolverrSessionName ?? "epigraph");
   let flareTtl         = $state(store.settings.flareSolverrSessionTtl ?? 15);
   let flareFallback    = $state(store.settings.flareSolverrFallback ?? false);
   let flareLocalAutoStart = $state(store.settings.flareSolverrLocalAutoStart ?? false);
@@ -3219,7 +3237,7 @@
     credsPassword = "";
   }
   function usesOAuth(t: Tracker): boolean { return !!t.authUrl; }
-  type ReleaseInfo = AethonReleaseInfo;
+  type ReleaseInfo = EpigraphReleaseInfo;
   type UpdatePhase =
     | "idle"
     | "downloading"
@@ -3230,7 +3248,7 @@
   let releases        = $state<ReleaseInfo[]>([]);
   let releasesLoading = $state(false);
   let releasesError   = $state<string | null>(null);
-  let updateCheck     = $state<AethonUpdateStatus | null>(null);
+  let updateCheck     = $state<EpigraphUpdateStatus | null>(null);
   let updateCheckError = $state<string | null>(null);
   let expandedTag     = $state<string | null>(null);
   let updatePhase     = $state<UpdatePhase>("idle");
@@ -3254,7 +3272,7 @@
     void loadReleases();
   }
   async function openProjectGithub() {
-    await openUrl(AETHON_GITHUB_URL);
+    await openUrl(EPIGRAPH_GITHUB_URL);
   }
   onMount(() => {
     let disposed = false;
@@ -3290,12 +3308,12 @@
       const [historyResult, updateResult] = await Promise.race([
         Promise.allSettled([
           invoke<ReleaseInfo[]>("list_releases"),
-          invoke<AethonUpdateStatus>("check_aethon_update"),
+          invoke<EpigraphUpdateStatus>("check_epigraph_update"),
         ]),
         timeout,
       ]);
       if (historyResult.status === "fulfilled") {
-        releases = sortAethonReleaseHistory(historyResult.value);
+        releases = sortEpigraphReleaseHistory(historyResult.value);
       } else {
         releasesError = historyResult.reason instanceof Error ? historyResult.reason.message : String(historyResult.reason);
       }
@@ -3330,7 +3348,7 @@
   });
   async function installUpdate(release: ReleaseInfo) {
     if (updatePhase === "downloading") return;
-    if (IS_WINDOWS && !isAuthorizedAethonUpdate(release, updateCheck)) {
+    if (IS_WINDOWS && !isAuthorizedEpigraphUpdate(release, updateCheck)) {
       await openUrl(release.html_url);
       return;
     }
@@ -3373,7 +3391,7 @@
   function triggerSplash() {
     splashTriggered = true;
     setTimeout(() => splashTriggered = false, 200);
-    (window as any).__aethonShowSplash?.();
+    (window as any).__epigraphShowSplash?.();
   }
   let contentSources:        Source[] = $state([]);
   let contentSourcesLoading: boolean  = $state(false);
@@ -3451,7 +3469,7 @@
     return Array.from(map.values());
   });
 </script>
-<main class="settings-page n-shell aethon-port--settings">
+<main class="settings-page n-shell epigraph-port--settings">
   <AppTopbar className="n-topbar--settings">
     {#snippet center()}
       <form
@@ -3467,7 +3485,7 @@
           class="n-search__input"
           role="combobox"
           aria-expanded={store.searchOpen}
-          aria-controls="aethon-search-results"
+          aria-controls="epigraph-search-results"
           aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
           aria-autocomplete="list"
           aria-label={$_("settings_inline_searchSettings")}
@@ -3518,7 +3536,7 @@
             <img src={splashMark} alt="" />
           </div>
           <div class="settings-brand-card__copy">
-            <p class="settings-brand-card__title">Aethon Nocturne</p>
+            <p class="settings-brand-card__title">Epigraph Nocturne</p>
             <p class="settings-brand-card__meta">v{appVersion}</p>
           </div>
         </div>
@@ -5186,7 +5204,7 @@
                 <p class="settings-card__intro">
                   {categoryDomain === "comics"
                     ? "Comics categories stay synced with Suwayomi. Library updates check every title except folders marked as excluded."
-                    : `Books categories are local to Aethon. Books updates skip every source novel assigned to folders marked as excluded${booksUpdateExcludedCount > 0 ? ` (${booksUpdateExcludedCount} currently skipped)` : ""}.`}
+                    : `Books categories are local to Epigraph. Books updates skip every source novel assigned to folders marked as excluded${booksUpdateExcludedCount > 0 ? ` (${booksUpdateExcludedCount} currently skipped)` : ""}.`}
                 </p>
                 {#if categoryDomain === "comics" && catsError}
                   <div class="settings-state">
@@ -6001,7 +6019,7 @@
                           </div>
                         </div>
                         <div class="settings-input-line">
-                  <input class="settings-text-input settings-input-line__grow" bind:value={flareSession} placeholder="aethon" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveFlareSolverr()} />
+                  <input class="settings-text-input settings-input-line__grow" bind:value={flareSession} placeholder="epigraph" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveFlareSolverr()} />
                         </div>
                       </div>
                       <div class="settings-row settings-mini-row">
@@ -6208,7 +6226,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">GitHub</p>
-                    <p class="settings-mini-row__hint">{AETHON_GITHUB_REPO}</p>
+                    <p class="settings-mini-row__hint">{EPIGRAPH_GITHUB_REPO}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>{$_("settings_inline_open")}</button>
                 </div>
@@ -6271,7 +6289,7 @@
                         {@const isExpanded = expandedTag === release.tag_name}
                         {@const isTarget = targetTag === release.tag_name}
                         {@const isInstalling = isTarget && updatePhase === "downloading"}
-                        {@const isAuthorizedUpdate = isAuthorizedAethonUpdate(release, updateCheck)}
+                        {@const isAuthorizedUpdate = isAuthorizedEpigraphUpdate(release, updateCheck)}
                         <div class="release-row" class:current={isCurrent}>
                           <div class="release-header">
                             <div class="release-meta">
@@ -6401,7 +6419,7 @@
                 <p class="settings-card__intro">{$_("settings_inline_exportHint")}</p>
                 <div class="settings-chip-list" style="margin-top:14px">
                   {#each [
-                    ["unified", "Unified Aethon"],
+                    ["unified", "Unified Epigraph"],
                     ["manga", "Manga only"],
                     ["books", "Books only"],
                     ["novels", "Novels only"],
@@ -6499,7 +6517,7 @@
                     <p class="settings-mini-row__hint">{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</p>
                     {#if backupImportKind}
                       <p class="settings-mini-row__hint">
-                        {$_("settings_inline_detectedFormat", { format: backupImportKind === "aethon" ? ".aethonbk" : $_("settings_inline_nativeMangaBackup") })}
+                        {$_("settings_inline_detectedFormat", { format: backupImportKind === "epigraph" ? ".epigraphbk" : $_("settings_inline_nativeMangaBackup") })}
                       </p>
                     {/if}
                     {#if backupRestoreHandoffSession}
@@ -6516,7 +6534,7 @@
                     {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_chooseFile")}
                   </button>
                 </div>
-                {#if backupImportKind === "aethon" && backupUnifiedPlan}
+                {#if backupImportKind === "epigraph" && backupUnifiedPlan}
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
                       <p class="settings-card__title">{$_("settings_inline_restoreSummary")}</p>
@@ -6611,7 +6629,7 @@
                     </div>
                     <p class="settings-card__intro">{$_("settings_inline_mangaRestorePathHint")}</p>
                     {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
-                      <p class="settings-card__intro">Aethon will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > {$_("settings_inline_storageWaitConfirmation")}</p>
+                      <p class="settings-card__intro">Epigraph will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > {$_("settings_inline_storageWaitConfirmation")}</p>
                     {:else if backupRestoreTargetMode === "current-profile"}
                       <p class="settings-card__intro">{$_("settings_inline_sourceReconciliationHint")}</p>
                     {/if}
@@ -6678,7 +6696,7 @@
                         <p class="settings-mini-row__hint">
                           {#if backupRestoreTargetMode === "other-local-profile"}
                             {$_("settings_inline_restoreHandoffTargetHint")}
-                          {:else if backupImportKind === "aethon"}
+                          {:else if backupImportKind === "epigraph"}
                             {$_("settings_inline_willRestoreKinds", { kinds: backupExecutablePayloadKinds.length > 0 ? backupExecutablePayloadKinds.map((kind) => backupPayloadKindLabel(kind)).join(", ") : $_("settings_inline_nothingYet") })}
                           {:else}
                             {$_("settings_inline_mangaRestoreCurrentProfileHint")}
@@ -6701,7 +6719,7 @@
                     </div>
                   </div>
                 {/if}
-                <input bind:this={backupFileInput} type="file" accept=".tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
+                <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
               </div>
               {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
                 <div class="settings-card__surface" style="margin-top:16px">

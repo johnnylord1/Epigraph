@@ -129,7 +129,7 @@ Final results:
 
 ## Real-App Screenshots
 
-Validation completed with managed Aethon desktop/WebView2 sessions in Nocturne. The palette was opened and controlled through the visible topbar input. The managed sessions confirmed:
+Validation completed with managed Epigraph desktop/WebView2 sessions in Nocturne. The palette was opened and controlled through the visible topbar input. The managed sessions confirmed:
 
 - Home query `Lorde`: one hydrated source novel plus separately grouped remote comic results;
 - Library Comics query `Osananajimi`: one local comic with a resolved Suwayomi thumbnail;
@@ -231,7 +231,7 @@ The final in-modal evidence uses the real Nocturne application and installed pro
 | `../search-browse-cards/after/01-browse-cards-aa-1280x800.png` | Same modal after the action, with current source-scoped horizontal result cards. |
 | `../search-browse-cards/after/02-browse-cards-aa-800x600.png` | Current responsive subview contained within an 800x600 window, with no page-level horizontal overflow. |
 
-Runtime confirmed that `navPage` and the URL remain unchanged while the modal switches pages, the topbar stays above the shared dim, the query remains in the single combobox, the back action restores global results, and source sections update progressively. Selecting the first real Comics result closed the modal, cleared `aethon-search-engaged`, and opened the current SeriesDetail with the exact source identity. For the real Books run, Central Novel remained pending and Illusia required FlareSolverr, so no genuine novel result was available to open. NovelDetail selection is therefore validated deterministically with a trusted installed-source payload rather than fabricated runtime data.
+Runtime confirmed that `navPage` and the URL remain unchanged while the modal switches pages, the topbar stays above the shared dim, the query remains in the single combobox, the back action restores global results, and source sections update progressively. Selecting the first real Comics result closed the modal, cleared `epigraph-search-engaged`, and opened the current SeriesDetail with the exact source identity. For the real Books run, Central Novel remained pending and Illusia required FlareSolverr, so no genuine novel result was available to open. NovelDetail selection is therefore validated deterministically with a trusted installed-source payload rather than fabricated runtime data.
 
 Only one installed provider returned a populated row for the stable `naruto` capture. Independent scrolling across two populated rows is consequently covered by the component test, not a synthetic screenshot. Some Suwayomi errors still expose provider-internal class/member names; normalizing those messages belongs to the source bridge and is outside this search-routing change.
 

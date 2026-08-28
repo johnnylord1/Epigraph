@@ -1,40 +1,40 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
-import { inspectAethonBackupContainer } from "./aethonBackup";
+import { inspectEpigraphBackupContainer } from "./epigraphBackup";
 import {
-  AETHON_APP_PAYLOAD_FILE_PATH,
-  buildAethonAppBackupContainer,
-  buildAethonAppPayload,
+  EPIGRAPH_APP_PAYLOAD_FILE_PATH,
+  buildEpigraphAppBackupContainer,
+  buildEpigraphAppPayload,
 } from "./appBackup";
 
 describe("app backup payload", () => {
   it("builds a portable app payload with reading state for Home restore", async () => {
-    const built = await buildAethonAppBackupContainer({
+    const built = await buildEpigraphAppBackupContainer({
       defaultLocalProfileId: "test",
       appVersion: "0.7.0",
       platform: "windows",
       sourceProfileId: "main",
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
     expect(inspected.hasErrors).toBe(false);
     expect(inspected.payloadManifests.app).toEqual(
       expect.objectContaining({
         exportMode: "full",
-        requiresRuntime: "aethon",
+        requiresRuntime: "epigraph",
         portableByDefault: false,
       }),
     );
     expect(inspected.payloadManifests.app?.files).toEqual([
       expect.objectContaining({
-        path: AETHON_APP_PAYLOAD_FILE_PATH,
+        path: EPIGRAPH_APP_PAYLOAD_FILE_PATH,
         role: "profile",
       }),
     ]);
   });
 
   it("persists reading state in app backups so Home can restore from backup", async () => {
-    const built = await buildAethonAppBackupContainer({
+    const built = await buildEpigraphAppBackupContainer({
       defaultLocalProfileId: "main",
       history: [
         {
@@ -66,9 +66,9 @@ describe("app backup payload", () => {
       },
     });
 
-    const inspected = await inspectAethonBackupContainer(built.bytes);
-    const appFile = inspected.payloadManifests.app?.files.find((file) => file.path === AETHON_APP_PAYLOAD_FILE_PATH);
-    expect(appFile).toEqual(expect.objectContaining({ path: AETHON_APP_PAYLOAD_FILE_PATH }));
+    const inspected = await inspectEpigraphBackupContainer(built.bytes);
+    const appFile = inspected.payloadManifests.app?.files.find((file) => file.path === EPIGRAPH_APP_PAYLOAD_FILE_PATH);
+    expect(appFile).toEqual(expect.objectContaining({ path: EPIGRAPH_APP_PAYLOAD_FILE_PATH }));
     const zip = await JSZip.loadAsync(built.bytes);
     const parsed = JSON.parse(await zip.file("payloads/app/profile.json")!.async("text")) as { version: number; history: unknown[]; readLog: unknown[]; readingStats: { totalChaptersRead: number } };
     expect(parsed.version).toBe(2);
@@ -78,13 +78,13 @@ describe("app backup payload", () => {
   });
 
   it("keeps the app payload builder independent so it can be used in mixed containers later", async () => {
-    const payload = buildAethonAppPayload({
+    const payload = buildEpigraphAppPayload({
       defaultLocalProfileId: "main",
     });
 
     expect(payload.kind).toBe("app");
     expect(payload.restoreModesSupported).toEqual(["full", "metadata-only"]);
-    expect(payload.files?.[0]?.path).toBe(AETHON_APP_PAYLOAD_FILE_PATH);
+    expect(payload.files?.[0]?.path).toBe(EPIGRAPH_APP_PAYLOAD_FILE_PATH);
     expect(new TextDecoder().decode(payload.files?.[0]?.bytes as Uint8Array)).toContain("defaultLocalProfileId");
   });
 });

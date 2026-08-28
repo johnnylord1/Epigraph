@@ -274,7 +274,7 @@ mod tests {
         assert_eq!(value["serverId"], "server-a");
         assert_eq!(value["port"], 4777);
         assert_eq!(value["fingerprint"], "a".repeat(64));
-        assert!(value["exe"].as_str().unwrap().contains("aethon"));
+        assert!(value["exe"].as_str().unwrap().contains("epigraph"));
     }
 
     #[test]

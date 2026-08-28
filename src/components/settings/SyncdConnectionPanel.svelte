@@ -20,6 +20,7 @@
     syncdGetRuntimeIdentity,
     syncdGetSessionCatalog,
     syncdHostDecidePairing,
+    syncdListPairedDevices,
     syncdForgetPersistedSession,
     syncdListDiscoveryCandidates,
     syncdPauseReplication,
@@ -28,6 +29,7 @@
     syncdRevalidatePersistedSyncSessions,
     syncdSetActiveReplicationSession,
     syncdStartHostPairing,
+    syncdUpdatePairedDeviceGrantedScopes,
     type PairingHostDecision,
     type PersistedSyncSessionView,
     type SyncdConnectState,
@@ -35,6 +37,7 @@
     type SyncdDesktopDiscoveryCandidate,
     type SyncdDesktopSnapshot,
     type SyncdHostPairingState,
+    type SyncdPairedDeviceView,
     type SyncdReplicationSnapshot,
     type SyncdReconnectStatus,
     type SyncdRuntimeIdentity,
@@ -54,11 +57,14 @@
   let connect = $state<SyncdConnectState | null>(null);
   let candidates = $state<SyncdDesktopDiscoveryCandidate[]>([]);
   let persistedSessions = $state<PersistedSyncSessionView[]>([]);
+  let pairedDevices = $state<SyncdPairedDeviceView[]>([]);
   let replicationSnapshot = $state<SyncdReplicationSnapshot | null>(null);
   let lastReconnectStatuses = $state<Record<string, SyncdReconnectStatus>>({});
   let loadingCandidates = $state(false);
   let loadingHost = $state(false);
   let loadingPersisted = $state(false);
+  let loadingPairedDevices = $state(false);
+  let pairedDeviceScopeBusy = $state<string | null>(null);
   let connectBusy = $state(false);
   let hostDecisionBusy = $state<PairingHostDecision | null>(null);
   let revalidateBusy = $state(false);
@@ -83,6 +89,7 @@
   let panelSubscriptionsReady = $state(false);
   let modalView = $state<SyncdModalView>("pairing");
   let modalElement = $state<HTMLElement | null>(null);
+  let modalBodyElement = $state<HTMLElement | null>(null);
   let runtimeIdentity = $state<SyncdRuntimeIdentity | null>(null);
   let panelMounted = false;
   let subscriptionGeneration = 0;
@@ -154,6 +161,7 @@
 
   function showView(view: SyncdModalView) {
     modalView = view;
+    if (modalBodyElement) modalBodyElement.scrollTop = 0;
   }
 
   function closeModal() {
@@ -299,6 +307,7 @@
       ...next,
       status: current.status,
       claimedDeviceId: current.claimedDeviceId ?? next.claimedDeviceId,
+      requestedScopes: next.requestedScopes.length > 0 ? next.requestedScopes : current.requestedScopes,
       error: current.error ?? next.error,
     };
   }
@@ -387,6 +396,58 @@
       panelError = error instanceof Error ? error.message : String(error);
     } finally {
       loadingPersisted = false;
+    }
+  }
+
+  async function loadPairedDevices() {
+    loadingPairedDevices = true;
+    try {
+      pairedDevices = (await syncdListPairedDevices()) ?? [];
+    } catch (error) {
+      panelError = error instanceof Error ? error.message : String(error);
+    } finally {
+      loadingPairedDevices = false;
+    }
+  }
+
+  function allowedDeviceScopes(device: SyncdPairedDeviceView): string[] {
+    return [
+      `comics:profile:${device.profileId}`,
+      `novels:profile:${device.profileId}`,
+      "books:global",
+    ];
+  }
+
+  function permissionScopeLabel(scope: string): string {
+    if (scope === "books:global") return translate("common_books");
+    if (scope.startsWith("novels:profile:")) return translate("ui_novels");
+    if (scope.startsWith("comics:profile:")) return translate("common_comics");
+    return scope;
+  }
+
+  async function togglePairedDeviceScope(device: SyncdPairedDeviceView, scope: string) {
+    const key = `${device.deviceId}:${device.profileId}`;
+    if (pairedDeviceScopeBusy) return;
+    pairedDeviceScopeBusy = key;
+    panelError = null;
+    try {
+      const grantedScopes = device.grantedScopes.includes(scope)
+        ? device.grantedScopes.filter((candidate) => candidate !== scope)
+        : [...device.grantedScopes, scope];
+      const updated = await syncdUpdatePairedDeviceGrantedScopes(
+        device.deviceId,
+        device.profileId,
+        grantedScopes,
+      );
+      pairedDevices = pairedDevices.map((candidate) =>
+        candidate.deviceId === updated.deviceId && candidate.profileId === updated.profileId
+          ? updated
+          : candidate,
+      );
+    } catch (error) {
+      panelError = error instanceof Error ? error.message : String(error);
+    } finally {
+      pairedDeviceScopeBusy = null;
     }
   }
 
@@ -529,6 +590,7 @@
       if (panelMounted) {
         hostDecisionBusy = null;
         void refreshHostAfterDecision();
+        void loadPairedDevices();
       }
     }
   }
@@ -555,7 +617,7 @@
     if (!qrCodeDataUrl || !host) return;
     const link = document.createElement("a");
     link.href = qrCodeDataUrl;
-    link.download = `aethon-sync-bootstrap-${host.profileId}.png`;
+    link.download = `epigraph-sync-bootstrap-${host.profileId}.png`;
     link.click();
   }
 
@@ -851,6 +913,7 @@
     });
 
     void loadHostState();
+    void loadPairedDevices();
     void refreshRuntimeIdentity();
     void refreshDiscoveryCandidates();
     if (activeProfileId) {
@@ -871,13 +934,13 @@
         void importQrDataUrl(dataUrl);
       }
     };
-    window.addEventListener("aethon:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
+    window.addEventListener("epigraph:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
 
     void reconnectPanelSubscriptions();
 
     return () => {
       panelMounted = false;
-      window.removeEventListener("aethon:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
+      window.removeEventListener("epigraph:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
       window.clearInterval(replicationPoll);
       stopPanelSubscriptions();
     };
@@ -924,7 +987,7 @@
       </button>
     </header>
 
-    <div class="syncd-modal__body">
+    <div bind:this={modalBodyElement} class="syncd-modal__body">
       <section class="syncd-view" hidden={modalView !== "pairing"} aria-hidden={modalView !== "pairing"} data-testid="syncd-pairing-view">
         <div class={`syncd-status syncd-status--${overviewStatus.tone}`} aria-live="polite">
           <div class="syncd-status__icon" aria-hidden="true">
@@ -1011,6 +1074,11 @@
                 <div>
                   <p class="syncd-row__label">{$_("syncd_modal_connectionRequest")}</p>
                   <p class="syncd-row__hint">{$_("syncd_modal_approveOnlyIfStarted")}</p>
+                  <div class="syncd-scope-list" data-testid="syncd-requested-scopes">
+                    {#each host.requestedScopes as scope}
+                      <span class="syncd-pill syncd-pill--info">{permissionScopeLabel(scope)}</span>
+                    {/each}
+                  </div>
                 </div>
                 <div class="syncd-actions">
                   <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>
@@ -1181,6 +1249,43 @@
         <div class="syncd-view__intro">
           <Gear size={18} weight="duotone" />
           <div><h3>{$_("syncd_modal_pairingOptions")}</h3><p>{$_("syncd_modal_pairingOptionsHint")}</p></div>
+        </div>
+
+        <div class="syncd-card" data-testid="syncd-paired-device-permissions">
+          <div class="syncd-card__head">
+            <div>
+              <p class="syncd-card__title">{$_("ui_scope")}</p>
+              <p class="syncd-card__intro">{$_("syncd_modal_trustedDesktopsStored")}</p>
+            </div>
+            <span class="syncd-pill syncd-pill--neutral">{loadingPairedDevices ? "..." : pairedDevices.length}</span>
+          </div>
+          {#if pairedDevices.length > 0}
+            <div class="syncd-list">
+              {#each pairedDevices as device}
+                <div class="syncd-list__item syncd-device-permission" data-testid="syncd-paired-device-permission">
+                  <div class="syncd-list__body">
+                    <p class="syncd-list__title">{device.deviceName}</p>
+                    <p class="syncd-list__hint">{device.platform} · {device.profileId}</p>
+                  </div>
+                  <div class="syncd-scope-list">
+                    {#each allowedDeviceScopes(device) as scope}
+                      <label class="syncd-scope-toggle">
+                        <input
+                          type="checkbox"
+                          checked={device.grantedScopes.includes(scope)}
+                          disabled={pairedDeviceScopeBusy !== null}
+                          onchange={() => togglePairedDeviceScope(device, scope)}
+                        />
+                        <span>{permissionScopeLabel(scope)}</span>
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_scope")} title={$_("ui_noApprovedSessions")} />
+          {/if}
         </div>
 
         <div class="syncd-card" data-testid="syncd-connect-card">
@@ -1476,6 +1581,36 @@
   .syncd-actions {
     flex-wrap: wrap;
     justify-content: flex-start;
+  }
+
+  .syncd-scope-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--component-syncd-pill-gap);
+    margin-top: var(--component-syncd-stack-gap);
+  }
+
+  .syncd-device-permission {
+    align-items: center;
+  }
+
+  .syncd-scope-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--component-syncd-pill-gap);
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-input-font-size);
+    cursor: pointer;
+  }
+
+  .syncd-scope-toggle input {
+    accent-color: var(--component-syncd-input-border-focus);
+  }
+
+  .syncd-scope-toggle:has(input:disabled) {
+    opacity: var(--component-syncd-control-disabled-opacity);
+    cursor: default;
   }
 
   .syncd-actions--stack {

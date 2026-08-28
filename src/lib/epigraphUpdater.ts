@@ -1,4 +1,4 @@
-export interface AethonUpdateStatus {
+export interface EpigraphUpdateStatus {
   update_available: boolean;
   current_version: string;
   version: string | null;
@@ -6,7 +6,7 @@ export interface AethonUpdateStatus {
   published_at: string | null;
 }
 
-export interface AethonReleaseInfo {
+export interface EpigraphReleaseInfo {
   tag_name: string;
   name: string;
   body: string;
@@ -16,15 +16,15 @@ export interface AethonReleaseInfo {
 
 const STABLE_SEMVER = /^v?(\d+)\.(\d+)\.(\d+)$/i;
 
-export function normalizeAethonVersion(value: string | null | undefined): string | null {
+export function normalizeEpigraphVersion(value: string | null | undefined): string | null {
   const match = value?.trim().match(STABLE_SEMVER);
   if (!match) return null;
   return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
 }
 
-export function compareAethonVersions(left: string, right: string): number {
-  const normalizedLeft = normalizeAethonVersion(left);
-  const normalizedRight = normalizeAethonVersion(right);
+export function compareEpigraphVersions(left: string, right: string): number {
+  const normalizedLeft = normalizeEpigraphVersion(left);
+  const normalizedRight = normalizeEpigraphVersion(right);
   if (!normalizedLeft || !normalizedRight) return 0;
 
   const leftParts = normalizedLeft.split(".").map(Number);
@@ -36,19 +36,19 @@ export function compareAethonVersions(left: string, right: string): number {
   return 0;
 }
 
-export function isAuthorizedAethonUpdate(
-  release: AethonReleaseInfo,
-  status: AethonUpdateStatus | null,
+export function isAuthorizedEpigraphUpdate(
+  release: EpigraphReleaseInfo,
+  status: EpigraphUpdateStatus | null,
 ): boolean {
   if (!status?.update_available || !status.version) return false;
-  const releaseVersion = normalizeAethonVersion(release.tag_name);
-  const authorizedVersion = normalizeAethonVersion(status.version);
+  const releaseVersion = normalizeEpigraphVersion(release.tag_name);
+  const authorizedVersion = normalizeEpigraphVersion(status.version);
   return releaseVersion !== null && releaseVersion === authorizedVersion;
 }
 
-export function sortAethonReleaseHistory(releases: readonly AethonReleaseInfo[]): AethonReleaseInfo[] {
+export function sortEpigraphReleaseHistory(releases: readonly EpigraphReleaseInfo[]): EpigraphReleaseInfo[] {
   return releases
-    .filter((release) => normalizeAethonVersion(release.tag_name) !== null)
+    .filter((release) => normalizeEpigraphVersion(release.tag_name) !== null)
     .slice()
-    .sort((left, right) => compareAethonVersions(right.tag_name, left.tag_name));
+    .sort((left, right) => compareEpigraphVersions(right.tag_name, left.tag_name));
 }

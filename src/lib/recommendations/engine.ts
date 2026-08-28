@@ -46,7 +46,7 @@ export function buildSearchRecommendations(
   options: BuildRecommendationSectionsOptions = {},
 ): SearchRecommendationResult {
   const trackerNameById = new Map((input.trackers ?? []).map((tracker) => [tracker.id, tracker.name]));
-  const trackerIconById = new Map((input.trackers ?? []).map((tracker) => [tracker.id, tracker.name]));
+  const trackerIconById = new Map((input.trackers ?? []).map((tracker) => [tracker.id, tracker.icon || tracker.name]));
   const mangaCandidateOptions = {
     trackRecordsByMangaId: input.trackRecordsByMangaId,
     trackerNameById,

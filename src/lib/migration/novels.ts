@@ -1,8 +1,8 @@
 import type { NovelRepositoryScopeInput } from "../novels/repositoryState";
 import type {
-  AethonNovelBookmarkEntry,
-  AethonNovelHistoryEntry,
-  AethonNovelProgressEntry,
+  EpigraphNovelBookmarkEntry,
+  EpigraphNovelHistoryEntry,
+  EpigraphNovelProgressEntry,
 } from "../backup/novelsBackup";
 import type { NovelDetailRecord, PersistedNovelChapterEntry, PersistedNovelLibraryState } from "../novels/domain";
 import {
@@ -217,10 +217,10 @@ function buildPreview(
 }
 
 function chooseFurthestProgress(
-  existing: AethonNovelProgressEntry | null,
-  migrated: AethonNovelProgressEntry | null,
+  existing: EpigraphNovelProgressEntry | null,
+  migrated: EpigraphNovelProgressEntry | null,
   targetDetail: NovelDetailRecord,
-): AethonNovelProgressEntry | null {
+): EpigraphNovelProgressEntry | null {
   if (!existing) return migrated;
   if (!migrated) return existing;
 
@@ -245,7 +245,7 @@ function chooseFurthestProgress(
   return migrated.updatedAt > existing.updatedAt ? migrated : existing;
 }
 
-function deduplicateBookmarks(entries: AethonNovelBookmarkEntry[]): AethonNovelBookmarkEntry[] {
+function deduplicateBookmarks(entries: EpigraphNovelBookmarkEntry[]): EpigraphNovelBookmarkEntry[] {
   const seen = new Set<string>();
   return entries.filter((entry) => {
     const key = [
@@ -260,7 +260,7 @@ function deduplicateBookmarks(entries: AethonNovelBookmarkEntry[]): AethonNovelB
   });
 }
 
-function deduplicateHistory(entries: AethonNovelHistoryEntry[]): AethonNovelHistoryEntry[] {
+function deduplicateHistory(entries: EpigraphNovelHistoryEntry[]): EpigraphNovelHistoryEntry[] {
   const seen = new Set<string>();
   return entries
     .sort((left, right) => right.readAt - left.readAt)
@@ -312,8 +312,8 @@ function remapNovelState(
   const oldHistory = oldState.history.filter((entry) => entry.novelId === currentNovelId);
   const existingTargetHistory = oldState.history.filter((entry) => entry.novelId === targetDetail.id);
 
-  const mappedProgressEntries: AethonNovelProgressEntry[] = [];
-  const preservedUnmappedProgress: AethonNovelProgressEntry[] = [];
+  const mappedProgressEntries: EpigraphNovelProgressEntry[] = [];
+  const preservedUnmappedProgress: EpigraphNovelProgressEntry[] = [];
   for (const progressEntry of oldProgressEntries) {
     const mapped = progressEntry.chapterId ? mappedByOldId.get(progressEntry.chapterId) : null;
     if (!mapped) {
@@ -329,13 +329,13 @@ function remapNovelState(
     });
   }
   const targetProgress = [...existingTargetProgressEntries, ...mappedProgressEntries]
-    .reduce<AethonNovelProgressEntry | null>(
+    .reduce<EpigraphNovelProgressEntry | null>(
       (selected, candidate) => chooseFurthestProgress(selected, candidate, targetDetail),
       null,
     );
 
-  const mappedBookmarks: AethonNovelBookmarkEntry[] = [];
-  const preservedUnmappedBookmarks: AethonNovelBookmarkEntry[] = [];
+  const mappedBookmarks: EpigraphNovelBookmarkEntry[] = [];
+  const preservedUnmappedBookmarks: EpigraphNovelBookmarkEntry[] = [];
   for (const bookmark of oldBookmarks) {
     const mapped = bookmark.chapterId ? mappedByOldId.get(bookmark.chapterId) : null;
     if (!mapped) {
@@ -351,8 +351,8 @@ function remapNovelState(
     });
   }
 
-  const mappedHistory: AethonNovelHistoryEntry[] = [];
-  const preservedUnmappedHistory: AethonNovelHistoryEntry[] = [];
+  const mappedHistory: EpigraphNovelHistoryEntry[] = [];
+  const preservedUnmappedHistory: EpigraphNovelHistoryEntry[] = [];
   for (const entry of oldHistory) {
     const mapped = entry.chapterId ? mappedByOldId.get(entry.chapterId) : null;
     if (!mapped) {

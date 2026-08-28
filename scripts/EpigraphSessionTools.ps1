@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-function Use-AethonWindowInterop {
-  if (-not ([System.Management.Automation.PSTypeName]'AethonWindow').Type) {
+function Use-EpigraphWindowInterop {
+  if (-not ([System.Management.Automation.PSTypeName]'EpigraphWindow').Type) {
     Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public static class AethonWindow {
+public static class EpigraphWindow {
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
 }
@@ -13,8 +13,8 @@ public static class AethonWindow {
   }
 }
 
-function Get-AethonWindowProcess {
-  $windowed = Get-Process aethon -ErrorAction SilentlyContinue |
+function Get-EpigraphWindowProcess {
+  $windowed = Get-Process epigraph -ErrorAction SilentlyContinue |
     Where-Object { $_.MainWindowHandle -ne 0 -or $_.MainWindowTitle }
 
   if (-not $windowed) {
@@ -39,22 +39,22 @@ function Get-AethonWindowProcess {
     Select-Object -First 1
 }
 
-function Focus-AethonWindow {
-  Use-AethonWindowInterop
+function Focus-EpigraphWindow {
+  Use-EpigraphWindowInterop
 
-  $proc = Get-AethonWindowProcess
+  $proc = Get-EpigraphWindowProcess
   if (-not $proc) { return $false }
 
   $hwnd = [System.IntPtr]$proc.MainWindowHandle
   if ($hwnd -eq [System.IntPtr]::Zero) { return $false }
 
-  [AethonWindow]::ShowWindowAsync($hwnd, 9) | Out-Null
+  [EpigraphWindow]::ShowWindowAsync($hwnd, 9) | Out-Null
   Start-Sleep -Milliseconds 250
-  [AethonWindow]::SetForegroundWindow($hwnd) | Out-Null
+  [EpigraphWindow]::SetForegroundWindow($hwnd) | Out-Null
   return $true
 }
 
-function Get-AethonProcessSnapshot {
+function Get-EpigraphProcessSnapshot {
   param(
     [int[]]$ExcludePids = @()
   )
@@ -63,7 +63,7 @@ function Get-AethonProcessSnapshot {
     Where-Object { $ExcludePids -notcontains [int]$_.ProcessId }
 }
 
-function Get-AethonManagedSeeds {
+function Get-EpigraphManagedSeeds {
   param(
     [Parameter(Mandatory)]
     [string]$ProjectRoot,
@@ -73,11 +73,11 @@ function Get-AethonManagedSeeds {
 
   $resolvedRoot = (Resolve-Path $ProjectRoot).Path
   $escapedRoot = [regex]::Escape($resolvedRoot)
-  $debugExe = Join-Path $resolvedRoot "src-tauri\target\debug\aethon.exe"
-  $releaseExe = Join-Path $resolvedRoot "src-tauri\target\release\aethon.exe"
-  $debugSyncdExe = Join-Path $resolvedRoot "src-tauri\target\debug\aethon-syncd.exe"
-  $releaseSyncdExe = Join-Path $resolvedRoot "src-tauri\target\release\aethon-syncd.exe"
-  $all = Get-AethonProcessSnapshot -ExcludePids $ExcludePids
+  $debugExe = Join-Path $resolvedRoot "src-tauri\target\debug\epigraph.exe"
+  $releaseExe = Join-Path $resolvedRoot "src-tauri\target\release\epigraph.exe"
+  $debugSyncdExe = Join-Path $resolvedRoot "src-tauri\target\debug\epigraph-syncd.exe"
+  $releaseSyncdExe = Join-Path $resolvedRoot "src-tauri\target\release\epigraph-syncd.exe"
+  $all = Get-EpigraphProcessSnapshot -ExcludePids $ExcludePids
 
   $includeAll = $Kinds -contains "All"
   function Has-Kind([string]$Kind) {
@@ -100,13 +100,13 @@ function Get-AethonManagedSeeds {
           $cmd -match "tauri:dev(?::gate)?" -or
           $cmd -match "tauri\.js""?\s+dev" -or
           $cmd -match "vite\.js --host 127\.0\.0\.1 --port 1420" -or
-          $cmd -match "launch-latest-aethon"
+          $cmd -match "launch-latest-epigraph"
         )
       ) {
         $isSeed = $true
       }
       elseif (
-        $name -eq "aethon.exe" -and
+        $name -eq "epigraph.exe" -and
         (
           ($exe -and $exe -ieq $debugExe) -or
           ($cmd -and $cmd -match [regex]::Escape($debugExe))
@@ -149,7 +149,7 @@ function Get-AethonManagedSeeds {
         $isSeed = $true
       }
       elseif (
-        $name -eq "aethon-syncd.exe" -and
+        $name -eq "epigraph-syncd.exe" -and
         (
           ($exe -and ($exe -ieq $debugSyncdExe -or $exe -ieq $releaseSyncdExe)) -or
           ($cmd -and ($cmd -match [regex]::Escape($debugSyncdExe) -or $cmd -match [regex]::Escape($releaseSyncdExe)))
@@ -173,7 +173,7 @@ function Get-AethonManagedSeeds {
         $isSeed = $true
       }
       elseif (
-        $name -eq "aethon.exe" -and
+        $name -eq "epigraph.exe" -and
         (
           ($cmd -and $cmd -match "--webdriver-automation") -or
           ($cmd -and $cmd -match [regex]::Escape("\tmp\syncd-")) -or
@@ -188,7 +188,7 @@ function Get-AethonManagedSeeds {
   }
 }
 
-function Get-AethonManagedProcesses {
+function Get-EpigraphManagedProcesses {
   param(
     [Parameter(Mandatory)]
     [string]$ProjectRoot,
@@ -196,10 +196,10 @@ function Get-AethonManagedProcesses {
     [int[]]$ExcludePids = @($PID)
   )
 
-  $all = Get-AethonProcessSnapshot -ExcludePids $ExcludePids
+  $all = Get-EpigraphProcessSnapshot -ExcludePids $ExcludePids
   $seedIds = New-Object 'System.Collections.Generic.HashSet[int]'
 
-  foreach ($proc in Get-AethonManagedSeeds -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids) {
+  foreach ($proc in Get-EpigraphManagedSeeds -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids) {
     [void]$seedIds.Add([int]$proc.ProcessId)
   }
 
@@ -223,7 +223,7 @@ function Get-AethonManagedProcesses {
     Sort-Object ProcessId
 }
 
-function Stop-AethonManagedProcesses {
+function Stop-EpigraphManagedProcesses {
   param(
     [Parameter(Mandatory)]
     [string]$ProjectRoot,
@@ -232,7 +232,7 @@ function Stop-AethonManagedProcesses {
     [int]$TimeoutSeconds = 15
   )
 
-  $targets = @(Get-AethonManagedProcesses -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids)
+  $targets = @(Get-EpigraphManagedProcesses -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids)
   if (-not $targets) {
     return @()
   }
@@ -244,7 +244,7 @@ function Stop-AethonManagedProcesses {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   do {
     Start-Sleep -Milliseconds 400
-    $remaining = @(Get-AethonManagedProcesses -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids)
+    $remaining = @(Get-EpigraphManagedProcesses -ProjectRoot $ProjectRoot -Kinds $Kinds -ExcludePids $ExcludePids)
   } until ((-not $remaining) -or (Get-Date) -gt $deadline)
 
   return $targets

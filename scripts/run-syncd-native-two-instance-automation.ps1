@@ -14,9 +14,9 @@ $driverStderr = Join-Path $tmpRoot "tauri-driver.stderr.log"
 $driverPort = 4554
 $nativePort = 4555
 $driverUrl = "http://127.0.0.1:$driverPort"
-$appBasePath = Join-Path $projectRoot "src-tauri\target\release\aethon.exe"
-$syncdBuiltExe = Join-Path $projectRoot "src-tauri\target\release\aethon-syncd.exe"
-$syncdSidecarExe = Join-Path $projectRoot "src-tauri\binaries\aethon-syncd-x86_64-pc-windows-msvc.exe"
+$appBasePath = Join-Path $projectRoot "src-tauri\target\release\epigraph.exe"
+$syncdBuiltExe = Join-Path $projectRoot "src-tauri\target\release\epigraph-syncd.exe"
+$syncdSidecarExe = Join-Path $projectRoot "src-tauri\binaries\epigraph-syncd-x86_64-pc-windows-msvc.exe"
 $bundledJava = Join-Path $projectRoot "src-tauri\binaries\suwayomi-bundle\jre\bin\java.exe"
 $reportPath = Join-Path $artifactsRoot "syncd-native-two-instance-report.json"
 $failurePath = Join-Path $artifactsRoot "syncd-native-two-instance-failure.json"
@@ -132,11 +132,11 @@ function Stop-ListeningPorts {
 function Stop-NativeAutomationResidue {
   Write-Host "Cleaning native automation residue"
   $patterns = @(
-    "*\src-tauri\target\debug\aethon.exe",
-    "*\src-tauri\target\release\aethon.exe",
-    "*\src-tauri\target\debug\aethon-syncd.exe",
-    "*\src-tauri\target\release\aethon-syncd.exe",
-    "*\src-tauri\binaries\aethon-syncd-x86_64-pc-windows-msvc.exe",
+    "*\src-tauri\target\debug\epigraph.exe",
+    "*\src-tauri\target\release\epigraph.exe",
+    "*\src-tauri\target\debug\epigraph-syncd.exe",
+    "*\src-tauri\target\release\epigraph-syncd.exe",
+    "*\src-tauri\binaries\epigraph-syncd-x86_64-pc-windows-msvc.exe",
     "*\src-tauri\target\debug\binaries\suwayomi-bundle\jre\bin\java.exe",
     "*\src-tauri\target\release\binaries\suwayomi-bundle\jre\bin\java.exe",
     "*\src-tauri\binaries\suwayomi-bundle\jre\bin\java.exe",
@@ -256,7 +256,7 @@ if ($SkipBuild) {
   Write-Host "Skipping native rebuild and reusing existing release binaries."
 } else {
   Invoke-NativeBuildCommand -Command "npm run build" -FailureMessage "npm run build failed." -LogSlug "01-npm-build"
-  Invoke-NativeBuildCommand -Command "cargo build --manifest-path src-tauri/Cargo.toml --release --bin aethon-syncd" -FailureMessage "cargo build --release --bin aethon-syncd failed." -LogSlug "02-cargo-syncd-release"
+  Invoke-NativeBuildCommand -Command "cargo build --manifest-path src-tauri/Cargo.toml --release --bin epigraph-syncd" -FailureMessage "cargo build --release --bin epigraph-syncd failed." -LogSlug "02-cargo-syncd-release"
   Invoke-NativeBuildCommand -Command "npm run tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json" -FailureMessage "tauri build --no-bundle failed." -LogSlug "03-tauri-build"
 }
 
@@ -269,8 +269,8 @@ function Resolve-EdgeDriver {
   if ($NativeDriver) {
     $candidates.Add($NativeDriver)
   }
-  if ($env:AETHON_EDGE_DRIVER) {
-    $candidates.Add($env:AETHON_EDGE_DRIVER)
+  if ($env:EPIGRAPH_EDGE_DRIVER) {
+    $candidates.Add($env:EPIGRAPH_EDGE_DRIVER)
   }
 
   $command = Get-Command "msedgedriver.exe" -ErrorAction SilentlyContinue
@@ -292,7 +292,7 @@ function Resolve-EdgeDriver {
     }
   }
 
-  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set AETHON_EDGE_DRIVER."
+  throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set EPIGRAPH_EDGE_DRIVER."
 }
 
 $nativeDriver = Resolve-EdgeDriver
@@ -303,9 +303,9 @@ if (-not (Test-Path $tauriDriver)) {
 Write-Host "Using EdgeDriver: $nativeDriver"
 & $nativeDriver --version
 
-if (-not $env:AETHON_SYNCD_MIN_CLIENT_VERSION) {
+if (-not $env:EPIGRAPH_SYNCD_MIN_CLIENT_VERSION) {
   $packageMetadata = Get-Content (Join-Path $projectRoot "package.json") -Raw | ConvertFrom-Json
-  $env:AETHON_SYNCD_MIN_CLIENT_VERSION = [string]$packageMetadata.version
+  $env:EPIGRAPH_SYNCD_MIN_CLIENT_VERSION = [string]$packageMetadata.version
 }
 
 $driverProcess = $null

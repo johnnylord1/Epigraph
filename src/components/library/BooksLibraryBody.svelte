@@ -754,7 +754,7 @@
         <UploadSimple size={22} weight="bold" />
         <div class="book-drop-copy">
           <strong>{importingDrop ? $_("ui_importingBooks") : $_("ui_dropEpubOrPdfFilesHere")}</strong>
-          <span>{importingDrop ? $_("ui_aethonIsAddingThemToTheBooksShelf") : $_("ui_importedBooksStaySeparateFromComics")}</span>
+          <span>{importingDrop ? $_("ui_epigraphIsAddingThemToTheBooksShelf") : $_("ui_importedBooksStaySeparateFromComics")}</span>
         </div>
       </div>
     </div>

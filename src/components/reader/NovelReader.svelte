@@ -115,9 +115,9 @@
     const handleHardcoverStateChanged = () => {
       hardcoverStateVersion += 1;
     };
-    globalThis.addEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+    globalThis.addEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
     return () => {
-      globalThis.removeEventListener?.("aethon-hardcover-state-changed", handleHardcoverStateChanged);
+      globalThis.removeEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
     };
   });
 

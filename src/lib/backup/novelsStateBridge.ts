@@ -1,19 +1,19 @@
 import type {
-  AethonNovelBookmarkEntry,
-  AethonNovelChapterEntry,
-  AethonNovelEntry,
-  AethonNovelHistoryEntry,
-  AethonNovelPluginReference,
-  AethonNovelProgressEntry,
-  AethonNovelRepositoryReference,
-  AethonNovelSourceIdentity,
-  AethonNovelsSnapshot,
-  RestoredAethonNovelsSnapshot,
+  EpigraphNovelBookmarkEntry,
+  EpigraphNovelChapterEntry,
+  EpigraphNovelEntry,
+  EpigraphNovelHistoryEntry,
+  EpigraphNovelPluginReference,
+  EpigraphNovelProgressEntry,
+  EpigraphNovelRepositoryReference,
+  EpigraphNovelSourceIdentity,
+  EpigraphNovelsSnapshot,
+  RestoredEpigraphNovelsSnapshot,
 } from "./novelsBackup";
 import type { PersistedNovelLibraryState } from "../novels/domain";
 import type { PersistedNovelRepositoryState } from "../novels/repositoryState";
 
-const UNKNOWN_NOVEL_SOURCE: AethonNovelSourceIdentity = {
+const UNKNOWN_NOVEL_SOURCE: EpigraphNovelSourceIdentity = {
   repositoryUrl: null,
   pluginId: null,
   sourceId: null,
@@ -21,7 +21,7 @@ const UNKNOWN_NOVEL_SOURCE: AethonNovelSourceIdentity = {
 
 function mapEntry(
   entry: PersistedNovelLibraryState["entries"][number],
-): AethonNovelEntry {
+): EpigraphNovelEntry {
   return {
     id: entry.id,
     title: entry.title,
@@ -42,7 +42,7 @@ function mapEntry(
 
 function mapChapter(
   chapter: PersistedNovelLibraryState["chapters"][number],
-): AethonNovelChapterEntry {
+): EpigraphNovelChapterEntry {
   return {
     id: chapter.id,
     novelId: chapter.novelId,
@@ -57,7 +57,7 @@ function mapChapter(
 
 function mapRepository(
   repository: PersistedNovelRepositoryState["repositories"][number],
-): AethonNovelRepositoryReference {
+): EpigraphNovelRepositoryReference {
   return {
     url: repository.normalizedUrl,
     name: null,
@@ -66,7 +66,7 @@ function mapRepository(
 
 function mapPlugin(
   plugin: PersistedNovelRepositoryState["installedPlugins"][number],
-): AethonNovelPluginReference {
+): EpigraphNovelPluginReference {
   return {
     id: plugin.pluginId,
     name: null,
@@ -75,10 +75,10 @@ function mapPlugin(
   };
 }
 
-export function buildAethonNovelsSnapshotFromAuthoritativeState(input: {
+export function buildEpigraphNovelsSnapshotFromAuthoritativeState(input: {
   libraryState: Pick<PersistedNovelLibraryState, "entries" | "chapters" | "progress" | "bookmarks" | "history">;
   repositoryState?: Pick<PersistedNovelRepositoryState, "repositories" | "installedPlugins"> | null;
-}): AethonNovelsSnapshot {
+}): EpigraphNovelsSnapshot {
   const repositories = input.repositoryState?.repositories ?? [];
   const installedPlugins = input.repositoryState?.installedPlugins ?? [];
   const repositoryUrlById = new Map(repositories.map((repository) => [repository.id, repository.normalizedUrl]));
@@ -86,9 +86,9 @@ export function buildAethonNovelsSnapshotFromAuthoritativeState(input: {
   return {
     entries: input.libraryState.entries.map((entry) => mapEntry(entry)),
     chapters: input.libraryState.chapters.map((chapter) => mapChapter(chapter)),
-    progress: input.libraryState.progress.map((entry): AethonNovelProgressEntry => ({ ...entry })),
-    bookmarks: input.libraryState.bookmarks.map((entry): AethonNovelBookmarkEntry => ({ ...entry })),
-    history: input.libraryState.history.map((entry): AethonNovelHistoryEntry => ({ ...entry })),
+    progress: input.libraryState.progress.map((entry): EpigraphNovelProgressEntry => ({ ...entry })),
+    bookmarks: input.libraryState.bookmarks.map((entry): EpigraphNovelBookmarkEntry => ({ ...entry })),
+    history: input.libraryState.history.map((entry): EpigraphNovelHistoryEntry => ({ ...entry })),
     repositories: repositories.map((repository) => mapRepository(repository)),
     plugins: installedPlugins.map((plugin) => ({
       ...mapPlugin(plugin),
@@ -99,7 +99,7 @@ export function buildAethonNovelsSnapshotFromAuthoritativeState(input: {
 
 export function applyRestoredNovelsSnapshotToLibraryState(input: {
   currentState: PersistedNovelLibraryState;
-  restored: RestoredAethonNovelsSnapshot;
+  restored: RestoredEpigraphNovelsSnapshot;
 }): PersistedNovelLibraryState {
   return {
     version: input.currentState.version,

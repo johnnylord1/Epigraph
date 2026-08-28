@@ -217,7 +217,7 @@ async function fetchAniListCover(id: number): Promise<string | null> {
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({
         query: `
-          query AethonDiscordCover($id: Int!) {
+          query EpigraphDiscordCover($id: Int!) {
             Media(id: $id, type: MANGA) {
               coverImage {
                 extraLarge

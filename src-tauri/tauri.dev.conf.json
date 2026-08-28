@@ -6,7 +6,7 @@
   "app": {
     "windows": [
       {
-        "title": "Aethon",
+        "title": "Epigraph",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
@@ -22,7 +22,7 @@
   },
   "bundle": {
     "externalBin": [
-      "binaries/aethon-syncd"
+      "binaries/epigraph-syncd"
     ]
   }
 }

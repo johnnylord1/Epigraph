@@ -18,7 +18,7 @@ describe("SearchPalette contract", () => {
     for (const topbarSource of topbarSearchSources) {
       expect(topbarSource).toContain('role="combobox"');
       expect(topbarSource).toContain('aria-expanded={store.searchOpen}');
-      expect(topbarSource).toContain('aria-controls="aethon-search-results"');
+      expect(topbarSource).toContain('aria-controls="epigraph-search-results"');
       expect(topbarSource).toContain("aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}");
     }
     expect(source).toContain('role="listbox"');
@@ -119,7 +119,7 @@ describe("SearchPalette contract", () => {
   });
 
   test("keeps the opener expanded while the palette owns search focus", () => {
-    expect(portSource).toContain("body.aethon-search-engaged .n-topbar .n-search");
+    expect(portSource).toContain("body.epigraph-search-engaged .n-topbar .n-search");
     expect(portSource).toContain("width: var(--shell-search-width-focus)");
     expect(portSource).toContain("box-shadow: var(--component-search-shadow-focus)");
     expect(portSource).toContain(".n-search:focus-within");
@@ -136,7 +136,7 @@ describe("SearchPalette contract", () => {
     expect(source).toContain("dismissSearchPalette()");
     expect(appSource).toContain('ensureLazyComponent("searchPalette")');
     expect(appSource).toContain("shellReady || store.searchEngaged");
-    expect(appSource).toContain('.aethon-app-shell .search-palette');
+    expect(appSource).toContain('.epigraph-app-shell .search-palette');
     expect(appSource).toContain(":not(.search-palette)");
     expect(appSource).toContain("animation-play-state: running !important");
   });
@@ -262,14 +262,14 @@ describe("SearchPalette contract", () => {
   });
 
   test("keeps the topbar search above the dim even inside isolated Settings", () => {
-    expect(portSource).toContain("body.aethon-search-engaged .aethon-search-dim-layer");
+    expect(portSource).toContain("body.epigraph-search-engaged .epigraph-search-dim-layer");
     expect(portSource).toContain("pointer-events: auto");
     expect(portSource).toContain(".main > .root");
     expect(portSource).toContain("animation-fill-mode: none !important");
-    expect(portSource).toContain("body.aethon-search-engaged .main--settings");
-    expect(portSource).toContain("body.aethon-search-engaged .settings-page");
+    expect(portSource).toContain("body.epigraph-search-engaged .main--settings");
+    expect(portSource).toContain("body.epigraph-search-engaged .settings-page");
     expect(portSource).toContain("isolation: auto !important");
-    expect(portSource).toContain("body.aethon-search-engaged .downloads-topbar-shell");
+    expect(portSource).toContain("body.epigraph-search-engaged .downloads-topbar-shell");
     expect(portSource).toContain("z-index: var(--component-topbar-search-z-index) !important");
   });
 

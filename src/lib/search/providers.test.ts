@@ -6,7 +6,7 @@ import { SETTINGS_SEARCH_CATALOG } from "./settingsCatalog";
 const manga = {
   id: 7,
   title: "The Moon Reader",
-  author: "Aethon Press",
+  author: "Epigraph Press",
   thumbnailUrl: null,
   sourceId: "source-1",
   source: { id: "source-1", displayName: "Local source" },

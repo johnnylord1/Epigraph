@@ -289,7 +289,7 @@ export function getPageSet(
 
 // ── Source frecency helpers ───────────────────────────────────────────────────
 
-const FRECENCY_KEY         = "aethon-source-frecency";
+const FRECENCY_KEY         = "epigraph-source-frecency";
 const MAX_FRECENCY_SOURCES = 4;
 
 type FrecencyMap = Record<string, number>;

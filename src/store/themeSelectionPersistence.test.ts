@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-const STORE_KEY = "aethon-store";
+const STORE_KEY = "epigraph-store";
 const STORE_VERSION = 7;
 
 async function loadSettingsTheme(settings: Record<string, unknown>) {

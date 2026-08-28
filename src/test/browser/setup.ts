@@ -3,14 +3,14 @@ import { commands, page } from "@vitest/browser/context";
 import { afterEach, beforeEach, expect } from "vitest";
 import { applyAppLanguage } from "../../lib/i18n/runtime";
 
-const FREEZE_STYLE_ID = "aethon-browser-freeze-style";
+const FREEZE_STYLE_ID = "epigraph-browser-freeze-style";
 const FONT_READY_TIMEOUT_MS = 1500;
-declare const __AETHON_BROWSER_SCREENSHOT_DIR__: string;
-declare const __AETHON_BROWSER_ACTUAL_SCREENSHOT_DIR__: string;
-declare const __AETHON_BROWSER_UPDATE_SCREENSHOTS__: boolean;
+declare const __EPIGRAPH_BROWSER_SCREENSHOT_DIR__: string;
+declare const __EPIGRAPH_BROWSER_ACTUAL_SCREENSHOT_DIR__: string;
+declare const __EPIGRAPH_BROWSER_UPDATE_SCREENSHOTS__: boolean;
 
-const SCREENSHOT_BASE_DIR = __AETHON_BROWSER_SCREENSHOT_DIR__;
-const SCREENSHOT_ACTUAL_DIR = __AETHON_BROWSER_ACTUAL_SCREENSHOT_DIR__;
+const SCREENSHOT_BASE_DIR = __EPIGRAPH_BROWSER_SCREENSHOT_DIR__;
+const SCREENSHOT_ACTUAL_DIR = __EPIGRAPH_BROWSER_ACTUAL_SCREENSHOT_DIR__;
 const MAX_SCREENSHOT_CHANNEL_DELTA = 1;
 const MAX_SCREENSHOT_CHANGED_PIXEL_RATIO = 0.002;
 
@@ -76,7 +76,7 @@ function normalizeScreenshotName(input: string) {
 }
 
 expect.extend({
-  async toMatchAethonScreenshot(received: Element, name?: string) {
+  async toMatchEpigraphScreenshot(received: Element, name?: string) {
     if (!(received instanceof Element)) throw new Error("Screenshot target must be an Element");
     const screenshotName = normalizeScreenshotName(name ?? "unnamed-screenshot");
     const baselinePath = `${SCREENSHOT_BASE_DIR}/${screenshotName}.png`;
@@ -92,7 +92,7 @@ expect.extend({
     }
 
     if (!baselineBase64) {
-      if (__AETHON_BROWSER_UPDATE_SCREENSHOTS__) {
+      if (__EPIGRAPH_BROWSER_UPDATE_SCREENSHOTS__) {
         await commands.writeFile(baselinePath, actual.base64, "base64");
         return {
           pass: true,
@@ -111,6 +111,14 @@ expect.extend({
       return {
         pass: true,
         message: () => `Expected screenshot not to match baseline ${baselinePath}`,
+      };
+    }
+
+    if (__EPIGRAPH_BROWSER_UPDATE_SCREENSHOTS__) {
+      await commands.writeFile(baselinePath, actual.base64, "base64");
+      return {
+        pass: true,
+        message: () => `Updated screenshot baseline at ${baselinePath}`,
       };
     }
 

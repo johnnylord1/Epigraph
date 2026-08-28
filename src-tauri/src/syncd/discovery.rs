@@ -23,6 +23,7 @@ use crate::syncd::db;
 pub const SYNCD_DISCOVERY_DESCRIPTOR_VERSION: u32 = 1;
 pub const SYNCD_CLIENT_DISCOVERY_CONTRACT_VERSION: u32 = 1;
 pub const SYNCD_CLIENT_DISCOVERY_GUIDANCE_VERSION: u32 = 1;
+pub const LEGACY_MDNS_SERVICE_NAME: &str = "_aethon-sync._tcp.local.";
 
 #[derive(Clone, Debug, Default)]
 pub struct SyncdDiscoveryDescriptorProvider;
@@ -413,7 +414,7 @@ impl SyncdDiscoveryProviderManager {
         )?;
         let short_server_id = descriptor.server_id.chars().take(8).collect::<String>();
         let port = advertised_origin_port(&descriptor.advertised_origin.base_url)?;
-        let instance_name = format!("aethon-syncd-{short_server_id}");
+        let instance_name = format!("epigraph-syncd-{short_server_id}");
         let host_name = format!("{instance_name}.local.");
         let txt_records = build_txt_records(&descriptor);
 
@@ -657,31 +658,57 @@ fn start_lan_publication_runtime(
                 state.config.discovery_mdns_port
             )
         })?;
-    let properties = txt_record_pairs(&publication.txt_records);
-    let mut service_info = ServiceInfo::new(
-        &transport_service_type(&publication.service_type),
-        &publication.instance_name,
-        &publication.host_name,
-        (),
-        publication.port,
-        &properties[..],
-    )
-    .with_context(|| {
-        format!(
-            "failed to build service info for '{}'",
-            publication.instance_name
-        )
-    })?;
-    service_info = service_info.enable_addr_auto();
-
     let monitor = daemon.monitor().context("failed to monitor mDNS daemon")?;
     let monitor_task = spawn_mdns_monitor_task(state, publication.clone(), monitor);
-    daemon.register(service_info).with_context(|| {
-        format!(
-            "failed to register mDNS service '{}'",
-            publication.instance_name
+    let properties = txt_record_pairs(&publication.txt_records);
+    let canonical_service_type = "_epigraph-sync._tcp.local.";
+    let legacy_instance_name = publication
+        .instance_name
+        .strip_prefix("epigraph-syncd-")
+        .map(|suffix| format!("aethon-syncd-{suffix}"))
+        .unwrap_or_else(|| format!("aethon-{}", publication.instance_name));
+    let legacy_host_name = format!("{legacy_instance_name}.local.");
+    let mut definitions = vec![(
+        publication.service_type.clone(),
+        publication.instance_name.clone(),
+        publication.host_name.clone(),
+    )];
+    if !publication
+        .service_type
+        .eq_ignore_ascii_case(canonical_service_type)
+    {
+        definitions.push((
+            canonical_service_type.to_string(),
+            publication.instance_name.clone(),
+            publication.host_name.clone(),
+        ));
+    }
+    if !publication
+        .service_type
+        .eq_ignore_ascii_case(LEGACY_MDNS_SERVICE_NAME)
+    {
+        definitions.push((
+            LEGACY_MDNS_SERVICE_NAME.to_string(),
+            legacy_instance_name,
+            legacy_host_name,
+        ));
+    }
+
+    for (service_type, instance_name, host_name) in definitions {
+        let service_info = ServiceInfo::new(
+            &transport_service_type(&service_type),
+            &instance_name,
+            &host_name,
+            (),
+            publication.port,
+            &properties[..],
         )
-    })?;
+        .with_context(|| format!("failed to build service info for '{instance_name}'"))?
+        .enable_addr_auto();
+        daemon.register(service_info).with_context(|| {
+            format!("failed to register mDNS service '{instance_name}' ({service_type})")
+        })?;
+    }
 
     Ok(SyncdDiscoveryRuntimeHandle {
         runtime: Some(SyncdDiscoveryProviderRuntime::LanPublication(
@@ -868,7 +895,7 @@ mod tests {
             server_protocol_version: 1,
             min_client_version: "0.1.0-alpha.1".to_string(),
             tls_cert_sha256: "fingerprint".to_string(),
-            mdns_service_name: "_aethon-sync._tcp.local.".to_string(),
+            mdns_service_name: "_epigraph-sync._tcp.local.".to_string(),
         }
     }
 
@@ -961,9 +988,9 @@ mod tests {
             publication.provider_kind,
             SyncdDiscoveryProviderKind::LanPublication
         );
-        assert_eq!(publication.service_type, "_aethon-sync._tcp.local.");
+        assert_eq!(publication.service_type, "_epigraph-sync._tcp.local.");
         assert_eq!(publication.port, 4777);
-        assert_eq!(publication.host_name, "aethon-syncd-syncd-se.local.");
+        assert_eq!(publication.host_name, "epigraph-syncd-syncd-se.local.");
         assert_eq!(
             publication.descriptor.advertised_origin.base_url,
             "https://127.0.0.1:4777"

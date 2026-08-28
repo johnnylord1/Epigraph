@@ -24,7 +24,7 @@ const englishCatalog = en as Record<string, string>;
 // only inside the advanced Options view.
 const englishCopyAllowlist = new Set(["ui_https1921681254777"]);
 const internalDetailAllowlist = new Set(["ui_https1921681254777"]);
-const preservedTechnicalTerms = ["Aethon", "QR", "TLS", "mDNS", "URL", "ID", "TTL"];
+const preservedTechnicalTerms = ["Epigraph", "QR", "TLS", "mDNS", "URL", "ID", "TTL"];
 const internalDetailPattern = /(?:https?:\/\/|127\.0\.0\.1|localhost|serverId|profileId|pairingSessionId|tlsCertSha256|bootstrapBundle)/i;
 
 function placeholders(value: string): string[] {
@@ -51,7 +51,7 @@ describe("active Syncd translations", () => {
 
     const settingsSource = readFileSync(resolve("src/components/settings/Settings.svelte"), "utf8");
 
-    expect(keys).toHaveLength(134);
+    expect(keys).toHaveLength(135);
     expect(keys).toContain("settings_inline_desktopSyncPairing");
     expect(keys).toContain("settings_inline_connecting");
     expect(keys).toContain("syncd_status_tls_mismatch");

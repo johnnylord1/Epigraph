@@ -3,7 +3,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::ConnectOptions;
 use sqlx::FromRow;
@@ -12,24 +13,28 @@ use uuid::Uuid;
 use super::config::SyncdConfig;
 use super::models::{
     canonical_novel_identity_key, canonical_novel_identity_key_from_source,
-    canonical_novel_plugin_id, canonical_novel_repository_id, AuthenticatedSession,
-    BookBookmarkPatch, BookBookmarkRecord, BookBookmarkRow, BookCategoryAssignmentPatch,
-    BookCategoryAssignmentRecord, BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord,
-    BookCategoryRow, BookEntryPatch, BookEntryRecord, BookEntryRow, BookHistoryPatch,
-    BookHistoryRecord, BookHistoryRow, BookLibraryUiPatch, BookLibraryUiRecord, BookLibraryUiRow,
-    BookProgressPatch, BookProgressRecord, BookProgressRow, ChangeEnvelope, ChangeLogRow,
-    ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow, ComicPageBookmarkPatch,
-    ComicPageBookmarkRecord, ComicPageBookmarkRow, MutationOperation, MutationReceiptContext,
-    MutationResult, MutationResultStatus, NovelBookmarkPatch, NovelBookmarkRecord,
-    NovelBookmarkRow, NovelCategoryAssignmentPatch, NovelCategoryAssignmentRecord,
-    NovelCategoryAssignmentRow, NovelCategoryPatch, NovelCategoryRecord, NovelCategoryRow,
-    NovelChapterAssetPatch, NovelChapterAssetRecord, NovelChapterAssetRow, NovelChapterPatch,
-    NovelChapterRecord, NovelChapterRow, NovelClassificationPatch, NovelClassificationRecord,
-    NovelClassificationRow, NovelEntryPatch, NovelEntryRecord, NovelEntryRow, NovelHistoryPatch,
-    NovelHistoryRecord, NovelHistoryRow, NovelPluginPatch, NovelPluginRecord, NovelPluginRow,
-    NovelProgressPatch, NovelProgressRecord, NovelProgressRow, NovelRepositoryPatch,
-    NovelRepositoryRecord, NovelRepositoryRow, PairingGrantVia, PairingPlatform, ServerRuntimeRow,
-    SnapshotEntity, SnapshotResponse, SnapshotTombstone, SNAPSHOT_SCHEMA_VERSION,
+    canonical_novel_plugin_id, canonical_novel_repository_id, canonical_portable_chapter_id,
+    canonical_portable_work_id, AuthenticatedSession, BookBookmarkPatch, BookBookmarkRecord,
+    BookBookmarkRow, BookCategoryAssignmentPatch, BookCategoryAssignmentRecord,
+    BookCategoryAssignmentRow, BookCategoryPatch, BookCategoryRecord, BookCategoryRow,
+    BookEntryPatch, BookEntryRecord, BookEntryRow, BookHighlightPatch, BookHighlightRecord,
+    BookHighlightRow, BookHistoryPatch, BookHistoryRecord, BookHistoryRow, BookLibraryUiPatch,
+    BookLibraryUiRecord, BookLibraryUiRow, BookProgressPatch, BookProgressRecord, BookProgressRow,
+    ChangeEnvelope, ChangeLogRow, ComicHistoryPatch, ComicHistoryRecord, ComicHistoryRow,
+    ComicPageBookmarkPatch, ComicPageBookmarkRecord, ComicPageBookmarkRow, EventClock,
+    MutationOperation, MutationReceiptContext, MutationResult, MutationResultStatus,
+    NovelBookmarkPatch, NovelBookmarkRecord, NovelBookmarkRow, NovelCategoryAssignmentPatch,
+    NovelCategoryAssignmentRecord, NovelCategoryAssignmentRow, NovelCategoryPatch,
+    NovelCategoryRecord, NovelCategoryRow, NovelChapterAssetPatch, NovelChapterAssetRecord,
+    NovelChapterAssetRow, NovelChapterPatch, NovelChapterRecord, NovelChapterRow,
+    NovelClassificationPatch, NovelClassificationRecord, NovelClassificationRow, NovelEntryPatch,
+    NovelEntryRecord, NovelEntryRow, NovelHistoryPatch, NovelHistoryRecord, NovelHistoryRow,
+    NovelPluginPatch, NovelPluginRecord, NovelPluginRow, NovelProgressPatch, NovelProgressRecord,
+    NovelProgressRow, NovelRepositoryPatch, NovelRepositoryRecord, NovelRepositoryRow,
+    PairingGrantVia, PairingPlatform, PortableChapterBindingRow, PortableChapterRefV3,
+    PortableResolutionReasonV3, PortableResolutionStateV3, PortableWorkBindingRow,
+    PortableWorkRefV3, ServerRuntimeRow, SnapshotEntity, SnapshotResponse, SnapshotTombstone,
+    SyncdPairedDeviceView, SNAPSHOT_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -59,6 +64,16 @@ pub struct PairingSessionRow {
     pub approved_at_ms: Option<i64>,
     pub rejected_at_ms: Option<i64>,
     pub created_at_ms: i64,
+    pub requested_scopes_json: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct PairedDeviceCatalogRow {
+    device_id: String,
+    device_name: String,
+    platform: String,
+    profile_id: String,
+    last_seen_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -102,6 +117,8 @@ pub enum PairingClaimError {
     ClaimedByOtherDevice,
     RejectedForDifferentDevice,
     ApprovedForDifferentDevice,
+    InvalidRequestedScopes(String),
+    RequestedScopesMismatch,
     InvalidStatus(String),
     Storage(String),
 }
@@ -111,6 +128,25 @@ pub struct MutationWriteOutcome {
     pub envelope: ChangeEnvelope,
     pub record: Value,
     pub applied_lamport: i64,
+}
+
+#[derive(Debug, Clone)]
+pub enum CausalMutationWriteOutcome {
+    Applied(MutationWriteOutcome),
+    Superseded {
+        record: Value,
+        winning_clock: EventClock,
+        server_version: i64,
+        applied_lamport: i64,
+    },
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct EntityEventClockRow {
+    physical_ms: i64,
+    logical: i64,
+    device_generation_id: String,
+    authenticated_device_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,7 +159,17 @@ pub enum MutationReceiptLookup {
 #[derive(Debug, Clone, FromRow)]
 struct MutationReceiptRow {
     mutation_hash: String,
+    mutation_json: String,
     result_json: String,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct ComicSyncStateRow {
+    entity_type: String,
+    entity_id: String,
+    record_json: String,
+    record_lamport: i64,
+    record_server_version: i64,
 }
 
 pub async fn lookup_mutation_receipt(
@@ -131,10 +177,11 @@ pub async fn lookup_mutation_receipt(
     device_id: &str,
     client_mutation_id: &str,
     mutation_hash: &str,
+    mutation_json: &str,
 ) -> anyhow::Result<MutationReceiptLookup> {
     let row = sqlx::query_as::<_, MutationReceiptRow>(
         r#"
-        SELECT mutation_hash, result_json
+        SELECT mutation_hash, mutation_json, result_json
         FROM mutation_receipts
         WHERE device_id = ? AND client_mutation_id = ?
         "#,
@@ -147,7 +194,9 @@ pub async fn lookup_mutation_receipt(
     let Some(row) = row else {
         return Ok(MutationReceiptLookup::Missing);
     };
-    if row.mutation_hash != mutation_hash {
+    if row.mutation_hash != mutation_hash
+        && !mutation_receipts_are_semantically_equivalent(&row.mutation_json, mutation_json)?
+    {
         return Ok(MutationReceiptLookup::Conflict {
             existing_hash: row.mutation_hash,
         });
@@ -156,6 +205,29 @@ pub async fn lookup_mutation_receipt(
     let result = serde_json::from_str(&row.result_json)
         .context("stored mutation receipt contains an invalid result")?;
     Ok(MutationReceiptLookup::Match(result))
+}
+
+fn mutation_receipts_are_semantically_equivalent(
+    stored_json: &str,
+    incoming_json: &str,
+) -> anyhow::Result<bool> {
+    let mut stored: serde_json::Value = serde_json::from_str(stored_json)
+        .context("stored mutation receipt contains invalid mutation JSON")?;
+    let mut incoming: serde_json::Value = serde_json::from_str(incoming_json)
+        .context("incoming mutation receipt contains invalid mutation JSON")?;
+
+    let stored_has_event_clock = stored.get("eventClock").is_some();
+    let incoming_has_event_clock = incoming.get("eventClock").is_some();
+    for value in [&mut stored, &mut incoming] {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("lamport");
+            if !stored_has_event_clock || !incoming_has_event_clock {
+                object.remove("eventClock");
+            }
+        }
+    }
+
+    Ok(stored == incoming)
 }
 
 pub async fn persist_rejected_mutation_receipt(
@@ -174,7 +246,7 @@ pub async fn persist_rejected_mutation_receipt(
             result_json,
             applied_server_version,
             created_at_ms
-        ) VALUES (?, ?, ?, ?, ?, NULL, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&context.device_id)
@@ -182,6 +254,7 @@ pub async fn persist_rejected_mutation_receipt(
     .bind(&context.mutation_hash)
     .bind(&context.mutation_json)
     .bind(result_json)
+    .bind(result.applied_server_version)
     .bind(now_ms())
     .execute(pool)
     .await?;
@@ -191,6 +264,7 @@ pub async fn persist_rejected_mutation_receipt(
         &context.device_id,
         &context.client_mutation_id,
         &context.mutation_hash,
+        &context.mutation_json,
     )
     .await
 }
@@ -456,6 +530,26 @@ pub async fn load_scope_snapshot(
             )?;
         }
 
+        let rows = sqlx::query_as::<_, BookHighlightRow>(
+            "SELECT * FROM book_highlights WHERE scope_id = ? ORDER BY highlight_id",
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            let entity_id = row.highlight_id.clone();
+            let server_version = row.record_server_version;
+            let lamport = row.record_lamport;
+            push_snapshot_entity(
+                &mut entities,
+                "book.highlight",
+                entity_id,
+                server_version,
+                lamport,
+                BookHighlightRecord::try_from(row)?,
+            )?;
+        }
+
         let rows = sqlx::query_as::<_, BookHistoryRow>(
             "SELECT * FROM book_history WHERE scope_id = ? ORDER BY history_id",
         )
@@ -707,6 +801,27 @@ pub async fn load_scope_snapshot(
             )?;
         }
     } else if scope_id.starts_with("comics:profile:") {
+        let rows = sqlx::query_as::<_, ComicSyncStateRow>(
+            r#"
+            SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
+            FROM comic_sync_state
+            WHERE scope_id = ?
+            ORDER BY entity_type, entity_id
+            "#,
+        )
+        .bind(scope_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for row in rows {
+            entities.push(SnapshotEntity {
+                entity_type: row.entity_type,
+                entity_id: row.entity_id,
+                server_version: row.record_server_version,
+                lamport: row.record_lamport,
+                record: serde_json::from_str(&row.record_json)?,
+            });
+        }
+
         let rows = sqlx::query_as::<_, ComicHistoryRow>(
             "SELECT * FROM comic_history WHERE scope_id = ? ORDER BY history_id",
         )
@@ -763,8 +878,21 @@ pub async fn load_scope_snapshot(
     .await?;
 
     tx.commit().await?;
+    let entity_count = entities.len();
+    let tombstone_count = tombstones.len();
+    let snapshot_identity = serde_json::to_vec(&(
+        scope_id,
+        runtime.current_server_version,
+        runtime.min_replayable_server_version,
+        &entities,
+        &tombstones,
+    ))?;
     Ok(SnapshotResponse {
         schema_version: SNAPSHOT_SCHEMA_VERSION,
+        snapshot_id: Some(format!("{:x}", Sha256::digest(snapshot_identity))),
+        complete: Some(true),
+        entity_count: Some(entity_count),
+        tombstone_count: Some(tombstone_count),
         scope_id: scope_id.to_string(),
         snapshot_version: runtime.current_server_version,
         min_replayable_server_version: runtime.min_replayable_server_version,
@@ -809,6 +937,51 @@ pub async fn load_server_identity(pool: &sqlx::SqlitePool) -> anyhow::Result<Ser
     Ok(row)
 }
 
+pub fn allowed_pairing_scopes(profile_id: &str) -> Vec<String> {
+    vec![
+        "books:global".to_string(),
+        format!("novels:profile:{profile_id}"),
+        format!("comics:profile:{profile_id}"),
+    ]
+}
+
+pub fn canonicalize_pairing_scopes(
+    profile_id: &str,
+    scopes: &[String],
+    require_non_empty: bool,
+) -> Result<Vec<String>, String> {
+    if require_non_empty && scopes.is_empty() {
+        return Err("At least one pairing scope must be requested.".to_string());
+    }
+
+    let allowed = allowed_pairing_scopes(profile_id);
+    let mut canonical = Vec::with_capacity(scopes.len());
+    for scope in scopes {
+        let scope = scope.trim();
+        if !allowed.iter().any(|candidate| candidate == scope) {
+            return Err(format!(
+                "Pairing scope '{scope}' is not allowed for profile '{profile_id}'."
+            ));
+        }
+        if !canonical.iter().any(|candidate| candidate == scope) {
+            canonical.push(scope.to_string());
+        }
+    }
+    canonical.sort();
+    Ok(canonical)
+}
+
+pub fn pairing_session_requested_scopes(
+    session: &PairingSessionRow,
+) -> anyhow::Result<Vec<String>> {
+    let Some(raw) = session.requested_scopes_json.as_deref() else {
+        return Ok(allowed_pairing_scopes(&session.profile_id));
+    };
+    let scopes = serde_json::from_str::<Vec<String>>(raw)
+        .context("pairing session requested scopes are invalid")?;
+    canonicalize_pairing_scopes(&session.profile_id, &scopes, true).map_err(anyhow::Error::msg)
+}
+
 pub async fn create_pairing_session(
     pool: &sqlx::SqlitePool,
     session_id: &str,
@@ -833,8 +1006,9 @@ pub async fn create_pairing_session(
             claimed_at_ms,
             approved_at_ms,
             rejected_at_ms,
-            created_at_ms
-        ) VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL, NULL, NULL, ?)
+            created_at_ms,
+            requested_scopes_json
+        ) VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL, NULL, NULL, ?, NULL)
         "#,
     )
     .bind(session_id)
@@ -896,7 +1070,8 @@ pub async fn load_pairing_session(
             claimed_at_ms,
             approved_at_ms,
             rejected_at_ms,
-            created_at_ms
+            created_at_ms,
+            requested_scopes_json
         FROM pairing_sessions
         WHERE session_id = ?
         "#,
@@ -1012,6 +1187,7 @@ pub async fn claim_pairing_session(
     device_id: &str,
     device_name: &str,
     platform: PairingPlatform,
+    requested_scopes: Option<&[String]>,
 ) -> Result<PairingClaimOutcome, PairingClaimError> {
     let mut tx = pool.begin().await.map_err(storage_pairing_claim_error)?;
     let now_ms = now_ms();
@@ -1032,8 +1208,25 @@ pub async fn claim_pairing_session(
         return Err(PairingClaimError::Expired);
     }
 
+    let requested_scopes_were_explicit = requested_scopes.is_some();
+    let requested_scopes = match requested_scopes {
+        Some(scopes) => canonicalize_pairing_scopes(&session.profile_id, scopes, true)
+            .map_err(PairingClaimError::InvalidRequestedScopes)?,
+        None => allowed_pairing_scopes(&session.profile_id),
+    };
+    let persisted_scopes = pairing_session_requested_scopes(&session)
+        .map_err(|error| PairingClaimError::Storage(error.to_string()))?;
+
     match session.status.as_str() {
         "pending" => {
+            let requested_scopes_json = if !requested_scopes_were_explicit {
+                None
+            } else {
+                Some(
+                    serde_json::to_string(&requested_scopes)
+                        .map_err(storage_pairing_claim_error)?,
+                )
+            };
             sqlx::query(
                 r#"
                 UPDATE pairing_sessions
@@ -1041,7 +1234,8 @@ pub async fn claim_pairing_session(
                     claimed_device_id = ?,
                     claimed_device_name = ?,
                     claimed_platform = ?,
-                    claimed_at_ms = COALESCE(claimed_at_ms, ?)
+                    claimed_at_ms = COALESCE(claimed_at_ms, ?),
+                    requested_scopes_json = ?
                 WHERE session_id = ?
                 "#,
             )
@@ -1049,6 +1243,7 @@ pub async fn claim_pairing_session(
             .bind(device_name)
             .bind(platform.as_str())
             .bind(now_ms)
+            .bind(requested_scopes_json)
             .bind(session_id)
             .execute(&mut *tx)
             .await
@@ -1069,6 +1264,9 @@ pub async fn claim_pairing_session(
             if session.claimed_device_id.as_deref() != Some(device_id) {
                 return Err(PairingClaimError::ClaimedByOtherDevice);
             }
+            if persisted_scopes != requested_scopes {
+                return Err(PairingClaimError::RequestedScopesMismatch);
+            }
             tx.commit().await.map_err(storage_pairing_claim_error)?;
             return Ok(PairingClaimOutcome::PendingApproval {
                 session,
@@ -1079,12 +1277,18 @@ pub async fn claim_pairing_session(
             if session.claimed_device_id.as_deref() != Some(device_id) {
                 return Err(PairingClaimError::RejectedForDifferentDevice);
             }
+            if persisted_scopes != requested_scopes {
+                return Err(PairingClaimError::RequestedScopesMismatch);
+            }
             tx.commit().await.map_err(storage_pairing_claim_error)?;
             return Ok(PairingClaimOutcome::Rejected(session));
         }
         "approved" => {
             if session.claimed_device_id.as_deref() != Some(device_id) {
                 return Err(PairingClaimError::ApprovedForDifferentDevice);
+            }
+            if persisted_scopes != requested_scopes {
+                return Err(PairingClaimError::RequestedScopesMismatch);
             }
 
             let trusted_before = has_active_trusted_device_in_tx(&mut tx, device_id)
@@ -1145,7 +1349,8 @@ async fn load_pairing_session_in_tx(
             claimed_at_ms,
             approved_at_ms,
             rejected_at_ms,
-            created_at_ms
+            created_at_ms,
+            requested_scopes_json
         FROM pairing_sessions
         WHERE session_id = ?
         "#,
@@ -1204,14 +1409,12 @@ async fn issue_pairing_token_in_tx(
     let now_ms = now_ms();
     let inactivity_expires_at_ms = now_ms + config.token_inactivity_window.as_millis() as i64;
     let token_id = format!("pairing-{}", session.session_id);
+    // Token prefixes are part of the persisted/protocol surface. Keep the
+    // legacy prefix so existing clients and audit tooling remain compatible.
     let access_token = format!("aethon_{}", Uuid::now_v7());
     let token_hash = hash_token(&access_token);
     let trusted_host_id = "syncd-local-host";
-    let scopes = vec![
-        "books:global".to_string(),
-        format!("novels:profile:{}", session.profile_id),
-        format!("comics:profile:{}", session.profile_id),
-    ];
+    let scopes = pairing_session_requested_scopes(session)?;
 
     sqlx::query(
         r#"
@@ -1297,6 +1500,121 @@ async fn issue_pairing_token_in_tx(
         inactivity_expires_at_ms,
         granted_via,
     })
+}
+
+pub async fn list_paired_devices(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<Vec<SyncdPairedDeviceView>> {
+    let rows = sqlx::query_as::<_, PairedDeviceCatalogRow>(
+        r#"
+        SELECT
+            trusted.device_id,
+            trusted.device_name,
+            trusted.platform,
+            tokens.profile_id,
+            MAX(tokens.last_seen_at_ms) AS last_seen_at_ms
+        FROM trusted_devices AS trusted
+        INNER JOIN paired_device_tokens AS tokens
+            ON tokens.device_id = trusted.device_id
+        WHERE trusted.revoked_at_ms IS NULL
+          AND tokens.revoked_at_ms IS NULL
+          AND tokens.granted_via != 'local-authority'
+        GROUP BY
+            trusted.device_id,
+            trusted.device_name,
+            trusted.platform,
+            tokens.profile_id
+        ORDER BY trusted.device_name, trusted.device_id, tokens.profile_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut devices = Vec::with_capacity(rows.len());
+    for row in rows {
+        let granted_scopes = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT scopes.scope_id
+            FROM paired_device_scopes AS scopes
+            INNER JOIN paired_device_tokens AS tokens
+                ON tokens.token_id = scopes.token_id
+            WHERE tokens.device_id = ?
+              AND tokens.profile_id = ?
+              AND tokens.revoked_at_ms IS NULL
+              AND tokens.granted_via != 'local-authority'
+            ORDER BY scopes.scope_id
+            "#,
+        )
+        .bind(&row.device_id)
+        .bind(&row.profile_id)
+        .fetch_all(pool)
+        .await?;
+
+        let platform = match row.platform.as_str() {
+            "android" => PairingPlatform::Android,
+            "desktop" => PairingPlatform::Desktop,
+            _ => PairingPlatform::Unknown,
+        };
+        devices.push(SyncdPairedDeviceView {
+            device_id: row.device_id,
+            device_name: row.device_name,
+            platform,
+            profile_id: row.profile_id,
+            granted_scopes,
+            last_seen_at_ms: row.last_seen_at_ms,
+        });
+    }
+    Ok(devices)
+}
+
+pub async fn update_paired_device_granted_scopes(
+    pool: &sqlx::SqlitePool,
+    device_id: &str,
+    profile_id: &str,
+    scopes: &[String],
+) -> anyhow::Result<Option<SyncdPairedDeviceView>> {
+    let scopes =
+        canonicalize_pairing_scopes(profile_id, scopes, false).map_err(anyhow::Error::msg)?;
+    let mut tx = pool.begin().await?;
+    let token_ids = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT token_id
+        FROM paired_device_tokens
+        WHERE device_id = ?
+          AND profile_id = ?
+          AND revoked_at_ms IS NULL
+          AND granted_via != 'local-authority'
+        "#,
+    )
+    .bind(device_id)
+    .bind(profile_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if token_ids.is_empty() {
+        tx.commit().await?;
+        return Ok(None);
+    }
+
+    for token_id in token_ids {
+        sqlx::query("DELETE FROM paired_device_scopes WHERE token_id = ?")
+            .bind(&token_id)
+            .execute(&mut *tx)
+            .await?;
+        for scope in &scopes {
+            sqlx::query("INSERT INTO paired_device_scopes (token_id, scope_id) VALUES (?, ?)")
+                .bind(&token_id)
+                .bind(scope)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+
+    Ok(list_paired_devices(pool)
+        .await?
+        .into_iter()
+        .find(|device| device.device_id == device_id && device.profile_id == profile_id))
 }
 
 pub async fn set_server_runtime_for_audit(
@@ -1490,7 +1808,9 @@ pub async fn apply_book_entry_mutation(
     let current = sqlx::query_as::<_, BookEntryRow>(
         r#"
         SELECT
-            scope_id, book_id, asset_fingerprint, title, author, description, subtype, page_count,
+            scope_id, book_id, asset_fingerprint, mime_type, byte_size, cover_asset_sha256,
+            cover_asset_byte_size, cover_asset_mime_type,
+            title, author, description, subtype, page_count,
             toc_count, spine_count, section_count, sections_summary_json, has_cover, created_at_ms,
             book_updated_at_ms, record_updated_at_ms, record_updated_by_device_id, record_lamport,
             record_server_version
@@ -1502,6 +1822,11 @@ pub async fn apply_book_entry_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
+
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.entry", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_book_entry_against_tombstone(client_lamport, tombstone)?;
+    }
 
     let merged = merge_book_entry(
         current.map(BookEntryRecord::try_from).transpose()?,
@@ -1527,13 +1852,20 @@ pub async fn apply_book_entry_mutation(
     sqlx::query(
         r#"
         INSERT INTO book_library_entries (
-            scope_id, book_id, asset_fingerprint, title, author, description, subtype, page_count,
+            scope_id, book_id, asset_fingerprint, mime_type, byte_size, cover_asset_sha256,
+            cover_asset_byte_size, cover_asset_mime_type,
+            title, author, description, subtype, page_count,
             toc_count, spine_count, section_count, sections_summary_json, has_cover, created_at_ms,
             book_updated_at_ms, record_updated_at_ms, record_updated_by_device_id, record_lamport,
             record_server_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_id, book_id) DO UPDATE SET
             asset_fingerprint = excluded.asset_fingerprint,
+            mime_type = excluded.mime_type,
+            byte_size = excluded.byte_size,
+            cover_asset_sha256 = excluded.cover_asset_sha256,
+            cover_asset_byte_size = excluded.cover_asset_byte_size,
+            cover_asset_mime_type = excluded.cover_asset_mime_type,
             title = excluded.title,
             author = excluded.author,
             description = excluded.description,
@@ -1555,6 +1887,11 @@ pub async fn apply_book_entry_mutation(
     .bind(scope_id)
     .bind(entity_id)
     .bind(merged.asset_fingerprint.as_deref())
+    .bind(merged.mime_type.as_deref())
+    .bind(merged.byte_size)
+    .bind(merged.cover_asset_sha256.as_deref())
+    .bind(merged.cover_asset_byte_size)
+    .bind(merged.cover_asset_mime_type.as_deref())
     .bind(&merged.title)
     .bind(merged.author.as_deref())
     .bind(merged.description.as_deref())
@@ -1573,6 +1910,10 @@ pub async fn apply_book_entry_mutation(
     .bind(server_version)
     .execute(&mut *tx)
     .await?;
+
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "book.entry", entity_id).await?;
+    }
 
     tx.commit().await?;
 
@@ -1593,6 +1934,48 @@ pub async fn apply_book_entry_mutation(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BookEntryIdentityConflict {
+    AssetFingerprint,
+    MimeType,
+    ByteSize,
+    Subtype,
+}
+
+pub async fn book_entry_identity_conflict(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &BookEntryPatch,
+) -> anyhow::Result<Option<BookEntryIdentityConflict>> {
+    let existing = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>, String)>(
+        "SELECT asset_fingerprint, mime_type, byte_size, subtype FROM book_library_entries WHERE scope_id = ? AND book_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((asset_fingerprint, mime_type, byte_size, subtype)) = existing else {
+        return Ok(None);
+    };
+    if asset_fingerprint.is_some()
+        && patch.asset_fingerprint.is_some()
+        && asset_fingerprint != patch.asset_fingerprint
+    {
+        return Ok(Some(BookEntryIdentityConflict::AssetFingerprint));
+    }
+    if mime_type.is_some() && patch.mime_type.is_some() && mime_type != patch.mime_type {
+        return Ok(Some(BookEntryIdentityConflict::MimeType));
+    }
+    if byte_size.is_some() && patch.byte_size.is_some() && byte_size != patch.byte_size {
+        return Ok(Some(BookEntryIdentityConflict::ByteSize));
+    }
+    if subtype != patch.subtype {
+        return Ok(Some(BookEntryIdentityConflict::Subtype));
+    }
+    Ok(None)
+}
+
 pub async fn delete_book_entry_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -1604,7 +1987,7 @@ pub async fn delete_book_entry_mutation(
     let mut tx = pool.begin().await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.entry", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
-        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+        ensure_not_stale_book_entry_against_tombstone(client_lamport, tombstone)?;
     }
 
     sqlx::query("DELETE FROM book_library_entries WHERE scope_id = ? AND book_id = ?")
@@ -3808,6 +4191,101 @@ pub async fn delete_novel_category_assignment_mutation(
     })
 }
 
+async fn superseding_event_clock_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    incoming: Option<&EventClock>,
+    authenticated_device_id: &str,
+) -> anyhow::Result<Option<EventClock>> {
+    let current = sqlx::query_as::<_, EntityEventClockRow>(
+        r#"
+        SELECT physical_ms, logical, device_generation_id, authenticated_device_id
+        FROM entity_event_clocks
+        WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    let winning = EventClock {
+        physical_ms: current.physical_ms,
+        logical: current.logical,
+        device_generation_id: current.device_generation_id.clone(),
+    };
+    let Some(incoming) = incoming else {
+        return Ok(Some(winning));
+    };
+    let incoming_order = (
+        incoming.physical_ms,
+        incoming.logical,
+        authenticated_device_id,
+    )
+        .cmp(&(
+            current.physical_ms,
+            current.logical,
+            current.authenticated_device_id.as_str(),
+        ))
+        .then_with(|| {
+            incoming
+                .device_generation_id
+                .cmp(&current.device_generation_id)
+        });
+    Ok((incoming_order != Ordering::Greater).then_some(winning))
+}
+
+async fn upsert_event_clock_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    clock: &EventClock,
+    authenticated_device_id: &str,
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO entity_event_clocks (
+            scope_id, entity_type, entity_id, physical_ms, logical,
+            device_generation_id, authenticated_device_id, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET
+            physical_ms = excluded.physical_ms,
+            logical = excluded.logical,
+            device_generation_id = excluded.device_generation_id,
+            authenticated_device_id = excluded.authenticated_device_id,
+            updated_at_ms = excluded.updated_at_ms
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(clock.physical_ms)
+    .bind(clock.logical)
+    .bind(&clock.device_generation_id)
+    .bind(authenticated_device_id)
+    .bind(updated_at_ms)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn current_server_version_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+) -> anyhow::Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
+    )
+    .fetch_one(&mut **tx)
+    .await?)
+}
+
 pub async fn apply_book_progress_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -3815,9 +4293,16 @@ pub async fn apply_book_progress_mutation(
     entity_id: &str,
     patch: &BookProgressPatch,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = pool.begin().await?;
+    let book_id = normalize_book_progress_book_id(entity_id);
+    let canonical_entity_id = if entity_id.starts_with("book.progress::") {
+        format!("book.progress::{book_id}")
+    } else {
+        book_id.clone()
+    };
     let current = sqlx::query_as::<_, BookProgressRow>(
         r#"
         SELECT
@@ -3840,11 +4325,47 @@ pub async fn apply_book_progress_mutation(
         "#,
     )
     .bind(scope_id)
-    .bind(entity_id)
+    .bind(&book_id)
     .fetch_optional(&mut *tx)
     .await?;
 
-    let merged = merge_book_progress(current.map(Into::into), entity_id, patch, client_lamport)?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        "book.progress",
+        &canonical_entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let record = current
+            .clone()
+            .map(BookProgressRecord::from)
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        tx.commit().await?;
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
+
+    let merged = merge_book_progress(
+        current.map(Into::into),
+        &canonical_entity_id,
+        patch,
+        client_lamport,
+        event_clock.is_some(),
+    )?;
     let record = serde_json::to_value(&merged)?;
     let profile_id = None;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
@@ -3852,7 +4373,7 @@ pub async fn apply_book_progress_mutation(
         scope_id,
         profile_id,
         "book.progress",
-        entity_id,
+        &canonical_entity_id,
         "merge",
         merged.record_lamport,
         session,
@@ -3895,7 +4416,7 @@ pub async fn apply_book_progress_mutation(
         "#,
     )
     .bind(scope_id)
-    .bind(entity_id)
+    .bind(&merged.book_id)
     .bind(merged.renderer.as_deref())
     .bind(merged.location.as_deref())
     .bind(merged.href.as_deref())
@@ -3911,15 +4432,28 @@ pub async fn apply_book_progress_mutation(
     .execute(&mut *tx)
     .await?;
 
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "book.progress",
+            &canonical_entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+
     tx.commit().await?;
 
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
             profile_id: None,
             entity_type: "book.progress".to_string(),
-            entity_id: entity_id.to_string(),
+            entity_id: canonical_entity_id,
             op: "merge".to_string(),
             lamport: merged.record_lamport,
             patch: Some(record.clone()),
@@ -3927,7 +4461,107 @@ pub async fn apply_book_progress_mutation(
         },
         record,
         applied_lamport: merged.record_lamport,
-    })
+    }))
+}
+
+async fn enqueue_comic_history_projection_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_id: &str,
+    record: &ComicHistoryRecord,
+    patch: &ComicHistoryPatch,
+    server_version: i64,
+    now: i64,
+) -> anyhow::Result<()> {
+    let Some(profile_id) = scope_id.strip_prefix("comics:profile:") else {
+        return Ok(());
+    };
+    if profile_id.is_empty() || profile_id.chars().any(char::is_control) {
+        return Ok(());
+    }
+    let mut projection_variables = match (&patch.portable_work_ref, &patch.portable_chapter_ref) {
+        (Some(work), Some(chapter)) => json!({
+            "portableWorkRef": work,
+            "portableChapterRef": chapter,
+        }),
+        (None, None) => {
+            let Some(manga_id) =
+                suwayomi_numeric_id_for_profile(&record.comic_id, profile_id, ":manga:")
+            else {
+                return Ok(());
+            };
+            let Some(chapter_id) =
+                suwayomi_numeric_id_for_profile(&record.chapter_id, profile_id, ":chapter:")
+            else {
+                return Ok(());
+            };
+            json!({ "mangaId": manga_id, "ids": [chapter_id] })
+        }
+        _ => return Ok(()),
+    };
+    let operation_id = format!("comic-history:{profile_id}:{entity_id}:{server_version}");
+    projection_variables["lastPageRead"] = json!(record.page_index);
+    let variables = serde_json::to_string(&projection_variables)?;
+
+    sqlx::query(
+        r#"
+        DELETE FROM suwayomi_projection_outbox
+        WHERE profile_id = ? AND entity_type = 'comic.history' AND entity_id = ?
+          AND status IN ('pending', 'retry') AND source_server_version < ?
+        "#,
+    )
+    .bind(profile_id)
+    .bind(entity_id)
+    .bind(server_version)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO suwayomi_projection_outbox (
+            operation_id, profile_id, operation_name, variables_json,
+            entity_type, entity_id, source_server_version,
+            next_attempt_at_ms, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, 'UpdateChaptersProgress', ?, 'comic.history', ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(operation_id)
+    .bind(profile_id)
+    .bind(variables)
+    .bind(entity_id)
+    .bind(server_version)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn suwayomi_numeric_id_for_profile(
+    entity_id: &str,
+    expected_profile_id: &str,
+    marker: &str,
+) -> Option<i64> {
+    let profile_and_remote = if let Some(value) = entity_id.strip_prefix("suwayomi:profile:") {
+        value
+    } else {
+        let value = entity_id.strip_prefix("suwayomi:server:")?;
+        let profile_marker = value.find(":profile:")?;
+        if profile_marker == 0 {
+            return None;
+        }
+        &value[profile_marker + ":profile:".len()..]
+    };
+    let remote_marker = profile_and_remote.rfind(marker)?;
+    let profile_id = &profile_and_remote[..remote_marker];
+    if profile_id != expected_profile_id {
+        return None;
+    }
+    profile_and_remote[remote_marker + marker.len()..]
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value > 0 && *value <= i32::MAX as i64)
 }
 
 pub async fn apply_novel_progress_mutation(
@@ -3937,8 +4571,9 @@ pub async fn apply_novel_progress_mutation(
     entity_id: &str,
     patch: &NovelProgressPatch,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = pool.begin().await?;
     let current = sqlx::query_as::<_, NovelProgressRow>(
         r#"
@@ -3946,6 +4581,8 @@ pub async fn apply_novel_progress_mutation(
             scope_id,
             novel_id,
             chapter_id,
+            portable_work_ref_json,
+            portable_chapter_ref_json,
             chapter_title,
             chapter_order_key,
             progress_percent,
@@ -3965,7 +4602,43 @@ pub async fn apply_novel_progress_mutation(
     .fetch_optional(&mut *tx)
     .await?;
 
-    let merged = merge_novel_progress(current.map(Into::into), entity_id, patch, client_lamport)?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        "novel.progress",
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let record = current
+            .clone()
+            .map(NovelProgressRecord::from)
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        tx.commit().await?;
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
+
+    let merged = merge_novel_progress(
+        current.map(Into::into),
+        entity_id,
+        patch,
+        client_lamport,
+        event_clock.is_some(),
+    )?;
     let record = serde_json::to_value(&merged)?;
     let profile_id = Some(session.profile_id.as_str());
     let (server_version, applied_at_ms) = append_change_log_in_tx(
@@ -3988,6 +4661,8 @@ pub async fn apply_novel_progress_mutation(
             scope_id,
             novel_id,
             chapter_id,
+            portable_work_ref_json,
+            portable_chapter_ref_json,
             chapter_title,
             chapter_order_key,
             progress_percent,
@@ -3998,9 +4673,11 @@ pub async fn apply_novel_progress_mutation(
             record_updated_by_device_id,
             record_lamport,
             record_server_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_id, novel_id) DO UPDATE SET
             chapter_id = excluded.chapter_id,
+            portable_work_ref_json = excluded.portable_work_ref_json,
+            portable_chapter_ref_json = excluded.portable_chapter_ref_json,
             chapter_title = excluded.chapter_title,
             chapter_order_key = excluded.chapter_order_key,
             progress_percent = excluded.progress_percent,
@@ -4016,6 +4693,20 @@ pub async fn apply_novel_progress_mutation(
     .bind(scope_id)
     .bind(entity_id)
     .bind(merged.chapter_id.as_deref())
+    .bind(
+        merged
+            .portable_work_ref
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+    )
+    .bind(
+        merged
+            .portable_chapter_ref
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+    )
     .bind(merged.chapter_title.as_deref())
     .bind(merged.chapter_order_key)
     .bind(merged.progress_percent)
@@ -4029,9 +4720,22 @@ pub async fn apply_novel_progress_mutation(
     .execute(&mut *tx)
     .await?;
 
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "novel.progress",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+
     tx.commit().await?;
 
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -4045,7 +4749,7 @@ pub async fn apply_novel_progress_mutation(
         },
         record,
         applied_lamport: merged.record_lamport,
-    })
+    }))
 }
 
 pub async fn apply_book_bookmark_mutation(
@@ -4069,6 +4773,9 @@ pub async fn apply_book_bookmark_mutation(
             page_index,
             progress_percent,
             label,
+            note,
+            created_at_ms,
+            updated_at_ms,
             saved_at_ms,
             record_updated_at_ms,
             record_updated_by_device_id,
@@ -4114,12 +4821,15 @@ pub async fn apply_book_bookmark_mutation(
             page_index,
             progress_percent,
             label,
+            note,
+            created_at_ms,
+            updated_at_ms,
             saved_at_ms,
             record_updated_at_ms,
             record_updated_by_device_id,
             record_lamport,
             record_server_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_id, bookmark_id) DO UPDATE SET
             book_id = excluded.book_id,
             location = excluded.location,
@@ -4127,6 +4837,9 @@ pub async fn apply_book_bookmark_mutation(
             page_index = excluded.page_index,
             progress_percent = excluded.progress_percent,
             label = excluded.label,
+            note = excluded.note,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms,
             saved_at_ms = excluded.saved_at_ms,
             record_updated_at_ms = excluded.record_updated_at_ms,
             record_updated_by_device_id = excluded.record_updated_by_device_id,
@@ -4142,6 +4855,9 @@ pub async fn apply_book_bookmark_mutation(
     .bind(merged.page_index)
     .bind(merged.progress_percent)
     .bind(merged.label.as_deref())
+    .bind(merged.note.as_deref())
+    .bind(merged.created_at_ms)
+    .bind(merged.updated_at_ms)
     .bind(merged.saved_at_ms)
     .bind(applied_at_ms)
     .bind(&session.device_id)
@@ -4162,6 +4878,106 @@ pub async fn apply_book_bookmark_mutation(
             scope_id: scope_id.to_string(),
             profile_id: None,
             entity_type: "book.bookmark".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: merged.record_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record,
+        applied_lamport: merged.record_lamport,
+    })
+}
+
+pub async fn apply_book_highlight_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    patch: &BookHighlightPatch,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, BookHighlightRow>(
+        "SELECT * FROM book_highlights WHERE scope_id = ? AND highlight_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(BookHighlightRecord::try_from)
+    .transpose()?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.highlight", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+
+    let merged = merge_book_highlight(current, entity_id, patch, client_lamport)?;
+    let record = serde_json::to_value(&merged)?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.highlight",
+        entity_id,
+        "merge",
+        merged.record_lamport,
+        session,
+        Some(&record),
+        retention_window,
+    )
+    .await?;
+
+    sqlx::query(
+        r#"INSERT INTO book_highlights (
+            scope_id, highlight_id, book_id, start_locator_json, end_locator_json,
+            selected_text, color_argb, note, created_at_ms, updated_at_ms,
+            record_updated_at_ms, record_updated_by_device_id, record_lamport,
+            record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, highlight_id) DO UPDATE SET
+            book_id = excluded.book_id,
+            start_locator_json = excluded.start_locator_json,
+            end_locator_json = excluded.end_locator_json,
+            selected_text = excluded.selected_text,
+            color_argb = excluded.color_argb,
+            note = excluded.note,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .bind(&merged.book_id)
+    .bind(serde_json::to_string(&merged.start_locator_json)?)
+    .bind(serde_json::to_string(&merged.end_locator_json)?)
+    .bind(&merged.selected_text)
+    .bind(merged.color_argb)
+    .bind(merged.note.as_deref())
+    .bind(merged.created_at_ms)
+    .bind(merged.updated_at_ms)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(merged.record_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, "book.highlight", entity_id).await?;
+    }
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: None,
+            entity_type: "book.highlight".to_string(),
             entity_id: entity_id.to_string(),
             op: "merge".to_string(),
             lamport: merged.record_lamport,
@@ -4469,6 +5285,76 @@ pub async fn delete_book_bookmark_mutation(
     })
 }
 
+pub async fn delete_book_highlight_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    retention_window: Duration,
+) -> anyhow::Result<MutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.highlight", entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+
+    sqlx::query("DELETE FROM book_highlights WHERE scope_id = ? AND highlight_id = ?")
+        .bind(scope_id)
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let applied_lamport = tombstone
+        .as_ref()
+        .map(|value| next_lamport(value.lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.highlight",
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        None,
+        "book.highlight",
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        applied_at_ms,
+        server_version,
+        retention_window,
+        "book_highlight_deleted",
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: None,
+            entity_type: "book.highlight".to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    })
+}
+
 pub async fn delete_novel_bookmark_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -4608,6 +5494,532 @@ pub async fn delete_book_history_mutation(
     })
 }
 
+pub async fn apply_comic_sync_state_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    apply_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        record,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await
+}
+
+pub async fn apply_mirrored_comic_sync_state_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    apply_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        record,
+        client_lamport,
+        event_clock,
+        retention_window,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_comic_sync_state_mutation_inner(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    enqueue_projection: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, ComicSyncStateRow>(
+        r#"
+        SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
+        FROM comic_sync_state
+        WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        entity_type,
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let record = current
+            .as_ref()
+            .map(|row| serde_json::from_str(&row.record_json))
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        tx.commit().await?;
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|row| next_lamport(row.record_lamport, client_lamport))
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        "merge",
+        applied_lamport,
+        session,
+        Some(record),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO comic_sync_state (
+            scope_id, entity_type, entity_id, record_json, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET
+            record_json = excluded.record_json,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(serde_json::to_string(record)?)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(applied_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    if enqueue_projection {
+        enqueue_comic_state_projection_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            record,
+            false,
+            server_version,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: applied_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record: record.clone(),
+        applied_lamport,
+    }))
+}
+
+pub async fn delete_comic_sync_state_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, ComicSyncStateRow>(
+        r#"
+        SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
+        FROM comic_sync_state
+        WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        entity_type,
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let record = current
+            .as_ref()
+            .map(|row| serde_json::from_str(&row.record_json))
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        tx.commit().await?;
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let Some(tombstone) = tombstone.as_ref() {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|row| next_lamport(row.record_lamport, client_lamport))
+        .or_else(|| {
+            tombstone
+                .as_ref()
+                .map(|row| next_lamport(row.lamport, client_lamport))
+        })
+        .unwrap_or(client_lamport);
+    let previous_record = current
+        .as_ref()
+        .map(|row| serde_json::from_str(&row.record_json))
+        .transpose()?;
+    sqlx::query(
+        "DELETE FROM comic_sync_state WHERE scope_id = ? AND entity_type = ? AND entity_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .execute(&mut *tx)
+    .await?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        server_version,
+        applied_at_ms,
+        retention_window,
+        "client_delete",
+    )
+    .await?;
+    if let Some(record) = previous_record.as_ref() {
+        enqueue_comic_state_projection_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            record,
+            true,
+            server_version,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    }))
+}
+
+async fn enqueue_comic_state_projection_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+    deleting: bool,
+    server_version: i64,
+    now: i64,
+) -> anyhow::Result<()> {
+    let Some(profile_id) = scope_id.strip_prefix("comics:profile:") else {
+        return Ok(());
+    };
+    let projections: Vec<(&str, Value)> = match entity_type {
+        "comic.entry" => {
+            let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            let variables = if let Some(work) = record
+                .get("portableWorkRef")
+                .filter(|value| !value.is_null())
+            {
+                json!({ "portableWorkRef": work, "inLibrary": !deleting })
+            } else {
+                let Some(manga_id) =
+                    suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                else {
+                    return Ok(());
+                };
+                json!({ "id": manga_id, "inLibrary": !deleting })
+            };
+            vec![("UpdateManga", variables)]
+        }
+        "comic.category_assignment" => {
+            let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            let Some(category_id) = record.get("categoryId").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            let Some(category_id) =
+                suwayomi_numeric_id_for_profile(category_id, profile_id, ":category:")
+            else {
+                return Ok(());
+            };
+            let (add_to, remove_from) = if deleting {
+                (Vec::<i64>::new(), vec![category_id])
+            } else {
+                (vec![category_id], Vec::<i64>::new())
+            };
+            let variables = if let Some(work) = record
+                .get("portableWorkRef")
+                .filter(|value| !value.is_null())
+            {
+                json!({
+                    "portableWorkRef": work,
+                    "addTo": add_to,
+                    "removeFrom": remove_from,
+                })
+            } else {
+                let Some(manga_id) =
+                    suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                else {
+                    return Ok(());
+                };
+                json!({
+                    "mangaId": manga_id,
+                    "addTo": add_to,
+                    "removeFrom": remove_from,
+                })
+            };
+            vec![("UpdateMangaCategories", variables)]
+        }
+        "comic.chapter_state" if !deleting => {
+            let portable_work_ref = record
+                .get("portableWorkRef")
+                .filter(|value| !value.is_null());
+            let portable_chapter_ref = record
+                .get("portableChapterRef")
+                .filter(|value| !value.is_null());
+            let mut variables = match (portable_work_ref, portable_chapter_ref) {
+                (Some(work), Some(chapter)) => json!({
+                    "portableWorkRef": work,
+                    "portableChapterRef": chapter,
+                }),
+                (None, None) => {
+                    let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
+                        return Ok(());
+                    };
+                    let Some(chapter_id) = record.get("chapterId").and_then(Value::as_str) else {
+                        return Ok(());
+                    };
+                    let Some(manga_id) =
+                        suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
+                    else {
+                        return Ok(());
+                    };
+                    let Some(chapter_id) =
+                        suwayomi_numeric_id_for_profile(chapter_id, profile_id, ":chapter:")
+                    else {
+                        return Ok(());
+                    };
+                    json!({ "mangaId": manga_id, "ids": [chapter_id] })
+                }
+                _ => return Ok(()),
+            };
+            variables["isRead"] = record.get("read").cloned().unwrap_or(Value::Null);
+            variables["isBookmarked"] = record.get("bookmarked").cloned().unwrap_or(Value::Null);
+            variables["lastPageRead"] = record.get("lastPageRead").cloned().unwrap_or(Value::Null);
+            vec![("UpdateChaptersProgress", variables)]
+        }
+        "comic.category" => {
+            let Some(category_id) = record.get("categoryId").and_then(Value::as_str) else {
+                return Ok(());
+            };
+            let Some(category_id) =
+                suwayomi_numeric_id_for_profile(category_id, profile_id, ":category:")
+            else {
+                return Ok(());
+            };
+            if deleting {
+                vec![("DeleteCategory", json!({ "id": category_id }))]
+            } else {
+                let mut category_projections = Vec::with_capacity(2);
+                if let Some(name) = record.get("name").and_then(Value::as_str) {
+                    category_projections
+                        .push(("UpdateCategory", json!({ "id": category_id, "name": name })));
+                }
+                if let Some(order) = record.get("order").and_then(Value::as_i64) {
+                    category_projections.push((
+                        "UpdateCategoryOrder",
+                        json!({ "id": category_id, "position": order }),
+                    ));
+                }
+                category_projections
+            }
+        }
+        _ => Vec::new(),
+    };
+    if projections.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        DELETE FROM suwayomi_projection_outbox
+        WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
+          AND status IN ('pending', 'retry') AND source_server_version < ?
+        "#,
+    )
+    .bind(profile_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(server_version)
+    .execute(&mut **tx)
+    .await?;
+    for (projection_index, (operation_name, variables)) in projections.into_iter().enumerate() {
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO suwayomi_projection_outbox (
+                operation_id, profile_id, operation_name, variables_json,
+                entity_type, entity_id, source_server_version,
+                next_attempt_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(format!(
+            "comic-state:{profile_id}:{entity_type}:{entity_id}:{server_version}:{projection_index}"
+        ))
+        .bind(profile_id)
+        .bind(operation_name)
+        .bind(serde_json::to_string(&variables)?)
+        .bind(entity_type)
+        .bind(entity_id)
+        .bind(server_version)
+        .bind(now)
+        .bind(now)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn apply_comic_history_mutation(
     pool: &sqlx::SqlitePool,
     session: &AuthenticatedSession,
@@ -4615,13 +6027,15 @@ pub async fn apply_comic_history_mutation(
     entity_id: &str,
     patch: &ComicHistoryPatch,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = pool.begin().await?;
     let current = sqlx::query_as::<_, ComicHistoryRow>(
         r#"
         SELECT
-            scope_id, history_id, comic_id, chapter_id, page_index, page_count,
+            scope_id, history_id, comic_id, chapter_id,
+            portable_work_ref_json, portable_chapter_ref_json, page_index, page_count,
             progress_percent, read_at_ms, record_updated_at_ms,
             record_updated_by_device_id, record_lamport, record_server_version
         FROM comic_history
@@ -4632,6 +6046,35 @@ pub async fn apply_comic_history_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        "comic.history",
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let record = current
+            .clone()
+            .map(ComicHistoryRecord::from)
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or(Value::Null);
+        let applied_lamport = current
+            .as_ref()
+            .map(|row| row.record_lamport)
+            .unwrap_or_default();
+        tx.commit().await?;
+        return Ok(CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        });
+    }
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -4653,16 +6096,29 @@ pub async fn apply_comic_history_mutation(
     )
     .await?;
 
+    let portable_work_ref_json = merged
+        .portable_work_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
+    let portable_chapter_ref_json = merged
+        .portable_chapter_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     sqlx::query(
         r#"
         INSERT INTO comic_history (
-            scope_id, history_id, comic_id, chapter_id, page_index, page_count,
+            scope_id, history_id, comic_id, chapter_id,
+            portable_work_ref_json, portable_chapter_ref_json, page_index, page_count,
             progress_percent, read_at_ms, record_updated_at_ms,
             record_updated_by_device_id, record_lamport, record_server_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_id, history_id) DO UPDATE SET
             comic_id = excluded.comic_id,
             chapter_id = excluded.chapter_id,
+            portable_work_ref_json = excluded.portable_work_ref_json,
+            portable_chapter_ref_json = excluded.portable_chapter_ref_json,
             page_index = excluded.page_index,
             page_count = excluded.page_count,
             progress_percent = excluded.progress_percent,
@@ -4677,6 +6133,8 @@ pub async fn apply_comic_history_mutation(
     .bind(entity_id)
     .bind(&merged.comic_id)
     .bind(&merged.chapter_id)
+    .bind(portable_work_ref_json)
+    .bind(portable_chapter_ref_json)
     .bind(merged.page_index)
     .bind(merged.page_count)
     .bind(merged.progress_percent)
@@ -4688,12 +6146,36 @@ pub async fn apply_comic_history_mutation(
     .execute(&mut *tx)
     .await?;
 
+    enqueue_comic_history_projection_in_tx(
+        &mut tx,
+        scope_id,
+        entity_id,
+        &merged,
+        patch,
+        server_version,
+        applied_at_ms,
+    )
+    .await?;
+
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "comic.history",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+
     if tombstone.is_some() {
         delete_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
     }
     tx.commit().await?;
 
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -4707,7 +6189,7 @@ pub async fn apply_comic_history_mutation(
         },
         record,
         applied_lamport: merged.record_lamport,
-    })
+    }))
 }
 
 pub async fn delete_comic_history_mutation(
@@ -4791,7 +6273,8 @@ pub async fn apply_comic_page_bookmark_mutation(
     let current = sqlx::query_as::<_, ComicPageBookmarkRow>(
         r#"
         SELECT
-            scope_id, bookmark_id, comic_id, chapter_id, page_index, page_count,
+            scope_id, bookmark_id, comic_id, chapter_id,
+            portable_work_ref_json, portable_chapter_ref_json, page_index, page_count,
             label, saved_at_ms, record_updated_at_ms, record_updated_by_device_id,
             record_lamport, record_server_version
         FROM comic_page_bookmarks
@@ -4826,16 +6309,29 @@ pub async fn apply_comic_page_bookmark_mutation(
     )
     .await?;
 
+    let portable_work_ref_json = merged
+        .portable_work_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
+    let portable_chapter_ref_json = merged
+        .portable_chapter_ref
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()?;
     sqlx::query(
         r#"
         INSERT INTO comic_page_bookmarks (
-            scope_id, bookmark_id, comic_id, chapter_id, page_index, page_count,
+            scope_id, bookmark_id, comic_id, chapter_id,
+            portable_work_ref_json, portable_chapter_ref_json, page_index, page_count,
             label, saved_at_ms, record_updated_at_ms, record_updated_by_device_id,
             record_lamport, record_server_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope_id, bookmark_id) DO UPDATE SET
             comic_id = excluded.comic_id,
             chapter_id = excluded.chapter_id,
+            portable_work_ref_json = excluded.portable_work_ref_json,
+            portable_chapter_ref_json = excluded.portable_chapter_ref_json,
             page_index = excluded.page_index,
             page_count = excluded.page_count,
             label = excluded.label,
@@ -4850,6 +6346,8 @@ pub async fn apply_comic_page_bookmark_mutation(
     .bind(entity_id)
     .bind(&merged.comic_id)
     .bind(&merged.chapter_id)
+    .bind(portable_work_ref_json)
+    .bind(portable_chapter_ref_json)
     .bind(merged.page_index)
     .bind(merged.page_count)
     .bind(merged.label.as_deref())
@@ -5148,6 +6646,7 @@ async fn append_change_log_in_tx(
             status: MutationResultStatus::Applied,
             applied_server_version: Some(server_version),
             applied_lamport: Some(lamport),
+            event_clock: context.event_clock.clone(),
             record: Some(patch.cloned().unwrap_or(Value::Null)),
             error: None,
         };
@@ -5292,6 +6791,19 @@ fn ensure_not_stale_against_tombstone(
     Ok(())
 }
 
+fn ensure_not_stale_book_entry_against_tombstone(
+    client_lamport: i64,
+    tombstone: &TombstoneRow,
+) -> anyhow::Result<()> {
+    if client_lamport <= tombstone.lamport {
+        bail!(
+            "stale book entry mutation rejected by tombstone lamport {}",
+            tombstone.lamport
+        );
+    }
+    Ok(())
+}
+
 fn ensure_not_stale_novel_category_against_tombstone(
     client_lamport: i64,
     tombstone: &TombstoneRow,
@@ -5356,6 +6868,11 @@ fn merge_book_entry(
     let incoming = BookEntryRecord {
         book_id: entity_id.to_string(),
         asset_fingerprint: normalize_optional_string(patch.asset_fingerprint.as_deref()),
+        mime_type: normalize_optional_string(patch.mime_type.as_deref()),
+        byte_size: patch.byte_size,
+        cover_asset_sha256: normalize_optional_string(patch.cover_asset_sha256.as_deref()),
+        cover_asset_byte_size: patch.cover_asset_byte_size,
+        cover_asset_mime_type: normalize_optional_string(patch.cover_asset_mime_type.as_deref()),
         title: patch.title.clone(),
         author: normalize_optional_string(patch.author.as_deref()),
         description: normalize_optional_string(patch.description.as_deref()),
@@ -5373,10 +6890,33 @@ fn merge_book_entry(
 
     Ok(match current {
         None => incoming,
-        Some(existing) => BookEntryRecord {
-            record_lamport: next_lamport(existing.record_lamport, client_lamport),
-            ..incoming
-        },
+        Some(existing) => {
+            if let (Some(current), Some(next)) = (
+                existing.asset_fingerprint.as_deref(),
+                incoming.asset_fingerprint.as_deref(),
+            ) {
+                anyhow::ensure!(current == next, "book asset identity cannot change");
+            }
+            anyhow::ensure!(
+                existing.subtype == incoming.subtype,
+                "book subtype cannot change"
+            );
+            if let (Some(current), Some(next)) = (existing.byte_size, incoming.byte_size) {
+                anyhow::ensure!(current == next, "book byte size cannot change");
+            }
+            if let (Some(current), Some(next)) =
+                (existing.mime_type.as_deref(), incoming.mime_type.as_deref())
+            {
+                anyhow::ensure!(current == next, "book mime type cannot change");
+            }
+            BookEntryRecord {
+                asset_fingerprint: incoming.asset_fingerprint.or(existing.asset_fingerprint),
+                mime_type: incoming.mime_type.or(existing.mime_type),
+                byte_size: incoming.byte_size.or(existing.byte_size),
+                record_lamport: next_lamport(existing.record_lamport, client_lamport),
+                ..incoming
+            }
+        }
     })
 }
 
@@ -5670,11 +7210,9 @@ fn merge_book_progress(
     entity_id: &str,
     patch: &BookProgressPatch,
     client_lamport: i64,
+    causal_event: bool,
 ) -> anyhow::Result<BookProgressRecord> {
-    let book_id = entity_id
-        .strip_prefix("book.progress::")
-        .unwrap_or(entity_id)
-        .to_string();
+    let book_id = normalize_book_progress_book_id(entity_id);
     let renderer = normalize_book_renderer(
         patch.renderer.as_deref().or_else(|| {
             current
@@ -5702,7 +7240,7 @@ fn merge_book_progress(
         None => incoming,
         Some(existing) => {
             let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
-            let winner = if patch.reset {
+            let winner = if patch.reset || causal_event {
                 incoming
             } else {
                 match effective_book_renderer(&existing, &incoming) {
@@ -5723,6 +7261,7 @@ fn merge_novel_progress(
     entity_id: &str,
     patch: &NovelProgressPatch,
     client_lamport: i64,
+    causal_event: bool,
 ) -> anyhow::Result<NovelProgressRecord> {
     let novel_id = entity_id
         .strip_prefix("novel.progress::")
@@ -5731,6 +7270,8 @@ fn merge_novel_progress(
     let incoming = NovelProgressRecord {
         novel_id,
         chapter_id: normalize_optional_string(patch.chapter_id.as_deref()),
+        portable_work_ref: patch.portable_work_ref.clone(),
+        portable_chapter_ref: patch.portable_chapter_ref.clone(),
         chapter_title: normalize_optional_string(patch.chapter_title.as_deref()),
         chapter_order_key: patch.chapter_order_key,
         progress_percent: patch.progress_percent,
@@ -5744,7 +7285,7 @@ fn merge_novel_progress(
         None => incoming,
         Some(existing) => {
             let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
-            let winner = if patch.reset {
+            let winner = if patch.reset || causal_event {
                 incoming
             } else {
                 pick_novel_progress(existing, incoming)
@@ -5757,12 +7298,29 @@ fn merge_novel_progress(
     })
 }
 
+fn normalize_book_progress_book_id(value: &str) -> String {
+    let mut normalized = value;
+    while let Some(book_id) = normalized.strip_prefix("book.progress::") {
+        normalized = book_id;
+    }
+    for (legacy_prefix, canonical_prefix) in [("epub-", "epub:sha256:"), ("pdf-", "pdf:sha256:")] {
+        if let Some(fingerprint) = normalized.strip_prefix(legacy_prefix) {
+            if fingerprint.len() == 64 && fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return format!("{canonical_prefix}{}", fingerprint.to_ascii_lowercase());
+            }
+        }
+    }
+    normalized.to_string()
+}
+
 fn merge_book_bookmark(
     current: Option<BookBookmarkRecord>,
     entity_id: &str,
     patch: &BookBookmarkPatch,
     client_lamport: i64,
 ) -> anyhow::Result<BookBookmarkRecord> {
+    let created_at_ms = patch.effective_created_at_ms();
+    let updated_at_ms = patch.effective_updated_at_ms();
     let incoming = BookBookmarkRecord {
         bookmark_id: entity_id.to_string(),
         book_id: patch.book_id.clone(),
@@ -5771,6 +7329,9 @@ fn merge_book_bookmark(
         page_index: patch.page_index,
         progress_percent: patch.progress_percent,
         label: normalize_optional_string(patch.label.as_deref()),
+        note: normalize_optional_string(patch.note.as_deref()),
+        created_at_ms,
+        updated_at_ms,
         saved_at_ms: patch.saved_at_ms,
         record_lamport: client_lamport,
     };
@@ -5813,6 +7374,52 @@ fn merge_novel_bookmark(
             let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
             let winner = pick_novel_bookmark(existing, incoming);
             NovelBookmarkRecord {
+                record_lamport: applied_lamport,
+                ..winner
+            }
+        }
+    })
+}
+
+fn merge_book_highlight(
+    current: Option<BookHighlightRecord>,
+    entity_id: &str,
+    patch: &BookHighlightPatch,
+    client_lamport: i64,
+) -> anyhow::Result<BookHighlightRecord> {
+    anyhow::ensure!(
+        patch.highlight_id == entity_id,
+        "book highlight patch highlight_id must match entity_id"
+    );
+    if let Some(existing) = current.as_ref() {
+        anyhow::ensure!(
+            existing.book_id == patch.book_id,
+            "book highlight parent book_id is immutable"
+        );
+    }
+    let incoming = BookHighlightRecord {
+        highlight_id: entity_id.to_string(),
+        book_id: patch.book_id.clone(),
+        start_locator_json: patch.start_locator_json.clone(),
+        end_locator_json: patch.end_locator_json.clone(),
+        selected_text: patch.selected_text.clone(),
+        color_argb: patch.color_argb,
+        note: normalize_optional_string(patch.note.as_deref()),
+        created_at_ms: patch.created_at_ms,
+        updated_at_ms: patch.updated_at_ms,
+        record_lamport: client_lamport,
+    };
+
+    Ok(match current {
+        None => incoming,
+        Some(existing) => {
+            let applied_lamport = next_lamport(existing.record_lamport, client_lamport);
+            let winner = if existing.updated_at_ms >= incoming.updated_at_ms {
+                existing
+            } else {
+                incoming
+            };
+            BookHighlightRecord {
                 record_lamport: applied_lamport,
                 ..winner
             }
@@ -5887,6 +7494,8 @@ fn merge_comic_history(
         history_id: entity_id.to_string(),
         comic_id: patch.comic_id.clone(),
         chapter_id: patch.chapter_id.clone(),
+        portable_work_ref: patch.portable_work_ref.clone(),
+        portable_chapter_ref: patch.portable_chapter_ref.clone(),
         page_index: patch.page_index,
         page_count: patch.page_count,
         progress_percent: patch.progress_percent,
@@ -5919,6 +7528,8 @@ fn merge_comic_page_bookmark(
         bookmark_id: entity_id.to_string(),
         comic_id: patch.comic_id.clone(),
         chapter_id: patch.chapter_id.clone(),
+        portable_work_ref: patch.portable_work_ref.clone(),
+        portable_chapter_ref: patch.portable_chapter_ref.clone(),
         page_index: patch.page_index,
         page_count: patch.page_count,
         label: normalize_optional_string(patch.label.as_deref()),
@@ -6004,8 +7615,9 @@ fn compare_novel_progress(left: &NovelProgressRecord, right: &NovelProgressRecor
 }
 
 fn compare_book_bookmark(left: &BookBookmarkRecord, right: &BookBookmarkRecord) -> Ordering {
-    book_bookmark_strength(left)
-        .cmp(&book_bookmark_strength(right))
+    left.updated_at_ms
+        .cmp(&right.updated_at_ms)
+        .then(book_bookmark_strength(left).cmp(&book_bookmark_strength(right)))
         .then(left.saved_at_ms.cmp(&right.saved_at_ms))
         .then(compare_f64(left.progress_percent, right.progress_percent))
         .then(left.record_lamport.cmp(&right.record_lamport))
@@ -6221,6 +7833,7 @@ pub async fn issue_local_authority_token(
     let now_ms = now_ms();
     let inactivity_expires_at_ms = now_ms + config.token_inactivity_window.as_millis() as i64;
     let token_id = format!("local-authority-{device_id}-{profile_id}");
+    // Local authority tokens keep their legacy prefix for persisted clients.
     let access_token = format!("aethon_local_{}", Uuid::now_v7());
     let token_hash = hash_token(&access_token);
     let trusted_host_id = "syncd-local-authority";
@@ -6253,7 +7866,7 @@ pub async fn issue_local_authority_token(
     )
     .bind(device_id)
     .bind(trusted_host_id)
-    .bind("Aethon local authority")
+    .bind("Epigraph local authority")
     .bind(PairingPlatform::Desktop.as_str())
     .bind(now_ms)
     .bind(now_ms)
@@ -6368,6 +7981,334 @@ pub async fn load_token_state(
     Ok(row)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_portable_work_binding(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    portable_id: &str,
+    reference: &PortableWorkRefV3,
+    dependency_key: Option<&str>,
+    local_reference: Option<&str>,
+    state: PortableResolutionStateV3,
+    reason: Option<PortableResolutionReasonV3>,
+    title_hint: Option<&str>,
+    provider_label_hint: Option<&str>,
+    record_lamport: i64,
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
+    reference
+        .validate()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    if canonical_portable_work_id(reference) != portable_id {
+        bail!("portable work ID does not match its canonical reference");
+    }
+    validate_portable_persistence_input(profile_id, "profile ID")?;
+    validate_portable_persistence_input(portable_id, "portable ID")?;
+    if let Some(dependency_key) = dependency_key {
+        validate_portable_persistence_input(dependency_key, "dependency key")?;
+    }
+    if let Some(local_reference) = local_reference {
+        validate_portable_persistence_input(local_reference, "local reference")?;
+    }
+    if matches!(state, PortableResolutionStateV3::Bound) && local_reference.is_none() {
+        bail!("bound portable work requires a local reference");
+    }
+    if record_lamport < 0 || updated_at_ms < 0 {
+        bail!("portable binding clocks must not be negative");
+    }
+    for (hint, label) in [
+        (title_hint, "title hint"),
+        (provider_label_hint, "provider label hint"),
+    ] {
+        if let Some(hint) = hint {
+            validate_portable_hint(hint, label)?;
+        }
+    }
+    let (ecosystem, source_id, plugin_id, provider_key) = match reference {
+        PortableWorkRefV3::Comic {
+            source_id,
+            manga_key,
+        } => (
+            "SUWAYOMI",
+            Some(source_id.as_str()),
+            None,
+            manga_key.as_str(),
+        ),
+        PortableWorkRefV3::Novel {
+            plugin_id,
+            novel_key,
+        } => (
+            "LNREADER",
+            None,
+            Some(plugin_id.as_str()),
+            novel_key.as_str(),
+        ),
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO portable_work_bindings (
+          profile_id, portable_id, ecosystem, source_id, plugin_id, provider_key,
+          dependency_key, local_reference, resolution_state, resolution_reason, title_hint, provider_label_hint,
+          record_lamport, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, portable_id) DO UPDATE SET
+          dependency_key = COALESCE(excluded.dependency_key, portable_work_bindings.dependency_key),
+          local_reference = COALESCE(excluded.local_reference, portable_work_bindings.local_reference),
+          resolution_state = excluded.resolution_state,
+          resolution_reason = excluded.resolution_reason,
+          title_hint = COALESCE(excluded.title_hint, portable_work_bindings.title_hint),
+          provider_label_hint = COALESCE(excluded.provider_label_hint, portable_work_bindings.provider_label_hint),
+          record_lamport = excluded.record_lamport,
+          updated_at_ms = excluded.updated_at_ms
+        WHERE excluded.record_lamport >= portable_work_bindings.record_lamport
+        "#,
+    )
+    .bind(profile_id)
+    .bind(portable_id)
+    .bind(ecosystem)
+    .bind(source_id)
+    .bind(plugin_id)
+    .bind(provider_key)
+    .bind(dependency_key)
+    .bind(local_reference)
+    .bind(portable_resolution_state_wire(state))
+    .bind(reason.map(portable_resolution_reason_wire))
+    .bind(title_hint)
+    .bind(provider_label_hint)
+    .bind(record_lamport)
+    .bind(updated_at_ms)
+    .execute(pool)
+    .await?;
+    if matches!(state, PortableResolutionStateV3::Bound) {
+        requeue_blocked_portable_projections(pool, profile_id).await?;
+    }
+    Ok(())
+}
+
+pub async fn load_portable_work_binding(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    portable_id: &str,
+) -> anyhow::Result<Option<PortableWorkBindingRow>> {
+    Ok(sqlx::query_as::<_, PortableWorkBindingRow>(
+        "SELECT * FROM portable_work_bindings WHERE profile_id = ? AND portable_id = ?",
+    )
+    .bind(profile_id)
+    .bind(portable_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_portable_chapter_binding(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    portable_chapter_id: &str,
+    portable_work_id: &str,
+    provider_key: &str,
+    local_reference: Option<&str>,
+    state: PortableResolutionStateV3,
+    reason: Option<PortableResolutionReasonV3>,
+    record_lamport: i64,
+    updated_at_ms: i64,
+) -> anyhow::Result<()> {
+    validate_portable_persistence_input(profile_id, "profile ID")?;
+    validate_portable_persistence_input(portable_chapter_id, "portable chapter ID")?;
+    validate_portable_persistence_input(portable_work_id, "portable work ID")?;
+    if provider_key.is_empty()
+        || provider_key.len() > 4096
+        || provider_key.chars().any(char::is_control)
+    {
+        bail!("portable chapter provider key is invalid");
+    }
+    if let Some(local_reference) = local_reference {
+        validate_portable_persistence_input(local_reference, "local chapter reference")?;
+    }
+    if matches!(state, PortableResolutionStateV3::Bound) && local_reference.is_none() {
+        bail!("bound portable chapter requires a local reference");
+    }
+    if record_lamport < 0 || updated_at_ms < 0 {
+        bail!("portable chapter clocks must not be negative");
+    }
+
+    let work = load_portable_work_binding(pool, profile_id, portable_work_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("portable work binding does not exist"))?;
+    let work_reference = work
+        .portable_ref()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    if canonical_portable_work_id(&work_reference) != portable_work_id {
+        bail!("portable work binding is not canonical");
+    }
+    let chapter_reference = match work_reference {
+        PortableWorkRefV3::Comic { .. } => PortableChapterRefV3::Comic {
+            work: work_reference,
+            chapter_key: provider_key.to_string(),
+        },
+        PortableWorkRefV3::Novel { .. } => PortableChapterRefV3::Novel {
+            work: work_reference,
+            chapter_key: provider_key.to_string(),
+        },
+    };
+    chapter_reference
+        .validate()
+        .map_err(|error| anyhow::anyhow!(error))?;
+    if canonical_portable_chapter_id(&chapter_reference) != portable_chapter_id {
+        bail!("portable chapter ID does not match its canonical reference");
+    }
+
+    sqlx::query(
+        r#"
+        INSERT INTO portable_chapter_bindings (
+          profile_id, portable_chapter_id, portable_work_id, provider_key, local_reference,
+          resolution_state, resolution_reason, record_lamport, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, portable_chapter_id) DO UPDATE SET
+          local_reference = COALESCE(excluded.local_reference, portable_chapter_bindings.local_reference),
+          resolution_state = excluded.resolution_state,
+          resolution_reason = excluded.resolution_reason,
+          record_lamport = excluded.record_lamport,
+          updated_at_ms = excluded.updated_at_ms
+        WHERE excluded.record_lamport >= portable_chapter_bindings.record_lamport
+        "#,
+    )
+    .bind(profile_id)
+    .bind(portable_chapter_id)
+    .bind(portable_work_id)
+    .bind(provider_key)
+    .bind(local_reference)
+    .bind(portable_resolution_state_wire(state))
+    .bind(reason.map(portable_resolution_reason_wire))
+    .bind(record_lamport)
+    .bind(updated_at_ms)
+    .execute(pool)
+    .await?;
+    if matches!(state, PortableResolutionStateV3::Bound) {
+        requeue_blocked_portable_projections(pool, profile_id).await?;
+    }
+    Ok(())
+}
+
+async fn requeue_blocked_portable_projections(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+) -> anyhow::Result<()> {
+    let now = now_ms();
+    sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'retry', next_attempt_at_ms = ?, lease_until_ms = NULL,
+            last_error = 'portable_binding_updated', updated_at_ms = ?
+        WHERE profile_id = ? AND status = 'blocked'
+          AND last_error IN (
+            'portable_work_not_bound', 'portable_work_binding_mismatch',
+            'portable_chapter_not_resolved', 'portable_binding_unavailable'
+          )
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(profile_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn load_portable_chapter_binding(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    portable_chapter_id: &str,
+) -> anyhow::Result<Option<PortableChapterBindingRow>> {
+    Ok(sqlx::query_as::<_, PortableChapterBindingRow>(
+        "SELECT * FROM portable_chapter_bindings WHERE profile_id = ? AND portable_chapter_id = ?",
+    )
+    .bind(profile_id)
+    .bind(portable_chapter_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn list_portable_chapter_bindings(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    portable_work_id: &str,
+) -> anyhow::Result<Vec<PortableChapterBindingRow>> {
+    Ok(sqlx::query_as::<_, PortableChapterBindingRow>(
+        r#"
+        SELECT * FROM portable_chapter_bindings
+        WHERE profile_id = ? AND portable_work_id = ?
+        ORDER BY updated_at_ms, portable_chapter_id
+        "#,
+    )
+    .bind(profile_id)
+    .bind(portable_work_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+fn validate_portable_persistence_input(value: &str, label: &str) -> anyhow::Result<()> {
+    if value.is_empty()
+        || value != value.trim()
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+    {
+        bail!("{label} is invalid");
+    }
+    Ok(())
+}
+
+fn validate_portable_hint(value: &str, label: &str) -> anyhow::Result<()> {
+    if value.is_empty()
+        || value != value.trim()
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+    {
+        bail!("{label} is invalid");
+    }
+    Ok(())
+}
+
+fn portable_resolution_state_wire(state: PortableResolutionStateV3) -> &'static str {
+    match state {
+        PortableResolutionStateV3::PendingDependency => "PENDING_DEPENDENCY",
+        PortableResolutionStateV3::PendingProvider => "PENDING_PROVIDER",
+        PortableResolutionStateV3::Resolving => "RESOLVING",
+        PortableResolutionStateV3::Ready => "READY",
+        PortableResolutionStateV3::Bound => "BOUND",
+        PortableResolutionStateV3::RetryableFailure => "RETRYABLE_FAILURE",
+        PortableResolutionStateV3::RequiresUserAction => "REQUIRES_USER_ACTION",
+        PortableResolutionStateV3::LegacyUnbound => "LEGACY_UNBOUND",
+        PortableResolutionStateV3::Conflict => "CONFLICT",
+    }
+}
+
+fn portable_resolution_reason_wire(reason: PortableResolutionReasonV3) -> &'static str {
+    match reason {
+        PortableResolutionReasonV3::ExtensionNotFound => "EXTENSION_NOT_FOUND",
+        PortableResolutionReasonV3::ExtensionStoreMissing => "EXTENSION_STORE_MISSING",
+        PortableResolutionReasonV3::ExtensionStoreApprovalRequired => {
+            "EXTENSION_STORE_APPROVAL_REQUIRED"
+        }
+        PortableResolutionReasonV3::ExtensionNotLoaded => "EXTENSION_NOT_LOADED",
+        PortableResolutionReasonV3::PluginNotFound => "PLUGIN_NOT_FOUND",
+        PortableResolutionReasonV3::PluginRepositoryMissing => "PLUGIN_REPOSITORY_MISSING",
+        PortableResolutionReasonV3::PluginRepositoryApprovalRequired => {
+            "PLUGIN_REPOSITORY_APPROVAL_REQUIRED"
+        }
+        PortableResolutionReasonV3::SourceNotFound => "SOURCE_NOT_FOUND",
+        PortableResolutionReasonV3::SourceNotLoaded => "SOURCE_NOT_LOADED",
+        PortableResolutionReasonV3::SourceOffline => "SOURCE_OFFLINE",
+        PortableResolutionReasonV3::SourceAuthRequired => "SOURCE_AUTH_REQUIRED",
+        PortableResolutionReasonV3::SourceConfigurationRequired => "SOURCE_CONFIGURATION_REQUIRED",
+        PortableResolutionReasonV3::WorkNotFound => "WORK_NOT_FOUND",
+        PortableResolutionReasonV3::WorkResolutionUnsupported => "WORK_RESOLUTION_UNSUPPORTED",
+        PortableResolutionReasonV3::WorkResolutionFailed => "WORK_RESOLUTION_FAILED",
+        PortableResolutionReasonV3::ChapterNotFound => "CHAPTER_NOT_FOUND",
+        PortableResolutionReasonV3::ChapterResolutionFailed => "CHAPTER_RESOLUTION_FAILED",
+    }
+}
+
 pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -6380,6 +8321,144 @@ mod tests {
     use std::collections::BTreeSet;
 
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn book_progress_id_migration_collapses_legacy_aliases_and_keeps_newest_record() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+
+        for migration in MIGRATOR.iter().filter(|migration| migration.version < 23) {
+            sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (book_id, progress, version) in [
+            ("epub:sha256:fixture", 0.75_f64, 20_i64),
+            ("book.progress::epub:sha256:fixture", 0.25_f64, 10_i64),
+            ("book.progress::pdf:sha256:legacy-only", 0.5_f64, 30_i64),
+        ] {
+            sqlx::query(
+                r#"INSERT INTO book_progress (
+                    scope_id, book_id, renderer, location, href, progress_percent,
+                    last_read_at_ms, page_index, total_pages, section_label,
+                    record_updated_at_ms, record_updated_by_device_id,
+                    record_lamport, record_server_version
+                ) VALUES ('books:global', ?, 'epub', NULL, NULL, ?, 1, NULL, NULL,
+                    NULL, ?, 'fixture-device', ?, ?)"#,
+            )
+            .bind(book_id)
+            .bind(progress)
+            .bind(version)
+            .bind(version)
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 23)
+            .unwrap();
+        sqlx::raw_sql(migration.sql.as_ref())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, f64, i64)> = sqlx::query_as(
+            "SELECT book_id, progress_percent, record_server_version FROM book_progress ORDER BY book_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("epub:sha256:fixture".to_string(), 0.75, 20),
+                ("pdf:sha256:legacy-only".to_string(), 0.5, 30),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn hashed_book_id_migration_collapses_desktop_local_aliases() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(":memory:")
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        for migration in MIGRATOR.iter().filter(|migration| migration.version < 24) {
+            sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let fingerprint = "A".repeat(64);
+        for (book_id, progress, version) in [
+            (format!("pdf-{fingerprint}"), 0.25_f64, 10_i64),
+            (
+                format!("pdf:sha256:{}", fingerprint.to_ascii_lowercase()),
+                0.75_f64,
+                20_i64,
+            ),
+        ] {
+            sqlx::query(
+                r#"INSERT INTO book_progress (
+                    scope_id, book_id, renderer, location, href, progress_percent,
+                    last_read_at_ms, page_index, total_pages, section_label,
+                    record_updated_at_ms, record_updated_by_device_id,
+                    record_lamport, record_server_version
+                ) VALUES ('books:global', ?, 'pdf', NULL, NULL, ?, 1, NULL, NULL,
+                    NULL, ?, 'fixture-device', ?, ?)"#,
+            )
+            .bind(book_id)
+            .bind(progress)
+            .bind(version)
+            .bind(version)
+            .bind(version)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let migration = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == 24)
+            .unwrap();
+        sqlx::raw_sql(migration.sql.as_ref())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let row: (String, f64, i64) = sqlx::query_as(
+            "SELECT book_id, progress_percent, record_server_version FROM book_progress",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            (
+                format!("pdf:sha256:{}", fingerprint.to_ascii_lowercase()),
+                0.75,
+                20,
+            )
+        );
+    }
 
     #[tokio::test]
     async fn novel_plugin_migration_preserves_v1_rows_without_publishing_them() {
@@ -6552,6 +8631,250 @@ mod tests {
     use crate::syncd::config::SyncdConfig;
 
     #[tokio::test]
+    async fn portable_bindings_preserve_opaque_provider_keys() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        let reference = PortableWorkRefV3::Comic {
+            source_id: "-10002".to_string(),
+            manga_key: "/Manga/Keep-Case?chapter=AbC%2F123".to_string(),
+        };
+        let portable_id = canonical_portable_work_id(&reference);
+
+        upsert_portable_work_binding(
+            &pool,
+            "main",
+            &portable_id,
+            &reference,
+            Some("eu.kanade.tachiyomi.extension.en.fixture"),
+            Some("42"),
+            PortableResolutionStateV3::RequiresUserAction,
+            Some(PortableResolutionReasonV3::ExtensionStoreApprovalRequired),
+            Some("Display hint"),
+            Some("Provider hint"),
+            1,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let row = load_portable_work_binding(&pool, "main", &portable_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.portable_ref().unwrap(), reference);
+        assert_eq!(
+            row.dependency_key.as_deref(),
+            Some("eu.kanade.tachiyomi.extension.en.fixture")
+        );
+        assert_eq!(row.local_reference.as_deref(), Some("42"));
+        assert_eq!(row.title_hint.as_deref(), Some("Display hint"));
+    }
+
+    #[tokio::test]
+    async fn portable_chapter_binding_requires_an_existing_portable_work() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+
+        let error = upsert_portable_chapter_binding(
+            &pool,
+            "main",
+            "portable:chapter:missing",
+            "portable:work:missing",
+            "/chapter/1",
+            None,
+            PortableResolutionStateV3::PendingProvider,
+            None,
+            1,
+            1,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn portable_bindings_reject_noncanonical_ids() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/novel/opaque".to_string(),
+        };
+
+        let error = upsert_portable_work_binding(
+            &pool,
+            "main",
+            "portable:work:not-canonical",
+            &work,
+            Some("fixture.plugin"),
+            None,
+            PortableResolutionStateV3::PendingProvider,
+            None,
+            None,
+            None,
+            1,
+            1,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("canonical reference"));
+
+        let work_id = canonical_portable_work_id(&work);
+        upsert_portable_work_binding(
+            &pool,
+            "main",
+            &work_id,
+            &work,
+            Some("fixture.plugin"),
+            Some("local-novel"),
+            PortableResolutionStateV3::Bound,
+            None,
+            None,
+            None,
+            1,
+            1,
+        )
+        .await
+        .unwrap();
+
+        let error = upsert_portable_chapter_binding(
+            &pool,
+            "main",
+            "portable:chapter:not-canonical",
+            &work_id,
+            "/chapter/opaque",
+            Some("local-chapter"),
+            PortableResolutionStateV3::Bound,
+            None,
+            1,
+            1,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("canonical reference"));
+    }
+
+    #[tokio::test]
+    async fn comic_reader_snapshot_preserves_portable_refs_after_persistence() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let work = PortableWorkRefV3::Comic {
+            source_id: "10002".to_string(),
+            manga_key: "/Manga/KeepCase?token=A%2FB".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Comic {
+            work: work.clone(),
+            chapter_key: "/Chapter/KeepCase?part=1".to_string(),
+        };
+        let work_id = canonical_portable_work_id(&work);
+        let chapter_id = canonical_portable_chapter_id(&chapter);
+
+        apply_comic_history_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "history-portable",
+            &ComicHistoryPatch {
+                history_id: "history-portable".to_string(),
+                comic_id: work_id.clone(),
+                chapter_id: chapter_id.clone(),
+                portable_work_ref: Some(work.clone()),
+                portable_chapter_ref: Some(chapter.clone()),
+                page_index: 3,
+                page_count: Some(20),
+                progress_percent: 0.15,
+                read_at_ms: 100,
+            },
+            1,
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        apply_comic_page_bookmark_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "bookmark-portable",
+            &ComicPageBookmarkPatch {
+                bookmark_id: "bookmark-portable".to_string(),
+                comic_id: work_id,
+                chapter_id,
+                portable_work_ref: Some(work.clone()),
+                portable_chapter_ref: Some(chapter.clone()),
+                page_index: 4,
+                page_count: Some(20),
+                label: Some("Opaque page".to_string()),
+                saved_at_ms: 101,
+            },
+            2,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        let snapshot = load_scope_snapshot(&pool, "comics:profile:main")
+            .await
+            .unwrap();
+        let history: ComicHistoryRecord = serde_json::from_value(
+            snapshot
+                .entities
+                .iter()
+                .find(|entity| entity.entity_type == "comic.history")
+                .unwrap()
+                .record
+                .clone(),
+        )
+        .unwrap();
+        let bookmark: ComicPageBookmarkRecord = serde_json::from_value(
+            snapshot
+                .entities
+                .iter()
+                .find(|entity| entity.entity_type == "comic.page_bookmark")
+                .unwrap()
+                .record
+                .clone(),
+        )
+        .unwrap();
+
+        assert_eq!(history.portable_work_ref.as_ref(), Some(&work));
+        assert_eq!(history.portable_chapter_ref.as_ref(), Some(&chapter));
+        assert_eq!(bookmark.portable_work_ref.as_ref(), Some(&work));
+        assert_eq!(bookmark.portable_chapter_ref.as_ref(), Some(&chapter));
+    }
+
+    #[test]
+    fn legacy_receipt_matches_v3_retry_when_only_transport_metadata_changed() {
+        let stored = r#"{"clientMutationId":"stable","entityId":"book-1","entityType":"book.progress","lamport":7,"op":"merge","patch":{"progressPercent":0.5},"scopeId":"books:global"}"#;
+        let incoming = r#"{"clientMutationId":"stable","entityId":"book-1","entityType":"book.progress","eventClock":{"deviceGenerationId":"device-1","logical":2,"physicalMs":1000},"lamport":19,"op":"merge","patch":{"progressPercent":0.5},"scopeId":"books:global"}"#;
+
+        assert!(mutation_receipts_are_semantically_equivalent(stored, incoming).unwrap());
+    }
+
+    #[test]
+    fn v3_receipt_rejects_a_retry_with_a_different_event_clock() {
+        let stored = r#"{"clientMutationId":"stable","entityId":"book-1","entityType":"book.progress","eventClock":{"deviceGenerationId":"device-1","logical":2,"physicalMs":1000},"lamport":7,"op":"merge","patch":{"progressPercent":0.5},"scopeId":"books:global"}"#;
+        let incoming = r#"{"clientMutationId":"stable","entityId":"book-1","entityType":"book.progress","eventClock":{"deviceGenerationId":"device-1","logical":3,"physicalMs":1001},"lamport":19,"op":"merge","patch":{"progressPercent":0.5},"scopeId":"books:global"}"#;
+
+        assert!(!mutation_receipts_are_semantically_equivalent(stored, incoming).unwrap());
+    }
+
+    #[tokio::test]
     async fn recalculates_min_replayable_after_gc() {
         let temp = tempdir().unwrap();
         let config = SyncdConfig::for_test(temp.path().to_path_buf());
@@ -6649,7 +8972,7 @@ mod tests {
             reset: false,
         };
 
-        let merged = merge_book_progress(Some(current), "book-1", &patch, 99).unwrap();
+        let merged = merge_book_progress(Some(current), "book-1", &patch, 99, false).unwrap();
         assert_eq!(merged.page_index, Some(20));
         assert_eq!(merged.progress_percent, 0.6);
         assert_eq!(merged.record_lamport, 100);
@@ -6658,6 +8981,8 @@ mod tests {
     #[test]
     fn novel_progress_merge_keeps_higher_chapter_even_with_newer_lamport() {
         let current = NovelProgressRecord {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
             novel_id: "novel-1".to_string(),
             chapter_id: Some("c20".to_string()),
             chapter_title: Some("Twenty".to_string()),
@@ -6670,6 +8995,8 @@ mod tests {
         };
 
         let patch = NovelProgressPatch {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
             chapter_id: Some("c19".to_string()),
             chapter_title: Some("Nineteen".to_string()),
             chapter_order_key: Some(19.0),
@@ -6680,10 +9007,138 @@ mod tests {
             reset: false,
         };
 
-        let merged = merge_novel_progress(Some(current), "novel-1", &patch, 77).unwrap();
+        let merged = merge_novel_progress(Some(current), "novel-1", &patch, 77, false).unwrap();
         assert_eq!(merged.chapter_order_key, Some(20.0));
         assert_eq!(merged.chapter_id.as_deref(), Some("c20"));
         assert_eq!(merged.record_lamport, 78);
+    }
+
+    #[test]
+    fn causal_novel_progress_accepts_an_intentional_regression() {
+        let current = NovelProgressRecord {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            novel_id: "novel-1".to_string(),
+            chapter_id: Some("c20".to_string()),
+            chapter_title: Some("Twenty".to_string()),
+            chapter_order_key: Some(20.0),
+            progress_percent: 0.8,
+            locator: Some("/20#p8".to_string()),
+            locator_sort_key: Some(8.0),
+            updated_at_ms: 1000,
+            record_lamport: 5,
+        };
+        let patch = NovelProgressPatch {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            chapter_id: Some("c19".to_string()),
+            chapter_title: Some("Nineteen".to_string()),
+            chapter_order_key: Some(19.0),
+            progress_percent: 0.1,
+            locator: Some("/19#p1".to_string()),
+            locator_sort_key: Some(1.0),
+            updated_at_ms: 2000,
+            reset: false,
+        };
+
+        let merged = merge_novel_progress(Some(current), "novel-1", &patch, 8, true).unwrap();
+
+        assert_eq!(merged.chapter_id.as_deref(), Some("c19"));
+        assert_eq!(merged.progress_percent, 0.1);
+    }
+
+    #[test]
+    fn legacy_novel_progress_does_not_inherit_stale_portable_refs() {
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/novel/one".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: "/chapter/one".to_string(),
+        };
+        let current = NovelProgressRecord {
+            novel_id: canonical_portable_work_id(&work),
+            chapter_id: Some(canonical_portable_chapter_id(&chapter)),
+            portable_work_ref: Some(work),
+            portable_chapter_ref: Some(chapter),
+            chapter_title: Some("Portable".to_string()),
+            chapter_order_key: Some(1.0),
+            progress_percent: 0.5,
+            locator: Some("block:1".to_string()),
+            locator_sort_key: Some(1.0),
+            updated_at_ms: 100,
+            record_lamport: 1,
+        };
+        let patch = NovelProgressPatch {
+            chapter_id: Some("legacy-chapter-2".to_string()),
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            chapter_title: Some("Legacy".to_string()),
+            chapter_order_key: Some(2.0),
+            progress_percent: 0.25,
+            locator: Some("legacy:2".to_string()),
+            locator_sort_key: Some(2.0),
+            updated_at_ms: 200,
+            reset: false,
+        };
+
+        let merged = merge_novel_progress(Some(current), "legacy-novel", &patch, 2, true).unwrap();
+
+        assert_eq!(merged.novel_id, "legacy-novel");
+        assert_eq!(merged.chapter_id.as_deref(), Some("legacy-chapter-2"));
+        assert!(merged.portable_work_ref.is_none());
+        assert!(merged.portable_chapter_ref.is_none());
+    }
+
+    #[test]
+    fn portable_novel_progress_replaces_legacy_identity_atomically() {
+        let current = NovelProgressRecord {
+            novel_id: "legacy-novel".to_string(),
+            chapter_id: Some("legacy-chapter".to_string()),
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            chapter_title: Some("Legacy".to_string()),
+            chapter_order_key: Some(1.0),
+            progress_percent: 0.5,
+            locator: Some("legacy:1".to_string()),
+            locator_sort_key: Some(1.0),
+            updated_at_ms: 100,
+            record_lamport: 1,
+        };
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/novel/one".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: "/chapter/two".to_string(),
+        };
+        let patch = NovelProgressPatch {
+            chapter_id: Some(canonical_portable_chapter_id(&chapter)),
+            portable_work_ref: Some(work.clone()),
+            portable_chapter_ref: Some(chapter.clone()),
+            chapter_title: Some("Portable".to_string()),
+            chapter_order_key: Some(2.0),
+            progress_percent: 0.25,
+            locator: Some("block:2".to_string()),
+            locator_sort_key: Some(2.0),
+            updated_at_ms: 200,
+            reset: false,
+        };
+
+        let merged = merge_novel_progress(
+            Some(current),
+            &canonical_portable_work_id(&work),
+            &patch,
+            2,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(merged.novel_id, canonical_portable_work_id(&work));
+        assert_eq!(merged.portable_work_ref.as_ref(), Some(&work));
+        assert_eq!(merged.portable_chapter_ref.as_ref(), Some(&chapter));
     }
 
     #[test]
@@ -6700,13 +9155,23 @@ mod tests {
             reset: false,
         };
 
-        let merged = merge_book_progress(None, "book.progress::book-1", &patch, 3).unwrap();
+        let merged = merge_book_progress(None, "book.progress::book-1", &patch, 3, false).unwrap();
         assert_eq!(merged.book_id, "book-1");
+        assert_eq!(
+            normalize_book_progress_book_id("book.progress::book.progress::book-1"),
+            "book-1"
+        );
+        assert_eq!(
+            normalize_book_progress_book_id(&format!("pdf-{}", "A".repeat(64))),
+            format!("pdf:sha256:{}", "a".repeat(64))
+        );
     }
 
     #[test]
     fn novel_progress_merge_strips_entity_prefix_from_persisted_novel_id() {
         let patch = NovelProgressPatch {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
             chapter_id: Some("c1".to_string()),
             chapter_title: Some("One".to_string()),
             chapter_order_key: Some(1.0),
@@ -6717,7 +9182,8 @@ mod tests {
             reset: false,
         };
 
-        let merged = merge_novel_progress(None, "novel.progress::novel-1", &patch, 7).unwrap();
+        let merged =
+            merge_novel_progress(None, "novel.progress::novel-1", &patch, 7, false).unwrap();
         assert_eq!(merged.novel_id, "novel-1");
     }
 
@@ -6763,6 +9229,7 @@ mod tests {
                 reset: false,
             },
             3,
+            None,
             config.retention_window,
         )
         .await
@@ -6778,5 +9245,472 @@ mod tests {
 
         assert_eq!(before_count, after_count);
         assert_eq!(runtime.current_server_version, 0);
+    }
+
+    #[tokio::test]
+    async fn causal_book_progress_accepts_recent_rewind_and_supersedes_late_delivery() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["books:global".to_string()]),
+            mutation_receipt: None,
+        };
+        let patch = |page_index, progress_percent, last_read_at_ms| BookProgressPatch {
+            renderer: Some("pdf".to_string()),
+            location: None,
+            href: None,
+            progress_percent,
+            last_read_at_ms,
+            page_index: Some(page_index),
+            total_pages: Some(100),
+            section_label: None,
+            reset: false,
+        };
+        let clock = |physical_ms| EventClock {
+            physical_ms,
+            logical: 1,
+            device_generation_id: "generation-main".to_string(),
+        };
+
+        assert!(matches!(
+            apply_book_progress_mutation(
+                &pool,
+                &session,
+                "books:global",
+                "book-1",
+                &patch(50, 0.5, 200),
+                1,
+                Some(&clock(200)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        assert!(matches!(
+            apply_book_progress_mutation(
+                &pool,
+                &session,
+                "books:global",
+                "book-1",
+                &patch(5, 0.05, 300),
+                2,
+                Some(&clock(300)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        assert!(matches!(
+            apply_book_progress_mutation(
+                &pool,
+                &session,
+                "books:global",
+                "book-1",
+                &patch(80, 0.8, 250),
+                3,
+                Some(&clock(250)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+
+        let stored: BookProgressRow = sqlx::query_as(
+            r#"SELECT scope_id, book_id, renderer, location, href, progress_percent,
+            last_read_at_ms, page_index, total_pages, section_label, record_updated_at_ms,
+            record_updated_by_device_id, record_lamport, record_server_version
+            FROM book_progress WHERE scope_id = ? AND book_id = ?"#,
+        )
+        .bind("books:global")
+        .bind("book-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(stored.page_index, Some(5));
+        assert_eq!(stored.progress_percent, 0.05);
+    }
+
+    #[tokio::test]
+    async fn causal_comic_history_enqueues_only_the_latest_canonical_projection() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let patch = |page_index, read_at_ms| ComicHistoryPatch {
+            portable_work_ref: None,
+            portable_chapter_ref: None,
+            history_id: "comic.history::suwayomi:profile:main:manga:7".to_string(),
+            comic_id: "suwayomi:profile:main:manga:7".to_string(),
+            chapter_id: "suwayomi:profile:main:chapter:11".to_string(),
+            page_index,
+            page_count: Some(100),
+            progress_percent: page_index as f64 / 100.0,
+            read_at_ms,
+        };
+        let clock = |physical_ms| EventClock {
+            physical_ms,
+            logical: 1,
+            device_generation_id: "generation-main".to_string(),
+        };
+
+        for (page, physical_ms) in [(50, 200), (5, 300)] {
+            assert!(matches!(
+                apply_comic_history_mutation(
+                    &pool,
+                    &session,
+                    "comics:profile:main",
+                    "comic.history::suwayomi:profile:main:manga:7",
+                    &patch(page, physical_ms),
+                    page,
+                    Some(&clock(physical_ms)),
+                    config.retention_window,
+                )
+                .await
+                .unwrap(),
+                CausalMutationWriteOutcome::Applied(_)
+            ));
+        }
+        assert!(matches!(
+            apply_comic_history_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                "comic.history::suwayomi:profile:main:manga:7",
+                &patch(80, 250),
+                80,
+                Some(&clock(250)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT variables_json FROM suwayomi_projection_outbox ORDER BY source_server_version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        let variables: Value = serde_json::from_str(&rows[0].0).unwrap();
+        assert_eq!(variables["mangaId"], 7);
+        assert_eq!(variables["ids"], json!([11]));
+        assert_eq!(variables["lastPageRead"], 5);
+    }
+
+    #[tokio::test]
+    async fn portable_comic_chapter_state_enqueues_exact_refs_for_binding_resolution() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let work = PortableWorkRefV3::Comic {
+            source_id: "10002".to_string(),
+            manga_key: "/Manga/KeepCase?token=A%2FB".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Comic {
+            work: work.clone(),
+            chapter_key: "/Chapter/KeepCase?part=1".to_string(),
+        };
+        let work_id = canonical_portable_work_id(&work);
+        let chapter_id = canonical_portable_chapter_id(&chapter);
+        let entity_id = format!("comic.chapter_state::{work_id}::{chapter_id}");
+        let record = json!({
+            "chapterStateId": entity_id,
+            "comicId": work_id,
+            "chapterId": chapter_id,
+            "portableWorkRef": work,
+            "portableChapterRef": chapter,
+            "read": true,
+            "bookmarked": false,
+            "lastPageRead": 8,
+            "lastReadAtMs": 100,
+            "updatedAtMs": 100,
+            "explicitProgressReset": false
+        });
+
+        apply_comic_sync_state_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "comic.chapter_state",
+            &entity_id,
+            &record,
+            1,
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        let variables_json: String = sqlx::query_scalar(
+            "SELECT variables_json FROM suwayomi_projection_outbox WHERE entity_type = 'comic.chapter_state'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let variables: Value = serde_json::from_str(&variables_json).unwrap();
+        assert_eq!(variables["portableWorkRef"], record["portableWorkRef"]);
+        assert_eq!(
+            variables["portableChapterRef"],
+            record["portableChapterRef"]
+        );
+        assert_eq!(variables["lastPageRead"], 8);
+        assert!(variables.get("mangaId").is_none());
+    }
+
+    #[tokio::test]
+    async fn mirrored_comic_chapter_state_never_echoes_back_to_suwayomi() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "mirror-token".to_string(),
+            device_id: "epigraph-core-mirror".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let entity_id =
+            "comic.chapter_state::suwayomi:profile:main:manga:7::suwayomi:profile:main:chapter:11";
+        let record = json!({
+            "chapterStateId": entity_id,
+            "comicId": "suwayomi:profile:main:manga:7",
+            "chapterId": "suwayomi:profile:main:chapter:11",
+            "read": false,
+            "bookmarked": true,
+            "updatedAtMs": 200,
+        });
+        let clock = EventClock {
+            physical_ms: 200,
+            logical: 0,
+            device_generation_id: "epigraph-core-mirror".to_string(),
+        };
+
+        assert!(matches!(
+            apply_mirrored_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                "comic.chapter_state",
+                entity_id,
+                &record,
+                200,
+                Some(&clock),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        let state_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM comic_sync_state WHERE entity_id = ?")
+                .bind(entity_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let projection_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM suwayomi_projection_outbox")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state_count, 1);
+        assert_eq!(projection_count, 0);
+    }
+
+    #[tokio::test]
+    async fn portable_comic_library_state_enqueues_work_ref_without_local_manga_id() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let work = PortableWorkRefV3::Comic {
+            source_id: "10002".to_string(),
+            manga_key: "/Manga/KeepCase?token=A%2FB".to_string(),
+        };
+        let work_id = canonical_portable_work_id(&work);
+        let record = json!({
+            "comicId": work_id,
+            "inLibrary": true,
+            "portableWorkRef": work,
+        });
+
+        apply_comic_sync_state_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "comic.entry",
+            &work_id,
+            &record,
+            1,
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        let variables_json: String = sqlx::query_scalar(
+            "SELECT variables_json FROM suwayomi_projection_outbox WHERE entity_type = 'comic.entry'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let variables: Value = serde_json::from_str(&variables_json).unwrap();
+        assert_eq!(variables["portableWorkRef"], record["portableWorkRef"]);
+        assert_eq!(variables["inLibrary"], true);
+        assert!(variables.get("id").is_none());
+        assert!(variables.get("mangaId").is_none());
+    }
+
+    #[tokio::test]
+    async fn book_annotations_preserve_full_metadata_and_highlight_tombstones() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["books:global".to_string()]),
+            mutation_receipt: None,
+        };
+
+        apply_book_bookmark_mutation(
+            &pool,
+            &session,
+            "books:global",
+            "bookmark-1",
+            &BookBookmarkPatch {
+                book_id: "book-1".to_string(),
+                location: Some("epubcfi(/6/2)".to_string()),
+                href: Some("chapter-1.xhtml".to_string()),
+                page_index: None,
+                progress_percent: 0.25,
+                label: Some("Start".to_string()),
+                note: Some("Keep this note".to_string()),
+                created_at_ms: 100,
+                updated_at_ms: 200,
+                saved_at_ms: 200,
+            },
+            1,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+        let bookmark: BookBookmarkRow =
+            sqlx::query_as("SELECT * FROM book_bookmarks WHERE scope_id = ? AND bookmark_id = ?")
+                .bind("books:global")
+                .bind("bookmark-1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bookmark.note.as_deref(), Some("Keep this note"));
+        assert_eq!(bookmark.created_at_ms, 100);
+        assert_eq!(bookmark.updated_at_ms, 200);
+
+        apply_book_highlight_mutation(
+            &pool,
+            &session,
+            "books:global",
+            "highlight-1",
+            &BookHighlightPatch {
+                highlight_id: "highlight-1".to_string(),
+                book_id: "book-1".to_string(),
+                start_locator_json: json!({ "cfi": "epubcfi(/6/2!/4/2:0)" }),
+                end_locator_json: json!({ "cfi": "epubcfi(/6/2!/4/2:8)" }),
+                selected_text: "Selected".to_string(),
+                color_argb: 0xffaa33,
+                note: Some("Annotation".to_string()),
+                created_at_ms: 300,
+                updated_at_ms: 300,
+            },
+            2,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+        let highlight_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM book_highlights WHERE scope_id = ? AND highlight_id = ?",
+        )
+        .bind("books:global")
+        .bind("highlight-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(highlight_count, 1);
+
+        delete_book_highlight_mutation(
+            &pool,
+            &session,
+            "books:global",
+            "highlight-1",
+            3,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+        let highlight_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM book_highlights WHERE scope_id = ? AND highlight_id = ?",
+        )
+        .bind("books:global")
+        .bind("highlight-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let tombstone_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM tombstones WHERE scope_id = ? AND entity_type = ? AND entity_id = ?",
+        )
+        .bind("books:global")
+        .bind("book.highlight")
+        .bind("highlight-1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(highlight_count, 0);
+        assert_eq!(tombstone_count, 1);
     }
 }

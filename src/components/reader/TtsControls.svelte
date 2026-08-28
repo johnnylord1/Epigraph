@@ -12,7 +12,7 @@
 
   let { controller, onback }: Props = $props();
   let stateVersion = $state(0);
-  const TTS_PREFERENCES_KEY = "aethon-tts-preferences-v1";
+  const TTS_PREFERENCES_KEY = "epigraph-tts-preferences-v1";
 
   function readPreferences() {
     try {

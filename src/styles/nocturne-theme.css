@@ -1,7 +1,7 @@
-/* Aethon Nocturne Theme
+/* Epigraph Nocturne Theme
    Single editable source for the current Nocturne identity used by the app.
 
-   Shared tokens for the current Aethon desktop identity.
+   Shared tokens for the current Epigraph desktop identity.
 */
 
 [data-theme="nocturne"] {
@@ -859,6 +859,7 @@
   --component-syncd-input-bg-focus: color-mix(in srgb, var(--color-settings-input-focus-source) 82%, transparent);
   --component-syncd-input-border: color-mix(in srgb, var(--border-strong) 16%, transparent);
   --component-syncd-input-border-focus: color-mix(in srgb, var(--accent-bright) 22%, transparent);
+  --component-syncd-control-disabled-opacity: 0.5;
   --component-syncd-input-fg: var(--text-primary);
   --component-syncd-input-radius: 14px;
   --component-syncd-input-padding: 10px 12px;

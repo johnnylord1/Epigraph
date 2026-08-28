@@ -5,7 +5,7 @@ import type { DiscordPrivacySettings } from "./types";
 export const DISCORD_COVER_COMPOSITOR_VERSION = "cover-compositor-v9";
 export const DISCORD_COVER_CACHE_TTL_MS = 70 * 60 * 60 * 1000;
 
-const CACHE_PREFIX = `aethon.discord.optimizedCover.${DISCORD_COVER_COMPOSITOR_VERSION}.`;
+const CACHE_PREFIX = `epigraph.discord.optimizedCover.${DISCORD_COVER_COMPOSITOR_VERSION}.`;
 
 export type DiscordCoverWorkKind = "comic" | "book" | "novel";
 export type DiscordCoverSource =

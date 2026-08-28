@@ -6,6 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use url::Url;
@@ -72,6 +73,7 @@ pub enum AppError {
     Gone(ErrorDetail),
     Conflict(ErrorDetail),
     UpgradeRequired(ErrorDetail),
+    ServiceUnavailable(ErrorDetail),
     Internal(String),
 }
 
@@ -142,6 +144,23 @@ impl AppError {
             details,
         })
     }
+
+    pub fn service_unavailable(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+    ) -> Self {
+        Self::ServiceUnavailable(ErrorDetail {
+            code: code.into(),
+            message: message.into(),
+            retryable: Some(retryable),
+            min_client_version: None,
+            current_server_version: None,
+            min_replayable_server_version: None,
+            required_action: None,
+            details: None,
+        })
+    }
 }
 
 impl IntoResponse for AppError {
@@ -205,6 +224,9 @@ impl IntoResponse for AppError {
             AppError::UpgradeRequired(error) => {
                 (StatusCode::UPGRADE_REQUIRED, Json(ErrorBody { error })).into_response()
             }
+            AppError::ServiceUnavailable(error) => {
+                (StatusCode::SERVICE_UNAVAILABLE, Json(ErrorBody { error })).into_response()
+            }
             AppError::Internal(message) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorBody {
@@ -239,8 +261,25 @@ pub struct CapabilitiesResponse {
     pub supports_novel_chapter_assets: bool,
     pub supports_novel_plugin_sync: bool,
     pub supports_suwayomi_proxy: bool,
+    pub supports_causal_mutations_v3: bool,
+    /// Portable provider identities are negotiated separately from causal mutation receipts.
+    pub supports_portable_sync_v3: bool,
+    /// The profile-scoped read-only catalog bridge is separate from the generic GraphQL proxy.
+    pub supports_suwayomi_catalog: bool,
+    /// Typed, profile-scoped details, chapters, and pages operations are available.
+    pub supports_suwayomi_content: bool,
+    /// Read-only inventory of extensions loaded by the managed Suwayomi runtime is available.
+    pub supports_suwayomi_extension_inventory: bool,
     pub supports_suwayomi_websocket_proxy: bool,
     pub suwayomi_proxy_path_template: String,
+    /// Comic catalog, library membership, categories and chapter state are
+    /// authoritative in the managed Suwayomi instance.  The Core only
+    /// mirrors complementary reader state and accepts confirmed commands.
+    pub comic_authority_mode: String,
+    pub supports_confirmed_suwayomi_commands_v1: bool,
+    /// Reserved for the aggregate sync-status endpoint.  It remains false
+    /// until that endpoint is available so clients never infer readiness.
+    pub supports_sync_status_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
@@ -249,15 +288,19 @@ pub struct CapabilitiesResponse {
     pub min_replayable_server_version: i64,
 }
 
-pub const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+// The syncd-only binary does not consume remote snapshots, while the desktop library target does.
+#[allow(dead_code)]
+pub const MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 20] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 25] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
     "book.library_ui",
     "book.progress",
     "book.bookmark",
+    "book.highlight",
     "book.history",
     "novel.entry",
     "novel.chapter",
@@ -270,6 +313,10 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 20] = [
     "novel.plugin",
     "novel.category",
     "novel.category_assignment",
+    "comic.entry",
+    "comic.category",
+    "comic.category_assignment",
+    "comic.chapter_state",
     "comic.history",
     "comic.page_bookmark",
 ];
@@ -299,6 +346,14 @@ pub struct SnapshotTombstone {
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotResponse {
     pub schema_version: u32,
+    #[serde(default)]
+    pub snapshot_id: Option<String>,
+    #[serde(default)]
+    pub complete: Option<bool>,
+    #[serde(default)]
+    pub entity_count: Option<usize>,
+    #[serde(default)]
+    pub tombstone_count: Option<usize>,
     pub scope_id: String,
     pub snapshot_version: i64,
     pub min_replayable_server_version: i64,
@@ -377,6 +432,7 @@ pub struct PairingStatusEvent {
     pub expires_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_device_id: Option<String>,
+    pub requested_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -405,6 +461,7 @@ pub struct PairingHostDecisionResponse {
     pub status: PairingSessionStatus,
     pub claimed_device_id: Option<String>,
     pub expires_at_ms: i64,
+    pub requested_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -435,6 +492,8 @@ pub struct PairingClaimRequest {
     pub platform: PairingPlatform,
     pub client_version: String,
     pub client_protocol_version: u32,
+    #[serde(default)]
+    pub requested_scopes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,8 +515,28 @@ pub struct PairingClaimResponse {
     pub profile_id: String,
     pub claimed_device_id: Option<String>,
     pub expires_at_ms: i64,
+    pub requested_scopes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<PairingTokenResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdPairedDeviceView {
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: PairingPlatform,
+    pub profile_id: String,
+    pub granted_scopes: Vec<String>,
+    pub last_seen_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedDeviceScopesUpdateRequest {
+    pub device_id: String,
+    pub profile_id: String,
+    pub granted_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -476,6 +555,8 @@ pub struct BootstrapSuwayomiHint {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapPayloadResponse {
+    pub schema_version: u32,
+    pub server_id: String,
     pub pairing_session_id: String,
     pub pairing_code: String,
     pub syncd_base_url: String,
@@ -483,8 +564,23 @@ pub struct BootstrapPayloadResponse {
     pub profile_id: String,
     pub expires_at_ms: i64,
     pub tls_cert_sha256: String,
+    pub mdns_service_name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suwayomi_hint: Option<BootstrapSuwayomiHint>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionResponse {
+    pub schema_version: u32,
+    pub server_id: String,
+    pub profile_id: String,
+    pub token_id: String,
+    pub scopes: Vec<String>,
+    pub inactivity_expires_at_ms: i64,
+    pub effective_base_url: String,
+    pub tls_cert_sha256: String,
+    pub mdns_service_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -805,6 +901,8 @@ pub enum MutationEntityType {
     NovelProgress,
     #[serde(rename = "book.bookmark")]
     BookBookmark,
+    #[serde(rename = "book.highlight")]
+    BookHighlight,
     #[serde(rename = "book.history")]
     BookHistory,
     #[serde(rename = "novel.entry")]
@@ -829,6 +927,14 @@ pub enum MutationEntityType {
     NovelCategoryAssignment,
     #[serde(rename = "comic.history")]
     ComicHistory,
+    #[serde(rename = "comic.entry")]
+    ComicEntry,
+    #[serde(rename = "comic.category")]
+    ComicCategory,
+    #[serde(rename = "comic.category_assignment")]
+    ComicCategoryAssignment,
+    #[serde(rename = "comic.chapter_state")]
+    ComicChapterState,
     #[serde(rename = "comic.page_bookmark")]
     ComicPageBookmark,
 }
@@ -843,6 +949,7 @@ impl MutationEntityType {
             Self::BookProgress => "book.progress",
             Self::NovelProgress => "novel.progress",
             Self::BookBookmark => "book.bookmark",
+            Self::BookHighlight => "book.highlight",
             Self::BookHistory => "book.history",
             Self::NovelEntry => "novel.entry",
             Self::NovelChapter => "novel.chapter",
@@ -854,6 +961,10 @@ impl MutationEntityType {
             Self::NovelPlugin => "novel.plugin",
             Self::NovelCategory => "novel.category",
             Self::NovelCategoryAssignment => "novel.category_assignment",
+            Self::ComicEntry => "comic.entry",
+            Self::ComicCategory => "comic.category",
+            Self::ComicCategoryAssignment => "comic.category_assignment",
+            Self::ComicChapterState => "comic.chapter_state",
             Self::ComicHistory => "comic.history",
             Self::ComicPageBookmark => "comic.page_bookmark",
         }
@@ -875,6 +986,14 @@ pub struct MutationsRequest {
     pub mutations: Vec<MutationInput>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EventClock {
+    pub physical_ms: i64,
+    pub logical: i64,
+    pub device_generation_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MutationBase {
@@ -884,6 +1003,8 @@ pub struct MutationBase {
     #[serde(default)]
     pub op: MutationOperation,
     pub lamport: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_clock: Option<EventClock>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -930,6 +1051,12 @@ pub enum MutationInput {
         #[serde(flatten)]
         base: MutationBase,
         patch: Option<BookBookmarkPatch>,
+    },
+    #[serde(rename = "book.highlight")]
+    BookHighlight {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<BookHighlightPatch>,
     },
     #[serde(rename = "book.history")]
     BookHistory {
@@ -1003,6 +1130,30 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<ComicHistoryPatch>,
     },
+    #[serde(rename = "comic.entry")]
+    ComicEntry {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicEntryPatch>,
+    },
+    #[serde(rename = "comic.category")]
+    ComicCategory {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicCategoryPatch>,
+    },
+    #[serde(rename = "comic.category_assignment")]
+    ComicCategoryAssignment {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicCategoryAssignmentPatch>,
+    },
+    #[serde(rename = "comic.chapter_state")]
+    ComicChapterState {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<ComicChapterStatePatch>,
+    },
     #[serde(rename = "comic.page_bookmark")]
     ComicPageBookmark {
         #[serde(flatten)]
@@ -1022,6 +1173,7 @@ pub struct MutationReceiptContext {
     pub canonical_entity_id: Option<String>,
     pub scope_id: String,
     pub op: MutationOperation,
+    pub event_clock: Option<EventClock>,
 }
 
 impl MutationInput {
@@ -1034,6 +1186,7 @@ impl MutationInput {
             Self::BookProgress { .. } => MutationEntityType::BookProgress,
             Self::NovelProgress { .. } => MutationEntityType::NovelProgress,
             Self::BookBookmark { .. } => MutationEntityType::BookBookmark,
+            Self::BookHighlight { .. } => MutationEntityType::BookHighlight,
             Self::BookHistory { .. } => MutationEntityType::BookHistory,
             Self::NovelEntry { .. } => MutationEntityType::NovelEntry,
             Self::NovelChapter { .. } => MutationEntityType::NovelChapter,
@@ -1045,6 +1198,10 @@ impl MutationInput {
             Self::NovelPlugin { .. } => MutationEntityType::NovelPlugin,
             Self::NovelCategory { .. } => MutationEntityType::NovelCategory,
             Self::NovelCategoryAssignment { .. } => MutationEntityType::NovelCategoryAssignment,
+            Self::ComicEntry { .. } => MutationEntityType::ComicEntry,
+            Self::ComicCategory { .. } => MutationEntityType::ComicCategory,
+            Self::ComicCategoryAssignment { .. } => MutationEntityType::ComicCategoryAssignment,
+            Self::ComicChapterState { .. } => MutationEntityType::ComicChapterState,
             Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
             Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
         }
@@ -1059,6 +1216,7 @@ impl MutationInput {
             | Self::BookProgress { base, .. }
             | Self::NovelProgress { base, .. }
             | Self::BookBookmark { base, .. }
+            | Self::BookHighlight { base, .. }
             | Self::BookHistory { base, .. }
             | Self::NovelEntry { base, .. }
             | Self::NovelChapter { base, .. }
@@ -1070,6 +1228,10 @@ impl MutationInput {
             | Self::NovelPlugin { base, .. }
             | Self::NovelCategory { base, .. }
             | Self::NovelCategoryAssignment { base, .. }
+            | Self::ComicEntry { base, .. }
+            | Self::ComicCategory { base, .. }
+            | Self::ComicCategoryAssignment { base, .. }
+            | Self::ComicChapterState { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. } => base,
         }
@@ -1080,6 +1242,11 @@ impl MutationInput {
 #[serde(rename_all = "camelCase")]
 pub struct BookEntryPatch {
     pub asset_fingerprint: Option<String>,
+    pub mime_type: Option<String>,
+    pub byte_size: Option<i64>,
+    pub cover_asset_sha256: Option<String>,
+    pub cover_asset_byte_size: Option<i64>,
+    pub cover_asset_mime_type: Option<String>,
     pub title: String,
     pub author: Option<String>,
     pub description: Option<String>,
@@ -1139,6 +1306,10 @@ pub struct BookProgressPatch {
 #[serde(rename_all = "camelCase")]
 pub struct NovelProgressPatch {
     pub chapter_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub chapter_title: Option<String>,
     pub chapter_order_key: Option<f64>,
     pub progress_percent: f64,
@@ -1162,7 +1333,44 @@ pub struct BookBookmarkPatch {
     pub page_index: Option<i64>,
     pub progress_percent: f64,
     pub label: Option<String>,
+    pub note: Option<String>,
+    #[serde(default)]
+    pub created_at_ms: i64,
+    #[serde(default)]
+    pub updated_at_ms: i64,
     pub saved_at_ms: i64,
+}
+
+impl BookBookmarkPatch {
+    pub fn effective_created_at_ms(&self) -> i64 {
+        if self.created_at_ms == 0 {
+            self.saved_at_ms
+        } else {
+            self.created_at_ms
+        }
+    }
+
+    pub fn effective_updated_at_ms(&self) -> i64 {
+        if self.updated_at_ms == 0 {
+            self.saved_at_ms
+        } else {
+            self.updated_at_ms
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BookHighlightPatch {
+    pub highlight_id: String,
+    pub book_id: String,
+    pub start_locator_json: Value,
+    pub end_locator_json: Value,
+    pub selected_text: String,
+    pub color_argb: i64,
+    pub note: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 }
 
 /// A point-in-time book reading event. Unlike `book.progress`, history entries
@@ -1194,6 +1402,400 @@ pub struct NovelBookmarkPatch {
     pub saved_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum PortableWorkRefV3 {
+    Comic {
+        #[serde(rename = "sourceId")]
+        source_id: String,
+        #[serde(rename = "mangaKey")]
+        manga_key: String,
+    },
+    Novel {
+        #[serde(rename = "pluginId")]
+        plugin_id: String,
+        #[serde(rename = "novelKey")]
+        novel_key: String,
+    },
+}
+
+impl PortableWorkRefV3 {
+    pub fn comic(source_id: impl Into<String>, manga_key: impl Into<String>) -> Self {
+        Self::Comic {
+            source_id: source_id.into(),
+            manga_key: manga_key.into(),
+        }
+    }
+
+    pub fn novel(plugin_id: impl Into<String>, novel_key: impl Into<String>) -> Self {
+        Self::Novel {
+            plugin_id: plugin_id.into(),
+            novel_key: novel_key.into(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Comic {
+                source_id,
+                manga_key,
+            } => {
+                validate_decimal_source_id(source_id)?;
+                validate_provider_owned_key(manga_key)
+            }
+            Self::Novel {
+                plugin_id,
+                novel_key,
+            } => {
+                validate_portable_identifier(plugin_id)?;
+                validate_provider_owned_key(novel_key)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum PortableChapterRefV3 {
+    Comic {
+        work: PortableWorkRefV3,
+        #[serde(rename = "chapterKey")]
+        chapter_key: String,
+    },
+    Novel {
+        work: PortableWorkRefV3,
+        #[serde(rename = "chapterKey")]
+        chapter_key: String,
+    },
+}
+
+impl PortableChapterRefV3 {
+    pub fn comic(work: PortableWorkRefV3, chapter_key: impl Into<String>) -> Self {
+        Self::Comic {
+            work,
+            chapter_key: chapter_key.into(),
+        }
+    }
+
+    pub fn novel(work: PortableWorkRefV3, chapter_key: impl Into<String>) -> Self {
+        Self::Novel {
+            work,
+            chapter_key: chapter_key.into(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match self {
+            Self::Comic { work, chapter_key } => {
+                if !matches!(work, PortableWorkRefV3::Comic { .. }) {
+                    return Err("comic chapter must reference a comic work");
+                }
+                work.validate()?;
+                validate_provider_owned_key(chapter_key)
+            }
+            Self::Novel { work, chapter_key } => {
+                if !matches!(work, PortableWorkRefV3::Novel { .. }) {
+                    return Err("novel chapter must reference a novel work");
+                }
+                work.validate()?;
+                validate_provider_owned_key(chapter_key)
+            }
+        }
+    }
+}
+
+pub fn canonical_portable_work_id(reference: &PortableWorkRefV3) -> String {
+    let mut digest = Sha256::new();
+    match reference {
+        PortableWorkRefV3::Comic {
+            source_id,
+            manga_key,
+        } => {
+            digest.update(b"comic\0");
+            digest.update(source_id.as_bytes());
+            digest.update(b"\0");
+            digest.update(manga_key.as_bytes());
+            format!("comic:{:x}", digest.finalize())
+        }
+        PortableWorkRefV3::Novel {
+            plugin_id,
+            novel_key,
+        } => {
+            digest.update(b"novel\0");
+            digest.update(plugin_id.as_bytes());
+            digest.update(b"\0");
+            digest.update(novel_key.as_bytes());
+            format!("novel:{:x}", digest.finalize())
+        }
+    }
+}
+
+pub fn canonical_portable_chapter_id(reference: &PortableChapterRefV3) -> String {
+    let mut digest = Sha256::new();
+    match reference {
+        PortableChapterRefV3::Comic { work, chapter_key } => {
+            let PortableWorkRefV3::Comic {
+                source_id,
+                manga_key,
+            } = work
+            else {
+                unreachable!("validated comic chapter contains a comic work")
+            };
+            digest.update(b"comic-chapter\0");
+            digest.update(source_id.as_bytes());
+            digest.update(b"\0");
+            digest.update(manga_key.as_bytes());
+            digest.update(b"\0");
+            digest.update(chapter_key.as_bytes());
+            format!("comic-chapter:{:x}", digest.finalize())
+        }
+        PortableChapterRefV3::Novel { work, chapter_key } => {
+            let PortableWorkRefV3::Novel {
+                plugin_id,
+                novel_key,
+            } = work
+            else {
+                unreachable!("validated novel chapter contains a novel work")
+            };
+            digest.update(b"novel-chapter\0");
+            digest.update(plugin_id.as_bytes());
+            digest.update(b"\0");
+            digest.update(novel_key.as_bytes());
+            digest.update(b"\0");
+            digest.update(chapter_key.as_bytes());
+            format!("novel-chapter:{:x}", digest.finalize())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionStoreReferenceV3 {
+    pub store_index_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicDependencyV3 {
+    pub pkg_name: String,
+    pub required_source_ids: BTreeSet<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_version_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension_store: Option<ExtensionStoreReferenceV3>,
+}
+
+impl ComicDependencyV3 {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        validate_portable_identifier(&self.pkg_name)?;
+        if self.required_source_ids.is_empty() {
+            return Err("comic dependency must require at least one source");
+        }
+        for source_id in &self.required_source_ids {
+            validate_decimal_source_id(source_id)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RepositoryReferenceV3 {
+    pub index_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_manifest_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NovelDependencyV3 {
+    pub plugin_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repository: Option<RepositoryReferenceV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_artifact_sha256: Option<String>,
+}
+
+impl NovelDependencyV3 {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        validate_portable_identifier(&self.plugin_id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PortableResolutionStateV3 {
+    PendingDependency,
+    PendingProvider,
+    Resolving,
+    Ready,
+    Bound,
+    RetryableFailure,
+    RequiresUserAction,
+    LegacyUnbound,
+    Conflict,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PortableResolutionReasonV3 {
+    ExtensionNotFound,
+    ExtensionStoreMissing,
+    ExtensionStoreApprovalRequired,
+    ExtensionNotLoaded,
+    PluginNotFound,
+    PluginRepositoryMissing,
+    PluginRepositoryApprovalRequired,
+    SourceNotFound,
+    SourceNotLoaded,
+    SourceOffline,
+    SourceAuthRequired,
+    SourceConfigurationRequired,
+    WorkNotFound,
+    WorkResolutionUnsupported,
+    WorkResolutionFailed,
+    ChapterNotFound,
+    ChapterResolutionFailed,
+}
+
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+pub struct PortableWorkBindingRow {
+    pub profile_id: String,
+    pub portable_id: String,
+    pub ecosystem: String,
+    pub source_id: Option<String>,
+    pub plugin_id: Option<String>,
+    pub provider_key: String,
+    pub dependency_key: Option<String>,
+    pub local_reference: Option<String>,
+    pub resolution_state: String,
+    pub resolution_reason: Option<String>,
+    pub title_hint: Option<String>,
+    pub provider_label_hint: Option<String>,
+    pub record_lamport: i64,
+    pub updated_at_ms: i64,
+}
+
+impl PortableWorkBindingRow {
+    pub fn portable_ref(&self) -> Result<PortableWorkRefV3, &'static str> {
+        let reference = match self.ecosystem.as_str() {
+            "SUWAYOMI" => PortableWorkRefV3::Comic {
+                source_id: self
+                    .source_id
+                    .clone()
+                    .ok_or("comic binding is missing source ID")?,
+                manga_key: self.provider_key.clone(),
+            },
+            "LNREADER" => PortableWorkRefV3::Novel {
+                plugin_id: self
+                    .plugin_id
+                    .clone()
+                    .ok_or("novel binding is missing plugin ID")?,
+                novel_key: self.provider_key.clone(),
+            },
+            _ => return Err("portable binding has an unsupported ecosystem"),
+        };
+        reference.validate()?;
+        Ok(reference)
+    }
+}
+
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+pub struct PortableChapterBindingRow {
+    pub profile_id: String,
+    pub portable_chapter_id: String,
+    pub portable_work_id: String,
+    pub provider_key: String,
+    pub local_reference: Option<String>,
+    pub resolution_state: String,
+    pub resolution_reason: Option<String>,
+    pub record_lamport: i64,
+    pub updated_at_ms: i64,
+}
+
+fn validate_decimal_source_id(value: &str) -> Result<(), &'static str> {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if value.is_empty()
+        || digits.is_empty()
+        || (digits.len() > 1 && digits.starts_with('0'))
+        || value == "-0"
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || value.parse::<i64>().is_err()
+    {
+        return Err("source ID must be a canonical signed-64-bit decimal string");
+    }
+    Ok(())
+}
+
+fn validate_provider_owned_key(value: &str) -> Result<(), &'static str> {
+    if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err("provider-owned key is invalid");
+    }
+    if provider_owned_key_may_contain_secret(value) {
+        return Err("provider-owned key may contain private credentials");
+    }
+    Ok(())
+}
+
+fn provider_owned_key_may_contain_secret(value: &str) -> bool {
+    if let Ok(url) = Url::parse(value) {
+        if !url.username().is_empty() || url.password().is_some() {
+            return true;
+        }
+    }
+    let query = value
+        .split_once('?')
+        .map(|(_, tail)| tail.split('#').next().unwrap_or(tail));
+    let fragment = value.split_once('#').map(|(_, fragment)| fragment);
+    query
+        .into_iter()
+        .chain(fragment)
+        .any(secret_parameter_segment)
+}
+
+fn secret_parameter_segment(segment: &str) -> bool {
+    url::form_urlencoded::parse(segment.as_bytes()).any(|(name, _)| {
+        matches!(
+            name.to_ascii_lowercase().as_str(),
+            "token"
+                | "access_token"
+                | "accesstoken"
+                | "auth"
+                | "authorization"
+                | "api_key"
+                | "apikey"
+                | "key"
+                | "signature"
+                | "sig"
+                | "session"
+                | "sessionid"
+                | "cookie"
+                | "password"
+                | "passwd"
+                | "secret"
+        )
+    })
+}
+
+fn validate_portable_identifier(value: &str) -> Result<(), &'static str> {
+    if value.is_empty()
+        || value != value.trim()
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+    {
+        return Err("portable identifier is invalid");
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NovelEntryPatch {
@@ -1208,12 +1810,17 @@ pub struct NovelEntryPatch {
     pub source: Value,
     pub added_at_ms: i64,
     pub updated_at_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
 }
 
 /// Returns the mobile-compatible novel identity when the source metadata is
 /// complete. Metadata-only legacy records deliberately return `None` so their
 /// existing identity key remains usable.
 pub fn canonical_novel_identity_key(patch: &NovelEntryPatch) -> Option<String> {
+    if let Some(reference) = patch.portable_work_ref.as_ref() {
+        return Some(canonical_portable_work_id(reference));
+    }
     canonical_novel_identity_key_from_source(&patch.source, &patch.path)
 }
 
@@ -1358,6 +1965,50 @@ pub fn canonicalize_novel_repository_url(raw: &str) -> Option<String> {
     Some(repository.to_string())
 }
 
+/// Private repositories remain valid local configuration, but never cross Syncd.
+pub fn canonicalize_public_novel_repository_url(raw: &str) -> Option<String> {
+    let repository = Url::parse(&canonicalize_novel_repository_url(raw)?).ok()?;
+    match repository.host()? {
+        url::Host::Domain(host) if is_private_sync_hostname(host) => None,
+        url::Host::Ipv4(address) if is_private_sync_ip(IpAddr::V4(address)) => None,
+        url::Host::Ipv6(address) if is_private_sync_ip(IpAddr::V6(address)) => None,
+        _ => Some(repository.to_string()),
+    }
+}
+
+fn is_private_sync_hostname(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    !host.contains('.')
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host.ends_with(".lan")
+}
+
+fn is_private_sync_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(address) => {
+            let octets = address.octets();
+            address.is_private()
+                || address.is_loopback()
+                || address.is_link_local()
+                || address.is_broadcast()
+                || address.is_multicast()
+                || address.is_unspecified()
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(address) => {
+            let first = address.segments()[0];
+            address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
 pub fn canonical_novel_repository_id(canonical_url: &str) -> String {
     format!(
         "novel-repository:{:x}",
@@ -1433,6 +2084,10 @@ pub struct ComicHistoryPatch {
     pub history_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub progress_percent: f64,
@@ -1447,6 +2102,10 @@ pub struct ComicPageBookmarkPatch {
     pub bookmark_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub label: Option<String>,
@@ -1477,6 +2136,8 @@ pub struct MutationResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub applied_lamport: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_clock: Option<EventClock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub record: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorDetail>,
@@ -1486,7 +2147,55 @@ pub struct MutationResult {
 #[serde(rename_all = "snake_case")]
 pub enum MutationResultStatus {
     Applied,
+    Superseded,
+    Conflict,
+    Retry,
     Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicEntryPatch {
+    pub comic_id: String,
+    pub in_library: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicCategoryPatch {
+    pub category_id: String,
+    pub name: String,
+    pub order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicCategoryAssignmentPatch {
+    pub assignment_id: String,
+    pub comic_id: String,
+    pub category_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ComicChapterStatePatch {
+    pub chapter_state_id: String,
+    pub comic_id: String,
+    pub chapter_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
+    pub read: Option<bool>,
+    pub bookmarked: Option<bool>,
+    pub last_page_read: Option<i64>,
+    pub last_read_at_ms: Option<i64>,
+    pub updated_at_ms: i64,
+    pub explicit_progress_reset: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1509,6 +2218,11 @@ pub struct BookProgressRecord {
 pub struct BookEntryRecord {
     pub book_id: String,
     pub asset_fingerprint: Option<String>,
+    pub mime_type: Option<String>,
+    pub byte_size: Option<i64>,
+    pub cover_asset_sha256: Option<String>,
+    pub cover_asset_byte_size: Option<i64>,
+    pub cover_asset_mime_type: Option<String>,
     pub title: String,
     pub author: Option<String>,
     pub description: Option<String>,
@@ -1559,6 +2273,10 @@ pub struct BookLibraryUiRecord {
 pub struct NovelProgressRecord {
     pub novel_id: String,
     pub chapter_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub chapter_title: Option<String>,
     pub chapter_order_key: Option<f64>,
     pub progress_percent: f64,
@@ -1578,7 +2296,25 @@ pub struct BookBookmarkRecord {
     pub page_index: Option<i64>,
     pub progress_percent: f64,
     pub label: Option<String>,
+    pub note: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub saved_at_ms: i64,
+    pub record_lamport: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BookHighlightRecord {
+    pub highlight_id: String,
+    pub book_id: String,
+    pub start_locator_json: Value,
+    pub end_locator_json: Value,
+    pub selected_text: String,
+    pub color_argb: i64,
+    pub note: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub record_lamport: i64,
 }
 
@@ -1745,6 +2481,10 @@ pub struct ComicHistoryRecord {
     pub history_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub progress_percent: f64,
@@ -1758,6 +2498,10 @@ pub struct ComicPageBookmarkRecord {
     pub bookmark_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_work_ref: Option<PortableWorkRefV3>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portable_chapter_ref: Option<PortableChapterRefV3>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub label: Option<String>,
@@ -1771,6 +2515,11 @@ pub struct BookEntryRow {
     pub scope_id: String,
     pub book_id: String,
     pub asset_fingerprint: Option<String>,
+    pub mime_type: Option<String>,
+    pub byte_size: Option<i64>,
+    pub cover_asset_sha256: Option<String>,
+    pub cover_asset_byte_size: Option<i64>,
+    pub cover_asset_mime_type: Option<String>,
     pub title: String,
     pub author: Option<String>,
     pub description: Option<String>,
@@ -1856,6 +2605,8 @@ pub struct NovelProgressRow {
     pub scope_id: String,
     pub novel_id: String,
     pub chapter_id: Option<String>,
+    pub portable_work_ref_json: Option<String>,
+    pub portable_chapter_ref_json: Option<String>,
     pub chapter_title: Option<String>,
     pub chapter_order_key: Option<f64>,
     pub progress_percent: f64,
@@ -1879,7 +2630,29 @@ pub struct BookBookmarkRow {
     pub page_index: Option<i64>,
     pub progress_percent: f64,
     pub label: Option<String>,
+    pub note: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub saved_at_ms: i64,
+    pub record_updated_at_ms: i64,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, FromRow)]
+pub struct BookHighlightRow {
+    pub scope_id: String,
+    pub highlight_id: String,
+    pub book_id: String,
+    pub start_locator_json: String,
+    pub end_locator_json: String,
+    pub selected_text: String,
+    pub color_argb: i64,
+    pub note: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
     pub record_updated_at_ms: i64,
     pub record_updated_by_device_id: String,
     pub record_lamport: i64,
@@ -2097,6 +2870,8 @@ pub struct ComicHistoryRow {
     pub history_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    pub portable_work_ref_json: Option<String>,
+    pub portable_chapter_ref_json: Option<String>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub progress_percent: f64,
@@ -2114,6 +2889,8 @@ pub struct ComicPageBookmarkRow {
     pub bookmark_id: String,
     pub comic_id: String,
     pub chapter_id: String,
+    pub portable_work_ref_json: Option<String>,
+    pub portable_chapter_ref_json: Option<String>,
     pub page_index: i64,
     pub page_count: Option<i64>,
     pub label: Option<String>,
@@ -2165,6 +2942,11 @@ impl TryFrom<BookEntryRow> for BookEntryRecord {
         Ok(Self {
             book_id: value.book_id,
             asset_fingerprint: value.asset_fingerprint,
+            mime_type: value.mime_type,
+            byte_size: value.byte_size,
+            cover_asset_sha256: value.cover_asset_sha256,
+            cover_asset_byte_size: value.cover_asset_byte_size,
+            cover_asset_mime_type: value.cover_asset_mime_type,
             title: value.title,
             author: value.author,
             description: value.description,
@@ -2228,6 +3010,14 @@ impl From<NovelProgressRow> for NovelProgressRecord {
         Self {
             novel_id: value.novel_id,
             chapter_id: value.chapter_id,
+            portable_work_ref: value
+                .portable_work_ref_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok()),
+            portable_chapter_ref: value
+                .portable_chapter_ref_json
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok()),
             chapter_title: value.chapter_title,
             chapter_order_key: value.chapter_order_key,
             progress_percent: value.progress_percent,
@@ -2249,9 +3039,31 @@ impl From<BookBookmarkRow> for BookBookmarkRecord {
             page_index: value.page_index,
             progress_percent: value.progress_percent,
             label: value.label,
+            note: value.note,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
             saved_at_ms: value.saved_at_ms,
             record_lamport: value.record_lamport,
         }
+    }
+}
+
+impl TryFrom<BookHighlightRow> for BookHighlightRecord {
+    type Error = serde_json::Error;
+
+    fn try_from(value: BookHighlightRow) -> Result<Self, Self::Error> {
+        Ok(Self {
+            highlight_id: value.highlight_id,
+            book_id: value.book_id,
+            start_locator_json: serde_json::from_str(&value.start_locator_json)?,
+            end_locator_json: serde_json::from_str(&value.end_locator_json)?,
+            selected_text: value.selected_text,
+            color_argb: value.color_argb,
+            note: value.note,
+            created_at_ms: value.created_at_ms,
+            updated_at_ms: value.updated_at_ms,
+            record_lamport: value.record_lamport,
+        })
     }
 }
 
@@ -2429,6 +3241,12 @@ impl From<ComicHistoryRow> for ComicHistoryRecord {
             history_id: value.history_id,
             comic_id: value.comic_id,
             chapter_id: value.chapter_id,
+            portable_work_ref: value
+                .portable_work_ref_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
+            portable_chapter_ref: value
+                .portable_chapter_ref_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
             page_index: value.page_index,
             page_count: value.page_count,
             progress_percent: value.progress_percent,
@@ -2444,6 +3262,12 @@ impl From<ComicPageBookmarkRow> for ComicPageBookmarkRecord {
             bookmark_id: value.bookmark_id,
             comic_id: value.comic_id,
             chapter_id: value.chapter_id,
+            portable_work_ref: value
+                .portable_work_ref_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
+            portable_chapter_ref: value
+                .portable_chapter_ref_json
+                .and_then(|json| serde_json::from_str(&json).ok()),
             page_index: value.page_index,
             page_count: value.page_count,
             label: value.label,
@@ -2458,6 +3282,67 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn portable_v3_keys_remain_opaque_and_source_ids_are_strings() {
+        let value = json!({
+            "type": "comic",
+            "sourceId": "9223372036854775807",
+            "mangaKey": "/Manga/Title?chapter=AbC%2F123#fragment"
+        });
+        let reference: PortableWorkRefV3 = serde_json::from_value(value.clone()).unwrap();
+
+        reference.validate().unwrap();
+        assert_eq!(serde_json::to_value(reference).unwrap(), value);
+    }
+
+    #[test]
+    fn portable_v3_rejects_secret_bearing_provider_keys_without_normalizing_them() {
+        for manga_key in [
+            "/manga/title?token=secret",
+            "/manga/title?API_KEY=secret",
+            "/manga/title#token=secret",
+            "/manga/title#Authorization=secret",
+            "https://user:secret@example.com/manga/title",
+        ] {
+            assert!(PortableWorkRefV3::Comic {
+                source_id: "1".to_string(),
+                manga_key: manga_key.to_string(),
+            }
+            .validate()
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn portable_v3_rejects_local_or_noncanonical_source_ids() {
+        for source_id in ["", "01", "+1", "-0", "1.0", "9223372036854775808"] {
+            let reference = PortableWorkRefV3::Comic {
+                source_id: source_id.to_string(),
+                manga_key: "/title".to_string(),
+            };
+            assert!(reference.validate().is_err(), "{source_id}");
+        }
+        assert!(PortableWorkRefV3::Comic {
+            source_id: "-1".to_string(),
+            manga_key: "/title".to_string(),
+        }
+        .validate()
+        .is_ok());
+    }
+
+    #[test]
+    fn portable_v3_keeps_extension_and_source_identity_separate() {
+        let dependency = ComicDependencyV3 {
+            pkg_name: "eu.kanade.tachiyomi.extension.en.example".to_string(),
+            required_source_ids: BTreeSet::from(["10001".to_string(), "10002".to_string()]),
+            observed_version_code: None,
+            extension_store: None,
+        };
+
+        dependency.validate().unwrap();
+        assert_eq!(dependency.required_source_ids.len(), 2);
+    }
 
     #[test]
     fn omitted_progress_reset_defaults_to_false() {
@@ -2499,6 +3384,7 @@ mod tests {
             }),
             added_at_ms: 1,
             updated_at_ms: 1,
+            portable_work_ref: None,
         };
 
         assert_eq!(
@@ -2531,7 +3417,17 @@ mod tests {
             "https://example.com/repository.json?token=signed",
             "https://example.com/repository.json#fragment",
         ] {
+            assert_eq!(canonicalize_public_novel_repository_url(url), None, "{url}");
             assert_eq!(canonicalize_novel_repository_url(url), None, "{url}");
+        }
+        for url in [
+            "https://localhost/plugins.min.json",
+            "https://repo.local/plugins.min.json",
+            "https://192.168.1.10/plugins.min.json",
+            "https://[::1]/plugins.min.json",
+        ] {
+            assert!(canonicalize_novel_repository_url(url).is_some(), "{url}");
+            assert_eq!(canonicalize_public_novel_repository_url(url), None, "{url}");
         }
     }
 

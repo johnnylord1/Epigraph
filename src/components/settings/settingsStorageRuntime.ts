@@ -1,24 +1,24 @@
-export const SETTINGS_AETHON_BACKUP_EXTENSION = ".aethonbk" as const;
+export const SETTINGS_EPIGRAPH_BACKUP_EXTENSION = ".epigraphbk" as const;
 
 export type SettingsStorageRuntime = {
   parseMihonBackup: typeof import("../../lib/backup/mihonBackup").parseMihonBackup;
-  buildAethonBackupContainer: typeof import("../../lib/backup/aethonBackup").buildAethonBackupContainer;
-  buildAethonRestorePlan: typeof import("../../lib/backup/aethonRestorePlanner").buildAethonRestorePlan;
-  buildAethonAppPayload: typeof import("../../lib/backup/appBackup").buildAethonAppPayload;
-  parseAethonAppPayload: typeof import("../../lib/backup/appBackup").parseAethonAppPayload;
-  buildAethonBooksSnapshotFromLibraryState: typeof import("../../lib/backup/booksBackup").buildAethonBooksSnapshotFromLibraryState;
-  buildAethonBooksPayload: typeof import("../../lib/backup/booksBackup").buildAethonBooksPayload;
-  restoreAethonBooksPayload: typeof import("../../lib/backup/booksBackup").restoreAethonBooksPayload;
-  extractAethonMangaPayloadFile: typeof import("../../lib/backup/mangaBackup").extractAethonMangaPayloadFile;
-  buildAethonMangaPayload: typeof import("../../lib/backup/mangaBackup").buildAethonMangaPayload;
-  buildAethonNovelsPayload: typeof import("../../lib/backup/novelsBackup").buildAethonNovelsPayload;
-  restoreAethonNovelsPayload: typeof import("../../lib/backup/novelsBackup").restoreAethonNovelsPayload;
+  buildEpigraphBackupContainer: typeof import("../../lib/backup/epigraphBackup").buildEpigraphBackupContainer;
+  buildEpigraphRestorePlan: typeof import("../../lib/backup/epigraphRestorePlanner").buildEpigraphRestorePlan;
+  buildEpigraphAppPayload: typeof import("../../lib/backup/appBackup").buildEpigraphAppPayload;
+  parseEpigraphAppPayload: typeof import("../../lib/backup/appBackup").parseEpigraphAppPayload;
+  buildEpigraphBooksSnapshotFromLibraryState: typeof import("../../lib/backup/booksBackup").buildEpigraphBooksSnapshotFromLibraryState;
+  buildEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").buildEpigraphBooksPayload;
+  restoreEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").restoreEpigraphBooksPayload;
+  extractEpigraphMangaPayloadFile: typeof import("../../lib/backup/mangaBackup").extractEpigraphMangaPayloadFile;
+  buildEpigraphMangaPayload: typeof import("../../lib/backup/mangaBackup").buildEpigraphMangaPayload;
+  buildEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").buildEpigraphNovelsPayload;
+  restoreEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").restoreEpigraphNovelsPayload;
   buildLnReaderNovelsBackupZip: typeof import("../../lib/backup/lnreaderBackup").buildLnReaderNovelsBackupZip;
   restoreLnReaderNovelsBackup: typeof import("../../lib/backup/lnreaderBackup").restoreLnReaderNovelsBackup;
   isLnReaderBackupZip: typeof import("../../lib/backup/lnreaderBackup").isLnReaderBackupZip;
   extractLnReaderBackupPluginIds: typeof import("../../lib/backup/lnreaderBackup").extractLnReaderBackupPluginIds;
   normalizeNativeMangaBackupBytes: typeof import("../../lib/backup/mangaNativeFormat").normalizeNativeMangaBackupBytes;
-  buildAethonNovelsSnapshotFromAuthoritativeState: typeof import("../../lib/backup/novelsStateBridge").buildAethonNovelsSnapshotFromAuthoritativeState;
+  buildEpigraphNovelsSnapshotFromAuthoritativeState: typeof import("../../lib/backup/novelsStateBridge").buildEpigraphNovelsSnapshotFromAuthoritativeState;
   applyRestoredNovelsSnapshotToLibraryState: typeof import("../../lib/backup/novelsStateBridge").applyRestoredNovelsSnapshotToLibraryState;
   loadNovelsProfileSnapshot: typeof import("../../lib/backup/novelsProfileState").loadNovelsProfileSnapshot;
   applyRestoredNovelsProfileSnapshot: typeof import("../../lib/backup/novelsProfileState").applyRestoredNovelsProfileSnapshot;
@@ -45,8 +45,8 @@ let settingsStorageRuntimePromise: Promise<SettingsStorageRuntime> | null = null
 export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
   settingsStorageRuntimePromise ??= Promise.all([
     import("../../lib/backup/mihonBackup"),
-    import("../../lib/backup/aethonBackup"),
-    import("../../lib/backup/aethonRestorePlanner"),
+    import("../../lib/backup/epigraphBackup"),
+    import("../../lib/backup/epigraphRestorePlanner"),
     import("../../lib/backup/appBackup"),
     import("../../lib/backup/booksBackup"),
     import("../../lib/backup/mangaBackup"),
@@ -67,7 +67,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
   ]).then(
     ([
       mihonBackup,
-      aethonBackup,
+      epigraphBackup,
       restorePlanner,
       appBackup,
       booksBackup,
@@ -88,23 +88,23 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       novelLibraryState,
     ]) => ({
       parseMihonBackup: mihonBackup.parseMihonBackup,
-      buildAethonBackupContainer: aethonBackup.buildAethonBackupContainer,
-      buildAethonRestorePlan: restorePlanner.buildAethonRestorePlan,
-      buildAethonAppPayload: appBackup.buildAethonAppPayload,
-      parseAethonAppPayload: appBackup.parseAethonAppPayload,
-      buildAethonBooksSnapshotFromLibraryState: booksBackup.buildAethonBooksSnapshotFromLibraryState,
-      buildAethonBooksPayload: booksBackup.buildAethonBooksPayload,
-      restoreAethonBooksPayload: booksBackup.restoreAethonBooksPayload,
-      extractAethonMangaPayloadFile: mangaBackup.extractAethonMangaPayloadFile,
-      buildAethonMangaPayload: mangaBackup.buildAethonMangaPayload,
-      buildAethonNovelsPayload: novelsBackup.buildAethonNovelsPayload,
-      restoreAethonNovelsPayload: novelsBackup.restoreAethonNovelsPayload,
+      buildEpigraphBackupContainer: epigraphBackup.buildEpigraphBackupContainer,
+      buildEpigraphRestorePlan: restorePlanner.buildEpigraphRestorePlan,
+      buildEpigraphAppPayload: appBackup.buildEpigraphAppPayload,
+      parseEpigraphAppPayload: appBackup.parseEpigraphAppPayload,
+      buildEpigraphBooksSnapshotFromLibraryState: booksBackup.buildEpigraphBooksSnapshotFromLibraryState,
+      buildEpigraphBooksPayload: booksBackup.buildEpigraphBooksPayload,
+      restoreEpigraphBooksPayload: booksBackup.restoreEpigraphBooksPayload,
+      extractEpigraphMangaPayloadFile: mangaBackup.extractEpigraphMangaPayloadFile,
+      buildEpigraphMangaPayload: mangaBackup.buildEpigraphMangaPayload,
+      buildEpigraphNovelsPayload: novelsBackup.buildEpigraphNovelsPayload,
+      restoreEpigraphNovelsPayload: novelsBackup.restoreEpigraphNovelsPayload,
       buildLnReaderNovelsBackupZip: lnreaderBackup.buildLnReaderNovelsBackupZip,
       restoreLnReaderNovelsBackup: lnreaderBackup.restoreLnReaderNovelsBackup,
       isLnReaderBackupZip: lnreaderBackup.isLnReaderBackupZip,
       extractLnReaderBackupPluginIds: lnreaderBackup.extractLnReaderBackupPluginIds,
       normalizeNativeMangaBackupBytes: mangaNativeFormat.normalizeNativeMangaBackupBytes,
-      buildAethonNovelsSnapshotFromAuthoritativeState: novelsStateBridge.buildAethonNovelsSnapshotFromAuthoritativeState,
+      buildEpigraphNovelsSnapshotFromAuthoritativeState: novelsStateBridge.buildEpigraphNovelsSnapshotFromAuthoritativeState,
       applyRestoredNovelsSnapshotToLibraryState: novelsStateBridge.applyRestoredNovelsSnapshotToLibraryState,
       loadNovelsProfileSnapshot: novelsProfileState.loadNovelsProfileSnapshot,
       applyRestoredNovelsProfileSnapshot: novelsProfileState.applyRestoredNovelsProfileSnapshot,

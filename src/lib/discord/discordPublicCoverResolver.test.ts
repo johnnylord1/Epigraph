@@ -163,7 +163,7 @@ describe("Discord public cover resolver", () => {
   test("uses source/local worker fallback for untracked works when cover improvement is enabled", async () => {
     const cache = createMemoryStorage();
     const resolver = new DiscordPublicCoverResolver({ storage: cache.storage });
-    const worker = vi.fn(async () => "https://relay.aethon.dev/discord-covers/v1/source.jpg");
+    const worker = vi.fn(async () => "https://relay.epigraph.dev/discord-covers/v1/source.jpg");
 
     await expect(resolver.resolve(input({
       trackerKey: null,
@@ -176,7 +176,7 @@ describe("Discord public cover resolver", () => {
       },
       resolveWorkerCover: worker,
     }))).resolves.toEqual({
-      url: "https://relay.aethon.dev/discord-covers/v1/source.jpg",
+      url: "https://relay.epigraph.dev/discord-covers/v1/source.jpg",
       source: "worker",
     });
 

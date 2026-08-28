@@ -174,6 +174,37 @@ describe("recommendation adapters", () => {
     expect(merged[0]?.contentType).toBe("manhwa");
   });
 
+  it("merges candidates when a provider title matches an alternative title", () => {
+    const sourceCandidate = {
+      ...mangaToRecommendationCandidate(createManga({
+        id: 12,
+        title: "Solo Leveling",
+        genre: ["Action", "Fantasy"],
+      })),
+      alternativeTitles: ["I Alone Level Up"],
+    };
+    const trackerCandidate = trackerSearchToRecommendationCandidate({
+      id: 1,
+      trackerId: 3,
+      remoteId: "solo-leveling",
+      title: "I Alone Level Up",
+      coverUrl: null,
+      summary: null,
+      publishingStatus: "FINISHED",
+      publishingType: "MANHWA",
+      startDate: null,
+      totalChapters: 0,
+      trackingUrl: null,
+    });
+
+    const merged = mergeRecommendationCandidates([sourceCandidate, trackerCandidate]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.title).toBe("Solo Leveling");
+    expect(merged[0]?.alternativeTitles).toContain("I Alone Level Up");
+    expect(merged[0]?.providers.map((provider) => provider.kind).sort()).toEqual(["source", "tracker"]);
+  });
+
   it("preserves real provider recency when duplicate source hits are merged", () => {
     const sourceCandidate = mangaToRecommendationCandidate(createManga({
       id: 9,

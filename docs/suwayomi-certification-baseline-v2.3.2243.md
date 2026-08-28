@@ -2,7 +2,7 @@
 
 ## Scope
 
-This is redacted Windows x64 evidence from Aethon's empty-profile certification gate on 2026-07-27. It does not approve a production update and does not change `src-tauri/resources/suwayomi-compatibility.json`.
+This is redacted Windows x64 evidence from Epigraph's empty-profile certification gate on 2026-07-27. It does not approve a production update and does not change `src-tauri/resources/suwayomi-compatibility.json`.
 
 The run used a disposable operating-system temporary directory and did not read, copy, or modify the managed user profile. The temporary runtime was removed after both phases.
 
@@ -70,7 +70,7 @@ The virtual-memory value is address space, not committed resident memory. These 
 ## SR7 Migration Certification
 
 The SR1 empty-profile limitations were addressed by a separate SR7 run on
-2026-07-27. The migration gate used Aethon's bundled Temurin 21.0.8 runtime and
+2026-07-27. The migration gate used Epigraph's bundled Temurin 21.0.8 runtime and
 an allowlisted, read-only copy of the managed profile. It never started a JVM
 against the original profile.
 
@@ -107,7 +107,7 @@ from Level 0 structural health.
 
 ## SR9 Deterministic Extension Workflow
 
-On 2026-07-28, the deterministic workflow gate passed with Aethon's bundled
+On 2026-07-28, the deterministic workflow gate passed with Epigraph's bundled
 Temurin 21.0.8 runtime and disposable profiles only. The gate deliberately made
 zero website requests.
 
@@ -139,7 +139,7 @@ path remains unsupported. A follow-up SR11 proof pinned the original Akuma
 and submitted those exact bytes through the official V23
 `installExternalExtension` operation. Suwayomi performed its own supported APK
 handling, registered 27 sources and preserved the same package, version and
-source IDs after restart. Aethon does not convert APKs or edit extension files.
+source IDs after restart. Epigraph does not convert APKs or edit extension files.
 
 Live sources remain observational. The deterministic gate does not infer
 website health, Cloudflare behavior, authentication or parser compatibility.
@@ -207,7 +207,7 @@ deterministic gate.
   serialization, obsolete source, parser, authentication, 404, and ordinary
   network failures remain ineligible.
 - For manga extensions, Suwayomi remains the only runtime that requests
-  websites through FlareSolverr. The Aethon controller performs only the local
+  websites through FlareSolverr. The Epigraph controller performs only the local
   `sessions.list` health probe.
 - The local backend has atomic ownership identity and a Windows Job Object with
   kill-on-close. Unknown or externally owned processes are not adopted or

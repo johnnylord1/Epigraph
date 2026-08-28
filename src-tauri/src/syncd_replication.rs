@@ -17,18 +17,24 @@ use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::syncd::middleware::{
-    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+    ASSET_SHA256_HEADER, CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER,
+    CURRENT_CLIENT_VERSION, LEGACY_ASSET_SHA256_HEADER, LEGACY_CLIENT_PROTOCOL_HEADER,
+    LEGACY_CLIENT_VERSION_HEADER,
 };
 use crate::syncd::models::{
-    canonical_novel_identity_key, BookBookmarkPatch, BookBookmarkRecord,
-    BookCategoryAssignmentPatch, BookCategoryAssignmentRecord, BookCategoryPatch,
-    BookCategoryRecord, BookEntryPatch, BookEntryRecord, BookHistoryPatch, BookHistoryRecord,
-    BookLibraryUiPatch, BookLibraryUiRecord, BookProgressPatch, BookProgressRecord, ChangeEnvelope,
-    ComicHistoryPatch, ComicPageBookmarkPatch, ErrorBody, MutationOperation, MutationResultStatus,
-    MutationsResponse, NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch,
-    NovelChapterRecord, NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch,
-    NovelEntryRecord, NovelHistoryPatch, NovelHistoryRecord, NovelProgressPatch,
-    NovelProgressRecord, SnapshotResponse, SyncdEffectiveDiscoverySource, SNAPSHOT_SCHEMA_VERSION,
+    canonical_novel_identity_key, canonical_novel_plugin_id, canonical_novel_repository_id,
+    canonical_portable_chapter_id, canonical_portable_work_id, canonicalize_novel_repository_url,
+    BookBookmarkPatch, BookBookmarkRecord, BookCategoryAssignmentPatch,
+    BookCategoryAssignmentRecord, BookCategoryPatch, BookCategoryRecord, BookEntryPatch,
+    BookEntryRecord, BookHighlightRecord, BookHistoryPatch, BookHistoryRecord, BookLibraryUiPatch,
+    BookLibraryUiRecord, BookProgressPatch, BookProgressRecord, ChangeEnvelope, ComicHistoryPatch,
+    ComicPageBookmarkPatch, ErrorBody, MutationOperation, MutationResultStatus, MutationsResponse,
+    NovelBookmarkPatch, NovelBookmarkRecord, NovelChapterPatch, NovelChapterRecord,
+    NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
+    NovelHistoryPatch, NovelHistoryRecord, NovelPluginPatch, NovelProgressPatch,
+    NovelProgressRecord, NovelRepositoryPatch, PortableChapterRefV3, PortableWorkRefV3,
+    SnapshotResponse, SyncdEffectiveDiscoverySource, MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION,
+    SNAPSHOT_SCHEMA_VERSION,
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
@@ -37,7 +43,8 @@ use crate::syncd_desktop::{
 };
 use crate::{
     book_library_state_path, books_data_dir, novel_library_state_path_for_target,
-    novel_source_classification_state_path_for_target, LaunchTarget, LaunchTargetInfo,
+    novel_repository_state_path_for_target, novel_source_classification_state_path_for_target,
+    LaunchTarget, LaunchTargetInfo,
 };
 
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
@@ -45,6 +52,8 @@ const BOOKS_SCOPE_ID: &str = "books:global";
 const EVENT_REPLICATION_STATE: &str = "syncd-replication-state";
 const EVENT_REPLICATION_ERROR: &str = "syncd-replication-error";
 const EVENT_COMIC_READER_STATE_APPLIED: &str = "syncd-comic-reader-state-applied";
+// This domain is hashed into the persisted comic-server fingerprint. It must
+// stay stable across the product rename.
 const COMIC_SERVER_IDENTITY_DOMAIN: &str = "aethon-core-suwayomi-v1";
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const ASSET_STREAM_CHUNK_SIZE: usize = 64 * 1024;
@@ -54,6 +63,7 @@ struct BookAssetEndpoint {
     client: reqwest::Client,
     origin: String,
     access_token: String,
+    scope_id: String,
 }
 
 impl BookAssetEndpoint {
@@ -62,7 +72,19 @@ impl BookAssetEndpoint {
             client,
             origin: origin.trim_end_matches('/').to_string(),
             access_token: access_token.to_string(),
+            scope_id: BOOKS_SCOPE_ID.to_string(),
         }
+    }
+
+    fn for_scope(
+        client: reqwest::Client,
+        origin: &str,
+        access_token: &str,
+        scope_id: &str,
+    ) -> Self {
+        let mut endpoint = Self::new(client, origin, access_token);
+        endpoint.scope_id = scope_id.to_string();
+        endpoint
     }
 
     fn asset_url(&self, sha256: &str) -> String {
@@ -288,6 +310,11 @@ fn replication_log_enabled() -> bool {
     ) || matches!(
         std::env::var("TAURI_WEBVIEW_AUTOMATION").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE")
+    ) || matches!(
+        std::env::var("EPIGRAPH_SYNCD_REPLICATION_LOG")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
     )
 }
 
@@ -312,7 +339,46 @@ fn load_replication_state() -> Result<PersistedReplicationState, String> {
         return Ok(PersistedReplicationState::default());
     }
     let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&raw).map_err(|error| error.to_string())
+    let mut state = serde_json::from_str::<PersistedReplicationState>(&raw)
+        .map_err(|error| error.to_string())?;
+    // Older builds retained every replayed version of a comic reader entity. That made the
+    // desktop state grow without bound (tens of thousands of history revisions for fewer than
+    // two thousand current entities) and forced each atomic state write to serialize the entire
+    // backlog. Delivery is state based: the latest server version for an entity causally
+    // supersedes its earlier merge/delete commands, so compact them during every load. The next
+    // normal save atomically migrates the persisted file without discarding any final state.
+    for profile in state.profiles.values_mut() {
+        compact_pending_comic_reader_changes(&mut profile.pending_comic_reader_changes);
+    }
+    Ok(state)
+}
+
+fn compact_pending_comic_reader_changes(changes: &mut Vec<ChangeEnvelope>) {
+    let mut latest = BTreeMap::<(String, String, String), ChangeEnvelope>::new();
+    for change in changes.drain(..) {
+        let key = (
+            change.scope_id.clone(),
+            change.entity_type.clone(),
+            change.entity_id.clone(),
+        );
+        let replaces_current = latest
+            .get(&key)
+            .map(|current| {
+                (change.server_version, change.lamport) > (current.server_version, current.lamport)
+            })
+            .unwrap_or(true);
+        if replaces_current {
+            latest.insert(key, change);
+        }
+    }
+    *changes = latest.into_values().collect();
+    changes.sort_by(|left, right| {
+        left.server_version
+            .cmp(&right.server_version)
+            .then_with(|| left.lamport.cmp(&right.lamport))
+            .then_with(|| left.entity_type.cmp(&right.entity_type))
+            .then_with(|| left.entity_id.cmp(&right.entity_id))
+    });
 }
 
 fn write_file_atomic(path: &Path, payload: &[u8]) -> Result<(), String> {
@@ -370,6 +436,245 @@ fn validate_asset_sha256(raw: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BookCoverAssetMetadata {
+    sha256: String,
+    byte_size: i64,
+    mime_type: &'static str,
+}
+
+fn cover_asset_metadata(value: &Value) -> Option<BookCoverAssetMetadata> {
+    let sha256 = value_string_field(value, "coverAssetSha256")?;
+    let byte_size = value_i64_field(value, "coverAssetByteSize")?;
+    let mime_type = match value_string_field(value, "coverAssetMimeType")?.as_str() {
+        "image/jpeg" => "image/jpeg",
+        "image/png" => "image/png",
+        "image/webp" => "image/webp",
+        _ => return None,
+    };
+    if byte_size <= 0 || validate_asset_sha256(&sha256).is_err() {
+        return None;
+    }
+    Some(BookCoverAssetMetadata {
+        sha256,
+        byte_size,
+        mime_type,
+    })
+}
+
+fn apply_cover_asset_metadata(value: &mut Value, metadata: Option<&BookCoverAssetMetadata>) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    match metadata {
+        Some(metadata) => {
+            object.insert(
+                "coverAssetSha256".to_string(),
+                Value::String(metadata.sha256.clone()),
+            );
+            object.insert(
+                "coverAssetByteSize".to_string(),
+                Value::Number(metadata.byte_size.into()),
+            );
+            object.insert(
+                "coverAssetMimeType".to_string(),
+                Value::String(metadata.mime_type.to_string()),
+            );
+            object.insert("hasCover".to_string(), Value::Bool(true));
+        }
+        None => {
+            object.remove("coverAssetSha256");
+            object.remove("coverAssetByteSize");
+            object.remove("coverAssetMimeType");
+            object.insert("hasCover".to_string(), Value::Bool(false));
+        }
+    }
+}
+
+fn detected_cover_mime_type(header: &[u8]) -> Option<&'static str> {
+    if header.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if header.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some("image/png")
+    } else if header.len() >= 12 && &header[..4] == b"RIFF" && &header[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+async fn inspect_local_book_cover(path: &Path) -> Result<Option<BookCoverAssetMetadata>, String> {
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(metadata) if metadata.is_file() && metadata.len() > 0 => metadata,
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Book cover metadata is unavailable: {error}")),
+    };
+    let byte_size = i64::try_from(metadata.len())
+        .map_err(|_| "Book cover size exceeds the supported contract range.".to_string())?;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .map_err(|error| format!("Book cover could not be opened: {error}"))?;
+    let mut header = [0_u8; 12];
+    let read = file
+        .read(&mut header)
+        .await
+        .map_err(|error| format!("Book cover header could not be read: {error}"))?;
+    let Some(mime_type) = detected_cover_mime_type(&header[..read]) else {
+        return Ok(None);
+    };
+    Ok(Some(BookCoverAssetMetadata {
+        sha256: sha256_file_async(path.to_path_buf()).await?,
+        byte_size,
+        mime_type,
+    }))
+}
+
+async fn enrich_book_cover_assets(
+    previous: &PersistedBookLibraryState,
+    next: &mut PersistedBookLibraryState,
+) -> Result<bool, String> {
+    let previous_by_id: HashMap<String, &Value> = previous
+        .books
+        .iter()
+        .filter_map(|entry| Some((book_entry_entity_id(entry)?, entry)))
+        .collect();
+    let mut changed = false;
+
+    for entry in &mut next.books {
+        let Some(book_id) = book_entry_entity_id(entry) else {
+            continue;
+        };
+        let previous_entry = previous_by_id.get(&book_id).copied();
+        let next_path =
+            value_string_field(entry, "coverPath").filter(|path| !path.trim().is_empty());
+        let previous_path = previous_entry
+            .and_then(|value| value_string_field(value, "coverPath"))
+            .filter(|path| !path.trim().is_empty());
+        let before = (
+            value_string_field(entry, "coverAssetSha256"),
+            value_i64_field(entry, "coverAssetByteSize"),
+            value_string_field(entry, "coverAssetMimeType"),
+            value_bool_field(entry, "hasCover", false),
+        );
+
+        let metadata = if next_path != previous_path {
+            match next_path.as_deref() {
+                Some(path) => inspect_local_book_cover(Path::new(path)).await?,
+                None => cover_asset_metadata(entry),
+            }
+        } else if let Some(metadata) = cover_asset_metadata(entry)
+            .or_else(|| previous_entry.and_then(|value| cover_asset_metadata(value)))
+        {
+            Some(metadata)
+        } else {
+            match next_path.as_deref() {
+                Some(path) => inspect_local_book_cover(Path::new(path)).await?,
+                None => None,
+            }
+        };
+        apply_cover_asset_metadata(entry, metadata.as_ref());
+
+        let after = (
+            value_string_field(entry, "coverAssetSha256"),
+            value_i64_field(entry, "coverAssetByteSize"),
+            value_string_field(entry, "coverAssetMimeType"),
+            value_bool_field(entry, "hasCover", false),
+        );
+        changed |= before != after;
+    }
+    Ok(changed)
+}
+
+fn expected_book_mime_type(subtype: &str) -> Result<&'static str, String> {
+    match subtype.trim().to_ascii_lowercase().as_str() {
+        "epub" => Ok("application/epub+zip"),
+        "pdf" => Ok("application/pdf"),
+        other => Err(format!(
+            "Unsupported synchronized book subtype '{other}'; expected epub or pdf."
+        )),
+    }
+}
+
+fn enrich_book_asset_metadata(
+    previous: &PersistedBookLibraryState,
+    next: &mut PersistedBookLibraryState,
+) -> Result<bool, String> {
+    let previous_by_id: HashMap<String, &Value> = previous
+        .books
+        .iter()
+        .filter_map(|entry| Some((book_entry_entity_id(entry)?, entry)))
+        .collect();
+    let mut changed = false;
+
+    for entry in &mut next.books {
+        let Some(book_id) = book_entry_entity_id(entry) else {
+            continue;
+        };
+        let Some(object) = entry.as_object_mut() else {
+            continue;
+        };
+        let previous_entry = previous_by_id.get(&book_id).copied();
+        for field in ["assetFingerprint", "assetPath", "mimeType", "byteSize"] {
+            let missing = object
+                .get(field)
+                .is_none_or(|value| value.is_null() || value.as_str().is_some_and(str::is_empty));
+            if missing {
+                if let Some(value) = previous_entry.and_then(|entry| entry.get(field)).cloned() {
+                    object.insert(field.to_string(), value);
+                    changed = true;
+                }
+            }
+        }
+
+        let subtype = object
+            .get("subtype")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("Book {book_id} is missing its immutable subtype."))?;
+        let expected_mime = expected_book_mime_type(&subtype)?;
+        match object
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
+            None | Some("") | Some("application/octet-stream") => {
+                object.insert(
+                    "mimeType".to_string(),
+                    Value::String(expected_mime.to_string()),
+                );
+                changed = true;
+            }
+            Some(actual) if actual != expected_mime => {
+                return Err(format!(
+                    "Book {book_id} MIME type '{actual}' does not match subtype '{subtype}'."
+                ));
+            }
+            Some(_) => {}
+        }
+
+        if let Some(path) = object
+            .get("assetPath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            if let Ok(metadata) = fs::metadata(path) {
+                if metadata.is_file() {
+                    let byte_size = i64::try_from(metadata.len()).map_err(|_| {
+                        format!("Book {book_id} exceeds the supported contract size range.")
+                    })?;
+                    if object.get("byteSize").and_then(Value::as_i64) != Some(byte_size) {
+                        object.insert("byteSize".to_string(), Value::Number(byte_size.into()));
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    Ok(changed)
+}
+
 fn book_asset_extension(subtype: &str) -> Result<&'static str, String> {
     match subtype.trim().to_ascii_lowercase().as_str() {
         "epub" => Ok("epub"),
@@ -407,11 +712,16 @@ fn authenticated_asset_request(
     endpoint: &BookAssetEndpoint,
 ) -> reqwest::RequestBuilder {
     request
-        .query(&[("scopeId", BOOKS_SCOPE_ID)])
+        .query(&[("scopeId", endpoint.scope_id.as_str())])
         .header("Authorization", format!("Bearer {}", endpoint.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
 }
@@ -435,7 +745,8 @@ async fn remote_asset_size(
     }
     let declared_sha = response
         .headers()
-        .get("x-aethon-asset-sha256")
+        .get(ASSET_SHA256_HEADER)
+        .or_else(|| response.headers().get(LEGACY_ASSET_SHA256_HEADER))
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     if !declared_sha.eq_ignore_ascii_case(sha256) {
@@ -476,8 +787,15 @@ async fn upload_book_asset(
             "Book asset changed before upload: expected {sha256}, found {actual_sha256}."
         ));
     }
-    if remote_asset_size(endpoint, sha256).await?.is_some() {
-        return Ok(());
+    if let Some(remote_size) = remote_asset_size(endpoint, sha256).await? {
+        return if remote_size == metadata.len() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Core already stores book asset {sha256} with {remote_size} bytes; expected {}.",
+                metadata.len()
+            ))
+        };
     }
 
     let file = tokio::fs::File::open(path)
@@ -1063,6 +1381,18 @@ enum SerializableMutationInput {
         base: SerializableMutationBase,
         patch: Option<NovelClassificationPatch>,
     },
+    #[serde(rename = "novel.repository")]
+    NovelRepository {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<NovelRepositoryPatch>,
+    },
+    #[serde(rename = "novel.plugin")]
+    NovelPlugin {
+        #[serde(flatten)]
+        base: SerializableMutationBase,
+        patch: Option<NovelPluginPatch>,
+    },
     #[serde(rename = "comic.history")]
     ComicHistory {
         #[serde(flatten)]
@@ -1093,6 +1423,8 @@ impl SerializableMutationInput {
             Self::NovelBookmark { .. } => "novel.bookmark",
             Self::NovelHistory { .. } => "novel.history",
             Self::NovelClassification { .. } => "novel.classification",
+            Self::NovelRepository { .. } => "novel.repository",
+            Self::NovelPlugin { .. } => "novel.plugin",
             Self::ComicHistory { .. } => "comic.history",
             Self::ComicPageBookmark { .. } => "comic.page_bookmark",
         }
@@ -1112,6 +1444,8 @@ impl SerializableMutationInput {
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
+            | Self::NovelRepository { base, .. }
+            | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. } => &base.op,
             Self::BookLibraryUi { base, .. } => &base.op,
@@ -1136,6 +1470,8 @@ impl SerializableMutationInput {
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
+            | Self::NovelRepository { base, .. }
+            | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. } => &base.entity_id,
             Self::BookLibraryUi { base, .. } => &base.entity_id,
@@ -1156,6 +1492,8 @@ impl SerializableMutationInput {
             | Self::NovelBookmark { base, .. }
             | Self::NovelHistory { base, .. }
             | Self::NovelClassification { base, .. }
+            | Self::NovelRepository { base, .. }
+            | Self::NovelPlugin { base, .. }
             | Self::ComicHistory { base, .. }
             | Self::ComicPageBookmark { base, .. }
             | Self::BookLibraryUi { base, .. } => &base.client_mutation_id,
@@ -1216,6 +1554,10 @@ struct PersistedBookLibraryState {
     books: Vec<Value>,
     book_progress: Vec<LocalBookProgress>,
     book_bookmarks: Vec<LocalBookBookmark>,
+    /// Highlights are currently owned by the native book readers and must survive frontend JSON
+    /// rewrites even when the desktop UI does not expose an editor for them yet.
+    #[serde(default)]
+    book_highlights: Vec<LocalBookHighlight>,
     /// Rust-owned bridge state. The current desktop frontend does not expose
     /// book reading sessions, so it must survive frontend JSON rewrites.
     #[serde(default)]
@@ -1265,13 +1607,74 @@ struct LocalBookProgress {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct LocalBookBookmark {
+    #[serde(default)]
+    bookmark_id: String,
     book_id: String,
     location: Option<String>,
     href: Option<String>,
     page_index: Option<i64>,
     progress_percent: f64,
     label: Option<String>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    created_at_ms: i64,
+    #[serde(default)]
+    updated_at_ms: i64,
     saved_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct PersistedNovelRepositoryState {
+    repositories: Vec<LocalNovelRepository>,
+    catalog_entries: Vec<LocalNovelCatalogEntry>,
+    installed_plugins: Vec<LocalInstalledNovelPlugin>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct LocalNovelRepository {
+    id: String,
+    url: String,
+    normalized_url: String,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct LocalNovelCatalogEntry {
+    repository_id: String,
+    plugin_id: String,
+    name: String,
+    lang: String,
+    version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct LocalInstalledNovelPlugin {
+    repository_id: String,
+    plugin_id: String,
+    version: String,
+    enabled: bool,
+    artifact_path: String,
+    installed_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LocalBookHighlight {
+    highlight_id: String,
+    book_id: String,
+    start_locator_json: Value,
+    end_locator_json: Value,
+    selected_text: String,
+    color_argb: i64,
+    note: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1388,6 +1791,18 @@ fn write_novels_state(
     write_file_atomic(&path, &payload)
 }
 
+fn read_novel_repository_state(
+    launch_target: &LaunchTargetInfo,
+    profile_id: &str,
+) -> Result<PersistedNovelRepositoryState, String> {
+    let path = novel_repository_state_path_for_target(launch_target, Some(profile_id), None)?;
+    if !path.exists() {
+        return Ok(PersistedNovelRepositoryState::default());
+    }
+    let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&raw).map_err(|error| error.to_string())
+}
+
 fn read_novel_classification_state(
     launch_target: &LaunchTargetInfo,
     profile_id: &str,
@@ -1479,16 +1894,20 @@ pub async fn ensure_local_authority_for_profile(
     profile_id: &str,
     local_base_url: &str,
 ) -> Result<(), String> {
+    // Bootstrap can be triggered by setup and by persistent-Core reattachment at
+    // nearly the same time. Issuing two tokens for the same deterministic tokenId
+    // revokes the first token hash, so keep the runtime lock until the winning
+    // token is stored and let concurrent callers observe that session.
+    let mut runtime = state.runtime.lock().await;
+    if runtime
+        .local_authority
+        .get(profile_id)
+        .map(|session| session.local_base_url == local_base_url)
+        .unwrap_or(false)
     {
-        let runtime = state.runtime.lock().await;
-        if runtime
-            .local_authority
-            .get(profile_id)
-            .map(|session| session.local_base_url == local_base_url)
-            .unwrap_or(false)
-        {
-            return Ok(());
-        }
+        drop(runtime);
+        clear_hosted_comic_reader_inbox(profile_id)?;
+        return Ok(());
     }
 
     let desktop = load_persisted_state()?;
@@ -1513,25 +1932,48 @@ pub async fn ensure_local_authority_for_profile(
     let payload: LocalAuthorityTokenResponse =
         response.json().await.map_err(|error| error.to_string())?;
 
-    {
-        let mut runtime = state.runtime.lock().await;
-        runtime.local_authority.insert(
-            profile_id.to_string(),
-            LocalAuthoritySession {
-                profile_id: profile_id.to_string(),
-                local_base_url: local_base_url.to_string(),
-                access_token: payload.access_token,
-            },
-        );
-    }
+    runtime.local_authority.insert(
+        profile_id.to_string(),
+        LocalAuthoritySession {
+            profile_id: profile_id.to_string(),
+            local_base_url: local_base_url.to_string(),
+            access_token: payload.access_token,
+        },
+    );
+    drop(runtime);
 
-    let _ = update_profile_state(profile_id, |profile| {
+    clear_hosted_comic_reader_inbox(profile_id)?;
+    if let Err(error) = publish_current_novel_repository_state(app, profile_id).await {
+        replication_log(format!(
+            "publish_current_novel_repository_state profile_id={profile_id} status=deferred error={error}"
+        ));
+    }
+    if let Err(error) = publish_current_novel_library_state(app, profile_id).await {
+        replication_log(format!(
+            "publish_current_novel_library_state profile_id={profile_id} status=deferred error={error}"
+        ));
+    }
+    if let Err(error) = publish_current_book_library_state(app, profile_id).await {
+        replication_log(format!(
+            "publish_current_book_library_state profile_id={profile_id} status=deferred error={error}"
+        ));
+    }
+    ensure_worker_for_profile(app, state, profile_id).await?;
+    Ok(())
+}
+
+fn clear_hosted_comic_reader_inbox(profile_id: &str) -> Result<(), String> {
+    update_profile_state(profile_id, |profile| {
+        // The hosted Core is the invisible desktop bridge for comic reader state and already
+        // projects it into Suwayomi. Keeping a second GUI inbox would retain the same state twice
+        // and previously grew to tens of thousands of revisions while the window was closed.
+        profile.pending_comic_reader_changes.clear();
+        profile.pending_comic_reader_snapshot = None;
         if profile.active_session_key.is_none() && !profile.paused {
             profile.replication_status = SyncdReplicationStatus::Idle;
             profile.last_error = None;
         }
-    });
-    ensure_worker_for_profile(app, state, profile_id).await?;
+    })?;
     Ok(())
 }
 
@@ -1870,6 +2312,7 @@ async fn replay_and_stream_remote(
                 changes.min_replayable_server_version,
                 SyncdReplicationReplayMode::ChangesBootstrap,
                 &asset_endpoint,
+                true,
             )
             .await?;
         }
@@ -1959,6 +2402,7 @@ async fn replay_and_stream_local_authority(
                 changes.min_replayable_server_version,
                 SyncdReplicationReplayMode::ChangesBootstrap,
                 &asset_endpoint,
+                false,
             )
             .await?;
         }
@@ -1997,8 +2441,13 @@ async fn fetch_changes_remote(
         .query(&[("sinceVersion", since_version)])
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -2041,8 +2490,13 @@ async fn fetch_changes_local_authority(
             format!("Bearer {}", authority.access_token),
         )
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -2083,8 +2537,13 @@ async fn fetch_authoritative_snapshot(
         .query(&[("scopeId", scope_id)])
         .header("Authorization", format!("Bearer {access_token}"))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -2112,10 +2571,12 @@ async fn fetch_authoritative_snapshot(
 }
 
 fn validate_snapshot(snapshot: &SnapshotResponse, expected_scope_id: &str) -> Result<(), String> {
-    if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
+    if !(MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION..=SNAPSHOT_SCHEMA_VERSION)
+        .contains(&snapshot.schema_version)
+    {
         return Err(format!(
-            "Unsupported snapshot schema {} for {expected_scope_id}; expected {}.",
-            snapshot.schema_version, SNAPSHOT_SCHEMA_VERSION
+            "Unsupported snapshot schema {} for {expected_scope_id}; supported range is {}..={}.",
+            snapshot.schema_version, MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION, SNAPSHOT_SCHEMA_VERSION
         ));
     }
     if snapshot.scope_id != expected_scope_id {
@@ -2131,6 +2592,29 @@ fn validate_snapshot(snapshot: &SnapshotResponse, expected_scope_id: &str) -> Re
         return Err(format!(
             "Snapshot checkpoint is invalid for {expected_scope_id}."
         ));
+    }
+    if snapshot.schema_version >= 3 {
+        if snapshot.complete != Some(true) {
+            return Err(format!(
+                "Snapshot is not declared complete for {expected_scope_id}."
+            ));
+        }
+        if snapshot
+            .snapshot_id
+            .as_deref()
+            .is_none_or(|snapshot_id| snapshot_id.is_empty() || snapshot_id.len() > 128)
+        {
+            return Err(format!(
+                "Snapshot identity is invalid for {expected_scope_id}."
+            ));
+        }
+        if snapshot.entity_count != Some(snapshot.entities.len())
+            || snapshot.tombstone_count != Some(snapshot.tombstones.len())
+        {
+            return Err(format!(
+                "Snapshot counts do not match its payload for {expected_scope_id}."
+            ));
+        }
     }
     Ok(())
 }
@@ -2154,6 +2638,8 @@ fn materialize_book_snapshot(
                     .iter()
                     .find(|entry| {
                         book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str())
+                            || canonical_book_id_for_entry(entry).as_deref()
+                                == Some(record.book_id.as_str())
                     })
                     .and_then(|entry| value_string_field(entry, "assetPath"));
                 upsert_book_entry(&mut next, record, local_asset_path);
@@ -2186,6 +2672,11 @@ fn materialize_book_snapshot(
             "book.bookmark" => upsert_book_bookmark(
                 &mut next,
                 serde_json::from_value::<BookBookmarkRecord>(entity.record.clone())
+                    .map_err(|error| error.to_string())?,
+            ),
+            "book.highlight" => upsert_book_highlight(
+                &mut next,
+                serde_json::from_value::<BookHighlightRecord>(entity.record.clone())
                     .map_err(|error| error.to_string())?,
             ),
             other => return Err(format!("Unsupported book snapshot entity: {other}.")),
@@ -2248,6 +2739,9 @@ fn materialize_novel_snapshot(
                 serde_json::from_value::<NovelClassificationRecord>(entity.record.clone())
                     .map_err(|error| error.to_string())?,
             ),
+            // Executable plugin state is reconciled from the LNReader repository file, never
+            // materialized from Syncd into the desktop runtime.
+            "novel.repository" | "novel.plugin" => {}
             other => return Err(format!("Unsupported novel snapshot entity: {other}.")),
         }
     }
@@ -2266,12 +2760,23 @@ fn comic_snapshot_changes(
     for entity in &snapshot.entities {
         if !matches!(
             entity.entity_type.as_str(),
-            "comic.history" | "comic.page_bookmark"
+            "comic.entry"
+                | "comic.category"
+                | "comic.category_assignment"
+                | "comic.chapter_state"
+                | "comic.history"
+                | "comic.page_bookmark"
         ) {
             return Err(format!(
                 "Unsupported comic snapshot entity: {}.",
                 entity.entity_type
             ));
+        }
+        if !matches!(
+            entity.entity_type.as_str(),
+            "comic.history" | "comic.page_bookmark"
+        ) {
+            continue;
         }
         changes.push(ChangeEnvelope {
             server_version: entity.server_version,
@@ -2288,12 +2793,23 @@ fn comic_snapshot_changes(
     for tombstone in &snapshot.tombstones {
         if !matches!(
             tombstone.entity_type.as_str(),
-            "comic.history" | "comic.page_bookmark"
+            "comic.entry"
+                | "comic.category"
+                | "comic.category_assignment"
+                | "comic.chapter_state"
+                | "comic.history"
+                | "comic.page_bookmark"
         ) {
             return Err(format!(
                 "Unsupported comic snapshot tombstone: {}.",
                 tombstone.entity_type
             ));
+        }
+        if !matches!(
+            tombstone.entity_type.as_str(),
+            "comic.history" | "comic.page_bookmark"
+        ) {
+            continue;
         }
         changes.push(ChangeEnvelope {
             server_version: tombstone.server_version,
@@ -2332,7 +2848,8 @@ fn stage_snapshot_recovery(
     novels_snapshot: &SnapshotResponse,
     comics_snapshot: &SnapshotResponse,
     comic_changes: &[ChangeEnvelope],
-) -> SyncdComicReaderSnapshotMarker {
+    stage_comic_reader_inbox: bool,
+) -> Option<SyncdComicReaderSnapshotMarker> {
     let recovered_scopes = [
         books_snapshot.scope_id.clone(),
         novels_snapshot.scope_id.clone(),
@@ -2364,22 +2881,21 @@ fn stage_snapshot_recovery(
     profile
         .pending_comic_reader_changes
         .retain(|change| change.scope_id != comics_snapshot.scope_id);
-    profile
-        .pending_comic_reader_changes
-        .extend(comic_changes.iter().cloned());
-    profile.pending_comic_reader_changes.sort_by(|left, right| {
-        left.server_version
-            .cmp(&right.server_version)
-            .then_with(|| left.entity_type.cmp(&right.entity_type))
-            .then_with(|| left.entity_id.cmp(&right.entity_id))
-    });
-    let comic_marker = SyncdComicReaderSnapshotMarker {
-        scope_id: comics_snapshot.scope_id.clone(),
-        snapshot_version: comics_snapshot.snapshot_version,
+    let comic_marker = if stage_comic_reader_inbox {
+        profile
+            .pending_comic_reader_changes
+            .extend(comic_changes.iter().cloned());
+        compact_pending_comic_reader_changes(&mut profile.pending_comic_reader_changes);
+        Some(SyncdComicReaderSnapshotMarker {
+            scope_id: comics_snapshot.scope_id.clone(),
+            snapshot_version: comics_snapshot.snapshot_version,
+        })
+    } else {
+        None
     };
     // The durable inbox and its reset marker are staged before checkpoints.
     // save_replication_state atomically publishes this complete profile state.
-    profile.pending_comic_reader_snapshot = Some(comic_marker.clone());
+    profile.pending_comic_reader_snapshot = comic_marker.clone();
     profile.books_scope_checkpoint = Some(snapshot_checkpoint(books_snapshot));
     profile.novels_scope_checkpoint = Some(snapshot_checkpoint(novels_snapshot));
     profile.comics_scope_checkpoint = Some(snapshot_checkpoint(comics_snapshot));
@@ -2399,6 +2915,7 @@ async fn apply_authoritative_snapshots(
     novels_snapshot: SnapshotResponse,
     comics_snapshot: SnapshotResponse,
     asset_endpoint: &BookAssetEndpoint,
+    stage_comic_reader_inbox: bool,
 ) -> Result<(), String> {
     validate_snapshot(&books_snapshot, BOOKS_SCOPE_ID)?;
     validate_snapshot(&novels_snapshot, &novels_scope_id(remote_profile_id))?;
@@ -2427,18 +2944,21 @@ async fn apply_authoritative_snapshots(
         &novels_snapshot,
         &comics_snapshot,
         &comic_changes,
+        stage_comic_reader_inbox,
     );
     save_replication_state(&replication)?;
 
     let _ = emit_replication_state_for_profile(app, local_profile_id).await;
-    let _ = app.emit(
-        EVENT_COMIC_READER_STATE_APPLIED,
-        SyncdComicReaderStateAppliedPayload {
-            local_profile_id: local_profile_id.to_string(),
-            changes: comic_changes,
-            authoritative_snapshot: Some(comic_marker),
-        },
-    );
+    if stage_comic_reader_inbox {
+        let _ = app.emit(
+            EVENT_COMIC_READER_STATE_APPLIED,
+            SyncdComicReaderStateAppliedPayload {
+                local_profile_id: local_profile_id.to_string(),
+                changes: comic_changes,
+                authoritative_snapshot: comic_marker,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -2470,6 +2990,7 @@ async fn recover_from_snapshots_remote(
         novels,
         comics,
         &asset_endpoint,
+        true,
     )
     .await
 }
@@ -2515,6 +3036,7 @@ async fn recover_from_snapshots_local_authority(
         novels,
         comics,
         &asset_endpoint,
+        false,
     )
     .await
 }
@@ -2533,8 +3055,13 @@ async fn stream_live_events(
         .get(format!("{origin}/v1/events"))
         .header("Authorization", format!("Bearer {}", session.access_token))
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -2575,6 +3102,7 @@ async fn stream_live_events(
                             0,
                             SyncdReplicationReplayMode::SseLive,
                             asset_endpoint,
+                            true,
                         )
                         .await?;
                     }
@@ -2610,8 +3138,13 @@ async fn stream_live_events_local_authority(
             format!("Bearer {}", authority.access_token),
         )
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .send()
@@ -2652,6 +3185,7 @@ async fn stream_live_events_local_authority(
                             0,
                             SyncdReplicationReplayMode::SseLive,
                             asset_endpoint,
+                            false,
                         )
                         .await?;
                     }
@@ -2681,6 +3215,7 @@ async fn apply_remote_envelopes(
     min_replayable_seen: i64,
     replay_mode: SyncdReplicationReplayMode,
     asset_endpoint: &BookAssetEndpoint,
+    stage_comic_reader_inbox: bool,
 ) -> Result<(), String> {
     if envelopes.is_empty() {
         return Ok(());
@@ -2693,6 +3228,15 @@ async fn apply_remote_envelopes(
     let mut outcome = RemoteApplyOutcome::default();
     let mut replication = load_replication_state()?;
     let profile = profile_state_mut(&mut replication, profile_id);
+    let cleared_hosted_comic_reader_inbox = if stage_comic_reader_inbox {
+        false
+    } else {
+        let had_pending = !profile.pending_comic_reader_changes.is_empty()
+            || profile.pending_comic_reader_snapshot.is_some();
+        profile.pending_comic_reader_changes.clear();
+        profile.pending_comic_reader_snapshot = None;
+        had_pending
+    };
 
     let mut ordered = envelopes.to_vec();
     ordered.sort_by_key(|envelope| envelope.server_version);
@@ -2807,6 +3351,16 @@ async fn apply_remote_envelopes(
                     outcome.books_changed = true;
                 }
             }
+            "book.highlight" => {
+                if let Some(patch) = envelope.patch.clone() {
+                    let record = serde_json::from_value::<BookHighlightRecord>(patch)
+                        .map_err(|error| error.to_string())?;
+                    upsert_book_highlight(&mut books_state, record);
+                } else {
+                    delete_book_highlight(&mut books_state, &envelope.entity_id);
+                }
+                outcome.books_changed = true;
+            }
             "novel.progress" => {
                 if let Some(patch) = envelope.patch.clone() {
                     let record = serde_json::from_value::<NovelProgressRecord>(patch)
@@ -2866,8 +3420,13 @@ async fn apply_remote_envelopes(
                 }
                 classification_state.updated_at_ms = Some(now_ms());
             }
+            // Syncd carries dependency evidence only. The desktop remains bound to its local
+            // LNReader repository manager and does not install executable bytes from replay.
+            "novel.repository" | "novel.plugin" => {}
             "comic.history" | "comic.page_bookmark" => {
-                outcome.comic_reader_changes.push(envelope.clone());
+                if stage_comic_reader_inbox {
+                    outcome.comic_reader_changes.push(envelope.clone());
+                }
             }
             _ => continue,
         }
@@ -2901,17 +3460,12 @@ async fn apply_remote_envelopes(
         write_novel_classification_state(launch_target, profile_id, &classification_state)?;
     }
     if !outcome.comic_reader_changes.is_empty() {
-        for change in &outcome.comic_reader_changes {
-            profile
-                .pending_comic_reader_changes
-                .retain(|pending| pending.server_version != change.server_version);
-            profile.pending_comic_reader_changes.push(change.clone());
-        }
         profile
             .pending_comic_reader_changes
-            .sort_by_key(|change| change.server_version);
+            .extend(outcome.comic_reader_changes.iter().cloned());
+        compact_pending_comic_reader_changes(&mut profile.pending_comic_reader_changes);
     }
-    if !outcome.applied_scopes.is_empty() {
+    if !outcome.applied_scopes.is_empty() || cleared_hosted_comic_reader_inbox {
         profile.last_applied_scopes = outcome.applied_scopes.iter().cloned().collect();
         profile.last_applied_at_ms = Some(now_ms());
         profile.last_connected_at_ms = Some(now_ms());
@@ -2946,13 +3500,23 @@ pub async fn notify_book_state_written(
     let next_value =
         serde_json::from_str::<Value>(next_contents).map_err(|error| error.to_string())?;
     let frontend_included_history = next_value.get("bookHistory").is_some();
+    let frontend_included_highlights = next_value.get("bookHighlights").is_some();
     let mut next = serde_json::from_value::<PersistedBookLibraryState>(next_value)
         .map_err(|error| error.to_string())?;
     if !frontend_included_history {
         next.book_history = previous.book_history.clone();
     }
+    if !frontend_included_highlights {
+        next.book_highlights = previous.book_highlights.clone();
+    }
+    let asset_metadata_changed = enrich_book_asset_metadata(&previous, &mut next)?;
+    let cover_assets_changed = enrich_book_cover_assets(&previous, &mut next).await?;
     let projected_history_changed = project_latest_book_history(&previous, &mut next);
-    if !frontend_included_history || projected_history_changed {
+    if !frontend_included_history
+        || projected_history_changed
+        || asset_metadata_changed
+        || cover_assets_changed
+    {
         // Keep the Rust-owned history collection in the canonical JSON even
         // while the current frontend is unaware of that field. This write does
         // not call the Tauri command again, so it cannot recurse.
@@ -3022,6 +3586,101 @@ pub async fn notify_novel_source_classification_state_written(
         return Ok(());
     }
     submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+}
+
+pub async fn notify_novel_repository_state_written(
+    app: &AppHandle,
+    local_profile_id: Option<&str>,
+    previous_contents: Option<String>,
+    next_contents: &str,
+) -> Result<(), String> {
+    let Some(profile_id) = local_profile_id.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+    let previous = previous_contents
+        .as_deref()
+        .map(serde_json::from_str::<PersistedNovelRepositoryState>)
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let next = serde_json::from_str::<PersistedNovelRepositoryState>(next_contents)
+        .map_err(|error| error.to_string())?;
+    let diff = diff_novel_dependency_mutations(profile_id, &previous, &next);
+    if diff.is_empty() {
+        return Ok(());
+    }
+    submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+}
+
+async fn publish_current_novel_repository_state(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<(), String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let current = read_novel_repository_state(&launch_target, profile_id)?;
+    let payload = serde_json::to_string(&current).map_err(|error| error.to_string())?;
+    notify_novel_repository_state_written(app, Some(profile_id), None, &payload).await
+}
+
+fn serialized_state_digest<T: Serialize>(state: &T) -> Result<String, String> {
+    serde_json::to_string(state)
+        .map(|payload| hash_digest(&payload))
+        .map_err(|error| error.to_string())
+}
+
+async fn publish_current_novel_library_state(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<(), String> {
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let current = read_novels_state(&launch_target, profile_id)?;
+    let digest = serialized_state_digest(&current)?;
+    let already_published = load_replication_state()?
+        .profiles
+        .get(profile_id)
+        .and_then(|profile| profile.last_local_snapshot_digest_novels.as_deref())
+        == Some(digest.as_str());
+    if already_published {
+        return Ok(());
+    }
+
+    let mutations =
+        diff_novel_mutations(profile_id, &PersistedNovelLibraryState::default(), &current);
+    submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await?;
+    update_profile_state(profile_id, |profile| {
+        profile.last_local_snapshot_digest_novels = Some(digest.clone());
+    })?;
+    Ok(())
+}
+
+async fn publish_current_book_library_state(
+    app: &AppHandle,
+    profile_id: &str,
+) -> Result<(), String> {
+    let mut current = read_books_state()?;
+    let empty = PersistedBookLibraryState::default();
+    let asset_metadata_changed = enrich_book_asset_metadata(&empty, &mut current)?;
+    let cover_assets_changed = enrich_book_cover_assets(&empty, &mut current).await?;
+    let projected_history_changed = project_latest_book_history(&empty, &mut current);
+    if asset_metadata_changed || cover_assets_changed || projected_history_changed {
+        write_books_state(&current)?;
+    }
+    let digest = serialized_state_digest(&current)?;
+    let already_published = load_replication_state()?
+        .profiles
+        .get(profile_id)
+        .and_then(|profile| profile.last_local_snapshot_digest_books.as_deref())
+        == Some(digest.as_str());
+    if already_published {
+        return Ok(());
+    }
+
+    let mutations = diff_book_mutations(&empty, &current);
+    submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await?;
+    update_profile_state(profile_id, |profile| {
+        profile.last_local_snapshot_digest_books = Some(digest.clone());
+    })?;
+    Ok(())
 }
 
 async fn remote_profile_id_for_local_profile(
@@ -3234,8 +3893,10 @@ pub fn syncd_ack_comic_reader_changes(
 }
 
 fn upsert_book_progress(state: &mut PersistedBookLibraryState, record: BookProgressRecord) {
+    let local_book_id = local_book_id_for_canonical_id(state, &record.book_id);
+    let canonical_book_id = strip_book_progress_entity_prefix(&record.book_id).to_string();
     let next = LocalBookProgress {
-        book_id: record.book_id.clone(),
+        book_id: local_book_id,
         location: record.location,
         href: record.href,
         progress_percent: record.progress_percent,
@@ -3245,6 +3906,10 @@ fn upsert_book_progress(state: &mut PersistedBookLibraryState, record: BookProgr
         section_label: record.section_label,
         renderer: record.renderer,
     };
+    state.book_progress.retain(|entry| {
+        entry.book_id == next.book_id
+            || strip_book_progress_entity_prefix(&entry.book_id) != canonical_book_id
+    });
     if let Some(index) = state
         .book_progress
         .iter()
@@ -3257,9 +3922,10 @@ fn upsert_book_progress(state: &mut PersistedBookLibraryState, record: BookProgr
 }
 
 fn upsert_book_history(state: &mut PersistedBookLibraryState, record: BookHistoryRecord) {
+    let local_book_id = local_book_id_for_canonical_id(state, &record.book_id);
     let next = LocalBookHistory {
         history_id: record.history_id,
-        book_id: record.book_id,
+        book_id: local_book_id,
         renderer: record.renderer,
         location: record.location,
         href: record.href,
@@ -3290,11 +3956,14 @@ fn upsert_book_entry(
     record: BookEntryRecord,
     materialized_asset_path: Option<String>,
 ) {
-    let book_id = record.book_id.clone();
-    let existing = state
-        .books
-        .iter()
-        .find(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id.as_str()));
+    let remote_book_id = record.book_id.clone();
+    let existing = state.books.iter().find(|entry| {
+        book_entry_entity_id(entry).as_deref() == Some(remote_book_id.as_str())
+            || canonical_book_id_for_entry(entry).as_deref() == Some(remote_book_id.as_str())
+    });
+    let book_id = existing
+        .and_then(book_entry_entity_id)
+        .unwrap_or(remote_book_id);
     let preserved_asset_path = materialized_asset_path
         .or_else(|| existing.and_then(|entry| value_string_field(entry, "assetPath")));
     let preserved_import_path = existing
@@ -3307,8 +3976,13 @@ fn upsert_book_entry(
         .and_then(|entry| entry.get("coverUrl").cloned())
         .unwrap_or(Value::Null);
     let next = json!({
-        "id": record.book_id,
+        "id": book_id,
         "assetFingerprint": record.asset_fingerprint,
+        "mimeType": record.mime_type,
+        "byteSize": record.byte_size,
+        "coverAssetSha256": record.cover_asset_sha256,
+        "coverAssetByteSize": record.cover_asset_byte_size,
+        "coverAssetMimeType": record.cover_asset_mime_type,
         "title": record.title,
         "author": record.author,
         "description": record.description,
@@ -3369,14 +4043,21 @@ async fn materialize_book_entry_asset(
         return Ok(state
             .books
             .iter()
-            .find(|entry| book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str()))
+            .find(|entry| {
+                book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str())
+                    || canonical_book_id_for_entry(entry).as_deref()
+                        == Some(record.book_id.as_str())
+            })
             .and_then(|entry| value_string_field(entry, "assetPath")));
     };
     let fingerprint = validate_asset_sha256(fingerprint)?;
     let current_path = state
         .books
         .iter()
-        .find(|entry| book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str()))
+        .find(|entry| {
+            book_entry_entity_id(entry).as_deref() == Some(record.book_id.as_str())
+                || canonical_book_id_for_entry(entry).as_deref() == Some(record.book_id.as_str())
+        })
         .and_then(|entry| value_string_field(entry, "assetPath"));
     if let Some(path) = matching_local_asset_path(current_path, &fingerprint).await? {
         return Ok(Some(path));
@@ -3403,14 +4084,20 @@ async fn materialize_snapshot_book_assets(
 }
 
 fn delete_book_entry(state: &mut PersistedBookLibraryState, book_id: &str) {
+    let local_book_id = local_book_id_for_canonical_id(state, book_id);
     state
         .books
-        .retain(|entry| book_entry_entity_id(entry).as_deref() != Some(book_id));
-    state.book_progress.retain(|entry| entry.book_id != book_id);
+        .retain(|entry| book_entry_entity_id(entry).as_deref() != Some(local_book_id.as_str()));
+    state
+        .book_progress
+        .retain(|entry| entry.book_id != local_book_id);
     state
         .book_bookmarks
-        .retain(|entry| entry.book_id != book_id);
-    state.books_category_assignments.remove(book_id);
+        .retain(|entry| entry.book_id != local_book_id);
+    state
+        .book_highlights
+        .retain(|entry| entry.book_id != local_book_id);
+    state.books_category_assignments.remove(&local_book_id);
 }
 
 fn upsert_book_category(state: &mut PersistedBookLibraryState, record: BookCategoryRecord) {
@@ -3444,13 +4131,15 @@ fn upsert_book_category_assignment(
     state: &mut PersistedBookLibraryState,
     record: BookCategoryAssignmentRecord,
 ) {
+    let local_book_id = local_book_id_for_canonical_id(state, &record.book_id);
     state
         .books_category_assignments
-        .insert(record.book_id, record.category_ids);
+        .insert(local_book_id, record.category_ids);
 }
 
 fn delete_book_category_assignment(state: &mut PersistedBookLibraryState, book_id: &str) {
-    state.books_category_assignments.remove(book_id);
+    let local_book_id = local_book_id_for_canonical_id(state, book_id);
+    state.books_category_assignments.remove(&local_book_id);
 }
 
 fn upsert_book_library_ui(state: &mut PersistedBookLibraryState, record: BookLibraryUiRecord) {
@@ -3465,13 +4154,18 @@ fn upsert_book_library_ui(state: &mut PersistedBookLibraryState, record: BookLib
 }
 
 fn upsert_book_bookmark(state: &mut PersistedBookLibraryState, record: BookBookmarkRecord) {
+    let local_book_id = local_book_id_for_canonical_id(state, &record.book_id);
     let next = LocalBookBookmark {
-        book_id: record.book_id,
+        bookmark_id: record.bookmark_id,
+        book_id: local_book_id,
         location: record.location,
         href: record.href,
         page_index: record.page_index,
         progress_percent: record.progress_percent,
         label: record.label,
+        note: record.note,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
         saved_at: record.saved_at_ms,
     };
     let bookmark_id = bookmark_entity_id_for_book(&next);
@@ -3486,6 +4180,36 @@ fn upsert_book_bookmark(state: &mut PersistedBookLibraryState, record: BookBookm
     }
 }
 
+fn upsert_book_highlight(state: &mut PersistedBookLibraryState, record: BookHighlightRecord) {
+    let local_book_id = local_book_id_for_canonical_id(state, &record.book_id);
+    let next = LocalBookHighlight {
+        highlight_id: record.highlight_id,
+        book_id: local_book_id,
+        start_locator_json: record.start_locator_json,
+        end_locator_json: record.end_locator_json,
+        selected_text: record.selected_text,
+        color_argb: record.color_argb,
+        note: record.note,
+        created_at_ms: record.created_at_ms,
+        updated_at_ms: record.updated_at_ms,
+    };
+    if let Some(index) = state
+        .book_highlights
+        .iter()
+        .position(|entry| entry.highlight_id == next.highlight_id)
+    {
+        state.book_highlights[index] = next;
+    } else {
+        state.book_highlights.push(next);
+    }
+}
+
+fn delete_book_highlight(state: &mut PersistedBookLibraryState, highlight_id: &str) {
+    state
+        .book_highlights
+        .retain(|entry| entry.highlight_id != highlight_id);
+}
+
 fn delete_book_bookmark(state: &mut PersistedBookLibraryState, bookmark_id: &str) {
     state
         .book_bookmarks
@@ -3493,9 +4217,24 @@ fn delete_book_bookmark(state: &mut PersistedBookLibraryState, bookmark_id: &str
 }
 
 fn upsert_novel_progress(state: &mut PersistedNovelLibraryState, record: NovelProgressRecord) {
+    let local_novel_id = record
+        .portable_work_ref
+        .as_ref()
+        .and_then(|reference| local_novel_id_for_portable_ref(state, reference))
+        .unwrap_or_else(|| record.novel_id.clone());
+    let local_chapter_id = match (
+        record.portable_chapter_ref.as_ref(),
+        Some(local_novel_id.as_str()),
+    ) {
+        (Some(reference), Some(local_novel_id)) => {
+            local_novel_chapter_id_for_portable_ref(state, local_novel_id, reference)
+                .or_else(|| record.chapter_id.clone())
+        }
+        _ => record.chapter_id.clone(),
+    };
     let next = LocalNovelProgress {
-        novel_id: record.novel_id.clone(),
-        chapter_id: record.chapter_id,
+        novel_id: local_novel_id,
+        chapter_id: local_chapter_id,
         chapter_title: record.chapter_title,
         progress_percent: record.progress_percent,
         locator: record.locator,
@@ -3530,15 +4269,20 @@ fn refresh_novel_entry_chapter_count(state: &mut PersistedNovelLibraryState, nov
 }
 
 fn upsert_novel_entry(state: &mut PersistedNovelLibraryState, record: NovelEntryRecord) {
+    let incoming_ref = portable_novel_work_ref(&record.source, &record.path);
+    let local_novel_id = incoming_ref
+        .as_ref()
+        .and_then(|reference| local_novel_id_for_portable_ref(state, reference))
+        .unwrap_or_else(|| record.novel_id.clone());
     let chapter_count = state
         .chapters
         .iter()
         .filter(|entry| {
-            value_string_field(entry, "novelId").as_deref() == Some(record.novel_id.as_str())
+            value_string_field(entry, "novelId").as_deref() == Some(local_novel_id.as_str())
         })
         .count() as i64;
     let next = json!({
-        "id": record.novel_id,
+        "id": local_novel_id,
         "title": record.title,
         "author": record.author,
         "description": record.description,
@@ -3578,9 +4322,28 @@ fn delete_novel_entry(state: &mut PersistedNovelLibraryState, novel_id: &str) {
 }
 
 fn upsert_novel_chapter(state: &mut PersistedNovelLibraryState, record: NovelChapterRecord) {
+    let local_novel_id = state
+        .entries
+        .iter()
+        .find_map(|entry| {
+            let reference = portable_novel_work_ref_from_entry(entry)?;
+            (canonical_portable_work_id(&reference) == record.novel_id)
+                .then(|| novel_entry_entity_id(entry))
+                .flatten()
+        })
+        .unwrap_or_else(|| record.novel_id.clone());
+    let local_chapter_id = state
+        .chapters
+        .iter()
+        .find(|entry| {
+            value_string_field(entry, "novelId").as_deref() == Some(local_novel_id.as_str())
+                && value_string_field(entry, "path").as_deref() == Some(record.path.as_str())
+        })
+        .and_then(novel_chapter_entity_id)
+        .unwrap_or_else(|| record.chapter_id.clone());
     let next = json!({
-        "id": record.chapter_id,
-        "novelId": record.novel_id,
+        "id": local_chapter_id,
+        "novelId": local_novel_id,
         "path": record.path,
         "title": record.title,
         "order": record.chapter_order_key,
@@ -3711,6 +4474,9 @@ fn delete_novel_classification(
 }
 
 fn bookmark_entity_id_for_book(entry: &LocalBookBookmark) -> String {
+    if !entry.bookmark_id.trim().is_empty() {
+        return entry.bookmark_id.clone();
+    }
     let locator = entry
         .location
         .clone()
@@ -3890,10 +4656,124 @@ fn novel_classification_entity_id(value: &Value) -> Option<String> {
     value_string_field(value, "pluginId")
 }
 
+fn portable_novel_work_ref(source: &Value, novel_key: &str) -> Option<PortableWorkRefV3> {
+    let plugin_id = value_string_field(source, "pluginId")?;
+    let reference = PortableWorkRefV3::Novel {
+        plugin_id,
+        novel_key: novel_key.to_string(),
+    };
+    reference.validate().ok()?;
+    Some(reference)
+}
+
+fn portable_novel_work_ref_from_entry(entry: &Value) -> Option<PortableWorkRefV3> {
+    portable_novel_work_ref(entry.get("source")?, &value_string_field(entry, "path")?)
+}
+
+fn local_novel_id_for_portable_ref(
+    state: &PersistedNovelLibraryState,
+    reference: &PortableWorkRefV3,
+) -> Option<String> {
+    state.entries.iter().find_map(|entry| {
+        (portable_novel_work_ref_from_entry(entry).as_ref() == Some(reference))
+            .then(|| novel_entry_entity_id(entry))
+            .flatten()
+    })
+}
+
+fn local_novel_chapter_id_for_portable_ref(
+    state: &PersistedNovelLibraryState,
+    local_novel_id: &str,
+    reference: &PortableChapterRefV3,
+) -> Option<String> {
+    let PortableChapterRefV3::Novel { chapter_key, .. } = reference else {
+        return None;
+    };
+    state.chapters.iter().find_map(|entry| {
+        (value_string_field(entry, "novelId").as_deref() == Some(local_novel_id)
+            && value_string_field(entry, "path").as_deref() == Some(chapter_key.as_str()))
+        .then(|| novel_chapter_entity_id(entry))
+        .flatten()
+    })
+}
+
+fn portable_novel_refs_for_progress(
+    state: &PersistedNovelLibraryState,
+    progress: &LocalNovelProgress,
+) -> Option<(PortableWorkRefV3, PortableChapterRefV3)> {
+    let entry = state.entries.iter().find(|entry| {
+        novel_entry_entity_id(entry).as_deref() == Some(progress.novel_id.as_str())
+    })?;
+    let work = portable_novel_work_ref_from_entry(entry)?;
+    let local_chapter_id = progress.chapter_id.as_deref()?;
+    let chapter = state.chapters.iter().find(|chapter| {
+        novel_chapter_entity_id(chapter).as_deref() == Some(local_chapter_id)
+            && value_string_field(chapter, "novelId").as_deref() == Some(progress.novel_id.as_str())
+    })?;
+    let chapter_key = value_string_field(chapter, "path")?;
+    let chapter_ref = PortableChapterRefV3::Novel {
+        work: work.clone(),
+        chapter_key,
+    };
+    chapter_ref.validate().ok()?;
+    Some((work, chapter_ref))
+}
+
+fn canonical_book_id_for_entry(value: &Value) -> Option<String> {
+    let subtype = value_string_field(value, "subtype")?
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(subtype.as_str(), "epub" | "pdf") {
+        return None;
+    }
+    let fingerprint = value_string_field(value, "assetFingerprint")?
+        .trim()
+        .to_ascii_lowercase();
+    if fingerprint.len() != 64 || !fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("{subtype}:sha256:{fingerprint}"))
+}
+
+fn canonical_book_id_for_local_id(state: &PersistedBookLibraryState, book_id: &str) -> String {
+    let book_id = strip_book_progress_entity_prefix(book_id);
+    state
+        .books
+        .iter()
+        .find(|entry| book_entry_entity_id(entry).as_deref() == Some(book_id))
+        .and_then(canonical_book_id_for_entry)
+        .unwrap_or_else(|| book_id.to_string())
+}
+
+fn local_book_id_for_canonical_id(state: &PersistedBookLibraryState, book_id: &str) -> String {
+    let book_id = strip_book_progress_entity_prefix(book_id);
+    state
+        .books
+        .iter()
+        .find_map(|entry| {
+            let local_id = book_entry_entity_id(entry)?;
+            (local_id == book_id || canonical_book_id_for_entry(entry).as_deref() == Some(book_id))
+                .then_some(local_id)
+        })
+        .unwrap_or_else(|| book_id.to_string())
+}
+
+fn strip_book_progress_entity_prefix(mut value: &str) -> &str {
+    while let Some(book_id) = value.strip_prefix("book.progress::") {
+        value = book_id;
+    }
+    value
+}
+
 #[allow(dead_code)]
 fn build_book_entry_patch(value: &Value) -> Option<BookEntryPatch> {
     Some(BookEntryPatch {
         asset_fingerprint: value_string_field(value, "assetFingerprint"),
+        mime_type: value_string_field(value, "mimeType"),
+        byte_size: value_i64_field(value, "byteSize"),
+        cover_asset_sha256: value_string_field(value, "coverAssetSha256"),
+        cover_asset_byte_size: value_i64_field(value, "coverAssetByteSize"),
+        cover_asset_mime_type: value_string_field(value, "coverAssetMimeType"),
         title: value_string_field(value, "title")?,
         author: value_string_field(value, "author"),
         description: value_string_field(value, "description"),
@@ -3935,18 +4815,25 @@ fn build_book_library_ui_patch(value: &Value) -> BookLibraryUiPatch {
 
 #[allow(dead_code)]
 fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
+    let path = value_string_field(value, "path")?;
+    let source = value.get("source").cloned().unwrap_or(Value::Null);
     let mut patch = NovelEntryPatch {
         identity_key: value_string_field(value, "id")?,
         title: value_string_field(value, "title")?,
         author: value_string_field(value, "author"),
         description: value_string_field(value, "description"),
         cover_url: value_string_field(value, "coverUrl"),
-        path: value_string_field(value, "path")?,
+        path: path.clone(),
         status: value_string_field(value, "status"),
         tags: value_string_array_field(value, "tags"),
-        source: value.get("source").cloned().unwrap_or(Value::Null),
+        source: source.clone(),
         added_at_ms: value_i64_field(value, "addedAt").unwrap_or_else(now_ms),
         updated_at_ms: value_i64_field(value, "updatedAt").unwrap_or_else(now_ms),
+        portable_work_ref: value
+            .get("portableWorkRef")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .or_else(|| portable_novel_work_ref(&source, &path)),
     };
     if let Some(identity_key) = canonical_novel_identity_key(&patch) {
         patch.identity_key = identity_key;
@@ -4004,12 +4891,22 @@ fn diff_book_mutations(
     let previous_entries: BTreeMap<String, BookEntryPatch> = previous
         .books
         .iter()
-        .filter_map(|entry| Some((book_entry_entity_id(entry)?, build_book_entry_patch(entry)?)))
+        .filter_map(|entry| {
+            Some((
+                canonical_book_id_for_entry(entry).or_else(|| book_entry_entity_id(entry))?,
+                build_book_entry_patch(entry)?,
+            ))
+        })
         .collect();
     let next_entries: BTreeMap<String, BookEntryPatch> = next
         .books
         .iter()
-        .filter_map(|entry| Some((book_entry_entity_id(entry)?, build_book_entry_patch(entry)?)))
+        .filter_map(|entry| {
+            Some((
+                canonical_book_id_for_entry(entry).or_else(|| book_entry_entity_id(entry))?,
+                build_book_entry_patch(entry)?,
+            ))
+        })
         .collect();
     for (book_id, patch) in &next_entries {
         let unchanged = previous_entries.get(book_id).is_some_and(|previous| {
@@ -4048,13 +4945,21 @@ fn diff_book_mutations(
         .book_progress
         .iter()
         .cloned()
-        .map(|entry| (entry.book_id.clone(), entry))
+        .map(|mut entry| {
+            let book_id = canonical_book_id_for_local_id(previous, &entry.book_id);
+            entry.book_id = book_id.clone();
+            (book_id, entry)
+        })
         .collect();
     let next_progress: BTreeMap<String, LocalBookProgress> = next
         .book_progress
         .iter()
         .cloned()
-        .map(|entry| (entry.book_id.clone(), entry))
+        .map(|mut entry| {
+            let book_id = canonical_book_id_for_local_id(next, &entry.book_id);
+            entry.book_id = book_id.clone();
+            (book_id, entry)
+        })
         .collect();
     for (book_id, entry) in &next_progress {
         if previous_progress.get(book_id) == Some(entry) {
@@ -4098,17 +5003,35 @@ fn diff_book_mutations(
         if previous_history.get(history_id) == Some(entry) {
             continue;
         }
+        let canonical_book_id = canonical_book_id_for_local_id(next, &entry.book_id);
+        let canonical_history_id = if history_id == &format!("book.history::{}", entry.book_id) {
+            format!("book.history::{canonical_book_id}")
+        } else {
+            history_id.clone()
+        };
+        if canonical_history_id != *history_id {
+            mutations.push(SerializableMutationInput::BookHistory {
+                base: SerializableMutationBase {
+                    client_mutation_id: Uuid::now_v7().to_string(),
+                    scope_id: BOOKS_SCOPE_ID.to_string(),
+                    entity_id: history_id.clone(),
+                    op: MutationOperation::Delete,
+                    lamport: now_ms(),
+                },
+                patch: None,
+            });
+        }
         mutations.push(SerializableMutationInput::BookHistory {
             base: SerializableMutationBase {
                 client_mutation_id: Uuid::now_v7().to_string(),
                 scope_id: BOOKS_SCOPE_ID.to_string(),
-                entity_id: history_id.clone(),
+                entity_id: canonical_history_id.clone(),
                 op: MutationOperation::Merge,
                 lamport: now_ms(),
             },
             patch: Some(BookHistoryPatch {
-                history_id: history_id.clone(),
-                book_id: entry.book_id.clone(),
+                history_id: canonical_history_id,
+                book_id: canonical_book_id,
                 renderer: entry.renderer.clone(),
                 location: entry.location.clone(),
                 href: entry.href.clone(),
@@ -4151,6 +5074,7 @@ fn diff_book_mutations(
         if previous_bookmarks.get(bookmark_id) == Some(entry) {
             continue;
         }
+        let canonical_book_id = canonical_book_id_for_local_id(next, &entry.book_id);
         mutations.push(SerializableMutationInput::BookBookmark {
             base: SerializableMutationBase {
                 client_mutation_id: Uuid::now_v7().to_string(),
@@ -4160,12 +5084,23 @@ fn diff_book_mutations(
                 lamport: now_ms(),
             },
             patch: Some(BookBookmarkPatch {
-                book_id: entry.book_id.clone(),
+                book_id: canonical_book_id,
                 location: entry.location.clone(),
                 href: entry.href.clone(),
                 page_index: entry.page_index,
                 progress_percent: entry.progress_percent,
                 label: entry.label.clone(),
+                note: entry.note.clone(),
+                created_at_ms: if entry.created_at_ms > 0 {
+                    entry.created_at_ms
+                } else {
+                    entry.saved_at
+                },
+                updated_at_ms: if entry.updated_at_ms > 0 {
+                    entry.updated_at_ms
+                } else {
+                    entry.saved_at
+                },
                 saved_at_ms: entry.saved_at,
             }),
         });
@@ -4194,6 +5129,48 @@ fn diff_novel_mutations(
 ) -> Vec<SerializableMutationInput> {
     let scope_id = novels_scope_id(local_profile_id);
     let mut mutations = Vec::new();
+    // Publish library membership before progress/bookmarks. Mobile can then hydrate chapters
+    // directly from the exact LNReader plugin and provider-owned work key.
+    let previous_entries: BTreeMap<String, NovelEntryPatch> = previous
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let patch = build_novel_entry_patch(entry)?;
+            Some((patch.identity_key.clone(), patch))
+        })
+        .collect();
+    let next_entries: BTreeMap<String, NovelEntryPatch> = next
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let patch = build_novel_entry_patch(entry)?;
+            Some((patch.identity_key.clone(), patch))
+        })
+        .collect();
+    for (novel_id, patch) in &next_entries {
+        let unchanged = previous_entries.get(novel_id).is_some_and(|previous| {
+            serde_json::to_value(previous).ok() == serde_json::to_value(patch).ok()
+        });
+        if unchanged {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelEntry {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: novel_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch.clone()),
+        });
+    }
+    // Entry deletes are appended after dependent bookmark/progress changes below.
+    let deleted_entries = previous_entries
+        .keys()
+        .filter(|novel_id| !next_entries.contains_key(*novel_id))
+        .cloned()
+        .collect::<Vec<_>>();
     let previous_progress: BTreeMap<String, LocalNovelProgress> = previous
         .progress
         .iter()
@@ -4210,16 +5187,27 @@ fn diff_novel_mutations(
         if previous_progress.get(novel_id) == Some(entry) {
             continue;
         }
+        let portable_refs = portable_novel_refs_for_progress(next, entry);
+        let entity_novel_id = portable_refs
+            .as_ref()
+            .map(|(work, _)| canonical_portable_work_id(work))
+            .unwrap_or_else(|| novel_id.clone());
+        let chapter_id = portable_refs
+            .as_ref()
+            .map(|(_, chapter)| canonical_portable_chapter_id(chapter))
+            .or_else(|| entry.chapter_id.clone());
         mutations.push(SerializableMutationInput::NovelProgress {
             base: SerializableMutationBase {
                 client_mutation_id: Uuid::now_v7().to_string(),
                 scope_id: scope_id.clone(),
-                entity_id: format!("novel.progress::{novel_id}"),
+                entity_id: format!("novel.progress::{entity_novel_id}"),
                 op: MutationOperation::Merge,
                 lamport: now_ms(),
             },
             patch: NovelProgressPatch {
-                chapter_id: entry.chapter_id.clone(),
+                portable_work_ref: portable_refs.as_ref().map(|(work, _)| work.clone()),
+                portable_chapter_ref: portable_refs.map(|(_, chapter)| chapter),
+                chapter_id,
                 chapter_title: entry.chapter_title.clone(),
                 chapter_order_key: None,
                 progress_percent: entry.progress_percent,
@@ -4247,6 +5235,15 @@ fn diff_novel_mutations(
         if previous_bookmarks.get(bookmark_id) == Some(entry) {
             continue;
         }
+        let novel_id = next
+            .entries
+            .iter()
+            .find(|candidate| {
+                novel_entry_entity_id(candidate).as_deref() == Some(entry.novel_id.as_str())
+            })
+            .and_then(build_novel_entry_patch)
+            .map(|patch| patch.identity_key)
+            .unwrap_or_else(|| entry.novel_id.clone());
         mutations.push(SerializableMutationInput::NovelBookmark {
             base: SerializableMutationBase {
                 client_mutation_id: Uuid::now_v7().to_string(),
@@ -4256,7 +5253,7 @@ fn diff_novel_mutations(
                 lamport: now_ms(),
             },
             patch: Some(NovelBookmarkPatch {
-                novel_id: entry.novel_id.clone(),
+                novel_id,
                 chapter_id: entry.chapter_id.clone(),
                 chapter_title: entry.chapter_title.clone(),
                 chapter_order_key: None,
@@ -4282,6 +5279,70 @@ fn diff_novel_mutations(
             patch: None,
         });
     }
+    let previous_history: BTreeMap<String, Value> = previous
+        .history
+        .iter()
+        .filter_map(|entry| novel_history_entity_id(entry).map(|id| (id, entry.clone())))
+        .collect();
+    let next_history: BTreeMap<String, Value> = next
+        .history
+        .iter()
+        .filter_map(|entry| novel_history_entity_id(entry).map(|id| (id, entry.clone())))
+        .collect();
+    for (history_id, entry) in &next_history {
+        if previous_history.get(history_id) == Some(entry) {
+            continue;
+        }
+        let Some(mut patch) = build_novel_history_patch(entry) else {
+            continue;
+        };
+        patch.novel_id = next
+            .entries
+            .iter()
+            .find(|candidate| {
+                novel_entry_entity_id(candidate).as_deref() == Some(patch.novel_id.as_str())
+            })
+            .and_then(build_novel_entry_patch)
+            .map(|entry| entry.identity_key)
+            .unwrap_or(patch.novel_id);
+        mutations.push(SerializableMutationInput::NovelHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: history_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch),
+        });
+    }
+    for history_id in previous_history.keys() {
+        if next_history.contains_key(history_id) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: history_id.clone(),
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
+        });
+    }
+    deleted_entries.into_iter().for_each(|novel_id| {
+        mutations.push(SerializableMutationInput::NovelEntry {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: novel_id,
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
+        });
+    });
     mutations
 }
 fn diff_novel_classification_mutations(
@@ -4340,6 +5401,201 @@ fn diff_novel_classification_mutations(
     mutations
 }
 
+fn novel_repository_records(
+    state: &PersistedNovelRepositoryState,
+) -> BTreeMap<String, NovelRepositoryPatch> {
+    state
+        .repositories
+        .iter()
+        .filter_map(|repository| {
+            let raw_url = if repository.normalized_url.trim().is_empty() {
+                repository.url.as_str()
+            } else {
+                repository.normalized_url.as_str()
+            };
+            let canonical_url = canonicalize_novel_repository_url(raw_url)?;
+            let repository_id = canonical_novel_repository_id(&canonical_url);
+            let name = url::Url::parse(&canonical_url)
+                .ok()
+                .and_then(|url| url.host_str().map(ToString::to_string))
+                .map(|host| format!("{host} LNReader repository"))
+                .unwrap_or_else(|| "LNReader repository".to_string());
+            Some((
+                repository_id,
+                NovelRepositoryPatch {
+                    canonical_url,
+                    name,
+                    enabled: repository.enabled,
+                    created_at_ms: 0,
+                    updated_at_ms: now_ms(),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn novel_plugin_identities<'a>(
+    state: &'a PersistedNovelRepositoryState,
+    repositories: &BTreeMap<String, NovelRepositoryPatch>,
+) -> BTreeMap<String, (&'a LocalInstalledNovelPlugin, String)> {
+    let repository_ids = state
+        .repositories
+        .iter()
+        .filter_map(|repository| {
+            let raw_url = if repository.normalized_url.trim().is_empty() {
+                repository.url.as_str()
+            } else {
+                repository.normalized_url.as_str()
+            };
+            let canonical_url = canonicalize_novel_repository_url(raw_url)?;
+            let repository_id = canonical_novel_repository_id(&canonical_url);
+            repositories
+                .contains_key(&repository_id)
+                .then(|| (repository.id.as_str(), repository_id))
+        })
+        .collect::<HashMap<_, _>>();
+
+    state
+        .installed_plugins
+        .iter()
+        .filter_map(|plugin| {
+            let repository_id = repository_ids.get(plugin.repository_id.as_str())?.clone();
+            let plugin_id = plugin.plugin_id.trim();
+            if plugin_id.is_empty() {
+                return None;
+            }
+            let entity_id = canonical_novel_plugin_id(&repository_id, plugin_id, plugin_id);
+            Some((entity_id, (plugin, repository_id)))
+        })
+        .collect()
+}
+
+fn build_novel_plugin_patch(
+    state: &PersistedNovelRepositoryState,
+    plugin: &LocalInstalledNovelPlugin,
+    repository_id: String,
+) -> Option<NovelPluginPatch> {
+    let catalog = state.catalog_entries.iter().find(|entry| {
+        entry.repository_id == plugin.repository_id
+            && entry.plugin_id == plugin.plugin_id
+            && entry.version == plugin.version
+    })?;
+    let artifact_path = Path::new(plugin.artifact_path.trim());
+    let byte_length = i64::try_from(fs::metadata(artifact_path).ok()?.len()).ok()?;
+    if !(1..=2_097_152).contains(&byte_length) {
+        return None;
+    }
+    Some(NovelPluginPatch {
+        repository_id,
+        plugin_id: plugin.plugin_id.trim().to_string(),
+        source_id: plugin.plugin_id.trim().to_string(),
+        name: catalog.name.trim().to_string(),
+        version: plugin.version.trim().to_string(),
+        lang: catalog.lang.trim().to_string(),
+        enabled: plugin.enabled,
+        artifact_sha256: sha256_file(artifact_path).ok()?,
+        artifact_byte_length: byte_length,
+        public_settings: json!({}),
+        created_at_ms: plugin.installed_at_ms.max(0),
+        updated_at_ms: plugin.updated_at_ms.max(plugin.installed_at_ms).max(0),
+    })
+}
+
+fn diff_novel_dependency_mutations(
+    local_profile_id: &str,
+    previous: &PersistedNovelRepositoryState,
+    next: &PersistedNovelRepositoryState,
+) -> Vec<SerializableMutationInput> {
+    let scope_id = novels_scope_id(local_profile_id);
+    let previous_repositories = novel_repository_records(previous);
+    let next_repositories = novel_repository_records(next);
+    let previous_plugins = novel_plugin_identities(previous, &previous_repositories);
+    let next_plugins = novel_plugin_identities(next, &next_repositories);
+    let mut mutations = Vec::new();
+
+    for (repository_id, patch) in &next_repositories {
+        let unchanged = previous_repositories
+            .get(repository_id)
+            .is_some_and(|previous| {
+                previous.canonical_url == patch.canonical_url && previous.enabled == patch.enabled
+            });
+        if unchanged {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelRepository {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: repository_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch.clone()),
+        });
+    }
+
+    for (plugin_id, (plugin, repository_id)) in &next_plugins {
+        let Some(patch) = build_novel_plugin_patch(next, plugin, repository_id.to_string()) else {
+            continue;
+        };
+        let unchanged = previous_plugins
+            .get(plugin_id)
+            .is_some_and(|(previous, _)| {
+                previous.version == plugin.version
+                    && previous.enabled == plugin.enabled
+                    && previous.artifact_path == plugin.artifact_path
+                    && previous.updated_at_ms == plugin.updated_at_ms
+            });
+        if unchanged {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelPlugin {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: plugin_id.clone(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch),
+        });
+    }
+
+    for plugin_id in previous_plugins.keys() {
+        if next_plugins.contains_key(plugin_id) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelPlugin {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: plugin_id.clone(),
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
+        });
+    }
+
+    for repository_id in previous_repositories.keys() {
+        if next_repositories.contains_key(repository_id) {
+            continue;
+        }
+        mutations.push(SerializableMutationInput::NovelRepository {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: repository_id.clone(),
+                op: MutationOperation::Delete,
+                lamport: now_ms(),
+            },
+            patch: None,
+        });
+    }
+
+    mutations
+}
+
 async fn submit_mutations_for_active_profiles(
     app: &AppHandle,
     restrict_profile_id: Option<&str>,
@@ -4348,6 +5604,9 @@ async fn submit_mutations_for_active_profiles(
     if mutations.is_empty() {
         return Ok(());
     }
+
+    let novel_plugin_assets =
+        collect_novel_plugin_asset_paths(app, restrict_profile_id, &mutations)?;
 
     let desktop = load_persisted_state()?;
     let replication = load_replication_state()?;
@@ -4381,7 +5640,10 @@ async fn submit_mutations_for_active_profiles(
                 "submit_mutations target profile_id={} mode=local_authority base_url={}",
                 profile_id, authority.local_base_url
             ));
-            if let Err(error) = post_mutations_for_local_authority(authority, &mutations).await {
+            if let Err(error) =
+                post_mutations_for_local_authority(authority, &mutations, &novel_plugin_assets)
+                    .await
+            {
                 last_delivery_error = Some(error.clone());
                 replication_log(format!(
                     "submit_mutations result profile_id={} mode=local_authority status=error error={}",
@@ -4425,7 +5687,9 @@ async fn submit_mutations_for_active_profiles(
             "submit_mutations target profile_id={} mode=remote canonical_origin={}",
             profile_id, session.canonical_origin
         ));
-        if let Err(error) = post_mutations_for_session(session, &mutations).await {
+        if let Err(error) =
+            post_mutations_for_session(session, &mutations, &novel_plugin_assets).await
+        {
             last_delivery_error = Some(error.clone());
             replication_log(format!(
                 "submit_mutations result profile_id={} mode=remote status=error error={}",
@@ -4463,6 +5727,63 @@ async fn submit_mutations_for_active_profiles(
     Ok(())
 }
 
+fn collect_novel_plugin_asset_paths(
+    app: &AppHandle,
+    local_profile_id: Option<&str>,
+    mutations: &[SerializableMutationInput],
+) -> Result<HashMap<String, PathBuf>, String> {
+    let required = mutations
+        .iter()
+        .filter_map(|mutation| match mutation {
+            SerializableMutationInput::NovelPlugin {
+                patch: Some(patch), ..
+            } => Some((
+                patch.plugin_id.as_str(),
+                patch.version.as_str(),
+                patch.artifact_sha256.as_str(),
+                patch.artifact_byte_length,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if required.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let profile_id = local_profile_id
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Novel plugin publication requires a local profile.".to_string())?;
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let state = read_novel_repository_state(&launch_target, profile_id)?;
+    let mut resolved = HashMap::new();
+    for (plugin_id, version, expected_sha256, expected_size) in required {
+        let installed = state
+            .installed_plugins
+            .iter()
+            .find(|plugin| plugin.plugin_id == plugin_id && plugin.version == version)
+            .ok_or_else(|| {
+                format!(
+                    "Novel plugin {plugin_id} {version} disappeared before its artifact could be published."
+                )
+            })?;
+        let path = PathBuf::from(installed.artifact_path.trim());
+        let metadata = fs::metadata(&path)
+            .map_err(|error| format!("Novel plugin artifact is unavailable: {error}"))?;
+        if !metadata.is_file() || i64::try_from(metadata.len()).ok() != Some(expected_size) {
+            return Err(format!(
+                "Novel plugin {plugin_id} {version} changed size before publication."
+            ));
+        }
+        let actual_sha256 = sha256_file(&path).map_err(|error| error.to_string())?;
+        if actual_sha256 != expected_sha256 {
+            return Err(format!(
+                "Novel plugin {plugin_id} {version} changed before publication."
+            ));
+        }
+        resolved.insert(expected_sha256.to_string(), path);
+    }
+    Ok(resolved)
+}
+
 fn validate_mutation_receipts(
     request: &SerializableMutationsRequest,
     response: &MutationsResponse,
@@ -4490,7 +5811,13 @@ fn validate_mutation_receipts(
         let result = results
             .get(mutation_id)
             .ok_or_else(|| format!("Core omitted receipt for clientMutationId {mutation_id}."))?;
-        if result.status != MutationResultStatus::Applied {
+        // `superseded` is a successful, terminal receipt: the Core accepted the
+        // mutation but retained an equal or newer canonical value. Treating it
+        // as a rejection makes idempotent inventory repair loop forever.
+        if !matches!(
+            result.status,
+            MutationResultStatus::Applied | MutationResultStatus::Superseded
+        ) {
             let detail = result
                 .error
                 .as_ref()
@@ -4534,7 +5861,11 @@ async fn ensure_book_assets_uploaded(
         let local = state
             .books
             .iter()
-            .find(|entry| book_entry_entity_id(entry).as_deref() == Some(base.entity_id.as_str()))
+            .find(|entry| {
+                book_entry_entity_id(entry).as_deref() == Some(base.entity_id.as_str())
+                    || canonical_book_id_for_entry(entry).as_deref()
+                        == Some(base.entity_id.as_str())
+            })
             .ok_or_else(|| {
                 format!(
                     "Book {} disappeared before its asset could be published.",
@@ -4550,6 +5881,95 @@ async fn ensure_book_assets_uploaded(
                 )
             })?;
         upload_book_asset(endpoint, &PathBuf::from(asset_path), &fingerprint).await?;
+
+        match (
+            patch.cover_asset_sha256.as_deref(),
+            patch.cover_asset_byte_size,
+            patch.cover_asset_mime_type.as_deref(),
+        ) {
+            (Some(cover_sha256), Some(cover_byte_size), Some(cover_mime_type)) => {
+                let expected_cover_size = u64::try_from(cover_byte_size)
+                    .map_err(|_| "Book cover byte size is invalid.".to_string())?;
+                if !matches!(cover_mime_type, "image/jpeg" | "image/png" | "image/webp") {
+                    return Err("Book cover MIME type is not eligible for sync.".to_string());
+                }
+                if let Some(remote_size) = remote_asset_size(endpoint, cover_sha256).await? {
+                    if remote_size != expected_cover_size {
+                        return Err(format!(
+                            "Core stores book cover {cover_sha256} with {remote_size} bytes; expected {expected_cover_size}."
+                        ));
+                    }
+                    continue;
+                }
+                let cover_path = value_string_field(local, "coverPath")
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        format!(
+                            "Book {} cannot publish its cover without local cover bytes.",
+                            base.entity_id
+                        )
+                    })?;
+                let inspected = inspect_local_book_cover(Path::new(&cover_path))
+                    .await?
+                    .ok_or_else(|| {
+                        format!(
+                            "Book {} cover must be a valid JPEG, PNG, or WebP image.",
+                            base.entity_id
+                        )
+                    })?;
+                if inspected.sha256 != cover_sha256
+                    || inspected.byte_size != cover_byte_size
+                    || inspected.mime_type != cover_mime_type
+                {
+                    return Err(format!(
+                        "Book {} cover changed before publication.",
+                        base.entity_id
+                    ));
+                }
+                if uploaded.insert(cover_sha256.to_string()) {
+                    upload_book_asset(endpoint, Path::new(&cover_path), cover_sha256).await?;
+                }
+            }
+            (None, None, None) => {}
+            _ => {
+                return Err(format!(
+                    "Book {} has an incomplete cover asset reference.",
+                    base.entity_id
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_novel_plugin_assets_uploaded(
+    client: reqwest::Client,
+    origin: &str,
+    access_token: &str,
+    mutations: &[SerializableMutationInput],
+    artifact_paths: &HashMap<String, PathBuf>,
+) -> Result<(), String> {
+    let mut uploaded = HashSet::new();
+    for mutation in mutations {
+        let SerializableMutationInput::NovelPlugin {
+            base,
+            patch: Some(patch),
+        } = mutation
+        else {
+            continue;
+        };
+        if !uploaded.insert((base.scope_id.clone(), patch.artifact_sha256.clone())) {
+            continue;
+        }
+        let path = artifact_paths.get(&patch.artifact_sha256).ok_or_else(|| {
+            format!(
+                "Novel plugin {} {} cannot be published without local artifact bytes.",
+                patch.plugin_id, patch.version
+            )
+        })?;
+        let endpoint =
+            BookAssetEndpoint::for_scope(client.clone(), origin, access_token, &base.scope_id);
+        upload_book_asset(&endpoint, path, &patch.artifact_sha256).await?;
     }
     Ok(())
 }
@@ -4557,6 +5977,7 @@ async fn ensure_book_assets_uploaded(
 async fn post_mutations_for_local_authority(
     authority: &LocalAuthoritySession,
     mutations: &[SerializableMutationInput],
+    novel_plugin_assets: &HashMap<String, PathBuf>,
 ) -> Result<(), String> {
     let request = SerializableMutationsRequest {
         request_id: Uuid::now_v7().to_string(),
@@ -4569,6 +5990,14 @@ async fn post_mutations_for_local_authority(
         &authority.access_token,
     );
     ensure_book_assets_uploaded(&asset_endpoint, mutations).await?;
+    ensure_novel_plugin_assets_uploaded(
+        client.clone(),
+        &authority.local_base_url,
+        &authority.access_token,
+        mutations,
+        novel_plugin_assets,
+    )
+    .await?;
     replication_log(format!(
         "post_mutations_for_local_authority profile_id={} url={}/v1/mutations mutation_count={} mutations=[{}]",
         authority.profile_id,
@@ -4583,8 +6012,13 @@ async fn post_mutations_for_local_authority(
             format!("Bearer {}", authority.access_token),
         )
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
             CLIENT_PROTOCOL_HEADER.as_str(),
+            CLIENT_PROTOCOL_VERSION.to_string(),
+        )
+        .header(
+            LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
             CLIENT_PROTOCOL_VERSION.to_string(),
         )
         .json(&request)
@@ -4617,6 +6051,7 @@ async fn post_mutations_for_local_authority(
 async fn post_mutations_for_session(
     session: &PersistedSyncSession,
     mutations: &[SerializableMutationInput],
+    novel_plugin_assets: &HashMap<String, PathBuf>,
 ) -> Result<(), String> {
     if mutations.is_empty() {
         return Ok(());
@@ -4650,12 +6085,32 @@ async fn post_mutations_for_session(
             }
             return Err(error);
         }
+        if let Err(error) = ensure_novel_plugin_assets_uploaded(
+            client.clone(),
+            origin,
+            &session.access_token,
+            mutations,
+            novel_plugin_assets,
+        )
+        .await
+        {
+            if is_connection_error(&error) && index + 1 < origins.len() {
+                last_error = Some(error);
+                continue;
+            }
+            return Err(error);
+        }
         let response = client
             .post(format!("{origin}/v1/mutations"))
             .header("Authorization", format!("Bearer {}", session.access_token))
             .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
+            .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
             .header(
                 CLIENT_PROTOCOL_HEADER.as_str(),
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .header(
+                LEGACY_CLIENT_PROTOCOL_HEADER.as_str(),
                 CLIENT_PROTOCOL_VERSION.to_string(),
             )
             .json(&request)
@@ -4730,7 +6185,8 @@ mod tests {
             .status(StatusCode::OK)
             .header(CONTENT_LENGTH, bytes.len())
             .header(ETAG, format!("\"{sha256}\""))
-            .header("x-aethon-asset-sha256", sha256)
+            .header(ASSET_SHA256_HEADER, &sha256)
+            .header(LEGACY_ASSET_SHA256_HEADER, &sha256)
             .body(Body::empty())
             .unwrap()
     }
@@ -4761,7 +6217,8 @@ mod tests {
             .status(status)
             .header(CONTENT_LENGTH, bytes.len().saturating_sub(start))
             .header(ETAG, format!("\"{sha256}\""))
-            .header("x-aethon-asset-sha256", sha256);
+            .header(ASSET_SHA256_HEADER, &sha256)
+            .header(LEGACY_ASSET_SHA256_HEADER, &sha256);
         if range_start.is_some() {
             builder = builder.header(
                 CONTENT_RANGE,
@@ -4784,7 +6241,8 @@ mod tests {
             .status(StatusCode::CREATED)
             .header(CONTENT_LENGTH, 0)
             .header(ETAG, format!("\"{sha256}\""))
-            .header("x-aethon-asset-sha256", sha256)
+            .header(ASSET_SHA256_HEADER, &sha256)
+            .header(LEGACY_ASSET_SHA256_HEADER, &sha256)
             .body(Body::empty())
             .unwrap()
     }
@@ -4867,6 +6325,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn desktop_cover_metadata_is_atomic_supported_and_path_free_on_wire() {
+        let root = tempfile::tempdir().unwrap();
+        let cover_path = root.path().join("cover.png");
+        let cover = b"\x89PNG\r\n\x1a\nverified-cover";
+        std::fs::write(&cover_path, cover).unwrap();
+        let mut next = PersistedBookLibraryState {
+            books: vec![json!({
+                "id": "epub:sha256:fixture",
+                "assetFingerprint": "a".repeat(64),
+                "mimeType": "application/epub+zip",
+                "byteSize": 128,
+                "title": "Covered book",
+                "subtype": "epub",
+                "coverPath": cover_path,
+                "createdAt": 1,
+                "updatedAt": 1,
+            })],
+            ..PersistedBookLibraryState::default()
+        };
+
+        assert!(
+            enrich_book_cover_assets(&PersistedBookLibraryState::default(), &mut next)
+                .await
+                .unwrap()
+        );
+        let book = &next.books[0];
+        let cover_sha256 = sha256_file_bytes(cover);
+        assert_eq!(
+            value_string_field(book, "coverAssetSha256").as_deref(),
+            Some(cover_sha256.as_str())
+        );
+        assert_eq!(
+            value_i64_field(book, "coverAssetByteSize"),
+            Some(cover.len() as i64)
+        );
+        assert_eq!(
+            value_string_field(book, "coverAssetMimeType").as_deref(),
+            Some("image/png")
+        );
+        assert!(value_bool_field(book, "hasCover", false));
+
+        let patch = build_book_entry_patch(book).unwrap();
+        let wire = serde_json::to_value(patch).unwrap();
+        assert_eq!(wire["coverAssetMimeType"], "image/png");
+        assert!(wire.get("coverPath").is_none());
+        assert!(wire.get("assetPath").is_none());
+        assert!(wire.get("privatePath").is_none());
+    }
+
+    #[test]
+    fn desktop_cover_signature_allowlist_is_jpeg_png_and_webp_only() {
+        assert_eq!(
+            detected_cover_mime_type(&[0xff, 0xd8, 0xff]),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            detected_cover_mime_type(b"\x89PNG\r\n\x1a\n"),
+            Some("image/png")
+        );
+        assert_eq!(
+            detected_cover_mime_type(b"RIFF\x04\0\0\0WEBP"),
+            Some("image/webp")
+        );
+        assert_eq!(detected_cover_mime_type(b"GIF89a"), None);
+        assert_eq!(detected_cover_mime_type(b"<svg"), None);
+    }
+
+    #[tokio::test]
     async fn remote_asset_download_resumes_validates_and_materializes_atomically() {
         let bytes = b"mobile uploaded pdf bytes with resumable tail".to_vec();
         let sha256 = sha256_file_bytes(&bytes);
@@ -4911,12 +6437,16 @@ mod tests {
     #[test]
     fn book_bookmark_entity_id_is_stable() {
         let entry = LocalBookBookmark {
+            bookmark_id: String::new(),
             book_id: "book-1".to_string(),
             location: Some("epubcfi(/6/2)".to_string()),
             href: None,
             page_index: None,
             progress_percent: 0.4,
             label: Some("Here".to_string()),
+            note: None,
+            created_at_ms: 10,
+            updated_at_ms: 10,
             saved_at: 10,
         };
         assert_eq!(
@@ -4926,15 +6456,106 @@ mod tests {
     }
 
     #[test]
+    fn book_asset_metadata_is_restored_before_publication() {
+        let asset = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(asset.path(), b"%PDF fixture").unwrap();
+        let mut current = PersistedBookLibraryState {
+            books: vec![json!({
+                "id": "pdf-local",
+                "title": "Fixture",
+                "subtype": "pdf",
+                "assetFingerprint": "fingerprint",
+                "assetPath": asset.path(),
+            })],
+            ..PersistedBookLibraryState::default()
+        };
+
+        assert!(
+            enrich_book_asset_metadata(&PersistedBookLibraryState::default(), &mut current,)
+                .unwrap()
+        );
+        let entry = &current.books[0];
+        assert_eq!(
+            value_string_field(entry, "mimeType").as_deref(),
+            Some("application/pdf")
+        );
+        assert_eq!(
+            value_i64_field(entry, "byteSize"),
+            Some(b"%PDF fixture".len() as i64)
+        );
+    }
+
+    #[test]
+    fn legacy_book_ids_publish_and_resolve_by_canonical_content_identity() {
+        let fingerprint = "e6047bf8a0a95f7840849c55983bf4f07b8b881091c3417340b4872fe81eecce";
+        let state = PersistedBookLibraryState {
+            books: vec![json!({
+                "id": format!("pdf-{fingerprint}"),
+                "title": "Legacy fixture",
+                "subtype": "pdf",
+                "assetFingerprint": fingerprint,
+                "mimeType": "application/pdf",
+                "byteSize": 10,
+            })],
+            book_history: vec![LocalBookHistory {
+                history_id: format!("book.history::pdf-{fingerprint}"),
+                book_id: format!("pdf-{fingerprint}"),
+                renderer: Some("pdf".to_string()),
+                location: Some("1".to_string()),
+                href: None,
+                page_index: Some(1),
+                progress_percent: 0.1,
+                section_label: None,
+                read_at_ms: 10,
+            }],
+            ..PersistedBookLibraryState::default()
+        };
+        let canonical = format!("pdf:sha256:{fingerprint}");
+
+        assert_eq!(
+            canonical_book_id_for_entry(&state.books[0]),
+            Some(canonical.clone())
+        );
+        assert_eq!(
+            canonical_book_id_for_local_id(&state, &format!("pdf-{fingerprint}")),
+            canonical
+        );
+        assert_eq!(
+            local_book_id_for_canonical_id(&state, &canonical),
+            format!("pdf-{fingerprint}")
+        );
+        let diff = diff_book_mutations(&PersistedBookLibraryState::default(), &state);
+        assert!(matches!(
+            &diff[0],
+            SerializableMutationInput::BookEntry { base, .. } if base.entity_id == canonical
+        ));
+        assert!(matches!(
+            &diff[1],
+            SerializableMutationInput::BookHistory { base, patch: None }
+                if base.entity_id == format!("book.history::pdf-{fingerprint}")
+        ));
+        assert!(matches!(
+            &diff[2],
+            SerializableMutationInput::BookHistory { base, patch: Some(patch) }
+                if base.entity_id == format!("book.history::{canonical}")
+                    && patch.book_id == canonical
+        ));
+    }
+
+    #[test]
     fn diff_book_mutations_emits_merge_and_delete() {
         let previous = PersistedBookLibraryState {
             book_bookmarks: vec![LocalBookBookmark {
+                bookmark_id: String::new(),
                 book_id: "book-1".to_string(),
                 location: Some("old".to_string()),
                 href: None,
                 page_index: None,
                 progress_percent: 0.1,
                 label: None,
+                note: None,
+                created_at_ms: 1,
+                updated_at_ms: 1,
                 saved_at: 1,
             }],
             ..PersistedBookLibraryState::default()
@@ -5096,7 +6717,8 @@ mod tests {
                     ..
                 },
                 patch: Some(BookEntryPatch { title, .. }),
-            } if entity_id == "book-1" && title == "New title"
+            } if entity_id == &format!("epub:sha256:{}", "a".repeat(64))
+                && title == "New title"
         ));
     }
 
@@ -5143,7 +6765,59 @@ mod tests {
     }
 
     #[test]
-    fn diff_novel_mutations_ignores_library_metadata_changes() {
+    fn diff_novel_progress_emits_portable_refs_from_exact_provider_keys() {
+        let next = PersistedNovelLibraryState {
+            entries: vec![json!({
+                "id": "local-novel-42",
+                "title": "Fixture",
+                "path": "/Novel/KeepCase?chapter=A%2FB",
+                "source": { "pluginId": "fixture.plugin" }
+            })],
+            chapters: vec![json!({
+                "id": "local-chapter-7",
+                "novelId": "local-novel-42",
+                "path": "/Chapter/KeepCase?part=1",
+                "title": "Chapter"
+            })],
+            progress: vec![LocalNovelProgress {
+                novel_id: "local-novel-42".to_string(),
+                chapter_id: Some("local-chapter-7".to_string()),
+                chapter_title: Some("Chapter".to_string()),
+                progress_percent: 0.4,
+                locator: Some("block:4".to_string()),
+                updated_at: 20,
+            }],
+            ..PersistedNovelLibraryState::default()
+        };
+
+        let diff =
+            diff_novel_mutations("local-main", &PersistedNovelLibraryState::default(), &next);
+        let SerializableMutationInput::NovelProgress { base, patch } = diff
+            .iter()
+            .find(|mutation| matches!(mutation, SerializableMutationInput::NovelProgress { .. }))
+            .expect("expected novel progress mutation")
+        else {
+            panic!("expected novel progress mutation");
+        };
+        let work = patch.portable_work_ref.as_ref().unwrap();
+        let chapter = patch.portable_chapter_ref.as_ref().unwrap();
+        let chapter_id = canonical_portable_chapter_id(chapter);
+
+        assert_eq!(
+            base.entity_id,
+            format!("novel.progress::{}", canonical_portable_work_id(work))
+        );
+        assert_eq!(patch.chapter_id.as_deref(), Some(chapter_id.as_str()));
+        assert!(matches!(
+            work,
+            PortableWorkRefV3::Novel { plugin_id, novel_key }
+                if plugin_id == "fixture.plugin"
+                    && novel_key == "/Novel/KeepCase?chapter=A%2FB"
+        ));
+    }
+
+    #[test]
+    fn diff_novel_mutations_publishes_library_metadata_and_history_changes() {
         let previous = PersistedNovelLibraryState {
             entries: vec![json!({
                 "id": "novel-1",
@@ -5190,7 +6864,102 @@ mod tests {
         };
 
         let diff = diff_novel_mutations("local-main", &previous, &next);
-        assert!(diff.is_empty());
+        assert_eq!(diff.len(), 3);
+        assert!(matches!(
+            &diff[0],
+            SerializableMutationInput::NovelEntry {
+                patch: Some(NovelEntryPatch { title, path, .. }),
+                ..
+            } if title == "New novel" && path == "/new"
+        ));
+        assert!(diff.iter().any(|mutation| matches!(
+            mutation,
+            SerializableMutationInput::NovelHistory {
+                patch: Some(NovelHistoryPatch { locator: Some(locator), .. }),
+                ..
+            } if locator == "new"
+        )));
+    }
+
+    #[test]
+    fn lnreader_dependencies_publish_metadata_without_executable_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let artifact_path = root.path().join("plugin.js");
+        let artifact = b"module.exports = { id: 'fixture' };";
+        std::fs::write(&artifact_path, artifact).unwrap();
+        let repository_url = "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
+        let repository_id = "desktop-repository";
+        let state = PersistedNovelRepositoryState {
+            repositories: vec![LocalNovelRepository {
+                id: repository_id.to_string(),
+                url: repository_url.to_string(),
+                normalized_url: repository_url.to_string(),
+                enabled: true,
+            }],
+            catalog_entries: vec![LocalNovelCatalogEntry {
+                repository_id: repository_id.to_string(),
+                plugin_id: "fixture.plugin".to_string(),
+                name: "Fixture plugin".to_string(),
+                lang: "en".to_string(),
+                version: "1.0.0".to_string(),
+            }],
+            installed_plugins: vec![LocalInstalledNovelPlugin {
+                repository_id: repository_id.to_string(),
+                plugin_id: "fixture.plugin".to_string(),
+                version: "1.0.0".to_string(),
+                enabled: true,
+                artifact_path: artifact_path.to_string_lossy().into_owned(),
+                installed_at_ms: 10,
+                updated_at_ms: 20,
+            }],
+        };
+
+        let created = diff_novel_dependency_mutations(
+            "main",
+            &PersistedNovelRepositoryState::default(),
+            &state,
+        );
+        assert_eq!(created.len(), 2);
+        assert!(matches!(
+            created[0],
+            SerializableMutationInput::NovelRepository { .. }
+        ));
+        let plugin = serde_json::to_value(&created[1]).unwrap();
+        assert_eq!(plugin["entityType"], "novel.plugin");
+        assert_eq!(plugin["patch"]["artifactByteLength"], artifact.len());
+        assert_eq!(
+            plugin["patch"]["artifactSha256"],
+            sha256_file_bytes(artifact)
+        );
+        assert!(plugin["patch"].get("artifactPath").is_none());
+        assert!(plugin["patch"].get("artifactBytes").is_none());
+
+        let removed = diff_novel_dependency_mutations(
+            "main",
+            &state,
+            &PersistedNovelRepositoryState::default(),
+        );
+        assert_eq!(removed.len(), 2);
+        assert!(matches!(
+            removed[0],
+            SerializableMutationInput::NovelPlugin {
+                base: SerializableMutationBase {
+                    op: MutationOperation::Delete,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            removed[1],
+            SerializableMutationInput::NovelRepository {
+                base: SerializableMutationBase {
+                    op: MutationOperation::Delete,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -5211,12 +6980,15 @@ mod tests {
 
         assert_eq!(
             patch.identity_key,
-            "novel-2ddcfbbb73a4bc27095ac742d5e3355a7f432b5ecd484525fb59fbbaf8a9b127"
+            canonical_portable_work_id(&PortableWorkRefV3::Novel {
+                plugin_id: "plugin".to_string(),
+                novel_key: "/novel/1".to_string(),
+            })
         );
     }
 
     #[test]
-    fn desktop_bridge_preserves_legacy_identity_for_metadata_only_novel() {
+    fn desktop_bridge_uses_portable_identity_when_plugin_and_path_are_available() {
         let patch = build_novel_entry_patch(&json!({
             "id": "novel:legacy:%2Fnovel%2F1",
             "title": "Legacy",
@@ -5229,7 +7001,13 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(patch.identity_key, "novel:legacy:%2Fnovel%2F1");
+        assert_eq!(
+            patch.identity_key,
+            canonical_portable_work_id(&PortableWorkRefV3::Novel {
+                plugin_id: "plugin".to_string(),
+                novel_key: "/novel/1".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -5261,6 +7039,9 @@ mod tests {
                 page_index: None,
                 progress_percent: 0.5,
                 label: Some("Good bit".to_string()),
+                note: Some("Keep".to_string()),
+                created_at_ms: 1200,
+                updated_at_ms: 1300,
                 saved_at_ms: 1300,
                 record_lamport: 11,
             },
@@ -5278,6 +7059,56 @@ mod tests {
     }
 
     #[test]
+    fn legacy_book_progress_alias_is_rebound_without_duplicate_local_progress() {
+        let fingerprint = "a".repeat(64);
+        let canonical = format!("epub:sha256:{fingerprint}");
+        let local = format!("epub-{fingerprint}");
+        let mut state = PersistedBookLibraryState {
+            books: vec![json!({
+                "id": local,
+                "subtype": "epub",
+                "assetFingerprint": fingerprint,
+            })],
+            book_progress: vec![LocalBookProgress {
+                book_id: format!("book.progress::{canonical}"),
+                location: Some("legacy".to_string()),
+                href: None,
+                progress_percent: 0.1,
+                last_read_at: 1,
+                page_index: None,
+                total_pages: None,
+                section_label: None,
+                renderer: Some("epub".to_string()),
+            }],
+            ..PersistedBookLibraryState::default()
+        };
+
+        upsert_book_progress(
+            &mut state,
+            BookProgressRecord {
+                book_id: canonical.clone(),
+                renderer: Some("epub".to_string()),
+                location: Some("current".to_string()),
+                href: None,
+                progress_percent: 0.8,
+                last_read_at_ms: 2,
+                page_index: None,
+                total_pages: None,
+                section_label: None,
+                record_lamport: 2,
+            },
+        );
+
+        assert_eq!(state.book_progress.len(), 1);
+        assert_eq!(state.book_progress[0].book_id, local);
+        assert_eq!(state.book_progress[0].progress_percent, 0.8);
+        assert_eq!(
+            canonical_book_id_for_local_id(&state, &format!("book.progress::{canonical}")),
+            canonical
+        );
+    }
+
+    #[test]
     fn remote_book_history_merge_and_tombstone_preserve_reader_state() {
         let progress = LocalBookProgress {
             book_id: "book-1".to_string(),
@@ -5291,12 +7122,16 @@ mod tests {
             renderer: Some("epub".to_string()),
         };
         let bookmark = LocalBookBookmark {
+            bookmark_id: "bookmark-1".to_string(),
             book_id: "book-1".to_string(),
             location: Some("epubcfi(/6/4)".to_string()),
             href: None,
             page_index: None,
             progress_percent: 0.5,
             label: Some("Keep".to_string()),
+            note: None,
+            created_at_ms: 110,
+            updated_at_ms: 110,
             saved_at: 110,
         };
         let mut state = PersistedBookLibraryState {
@@ -5336,6 +7171,8 @@ mod tests {
             NovelProgressRecord {
                 novel_id: "novel-1".to_string(),
                 chapter_id: Some("chapter-9".to_string()),
+                portable_work_ref: None,
+                portable_chapter_ref: None,
                 chapter_title: Some("Nine".to_string()),
                 chapter_order_key: Some(9.0),
                 progress_percent: 0.8,
@@ -5370,6 +7207,56 @@ mod tests {
         let bookmark_id = bookmark_entity_id_for_novel(&state.bookmarks[0]);
         delete_novel_bookmark(&mut state, &bookmark_id);
         assert!(state.bookmarks.is_empty());
+    }
+
+    #[test]
+    fn remote_portable_novel_progress_resolves_to_existing_local_ids() {
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/novel/opaque".to_string(),
+        };
+        let chapter = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: "/chapter/opaque".to_string(),
+        };
+        let mut state = PersistedNovelLibraryState {
+            entries: vec![json!({
+                "id": "local-novel-1",
+                "title": "Local",
+                "path": "/novel/opaque",
+                "source": { "pluginId": "fixture.plugin" }
+            })],
+            chapters: vec![json!({
+                "id": "local-chapter-9",
+                "novelId": "local-novel-1",
+                "path": "/chapter/opaque",
+                "title": "Nine"
+            })],
+            ..PersistedNovelLibraryState::default()
+        };
+
+        upsert_novel_progress(
+            &mut state,
+            NovelProgressRecord {
+                novel_id: canonical_portable_work_id(&work),
+                chapter_id: Some(canonical_portable_chapter_id(&chapter)),
+                portable_work_ref: Some(work),
+                portable_chapter_ref: Some(chapter),
+                chapter_title: Some("Nine".to_string()),
+                chapter_order_key: Some(9.0),
+                progress_percent: 0.8,
+                locator: Some("block:9".to_string()),
+                locator_sort_key: Some(9.0),
+                updated_at_ms: 2000,
+                record_lamport: 20,
+            },
+        );
+
+        assert_eq!(state.progress[0].novel_id, "local-novel-1");
+        assert_eq!(
+            state.progress[0].chapter_id.as_deref(),
+            Some("local-chapter-9")
+        );
     }
 
     #[test]
@@ -5509,6 +7396,8 @@ mod tests {
                 lamport: 123,
             },
             patch: Some(ComicHistoryPatch {
+                portable_work_ref: None,
+                portable_chapter_ref: None,
                 history_id: history_id.clone(),
                 comic_id,
                 chapter_id: "9".to_string(),
@@ -5589,6 +7478,10 @@ mod tests {
         };
         let snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("book-progress-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(1),
+            tombstone_count: Some(1),
             scope_id: BOOKS_SCOPE_ID.to_string(),
             snapshot_version: 40,
             min_replayable_server_version: 10,
@@ -5631,6 +7524,10 @@ mod tests {
         };
         let snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("book-history-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(1),
+            tombstone_count: Some(0),
             scope_id: BOOKS_SCOPE_ID.to_string(),
             snapshot_version: 60,
             min_replayable_server_version: 20,
@@ -5685,6 +7582,8 @@ mod tests {
         let record = NovelProgressRecord {
             novel_id: "novel-remote".to_string(),
             chapter_id: Some("chapter-2".to_string()),
+            portable_work_ref: None,
+            portable_chapter_ref: None,
             chapter_title: Some("Two".to_string()),
             chapter_order_key: Some(2.0),
             progress_percent: 0.6,
@@ -5695,6 +7594,10 @@ mod tests {
         };
         let snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("novel-progress-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(1),
+            tombstone_count: Some(0),
             scope_id: "novels:profile:remote-main".to_string(),
             snapshot_version: 50,
             min_replayable_server_version: 12,
@@ -5725,6 +7628,8 @@ mod tests {
             history_id: format!("comic.history::{comic_id}"),
             comic_id: comic_id.clone(),
             chapter_id: "2".to_string(),
+            portable_work_ref: None,
+            portable_chapter_ref: None,
             page_index: 4,
             page_count: Some(20),
             progress_percent: 0.25,
@@ -5733,16 +7638,36 @@ mod tests {
         };
         let snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("comic-reader-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(3),
+            tombstone_count: Some(1),
             scope_id: "comics:profile:remote-main".to_string(),
             snapshot_version: 80,
             min_replayable_server_version: 20,
-            entities: vec![SnapshotEntity {
-                entity_type: "comic.history".to_string(),
-                entity_id: record.history_id.clone(),
-                server_version: 79,
-                lamport: 12,
-                record: serde_json::to_value(record).unwrap(),
-            }],
+            entities: vec![
+                SnapshotEntity {
+                    entity_type: "comic.entry".to_string(),
+                    entity_id: "portable:comic:entry".to_string(),
+                    server_version: 77,
+                    lamport: 10,
+                    record: json!({ "comicId": "portable:comic:entry", "inLibrary": true }),
+                },
+                SnapshotEntity {
+                    entity_type: "comic.chapter_state".to_string(),
+                    entity_id: "portable:comic:chapter-state".to_string(),
+                    server_version: 78,
+                    lamport: 11,
+                    record: json!({ "chapterStateId": "portable:comic:chapter-state" }),
+                },
+                SnapshotEntity {
+                    entity_type: "comic.history".to_string(),
+                    entity_id: record.history_id.clone(),
+                    server_version: 79,
+                    lamport: 12,
+                    record: serde_json::to_value(record).unwrap(),
+                },
+            ],
             tombstones: vec![SnapshotTombstone {
                 entity_type: "comic.page_bookmark".to_string(),
                 entity_id: "bookmark-old".to_string(),
@@ -5766,6 +7691,10 @@ mod tests {
 
         let books_snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("empty-books-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(0),
+            tombstone_count: Some(0),
             scope_id: BOOKS_SCOPE_ID.to_string(),
             snapshot_version: 80,
             min_replayable_server_version: 20,
@@ -5774,6 +7703,10 @@ mod tests {
         };
         let novels_snapshot = SnapshotResponse {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("empty-novels-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(0),
+            tombstone_count: Some(0),
             scope_id: "novels:profile:remote-main".to_string(),
             snapshot_version: 80,
             min_replayable_server_version: 20,
@@ -5787,8 +7720,9 @@ mod tests {
             &novels_snapshot,
             &snapshot,
             &changes,
+            true,
         );
-        assert_eq!(profile.pending_comic_reader_snapshot, Some(marker));
+        assert_eq!(profile.pending_comic_reader_snapshot, marker);
         assert_eq!(profile.pending_comic_reader_changes.len(), changes.len());
         assert_eq!(
             profile.pending_comic_reader_changes[0].server_version,
@@ -5802,6 +7736,105 @@ mod tests {
                 .last_applied_server_version,
             80
         );
+    }
+
+    #[test]
+    fn hosted_local_authority_does_not_stage_redundant_comic_reader_inbox() {
+        let empty_snapshot = |scope_id: &str| SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some(format!("{scope_id}-snapshot")),
+            complete: Some(true),
+            entity_count: Some(0),
+            tombstone_count: Some(0),
+            scope_id: scope_id.to_string(),
+            snapshot_version: 80,
+            min_replayable_server_version: 20,
+            entities: Vec::new(),
+            tombstones: Vec::new(),
+        };
+        let books_snapshot = empty_snapshot(BOOKS_SCOPE_ID);
+        let novels_snapshot = empty_snapshot("novels:profile:main");
+        let comics_snapshot = empty_snapshot("comics:profile:main");
+        let comic_change = ChangeEnvelope {
+            server_version: 79,
+            scope_id: comics_snapshot.scope_id.clone(),
+            profile_id: Some("main".to_string()),
+            entity_type: "comic.history".to_string(),
+            entity_id: "history-1".to_string(),
+            op: "merge".to_string(),
+            lamport: 79,
+            patch: Some(json!({ "pageIndex": 12 })),
+            applied_at_ms: 79,
+        };
+        let mut profile = PersistedReplicationProfileState {
+            pending_comic_reader_changes: vec![comic_change.clone()],
+            pending_comic_reader_snapshot: Some(SyncdComicReaderSnapshotMarker {
+                scope_id: comics_snapshot.scope_id.clone(),
+                snapshot_version: 70,
+            }),
+            ..Default::default()
+        };
+
+        let marker = stage_snapshot_recovery(
+            &mut profile,
+            &books_snapshot,
+            &novels_snapshot,
+            &comics_snapshot,
+            &[comic_change],
+            false,
+        );
+
+        assert!(marker.is_none());
+        assert!(profile.pending_comic_reader_changes.is_empty());
+        assert!(profile.pending_comic_reader_snapshot.is_none());
+        assert_eq!(
+            profile
+                .comics_scope_checkpoint
+                .as_ref()
+                .unwrap()
+                .last_applied_server_version,
+            80
+        );
+    }
+
+    #[test]
+    fn comic_reader_inbox_compacts_revisions_by_scoped_entity_identity() {
+        let change = |scope: &str, entity_id: &str, server_version: i64, op: &str| ChangeEnvelope {
+            server_version,
+            scope_id: scope.to_string(),
+            profile_id: Some("main".to_string()),
+            entity_type: "comic.history".to_string(),
+            entity_id: entity_id.to_string(),
+            op: op.to_string(),
+            lamport: server_version,
+            patch: (op == "merge").then(|| json!({ "pageIndex": server_version })),
+            applied_at_ms: server_version,
+        };
+        let mut pending = vec![
+            change("comics:profile:main", "history-1", 10, "merge"),
+            change("comics:profile:main", "history-2", 11, "merge"),
+            change("comics:profile:main", "history-1", 12, "delete"),
+            // An older replay arriving after the delete must not resurrect the entity.
+            change("comics:profile:main", "history-1", 9, "merge"),
+            // The same entity ID in another profile is a different durable state.
+            change("comics:profile:secondary", "history-1", 13, "merge"),
+        ];
+
+        compact_pending_comic_reader_changes(&mut pending);
+
+        assert_eq!(pending.len(), 3);
+        assert_eq!(
+            pending
+                .iter()
+                .find(|change| {
+                    change.scope_id == "comics:profile:main" && change.entity_id == "history-1"
+                })
+                .map(|change| (change.server_version, change.op.as_str())),
+            Some((12, "delete")),
+        );
+        assert!(pending
+            .windows(2)
+            .all(|window| window[0].server_version <= window[1].server_version));
     }
 
     fn receipt_fixture(
@@ -5834,6 +7867,7 @@ mod tests {
                 status,
                 applied_server_version: Some(1),
                 applied_lamport: Some(1),
+                event_clock: None,
                 record: None,
                 error: None,
             }],
@@ -5842,9 +7876,12 @@ mod tests {
     }
 
     #[test]
-    fn mutation_receipts_require_applied_result_for_every_request() {
+    fn mutation_receipts_accept_applied_or_superseded_terminal_results() {
         let (request, applied) = receipt_fixture(MutationResultStatus::Applied);
         validate_mutation_receipts(&request, &applied).unwrap();
+
+        let (_, superseded) = receipt_fixture(MutationResultStatus::Superseded);
+        validate_mutation_receipts(&request, &superseded).unwrap();
 
         let (_, rejected) = receipt_fixture(MutationResultStatus::Rejected);
         assert!(validate_mutation_receipts(&request, &rejected)

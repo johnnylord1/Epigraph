@@ -322,8 +322,8 @@ describe("ComicsLibraryBody", () => {
     await waitFor(() => {
       const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
       expect(src).toContain("/api/v1/manga/18/thumbnail");
-      expect(src).toContain("aethon_cover_generation=");
-      expect(src).toContain("aethon_cover_recovery=0");
+      expect(src).toContain("epigraph_cover_generation=");
+      expect(src).toContain("epigraph_cover_recovery=0");
     });
   });
 
@@ -380,11 +380,11 @@ describe("ComicsLibraryBody", () => {
       });
 
       await waitFor(() => expect(getCachedLibraryCoverUrl).toHaveBeenCalled());
-      await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-
-      const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
-      expect(src).toContain("/api/v1/manga/19/thumbnail");
-      expect(src).not.toBe("cover://bad-cache");
+      await waitFor(() => {
+        const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
+        expect(src).toContain("/api/v1/manga/19/thumbnail");
+        expect(src).not.toBe("cover://bad-cache");
+      }, { timeout: 3000 });
       expect(setSessionLibraryCoverUrl).not.toHaveBeenCalledWith(expect.anything(), targetManga, "cover://bad-cache");
     } finally {
       decodeSpy.mockRestore();
@@ -510,7 +510,7 @@ describe("ComicsLibraryBody", () => {
     await waitFor(() => {
       const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
       expect(src).toContain("/covers/broken.jpg");
-      expect(src).toContain("aethon_cover_retry=1");
+      expect(src).toContain("epigraph_cover_retry=1");
       expect(src).not.toBe("cover://broken-cover.jpg");
     });
 

@@ -3,8 +3,8 @@ Set-StrictMode -Version Latest
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
-$appPath = Join-Path $projectRoot "src-tauri\target\release\aethon.exe"
-$runId = "aethon-release-verify-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))-$PID"
+$appPath = Join-Path $projectRoot "src-tauri\target\release\epigraph.exe"
+$runId = "epigraph-release-verify-$([DateTime]::UtcNow.ToString('yyyyMMddHHmmss'))-$PID"
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) $runId
 $initialFingerprint = $null
 $results = [System.Collections.Generic.List[object]]::new()
@@ -61,19 +61,19 @@ try {
   $env:CI = "true"
   $env:CARGO_BUILD_JOBS = "1"
   $env:NODE_OPTIONS = if ($env:NODE_OPTIONS) { $env:NODE_OPTIONS } else { "--max-old-space-size=3072" }
-  $env:AETHON_NATIVE_SMOKE_OUTPUT_DIR = Join-Path $tempRoot "native-viewports"
-  $env:AETHON_NAVIGATION_OUTPUT_DIR = Join-Path $tempRoot "navigation"
-  $env:AETHON_BROWSER_SCREENSHOT_DIR = Join-Path $tempRoot "browser-provider"
-  $env:AETHON_WEBDRIVER_WINDOW_X = "1980"
-  $env:AETHON_WEBDRIVER_WINDOW_Y = "80"
-  $env:AETHON_WEBDRIVER_WINDOW_WIDTH = "1280"
-  $env:AETHON_WEBDRIVER_WINDOW_HEIGHT = "800"
-  Remove-Item Env:AETHON_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_RELEASE_SMOKE_LIVE -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_LIVE_SUWAYOMI_URL -ErrorAction SilentlyContinue
-  Remove-Item Env:AETHON_LIVE_FLARESOLVERR_URL -ErrorAction SilentlyContinue
+  $env:EPIGRAPH_NATIVE_SMOKE_OUTPUT_DIR = Join-Path $tempRoot "native-viewports"
+  $env:EPIGRAPH_NAVIGATION_OUTPUT_DIR = Join-Path $tempRoot "navigation"
+  $env:EPIGRAPH_BROWSER_SCREENSHOT_DIR = Join-Path $tempRoot "browser-provider"
+  $env:EPIGRAPH_WEBDRIVER_WINDOW_X = "1980"
+  $env:EPIGRAPH_WEBDRIVER_WINDOW_Y = "80"
+  $env:EPIGRAPH_WEBDRIVER_WINDOW_WIDTH = "1280"
+  $env:EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT = "800"
+  Remove-Item Env:EPIGRAPH_WEBDRIVER_SHOW_WINDOW -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_SUWAYOMI_LIVE_ENDPOINT -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_SUWAYOMI_LIVE_PROFILE -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_RELEASE_SMOKE_LIVE -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_LIVE_SUWAYOMI_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:EPIGRAPH_LIVE_FLARESOLVERR_URL -ErrorAction SilentlyContinue
 
   Invoke-ReleaseStep "Initial whitespace check" { Test-GitWhitespace }
   Invoke-ReleaseStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
@@ -87,9 +87,9 @@ try {
     & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1 -SkipProjectGates
   }
   Invoke-ReleaseStep "External integration contracts" {
-    $env:AETHON_SKIP_SUWAYOMI_CERTIFICATION = "1"
+    $env:EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION = "1"
     try { & pnpm release:certify-integrations }
-    finally { Remove-Item Env:AETHON_SKIP_SUWAYOMI_CERTIFICATION -ErrorAction SilentlyContinue }
+    finally { Remove-Item Env:EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION -ErrorAction SilentlyContinue }
   }
   Invoke-ReleaseStep "Bundle budgets" { & pnpm release:check-bundles }
   Invoke-ReleaseStep "Rust test suite" { & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1 }

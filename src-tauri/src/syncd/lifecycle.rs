@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,15 +15,21 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
 use super::config::SyncdConfig;
-use super::middleware::{CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION};
+use super::middleware::{
+    CLIENT_PROTOCOL_HEADER, CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION,
+    LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
+};
 use super::models::{
     AppError, AuthenticatedSession, ErrorBody, PairingTokenResponse, SharedAppState,
     SyncdDiscoveryDescriptor,
 };
+use super::network::detect_lan_ip;
 use super::runtime_manifest::{read_runtime_manifest, runtime_manifest_path, SyncdRuntimeManifest};
 
 const SHUTDOWN_RESPONSE_DELAY: Duration = Duration::from_millis(100);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+// Stable persisted device identity; the display name may be Epigraph while
+// the database identity remains compatible with existing installations.
 const LOCAL_AUTHORITY_DEVICE_ID: &str = "aethon-core-maintenance";
 const LOCAL_AUTHORITY_PROFILE_ID: &str = "main";
 
@@ -158,7 +164,7 @@ pub async fn run_command_line() -> anyhow::Result<()> {
         "serve" => run_serve_command(args.collect()).await,
         "shutdown" => run_shutdown_command(args.collect()).await,
         "autostart" => run_autostart_command(args.collect()),
-        other => bail!("unsupported aethon-syncd command '{other}'"),
+        other => bail!("unsupported epigraph-syncd command '{other}'"),
     }
 }
 
@@ -167,16 +173,25 @@ async fn run_serve_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result
         [] => super::app::run().await,
         [mode] if mode == "--lan" => {
             let lan_ip = detect_lan_ip()?;
-            std::env::set_var("AETHON_SYNCD_BIND_HOST", "0.0.0.0");
-            std::env::set_var("AETHON_SYNCD_OWNERSHIP", "persistent-attached");
+            let port = SyncdConfig::from_env().bind_addr.port();
+            std::env::set_var("EPIGRAPH_SYNCD_BIND_HOST", "0.0.0.0");
+            std::env::set_var("EPIGRAPH_SYNCD_OWNERSHIP", "persistent-attached");
             std::env::set_var(
-                "AETHON_SYNCD_ADVERTISED_BASE_URL",
-                format!("https://{lan_ip}:4777"),
+                "EPIGRAPH_SYNCD_ADVERTISED_BASE_URL",
+                lan_advertised_base_url(lan_ip, port),
             );
             super::app::run().await
         }
         _ => bail!("serve accepts only the optional --lan argument"),
     }
+}
+
+fn lan_advertised_base_url(lan_ip: IpAddr, port: u16) -> String {
+    let host = match lan_ip {
+        IpAddr::V4(ip) => ip.to_string(),
+        IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    format!("https://{host}:{port}")
 }
 
 async fn run_shutdown_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result<()> {
@@ -236,9 +251,9 @@ fn run_autostart_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result<(
         bail!("autostart requires exactly one action: install, remove, or status");
     };
     let executable = std::env::current_exe()
-        .context("failed to resolve Aethon Core executable")?
+        .context("failed to resolve Epigraph Core executable")?
         .canonicalize()
-        .context("failed to canonicalize Aethon Core executable")?;
+        .context("failed to canonicalize Epigraph Core executable")?;
     match action.to_string_lossy().as_ref() {
         "install" => super::autostart::install(&executable),
         "remove" => {
@@ -258,24 +273,6 @@ fn run_autostart_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Result<(
         }
         other => bail!("unsupported autostart action '{other}'"),
     }
-}
-
-fn detect_lan_ip() -> anyhow::Result<std::net::IpAddr> {
-    use std::net::{Ipv4Addr, UdpSocket};
-
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-        .context("failed to open LAN discovery socket")?;
-    socket
-        .connect((Ipv4Addr::new(8, 8, 8, 8), 80))
-        .context("failed to resolve a LAN route")?;
-    let ip = socket
-        .local_addr()
-        .context("failed to resolve local LAN address")?
-        .ip();
-    if ip.is_loopback() || ip.is_unspecified() {
-        bail!("resolved LAN address is not reachable from another device");
-    }
-    Ok(ip)
 }
 
 pub async fn request_persistent_shutdown(
@@ -298,7 +295,9 @@ pub async fn request_persistent_shutdown(
         .post(url)
         .header("authorization", format!("Bearer {}", token.access_token))
         .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+        .header(LEGACY_CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
         .header(CLIENT_PROTOCOL_HEADER, "1")
+        .header(LEGACY_CLIENT_PROTOCOL_HEADER, "1")
         .json(&ShutdownRequest {
             server_id: manifest.server_id.clone(),
             expected_pid: manifest.pid,
@@ -511,6 +510,18 @@ mod tests {
     use tokio::sync::{broadcast, Mutex, RwLock};
 
     #[test]
+    fn lan_advertisement_uses_the_effective_configured_port() {
+        assert_eq!(
+            lan_advertised_base_url("192.168.1.20".parse().unwrap(), 4779),
+            "https://192.168.1.20:4779"
+        );
+        assert_eq!(
+            lan_advertised_base_url("::1".parse().unwrap(), 4780),
+            "https://[::1]:4780"
+        );
+    }
+
+    #[test]
     fn coordinator_accepts_only_the_first_shutdown_request() {
         let (coordinator, receiver) = ShutdownCoordinator::channel();
         let first = ShutdownRequest {
@@ -591,7 +602,9 @@ mod tests {
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {token}"))
             .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+            .header(LEGACY_CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
             .header(CLIENT_PROTOCOL_HEADER, "1")
+            .header(LEGACY_CLIENT_PROTOCOL_HEADER, "1")
             .extension(ConnectInfo(remote.parse::<SocketAddr>().unwrap()))
             .body(Body::from(
                 serde_json::to_vec(&ShutdownRequest {

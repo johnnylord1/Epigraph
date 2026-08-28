@@ -1,19 +1,19 @@
 import type { Chapter, Manga } from "../types";
 import { resolveDiscordCover } from "./coverResolver";
 import {
-  AETHON_DISCORD_ACTIVITY_NAME,
-  AETHON_ICON_ASSET,
+  EPIGRAPH_DISCORD_ACTIVITY_NAME,
+  EPIGRAPH_ICON_ASSET,
   DISCORD_STATUS_DISPLAY_DETAILS,
   type DiscordButtonPayload,
   type DiscordPresencePayload,
 } from "./types";
 
-const DEFAULT_AETHON_GITHUB_REPO = "johnnylord1/Aethon";
-const AETHON_GITHUB_REPO = (import.meta.env.VITE_AETHON_GITHUB_REPO ?? "").trim() || DEFAULT_AETHON_GITHUB_REPO;
-const AETHON_GITHUB_URL = `https://github.com/${AETHON_GITHUB_REPO}`;
+const DEFAULT_EPIGRAPH_GITHUB_REPO = "johnnylord1/Epigraph";
+const EPIGRAPH_GITHUB_REPO = (import.meta.env.VITE_EPIGRAPH_GITHUB_REPO ?? "").trim() || DEFAULT_EPIGRAPH_GITHUB_REPO;
+const EPIGRAPH_GITHUB_URL = `https://github.com/${EPIGRAPH_GITHUB_REPO}`;
 
 export const DISCORD_BUTTONS: DiscordButtonPayload[] = [
-  { label: "GitHub", url: AETHON_GITHUB_URL },
+  { label: "GitHub", url: EPIGRAPH_GITHUB_URL },
 ];
 
 export function truncatePresenceText(value: string, max = 128): string {
@@ -36,10 +36,10 @@ function basePayload(kind: DiscordPresencePayload["kind"], details: string): Dis
   return {
     kind,
     details,
-    activityName: AETHON_DISCORD_ACTIVITY_NAME,
+    activityName: EPIGRAPH_DISCORD_ACTIVITY_NAME,
     statusDisplayType: DISCORD_STATUS_DISPLAY_DETAILS,
-    largeImage: AETHON_ICON_ASSET,
-    largeText: "Aethon",
+    largeImage: EPIGRAPH_ICON_ASSET,
+    largeText: "Epigraph",
     buttons: DISCORD_BUTTONS,
   };
 }
@@ -48,8 +48,8 @@ export function mapNavigationPresence(navPage: string): DiscordPresencePayload {
   if (navPage === "library") return basePayload("navigation", "Browsing Library");
   if (navPage === "search") return basePayload("navigation", "Discovering manga");
   if (navPage === "downloads") return basePayload("downloads", "Downloading chapters");
-  if (navPage === "settings") return basePayload("navigation", "Customizing Aethon");
-  return basePayload("navigation", "Exploring Aethon");
+  if (navPage === "settings") return basePayload("navigation", "Customizing Epigraph");
+  return basePayload("navigation", "Exploring Epigraph");
 }
 
 export function mapSearchingPresence(): DiscordPresencePayload {

@@ -39,7 +39,7 @@ async fn create_bootstrap_session(
     .await
     .map_err(|error| AppError::Internal(format!("Failed to create bootstrap session: {error}")))?;
 
-    Ok(build_bootstrap_payload(&state, &session).await)
+    build_bootstrap_payload(&state, &session).await
 }
 
 pub async fn get_bootstrap_session(
@@ -85,13 +85,13 @@ async fn fetch_bootstrap_session(
         }));
     }
 
-    Ok(build_bootstrap_payload(&state, &session).await)
+    build_bootstrap_payload(&state, &session).await
 }
 
 async fn build_bootstrap_payload(
     state: &SharedAppState,
     session: &PairingSessionRow,
-) -> BootstrapPayloadResponse {
+) -> Result<BootstrapPayloadResponse, AppError> {
     let syncd_base_url = state
         .discovery_provider_state
         .read()
@@ -101,7 +101,13 @@ async fn build_bootstrap_payload(
         .clone();
     let claim_url = format!("{syncd_base_url}/v1/pairing/claim");
 
-    BootstrapPayloadResponse {
+    let server_identity = db::load_server_identity(&state.pool)
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to load server identity: {error}")))?;
+
+    Ok(BootstrapPayloadResponse {
+        schema_version: 2,
+        server_id: server_identity.server_id,
         pairing_session_id: session.session_id.clone(),
         pairing_code: session.pairing_code.clone(),
         syncd_base_url,
@@ -109,8 +115,9 @@ async fn build_bootstrap_payload(
         profile_id: session.profile_id.clone(),
         expires_at_ms: session.expires_at_ms,
         tls_cert_sha256: state.tls_cert_sha256.clone(),
+        mdns_service_name: server_identity.mdns_service_name,
         suwayomi_hint: suwayomi_hint_for_profile(&session.profile_id),
-    }
+    })
 }
 
 fn bootstrap_response(result: Result<BootstrapPayloadResponse, AppError>) -> Response {
@@ -195,20 +202,20 @@ fn local_server_profile_root(profile: BootstrapLocalServerProfile) -> PathBuf {
             {
                 dirs::data_dir()
                     .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-                    .join("aethon-main")
+                    .join("epigraph-main")
             }
             #[cfg(target_os = "macos")]
             {
                 dirs::data_dir()
                     .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-                    .join("aethon-main")
+                    .join("epigraph-main")
             }
             #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             {
                 let base = std::env::var("XDG_DATA_HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-                base.join("aethon-main")
+                base.join("epigraph-main")
             }
         }
     }
@@ -216,8 +223,8 @@ fn local_server_profile_root(profile: BootstrapLocalServerProfile) -> PathBuf {
 
 fn local_server_profile_root_override(profile: BootstrapLocalServerProfile) -> Option<PathBuf> {
     let var_name = match profile {
-        BootstrapLocalServerProfile::Main => "AETHON_LOCAL_SERVER_MAIN_ROOT",
-        BootstrapLocalServerProfile::Test => "AETHON_LOCAL_SERVER_TEST_ROOT",
+        BootstrapLocalServerProfile::Main => "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
+        BootstrapLocalServerProfile::Test => "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
     };
     std::env::var_os(var_name).map(PathBuf::from)
 }
@@ -227,20 +234,20 @@ fn suwayomi_data_dir() -> PathBuf {
     {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("C:\\ProgramData"))
-            .join("aethon")
+            .join("epigraph")
     }
     #[cfg(target_os = "macos")]
     {
         dirs::data_dir()
             .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("~")))
-            .join("aethon")
+            .join("epigraph")
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let base = std::env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| dirs::data_dir().unwrap_or_else(|| PathBuf::from("/tmp")));
-        base.join("aethon")
+        base.join("epigraph")
     }
 }
 

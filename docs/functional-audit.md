@@ -1,10 +1,10 @@
-# Auditoria Funcional — Aethon Desktop
+# Auditoria Funcional — Epigraph Desktop
 
 [Guia do usuário](user-guide.md) · [Bugs confirmados](bug-report.md) · [Melhorias e dívidas](improvement-report.md)
 
 ## Resumo
 
-Auditoria executada exclusivamente sobre o Aethon Desktop (Svelte 5, Tauri v2, Rust e WebView2). Aethon Mobile, Sorayomi, Flutter, Android e iOS ficaram fora do escopo. Syncd foi considerado somente como funcionalidade entre instâncias desktop.
+Auditoria executada originalmente sobre o Epigraph Desktop (Svelte 5, Tauri v2, Rust e WebView2). Epigraph Mobile, Suwayomi, Flutter, Android e iOS ficaram fora do escopo dos 63 fluxos originais. A revalidação de 09/08/2026 adicionou um smoke real Desktop↔Android em emulador: bridge Core, catálogo, capas, conteúdo, mutations e offline foram exercitados contra o perfil real. Aparelho físico continua fora do escopo certificado.
 
 - Data: 18/07/2026
 - Início: 15:07:23 (America/Sao_Paulo)
@@ -15,8 +15,8 @@ Auditoria executada exclusivamente sobre o Aethon Desktop (Svelte 5, Tauri v2, R
 
 | Estado padronizado | Total |
 | --- | ---: |
-| Funcionando | 29 |
-| Funcionando parcialmente | 4 |
+| Funcionando | 28 |
+| Funcionando parcialmente | 5 |
 | Quebrada | 0 |
 | Somente interface | 0 |
 | Implementada, mas inacessível | 1 |
@@ -105,8 +105,8 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-057 | Syncd Desktop | QR e pairing entre duas instâncias desktop | Syncd modal | Sim | Sim | Funcionando | Harness nativo com perfis isolados concluiu 7/7 cenários, incluindo QR, aprovação, restart e persistência | — |
 | FUNC-058 | Syncd Desktop | Descoberta LAN e fallback manual | Syncd modal | Sim | Sim | Funcionando | Backend, mDNS, hardening LAN e phase gate com normalização canônica passaram | — |
 | FUNC-059 | Syncd Desktop | Sessões, pause/resume e reconnect | Syncd modal | Sim | Sim | Funcionando | Testes Rust e componentes do painel passaram | — |
-| FUNC-060 | Syncd Desktop | Replicação de comics, novels e books | Syncd runtime | Sim | Sim, backend | Funcionando | Rust validou snapshot, replay, progresso, bookmarks, categorias, tombstones e assets | — |
-| FUNC-061 | Atualização | Updater do Aethon Desktop | Settings > About | Sim | Não | Depende de serviço externo | Requer endpoint/release e assinatura disponíveis | — |
+| FUNC-060 | Syncd/Core | Estado complementar de comics, novels e books | Syncd runtime / Core bridge | Sim | Parcial | Funcionando parcialmente | Rust validou snapshot/replay; emulador pareado materializou mais de 600 obras e confirmou capas, detalhes, capítulos, progresso, categorias e leitura offline. Restam aparelho físico, mudança real do inventário de extensões e restart da porta padrão | — |
+| FUNC-061 | Atualização | Updater do Epigraph Desktop | Settings > About | Sim | Não | Depende de serviço externo | Requer endpoint/release e assinatura disponíveis | — |
 | FUNC-062 | Resiliência | Loading, erros de rede e fallback de entrada | Splash/Shell | Sim | Sim | Funcionando | Fallback de inicialização e 44/44 testes browser passaram sem erros não tratados | — |
 | FUNC-063 | Novels | Escrita de settings de plugin no runtime host | Runtime oculto | Não | Não aplicável | Removida | A capacidade não possuía chamador nem implementação; o Marco 65 removeu a ação da whitelist e preservou somente `source.settings.read` sob demanda | — |
 
@@ -164,6 +164,8 @@ General, Reader, Content e About foram renderizados em inglês a 1280×800 em am
 
 O backend Rust validou autenticação, escopos, bootstrap, pairing, sessão, pause/resume/reconnect, snapshots, replay, tombstones e replicação para comics, novels e books. Os gates base, pairing, live pairing, mutações, hardening LAN e discovery passaram. O runner WebView2 com perfis isolados concluiu 7/7 cenários nos Marcos 58, 61 e 62. O risco remanescente é de concorrência do harness por portas e ownership de processos (`IMP-017`), não uma falha funcional Syncd reproduzida.
 
+Essa evidência cobre o estado complementar atualmente suportado pelo Syncd. O Core desktop publica uma bridge profile-scoped para catálogo e conteúdo sem ler H2 ou criar uma segunda autoridade; comandos tipados encaminham as mutations oficiais. O consumidor mobile pagina e materializa por bindings existentes, resolve assets sob demanda e mantém outbox durável. O smoke pareado em emulador confirmou catálogo, capas, detalhes, capítulos, páginas, progresso, categorias e CBZ offline. A certificação permanece parcial apenas porque ainda não houve aparelho físico, mudança real do inventário de extensões nem restart do Windows para recuperar a porta padrão.
+
 O Marco 68 localizou o contrato completo de 134 mensagens efetivamente renderizadas pelo modal em espanhol, japonês e chinês simplificado. Paridade de chaves/placeholders, termos técnicos, ausência de cópias inglesas e proteção contra endpoints/IDs em texto comum passaram em 5/5 testes; Pairing, Details e Options passaram em 4/4 testes browser e cinco baselines estáveis. A URL de exemplo permanece somente em Options, área avançada destinada à origem manual.
 
 Para a próxima certificação nativa, recomenda-se alocar dinamicamente todas as portas locais — driver, WebDriver nativo, Suwayomi de teste e cada sidecar Syncd — e propagá-las ao runtime, QR e mDNS. `runId`, perfil descartável, diretório temporário e lista de PIDs próprios devem existir apenas no harness. No produto, a seleção precisa ser automática e invisível, sem criar artefatos em pastas comuns do usuário ou expor configuração de porta no fluxo principal. Computadores diferentes podem reutilizar a mesma porta, mas instâncias e contas no mesmo Windows compartilham o namespace TCP.
@@ -216,7 +218,7 @@ Drift observado: entre a elaboração inicial do plano e o baseline de execuçã
 
 O comando `pnpm release:certify-integrations` certifica as integrações existentes sem contas reais e com execução serial. O gate passou com 93 testes TypeScript, 5 contratos Suwayomi e 1 teste Rust focado. A cobertura inclui OAuth e operações GraphQL de trackers, autorização/cache/rate limit do Hardcover, ausência e recuperação do Discord, privacidade e SSRF de capas, saúde/timeout/recuperação do FlareSolverr, validação SOCKS e políticas dos dois updaters.
 
-O updater do Aethon agora separa histórico público de autoridade de atualização: `list_releases` filtra drafts, prereleases e tags instáveis, enquanto apenas `check_aethon_update`, baseado no endpoint configurado e assinado, pode anunciar uma atualização. A instalação nativa exige que a versão escolhida continue sendo a oferecida pelo endpoint assinado. Assim, uma release pública mais nova, mas sem manifesto autorizado, aparece apenas como histórico e não como atualização instalável.
+O updater do Epigraph agora separa histórico público de autoridade de atualização: `list_releases` filtra drafts, prereleases e tags instáveis, enquanto apenas `check_epigraph_update`, baseado no endpoint configurado e assinado, pode anunciar uma atualização. A instalação nativa exige que a versão escolhida continue sendo a oferecida pelo endpoint assinado. Assim, uma release pública mais nova, mas sem manifesto autorizado, aparece apenas como histórico e não como atualização instalável.
 
 O gate sanitiza caminhos do workspace e padrões de credenciais antes de imprimir subprocessos. `release:smoke-live` permanece opcional e exige opt-in explícito com endpoints descartáveis; nenhuma conta, cookie, token ou serviço real é necessário para o gate bloqueante.
 
@@ -236,7 +238,7 @@ A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada 
 | --- | --- | --- |
 | Automática | Svelte/TypeScript, unit/jsdom, browser components, builtins, runtime de temas, Suwayomi, integrações determinísticas, bundles, Rust e builds | Verde: 151/852 unit-jsdom, 10/48 browser, 324+172 Rust |
 | WebView2 descartável | Import/restore EPUB e PDF, corrupção sem mutação, viewports 1280×800 e 800×600, Search dim, Comics/Books, toast e navegação | Verde: 2 livros, 2 progressos, 2 bookmarks, 6 checks de viewport e 5 sessões de navegação |
-| Condicional de release | Instalação real do updater Aethon a partir de manifesto/assinatura de produção | Não executada sem chave e pacote assinados; contratos de versão, manifesto e assinatura permanecem bloqueantes |
+| Condicional de release | Instalação real do updater Epigraph a partir de manifesto/assinatura de produção | Não executada sem chave e pacote assinados; contratos de versão, manifesto e assinatura permanecem bloqueantes |
 | Smoke ao vivo opcional | Trackers, Hardcover, Discord, proxies e serviços externos reais | Não executado sem opt-in/credenciais; os transports falsos e servidores locais são o gate reproduzível |
 | Manual residual | Leitor de tela e manga/fullscreen com catálogo real | Pendente, sem regressão comprovada nos smokes disponíveis |
 
@@ -257,9 +259,9 @@ utiliza para manga e o runtime LNReader separado mantém sua própria recuperaç
 anti-bot.
 
 Os testes proporcionais, browser, `svelte-check`, Cargo e build passaram. O
-gate agregado `pnpm release:verify` deve ser repetido no HEAD atual. Docker
-FlareSolverr real, instalação assinada, serviços live opt-in,
-manga/fullscreen e leitor de tela permanecem condicionais.
+gate agregado `pnpm release:verify` passou no HEAD atual em 01/08/2026. Docker
+FlareSolverr real, instalação assinada, serviços live opt-in, manga/fullscreen
+e leitor de tela permanecem condicionais.
 
 ## Marco 72F1 - ownership de comandos do Reader
 
@@ -405,11 +407,31 @@ usuário artificialmente.
 
 Continuam condicionais, e não foram apresentados como certificados: instalação
 assinada real, serviços externos live, Docker FlareSolverr real, manga/fullscreen
-dependente de catálogo e auditoria manual com leitor de tela. A execução única
-de `pnpm release:verify` foi interrompida durante a certificação de dados antes
-do resumo final; os gates constituintes foram concluídos em execuções
-controladas e o orquestrador mantém o contrato de worktree/diff para uma nova
-execução agregada. O Marco 72H permanece aberto até essa execução terminar.
+dependente de catálogo e auditoria manual com leitor de tela. O registro acima
+descreve a execução constituinte de 29/07/2026; a execução agregada foi
+repetida no HEAD atual em 01/08/2026 e passou os 16 gates bloqueantes, incluindo
+certificação de dados e limpeza final.
+
+### Revalidação do HEAD atual — 01/08/2026
+
+- Commit auditado: `50f1c8f6ea6c91da2c19113a826a42d187b668f1`.
+- `svelte-check`: 0 erros e 0 warnings.
+- Unit/jsdom: 189 arquivos, 1.119 testes aprovados e 1 skip; browser: 10
+  arquivos, 48/48 aprovados.
+- Rust: 349 testes do Epigraph e 176 do Syncd aprovados. Build frontend, Tauri
+  de automação e os gates determinísticos de dados, fontes, integrações e
+  bundles passaram.
+- WebView2 nativo: dados locais preservaram EPUB/PDF, progresso e bookmarks;
+  restore corrompido foi rejeitado; viewport passou 6/6; navegação passou sem
+  dim residual na Search, com toast animado e sem crescimento monotônico de
+  listeners/observers.
+- Auditoria visual adicional em DISPLAY3: Home, Library e Settings foram
+  capturados em 1280×800 e 800×600. Não houve clipping horizontal ou foco fora
+  da viewport. O perfil vazio explica placeholders e Library sem títulos.
+- A mediana de startup total acima da referência histórica é observacional e
+  não bloqueia: shell activation, transições de Library, Search e budgets
+  app-owned permaneceram dentro do contrato.
+
 ## Internacionalizacao - 01/08/2026
 
 - Os catalogos `en`, `es`, `ja`, `pt-BR` e `zh-CN` permanecem alinhados com
@@ -424,3 +446,31 @@ execução agregada. O Marco 72H permanece aberto até essa execução terminar.
 - Nomes proprios, URLs, formatos, unidades, nomes de icones e termos tecnicos
   como `EPUB`, `PDF`, `HUD`, `Nocturne`, `Host` e `Manga` permanecem sem
   traducao quando essa e a forma correta de apresenta-los.
+
+## Correção da fronteira Core/Mobile — 04/08/2026
+
+O desktop continua consultando catálogo, categorias e capítulos diretamente
+pela autoridade Suwayomi através do caminho GraphQL autenticado. O Core agora
+também expõe a ponte read-only `GET /v1/suwayomi/catalog`, com operações
+allowlisted para `library`, `categories` e `chapters`, sempre limitadas ao
+perfil autenticado e sem ler H2. O mesmo proxy aceita as mutations oficiais
+usadas pelo consumidor mobile.
+
+Isso fecha a parte desktop da bridge Suwayomi -> Core e a primeira parte do
+consumidor mobile. O Epigraph Mobile agora pagina `library`, `categories` e `chapters`,
+materializa as entidades por bindings existentes, resolve capas através do
+Core autenticado e grava Library, categorias remotas e progresso de capítulos
+na fila oficial `epigraph_suwayomi_mutation_queue`. A fila é transacional com a
+alteração local, filtrada por perfil, sequencial, confirmada por releitura e
+mantém retry ou bloqueio sanitizado conforme o erro. Testes cobrem sucesso,
+retry transitório, confirmação de progresso e isolamento entre perfis.
+
+O bootstrap pareado, as mutations de progresso/categoria e o download/leitura
+offline foram confirmados em emulador contra o perfil real. O relatório deve
+manter a certificação como **parcial** até cobrir aparelho físico, uma mudança
+real no inventário de extensões e a recuperação da porta padrão após restart.
+O capability `supportsSuwayomiCatalog` agora
+separa a bridge read-only do proxy GraphQL, e o cliente deriva o scope de
+comics do perfil embutido na identidade catalogada em vez de assumir `main`.
+Criação/renomeação de categorias e downloads do servidor permanecem fora desta
+vertical até existir contrato oficial e confirmação equivalente.

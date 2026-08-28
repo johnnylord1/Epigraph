@@ -6,11 +6,11 @@ import {
   normalizeServerUrl,
   type LocalProfileId,
 } from "../localProfiles";
-import type { AethonPayloadRestorePlan, AethonRestorePlan } from "./aethonRestorePlanner";
+import type { EpigraphPayloadRestorePlan, EpigraphRestorePlan } from "./epigraphRestorePlanner";
 
 export type BackupExportMode = "unified" | "manga" | "manga-proto-gz" | "manga-proto" | "novels" | "novels-lnreader" | "books" | "app";
 export type RestoreTargetMode = "other-local-profile" | "current-profile";
-export type BackupImportKind = "aethon" | "manga" | "novels-lnreader";
+export type BackupImportKind = "epigraph" | "manga" | "novels-lnreader";
 export type BackupExecutionSelection = Record<string, boolean>;
 
 export interface BackupLaunchIntent {
@@ -46,11 +46,11 @@ export function executionBlockedReasonForProfile(
     : "Restore execution is available only when this session is running on the built-in TEST or MAIN local profiles.";
 }
 
-export function isPayloadExecutable(payload: Pick<AethonPayloadRestorePlan, "canExecuteRestore" | "canRestoreNow">): boolean {
+export function isPayloadExecutable(payload: Pick<EpigraphPayloadRestorePlan, "canExecuteRestore" | "canRestoreNow">): boolean {
   return payload.canExecuteRestore && payload.canRestoreNow;
 }
 
-export function defaultExecutionSelection(plan: AethonRestorePlan): BackupExecutionSelection {
+export function defaultExecutionSelection(plan: EpigraphRestorePlan): BackupExecutionSelection {
   return Object.fromEntries(
     plan.payloads.map((payload) => [
       payload.kind,
@@ -60,7 +60,7 @@ export function defaultExecutionSelection(plan: AethonRestorePlan): BackupExecut
 }
 
 export function selectedExecutablePayloadKinds(
-  plan: AethonRestorePlan,
+  plan: EpigraphRestorePlan,
   selection: BackupExecutionSelection,
 ): string[] {
   return plan.payloads
@@ -89,8 +89,8 @@ export function buildRestoreRelaunchArgs(input: {
   intent: BackupLaunchIntent;
 }): string[] {
   const args = [`--${input.targetProfileId}`];
-  if (input.intent.kind === "aethon") {
-    args.push(`--restore-aethon-backup=${input.intent.path}`);
+  if (input.intent.kind === "epigraph") {
+    args.push(`--restore-epigraph-backup=${input.intent.path}`);
   } else if (input.intent.kind === "manga") {
     args.push(`--restore-manga-backup=${input.intent.path}`);
   } else {
@@ -107,7 +107,7 @@ export function detectBackupImportKind(path: string | null | undefined): BackupI
   const trimmed = typeof path === "string" ? path.trim() : "";
   if (!trimmed) return null;
   const normalized = trimmed.toLowerCase();
-  if (normalized.endsWith(".aethonbk")) return "aethon";
+  if (normalized.endsWith(".epigraphbk") || normalized.endsWith(".aethonbk")) return "epigraph";
   if (normalized.endsWith(".tachibk") || normalized.endsWith(".proto.gz") || normalized.endsWith(".proto")) {
     return "manga";
   }
@@ -115,7 +115,7 @@ export function detectBackupImportKind(path: string | null | undefined): BackupI
   return null;
 }
 
-export function normalizeBackupSavePath(path: string, extension: ".aethonbk" | ".tachibk" | ".proto.gz" | ".proto" | ".zip"): string {
+export function normalizeBackupSavePath(path: string, extension: ".epigraphbk" | ".tachibk" | ".proto.gz" | ".proto" | ".zip"): string {
   const trimmed = path.trim();
   if (!trimmed) return trimmed;
   return trimmed.toLowerCase().endsWith(extension) ? trimmed : `${trimmed}${extension}`;
@@ -128,7 +128,7 @@ export function canExecuteUnifiedRestoreOnCurrentSession(
 }
 
 export function hasAnyExecutableSelection(
-  plan: AethonRestorePlan,
+  plan: EpigraphRestorePlan,
   selection: BackupExecutionSelection,
 ): boolean {
   return selectedExecutablePayloadKinds(plan, selection).length > 0;

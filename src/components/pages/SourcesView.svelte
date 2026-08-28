@@ -159,8 +159,8 @@
 
   $effect(() => {
     if (typeof document === "undefined") return;
-    document.body.classList.toggle("aethon-sources-modal-open", utilityPanel !== null);
-    return () => document.body.classList.remove("aethon-sources-modal-open");
+    document.body.classList.toggle("epigraph-sources-modal-open", utilityPanel !== null);
+    return () => document.body.classList.remove("epigraph-sources-modal-open");
   });
 
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
@@ -473,7 +473,7 @@
     addToast({
       kind: "info",
       title: translate("ui_restartingExtensionManager"),
-      body: `${extension.name} is already cached, but Suwayomi is holding the file. Aethon will restart the local server and check again.`,
+      body: `${extension.name} is already cached, but Suwayomi is holding the file. Epigraph will restart the local server and check again.`,
       duration: 6000,
     });
 
@@ -853,7 +853,7 @@
         addToast({
           kind: "error",
           title: translate("ui_couldNotAddTheRecommendedRepo"),
-          body: error instanceof Error ? error.message : translate("ui_aethonCouldnTSaveTheRecommendedRepo"),
+          body: error instanceof Error ? error.message : translate("ui_epigraphCouldnTSaveTheRecommendedRepo"),
         });
       }
     } finally {
@@ -1179,7 +1179,7 @@
         addToast({
           kind: "error",
           title: translate("ui_couldNotRemoveNovelSource"),
-          body: error instanceof Error ? error.message : translate("ui_aethonCouldNotRemoveThisNovelPlugin"),
+          body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotRemoveThisNovelPlugin"),
         });
       } finally {
         finishExtensionOperation(extension.pkgName);
@@ -1360,7 +1360,7 @@
       });
     } catch (error) {
       console.error(error);
-      const message = error instanceof Error ? error.message : translate("ui_aethonCouldNotFinishTheUpdateQueue");
+      const message = error instanceof Error ? error.message : translate("ui_epigraphCouldNotFinishTheUpdateQueue");
       const nextState = blockedByRuntime ? null : await refreshSetupState();
       if (blockedByRuntime || isServerUnavailableState(nextState)) {
         for (const extension of candidates) setExtensionOperationError(extension.pkgName, message);
@@ -2143,7 +2143,7 @@
     backdrop-filter: var(--component-sources-overlay-blur);
   }
 
-  :global(body.aethon-sources-modal-open .n-sidebar::after) {
+  :global(body.epigraph-sources-modal-open .n-sidebar::after) {
     content: "";
     position: absolute;
     inset: -1px;

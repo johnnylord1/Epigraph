@@ -31,7 +31,7 @@ const progressLogPath = path.join(artifactsRoot, "progress.log");
 const lastStepPath = path.join(artifactsRoot, "last-step.json");
 const driverUrl = args["driver-url"] || "http://127.0.0.1:4554";
 const appBasePath = path.resolve(
-  args.app || path.join(projectRoot, "src-tauri", "target", "release", "aethon.exe"),
+  args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"),
 );
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -223,7 +223,7 @@ async function killListeningProcessOnPort(port) {
 async function replaceSyncdDaemon(instance) {
   const manifestPath = path.join(
     instance.localAppDataDir,
-    "Aethon",
+    "Epigraph",
     "syncd",
     "runtime.json",
   );
@@ -321,7 +321,7 @@ async function waitForAuditShellReady(driver, timeout = DEFAULT_TIMEOUT_MS, labe
   while (Date.now() < deadline) {
     try {
       lastState = await driver.executeScript(`
-        const audit = window.__aethonAudit;
+        const audit = window.__epigraphAudit;
         const state = audit?.getState?.() ?? null;
         return {
           hasAudit: !!audit,
@@ -374,7 +374,7 @@ async function waitForAuditShellReady(driver, timeout = DEFAULT_TIMEOUT_MS, labe
     // Best-effort timeout artifact only.
   }
 
-  throw new Error(`Timed out waiting for the Aethon shell to become automation-ready (${label}).`);
+  throw new Error(`Timed out waiting for the Epigraph shell to become automation-ready (${label}).`);
 }
 
 async function waitForPanelSubscriptionsReady(driver, timeout = DEFAULT_TIMEOUT_MS) {
@@ -423,7 +423,7 @@ async function openSecuritySettings(driver, timeout = DEFAULT_TIMEOUT_MS) {
       const now = Date.now();
       const shouldRequestOpen = now - lastOpenRequestAt >= 2_000;
       const ready = await driver.executeScript(`
-        const audit = window.__aethonAudit;
+        const audit = window.__epigraphAudit;
         if (!audit?.openSettings || !audit?.getState) return false;
         if (arguments[0]) audit.openSettings("security");
         const state = audit.getState();
@@ -463,7 +463,7 @@ async function callAudit(instance, method, ...args) {
       const done = arguments[arguments.length - 1];
       Promise.resolve()
         .then(() => {
-          const audit = window.__aethonAudit;
+          const audit = window.__epigraphAudit;
           if (!audit || typeof audit[method] !== "function") {
             throw new Error(\`Audit method \${method} is not available.\`);
           }
@@ -577,7 +577,7 @@ async function captureHostDiagnostics(host, name) {
     hostCardText,
     bootstrapBundleLength: (await readOptionalValue(host.driver, "syncd-bootstrap-bundle-host")).length,
     auditState: await host.driver
-      .executeScript("return window.__aethonAudit?.getState?.() ?? null;")
+      .executeScript("return window.__epigraphAudit?.getState?.() ?? null;")
       .catch(() => null),
     auditPanelDiagnostics: await callAudit(host, "getSyncdPanelDiagnostics").catch(() => null),
     instance: {
@@ -642,7 +642,7 @@ async function captureJoinerDiagnostics(joiner, name) {
     connectCardText,
     connectStateText,
     auditState: await joiner.driver
-      .executeScript("return window.__aethonAudit?.getState?.() ?? null;")
+      .executeScript("return window.__epigraphAudit?.getState?.() ?? null;")
       .catch(() => null),
     auditPanelDiagnostics: await callAudit(joiner, "getSyncdPanelDiagnostics").catch(() => null),
     instance: {
@@ -713,7 +713,7 @@ async function connectJoiner(joiner, { bundleRaw, manualOrigin = null, useQrPath
     await joiner.driver.executeScript(
       `
         window.dispatchEvent(
-          new CustomEvent("aethon:syncd-import-qr-data-url", {
+          new CustomEvent("epigraph:syncd-import-qr-data-url", {
             detail: arguments[0],
           }),
         );
@@ -791,7 +791,7 @@ async function waitForPersistedSessionOrigin(instance, canonicalOrigin, timeout 
 async function readPersistedState(instance) {
   const statePath = path.join(
     instance.localAppDataDir,
-    "Aethon",
+    "Epigraph",
     "syncd-desktop",
     "syncd-desktop-state.json",
   );

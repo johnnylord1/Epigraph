@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aethon</title>
+    <title>Epigraph</title>
     <style>
       html,
       body,
@@ -264,7 +264,7 @@
         <i class="boot-splash__corner boot-splash__corner--br"></i>
         <i class="boot-splash__corner boot-splash__corner--bl"></i>
         <div class="boot-splash__identity">
-          <img class="boot-splash__mark" src="/src/assets/aethon-splash-mark.png" alt="" />
+          <img class="boot-splash__mark" src="/src/assets/epigraph-splash-mark.png" alt="" />
         </div>
         <div class="boot-splash__dock">
           <div class="boot-splash__value">Initializing profile</div>
@@ -469,7 +469,7 @@
           });
         }
 
-        window.addEventListener("aethon:boot-ready", checkForAppShell, { once: true });
+        window.addEventListener("epigraph:boot-ready", checkForAppShell, { once: true });
         checkForAppShell();
         fallbackTimer = window.setTimeout(dismiss, 30000);
       })();

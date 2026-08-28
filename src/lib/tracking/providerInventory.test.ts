@@ -73,7 +73,7 @@ describe("tracking provider inventory", () => {
     const inventory = loadTrackingProviderInventory([tracker(1, "MyAnimeList")]);
 
     expect(inventory.map((provider) => provider.name)).toContain("Hardcover");
-    expect(TRACKING_PROVIDER_STATE_EVENTS).toContain("aethon-hardcover-state-changed");
+    expect(TRACKING_PROVIDER_STATE_EVENTS).toContain("epigraph-hardcover-state-changed");
     expect(Object.keys(inventory.find((provider) => provider.name === "Hardcover") ?? {})).toEqual([
       "id",
       "name",

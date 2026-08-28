@@ -23,7 +23,8 @@ use super::middleware::require_authenticated_session;
 use super::models::AppState;
 use super::routes::{
     assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing,
-    snapshot, suwayomi_proxy,
+    portable_manifest, session, snapshot, status, suwayomi_catalog, suwayomi_commands,
+    suwayomi_content, suwayomi_extensions, suwayomi_proxy,
 };
 use super::runtime_manifest::{RuntimeManifestLease, RuntimeProcessLock, SyncdRuntimeManifest};
 use super::tls;
@@ -54,13 +55,6 @@ pub async fn run() -> anyhow::Result<()> {
     let tls = tls::load_or_create(&config, &advertised_resolution.candidates).await?;
     let pool = db::connect(&config).await?;
     db::upsert_server_identity(&pool, &config, &tls.fingerprint_sha256).await?;
-    let granted_comics_scopes = db::grant_comics_scopes_to_existing_tokens(&pool).await?;
-    if granted_comics_scopes > 0 {
-        tracing::info!(
-            granted_comics_scopes,
-            "granted comics proxy scope to existing active paired tokens"
-        );
-    }
     let server_identity = db::load_server_identity(&pool).await?;
     db::prune_expired_rows(&pool, db::now_ms()).await?;
 
@@ -93,9 +87,29 @@ pub async fn run() -> anyhow::Result<()> {
             "attached Core lifecycle to existing owned Suwayomi"
         );
     }
-
+    if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
+        match super::extension_store_seed::ensure_extension_stores(
+            &super::extension_store_seed::active_profile_root(),
+            &desired_extension_stores(),
+        ) {
+            Ok(stores) => {
+                tracing::info!(count = stores.len(), "extension store seed reconciled");
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to seed extension stores");
+            }
+        }
+    }
     let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
+    if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
+        super::suwayomi_process::start_headless_supervisor(shutdown.subscribe());
+    }
     spawn_gc_task(state.clone(), shutdown.subscribe());
+    super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
+    super::suwayomi_progress_mirror::spawn_progress_mirror_task(
+        state.clone(),
+        shutdown.subscribe(),
+    );
     spawn_parent_watchdog(state.clone(), shutdown.clone());
     spawn_discovery_provider_task(state.clone(), shutdown.subscribe());
     let router = build_router(state.clone(), shutdown.clone());
@@ -106,13 +120,13 @@ pub async fn run() -> anyhow::Result<()> {
         advertised_policy = advertised_resolution.policy_name,
         effective_discovery_policy = %config.effective_discovery_policy.as_str(),
         tls_cert_sha256 = %state.tls_cert_sha256,
-        "aethon-syncd starting"
+        "epigraph-syncd starting"
     );
 
     let _runtime_manifest_lease = if config.ownership_mode == SyncdOwnershipMode::PersistentAttached
     {
         let executable =
-            std::env::current_exe().context("failed to resolve aethon-syncd executable path")?;
+            std::env::current_exe().context("failed to resolve epigraph-syncd executable path")?;
         let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
         let manifest = SyncdRuntimeManifest::new(
             std::process::id(),
@@ -140,7 +154,7 @@ pub async fn run() -> anyhow::Result<()> {
         .handle(server_handle)
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
-        .context("aethon-syncd failed while serving");
+        .context("epigraph-syncd failed while serving");
 
     shutdown_task.abort();
     stop_discovery_provider(&state).await;
@@ -154,6 +168,8 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route("/v1/changes", get(events::get_changes))
         .route("/v1/mutations", post(mutations::post_mutations))
         .route("/v1/snapshot", get(snapshot::get_snapshot))
+        .route("/v1/sync/status", get(status::get_sync_status))
+        .route("/v1/session", get(session::get_session))
         .route(
             "/v1/local/shutdown",
             post(super::lifecycle::post_local_shutdown),
@@ -169,6 +185,24 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             get(suwayomi_proxy::get_or_head)
                 .head(suwayomi_proxy::get_or_head)
                 .post(suwayomi_proxy::post_graphql),
+        )
+        .route("/v1/suwayomi/catalog", get(suwayomi_catalog::get_catalog))
+        .route(
+            "/v1/suwayomi/extensions",
+            get(suwayomi_extensions::get_extensions),
+        )
+        .route(
+            "/v1/suwayomi/commands",
+            post(suwayomi_commands::post_command),
+        )
+        .route("/v1/suwayomi/content", post(suwayomi_content::post_content))
+        .route(
+            "/v1/portable/manifest",
+            get(portable_manifest::get_portable_manifest),
+        )
+        .route(
+            "/v1/portable/novel-manifest",
+            get(portable_manifest::get_portable_novel_manifest),
         )
         .layer(Extension(shutdown))
         .route_layer(middleware::from_fn_with_state(
@@ -208,6 +242,11 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             "/v1/pairing/session/:session_id/decision",
             post(pairing::post_pairing_host_decision),
         )
+        .route("/v1/pairing/devices", get(pairing::get_paired_devices))
+        .route(
+            "/v1/pairing/devices/scopes",
+            post(pairing::post_paired_device_scopes),
+        )
         .route(
             "/v1/local/authority-token",
             post(local::post_local_authority_token),
@@ -216,12 +255,31 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .merge(protected)
         .with_state(state.clone());
 
-    if std::env::var("AETHON_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1") {
+    if std::env::var("EPIGRAPH_SYNCD_ENABLE_AUDIT_ROUTES").as_deref() == Ok("1") {
         tracing::warn!("syncd audit routes enabled");
         router = router.merge(super::routes::audit::router(state));
     }
 
     router
+}
+
+fn desired_extension_stores() -> Vec<String> {
+    let from_env = std::env::var("EPIGRAPH_SYNCD_EXTENSION_STORES")
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if from_env.is_empty() {
+        return super::extension_store_seed::DEFAULT_SEED_STORES
+            .iter()
+            .map(|url| url.to_string())
+            .collect();
+    }
+    from_env
 }
 
 fn spawn_gc_task(
@@ -509,9 +567,12 @@ mod tests {
                     "op": "merge",
                     "lamport": 1,
                     "patch": {
-                        "assetFingerprint": "sha256:book-1",
+                        "assetFingerprint": null,
+                        "mimeType": null,
+                        "byteSize": null,
+                        "coverAssetSha256": null,
                         "title": "Book One",
-                        "author": "Aethon",
+                        "author": "Epigraph",
                         "description": null,
                         "subtype": "epub",
                         "pageCount": null,
@@ -590,6 +651,9 @@ mod tests {
                         "pageIndex": null,
                         "progressPercent": 0.25,
                         "label": "Start",
+                        "note": null,
+                        "createdAtMs": 2000,
+                        "updatedAtMs": 2000,
                         "savedAtMs": 2000
                     }
                 },
@@ -630,7 +694,7 @@ mod tests {
                     "patch": {
                         "identityKey": "repo:plugin:source:/novel-1",
                         "title": "Novel One",
-                        "author": "Aethon",
+                        "author": "Epigraph",
                         "description": null,
                         "coverUrl": "https://example.test/cover.jpg",
                         "path": "/novel-1",
@@ -738,7 +802,7 @@ mod tests {
     #[tokio::test]
     async fn capabilities_returns_200_for_compatible_client() {
         let (_temp, state) = build_state_for_http().await;
-        let app = build_test_router(state);
+        let app = build_test_router(state.clone());
 
         let response = app
             .oneshot(
@@ -760,9 +824,15 @@ mod tests {
         assert_eq!(payload["supportsAssets"], true);
         assert_eq!(payload["supportsNovelChapterAssets"], true);
         assert_eq!(payload["supportsNovelPluginSync"], true);
-        assert_eq!(payload["snapshotSchemaVersion"], 1);
+        assert_eq!(payload["supportsSuwayomiCatalog"], true);
+        assert_eq!(payload["supportsSuwayomiContent"], true);
+        assert_eq!(payload["supportsSuwayomiExtensionInventory"], true);
+        assert_eq!(payload["comicAuthorityMode"], "suwayomi-confirmed-v1");
+        assert_eq!(payload["supportsConfirmedSuwayomiCommandsV1"], true);
+        assert_eq!(payload["supportsSyncStatusV1"], true);
+        assert_eq!(payload["snapshotSchemaVersion"], 3);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 20);
+        assert_eq!(entity_types.len(), 25);
         assert!(entity_types
             .iter()
             .any(|value| value == "novel.chapter_asset"));
@@ -773,6 +843,14 @@ mod tests {
             .iter()
             .any(|value| value == "novel.category_assignment"));
         assert!(entity_types.iter().any(|value| value == "comic.history"));
+        assert!(entity_types.iter().any(|value| value == "comic.entry"));
+        assert!(entity_types.iter().any(|value| value == "comic.category"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "comic.category_assignment"));
+        assert!(entity_types
+            .iter()
+            .any(|value| value == "comic.chapter_state"));
         assert!(entity_types
             .iter()
             .any(|value| value == "comic.page_bookmark"));
@@ -826,6 +904,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_status_reports_authoritative_projection_readiness() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("comic-token"),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/sync/status?scopeId=comics%3Aprofile%3Amain",
+            Some("comic-token"),
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["scopeId"], "comics:profile:main");
+        assert_eq!(payload["comicAuthorityMode"], "suwayomi-confirmed-v1");
+        assert_eq!(payload["suwayomiProjectionPending"], 0);
+        assert_eq!(payload["suwayomiProjectionBlocked"], 0);
+        assert_eq!(payload["suwayomiProjectionInFlight"], 0);
+        assert_eq!(payload["ready"], true);
+
+        sqlx::query(
+            r#"
+            INSERT INTO suwayomi_projection_outbox (
+              operation_id, profile_id, operation_name, variables_json,
+              entity_type, entity_id, source_server_version, status,
+              attempt_count, next_attempt_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, 'UpdateManga', ?, 'comic.entry', ?, 1, 'pending', 0, ?, ?, ?)
+            "#,
+        )
+        .bind("status-test-operation")
+        .bind("main")
+        .bind(r#"{"id":7,"inLibrary":true}"#)
+        .bind("comic:test")
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/sync/status?scopeId=comics%3Aprofile%3Amain",
+            Some("comic-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["suwayomiProjectionPending"], 1);
+        assert_eq!(payload["ready"], false);
+    }
+
+    #[tokio::test]
     async fn snapshot_returns_empty_authoritative_scope() {
         let (_temp, state) = build_state_for_http().await;
         ensure_test_token(
@@ -849,7 +991,11 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["schemaVersion"], 3);
+        assert_eq!(payload["complete"], true);
+        assert_eq!(payload["entityCount"], 0);
+        assert_eq!(payload["tombstoneCount"], 0);
+        assert_eq!(payload["snapshotId"].as_str().unwrap().len(), 64);
         assert_eq!(payload["scopeId"], "books:global");
         assert_eq!(payload["snapshotVersion"], 0);
         assert_eq!(payload["minReplayableServerVersion"], 0);
@@ -900,6 +1046,9 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(payload["snapshotVersion"], 7);
+        assert_eq!(payload["complete"], true);
+        assert_eq!(payload["entityCount"], 7);
+        assert_eq!(payload["tombstoneCount"], 0);
         let entities = payload["entities"].as_array().unwrap();
         let entity_types = entities
             .iter()

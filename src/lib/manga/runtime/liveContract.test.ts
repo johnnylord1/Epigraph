@@ -7,8 +7,8 @@ import {
 import { collectStructuralExtensionHealth } from "./health";
 import { SuwayomiTransport } from "./transport";
 
-const endpoint = process.env.AETHON_SUWAYOMI_LIVE_ENDPOINT;
-const profileId = process.env.AETHON_SUWAYOMI_LIVE_PROFILE ?? "v23";
+const endpoint = process.env.EPIGRAPH_SUWAYOMI_LIVE_ENDPOINT;
+const profileId = process.env.EPIGRAPH_SUWAYOMI_LIVE_PROFILE ?? "v23";
 
 describe.runIf(Boolean(endpoint))("Suwayomi live compatibility contract", () => {
   it("executes the selected profile against a disposable runtime", async () => {

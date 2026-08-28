@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LibraryUpdateIntensity } from "../store/state.svelte";
 
-export const SERVER_READY_EVENT = "aethon:server-ready";
+export const SERVER_READY_EVENT = "epigraph:server-ready";
 
 const SERVER_READY_NOTIFY_DEBOUNCE_MS = 10_000;
 

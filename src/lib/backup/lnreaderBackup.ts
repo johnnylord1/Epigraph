@@ -1,10 +1,10 @@
 import JSZip from "jszip";
 import {
-  classifyAethonNovelsSnapshot,
-  normalizeAethonNovelsSnapshot,
-  type AethonNovelRuntimeState,
-  type AethonNovelsSnapshot,
-  type RestoredAethonNovelsSnapshot,
+  classifyEpigraphNovelsSnapshot,
+  normalizeEpigraphNovelsSnapshot,
+  type EpigraphNovelRuntimeState,
+  type EpigraphNovelsSnapshot,
+  type RestoredEpigraphNovelsSnapshot,
 } from "./novelsBackup";
 
 const VERSION_FILE = "Version.json";
@@ -37,7 +37,7 @@ function stableNovelId(pluginId: string, path: string, fallback: number): string
   return key.length > 1 ? `lnreader:${key}` : `lnreader:${fallback}`;
 }
 
-function numberFromAethonId(id: string, fallback: number): number {
+function numberFromEpigraphId(id: string, fallback: number): number {
   const raw = Number.parseInt(id.replace(/\D+/g, "").slice(-9), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
@@ -91,12 +91,12 @@ async function coverDataUrlFromBackup(downloadZip: JSZip | null, coverPath: stri
   return `data:${mimeTypeFromPath(normalized)};base64,${base64}`;
 }
 
-export async function buildLnReaderNovelsBackupZip(snapshot: AethonNovelsSnapshot): Promise<Uint8Array> {
-  const normalized = normalizeAethonNovelsSnapshot(snapshot);
+export async function buildLnReaderNovelsBackupZip(snapshot: EpigraphNovelsSnapshot): Promise<Uint8Array> {
+  const normalized = normalizeEpigraphNovelsSnapshot(snapshot);
   const root = new JSZip();
   const download = new JSZip();
 
-  root.file(VERSION_FILE, JSON.stringify({ version: "0.0.1-aethon" }, null, 2));
+  root.file(VERSION_FILE, JSON.stringify({ version: "0.0.1-epigraph" }, null, 2));
   root.file(CATEGORY_FILE, JSON.stringify([], null, 2));
   root.file(SETTING_FILE, JSON.stringify({}, null, 2));
   root.file(DOWNLOAD_ZIP, await download.generateAsync({ type: "uint8array" }));
@@ -109,8 +109,8 @@ export async function buildLnReaderNovelsBackupZip(snapshot: AethonNovelsSnapsho
   }
 
   normalized.entries.forEach((entry, index) => {
-    const numericId = numberFromAethonId(entry.id, index + 1);
-    const pluginId = entry.source?.pluginId ?? entry.source?.sourceId ?? "aethon";
+    const numericId = numberFromEpigraphId(entry.id, index + 1);
+    const pluginId = entry.source?.pluginId ?? entry.source?.sourceId ?? "epigraph";
     const novel = {
       id: numericId,
       path: entry.path,
@@ -126,7 +126,7 @@ export async function buildLnReaderNovelsBackupZip(snapshot: AethonNovelsSnapsho
       isLocal: false,
       totalPages: null,
       chapters: (chapterByNovelId.get(entry.id) ?? []).map((chapter, chapterIndex) => ({
-        id: numberFromAethonId(chapter.id, chapterIndex + 1),
+        id: numberFromEpigraphId(chapter.id, chapterIndex + 1),
         novelId: numericId,
         path: chapter.path,
         name: chapter.title,
@@ -189,7 +189,7 @@ export async function isLnReaderBackupZip(bytes: Uint8Array | ArrayBuffer): Prom
   }
 }
 
-export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer): Promise<AethonNovelsSnapshot> {
+export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer): Promise<EpigraphNovelsSnapshot> {
   const zip = await openLnReaderDataZip(bytes);
   const downloadZip = await openLnReaderDownloadZip(zip);
   const pluginIds = await extractLnReaderBackupPluginIds(bytes);
@@ -307,7 +307,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     throw new Error("LNReader backup does not contain saved library novels.");
   }
 
-  return normalizeAethonNovelsSnapshot({
+  return normalizeEpigraphNovelsSnapshot({
     entries: novels.map((item) => item.entry),
     chapters: novels.flatMap((item) => item.chapters),
     progress: novels.flatMap((item) => item.progress),
@@ -325,8 +325,8 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
 
 export async function restoreLnReaderNovelsBackup(
   bytes: Uint8Array | ArrayBuffer,
-  runtime: AethonNovelRuntimeState,
-): Promise<RestoredAethonNovelsSnapshot> {
+  runtime: EpigraphNovelRuntimeState,
+): Promise<RestoredEpigraphNovelsSnapshot> {
   const snapshot = await parseLnReaderNovelsBackup(bytes);
-  return classifyAethonNovelsSnapshot(snapshot, "repository-aware", runtime);
+  return classifyEpigraphNovelsSnapshot(snapshot, "repository-aware", runtime);
 }

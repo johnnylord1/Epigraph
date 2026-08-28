@@ -1,5 +1,5 @@
 {
-  description = "aethon — manga reader frontend for Suwayomi";
+  description = "epigraph — manga reader frontend for Suwayomi";
 
   inputs = {
     nixpkgs.url     = "github:NixOS/nixpkgs/nixos-unstable";
@@ -60,14 +60,14 @@
           };
 
           frontend = pkgs.stdenv.mkDerivation {
-            pname   = "aethon-frontend";
+            pname   = "epigraph-frontend";
             inherit version;
             src     = frontendSrc;
 
             nativeBuildInputs = with pkgs; [ nodejs_22 pnpm pnpmConfigHook ];
 
             pnpmDeps = pkgs.fetchPnpmDeps {
-              pname          = "aethon-frontend";
+              pname          = "epigraph-frontend";
               inherit version;
               src            = frontendSrc;
               fetcherVersion = 1;
@@ -101,41 +101,41 @@
 
           cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-          aethon = craneLib.buildPackage (commonArgs // {
+          epigraph = craneLib.buildPackage (commonArgs // {
             inherit cargoArtifacts;
-            meta.mainProgram = "aethon";
+            meta.mainProgram = "epigraph";
             postInstall = ''
               mkdir -p "$out/share/applications"
-              cat > "$out/share/applications/aethon.desktop" << EOF
+              cat > "$out/share/applications/epigraph.desktop" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=Aethon
+Name=Epigraph
 Comment=Manga reader frontend for Suwayomi
-Exec=$out/bin/aethon
-Icon=aethon
+Exec=$out/bin/epigraph
+Icon=epigraph
 Terminal=false
 Categories=Graphics;Viewer;
 Keywords=manga;comic;reader;suwayomi;
-StartupWMClass=aethon
+StartupWMClass=epigraph
 EOF
 
               for size in 32x32 128x128 256x256 512x512; do
                 src="icons/$size.png"
                 [ -f "$src" ] && install -Dm644 "$src" \
-                  "$out/share/icons/hicolor/$size/apps/aethon.png"
+                  "$out/share/icons/hicolor/$size/apps/epigraph.png"
               done
 
               for size in 128x128 256x256; do
                 src="icons/''${size}@2x.png"
                 [ -f "$src" ] && install -Dm644 "$src" \
-                  "$out/share/icons/hicolor/''${size}@2/apps/aethon.png"
+                  "$out/share/icons/hicolor/''${size}@2/apps/epigraph.png"
               done
 
-              install -Dm644 "${./src/assets/aethon-icon.svg}" \
-                "$out/share/icons/hicolor/scalable/apps/aethon.svg"
+              install -Dm644 "${./src/assets/epigraph-icon.svg}" \
+                "$out/share/icons/hicolor/scalable/apps/epigraph.svg"
 
-              wrapProgram $out/bin/aethon \
+              wrapProgram $out/bin/epigraph \
                 --prefix XDG_DATA_DIRS : "${lib.makeSearchPath "share/gsettings-schemas" [
                   pkgs.gsettings-desktop-schemas
                   pkgs.gtk3
@@ -148,7 +148,7 @@ EOF
           });
 
           bumpScript = pkgs.writeShellApplication {
-            name = "aethon-bump";
+            name = "epigraph-bump";
             runtimeInputs = with pkgs; [ gnused coreutils git rustToolchain ];
             text = ''
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#bump -- <version>"; exit 1; }
@@ -166,7 +166,7 @@ EOF
           };
 
           flatpakScript = pkgs.writeShellApplication {
-            name = "aethon-flatpak";
+            name = "epigraph-flatpak";
             runtimeInputs = with pkgs; [
               gnused coreutils git
               nodejs_22 pnpm
@@ -177,7 +177,7 @@ EOF
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#flatpak -- <version>"; exit 1; }
               VERSION="$1"
               REPO="$(git rev-parse --show-toplevel)"
-              MANIFEST="$REPO/dev.aethon.app.yml"
+              MANIFEST="$REPO/dev.epigraph.app.yml"
 
               echo "── Bumping versions ──"
               sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" \
@@ -226,13 +226,13 @@ EOF
                 --force-clean \
                 "$REPO/build-dir" \
                 "$MANIFEST"
-              flatpak build-bundle "$REPO/repo" "$REPO/aethon.flatpak" dev.aethon.app
+              flatpak build-bundle "$REPO/repo" "$REPO/epigraph.flatpak" dev.epigraph.app
               rm -rf "$REPO/build-dir" "$REPO/repo"
-              echo "aethon.flatpak created"
+              echo "epigraph.flatpak created"
 
               echo ""
               echo "Done — v$VERSION"
-              echo "  -> $REPO/aethon.flatpak"
+              echo "  -> $REPO/epigraph.flatpak"
               echo ""
               echo "After pushing the tag, run:"
               echo "  nix run .#pkgbuild-bump -- $VERSION"
@@ -240,7 +240,7 @@ EOF
           };
 
           pkgbuildBumpScript = pkgs.writeShellApplication {
-            name = "aethon-pkgbuild-bump";
+            name = "epigraph-pkgbuild-bump";
             runtimeInputs = with pkgs; [ gnused curl coreutils git ];
             text = ''
               [[ $# -lt 1 ]] && { echo "Usage: nix run .#pkgbuild-bump -- <version>"; exit 1; }
@@ -249,7 +249,7 @@ EOF
               PKGBUILD="$REPO/PKGBUILD"
               [[ -f "$PKGBUILD" ]] || { echo "PKGBUILD not found"; exit 1; }
 
-              TARBALL_URL="https://github.com/johnnylord1/Aethon/archive/refs/tags/v$VERSION.tar.gz"
+              TARBALL_URL="https://github.com/johnnylord1/Epigraph/archive/refs/tags/v$VERSION.tar.gz"
               echo "Fetching tarball sha256..."
               TARBALL_SHA=$(curl -fsSL "$TARBALL_URL" | sha256sum | awk '{print $1}')
 
@@ -267,16 +267,16 @@ EOF
         in
         {
           apps = {
-            default       = { type = "app"; program = "${aethon}/bin/aethon"; };
-            aethon          = { type = "app"; program = "${aethon}/bin/aethon"; };
-            bump          = { type = "app"; program = "${bumpScript}/bin/aethon-bump"; };
-            flatpak       = { type = "app"; program = "${flatpakScript}/bin/aethon-flatpak"; };
-            pkgbuild-bump = { type = "app"; program = "${pkgbuildBumpScript}/bin/aethon-pkgbuild-bump"; };
+            default       = { type = "app"; program = "${epigraph}/bin/epigraph"; };
+            epigraph          = { type = "app"; program = "${epigraph}/bin/epigraph"; };
+            bump          = { type = "app"; program = "${bumpScript}/bin/epigraph-bump"; };
+            flatpak       = { type = "app"; program = "${flatpakScript}/bin/epigraph-flatpak"; };
+            pkgbuild-bump = { type = "app"; program = "${pkgbuildBumpScript}/bin/epigraph-pkgbuild-bump"; };
           };
 
           packages = {
-            inherit aethon frontend;
-            default = aethon;
+            inherit epigraph frontend;
+            default = epigraph;
           };
 
           devShells.default = pkgs.mkShell {
@@ -295,7 +295,7 @@ EOF
               export PKG_CONFIG_PATH="${pkgs.openssl.dev}/lib/pkgconfig''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
               export XDG_DATA_DIRS="${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
-              echo "aethon dev shell — pnpm install && pnpm tauri:dev"
+              echo "epigraph dev shell — pnpm install && pnpm tauri:dev"
               echo ""
               echo "Release:"
               echo "  nix run .#bump          -- <ver>   bump versions only"

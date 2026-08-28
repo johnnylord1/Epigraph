@@ -18,12 +18,12 @@ import {
 
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const outputDirectory = path.resolve(
-  process.env.AETHON_NAVIGATION_OUTPUT_DIR
+  process.env.EPIGRAPH_NAVIGATION_OUTPUT_DIR
     || path.join(projectRoot, "docs", "screenshots", "marco70-bundle-performance"),
 );
-const iterations = Number(process.env.AETHON_NAVIGATION_ITERATIONS || 10);
-const searchCycles = Number(process.env.AETHON_NAVIGATION_SEARCH_CYCLES || 20);
-const repeatedLibraryTransitions = Number(process.env.AETHON_LIBRARY_TRANSITIONS || 20);
+const iterations = Number(process.env.EPIGRAPH_NAVIGATION_ITERATIONS || 10);
+const searchCycles = Number(process.env.EPIGRAPH_NAVIGATION_SEARCH_CYCLES || 20);
+const repeatedLibraryTransitions = Number(process.env.EPIGRAPH_LIBRARY_TRANSITIONS || 20);
 const budgets = JSON.parse(await fs.readFile(path.join(projectRoot, "config", "release-navigation-budgets.json"), "utf8"));
 
 function parseArgs(argv) {
@@ -139,7 +139,7 @@ async function waitUntil(check, message, timeoutMs = 30_000) {
 
 async function callAudit(driver, method, ...args) {
   const result = await driver.executeAsyncScript(function auditCall(name, values, done) {
-    const bridge = window.__aethonAudit;
+    const bridge = window.__epigraphAudit;
     if (!bridge || typeof bridge[name] !== "function") return done({ error: `Missing audit method ${name}` });
     Promise.resolve(bridge[name](...values))
       .then((value) => done({ value }))
@@ -151,8 +151,8 @@ async function callAudit(driver, method, ...args) {
 
 async function waitForAuditBridge(driver) {
   await waitUntil(
-    () => driver.executeScript("return Boolean(window.__aethonAudit)").catch(() => false),
-    "Aethon audit bridge did not become ready.",
+    () => driver.executeScript("return Boolean(window.__epigraphAudit)").catch(() => false),
+    "Epigraph audit bridge did not become ready.",
     120_000,
   );
 }
@@ -172,7 +172,7 @@ async function waitForLibrary(driver) {
   } catch (error) {
     const evidence = await driver.executeScript(function libraryFailureEvidence() {
       return {
-        navPage: window.__aethonAudit?.getState?.().navPage ?? null,
+        navPage: window.__epigraphAudit?.getState?.().navPage ?? null,
         activePage: document.querySelector(".page-keepalive.is-active")?.textContent?.trim().slice(0, 180) ?? null,
         heroCount: document.querySelectorAll(".library-hero").length,
         skeletonCount: document.querySelectorAll(".grid-skeleton").length,
@@ -185,15 +185,15 @@ async function waitForLibrary(driver) {
 }
 
 async function readDevToolsMetrics(driver) {
-  if (!driver.__aethonDevToolsEnabled) return null;
+  if (!driver.__epigraphDevToolsEnabled) return null;
   try {
     await driver.execute(
-      new WebDriverCommand("aethonSendDevToolsCommand")
+      new WebDriverCommand("epigraphSendDevToolsCommand")
         .setParameter("cmd", "Performance.enable")
         .setParameter("params", {}),
     );
     const response = await driver.execute(
-      new WebDriverCommand("aethonSendAndGetDevToolsCommand")
+      new WebDriverCommand("epigraphSendAndGetDevToolsCommand")
         .setParameter("cmd", "Performance.getMetrics")
         .setParameter("params", {}),
     );
@@ -204,10 +204,10 @@ async function readDevToolsMetrics(driver) {
 }
 
 async function collectJavaScriptGarbage(driver) {
-  if (!driver.__aethonDevToolsEnabled) return false;
+  if (!driver.__epigraphDevToolsEnabled) return false;
   try {
     await driver.execute(
-      new WebDriverCommand("aethonSendDevToolsCommand")
+      new WebDriverCommand("epigraphSendDevToolsCommand")
         .setParameter("cmd", "HeapProfiler.collectGarbage")
         .setParameter("params", {}),
     );
@@ -240,8 +240,8 @@ function diffDevToolsMetrics(before, after) {
 
 async function installLibraryResourceAudit(driver) {
   return driver.executeScript(function installResourceAudit() {
-    if (window.__aethonLibraryResourceAudit) {
-      return window.__aethonLibraryResourceAudit.snapshot();
+    if (window.__epigraphLibraryResourceAudit) {
+      return window.__epigraphLibraryResourceAudit.snapshot();
     }
 
     const original = {
@@ -359,7 +359,7 @@ async function installLibraryResourceAudit(driver) {
       };
     }
 
-    window.__aethonLibraryResourceAudit = {
+    window.__epigraphLibraryResourceAudit = {
       snapshot() {
         for (let index = listenerRecords.length - 1; index >= 0; index -= 1) {
           const target = listenerRecords[index].target;
@@ -381,14 +381,14 @@ async function installLibraryResourceAudit(driver) {
         };
       },
     };
-    return window.__aethonLibraryResourceAudit.snapshot();
+    return window.__epigraphLibraryResourceAudit.snapshot();
   });
 }
 
 async function readLibraryResourceAudit(driver) {
   const garbageCollected = await collectJavaScriptGarbage(driver);
   return driver.executeScript(function readResourceAudit() {
-    const resources = window.__aethonLibraryResourceAudit?.snapshot?.() ?? null;
+    const resources = window.__epigraphLibraryResourceAudit?.snapshot?.() ?? null;
     const memory = performance.memory;
     return {
       ...resources,
@@ -512,7 +512,7 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
     let stateUpdatedAt = null;
     target.click();
     handlerReturnedAt = performance.now();
-    if (window.__aethonAudit?.getState?.().librarySection === section) {
+    if (window.__epigraphAudit?.getState?.().librarySection === section) {
       stateUpdatedAt = performance.now();
     }
 
@@ -558,7 +558,7 @@ async function switchLibrarySection(driver, index, expected, options = {}) {
 
 async function collectViewportEvidence(driver) {
   return driver.executeScript(function viewportEvidence() {
-    const shell = document.querySelector(".aethon-app-shell")?.getBoundingClientRect();
+    const shell = document.querySelector(".epigraph-app-shell")?.getBoundingClientRect();
     return {
       width: window.innerWidth,
       height: window.innerHeight,
@@ -583,27 +583,27 @@ async function verifySearchDim(driver) {
       input.focus();
       return {
         focused: document.activeElement === input,
-        stateLatencyMs: document.body.classList.contains("aethon-search-engaged")
+        stateLatencyMs: document.body.classList.contains("epigraph-search-engaged")
           ? performance.now() - stateStartedAt
           : null,
       };
     });
     assert.equal(focusResult.focused, true, `Search input was not focusable on cycle ${cycle + 1}.`);
     await waitUntil(
-      () => driver.executeScript("return document.body.classList.contains('aethon-search-engaged')"),
+      () => driver.executeScript("return document.body.classList.contains('epigraph-search-engaged')"),
       `Search state did not engage on cycle ${cycle + 1}.`,
     );
     await waitUntil(
       () => driver.executeScript(function searchDimEngaged() {
-        const dim = document.querySelector(".aethon-search-dim-layer");
-        return document.body.classList.contains("aethon-search-engaged")
+        const dim = document.querySelector(".epigraph-search-dim-layer");
+        return document.body.classList.contains("epigraph-search-engaged")
           && Number(dim ? getComputedStyle(dim).opacity : 0) >= 0.95;
       }),
       `Search dim did not engage on cycle ${cycle + 1}.`,
     );
     if (!focusEvidence) {
       focusEvidence = await driver.executeScript(function searchEvidence() {
-        const dim = document.querySelector(".aethon-search-dim-layer");
+        const dim = document.querySelector(".epigraph-search-dim-layer");
         const search = document.querySelector(".library-search");
         const input = document.querySelector(".library-search .n-search__input");
         const dimStyle = dim ? getComputedStyle(dim) : null;
@@ -619,26 +619,26 @@ async function verifySearchDim(driver) {
       });
     }
     const closeResult = await driver.executeScript(function closeSearchFromDim() {
-      const dim = document.querySelector(".aethon-search-dim-layer");
+      const dim = document.querySelector(".epigraph-search-dim-layer");
       if (!(dim instanceof HTMLElement)) return { clicked: false, stateLatencyMs: null };
       const stateStartedAt = performance.now();
       dim.click();
       return {
         clicked: true,
-        stateLatencyMs: !document.body.classList.contains("aethon-search-engaged")
+        stateLatencyMs: !document.body.classList.contains("epigraph-search-engaged")
           ? performance.now() - stateStartedAt
           : null,
       };
     });
     assert.equal(closeResult.clicked, true, `Search dim was not clickable on cycle ${cycle + 1}.`);
     await waitUntil(
-      () => driver.executeScript("return !document.body.classList.contains('aethon-search-engaged')"),
+      () => driver.executeScript("return !document.body.classList.contains('epigraph-search-engaged')"),
       `Search state remained after blur on cycle ${cycle + 1}.`,
     );
     await waitUntil(
       () => driver.executeScript(function dimCleared() {
-        const dim = document.querySelector(".aethon-search-dim-layer");
-        return !document.body.classList.contains("aethon-search-engaged")
+        const dim = document.querySelector(".epigraph-search-dim-layer");
+        return !document.body.classList.contains("epigraph-search-engaged")
           && Number(dim ? getComputedStyle(dim).opacity : 0) === 0;
       }),
       `Search dim remained after blur on cycle ${cycle + 1}.`,
@@ -727,10 +727,10 @@ async function createSession(driverUrl, appPath, fakeCoreUrl, profileRoot) {
     },
   });
   const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
-  const windowX = Number(process.env.AETHON_WEBDRIVER_WINDOW_X);
-  const windowY = Number(process.env.AETHON_WEBDRIVER_WINDOW_Y);
-  const windowWidth = Number(process.env.AETHON_WEBDRIVER_WINDOW_WIDTH || 1280);
-  const windowHeight = Number(process.env.AETHON_WEBDRIVER_WINDOW_HEIGHT || 800);
+  const windowX = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_X);
+  const windowY = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_Y);
+  const windowWidth = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_WIDTH || 1280);
+  const windowHeight = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_HEIGHT || 800);
   if ([windowX, windowY, windowWidth, windowHeight].every(Number.isFinite)) {
     await driver.manage().window().setRect({
       x: windowX,
@@ -742,25 +742,25 @@ async function createSession(driverUrl, appPath, fakeCoreUrl, profileRoot) {
   try {
     const executor = driver.getExecutor();
     executor.defineCommand(
-      "aethonSendDevToolsCommand",
+      "epigraphSendDevToolsCommand",
       "POST",
       "/session/:sessionId/chromium/send_command",
     );
     executor.defineCommand(
-      "aethonSendAndGetDevToolsCommand",
+      "epigraphSendAndGetDevToolsCommand",
       "POST",
       "/session/:sessionId/chromium/send_command_and_get_result",
     );
-    driver.__aethonDevToolsEnabled = true;
+    driver.__epigraphDevToolsEnabled = true;
   } catch {
-    driver.__aethonDevToolsEnabled = false;
+    driver.__epigraphDevToolsEnabled = false;
   }
   return driver;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "aethon.exe"));
+  const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"));
   const driverUrl = args["driver-url"];
   assert(driverUrl, "--driver-url is required.");
   await fs.access(appPath);
@@ -785,7 +785,7 @@ async function main() {
 
   try {
     for (let iteration = 0; iteration < iterations; iteration += 1) {
-      const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), `aethon-navigation-${Date.now()}-${iteration}-`));
+      const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), `epigraph-navigation-${Date.now()}-${iteration}-`));
       let driver;
       try {
         const startupStartedAt = Date.now();
@@ -797,7 +797,7 @@ async function main() {
         await waitUntil(async () => {
           const state = await callAudit(driver, "getState");
           return Boolean(state?.profileId && state?.serverUrl);
-        }, "Aethon launch target did not become ready.", 120_000);
+        }, "Epigraph launch target did not become ready.", 120_000);
         const runtimeStateReadyAt = Date.now();
         await callAudit(driver, "bypassStartupSplash");
         const splashBypassedAt = Date.now();
@@ -805,7 +805,7 @@ async function main() {
           const state = await callAudit(driver, "getState");
           const shellRendered = await driver.executeScript("return Boolean(document.querySelector('#app-shell .n-sidebar')) && !document.querySelector('.page-loading')");
           return state?.shellReady === true && shellRendered;
-        }, "Aethon shell did not become ready.", 120_000);
+        }, "Epigraph shell did not become ready.", 120_000);
         const shellReadyAt = Date.now();
         const startupSample = {
           totalMs: shellReadyAt - startupStartedAt,
@@ -887,25 +887,25 @@ async function main() {
             input.focus();
           });
           await waitUntil(() => driver.executeScript(function searchDimEngaged() {
-            const dim = document.querySelector(".aethon-search-dim-layer");
-            return document.body.classList.contains("aethon-search-engaged")
+            const dim = document.querySelector(".epigraph-search-dim-layer");
+            return document.body.classList.contains("epigraph-search-engaged")
               && Number(dim ? getComputedStyle(dim).opacity : 0) >= 0.95;
           }), "Search did not re-engage for screenshot.");
           const imageSearch = await driver.takeScreenshot();
           await fs.writeFile(path.join(outputDirectory, "search-dim-focused.png"), imageSearch, "base64");
-          await driver.executeScript("document.querySelector('.aethon-search-dim-layer')?.click()");
+          await driver.executeScript("document.querySelector('.epigraph-search-dim-layer')?.click()");
           await waitUntil(
             () => driver.executeScript(function screenshotSearchCleared() {
-              const dim = document.querySelector(".aethon-search-dim-layer");
-              return !document.body.classList.contains("aethon-search-engaged")
+              const dim = document.querySelector(".epigraph-search-dim-layer");
+              return !document.body.classList.contains("epigraph-search-engaged")
                 && Number(dim ? getComputedStyle(dim).opacity : 0) === 0;
             }),
             "Search dim remained after screenshot.",
           );
 
           await waitUntil(
-            () => driver.executeScript("return document.querySelector('#app-shell')?.classList.contains('aethon-motion-idle')"),
-            "Aethon did not enter motion-idle state.",
+            () => driver.executeScript("return document.querySelector('#app-shell')?.classList.contains('epigraph-motion-idle')"),
+            "Epigraph did not enter motion-idle state.",
             10_000,
           );
           toastReport = await verifyToastAnimation(driver);

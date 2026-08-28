@@ -32,7 +32,7 @@ function readRepoFile(path: string) {
 
 function layoutCssShellBlock() {
   const source = readRepoFile("src/styles/nocturne-port.css");
-  const start = source.indexOf(".aethon-app-shell");
+  const start = source.indexOf(".epigraph-app-shell");
   const end = source.indexOf(".n-btn {", start);
   if (start < 0 || end < 0) throw new Error("Could not locate layout shell CSS block");
   return source.slice(start, end);
@@ -98,7 +98,7 @@ describe("layout theme components", () => {
     const shell = layoutCssShellBlock();
     const tokens = readRepoFile("src/styles/tokens.css");
 
-    expect(shell).toMatch(/\.aethon-search-dim-layer\s*\{[^}]*z-index:\s*var\(--z-popover\);/s);
+    expect(shell).toMatch(/\.epigraph-search-dim-layer\s*\{[^}]*z-index:\s*var\(--z-popover\);/s);
     expect(tokens).toMatch(/--z-popover:\s*(\d+);/);
     expect(tokens).toMatch(/--z-modal:\s*(\d+);/);
 

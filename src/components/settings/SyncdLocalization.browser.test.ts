@@ -44,12 +44,14 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdHostDecidePairing: vi.fn(),
   syncdForgetPersistedSession: vi.fn(),
   syncdListDiscoveryCandidates: vi.fn(async () => []),
+  syncdListPairedDevices: vi.fn(async () => []),
   syncdPauseReplication: vi.fn(),
   syncdResumeReplication: vi.fn(),
   syncdRevalidateSession: vi.fn(),
   syncdRevalidatePersistedSyncSessions: vi.fn(async () => []),
   syncdSetActiveReplicationSession: vi.fn(),
   syncdStartHostPairing: vi.fn(),
+  syncdUpdatePairedDeviceGrantedScopes: vi.fn(),
 }));
 
 import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
@@ -68,9 +70,9 @@ async function expectDialogScreenshot(name: string) {
   expect(rect.bottom).toBeLessThanOrEqual(window.innerHeight);
   await (
     expect(dialog) as unknown as {
-      toMatchAethonScreenshot: (screenshotName: string) => Promise<void>;
+      toMatchEpigraphScreenshot: (screenshotName: string) => Promise<void>;
     }
-  ).toMatchAethonScreenshot(name);
+  ).toMatchEpigraphScreenshot(name);
   return dialog;
 }
 

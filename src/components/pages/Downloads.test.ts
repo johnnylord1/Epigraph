@@ -202,7 +202,7 @@ describe("Downloads", () => {
       expect(screen.getByText("Vagabond")).toBeTruthy();
     });
 
-    expect(container.querySelector(".aethon-port--downloads")).toBeTruthy();
+    expect(container.querySelector(".epigraph-port--downloads")).toBeTruthy();
     expect(screen.getByText("Vagabond")).toBeTruthy();
     expect(screen.getByText("Vinland Saga")).toBeTruthy();
     expect(screen.getByText("4 Items")).toBeTruthy();
@@ -246,7 +246,7 @@ describe("Downloads", () => {
       expect(screen.getByText("Vagabond")).toBeTruthy();
     });
 
-    expect(document.body.className).not.toContain("aethon-downloads-search-engaged");
+    expect(document.body.className).not.toContain("epigraph-downloads-search-engaged");
     expect(container.querySelector(".downloads-search-overlay")).toBeNull();
     expect(screen.getByRole("button", { name: "Home" })).toBeTruthy();
   });

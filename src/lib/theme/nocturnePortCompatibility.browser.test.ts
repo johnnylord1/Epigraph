@@ -9,16 +9,16 @@ function painted(element: Element): boolean {
 describe("Nocturne port computed compatibility", () => {
   test("resolves every active port host in the final cascade", async () => {
     const splash = document.createElement("div");
-    splash.className = "aethon-port--splash";
+    splash.className = "epigraph-port--splash";
 
     const shell = document.createElement("div");
-    shell.className = "aethon-app-shell";
+    shell.className = "epigraph-app-shell";
     const sidebar = document.createElement("nav");
     sidebar.className = "n-sidebar";
     shell.appendChild(sidebar);
 
     const settings = document.createElement("main");
-    settings.className = "aethon-port--settings settings-page";
+    settings.className = "epigraph-port--settings settings-page";
     const settingsCard = document.createElement("section");
     settingsCard.className = "settings-card";
     settings.appendChild(settingsCard);

@@ -253,7 +253,7 @@
       componentActive = false;
       setupStateController?.abort();
       setupStateController = null;
-      document.body.classList.remove("aethon-home-search-engaged");
+      document.body.classList.remove("epigraph-home-search-engaged");
       cancelScheduledHomeMetaLoad();
       window.removeEventListener(SERVER_READY_EVENT, handleServerReady);
       unsubLibrary();
@@ -963,7 +963,7 @@
           type="text"
           role="combobox"
           aria-expanded={store.searchOpen}
-          aria-controls="aethon-search-results"
+          aria-controls="epigraph-search-results"
           aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
           aria-autocomplete="list"
           placeholder={$_("home.searchPlaceholder")}

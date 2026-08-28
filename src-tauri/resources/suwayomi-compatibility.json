@@ -1,32 +1,44 @@
 {
-  "schemaVersion": 2,
-  "repository": "Suwayomi/Suwayomi-Server",
-  "minSupportedVersion": "v2.1.1867",
-  "maxTestedVersion": "v2.3.2243",
-  "checksumAsset": "Checksums.sha256",
-  "signatureAsset": null,
-  "allowedVersions": [
-    {
-      "version": "v2.1.1867",
-      "asset": "Suwayomi-Server-v2.1.1867.jar",
-      "sha256": "51e307c2581e4e1a002991ab3e3a77503c8b074c42695987a984a7382d0ac5af",
-      "notes": "Aethon baseline Suwayomi 2.1 release."
-    },
-    {
-      "version": "v2.3.2243",
-      "asset": "Suwayomi-Server-v2.3.2243.jar",
-      "sha256": "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
-      "notes": "Certified on Windows x64 with Java 21, disposable H2 migration, Extension Stores, installed extension canaries, restart, and rollback."
-    }
-  ],
-  "blockedVersions": [
-    {
-      "version": "v2.0.1727",
-      "reason": "Below Aethon's tested managed-update baseline."
-    },
-    {
-      "version": "v2.2.2100",
-      "reason": "Blocked after Aethon managed-runtime smoke testing: the promoted server process did not become GraphQL-healthy on the main profile."
-    }
-  ]
+    "schemaVersion":  3,
+    "repository":  "Suwayomi/Suwayomi-Server",
+    "minSupportedVersion":  "v2.1.1867",
+    "maxTestedVersion":  "v2.3.2333",
+    "checksumAsset":  "Checksums.sha256",
+    "signatureAsset":  null,
+    "allowedVersions":  [
+                            {
+                                "version":  "v2.1.1867",
+                                "asset":  "Suwayomi-Server-v2.1.1867.jar",
+                                "sha256":  "51e307c2581e4e1a002991ab3e3a77503c8b074c42695987a984a7382d0ac5af",
+                                "compatibilityProfile":  "V21",
+                                "transactionalExtensionUpdates":  false,
+                                "notes":  "Epigraph baseline Suwayomi 2.1 release."
+                            },
+                            {
+                                "version":  "v2.3.2243",
+                                "asset":  "Suwayomi-Server-v2.3.2243.jar",
+                                "sha256":  "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
+                                "compatibilityProfile":  "V23",
+                                "transactionalExtensionUpdates":  true,
+                                "notes":  "Certified on Windows x64 with Java 21, disposable H2 migration, Extension Stores, installed extension canaries, restart, and rollback."
+                            },
+                            {
+                                "version":  "v2.3.2333",
+                                "asset":  "Suwayomi-Server-v2.3.2333.jar",
+                                "sha256":  "ce903cf3814a14e8b56d6cf70b2f758c9f21b7084307f45a14bd1fa4af5b04db",
+                                "compatibilityProfile":  "V23",
+                                "transactionalExtensionUpdates":  true,
+                                "notes":  "Preview channel certified locally: KCEF disabled for headless Core profile; new-API keiyoushi extensions verified visible."
+                            }
+                        ],
+    "blockedVersions":  [
+                            {
+                                "version":  "v2.0.1727",
+                                "reason":  "Below Epigraph\u0027s tested managed-update baseline."
+                            },
+                            {
+                                "version":  "v2.2.2100",
+                                "reason":  "Blocked after Epigraph managed-runtime smoke testing: the promoted server process did not become GraphQL-healthy on the main profile."
+                            }
+                        ]
 }

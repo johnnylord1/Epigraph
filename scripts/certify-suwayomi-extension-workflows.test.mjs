@@ -39,13 +39,13 @@ test("rejects structural runtime and extension ABI errors", () => {
 });
 
 test("creates deterministic Local Source files without user data", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "aethon-local-source-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "epigraph-local-source-test-"));
   try {
     await createLocalSourceFixture(root);
-    const details = JSON.parse(await readFile(path.join(root, "local", "Aethon Certification", "details.json"), "utf8"));
-    assert.equal(details.title, "Aethon Certification");
-    assert.equal(details.author, "Aethon");
-    assert.ok((await readFile(path.join(root, "local", "Aethon Certification", "Chapter 01", "page01.png"))).length > 0);
+    const details = JSON.parse(await readFile(path.join(root, "local", "Epigraph Certification", "details.json"), "utf8"));
+    assert.equal(details.title, "Epigraph Certification");
+    assert.equal(details.author, "Epigraph");
+    assert.ok((await readFile(path.join(root, "local", "Epigraph Certification", "Chapter 01", "page01.png"))).length > 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -60,8 +60,8 @@ test("requires extension registration and the complete local content workflow", 
         { id: "7", name: "Akuma", extension: { pkgName: STRUCTURAL_CANARY.packageName } },
       ] },
     },
-    search: { fetchSourceManga: { mangas: [{ id: 10, title: "Aethon Certification" }] } },
-    details: { fetchManga: { manga: { id: 10, title: "Aethon Certification", author: "Aethon" } } },
+    search: { fetchSourceManga: { mangas: [{ id: 10, title: "Epigraph Certification" }] } },
+    details: { fetchManga: { manga: { id: 10, title: "Epigraph Certification", author: "Epigraph" } } },
     chapters: { fetchChapters: { chapters: [{ id: 20, mangaId: 10 }] } },
     pages: { fetchChapterPages: { pages: ["http://127.0.0.1/page"] } },
   });
@@ -80,7 +80,7 @@ test("keeps structural and content fixtures inside official Suwayomi mechanisms"
 });
 
 test("serves a deterministic V23 store and exact JAR from loopback", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "aethon-extension-store-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "epigraph-extension-store-test-"));
   const artifactPath = path.join(root, "fixture.jar");
   await writeFile(artifactPath, Buffer.from("fixture"));
   const store = await startFixtureStoreServer(artifactPath, DIRECT_INSTALL_CANARY);
@@ -98,7 +98,7 @@ test("serves a deterministic V23 store and exact JAR from loopback", async () =>
 });
 
 test("reuses only checksum-valid artifacts from a bounded harness cache", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "aethon-artifact-cache-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "epigraph-artifact-cache-test-"));
   const cacheRoot = path.join(root, "cache");
   const artifact = Buffer.from("checksum-pinned fixture");
   const descriptor = {
@@ -114,8 +114,8 @@ test("reuses only checksum-valid artifacts from a bounded harness cache", async 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   descriptor.url = `http://127.0.0.1:${address.port}/fixture.jar`;
-  const previousCache = process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE;
-  process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE = cacheRoot;
+  const previousCache = process.env.EPIGRAPH_SUWAYOMI_ARTIFACT_CACHE;
+  process.env.EPIGRAPH_SUWAYOMI_ARTIFACT_CACHE = cacheRoot;
   try {
     await mkdir(cacheRoot, { recursive: true });
     for (let index = 0; index < 10; index += 1) {
@@ -134,15 +134,15 @@ test("reuses only checksum-valid artifacts from a bounded harness cache", async 
     const remaining = await readdir(cacheRoot);
     assert.equal(remaining.filter((name) => name.startsWith("shared-file-")).length, 10);
   } finally {
-    if (previousCache === undefined) delete process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE;
-    else process.env.AETHON_SUWAYOMI_ARTIFACT_CACHE = previousCache;
+    if (previousCache === undefined) delete process.env.EPIGRAPH_SUWAYOMI_ARTIFACT_CACHE;
+    else process.env.EPIGRAPH_SUWAYOMI_ARTIFACT_CACHE = previousCache;
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test("accepts Suwayomi-generated JAR names after GraphQL identity was verified", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "aethon-generated-jar-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "epigraph-generated-jar-test-"));
   const extensions = path.join(root, "extensions");
   const bytes = Buffer.from("generated extension");
   try {

@@ -6,7 +6,7 @@ import {
 } from "./chapterCounts";
 import type { Chapter, Manga } from "../types";
 
-const COMICS_CHAPTER_SNAPSHOT_KEY = "aethon-comics-chapter-snapshots";
+const COMICS_CHAPTER_SNAPSHOT_KEY = "epigraph-comics-chapter-snapshots";
 const COMICS_CHAPTER_SNAPSHOT_VERSION = 1 as const;
 
 interface StorageLike {

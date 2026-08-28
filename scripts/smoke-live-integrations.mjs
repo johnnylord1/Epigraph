@@ -1,13 +1,13 @@
-const enabled = process.env.AETHON_RELEASE_SMOKE_LIVE === "1";
+const enabled = process.env.EPIGRAPH_RELEASE_SMOKE_LIVE === "1";
 
 if (!enabled) {
-  process.stdout.write("Live integration smoke skipped. Set AETHON_RELEASE_SMOKE_LIVE=1 with explicit disposable endpoints to opt in.\n");
+  process.stdout.write("Live integration smoke skipped. Set EPIGRAPH_RELEASE_SMOKE_LIVE=1 with explicit disposable endpoints to opt in.\n");
   process.exit(0);
 }
 
 const configuredTargets = [
-  ["FlareSolverr", process.env.AETHON_LIVE_FLARESOLVERR_URL],
-  ["Suwayomi", process.env.AETHON_LIVE_SUWAYOMI_URL],
+  ["FlareSolverr", process.env.EPIGRAPH_LIVE_FLARESOLVERR_URL],
+  ["Suwayomi", process.env.EPIGRAPH_LIVE_SUWAYOMI_URL],
 ].filter(([, value]) => Boolean(value));
 
 if (configuredTargets.length === 0) {

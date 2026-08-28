@@ -1,4 +1,4 @@
-# Relatório de Melhorias e Dívidas Técnicas — Aethon Desktop
+# Relatório de Melhorias e Dívidas Técnicas — Epigraph Desktop
 
 [Matriz funcional](functional-audit.md) · [Bugs confirmados](bug-report.md) · [Guia do usuário](user-guide.md)
 
@@ -10,7 +10,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | IMP-001 | Cobertura de testes | O Marco 67 adicionou smoke WebView2 de Home, Library e Settings em 1280×800 e 800×600; o Marco 66 cobre EPUB/PDF. Manga fullscreen ainda depende de catálogo/capítulo real. | Detectar regressões de foco, fullscreen, teclado, diálogos e persistência no runtime real. | Média | Baixo | P2 | Tauri driver, launcher gerenciado, perfis descartáveis | BUG-003 |
 | IMP-002 | Arquitetura | O Marco 65 removeu `source.settings.write`, que não possuía implementação nem chamador de produção. `source.settings.read` continua sob demanda. | Contrato publicado corresponde às capacidades reais. | Concluída | Baixo | Resolvido | `novels/contracts.ts` e testes de contrato | FUNC-063 |
-| IMP-003 | Desempenho | O Marco 70 reduziu o entry em 17,57%, retirou EPUB/PDF/parsers do grafo estático inicial e adicionou budgets determinísticos de bundle e navegação. | Menor tempo de startup, parse e memória do WebView2. | Concluída | Baixo | Resolvido | `release:check-bundles`, `release:check-navigation` | — |
+| IMP-003 | Desempenho | O Marco 70 e o gate 72H reduziram o entry em 18,57%, retiraram EPUB/PDF/parsers do grafo estático inicial e adicionaram budgets determinísticos de bundle e navegação. | Menor tempo de startup, parse e memória do WebView2. | Concluída | Baixo | Resolvido | `release:check-bundles`, `release:check-navigation` | — |
 | IMP-004 | Cobertura de testes | O Marco 66 adicionou gate WebView2 descartável para EPUB/PDF e round-trip de Books, além do contrato de fallback offline. | Provar integridade de dados, rejeição de corrupção e persistência antes de releases. | Concluída | Baixo | Resolvido | `release:certify-data`, perfil Tauri descartável | — |
 | IMP-005 | Observabilidade | O snapshot original tinha 23 erros não tratados; o browser gate atual passou 44/44 sem repetir a falha. | Manter logs com fase, perfil, comando Tauri e correlação sem dados sensíveis nos novos harnesses. | Média | Baixo | P1 | Vitest browser, bridge Tauri, scripts de release | BUG-003 |
 | IMP-006 | Manutenção | O baseline histórico tinha 308 erros e 11 warnings; em 21/07/2026 o `svelte-check` passou com 0 erros e 0 warnings. | Manter o type-check verde como gate de release. | Concluída | Baixo | Resolvido | Svelte/TS, readers, books, i18n, novels | BUG-002 |
@@ -24,8 +24,10 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 | IMP-014 | Observabilidade | Fluxos externos não apresentam um relatório de capacidades consolidadas (configurado, indisponível, credencial ausente, offline). | Diagnóstico de suporte mais rápido sem expor tokens. | Média | Baixo | P2 | About, Activity Center, Settings, runtime diagnostics | — |
 | IMP-015 | Contratos | O tipo mDNS é repetido em Rust e PowerShell com formas diferentes quanto ao ponto final. | Evitar gates falsamente vermelhos e consumidores incompatíveis. | Baixa | Médio | P1 | discovery provider, phase gate, diagnóstico Syncd | BUG-005 |
 | IMP-016 | Confiabilidade | O lifecycle Syncd não forneceu bootstrap quando o sidecar encontrou colisão e `runtime.json` não foi criado. | Start/restart idempotente e recuperação clara sem deixar o pairing em espera. | Alta | Alto | P1 | sidecar, lifecycle, runtime file, automação nativa | BUG-006 |
-| IMP-017 | Automação / concorrência | Driver, servidor local e instâncias Syncd usam conjuntos de portas fixas; a limpeza procura processos e listeners de forma ampla. Execuções paralelas no mesmo Windows podem disputar portas ou interferir entre si. | Permitir auditorias e duas ou mais instâncias locais simultâneas sem afetar outros usuários, chats ou sessões do Aethon, mantendo a complexidade invisível no app. | Alta | Alto | P1 | runner nativo, wrapper PowerShell, lifecycle, `runtime.json`, mDNS/QR | BUG-006 |
+| IMP-017 | Automação / concorrência | Driver, servidor local e instâncias Syncd usam conjuntos de portas fixas; a limpeza procura processos e listeners de forma ampla. Execuções paralelas no mesmo Windows podem disputar portas ou interferir entre si. | Permitir auditorias e duas ou mais instâncias locais simultâneas sem afetar outros usuários, chats ou sessões do Epigraph, mantendo a complexidade invisível no app. | Alta | Alto | P1 | runner nativo, wrapper PowerShell, lifecycle, `runtime.json`, mDNS/QR | BUG-006 |
 | IMP-018 | Armazenamento / UX | Runtime, logs, temporários e diagnósticos podem crescer ou aparecer como múltiplos artefatos se cada execução criar estruturas permanentes. | Manter o perfil do usuário limpo, com estado interno limitado, rotação automática e nenhuma configuração técnica no fluxo normal. | Média | Alto | P1 | diretório de dados do app, logs, temporários, diagnósticos, backup | — |
+| IMP-019 | Desempenho / observabilidade | O gate 72H observou startup total mediano de 5.702,5 ms contra referência histórica de 3.816 ms; shell activation e trabalho app-owned permaneceram dentro dos budgets. A maior parcela ocorre antes ou fora da ativação do shell. | Separar custo de ambiente/WebView2 do custo do app e reduzir eventual atraso real sem elevar budgets por conveniência. | Média | Baixo | P2 | `release:check-navigation`, bootstrap Tauri/WebView2 | — |
+| IMP-021 | Arquitetura Core/Mobile | A bridge profile-scoped, o consumidor mobile, as mutations tipadas e o offline foram certificados em emulador contra o perfil real. Mais de 600 obras, capas, detalhes, capítulos, progresso e categorias convergiram sem criar catálogo paralelo. Restam aparelho físico, mudança real do inventário de extensões e restart do Windows para a porta padrão. | Encerrar a evidência de release sem enfraquecer a autoridade do Suwayomi nem interpretar indisponibilidade como exclusão. | Média | Médio | P2 | Core, proxy Suwayomi, gateway mobile, scopes Syncd | FUNC-060 |
 
 ## Ordem sugerida
 
@@ -34,6 +36,9 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 3. Marcos 66–68: concluídos; dados locais, acessibilidade/viewports e localização Syncd possuem gates reproduzíveis.
 4. Marcos 69–70: concluídos; integrações determinísticas e budgets de desempenho estão certificados.
 5. Marco 71: concluído; o gate agregado e a matriz de riscos foram publicados.
+6. Marco 72H: concluído no HEAD `50f1c8f6`; `pnpm release:verify` passou os 16
+   gates bloqueantes em 01/08/2026. `IMP-019` permanece observação de
+   desempenho não bloqueante.
 
 ## Estado revalidado em 21/07/2026
 
@@ -65,7 +70,7 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 
 ## Atualização do Marco 69
 
-- `IMP-008` foi concluído no gate reproduzível: trackers, Hardcover, Discord, updater Aethon, updater Suwayomi, FlareSolverr e SOCKS possuem contratos determinísticos sem credenciais reais.
+- `IMP-008` foi concluído no gate reproduzível: trackers, Hardcover, Discord, updater Epigraph, updater Suwayomi, FlareSolverr e SOCKS possuem contratos determinísticos sem credenciais reais.
 - O falso aviso de update foi eliminado na origem: releases GitHub não autorizam instalação; somente o endpoint assinado do Tauri updater informa disponibilidade.
 - Hardcover não inclui corpo remoto em erros 401/403 e sanitiza padrões de credencial nos demais erros.
 - Discord não marca uma presença como enviada quando o cliente não iniciou e recupera em um novo start.
@@ -102,8 +107,8 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
 - FlareSolverr ganhou classificação estrita, ownership, contenção local e
   policy Docker determinística. O lifecycle Docker real permanece uma
   validação condicional por indisponibilidade do CLI.
-- A prioridade imediata é repetir `pnpm release:verify` no HEAD atual. Os
-  demais itens abertos continuam melhorias ou evidências condicionais, não
+- `pnpm release:verify` foi repetido no HEAD atual em 01/08/2026 e passou.
+  Os demais itens abertos continuam melhorias ou evidências condicionais, não
   regressões confirmadas.
 
 ## Atualização do Marco 72H
@@ -117,11 +122,23 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
   Também bloqueia pelos custos pertencentes ao app, mediana global, long tasks,
   heap, listeners, observers e RAFs. A mudança foi motivada por evidência repetida de
   `requestAnimationFrame` adiado com Svelte/DOM concluídos em menos de 5 ms.
-- Todos os gates constituintes executados do 72H ficaram verdes. A execução
-  agregada foi interrompida durante a certificação de dados, portanto o marco
-  ainda aguarda um resumo único e uma limpeza final. Isso não substitui as
-  limitações condicionais já registradas para live services, assinatura real,
-  Docker FlareSolverr, manga/fullscreen e leitor de tela.
+- Todos os gates constituintes e a execução agregada do 72H ficaram verdes no
+  HEAD atual. Permanecem condicionais live services, assinatura real, Docker
+  FlareSolverr, manga/fullscreen e leitor de tela.
+
+## Revalidação final — 01/08/2026
+
+O release gate atual passou 16/16 etapas bloqueantes. A limpeza removeu perfis,
+logs e temporários de sucesso; nenhuma alteração de código ou artefato de
+teste ficou no worktree. A auditoria visual nativa adicional confirmou Home,
+Library e Settings em DISPLAY3, nos viewports 1280×800 e 800×600, sem clipping
+horizontal e com foco visível. O perfil vazio foi mantido sem dados artificiais.
+
+O único sinal novo é `IMP-019`: startup total acima da referência histórica,
+com shell activation, transições de Library, Search, toast, heap e lifecycle
+app-owned aprovados. Ele deve ser investigado sem alterar budgets ou mascarar
+custos do ambiente.
+
 ## Atualizacao de internacionalizacao - 01/08/2026
 
 | IMP-020 | Localizacao | Catalogos de Settings, Sources e updater ainda continham textos ativos em ingles nos idiomas suportados. | Manter cobertura de interface consistente sem alterar logica, APIs ou contratos de runtime. | Concluida | Baixo | Resolvido | `catalogContract.test.ts`, `runtime.test.ts`, `svelte-check` | - |

@@ -64,6 +64,9 @@ export interface TasteProfile {
 
 export interface RecommendationScoreBreakdown {
   personalRatingAffinity: number;
+  profileTagOverlap: number;
+  contentTypeFit: number;
+  sourceAffinity: number;
   contentSimilarity: number;
   trackerConsensus: number;
   trendingVelocity: number;

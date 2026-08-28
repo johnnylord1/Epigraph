@@ -33,7 +33,7 @@ export interface LibraryUpdateSubscription {
 }
 
 const LIBRARY_UPDATE_STATUS_SUBSCRIPTION = `
-  subscription AethonLibraryUpdateStatus($input: LibraryUpdateStatusChangedInput!) {
+  subscription EpigraphLibraryUpdateStatus($input: LibraryUpdateStatusChangedInput!) {
     libraryUpdateStatusChanged(input: $input) {
       omittedUpdates
       jobsInfo {
