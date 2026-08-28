@@ -1,242 +1,219 @@
 # Epigraph
 
 <p align="center">
-  <img src="docs/assets/epigraph-splash.gif" alt="Epigraph splash animation captured from the app" />
+  <img src="docs/assets/epigraph-splash.gif" alt="Epigraph splash animation" />
 </p>
 
 <p align="center">
-  <strong>A desktop reader, library manager, source manager, and safe Suwayomi runtime shell.</strong>
-</p>
-
-Epigraph is a native desktop app for comics, manga, novels, and local books. It combines a Svelte 5 interface, Tauri v2 desktop integration, Suwayomi GraphQL for manga/comics, local book support, migration tools, downloads, TTS controls, backup/restore utilities, and a guarded runtime updater.
-
-<p align="center">
-  <img src="docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop app banner" />
-</p>
-
-## Preview
-
-<p align="center">
-  <img src="docs/assets/epigraph-app-tour.gif" alt="Epigraph app tour using real app screenshots" width="78%" />
+  <strong>Your library, across desktop and Android.</strong><br>
+  Manga, novels, EPUB, and PDF reading with a shared Epigraph identity.
 </p>
 
 <p align="center">
-  <img src="docs/assets/epigraph-preview-grid.png" alt="Epigraph screen preview grid" />
+  <a href="https://github.com/johnnylord1/Epigraph/tree/main">Desktop</a> ·
+  <a href="https://github.com/johnnylord1/Epigraph/tree/mobile">Android</a> ·
+  <a href="https://github.com/johnnylord1/Epigraph/releases">Releases</a> ·
+  <a href="https://github.com/johnnylord1/Epigraph/issues">Issues</a>
 </p>
 
-### Readers
+Epigraph is a cross-platform reading environment. The Windows-first desktop
+client combines library management, source discovery, migration, downloads,
+local books, and a guarded Suwayomi runtime. The native Android client brings
+the mobile reading and library experience together with the same product
+identity and compatibility model.
+
+## Product overview
+
+| Client | What it is | Identity | Branch |
+| --- | --- | --- | --- |
+| Desktop | Tauri v2 application for Windows and other desktop targets | <code>dev.epigraph.app</code> · <code>epigraph</code> | [main](https://github.com/johnnylord1/Epigraph/tree/main) |
+| Android | Native Android reading and library client | <code>app.epigraph.mobile</code> | [mobile](https://github.com/johnnylord1/Epigraph/tree/mobile) |
+| Shared services | Epigraph Core, Syncd, pairing, backup, and compatibility contracts | <code>epigraph://</code> · <code>.epigraphbk</code> | Shared by contract |
+
+## Desktop
 
 <p align="center">
-  <img src="docs/screenshots/epigraph-ComicReader.png" alt="Epigraph comic reader with HUD" width="49%" />
-  <img src="docs/screenshots/epigraph-BookReader.png" alt="Epigraph book reader with HUD" width="49%" />
+  <img src="docs/assets/epigraph-hero-banner.png" alt="Epigraph desktop recommendations and reader interface" />
 </p>
 
-More real screenshots are available in [docs/screenshots](docs/screenshots).
+The desktop client is the operational hub for the full library:
 
-## Current Features
+- Unified library surfaces for manga and comics, source novels, EPUB books,
+  and PDFs while keeping their data domains separate.
+- Home and Browse dashboards for reading continuity, updates, downloads,
+  recommendations, source health, trackers, and taste signals.
+- Suwayomi GraphQL integration for manga metadata, chapters, sources,
+  extensions, downloads, and library state.
+- LNReader-compatible novel sources, local EPUB/PDF imports, TTS controls,
+  offline reading, and reader-specific progress.
+- Single-title and mass migration flows with review, matching, retry,
+  exclusion, and journal-backed safety.
+- Managed Suwayomi runtime updates with ownership checks, snapshots,
+  checksums, rollback, and health gates.
 
-### Core
+<p align="center">
+  <img src="docs/assets/epigraph-app-tour.gif" alt="Epigraph desktop app tour" width="78%" />
+</p>
 
-- Unified desktop Library for comics/manga, LNReader-style source novels, EPUB books, and PDFs while keeping those domains separate internally.
-- Home dashboard with continue reading, recent updates, this-week activity, recently finished titles, archive search, quick actions, source status, download status, reading metrics, and tracker status.
-- Browse page with profile-based recommendations for manga and novels, source/tracker scoring, taste signals, recommendation categories, keyword search, Discover, source catalogs, and extension management.
-- Suwayomi GraphQL integration for manga/comics metadata, chapters, sources, extensions, downloads, and library state.
-- Local book support for imported EPUB/PDF/prose-style reading flows.
-- Download queue management and downloaded manga fallback.
+<p align="center">
+  <img src="docs/screenshots/epigraph-ComicReader.png" alt="Epigraph comic reader" width="49%" />
+  <img src="docs/screenshots/epigraph-BookReader.png" alt="Epigraph book reader" width="49%" />
+</p>
 
-### Reader
+More desktop screens are available in
+[docs/screenshots](https://github.com/johnnylord1/Epigraph/tree/main/docs/screenshots).
 
-- Manga reader with keyboard controls, fullscreen handling, progress tracking, bookmarks, scanlator ordering, and offline fallback.
-- Novel reader for source-backed prose from LNReader-compatible extensions, with local state and chapter progress.
-- EPUB reader for imported books.
-- PDF reader with native page mode and reflow mode for prose-oriented reading.
-- Book and novel presentation controls for local files and source-backed prose.
-- Browser `speechSynthesis` TTS controls with persisted voice/rate/progress preferences.
-- Stable placeholders and retry behavior for covers, thumbnails, and backdrops.
+## Android
 
-### Sources And Migration
+<p align="center">
+  <img src="https://raw.githubusercontent.com/johnnylord1/Epigraph/mobile/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Epigraph Android launcher icon" width="180" />
+  <img src="https://raw.githubusercontent.com/johnnylord1/Epigraph/mobile/.github/readme-images/screens.gif" alt="Epigraph Android library and reader screens" width="68%" />
+</p>
 
-- Installed/available manga extension management through Suwayomi.
-- External `.apk` extension upload flow.
-- Source search, discover, latest/catalog browsing, source filters, language-aware source handling, and repository management.
-- LNReader-compatible novel repository and plugin flows are kept separate from Suwayomi manga extensions.
-- Single-title manga migration.
-- Source-based manga mass migration with review, matching, manual search, selection, retry/exclude actions, and journal-backed execution.
-- Novel migration flow kept separate from manga migration.
+The Android client lives in the
+[mobile branch](https://github.com/johnnylord1/Epigraph/tree/mobile) and is
+built from the Hayai-based native foundation:
 
-### Safety And Reliability
+- Manga and comic library, source browsing, downloads, categories, trackers,
+  backups, and offline reading.
+- Native novel reader with LNReader-compatible JavaScript plugins and
+  on-device QuickJS execution.
+- Continuous chapter reading, TTS, reader controls, orientation preferences,
+  progress positioning, and tablet-friendly layouts.
+- Recommendation flows that distinguish manga and novels and search installed
+  sources when a recommendation is selected.
+- Stable, beta, and nightly build variants with crash reporting and migration
+  tooling.
 
-- Suwayomi readiness checks that avoid destructive empty states while the backend is starting or reconnecting.
-- Normalized empty GraphQL errors for clearer backend failure messages.
-- Secure assisted Suwayomi runtime updater with ownership checks, compatibility allowlist, snapshot, staging, checksum validation, atomic promotion, rollback, and GraphQL health checks.
-- Global write lock during Suwayomi update operations.
-- Backup, restore, reconciliation, and snapshot utilities for app/library state.
-- Toast notifications for update state and important user-visible operations.
+The Android application ID is <code>app.epigraph.mobile</code>. It is a new
+installation alongside the legacy <code>app.aethon.mobile</code>; Android does
+not allow the new app to read the old app's private sandbox automatically.
+Use a backup/import flow or explicitly selected shared storage when moving
+data.
 
-### UI And UX
+## Cross-device compatibility
 
-- Nocturne desktop visual system with dense, desktop-first layouts.
-- Settings surfaces for appearance, reader behavior, library behavior, content/security, storage, tracking, backups, repositories, updater, and developer diagnostics.
-- Theme editor and live theme preview.
-- Paraglide localization with English, Portuguese, Spanish, Japanese, and Chinese catalogs.
-- Keyboard-oriented controls and accessible modal/toast patterns in the main surfaces.
+Epigraph keeps the persisted database and protocol identifiers stable where
+compatibility requires it, while presenting the new product identity at the
+edges:
 
-## Epigraph-Specific Work
+- New deep links use <code>epigraph://</code>; <code>aethon://</code>,
+  <code>hayai://</code>, and <code>tachiyomi://</code> remain accepted.
+- New backups use <code>.epigraphbk</code>; existing
+  <code>.aethonbk</code> and supported legacy formats remain importable.
+- New desktop and mobile headers use <code>X-Epigraph-*</code>; compatible
+  <code>X-Aethon-*</code> headers are still understood.
+- New discovery publishes <code>_epigraph-sync._tcp.local.</code> and can
+  discover the legacy service during transition.
+- Desktop migration recognizes legacy <code>Aethon/aethon</code> storage and
+  the new <code>Epigraph/epigraph</code> locations without silently
+  overwriting newer data.
+- Pairing can be established between new clients and supported legacy clients
+  while the migration is in progress.
 
-- Managed bundled Suwayomi runtime with local profile ownership checks.
-- Safe Suwayomi runtime updater built for Epigraph's desktop distribution model.
-- Home is treated as an operational desktop hub, not a static landing page: it summarizes reading continuity, update pressure, downloads, source health, archive activity, and tracking state.
-- Browse combines installed manga sources, LNReader novel sources, trackers, Hardcover data, and the user's Library profile to rank recommendations instead of only showing raw source catalogs.
-- Recommendations expose why they were selected through provider signals, score breakdowns, profile tags, tracker/Hardcover signals, and source availability.
-- Book reading is first-class: source novels, EPUB imports, PDF native mode, and PDF reflow mode live alongside manga/comics without sharing unsafe data paths.
-- Single and mass migration flows designed around Epigraph's Library and journal safety rules.
-- Library split between comics/manga, source novels, and imported books without collapsing user data domains.
-- Restore/reconciliation tooling for imported state, manga backups, novels, books, categories, and progress.
-- Epigraph Core/Syncd groundwork for real device/session synchronization. The Core remains hosted on the PC; Epigraph Mobile uses the authenticated Suwayomi proxy for comics and Syncd scopes for complementary state.
-- Nocturne visual identity, Settings architecture, source management UI, and desktop runtime policy.
-
-## Planned
-
-These items are planned work, not completed functionality:
-
-- Complete the conditional release checks that require signed packages, live
-  services, an accessible manga catalog, or manual screen-reader validation.
-- Continue LNReader source compatibility diagnostics without introducing a
-  proprietary plugin format or synchronizing credentials and chapter content.
-- Improve reader and TTS ergonomics while preserving the existing EPUB, PDF,
-  manga, prose, progress, keyboard, fullscreen, and offline contracts.
-- Keep source, extension, updater, bundle, navigation, storage, and Syncd
-  certification gates current as their implementations evolve.
-- Complete the PC-hosted Core boundary consumed by the separate native Android
-  Hayai-based Epigraph Mobile project without adding mobile UI or packaging to
-  this repository. Comics continue to use Suwayomi through the Core proxy;
-  Syncd is not a replacement catalog.
-
-See [docs/roadmap.md](docs/roadmap.md) for the current roadmap.
+The Android sandbox boundary is intentional: installing Epigraph Mobile does
+not remove or modify the legacy app, and a user-controlled backup/import is
+required for private application data.
 
 ## Install
 
-Release packaging is Windows-first. Download releases from the official Epigraph repository when published:
+### Desktop
 
-[https://github.com/johnnylord1/Epigraph/releases](https://github.com/johnnylord1/Epigraph/releases)
+Desktop release artifacts are published on the
+[Epigraph Releases page](https://github.com/johnnylord1/Epigraph/releases)
+when available. The application can use its managed Suwayomi runtime or an
+external Suwayomi server configured in Settings.
 
-Epigraph can run with its managed bundled Suwayomi runtime or connect to an external Suwayomi server from Settings.
+### Android
 
-## Development
+Android artifacts and build status are available from the
+[mobile branch](https://github.com/johnnylord1/Epigraph/tree/mobile) and
+[GitHub Actions](https://github.com/johnnylord1/Epigraph/actions). The
+minimum supported Android version is Android 7.0.
 
-Prerequisites:
+## Build from source
 
-- Node.js and pnpm.
-- Rust via rustup.
-- Tauri v2 prerequisites for your platform.
-- Microsoft Edge WebView2 on Windows.
+### Desktop
 
-Install dependencies:
+Prerequisites: Node.js, pnpm, Rust via rustup, Tauri v2 prerequisites, and
+Microsoft Edge WebView2 on Windows.
 
-```bash
+~~~bash
 pnpm install
-```
-
-Run the web dev server:
-
-```bash
 pnpm dev
-```
-
-Run the desktop app:
-
-```bash
 pnpm tauri:dev
-```
+~~~
 
-Run the managed desktop gate:
+Build the frontend and Tauri application:
 
-```bash
-pnpm tauri:dev:gate
-```
-
-## Build
-
-Build the frontend:
-
-```bash
+~~~bash
 pnpm build
-```
-
-Build the Tauri app:
-
-```bash
 pnpm tauri -- build --config src-tauri/tauri.conf.json
-```
+~~~
 
-Build the automation target:
+### Android
 
-```bash
-pnpm tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json
-```
+Open the repository in Android Studio or run Gradle from the
+<code>mobile</code> branch. The usual verification targets are:
+
+~~~bash
+./gradlew assembleDevDebug
+./gradlew assembleStandardRelease
+./gradlew test
+./gradlew lint
+~~~
 
 ## Tests
 
-Run all Vitest projects:
+Desktop checks:
 
-```bash
-pnpm test
-```
-
-Run focused unit/jsdom tests:
-
-```bash
-pnpm test:unit -- <files>
-```
-
-Run browser component tests:
-
-```bash
+~~~bash
+pnpm test:unit
 pnpm test:browser
-```
+cargo test --manifest-path src-tauri/Cargo.toml
+~~~
 
-Run Rust updater tests:
+Android checks:
 
-```bash
-cargo test --manifest-path src-tauri/Cargo.toml suwayomi_update
-```
+~~~bash
+./gradlew test
+./gradlew lint
+~~~
 
-Check whitespace before finalizing changes:
+Before committing, check for whitespace errors with
+<code>git diff --check</code>. Release gates additionally validate bundle
+metadata, updater configuration, package IDs, migrations, and compatibility
+fixtures.
 
-```bash
-git diff --check
-```
+## Repository layout
 
-## Architecture
+- <code>main</code> contains the Epigraph desktop Tauri application,
+  Epigraph Core/Syncd, UI, runtime policy, and desktop assets.
+- <code>mobile</code> contains the native Android Epigraph client.
+- <code>docs</code> contains architecture notes, roadmap material, and
+  desktop screenshots.
+- <code>src-tauri</code> contains native commands, storage compatibility,
+  managed runtime lifecycle, pairing, backups, and updater logic.
 
-- `src/components/pages` contains Home, Library, Browse, Downloads, Settings, detail, migration, source, and tracking screens.
-- `src/components/library` contains shared Library shell/card/tooling UI.
-- `src/components/reader` contains manga, novel, book, HUD, and TTS reader UI.
-- `src/components/settings` contains settings panels, theme editing, repository panels, sync panels, and the Suwayomi updater panel.
-- `src/lib/client.ts` contains the Suwayomi GraphQL client.
-- `src/lib/manga` contains manga/source helpers.
-- `src/lib/migration` contains single and mass migration logic plus journal handling.
-- `src/lib/books` and `src/lib/novels` keep local books and novels separate from manga/comics.
-- `src-tauri/src` contains native Tauri commands, managed runtime lifecycle, Syncd/Epigraph Core, backup/restore, and updater backend logic.
-- `messages` contains localized Paraglide messages.
+See [docs/roadmap.md](https://github.com/johnnylord1/Epigraph/blob/main/docs/roadmap.md)
+for planned work. The desktop client remains the PC-hosted Core boundary;
+Android uses the authenticated contracts exposed by that boundary.
 
-The mobile implementation is deliberately outside this repository at
-`C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`. Only explicit Core
-protocols, schemas, and compatibility fixtures are shared between the two
-workspaces.
+## Credits and legal
 
-## Credits
+Epigraph is an independent product identity with its own release
+infrastructure, UI direction, and runtime policy. Its desktop lineage began
+as a fork of Moku; that origin remains documented for legal attribution and
+license continuity.
 
-Epigraph is an independent app with its own identity, release infrastructure, UI direction, and runtime policy. It began as a fork of Moku; that origin is credited here only for legal attribution and license continuity.
+The Android foundation preserves the historical contributions and credits of
+Hayai, Yōkai, Mihon, TachiyomiJ2K, TachiyomiSY, and LNReader. Their names and
+licenses are provenance and attribution, not Epigraph branding.
 
-Epigraph integrates with Suwayomi-Server:
+Epigraph integrates with
+[Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) and does not
+host, provide, or distribute third-party content. Users are responsible for
+their own sources, servers, downloads, and local files.
 
-[https://github.com/Suwayomi/Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server)
-
-## License
-
-This repository preserves the Apache License 2.0 terms in [LICENSE](LICENSE).
-
-## Disclaimer
-
-Epigraph does not host, provide, or distribute third-party content. Users are responsible for their own sources, servers, downloads, and local files.
+This repository preserves the terms of the
+[Apache License 2.0](https://github.com/johnnylord1/Epigraph/blob/main/LICENSE).
