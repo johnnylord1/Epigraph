@@ -69,7 +69,7 @@ sealed interface CoreEventStreamOutcome {
     ) : CoreEventStreamOutcome
 }
 
-/** Real, incremental `GET /v1/events` transport for aethon-syncd wire protocol v1. */
+/** Real, incremental `GET /v1/events` transport for the legacy-compatible Syncd wire protocol v1. */
 class OkHttpCoreEventStream internal constructor(
     client: OkHttpClient,
     private val baseUrl: HttpUrl,

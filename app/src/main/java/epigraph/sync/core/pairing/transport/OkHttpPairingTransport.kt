@@ -31,7 +31,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 
-/** Real public pairing transport for the existing Epigraph Core/aethon-syncd v1 routes. */
+/** Real public pairing transport for the existing Epigraph Core/Syncd v1 routes. */
 class OkHttpPairingTransport internal constructor(
     private val pinnedClient: (String) -> OkHttpClient,
     private val webSocketConnector: PairingWebSocketConnector = PairingWebSocketConnector.DEFAULT,

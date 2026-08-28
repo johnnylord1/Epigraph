@@ -388,7 +388,7 @@ CREATE TABLE aethon_entity_alias (
     FOREIGN KEY(canonical_entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE
 );
 
--- Confirmed, protocol-v1 state received from Aethon Core. These tables deliberately do not
+-- Confirmed, protocol-v1 state received from the Core service. These tables deliberately do not
 -- project into the Hayai manga/novel tables: projection is a later, entity-specific operation.
 CREATE TABLE aethon_core_replica_record (
     scope_id TEXT NOT NULL,

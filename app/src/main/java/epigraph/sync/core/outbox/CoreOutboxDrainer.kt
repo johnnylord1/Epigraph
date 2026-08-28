@@ -182,7 +182,7 @@ data class CoreOutboxDrainReport(
 )
 
 /**
- * One ordered, fail-closed outbox pass against the existing aethon-syncd wire protocol v1.
+ * One ordered, fail-closed outbox pass against the existing legacy-compatible Syncd wire protocol v1.
  *
  * The endpoint is non-atomic: every response is matched by clientMutationId and settled
  * independently. A transport/protocol failure releases every still-leased ready row.

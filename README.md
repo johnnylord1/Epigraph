@@ -50,19 +50,18 @@ contracts:
 ## Android identity and migration
 
 The Android application ID is <code>app.epigraph.mobile</code>. It is installed
-separately from the legacy <code>app.aethon.mobile</code>; Android private
-sandboxes are isolated, so the new app cannot read the old app's private data
-automatically.
+separately from the previous package; Android private sandboxes are isolated,
+so the new app cannot read the previous app's private data automatically.
 
 Move data through an exported backup/import flow or by selecting shared
-storage explicitly. The new app does not remove or modify the legacy
-installation. New backups use <code>.epigraphbk</code> while existing
-<code>.aethonbk</code> backups remain importable.
+storage explicitly. The new app does not remove or modify the previous
+installation. New backups use <code>.epigraphbk</code> while supported legacy
+backup containers remain importable.
 
 For paired desktop use, new links use <code>epigraph://</code> and the clients
-continue accepting supported <code>aethon://</code>, <code>hayai://</code>, and
-<code>tachiyomi://</code> links during the transition. Persisted database and
-protocol identifiers remain stable where compatibility requires them.
+continue accepting supported legacy links during the transition. Persisted
+database and protocol identifiers remain stable where compatibility requires
+them.
 
 ## Features
 

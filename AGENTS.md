@@ -3,11 +3,11 @@
 ## Scope
 
 - This repository contains the Android application only.
-- Do not modify `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon` from this workspace.
+- Do not modify the separate desktop workspace from this Android workspace.
 - Do not reintroduce Sorayomi code or artifacts.
 - Preserve the Hayai/J2K interaction model. Product-facing identity is Epigraph; internal legacy package names may remain when changing them has no user benefit.
-- The Android product is installed as `app.epigraph.mobile`, alongside (not over) the legacy `app.aethon.mobile`. Android private app sandboxes are isolated: users must export a backup from Aethon and import it in Epigraph, or explicitly select a shared storage directory. Do not claim that an APK update can read the old private sandbox automatically.
-- New backups use `.epigraphbk`; restore/import must continue accepting `.aethonbk`, `.tachibk`, `.proto.gz`, and the existing JSON formats. Persisted SQLDelight table names, migration filenames, preference keys, and wire identifiers are compatibility contracts.
+- The Android product is installed as `app.epigraph.mobile`, alongside (not over) the previous package. Android private app sandboxes are isolated: users must export a backup from the previous installation and import it in Epigraph, or explicitly select a shared storage directory. Do not claim that an APK update can read the previous private sandbox automatically.
+- New backups use `.epigraphbk`; restore/import must continue accepting supported legacy containers, `.tachibk`, `.proto.gz`, and the existing JSON formats. Persisted SQLDelight table names, migration filenames, preference keys, and wire identifiers are compatibility contracts.
 
 ## Git safety
 

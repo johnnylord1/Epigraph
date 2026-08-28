@@ -40,7 +40,7 @@ Date: 2026-07-22
 - SAF imports are copied to a bounded `.part`, fsynced, revalidated and atomically renamed into content-addressed private storage.
 - PDF now has a dependency-neutral controller for lifecycle, progress, ephemeral passwords, outline, search, highlights and selection.
 - The first library/favorite/category mutation path is atomic with its ordered outbox commands, though UI/DI wiring is still pending.
-- Android now distinguishes the local domain protocol v2 from the existing `aethon-syncd` HTTP wire protocol v1.
+- Android now distinguishes the local domain protocol v2 from the existing legacy-compatible Syncd HTTP wire protocol v1.
 - Syncd v1 capabilities, snapshots, changes, flat mutation requests/results and structured errors have exact serializable DTOs.
 - Pairing validates the real desktop QR bundle, requires a LAN HTTPS origin and DER-certificate SHA-256, serializes rotating-token claims, and implements `claim -> desktop approval -> final claim` without fake success.
 - The concrete pairing transport performs the real HTTP claim and secure WebSocket approval flow with an exact SHA-256 pin of the leaf certificate DER, normal hostname/validity checks, bounded responses and cancellation.

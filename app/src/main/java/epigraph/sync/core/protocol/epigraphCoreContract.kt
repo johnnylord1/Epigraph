@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Wire protocol spoken by the legacy-compatible `aethon-syncd` daemon.
+ * Wire protocol spoken by the legacy-compatible Syncd daemon.
  *
  * This is deliberately independent from `EpigraphSyncProtocol`, which versions
  * the local domain commands stored in the Android outbox.

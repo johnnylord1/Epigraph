@@ -137,7 +137,7 @@ internal class PinnedPairingClientFactory(
 
 }
 
-/** Shared TLS factory for every authenticated aethon-syncd HTTP/SSE/asset call. */
+/** Shared TLS factory for every authenticated Syncd HTTP/SSE/asset call. */
 class EpigraphCoreTlsClientFactory(
     baseClient: OkHttpClient,
 ) {

@@ -78,7 +78,7 @@ final `devDebug` APK builds and installs successfully.
 Inspection of the real emulator profile found 631 favorite Core comics, 631
 Core bindings, four categories, one cached extension inventory and three local
 books. All 631 comic rows were persisted, but all had `initialized = false` and
-their covers were still authenticated `aethon-core://` references. This made
+their covers were still authenticated legacy Core references. This made
 the catalog look present while details and uncached covers still depended on an
 active pairing.
 

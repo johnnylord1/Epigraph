@@ -22,7 +22,7 @@ data class Backup(
         /**
          * Epigraph's canonical backup suffix. The decoder is content based, so these names are
          * only used for new files and for pruning scheduled backups. Keep every historical
-         * suffix here so upgrading never deletes or rejects a user's Aethon/Tachiyomi backup.
+         * suffix here so upgrading never deletes or rejects a user's legacy backup.
          */
         private const val CANONICAL_EXTENSION = "epigraphbk"
         val filenameRegex = """(?i)(?:${BuildConfig.APPLICATION_ID}|app\.aethon\.mobile(?:\.(?:debug|beta|nightly))?|aethon|tachiyomi)?_\d+-\d+-\d+_\d+-\d+\.(epigraphbk|aethonbk|tachibk|proto\.gz|json)""".toRegex()

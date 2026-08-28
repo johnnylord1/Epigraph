@@ -2,9 +2,8 @@
 
 Date: 2026-08-08
 
-This document records a read-only audit of the reader in
-`C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon`. Desktop files were not
-modified. The mobile implementation lives only in this repository and keeps
+This document records a read-only audit of the reader in the separate desktop
+workspace. Desktop files were not modified. The mobile implementation lives only in this repository and keeps
 the Epigraph visual system unchanged.
 
 ## Capability matrix

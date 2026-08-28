@@ -867,7 +867,7 @@
     <string name="backup_restore_invalid_uri">Error: empty URI</string>
     <string name="creating_backup">Creating backup</string>
     <string name="backup_info">Automatic backups are highly recommended. You should keep copies in other places as well.</string>
-    <string name="epigraph_backup_migration_info">Epigraph backups use the .epigraphbk suffix. You can import .aethonbk, .tachibk, .proto.gz, and existing JSON backups. The Epigraph app is installed separately from Aethon, so Android private app data must be moved through backup/import or a folder you choose.</string>
+    <string name="epigraph_backup_migration_info">Epigraph backups use the .epigraphbk suffix. You can import supported legacy containers, .tachibk, .proto.gz, and existing JSON backups. The Epigraph app is installed separately from the previous installation, so Android private app data must be moved through backup/import or a folder you choose.</string>
     <string name="what_should_backup">What do you want to backup?</string>
     <string name="restoring_backup">Restoring backup</string>
     <string name="restore_duration">%1$02d min, %2$02d sec</string>

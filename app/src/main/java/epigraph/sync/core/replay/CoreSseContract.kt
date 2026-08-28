@@ -3,7 +3,7 @@ package epigraph.sync.core.replay
 import epigraph.sync.core.protocol.CoreChangeEnvelope
 import kotlinx.serialization.Serializable
 
-/** Events emitted by `GET /v1/events` in aethon-syncd wire protocol v1. */
+/** Events emitted by `GET /v1/events` in the legacy-compatible Syncd wire protocol v1. */
 sealed interface CoreSseEvent {
     /** [globalEventId] is the Core-wide server version, not a per-scope sequence. */
     data class Change(
