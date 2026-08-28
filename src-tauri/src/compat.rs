@@ -6,6 +6,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
@@ -45,6 +46,50 @@ pub fn migrate_legacy_storage() {
     for (legacy, canonical) in migration_pairs() {
         if let Err(error) = merge_directory(&legacy, &canonical) {
             eprintln!("[Epigraph] legacy migration {} -> {} failed: {error}", legacy.display(), canonical.display());
+        }
+    }
+}
+
+/// Migrate only the persistent Core state needed by the headless Syncd binary.
+///
+/// The desktop migration intentionally covers every historical profile and can
+/// be expensive on long-lived installations. Running that broad migration in
+/// `epigraph-syncd` delayed the HTTPS listener on every daemon invocation,
+/// including maintenance commands. The Core only owns the `syncd` subtree, so
+/// migrate that subtree once and leave desktop/profile migration to the GUI.
+pub fn migrate_legacy_core_storage() {
+    if std::env::var_os("EPIGRAPH_SYNCD_DATA_DIR").is_some() {
+        // An explicit data directory is a disposable/test or operator-managed
+        // instance. It must never import state from the user's default profile.
+        return;
+    }
+
+    let Some(local) = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(dirs::data_local_dir)
+    else {
+        return;
+    };
+
+    let canonical = local.join("Epigraph").join("syncd");
+    for legacy_root in ["Aethon", "aethon"] {
+        let legacy = local.join(legacy_root).join("syncd");
+        if legacy
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&canonical.to_string_lossy())
+        {
+            continue;
+        }
+        if let Err(error) = merge_directory_once(
+            &legacy,
+            &canonical,
+            ".epigraph-core-migration-v1.complete",
+        ) {
+            eprintln!(
+                "[Epigraph] legacy Core migration {} -> {} failed: {error}",
+                legacy.display(),
+                canonical.display()
+            );
         }
     }
 }
@@ -141,6 +186,49 @@ fn merge_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn merge_directory_once(
+    source: &Path,
+    destination: &Path,
+    marker_name: &str,
+) -> std::io::Result<()> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+
+    let marker = destination.join(marker_name);
+    if marker.is_file() {
+        return Ok(());
+    }
+
+    merge_directory(source, destination)?;
+    write_marker_atomically(&marker)
+}
+
+fn write_marker_atomically(marker: &Path) -> std::io::Result<()> {
+    if marker.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = marker.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = marker.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = fs::remove_file(&temporary);
+    let mut file = fs::File::create(&temporary)?;
+    file.write_all(b"epigraph-core-migration-v1\n")?;
+    file.sync_all()?;
+    match fs::rename(&temporary, marker) {
+        Ok(()) => Ok(()),
+        Err(_error) if marker.exists() => {
+            let _ = fs::remove_file(&temporary);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error)
+        }
+    }
+}
+
 fn copy_file_atomically(source: &Path, destination: &Path) -> std::io::Result<()> {
     if destination.exists() {
         return Ok(());
@@ -204,5 +292,25 @@ mod tests {
             "new"
         );
         assert!(source.join("nested/legacy.txt").exists());
+    }
+
+    #[test]
+    fn one_time_merge_skips_future_legacy_growth_after_success() {
+        let root = tempdir().unwrap();
+        let source = root.path().join("Aethon/syncd");
+        let destination = root.path().join("Epigraph/syncd");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("syncd.sqlite"), "legacy").unwrap();
+
+        merge_directory_once(&source, &destination, ".migration.complete").unwrap();
+        fs::write(source.join("late.log"), "late").unwrap();
+        merge_directory_once(&source, &destination, ".migration.complete").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("syncd.sqlite")).unwrap(),
+            "legacy"
+        );
+        assert!(!destination.join("late.log").exists());
+        assert!(destination.join(".migration.complete").is_file());
     }
 }

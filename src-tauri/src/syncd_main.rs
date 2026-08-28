@@ -9,6 +9,6 @@ mod syncd;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     epigraph_lib::promote_legacy_environment();
-    epigraph_lib::migrate_legacy_storage();
+    epigraph_lib::migrate_legacy_core_storage();
     syncd::run_command_line().await
 }

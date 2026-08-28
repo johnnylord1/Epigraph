@@ -2,7 +2,7 @@
     "schemaVersion":  3,
     "repository":  "Suwayomi/Suwayomi-Server",
     "minSupportedVersion":  "v2.1.1867",
-    "maxTestedVersion":  "v2.3.2333",
+    "maxTestedVersion":  "v2.3.2243",
     "checksumAsset":  "Checksums.sha256",
     "signatureAsset":  null,
     "allowedVersions":  [
@@ -21,14 +21,6 @@
                                 "compatibilityProfile":  "V23",
                                 "transactionalExtensionUpdates":  true,
                                 "notes":  "Certified on Windows x64 with Java 21, disposable H2 migration, Extension Stores, installed extension canaries, restart, and rollback."
-                            },
-                            {
-                                "version":  "v2.3.2333",
-                                "asset":  "Suwayomi-Server-v2.3.2333.jar",
-                                "sha256":  "ce903cf3814a14e8b56d6cf70b2f758c9f21b7084307f45a14bd1fa4af5b04db",
-                                "compatibilityProfile":  "V23",
-                                "transactionalExtensionUpdates":  true,
-                                "notes":  "Preview channel certified locally: KCEF disabled for headless Core profile; new-API keiyoushi extensions verified visible."
                             }
                         ],
     "blockedVersions":  [

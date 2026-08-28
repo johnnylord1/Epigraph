@@ -11,7 +11,9 @@ mod syncd_desktop;
 mod syncd_replication;
 mod syncd_sidecar;
 
-pub use compat::{migrate_legacy_storage, promote_legacy_environment};
+pub use compat::{
+    migrate_legacy_core_storage, migrate_legacy_storage, promote_legacy_environment,
+};
 
 use base64::Engine;
 use fs2::FileExt;
