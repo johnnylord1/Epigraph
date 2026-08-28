@@ -1,4 +1,4 @@
-"""Render Android launcher / splash assets from the master Hayai SVGs.
+"""Render Android launcher / splash assets from the master Epigraph SVGs.
 
 Run with:  python .github/branding/build_branding.py
 Requires:  Pillow, resvg-py  (pip install --user Pillow resvg-py)
@@ -197,7 +197,7 @@ def write_vector_drawables() -> None:
     write_text(RES / "drawable" / "ic_launcher_foreground.xml", fg_xml)
 
     # Themed-icon (monochrome) layer for adaptive icons — same silhouette
-    write_text(RES / "drawable" / "ic_hayai_monochrome_launcher.xml", fg_xml)
+    write_text(RES / "drawable" / "ic_epigraph_monochrome_launcher.xml", fg_xml)
 
     # Legacy/full ic_launcher drawable (with rosé background) used as drawable resource
     write_text(
@@ -215,7 +215,7 @@ def write_vector_drawables() -> None:
     # sets the rosé fill). 108dp is the Android 12 spec for adaptive / splash
     # icons; the LOGO_SCALE padding matches the launcher look.
     write_text(
-        RES / "drawable" / "ic_hayai_splash.xml",
+        RES / "drawable" / "ic_epigraph_splash.xml",
         vector_drawable(
             fg_paths,
             width_dp=108,
@@ -229,7 +229,7 @@ def write_vector_drawables() -> None:
     # we use a much milder padding than the launcher — otherwise the silhouette
     # is barely visible in the 24dp tray slot.
     write_text(
-        RES / "drawable" / "ic_hayai.xml",
+        RES / "drawable" / "ic_epigraph.xml",
         vector_drawable(
             fg_paths,
             width_dp=24,

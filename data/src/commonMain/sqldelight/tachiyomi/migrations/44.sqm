@@ -1,0 +1,5 @@
+-- Core catalog rows are complete last-known-good metadata. Older builds projected them as
+-- uninitialized, which made details and covers depend on an active desktop pairing.
+UPDATE mangas
+SET initialized = 1
+WHERE source = 3238364976084580419;

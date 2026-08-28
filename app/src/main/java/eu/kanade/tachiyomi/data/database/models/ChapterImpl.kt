@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.database.models
 
 import eu.kanade.tachiyomi.source.model.SChapter
+import kotlinx.serialization.json.JsonObject
 
 fun SChapter.toChapter(): ChapterImpl {
     return ChapterImpl().apply {
@@ -32,6 +33,8 @@ class ChapterImpl : Chapter {
     override var last_page_read: Int = 0
 
     override var chapterLocked: Boolean = false
+
+    override var memo: JsonObject = JsonObject(emptyMap())
 
     override var pages_left: Int = 0
 

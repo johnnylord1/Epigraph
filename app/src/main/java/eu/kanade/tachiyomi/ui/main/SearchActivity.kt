@@ -212,8 +212,9 @@ class SearchActivity : MainActivity() {
                 )
             }
             SHORTCUT_READER_SETTINGS -> {
+                val target = intent.getStringExtra(EXTRA_READER_SETTINGS_TARGET)
                 router.replaceTopController(
-                    RouterTransaction.with(SettingsReaderHubController())
+                    RouterTransaction.with(SettingsReaderHubController().selectInitialTab(target))
                         .pushChangeHandler(SimpleSwapChangeHandler())
                         .popChangeHandler(FadeChangeHandler()),
                 )
@@ -227,13 +228,16 @@ class SearchActivity : MainActivity() {
         fun openMangaIntent(context: Context, id: Long?, canReturnToMain: Boolean = false) =
             IntentCommon.openManga(context, id, canReturnToMain)
 
-        fun openReaderSettings(context: Context) = Intent(
+        fun openReaderSettings(context: Context, target: String? = null) = Intent(
             context,
             SearchActivity::class
                 .java,
         )
             .apply {
                 action = SHORTCUT_READER_SETTINGS
+                target?.let { putExtra(EXTRA_READER_SETTINGS_TARGET, it) }
             }
+
+        private const val EXTRA_READER_SETTINGS_TARGET = "reader_settings_target"
     }
 }

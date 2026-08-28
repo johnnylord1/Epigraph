@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
+import eu.kanade.tachiyomi.data.backup.create.creators.LocalBookBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.SourcesBackupCreator
 import eu.kanade.tachiyomi.data.backup.models.Backup
@@ -34,6 +35,7 @@ class BackupCreator(
     private val mangaBackupCreator: MangaBackupCreator = MangaBackupCreator(),
     private val preferenceBackupCreator: PreferenceBackupCreator = PreferenceBackupCreator(),
     private val sourcesBackupCreator: SourcesBackupCreator = SourcesBackupCreator(),
+    private val localBookBackupCreator: LocalBookBackupCreator = LocalBookBackupCreator(),
     private val getManga: GetManga = get(),
 ) {
 
@@ -79,6 +81,7 @@ class BackupCreator(
                 backupSources = backupSources(backupManga),
                 backupPreferences = backupAppPreferences(options),
                 backupSourcePreferences = backupSourcePreferences(options),
+                backupLocalBooks = backupLocalBooks(options),
             )
 
             val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
@@ -133,5 +136,10 @@ class BackupCreator(
         if (!options.sourcePrefs) return emptyList()
 
         return preferenceBackupCreator.createSource(includePrivatePreferences = options.includePrivate)
+    }
+
+    private suspend fun backupLocalBooks(options: BackupOptions): List<eu.kanade.tachiyomi.data.backup.models.BackupLocalBook> {
+        if (!options.libraryEntries) return emptyList()
+        return localBookBackupCreator(options.categories)
     }
 }

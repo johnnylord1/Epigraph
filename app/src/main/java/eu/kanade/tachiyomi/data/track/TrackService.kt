@@ -33,9 +33,9 @@ abstract class TrackService(val id: Long) : TrackerMetadataProvider {
         get() = networkService.client
 
     /**
-     * Content types this tracker supports. Defaults to manga-only; novel-specific trackers
-     * (NovelUpdates, NovelList) override to `setOf(TrackContentType.NOVEL)`. Tracker-selection
-     * UI filters by the entry's content type so manga and novel trackers don't cross-pollute.
+     * Content types this tracker supports. Defaults to manga-only; novel-only trackers
+     * (NovelUpdates, NovelList, Hardcover) override this set. Tracker-selection UI filters by
+     * the entry's content type so manga and novel trackers don't cross-pollute.
      */
     open val supportedContentTypes: Set<TrackContentType> = setOf(TrackContentType.MANGA)
 

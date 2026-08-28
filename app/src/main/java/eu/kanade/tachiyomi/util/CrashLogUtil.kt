@@ -24,7 +24,7 @@ import java.io.IOException
 class CrashLogUtil(private val context: Context) {
 
     private val notificationBuilder = context.notificationBuilder(Notifications.CHANNEL_CRASH_LOGS) {
-        setSmallIcon(R.drawable.ic_hayai)
+        setSmallIcon(R.drawable.ic_epigraph)
     }
 
     suspend fun dumpLogs(exception: Throwable? = null) = withNonCancellableContext {
@@ -52,7 +52,7 @@ class CrashLogUtil(private val context: Context) {
     }
 
     private fun createLogFile(exception: Throwable? = null): Uri {
-        val file = context.createFileInCacheDir("hayai_crash_logs.txt")
+        val file = context.createFileInCacheDir("epigraph_crash_logs.txt")
         file.appendText(getDebugInfo() + "\n\n")
         file.appendText(getExtensionsInfo() + "\n\n")
         exception?.let { file.appendText("$it\n\n") }

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.source
 
+import android.annotation.SuppressLint
 import yokai.util.koin.get
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.items.IFlexible
@@ -25,6 +26,7 @@ class SourceAdapter(val controller: BrowseController) :
 
     val extensionManager = controller.presenter.extensionManager
 
+    @SuppressLint("ResourceType") // Layout IDs are intentionally folded into a content hash here.
     fun updateDataSetIfChanged(items: List<IFlexible<*>>, animate: Boolean = false): Boolean {
         val nextSignatures = items.map { item ->
             when (item) {

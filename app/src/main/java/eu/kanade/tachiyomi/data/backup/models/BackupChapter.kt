@@ -2,7 +2,9 @@ package eu.kanade.tachiyomi.data.backup.models
 
 import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.protobuf.ProtoNumber
+import yokai.data.memoColumnAdapter
 
 @Serializable
 data class BackupChapter(
@@ -23,6 +25,9 @@ data class BackupChapter(
 
     // J2K specific values
     @ProtoNumber(800) var pagesLeft: Int = 0,
+
+    // lib 1.6 extension payload (e.g. Asura Scans mangaSlug), kept as bytes for proto
+    @ProtoNumber(801) var memo: ByteArray = memoColumnAdapter.encode(JsonObject(emptyMap())),
 ) {
     fun toChapterImpl(): ChapterImpl {
         return ChapterImpl().apply {
@@ -37,6 +42,7 @@ data class BackupChapter(
             date_upload = this@BackupChapter.dateUpload
             source_order = this@BackupChapter.sourceOrder
             pages_left = this@BackupChapter.pagesLeft
+            memo = memoColumnAdapter.decode(this@BackupChapter.memo)
         }
     }
 
@@ -55,6 +61,7 @@ data class BackupChapter(
             sourceOrder: Long,
             dateFetch: Long,
             dateUpload: Long,
+            memo: JsonObject,
         ) = BackupChapter(
             url = url,
             name = name,
@@ -67,6 +74,7 @@ data class BackupChapter(
             sourceOrder = sourceOrder.toInt(),
             dateFetch = dateFetch,
             dateUpload = dateUpload,
+            memo = memoColumnAdapter.encode(memo),
         )
     }
 }

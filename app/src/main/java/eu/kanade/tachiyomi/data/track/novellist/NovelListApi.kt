@@ -22,7 +22,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
- * Network layer for [NovelList]. Mirrors Tsundoku's network code line-by-line; uses Hayai's
+ * Network layer for [NovelList]. Mirrors Tsundoku's network code line-by-line; uses Epigraph's
  * `Track.media_id` (Long hash) for table joins while keeping the tracking URL as the canonical
  * source of the API UUID.
  */

@@ -7,7 +7,7 @@ import yokai.core.migration.MigrationContext
 import yokai.domain.ui.settings.ReaderPreferences
 
 /**
- * Migrates Hayai's pre-port novel reader preferences (six unprefixed keys on
+ * Migrates Epigraph's pre-port novel reader preferences (six unprefixed keys on
  * PreferencesHelper, e.g. `novel_font_size`) to the new Tsundoku-compatible
  * keys (`pref_novel_*`) on [ReaderPreferences].
  *
@@ -75,7 +75,7 @@ class NovelReaderPrefsMigration : Migration {
         private const val LEGACY_PADDING = "novel_padding"
         private const val LEGACY_THEME = "novel_reader_theme"
 
-        // Legacy index → CSS family-name mapping. Order must match Hayai's
+        // Legacy index → CSS family-name mapping. Order must match Epigraph's
         // pre-port `NovelConfig.fontFamilies` (serif/sans-serif/monospace/system-ui).
         private val LEGACY_FONT_FAMILIES = arrayOf("serif", "sans-serif", "monospace", "system-ui")
 

@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.domain.manga.models.Manga.Companion.TYPE_WEBTOON
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.SManga
+import kotlinx.serialization.json.JsonObject
 import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
 import eu.kanade.tachiyomi.util.isLocal
@@ -198,6 +199,7 @@ fun Manga.Companion.mapper(
     coverLastModified: Long,
     nextUpdate: Long,
     fetchInterval: Long,
+    memo: JsonObject,
 ) = create(url, title, source).apply {
     this.id = id
     this.artist = artist
@@ -218,6 +220,7 @@ fun Manga.Companion.mapper(
     this.cover_last_modified = coverLastModified
     this.next_update = nextUpdate
     this.fetch_interval = fetchInterval.toInt()
+    this.memo = memo
 }
 
 fun Manga.hasCustomCover(coverCache: CoverCache = get()): Boolean {

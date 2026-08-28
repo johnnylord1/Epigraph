@@ -1,5 +1,3 @@
-import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsPlugin
-import com.google.gms.googleservices.GoogleServicesPlugin
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -10,13 +8,6 @@ plugins {
     id("yokai.android.application.compose")
     alias(kotlinx.plugins.serialization)
     alias(kotlinx.plugins.parcelize)
-    alias(libs.plugins.firebase.crashlytics) apply false
-    alias(libs.plugins.google.services) apply false
-}
-
-if (gradle.startParameter.taskRequests.toString().contains("standard", true)) {
-    apply<CrashlyticsPlugin>()
-    apply<GoogleServicesPlugin>()
 }
 
 fun runCommand(command: String): String {
@@ -25,7 +16,7 @@ fun runCommand(command: String): String {
 }
 
 @Suppress("PropertyName")
-val _versionName = "1.15.0"
+val _versionName = "0.1.0-alpha.1"
 val betaCount by lazy {
     val betaTags = runCommand("git tag -l --sort=refname v${_versionName}-b*")
 
@@ -46,9 +37,12 @@ val buildTime: String by lazy {
 val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 
 android {
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
     defaultConfig {
-        applicationId = "dev.ahmedmohamed.hayai"
-        versionCode = 80
+        applicationId = "app.epigraph.mobile"
+        versionCode = 1
         versionName = _versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "COMMIT_COUNT", "\"${commitCount}\"")
@@ -81,6 +75,16 @@ android {
         getByName("debug") {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-d${commitCount}"
+        }
+        // Internal emulator/device build: keeps debug tooling and fast packaging while using the
+        // production application id. This updates the user-facing Epigraph installation in place
+        // without paying the R8 cost of a release build on every local verification cycle.
+        create("local") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = null
+            versionNameSuffix = "-local${commitCount}"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks.add("debug")
         }
         getByName("release") {
             applicationIdSuffix = null
@@ -138,7 +142,8 @@ android {
 
     productFlavors {
         create("standard") {
-            buildConfigField("Boolean", "INCLUDE_UPDATER", "true")
+            // Keep the upstream updater disabled until Epigraph has its own signed feed.
+            buildConfigField("Boolean", "INCLUDE_UPDATER", "false")
             dimension = "default"
         }
         create("dev") {
@@ -149,8 +154,10 @@ android {
 
     lint {
         disable.addAll(listOf("MissingTranslation", "ExtraTranslation"))
-        abortOnError = false
-        checkReleaseBuilds = false
+        // Lint is a release gate. Only the two intentional translation checks stay disabled;
+        // no baseline or `checkOnly` shortcut is used to hide UAST failures.
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 
     namespace = "eu.kanade.tachiyomi"
@@ -169,6 +176,7 @@ dependencies {
     implementation(platform(compose.bom))
     implementation(compose.bundles.compose)
     debugImplementation(compose.ui.tooling)
+    "localImplementation"(compose.ui.tooling)
     implementation(libs.compose.theme.adapter3)
     implementation(compose.webview)
 
@@ -184,11 +192,6 @@ dependencies {
     implementation(androidx.bundles.androidx)
     implementation(androidx.profileinstaller)
 
-    implementation(platform(libs.firebase))
-
-    implementation(libs.firebase.analytics)
-    implementation(libs.firebase.crashlytics)
-
     // ReactiveX
     implementation(libs.rxandroid)
     implementation(libs.rxjava)
@@ -196,6 +199,7 @@ dependencies {
 
     // Chucker
     debugImplementation(libs.chucker.library)
+    "localImplementation"(libs.chucker.library)
     releaseImplementation(libs.chucker.library.no.op)
     "nightlyImplementation"(libs.chucker.library.no.op)
     "betaImplementation"(libs.chucker.library.no.op)
@@ -210,6 +214,18 @@ dependencies {
     // surface (used by Mangago, MangaHere, Readcomiconline, etc.) onto the same
     // native engine so we ship only one libquickjs.so.
     implementation(libs.quickjs.android)
+
+    // Local publication readers. They are hidden behind epigraph.books.reader adapters so the
+    // rest of the application does not depend on engine-specific types.
+    implementation(libs.readium.shared)
+    implementation(libs.readium.streamer)
+    // The navigator AAR embeds the PhotoView classes used by both the EPUB navigator and the
+    // existing manga reader. Do not add the standalone PhotoView artifact below as well.
+    implementation(libs.readium.navigator)
+    implementation(libs.ahmer.pdfium)
+    // Optional on-device OCR for scanned PDF pages. The reader only invokes it when Pdfium has
+    // no text layer, so normal textual PDFs do not pay the recognition cost.
+    implementation(libs.mlkit.text.recognition)
 
     // Disk
     implementation(libs.disklrucache)
@@ -259,10 +275,10 @@ dependencies {
     implementation(libs.slice)
     implementation(libs.markwon)
 
-    implementation(libs.photoview)
     implementation(libs.directionalviewpager)
     implementation(libs.viewtooltip)
     implementation(libs.taptargetview)
+    implementation(libs.zxing.embedded)
 
     // Navigation
     implementation(libs.bundles.voyager)
@@ -287,14 +303,25 @@ dependencies {
     testRuntimeOnly(libs.bundles.test.runtime)
     androidTestImplementation(libs.bundles.test.android)
     testImplementation(kotlinx.coroutines.test)
+    testImplementation(libs.sqldelight.sqlite.driver)
 
     // For detecting memory leaks
     // REF: https://square.github.io/leakcanary/
     debugImplementation(libs.leakcanary.android)
+    "localImplementation"(libs.leakcanary.android)
     implementation(libs.leakcanary.plumber)
 }
 
 tasks {
+    val verifyNoUpstreamTelemetry = register<VerifyNoTelemetryTask>("verifyNoUpstreamTelemetry") {
+        group = "verification"
+        description = "Fails when upstream telemetry code or Firebase configuration is reintroduced."
+
+        sourceFiles.from(fileTree(projectDir) {
+            include("src/**/*.kt", "src/**/*.kts", "src/**/google-services.json")
+        })
+    }
+
     // See https://kotlinlang.org/docs/reference/experimental.html#experimental-status-of-experimental-api(-markers)
     withType<KotlinCompile> {
         compilerOptions.freeCompilerArgs.addAll(
@@ -327,7 +354,8 @@ tasks {
     preBuild {
         dependsOn(
             // formatKotlin,
-            copyHebrewStrings
+            copyHebrewStrings,
+            verifyNoUpstreamTelemetry,
         )
     }
 }

@@ -87,6 +87,20 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
 
     private var mangaType: FilterTagGroup? = null
 
+    private var booksType: FilterTagGroup? = null
+    private var booksMode = false
+
+    /** Receives the active local Books type, or null when all types are shown. */
+    var onBooksTypeFilterChanged: (String?) -> Unit = { _ -> }
+
+    /** Receives a common filter state while Books is active, without touching Comics prefs. */
+    var onBooksFilterChanged: (Char, Int) -> Unit = { _, _ -> }
+
+    /** Clears the independent Books filter state. */
+    var onBooksFiltersCleared: () -> Unit = {}
+
+    private val booksFilterStates = mutableMapOf<Char, Int>()
+
     var sheetBehavior: BottomSheetBehavior<View>? = null
 
     private var expandedFilterSheet: ExpandedFilterSheet? = null
@@ -108,6 +122,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             tracked?.let { list.add(it) }
         }
         list.add(contentType)
+        booksType?.let { list.add(it) }
         list
     }
 
@@ -223,11 +238,123 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             .launchIn(controller.viewScope)
     }
 
+    /**
+     * Switches the existing filter strip to the Books scope. Books keeps the same groups as
+     * Comics, plus Novels/EPUB/PDF, but its states are held locally so selecting a Books filter
+     * never changes the Comics library preferences.
+     */
+    fun setBooksMode(enabled: Boolean) {
+        if (!::binding.isInitialized || booksMode == enabled) return
+        booksMode = enabled
+        if (enabled) {
+            booksType = inflate(R.layout.filter_tag_group) as FilterTagGroup
+            booksType?.setup(
+                this,
+                context.getString(R.string.epigraph_novels),
+                context.getString(R.string.epigraph_epub),
+                context.getString(R.string.epigraph_pdf),
+            )
+        } else {
+            booksType?.reset()
+            booksType = null
+            onBooksTypeFilterChanged(null)
+            controller?.viewScope?.launch { setFilterStates() }
+        }
+        reorderFilters()
+        if (enabled) restoreBooksFilterStates()
+        reSortViews()
+        setExpandText(controller?.canCollapseOrExpandCategory(), false)
+    }
+
+    /**
+     * Restores the independent Books type filter when returning to the Books surface.
+     * The value is a domain name (NOVELS, EPUB or PDF), not a Comics preference value.
+     */
+    fun restoreBooksTypeFilter(value: String?) {
+        if (!booksMode) return
+        val group = booksType ?: return
+        val label = when (value?.uppercase()) {
+            "NOVELS" -> context.getString(R.string.epigraph_novels)
+            "EPUB" -> context.getString(R.string.epigraph_epub)
+            "PDF" -> context.getString(R.string.epigraph_pdf)
+            else -> null
+        }
+        if (label == null) {
+            group.reset()
+            onBooksTypeFilterChanged(null)
+        } else {
+            // FilterTagGroup.setState(String) uses the same callback path as a user tap, but
+            // with updatePreference=false, so restoring the chip never touches Comics prefs.
+            group.setState(label)
+        }
+        reSortViews()
+    }
+
+    private fun restoreBooksFilterStates() {
+        listOfNotNull(
+            unreadProgress,
+            unread,
+            downloaded,
+            completed,
+            bookmarked,
+            customInterval,
+            tracked,
+            contentType,
+        ).forEach { group ->
+            group.reset()
+            val state = booksFilterStates[filterKey(group)] ?: STATE_IGNORE
+            when (group) {
+                unreadProgress -> if (state >= 3) group.state = state - 3
+                unread -> if (state in STATE_INCLUDE..STATE_EXCLUDE) group.state = state - 1
+                else -> if (state in STATE_INCLUDE..STATE_EXCLUDE) group.state = state - 1
+            }
+        }
+    }
+
+    private fun booksFilterGroups(): List<FilterTagGroup> = listOfNotNull(
+        unreadProgress,
+        unread,
+        downloaded,
+        completed,
+        bookmarked,
+        customInterval,
+        tracked,
+        contentType,
+        booksType,
+    )
+
+    private fun libraryFilterTitle(group: FilterTagGroup): String? {
+        val stringRes = when (group) {
+            unreadProgress -> MR.strings.read_progress
+            unread -> MR.strings.unread
+            downloaded -> MR.strings.downloaded
+            completed -> MR.strings.status
+            bookmarked -> MR.strings.bookmarked
+            customInterval -> MR.strings.custom_update_interval
+            tracked -> MR.strings.tracking
+            contentType -> MR.strings.content_type
+            booksType -> null
+            else -> null
+        }
+        return stringRes?.let(context::getString)
+            ?: booksType?.takeIf { group == it }?.let { context.getString(R.string.epigraph_book_type) }
+    }
+
     private fun showFullFilterSheet() {
         if (expandedFilterSheet != null) return
         val activity = controller?.activity ?: return
-        expandedFilterSheet = ExpandedFilterSheet(
-            activity,
+        val filters = if (booksMode) {
+            booksFilterGroups().mapNotNull { group ->
+                libraryFilterTitle(group)?.let {
+                    LibraryFilter(
+                        it,
+                        group.items,
+                        group,
+                        group.state + 1,
+                    )
+                }
+            }
+        } else {
             filterOrder.toCharArray().distinct().mapNotNull { c ->
                 val filter = Filters.filterOf(c)
                 val filterTagGroup = mapOfFilters(c)
@@ -240,8 +367,12 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
                     )
                 }
                 return@mapNotNull null
-            },
-            trackers?.let {
+            }
+        }
+        expandedFilterSheet = ExpandedFilterSheet(
+            activity,
+            filters,
+            trackers?.takeUnless { booksMode }?.let {
                 LibraryFilter(
                     activity.getString(MR.strings.trackers),
                     it.items,
@@ -327,6 +458,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     private fun hasActiveFilters() = filterItems.any { it.isActivated }
 
     private fun hasActiveFiltersFromPref(): Boolean {
+        if (booksMode) return booksFilterStates.values.any { it != STATE_IGNORE } || booksType?.isActivated == true
         return preferences.filterDownloaded().get() > 0 ||
             preferences.filterUnread().get() > 0 ||
             preferences.filterCompleted().get() > 0 ||
@@ -445,6 +577,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     }
 
     private suspend fun setFilterStates() {
+        if (booksMode) return
         withContext(Dispatchers.Main) {
             downloaded.setState(preferences.filterDownloaded())
             completed.setState(preferences.filterCompleted())
@@ -464,6 +597,21 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     }
 
     private fun reorderFilters() {
+        if (booksMode) {
+            filterItems.clear()
+            listOfNotNull(
+                unreadProgress,
+                unread,
+                downloaded,
+                completed,
+                bookmarked,
+                customInterval,
+                tracked,
+                contentType,
+                booksType,
+            ).forEach { filterItems.add(it) }
+            return
+        }
         val array = filterOrder.toCharArray().distinct()
         filterItems.clear()
         for (c in array) {
@@ -471,8 +619,17 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
                 filterItems.add(it)
             }
         }
-        listOfNotNull(unreadProgress, unread, downloaded, completed, mangaType, bookmarked, tracked, contentType)
-            .plus(customInterval)
+        listOfNotNull(
+            unreadProgress,
+            unread,
+            downloaded,
+            completed,
+            mangaType,
+            bookmarked,
+            tracked,
+            contentType,
+            booksType,
+        ).plus(customInterval)
             .forEach {
                 if (!filterItems.contains(it)) {
                     filterItems.add(it)
@@ -500,6 +657,23 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     }
 
     override fun onFilterClicked(view: FilterTagGroup, index: Int, updatePreference: Boolean) {
+        if (view == booksType) {
+            onBooksTypeFilterChanged(view.nameOf(index)?.uppercase())
+            if (updatePreference) onGroupClicked(ACTION_FILTER)
+            val hasFilters = hasActiveFilters()
+            if (hasFilters && clearButton.parent == null) {
+                binding.filterLayout.addView(clearButton)
+            } else if (!hasFilters && clearButton.parent != null) {
+                binding.filterLayout.removeView(clearButton)
+            }
+            return
+        }
+        if (booksMode) {
+            setBooksFilterPreference(view, index)
+            if (updatePreference) onGroupClicked(ACTION_FILTER)
+            updateClearButton()
+            return
+        }
         if (updatePreference && controller?.isSubClass != true) {
             setFilterPreference(view, index)
             onGroupClicked(ACTION_FILTER)
@@ -559,12 +733,70 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
                 null
             }
             contentType -> preferences.filterContentType()
+            booksType -> {
+                onBooksTypeFilterChanged(view.nameOf(index)?.uppercase())
+                null
+            }
             else -> null
         }?.set(index + 1)
     }
 
+    private fun filterKey(view: FilterTagGroup): Char = when (view) {
+        unreadProgress -> Filters.UnreadProgress.value
+        unread -> Filters.Unread.value
+        downloaded -> Filters.Downloaded.value
+        completed -> Filters.Completed.value
+        bookmarked -> Filters.Bookmarked.value
+        customInterval -> Filters.CustomInterval.value
+        tracked -> Filters.Tracked.value
+        contentType -> Filters.ContentType.value
+        else -> '\u0000'
+    }
+
+    private fun setBooksFilterPreference(view: FilterTagGroup, index: Int) {
+        val key = filterKey(view)
+        if (key == '\u0000') return
+        val state = when {
+            index < 0 -> STATE_IGNORE
+            view == unreadProgress -> index + 3
+            else -> index + 1
+        }
+        booksFilterStates[key] = state
+        if (state == STATE_IGNORE) booksFilterStates.remove(key)
+        if (view == unreadProgress && state != STATE_IGNORE) {
+            unread.reset()
+            booksFilterStates.remove(Filters.Unread.value)
+        } else if (view == unread && state != STATE_IGNORE) {
+            unreadProgress.reset()
+            booksFilterStates.remove(Filters.UnreadProgress.value)
+        }
+        onBooksFilterChanged(key, state)
+    }
+
+    private fun updateClearButton() {
+        val hasFilters = hasActiveFilters()
+        if (hasFilters && clearButton.parent == null) {
+            binding.filterLayout.addView(clearButton)
+        } else if (!hasFilters && clearButton.parent != null) {
+            binding.filterLayout.removeView(clearButton)
+        }
+    }
+
     private fun massUpdateFilters(views: List<FilterTagGroup>) {
         if (controller?.isSubClass != true) {
+            if (booksMode) {
+                views.forEach { view ->
+                    if (view == booksType) {
+                        onBooksTypeFilterChanged(view.nameOf(view.state)?.uppercase())
+                    } else {
+                        setBooksFilterPreference(view, view.state)
+                    }
+                }
+                updateClearButton()
+                reSortViews()
+                onGroupClicked(ACTION_FILTER)
+                return
+            }
             var setUnread = false
             views.forEach { view ->
                 val index = view.state
@@ -592,14 +824,21 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     }
 
     private fun clearFilters() {
-        preferences.filterDownloaded().set(0)
-        preferences.filterUnread().set(0)
-        preferences.filterCompleted().set(0)
-        preferences.filterBookmarked().set(0)
-        preferences.filterCustomInterval().set(0)
-        preferences.filterTracked().set(0)
-        preferences.filterMangaType().set(0)
-        FILTER_TRACKER = ""
+        if (!booksMode) {
+            preferences.filterDownloaded().set(0)
+            preferences.filterUnread().set(0)
+            preferences.filterCompleted().set(0)
+            preferences.filterBookmarked().set(0)
+            preferences.filterCustomInterval().set(0)
+            preferences.filterTracked().set(0)
+            preferences.filterMangaType().set(0)
+            FILTER_TRACKER = ""
+        } else {
+            booksFilterStates.clear()
+            onBooksFiltersCleared()
+        }
+        booksFilterGroups().forEach { it.reset() }
+        if (booksMode) onBooksTypeFilterChanged(null)
 
         val transition = androidx.transition.AutoTransition()
         transition.duration = 150

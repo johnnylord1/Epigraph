@@ -13,7 +13,6 @@ import yokai.i18n.MR
 import yokai.util.lang.getString
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.databinding.ReaderColorFilterBinding
-import eu.kanade.tachiyomi.ui.main.SearchActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.view.collapse
@@ -25,8 +24,11 @@ import eu.kanade.tachiyomi.widget.TabbedBottomSheetDialog
 // TabbedNovelReaderSettingsSheet instead.
 class TabbedReaderSettingsSheet(
     val readerActivity: ReaderActivity,
-    showColorFilterSettings: Boolean = false,
+    private val showColorFilterSettings: Boolean = false,
 ) : TabbedBottomSheetDialog(readerActivity) {
+    /** Called by the embedded reader host when the viewer mode changes its tab label. */
+    internal var embeddedTabsChanged: (() -> Unit)? = null
+    override val initialTab: Int = if (showColorFilterSettings) 2 else 0
     private val generalView: ReaderGeneralView = View.inflate(
         readerActivity,
         R.layout.reader_general_layout,
@@ -98,8 +100,7 @@ class TabbedReaderSettingsSheet(
             ),
         )
         binding.menu.setOnClickListener {
-            val intent = SearchActivity.openReaderSettings(readerActivity)
-            readerActivity.startActivity(intent)
+            readerActivity.openGlobalReaderSettings()
             dismiss()
         }
 
@@ -141,9 +142,6 @@ class TabbedReaderSettingsSheet(
             },
         )
 
-        if (showColorFilterSettings) {
-            binding.tabs.getTabAt(filterTabIndex)?.select()
-        }
     }
 
     override fun onStart() {
@@ -164,5 +162,6 @@ class TabbedReaderSettingsSheet(
         showWebtoonView = isWebtoon
         binding.pager.adapter?.notifyDataSetChanged()
         pagedView.updatePrefs()
+        embeddedTabsChanged?.invoke()
     }
 }

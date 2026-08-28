@@ -83,6 +83,10 @@ interface Manga : SManga {
 
         update_strategy = other.update_strategy
 
+        // lib 1.6 payload must survive the details round-trip so the chapter fetch right
+        // after it can resolve URLs (e.g. Asura Scans keeps its mangaSlug in memo).
+        memo = other.memo
+
         if (!initialized) {
             initialized = other.initialized
         }

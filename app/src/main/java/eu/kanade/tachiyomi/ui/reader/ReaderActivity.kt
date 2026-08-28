@@ -26,7 +26,6 @@ import android.os.IBinder
 import android.text.TextUtils
 import android.text.style.DynamicDrawableSpan
 import android.text.style.ImageSpan
-import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -39,7 +38,10 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.view.animation.AnimationUtils
+import android.widget.EditText
 import android.widget.TextView
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
@@ -75,11 +77,17 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.slider.Slider
+import com.google.android.material.slider.SliderOrientation
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.transition.platform.MaterialContainerTransform
 import com.google.android.material.transition.platform.MaterialContainerTransformSharedElementCallback
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
+import epigraph.reader.settings.ReaderDomain
+import epigraph.reader.settings.ReaderSettingsCapabilities
+import epigraph.reader.settings.ReaderSettingsHost
+import epigraph.reader.settings.ReaderThemeColors
+import epigraph.reader.settings.applyReaderTheme
 import com.google.android.material.R as materialR
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.preference.toggle
@@ -109,7 +117,9 @@ import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.ui.reader.settings.PageLayout
 import eu.kanade.tachiyomi.ui.reader.settings.ReaderBottomButton
 import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.settings.ReaderSettingsPanel
 import eu.kanade.tachiyomi.ui.reader.settings.TabbedReaderSettingsSheet
+import eu.kanade.tachiyomi.ui.reader.settings.TabbedNovelReaderSettingsSheet
 import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.L2RPagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
@@ -193,7 +203,7 @@ import android.R as AR
  * Activity containing the reader of Tachiyomi. This activity is mostly a container of the
  * viewers, to which calls from the view model or UI events are delegated.
  */
-class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
+class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost {
 
     val viewModel by viewModels<ReaderViewModel>()
 
@@ -230,6 +240,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
      */
     private var bottomSheet: BottomSheetDialog? = null
 
+    /** Settings are mounted into the existing chapter sheet; no second dialog is shown. */
+    private var readerSettingsPanel: ReaderSettingsPanel? = null
+    private var readerSettingsHost: Any? = null
+    private var readerSettingsCallback: BottomSheetBehavior.BottomSheetCallback? = null
+    private var readerSettingsRootHeight: Int? = null
+    private var readerSettingsTopbarHeight: Int? = null
+
     var sheetManageNavColor = false
 
     private val wic by lazy { WindowInsetsControllerCompat(window, binding.root) }
@@ -240,7 +257,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
     private var intentPageNumber: Int? = null
 
     /**
-     * Compose overlay mounted when the active viewer is a [NovelViewer] / [NovelWebViewViewer]
+     * Compose overlay mounted when the active viewer is the canonical [NovelWebViewViewer]
      * to expose novel-only actions (TTS toggle, auto-scroll, scroll-to-top, settings) that the
      * manga XML bars never carried. Lifecycle is tied to the viewer-swap path in [setManga];
      * visibility is driven by [menuVisible] via [novelActionBarVisibleState].
@@ -288,10 +305,52 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
             field = value
             (viewer as? PagerViewer)?.config?.hingeGapSize = value
         }
+    private var readerNavVertical = false
+    private var pendingReaderNavHeightUpdate = false
 
     private val readerPreferences: ReaderPreferences by injectLazy()
     private val basePreferences: BasePreferences by injectLazy()
     private val translationService: TranslationService by injectLazy()
+
+    override val readerDomain: ReaderDomain
+        get() = if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) ReaderDomain.NOVEL else ReaderDomain.COMIC
+
+    override val readerSettingsCapabilities: ReaderSettingsCapabilities
+        get() = ReaderSettingsCapabilities(
+            supportsPagedNavigation = readerDomain == ReaderDomain.COMIC,
+            supportsTextLayout = readerDomain == ReaderDomain.NOVEL,
+            supportsColorFilters = true,
+            supportsDoublePages = readerDomain == ReaderDomain.COMIC,
+            supportsCropBorders = true,
+            supportsTts = readerDomain == ReaderDomain.NOVEL,
+            supportsChapterTransitions = true,
+        )
+
+    override fun applyReaderSettings() {
+        applyReaderNavRailLayout()
+        applyReaderChromeTheme()
+    }
+
+    override fun resetReaderSettingsToDefaults() {
+        if (readerDomain == ReaderDomain.NOVEL) {
+            readerPreferences.resetNovelReaderSettingsToDefaults()
+        } else {
+            preferences.resetReaderSettingsToDefaults()
+            // A reset should also release this series' explicit overrides so it follows the
+            // restored global defaults. Reading progress and bookmarks remain untouched.
+            viewModel.setMangaReadingMode(0)
+            viewModel.setMangaOrientationType(0)
+        }
+        config?.applyActiveFilterSnapshot()
+        applyReaderSettings()
+        updateCropBordersShortcut()
+        updateBottomShortcuts()
+        toast(getString(R.string.epigraph_reader_reset_defaults))
+    }
+
+    override fun openGlobalReaderSettings() {
+        startActivity(SearchActivity.openReaderSettings(this, if (readerDomain == ReaderDomain.NOVEL) "NOVEL" else "MANGA"))
+    }
 
     companion object {
 
@@ -396,6 +455,10 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
 
         backPressedCallback = object : OnBackPressedCallback(enabled = true) {
             override fun handleOnBackPressed() {
+                if (readerSettingsPanel != null) {
+                    closeReaderSettingsPanel()
+                    return
+                }
                 if (binding.chaptersSheet.root.sheetBehavior.isExpanded()) {
                     binding.chaptersSheet.root.lastScale = binding.chaptersSheet.root.scaleX
                     binding.chaptersSheet.root.sheetBehavior?.collapse()
@@ -587,6 +650,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         // Cleanup must happen BEFORE super.onDestroy(): unregisterReceiver and the
         // foreground-service stop both rely on Activity context state that super tears down.
         // This mirrors Tsundoku's `ReaderActivity.onDestroy` ordering exactly.
+        closeReaderSettingsPanel()
         removeNovelActionBar()
         // Detach the viewer from the controller before we tear the viewer down, so the
         // controller doesn't hold a dangling reference into a destroyed WebView.
@@ -906,6 +970,65 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         return handled || super.dispatchKeyEvent(event)
     }
 
+    /**
+     * The settings surface is mounted in the existing chapter sheet. Keep the sheet controls
+     * interactive, but let a single tap on the visible page dismiss the expanded settings state.
+     * This is intentionally scoped to settings mode so normal viewer gestures are untouched.
+     */
+    private var readerSettingsGestureStartedOnContent = false
+    private val readerSettingsGestureDetector by lazy {
+        GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(event: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(event: MotionEvent): Boolean {
+                val chrome = binding
+                if (readerSettingsPanel == null) return false
+
+                val sheetTop = chrome.chaptersSheet.root.top
+                val inToolbar = chrome.appBar.isVisible && event.y <= chrome.appBar.bottom
+                if (!inToolbar && event.y < sheetTop) {
+                    closeReaderSettingsPanel()
+                    return true
+                }
+                return false
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // The detector is armed only while the embedded settings surface exists. It observes
+        // page taps before the active manga/novel viewer receives them without stealing any
+        // gestures from the sheet controls or from the normal reader chrome.
+        if (readerSettingsPanel != null) {
+            val chrome = binding
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    val inToolbar = chrome.appBar.isVisible && event.y <= chrome.appBar.bottom
+                    val inSheet = chrome.chaptersSheet.root.isVisible &&
+                        event.y >= chrome.chaptersSheet.root.top
+                    readerSettingsGestureStartedOnContent = !inToolbar && !inSheet
+                    if (readerSettingsGestureStartedOnContent) {
+                        readerSettingsGestureDetector.onTouchEvent(event)
+                    }
+                }
+                MotionEvent.ACTION_MOVE,
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL
+                -> if (readerSettingsGestureStartedOnContent) {
+                    readerSettingsGestureDetector.onTouchEvent(event)
+                }
+            }
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL
+            ) {
+                readerSettingsGestureStartedOnContent = false
+            }
+        } else {
+            readerSettingsGestureStartedOnContent = false
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         when (keyCode) {
             KeyEvent.KEYCODE_N -> {
@@ -965,6 +1088,195 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                 ) ?: 500
                 ).toLong()
             addTarget(AR.id.content)
+        }
+    }
+
+    /**
+     * Opens the canonical reader settings inside the existing chapter sheet. The collapsed HUD
+     * remains a fixed bar; only this explicitly opened settings state is draggable to dismiss.
+     */
+    private fun showReaderSettings() {
+        if (readerSettingsPanel != null) return
+
+        val root = binding.chaptersSheet.root
+        val behavior = BottomSheetBehavior.from(root)
+        readerSettingsRootHeight = root.layoutParams.height.takeIf { it > 0 } ?: root.height
+        readerSettingsTopbarHeight = binding.chaptersSheet.topbarLayout.layoutParams.height
+            .takeIf { it > 0 }
+
+        val host: Any
+        val views: List<View>
+        val titles: List<dev.icerock.moko.resources.StringResource>
+        if (readerDomain == ReaderDomain.NOVEL) {
+            val novelHost = TabbedNovelReaderSettingsSheet(this)
+            host = novelHost
+            views = novelHost.getTabViews()
+            titles = novelHost.getTabTitles()
+        } else {
+            val comicHost = TabbedReaderSettingsSheet(this)
+            host = comicHost
+            views = comicHost.getTabViews()
+            titles = comicHost.getTabTitles()
+            comicHost.embeddedTabsChanged = {
+                readerSettingsPanel?.refreshTabTitles()
+            }
+        }
+
+        // The filter view normally points at the dialog window. In embedded mode the reader
+        // activity is the real host, so brightness previews must target this window instead.
+        views.filterIsInstance<eu.kanade.tachiyomi.ui.reader.settings.ReaderFilterView>()
+            .forEach { it.window = window }
+
+        val panel = ReaderSettingsPanel(
+            context = this,
+            activity = this,
+            views = views,
+            titles = titles,
+            onOpenGlobalSettings = {
+                closeReaderSettingsPanel()
+                openGlobalReaderSettings()
+            },
+            onResetDefaults = ::confirmResetReaderSettings,
+        )
+        readerSettingsHost = host
+        readerSettingsPanel = panel
+
+        root.binding.chapterRecycler.isVisible = false
+        root.backgroundTintList = ColorStateList.valueOf(currentReaderThemeColors().surface)
+        with(binding.chaptersSheet) {
+            // The action row belongs to the fixed HUD. Settings reuses this same sheet, so once
+            // those actions are hidden we retain only the handle instead of leaving an empty
+            // action-bar-sized gap that looks like a duplicated lower HUD.
+            topbarLayout.updateLayoutParams<ViewGroup.LayoutParams> {
+                height = 20.dpToPx
+            }
+            chaptersButton.isVisible = false
+            webviewButton.isVisible = false
+            readingMode.isVisible = false
+            rotationSheetButton.isVisible = false
+            cropBordersSheetButton.isVisible = false
+            doublePage.isVisible = false
+            shiftPageButton.isVisible = false
+            displayOptions.isVisible = false
+        }
+        // Hide the whole navigation container while settings are expanded. Hiding only the
+        // included reader_nav child leaves its anchored nav_layout (and vertical rail bounds)
+        // alive above the chapter sheet, which makes the closed HUD look duplicated when the
+        // sheet is restored. Books use the parent container as the ownership boundary too.
+        binding.navLayout.isVisible = false
+        novelActionBarComposeView?.isVisible = false
+        root.addView(
+            panel,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        root.updateLayoutParams<ViewGroup.LayoutParams> {
+            // Let the selected settings page determine the sheet height.  Long pages are capped
+            // by ReaderSettingsPanel and remain scrollable; short pages no longer open full-screen.
+            height = ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+
+        behavior.isHideable = false
+        behavior.isDraggable = true
+        readerSettingsCallback = object : BottomSheetBehavior.BottomSheetCallback() {
+            override fun onSlide(bottomSheet: View, slideOffset: Float) = Unit
+
+            override fun onStateChanged(bottomSheet: View, newState: Int) {
+                if (newState == BottomSheetBehavior.STATE_COLLAPSED ||
+                    newState == BottomSheetBehavior.STATE_HIDDEN
+                ) {
+                    closeReaderSettingsPanel()
+                }
+            }
+        }.also(behavior::addBottomSheetCallback)
+
+        root.post {
+            if (readerSettingsPanel === panel && !isFinishing && !isDestroyed) {
+                behavior.state = BottomSheetBehavior.STATE_EXPANDED
+            }
+        }
+    }
+
+    private fun confirmResetReaderSettings() {
+        materialAlertDialog()
+            .setTitle(R.string.epigraph_reader_reset_defaults_title)
+            .setMessage(R.string.epigraph_reader_reset_defaults_message)
+            .setNegativeButton(AR.string.cancel, null)
+            .setPositiveButton(R.string.epigraph_reader_reset_defaults) { _, _ ->
+                resetReaderSettingsToDefaults()
+            }
+            .show()
+    }
+
+    private fun applyReaderChromeTheme() {
+        binding.applyReaderTheme(currentReaderThemeColors())
+    }
+
+    private fun currentReaderThemeColors(): ReaderThemeColors {
+        return if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+            ReaderThemeColors.novel(
+                activity = this,
+                theme = readerPreferences.novelTheme.get(),
+                customBackground = readerPreferences.novelBackgroundColor.get(),
+                customForeground = readerPreferences.novelFontColor.get(),
+            )
+        } else {
+            ReaderThemeColors.comic(this, preferences.readerTheme().get())
+        }
+    }
+
+    /** Restores the fixed reader HUD after the embedded settings surface is dismissed. */
+    internal fun closeReaderSettingsPanel() {
+        val panel = readerSettingsPanel ?: return
+        val root = binding.chaptersSheet.root
+        val behavior = BottomSheetBehavior.from(root)
+        readerSettingsCallback?.let(behavior::removeBottomSheetCallback)
+        readerSettingsCallback = null
+
+        root.removeView(panel)
+        root.backgroundTintList = ColorStateList.valueOf(currentReaderThemeColors().surface)
+        root.binding.chapterRecycler.apply {
+            isVisible = true
+            alpha = 0f
+            isClickable = false
+            isFocusable = false
+        }
+        with(binding.chaptersSheet) {
+            chaptersButton.isVisible = true
+            webviewButton.isVisible = true
+            readingMode.isVisible = true
+            rotationSheetButton.isVisible = false
+            cropBordersSheetButton.isVisible = false
+            doublePage.isVisible = false
+            shiftPageButton.isVisible = false
+            displayOptions.isVisible = true
+        }
+        // Restore the same parent container that owns the fixed HUD. This mirrors the Books
+        // reader and prevents a stale anchored rail from being laid out a second time.
+        binding.navLayout.isVisible = true
+        novelActionBarComposeView?.isVisible = viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
+        updateBottomShortcuts()
+
+        binding.chaptersSheet.topbarLayout.updateLayoutParams<ViewGroup.LayoutParams> {
+            height = readerSettingsTopbarHeight?.takeIf { it > 0 } ?: 56.dpToPx
+        }
+
+        root.updateLayoutParams<ViewGroup.LayoutParams> {
+            height = readerSettingsRootHeight?.takeIf { it > 0 } ?: 280.dpToPx
+        }
+        (readerSettingsHost as? TabbedReaderSettingsSheet)?.embeddedTabsChanged = null
+        (readerSettingsHost as? BottomSheetDialog)?.dismissSafely()
+        readerSettingsHost = null
+        readerSettingsRootHeight = null
+        readerSettingsTopbarHeight = null
+        readerSettingsPanel = null
+        applyReaderChromeTheme()
+        behavior.apply {
+            isHideable = false
+            isDraggable = false
+            state = BottomSheetBehavior.STATE_COLLAPSED
         }
     }
 
@@ -1044,32 +1356,32 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
             }
 
             webviewButton.setOnClickListener {
-                openMangaInBrowser()
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    showNovelChapterSearch()
+                } else {
+                    openMangaInBrowser()
+                }
             }
 
             displayOptions.setOnClickListener {
-                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
-                    eu.kanade.tachiyomi.ui.reader.settings.TabbedNovelReaderSettingsSheet(this@ReaderActivity).show()
-                } else {
-                    TabbedReaderSettingsSheet(this@ReaderActivity).show()
-                }
+                showReaderSettings()
             }
 
             displayOptions.setOnLongClickListener {
-                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
-                    eu.kanade.tachiyomi.ui.reader.settings.TabbedNovelReaderSettingsSheet(this@ReaderActivity).show()
-                } else {
-                    TabbedReaderSettingsSheet(this@ReaderActivity, true).show()
-                }
+                showReaderSettings()
                 true
             }
 
             readingMode.setOnClickListener { readingMode ->
-                readingMode.popupMenu(
-                    items = ReadingModeType.entries.map { it.flagValue to it.stringRes },
-                    selectedItemId = viewModel.manga?.readingModeType,
-                ) {
-                    viewModel.setMangaReadingMode(itemId)
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    showReaderAnnotations()
+                } else {
+                    readingMode.popupMenu(
+                        items = ReadingModeType.entries.map { it.flagValue to it.stringRes },
+                        selectedItemId = viewModel.manga?.readingModeType,
+                    ) {
+                        viewModel.setMangaReadingMode(itemId)
+                    }
                 }
             }
         }
@@ -1106,8 +1418,6 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
             binding.readerNav.pageSeekbar.addOnSliderTouchListener(
                 object : Slider.OnSliderTouchListener {
                     override fun onStartTrackingTouch(slider: Slider) {
-                        readerNavGestureDetector.lockVertical = false
-                        readerNavGestureDetector.hasScrollHorizontal = true
                         isScrollingThroughPagesOrChapters = true
                     }
 
@@ -1116,7 +1426,10 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                     }
                 },
             )
-            listOf(root, leftChapter, rightChapter, pageSeekbar).forEach {
+            // The progress control is a native vertical Material Slider. Let it receive the
+            // complete gesture stream; routing it through the chapter-sheet swipe detector
+            // would turn a long drag into an expand gesture before the thumb can move.
+            listOf(root, leftChapter, rightChapter).forEach {
                 it.setOnTouchListener { _, event ->
                     val result = gestureDetector.onTouchEvent(event)
                     if (event?.action == MotionEvent.ACTION_UP) {
@@ -1133,11 +1446,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                         event.action = MotionEvent.ACTION_CANCEL
                         return@setOnTouchListener false
                     }
-                    if (it == pageSeekbar) {
-                        readerNavGestureDetector.lockVertical
-                    } else {
-                        result
-                    }
+                    result
                 }
             }
         }
@@ -1232,16 +1541,8 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                 left = cutOutInsets?.safeInsetLeft ?: 0,
                 right = cutOutInsets?.safeInsetRight ?: 0,
             )
-            binding.navLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                leftMargin = 12.dpToPx + max(systemInsets.left, cutOutInsets?.safeInsetLeft ?: 0)
-                rightMargin = 12.dpToPx + max(systemInsets.right, cutOutInsets?.safeInsetRight ?: 0)
-            }
-            // Re-resolve the slider's vertical position whenever insets change. The "top"
-            // mode pins the slider to `actionBarSize + status-bar-inset`; immersive toggles
-            // and cutout transitions can change that inset mid-session, so we recompute on
-            // every inset event. Idempotent for "center"/"bottom" — those branches don't
-            // read the inset.
-            applyNovelNavLayoutPosition()
+            // Recompute the right-side rail whenever system bars or display cutouts change.
+            applyReaderNavRailLayout()
             binding.chaptersSheet.root.sheetBehavior?.peekHeight =
                 peek + if (fullscreen) {
                 insets.getBottomGestureInsets()
@@ -1569,121 +1870,108 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         novelActionBarComposeView = null
     }
 
-    /**
-     * Reposition the chapter-nav layout (slider + prev/next chapter) and the novel action bar
-     * based on [ReaderPreferences.novelProgressSliderPosition], which is a 3x3 grid string
-     * formatted "<v>-<h>" where v ∈ {top, center, bottom} and h ∈ {left, center, right}.
-     *
-     * Layout rules:
-     *   - **bottom-center** (default): keeps the manga-reader layout exactly — nav_layout is
-     *     anchored to `chapters_sheet`, full-width, with the action bar stacked just above.
-     *   - any other **-center** (top-center, center-center): full-width stretch but anchored
-     *     to a different vertical zone (under the toolbar / vertically centered).
-     *   - any **-left or **-right**: compact pill (~360dp wide), anchored to that side via
-     *     gravity. Inside the pill the slider's `layout_weight=1` fills the remaining space
-     *     between the two prev/next buttons.
-     *
-     * Action bar (TTS / auto-scroll / find-replace) follows the slider only when slider is
-     * at bottom-center; in every other mode it re-anchors to `chapters_sheet` so the
-     * controls stay at the bottom-of-screen for thumb access.
-     *
-     * Backward-compat: the legacy preference values "top"/"center"/"bottom" (without a
-     * horizontal axis) map to their *-center equivalents so existing user prefs still work.
-     *
-     * Foldables: the hinge-gap branch (init block, line ~537) overrides nav width on dual-pane
-     * layouts before this runs once per pref change. Re-running this from a hinge update would
-     * stomp that width — currently the foldable path only fires on layout-info changes, which
-     * happen rarely enough that we don't bother re-merging.
-     */
-    private fun applyNovelNavLayoutPosition() {
-        val isNovelViewer = viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
-        val rawPosition = if (isNovelViewer) {
-            readerPreferences.novelProgressSliderPosition.get()
+    /** Applies the J2K progress bar layout without changing the saved preference on cramped windows. */
+    @SuppressLint("RtlHardcoded")
+    private fun applyReaderNavRailLayout() {
+        val mode = ReadingModeType.fromPreference(viewModel.getMangaReadingMode())
+        val modeSelected = if (mode == ReadingModeType.NOVEL) {
+            preferences.novelVerticalSeekbar().get()
         } else {
-            "bottom-center"
+            mode.prefValue.toString() in preferences.readerVerticalSeekbarModes().get()
         }
-        // Legacy 1D values → 2D *-center equivalents.
-        val position = when (rawPosition) {
-            "top" -> "top-center"
-            "center" -> "center-center"
-            "bottom" -> "bottom-center"
-            else -> rawPosition
-        }
-        val (vAxis, hAxis) = position.split("-").let {
-            (it.getOrNull(0) ?: "bottom") to (it.getOrNull(1) ?: "center")
-        }
-        val twelveDp = 12.dpToPx
-        // Compact pill width for the *-left / *-right corners. Capped at 360dp so it sits
-        // comfortably in the gutter without crowding content; the inner slider's
-        // layout_weight=1 fills the remaining space between the prev/next chapter buttons.
-        val compactWidthPx = 360.dpToPx
-        val isStretch = hAxis == "center"
-        // ?attr/actionBarSize resolved at runtime; falls back to 56dp. Used by top-* to push
-        // the slider below the toolbar; tracks live insets via the inset listener.
-        val toolbarPx by lazy {
-            val typed = TypedValue()
-            if (theme.resolveAttribute(android.R.attr.actionBarSize, typed, true)) {
-                TypedValue.complexToDimensionPixelSize(typed.data, resources.displayMetrics)
-            } else {
-                56.dpToPx
+        val rootHeight = binding.root.height
+        val insets = binding.root.rootWindowInsetsCompat?.ignoredSystemInsets
+        val availableHeight = rootHeight - (insets?.top ?: 0) - (insets?.bottom ?: 0)
+        val vertical = modeSelected && (rootHeight <= 0 || availableHeight > 300.dpToPx)
+        val dockLeft = preferences.readerVerticalSeekbarDockLeft().get()
+        val orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+
+        readerNavVertical = vertical
+        with(binding.readerNav) {
+            root.orientation = orientation
+            readerSeekbar.orientation = orientation
+            pageSeekbar.setOrientation(if (vertical) SliderOrientation.VERTICAL else SliderOrientation.HORIZONTAL)
+            pageSeekbar.scaleY = if (vertical) -1f else 1f
+            pageSeekbar.isRTL = if (vertical) dockLeft else viewer is R2LPagerViewer
+            leftChapter.rotation = if (vertical) 90f else 0f
+            rightChapter.rotation = if (vertical) 90f else 0f
+            readerSeekbar.updateLayoutParams<LinearLayout.LayoutParams> {
+                if (vertical) {
+                    width = LinearLayout.LayoutParams.WRAP_CONTENT
+                    height = 0
+                } else {
+                    width = 0
+                    height = LinearLayout.LayoutParams.WRAP_CONTENT
+                }
+            }
+            pageSeekbar.updateLayoutParams<LinearLayout.LayoutParams> {
+                if (vertical) {
+                    width = 40.dpToPx
+                    height = 0
+                } else {
+                    width = 0
+                    height = 40.dpToPx
+                }
+            }
+            root.updatePaddingRelative(
+                if (vertical) 2.dpToPx else 12.dpToPx,
+                if (vertical) 12.dpToPx else 6.dpToPx,
+                if (vertical) 2.dpToPx else 12.dpToPx,
+                if (vertical) 12.dpToPx else 6.dpToPx,
+            )
+            root.updateLayoutParams<FrameLayout.LayoutParams> {
+                width = if (vertical) FrameLayout.LayoutParams.WRAP_CONTENT else FrameLayout.LayoutParams.MATCH_PARENT
+                height = if (vertical) FrameLayout.LayoutParams.MATCH_PARENT else FrameLayout.LayoutParams.WRAP_CONTENT
             }
         }
-        val statusBarTop = binding.root.rootWindowInsetsCompat?.getInsets(systemBars())?.top ?: 0
-        // Translate the v/h axis into Android Gravity flags. Note START/END (rather than
-        // LEFT/RIGHT) so RTL locales mirror correctly.
-        val verticalGravity = when (vAxis) {
-            "top" -> Gravity.TOP
-            "center" -> Gravity.CENTER_VERTICAL
-            else -> Gravity.BOTTOM
-        }
-        val horizontalGravity = when (hAxis) {
-            "left" -> Gravity.START
-            "right" -> Gravity.END
-            else -> Gravity.CENTER_HORIZONTAL
-        }
+
         binding.navLayout.updateLayoutParams<CoordinatorLayout.LayoutParams> {
-            if (position == "bottom-center") {
-                // Preserve the original anchored behaviour for the manga-equivalent default —
-                // anchoring to chapters_sheet auto-handles sheet expansion (nav slides up
-                // with the sheet) and keeps the rotation/foldable code paths working.
+            if (vertical) {
+                anchorId = View.NO_ID
+                anchorGravity = 0
+                gravity = (if (dockLeft) Gravity.START else Gravity.END) or Gravity.CENTER_VERTICAL
+                width = ViewGroup.LayoutParams.WRAP_CONTENT
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                leftMargin = 8.dpToPx
+                rightMargin = 8.dpToPx
+                topMargin = 8.dpToPx
+                bottomMargin = (binding.chaptersSheet.root.sheetBehavior?.peekHeight ?: 60.dpToPx) + 8.dpToPx
+            } else {
                 anchorId = R.id.chapters_sheet
                 anchorGravity = Gravity.TOP
                 gravity = Gravity.TOP
+                width = ViewGroup.LayoutParams.MATCH_PARENT
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                leftMargin = 6.dpToPx
+                rightMargin = 6.dpToPx
                 topMargin = 0
                 bottomMargin = 0
-                width = CoordinatorLayout.LayoutParams.MATCH_PARENT
-            } else {
-                // All other 8 positions: detach anchor and use absolute gravity. Manual
-                // top/bottom margins compensate for toolbar/sheet so the slider doesn't
-                // collide with either.
-                anchorId = View.NO_ID
-                gravity = verticalGravity or horizontalGravity
-                topMargin = if (vAxis == "top") toolbarPx + statusBarTop else 0
-                // For bottom-left / bottom-right, lift above the chapters_sheet's peek
-                // height so the slider sits in the same band as bottom-center would.
-                bottomMargin = if (vAxis == "bottom") {
-                    (binding.chaptersSheet.root.sheetBehavior?.peekHeight ?: 50.dpToPx)
-                } else {
-                    0
-                }
-                width = if (isStretch) {
-                    CoordinatorLayout.LayoutParams.MATCH_PARENT
-                } else {
-                    compactWidthPx
-                }
             }
-            // Preserve horizontal cutout/inset margins applied by the inset listener.
-            marginStart = max(twelveDp, marginStart)
-            marginEnd = max(twelveDp, marginEnd)
         }
-        // Action bar: only follow the slider when it's at bottom-center (so the action bar
-        // sits naturally above the slider, where the user expects controls). For every
-        // other slider position, re-anchor the action bar to chapters_sheet so TTS /
-        // auto-scroll / find-replace remain at thumb-reach at the bottom of the screen.
+        if (vertical) updateReaderNavHeight()
+
         novelActionBarComposeView?.updateLayoutParams<CoordinatorLayout.LayoutParams> {
-            anchorId = if (position == "bottom-center") R.id.nav_layout else R.id.chapters_sheet
+            anchorId = R.id.chapters_sheet
             anchorGravity = Gravity.TOP
             gravity = Gravity.TOP
+        }
+    }
+
+    private fun updateReaderNavHeight() {
+        if (!readerNavVertical || pendingReaderNavHeightUpdate) return
+        pendingReaderNavHeightUpdate = true
+        binding.navLayout.post {
+            pendingReaderNavHeightUpdate = false
+            if (!readerNavVertical) return@post
+            val rootHeight = binding.root.height
+            if (rootHeight <= 0) return@post
+            val percent = preferences.readerVerticalSeekbarHeightPercent().get().coerceIn(60, 100)
+            val insets = binding.root.rootWindowInsetsCompat?.ignoredSystemInsets
+            val available = rootHeight - (insets?.top ?: 0) - (insets?.bottom ?: 0) -
+                (binding.chaptersSheet.root.sheetBehavior?.peekHeight ?: 60.dpToPx) - 16.dpToPx
+            binding.navLayout.updateLayoutParams<CoordinatorLayout.LayoutParams> {
+                height = (available * percent / 100).coerceAtLeast(200.dpToPx)
+            }
         }
     }
 
@@ -1701,10 +1989,8 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
             ReadingModeType.LONG_STRIP.flagValue -> WebtoonViewer(this)
             ReadingModeType.CONTINUOUS_VERTICAL.flagValue -> WebtoonViewer(this, hasMargins = true)
             // NOVEL -->
-            // Novel reading is WebView-only as of the viewer consolidation. The legacy
-            // native NovelViewer was deleted; the `novelRenderingMode` preference is gone.
-            // Keeping the WHEN branch lets ReadingModeType.NOVEL stay distinct so manga
-            // viewer flags don't accidentally route a novel through a Pager/Webtoon.
+            // Keep the novel branch distinct so manga viewer flags cannot route a novel through
+            // a pager or webtoon.
             ReadingModeType.NOVEL.flagValue ->
                 eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer(this)
             // NOVEL <--
@@ -1754,20 +2040,54 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         }
         viewer = newViewer
         binding.viewerContainer.addView(newViewer.getView())
-
-        // Mount/dismount the Compose overlay that hosts the novel-only action bar.
+        applyReaderChromeTheme()
+        // Novel-specific actions live on the fixed reader HUD. Comics retain their existing
+        // viewer-mode and source-browser shortcuts; novels expose chapter search and annotations
+        // here while TTS remains inside the expanded Reader settings surface.
         if (newViewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
-            mountNovelActionBarIfNeeded()
+            binding.chaptersSheet.webviewButton.apply {
+                setImageResource(R.drawable.ic_search_24dp)
+                contentDescription = "Search in chapter"
+                compatToolTipText = "Search in chapter"
+            }
+            binding.chaptersSheet.readingMode.apply {
+                setImageResource(R.drawable.ic_format_quote_24dp)
+                contentDescription = "Annotations"
+                compatToolTipText = "Annotations"
+            }
+        } else {
+            binding.chaptersSheet.webviewButton.apply {
+                setImageResource(R.drawable.ic_open_in_webview_24dp)
+                contentDescription = getString(MR.strings.open_in_webview)
+                compatToolTipText = getString(MR.strings.open_in_webview)
+            }
+            binding.chaptersSheet.readingMode.apply {
+                setImageResource(ReadingModeType.fromPreference(viewModel.getMangaReadingMode()).iconRes)
+                contentDescription = getString(MR.strings.reading_mode)
+                compatToolTipText = getString(MR.strings.reading_mode)
+            }
+        }
+        // The preference collectors are created before the concrete viewer is known. Re-apply
+        // the correct domain snapshot now so opening a novel never inherits the comic filter
+        // (and returning to comics never keeps the novel filter).
+        config?.applyActiveFilterSnapshot()
+        // Initial-load error/source overlays temporarily disable the transparent touch layer so
+        // their Retry/Close buttons remain clickable. A successfully rebuilt viewer restores it.
+        binding.touchView.isVisible = true
+
+        // Keep the novel reader on the same fixed chapter-sheet HUD as comics. TTS, translation
+        // and the remaining novel controls are reached from the expanded Reader settings tabs;
+        // do not mount a second floating action bar over the reader content.
+        removeNovelActionBar()
+        if (newViewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
             // The controller may already be bound from a prior session; re-attach the
             // freshly-created viewer so play/pause issued before bind-completion still
             // routes through this viewer once the controller fires.
             attachNovelViewerToTtsController()
-        } else {
-            removeNovelActionBar()
         }
         // Position the slider/nav (top/center/bottom) — must run after the action bar is
         // mounted so it can re-anchor that view too.
-        applyNovelNavLayoutPosition()
+        applyReaderNavRailLayout()
 
         if (newViewer is R2LPagerViewer) {
             binding.readerNav.leftChapter.compatToolTipText = getString(MR.strings.next_chapter)
@@ -1925,7 +2245,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         // refreshList() call returns an empty list. For paged viewers a subsequent
         // PagerViewer.firstLayout → onPageChange → activity.onPageSelected fires another
         // refreshList via the selectedChapterId-mismatch check downstream, which
-        // backfills the sheet. NovelViewer.setChapters never goes through onPageSelected
+        // backfills the sheet. The WebView novel viewer does not go through onPageSelected.
         // on the initial load (it just renders the text into the scroll container), so
         // without a refresh here the sheet stays empty for the entire session. Force a
         // refresh whenever the selected chapter actually changes — cheap, idempotent,
@@ -2054,13 +2374,68 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         listOfNotNull(getTitleTextView(), getSubtitleTextView()).forEach { it.isSelected = false }
 
     /**
-     * Called from the view model if the initial load couldn't load the pages of the chapter. In
-     * this case the activity is closed and a toast is shown to the user.
+     * Called from the view model if the initial load couldn't load the pages of the chapter.
+     * Keep the reader open and show a recoverable state instead of leaving a centered spinner
+     * behind while the activity finishes.
      */
     private fun setInitialChapterError(error: Throwable) {
         Logger.e(error)
-        finish()
-        toast(error.message)
+        binding.pleaseWait.clearAnimation()
+        binding.pleaseWait.isVisible = false
+        binding.touchView.isVisible = false
+        initialChapterErrorOverlay?.let { binding.viewerContainer.removeView(it) }
+
+        val container = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(48.dpToPx, 48.dpToPx, 48.dpToPx, 48.dpToPx)
+            isClickable = true
+            isFocusable = true
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        val title = TextView(this).apply {
+            text = getString(MR.strings.novel_error_loading_chapter)
+            textSize = 18f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }
+        val message = TextView(this).apply {
+            val safeMessage = error.message
+                ?.replace(Regex("\\s+"), " ")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: getString(MR.strings.unknown_error)
+            text = safeMessage.take(320)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setPadding(0, 16.dpToPx, 0, 24.dpToPx)
+            alpha = 0.7f
+        }
+        val actions = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val retry = com.google.android.material.button.MaterialButton(this).apply {
+            text = getString(MR.strings.retry)
+            setOnClickListener {
+                hideInitialChapterErrorOverlay()
+                retryInitialChapterLoad()
+            }
+        }
+        val close = com.google.android.material.button.MaterialButton(this).apply {
+            text = getString(MR.strings.close)
+            setOnClickListener { finish() }
+        }
+        actions.addView(retry)
+        actions.addView(close)
+        container.addView(title)
+        container.addView(message)
+        container.addView(actions)
+        binding.viewerContainer.addView(container)
+        initialChapterErrorOverlay = container
     }
 
     /**
@@ -2069,6 +2444,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
      * than stacking duplicates.
      */
     private var sourceNotReadyOverlay: View? = null
+
+    /**
+     * View handle for a failed initial chapter load. Network/Core failures used to call
+     * finish() while the centered spinner was still visible, which made a reader screenshot
+     * look permanently stuck and gave the user no recovery action.
+     */
+    private var initialChapterErrorOverlay: View? = null
 
     /**
      * Inline overlay shown when [ReaderViewModel.init] gives up waiting for the source.
@@ -2081,6 +2463,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         Logger.w { "ReaderActivity: showing SourceNotReady overlay for source $sourceId" }
         binding.pleaseWait.clearAnimation()
         binding.pleaseWait.isVisible = false
+        binding.touchView.isVisible = false
         // Idempotent: clobber any prior overlay so we don't stack views on rapid retries.
         sourceNotReadyOverlay?.let { binding.viewerContainer.removeView(it) }
 
@@ -2128,6 +2511,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
     private fun hideSourceNotReadyOverlay() {
         sourceNotReadyOverlay?.let { binding.viewerContainer.removeView(it) }
         sourceNotReadyOverlay = null
+        binding.touchView.isVisible = true
+    }
+
+    private fun hideInitialChapterErrorOverlay() {
+        initialChapterErrorOverlay?.let { binding.viewerContainer.removeView(it) }
+        initialChapterErrorOverlay = null
+        binding.touchView.isVisible = true
     }
 
     /**
@@ -2136,7 +2526,10 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
      * has finished loading and awaitSource resolves immediately, or (b) it still hasn't
      * and we show the overlay again. Either path is fine — the user is in control.
      */
-    private fun retryInitAfterSourceNotReady() {
+    private fun retryInitAfterSourceNotReady() = retryInitialChapterLoad()
+
+    /** Re-runs the initial chapter load after either a source or network/Core failure. */
+    private fun retryInitialChapterLoad() {
         val manga = intent.extras?.getLong("manga", -1L) ?: -1L
         val chapter = intent.extras?.getLong("chapter", -1L) ?: -1L
         val page = intent.extras?.getInt("page", -1) ?: -1
@@ -2145,6 +2538,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
             return
         }
         val startingPage = page.takeIf { it >= 0 }
+        viewModel.resetInitialLoad()
         binding.pleaseWait.isVisible = true
         lifecycleScope.launchNonCancellableIO {
             val initResult = viewModel.init(manga, chapter, startingPage)
@@ -2272,7 +2666,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
     }
 
     /**
-     * Float overload called by the Tsundoku-derived NovelViewer when scroll progress changes.
+     * Float overload called by the WebView novel viewer when scroll progress changes.
      * Updates the progress slider in real-time.
      */
     fun onNovelProgressChanged(progress: Float) {
@@ -2284,13 +2678,18 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
      * Called from the novel viewer to save reading progress with a percentage.
      * Progress is stored as percentage (0-100) in last_page_read.
      */
-    fun saveNovelProgress(page: ReaderPage, progressPercentage: Int, isTeardown: Boolean = false) {
+    fun saveNovelProgress(
+        page: ReaderPage,
+        progressPercentage: Int,
+        textPosition: NovelTextPosition? = null,
+        isTeardown: Boolean = false,
+    ) {
         page.chapter.chapter.last_page_read = progressPercentage.coerceIn(0, 100)
         if (isTeardown) {
             // Teardown path: flush the percent but never flip the read flag.
-            viewModel.onNovelTeardownProgress(page)
+            viewModel.onNovelTeardownProgress(page, textPosition)
         } else {
-            viewModel.onNovelScrollProgress(page)
+            viewModel.onNovelScrollProgress(page, textPosition)
         }
     }
 
@@ -2774,6 +3173,46 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
         startActivity(intent)
     }
 
+    private fun showNovelChapterSearch() {
+        val novelViewer = viewer as? eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer ?: return
+        val input = EditText(this).apply {
+            hint = "Search in chapter"
+            isSingleLine = true
+            setPadding(24.dpToPx, 8.dpToPx, 24.dpToPx, 8.dpToPx)
+        }
+        materialAlertDialog()
+            .setTitle("Search in chapter")
+            .setView(input)
+            .setNegativeButton(AR.string.cancel, null)
+            .setPositiveButton(AR.string.ok) { _, _ ->
+                novelViewer.searchInChapter(input.text?.toString().orEmpty())
+            }
+            .show()
+    }
+
+    private fun showReaderAnnotations() {
+        val novel = viewer as? eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
+        if (novel != null) {
+            val manga = viewModel.manga ?: return
+            val novelId = manga.id ?: return
+            val chapter = viewModel.state.value.viewerChapters?.currChapter?.chapter
+            hayai.novel.reader.quote.showQuotesSheet(
+                activity = this,
+                novelId = novelId,
+                novelName = manga.title,
+                chapterName = chapter?.name ?: "",
+            )
+            return
+        }
+
+        // Comics do not have text highlights, but their chapter bookmark is the equivalent
+        // persistent annotation and is already represented in the chapter sheet.
+        viewModel.getCurrentChapter()?.chapter?.let { chapter ->
+            viewModel.toggleBookmark(chapter)
+            toast(if (chapter.bookmark) "Bookmark added" else "Bookmark removed")
+        }
+    }
+
     /**
      * Forces the user preferred [orientation] on the activity.
      */
@@ -2802,7 +3241,28 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                             getResourceColor(android.R.attr.colorBackground),
                         )
                     )
+                    applyReaderChromeTheme()
                 }
+
+            readerPreferences.novelTheme.changesIn(scope) {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    applyReaderChromeTheme()
+                }
+            }
+            readerPreferences.novelBackgroundColor.changesIn(scope) {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer &&
+                    readerPreferences.novelTheme.get() == "custom"
+                ) {
+                    applyReaderChromeTheme()
+                }
+            }
+            readerPreferences.novelFontColor.changesIn(scope) {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer &&
+                    readerPreferences.novelTheme.get() == "custom"
+                ) {
+                    applyReaderChromeTheme()
+                }
+            }
 
             preferences.defaultOrientationType().changes()
                 .drop(1)
@@ -2846,8 +3306,20 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
                 setColorFilter(preferences.colorFilter().get())
             }
 
+            readerPreferences.novelColorFilter.changesIn(scope) {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) setColorFilter(it)
+            }
+            readerPreferences.novelColorFilterMode.changesIn(scope) {
+                if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    setColorFilter(readerPreferences.novelColorFilter.get())
+                }
+            }
+
             merge(preferences.grayscale().changes(), preferences.invertedColors().changes())
-                .onEach { setLayerPaint(preferences.grayscale().get(), preferences.invertedColors().get()) }
+                .onEach { applyActiveLayerPaint() }
+                .launchIn(lifecycleScope)
+            merge(readerPreferences.novelGrayscale.changes(), readerPreferences.novelInvertedColors.changes())
+                .onEach { applyActiveLayerPaint() }
                 .launchIn(lifecycleScope)
 
             preferences.alwaysShowChapterTransition().changesIn(scope) {
@@ -2882,11 +3354,14 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
 
             preferences.readerBottomButtons().changesIn(scope) { updateBottomShortcuts() }
 
-            // React to live changes from the novel quick-settings sheet so the slider snaps
-            // to the new position without re-creating the viewer.
-            readerPreferences.novelProgressSliderPosition.changes().onEach {
-                applyNovelNavLayoutPosition()
-            }.launchIn(scope)
+            preferences.readerVerticalSeekbarModes().changesIn(scope) { applyReaderNavRailLayout() }
+            preferences.novelVerticalSeekbar().changesIn(scope) { applyReaderNavRailLayout() }
+            preferences.readerVerticalSeekbarDockLeft().changesIn(scope) { applyReaderNavRailLayout() }
+            preferences.readerVerticalSeekbarHeightPercent().changesIn(scope) { applyReaderNavRailLayout() }
+
+            binding.root.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+                if (bottom - top != oldBottom - oldTop) applyReaderNavRailLayout()
+            }
         }
 
         /**
@@ -2958,13 +3433,30 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
          */
         private fun setColorFilter(enabled: Boolean) {
             if (enabled) {
-                preferences.colorFilterValue().changes()
+                val valuePref = if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                    readerPreferences.novelColorFilterValue
+                } else {
+                    preferences.colorFilterValue()
+                }
+                valuePref.changes()
                     .sample(100)
                     .onEach { setColorFilterValue(it) }
                     .launchIn(scope)
             } else {
                 binding.colorOverlay.isVisible = false
             }
+        }
+
+        fun applyActiveFilterSnapshot() {
+            val novel = viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
+            val enabled = if (novel) readerPreferences.novelColorFilter.get() else preferences.colorFilter().get()
+            if (enabled) {
+                val value = if (novel) readerPreferences.novelColorFilterValue.get() else preferences.colorFilterValue().get()
+                setColorFilterValue(value)
+            } else {
+                binding.colorOverlay.isVisible = false
+            }
+            applyActiveLayerPaint()
         }
 
         private fun getCombinedPaint(grayscale: Boolean, invertedColors: Boolean): Paint {
@@ -3026,12 +3518,25 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>() {
          */
         private fun setColorFilterValue(value: Int) {
             binding.colorOverlay.isVisible = true
-            binding.colorOverlay.setFilterColor(value, preferences.colorFilterMode().get())
+            val mode = if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                readerPreferences.novelColorFilterMode.get()
+            } else {
+                preferences.colorFilterMode().get()
+            }
+            binding.colorOverlay.setFilterColor(value, mode)
         }
 
         private fun setLayerPaint(grayscale: Boolean, invertedColors: Boolean) {
             val paint = if (grayscale || invertedColors) getCombinedPaint(grayscale, invertedColors) else null
             binding.viewerContainer.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+        }
+
+        private fun applyActiveLayerPaint() {
+            if (viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+                setLayerPaint(readerPreferences.novelGrayscale.get(), readerPreferences.novelInvertedColors.get())
+            } else {
+                setLayerPaint(preferences.grayscale().get(), preferences.invertedColors().get())
+            }
         }
     }
 }

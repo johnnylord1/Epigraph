@@ -162,7 +162,7 @@ class FormData {
   [Symbol.iterator]() { return this.entries(); }
 
   __serialize() {
-    const boundary = '----HayaiFormBoundary' +
+    const boundary = '----EpigraphFormBoundary' +
       Math.random().toString(16).slice(2) + Date.now().toString(16);
     const enc = new TextEncoder();
     const chunks = [];
@@ -195,7 +195,7 @@ function _qpEscape(s) {
 }
 
 // ---- Response -------------------------------------------------------------
-// Supports dual-body init for the hayai bridge: pass a string body for the
+// Supports dual-body init for the Epigraph bridge: pass a string body for the
 // fast text path; pass `_bodyBase64` in init for lazy binary decode (only
 // realized when arrayBuffer/blob is actually called).
 

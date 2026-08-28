@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 // NOVEL -->
 import hayai.novel.reader.NovelDownloadPageLoader
 import hayai.novel.reader.NovelPageLoader
@@ -31,6 +32,8 @@ class ChapterLoader(
     private val source: Source,
 ) {
 
+    private var activePageLoader: PageLoader? = null
+
     /**
      * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
      * is already loaded.
@@ -48,6 +51,7 @@ class ChapterLoader(
             Logger.d { "Loading pages for ${chapter.chapter.name}" }
             try {
                 val loader = getPageLoader(chapter)
+                activePageLoader = loader
                 chapter.pageLoader = loader
 
                 val pages = loader.getPages()
@@ -61,7 +65,11 @@ class ChapterLoader(
                     chapter.requestedPage = page
                 } else if (!source.isNovelSource() && !chapter.chapter.read) {
                     // If the chapter is partially read, set the starting page to the last the user read
-                    chapter.requestedPage = chapter.chapter.last_page_read
+                    chapter.requestedPage = resolveRequestedPage(
+                        storedPageIndex = chapter.chapter.last_page_read,
+                        storedPageCount = chapter.chapter.last_page_read + chapter.chapter.pages_left,
+                        pages = pages,
+                    )
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
@@ -77,6 +85,12 @@ class ChapterLoader(
      */
     private fun chapterIsReady(chapter: ReaderChapter): Boolean {
         return chapter.state is ReaderChapter.State.Loaded && chapter.pageLoader != null
+    }
+
+    /** Stop workers belonging to a failed initial load before the activity retries it. */
+    fun recycle() {
+        activePageLoader?.recycle()
+        activePageLoader = null
     }
 
     /**
@@ -104,4 +118,18 @@ class ChapterLoader(
             else -> error(context.getString(MR.strings.source_not_installed))
         }
     }
+}
+
+internal fun resolveRequestedPage(
+    storedPageIndex: Int,
+    storedPageCount: Int,
+    pages: List<ReaderPage>,
+): Int {
+    val sourcePageCount = pages.firstNotNullOfOrNull { it.sourcePageCount }
+    if (sourcePageCount == null || sourcePageCount == pages.size || storedPageCount != sourcePageCount) {
+        return storedPageIndex
+    }
+    return pages.indexOfFirst { it.sourcePageIndex == storedPageIndex }
+        .takeIf { it >= 0 }
+        ?: storedPageIndex
 }

@@ -29,6 +29,8 @@
 -keep,allowoptimization class org.jsoup.** { public protected *; }
 -keep,allowoptimization class com.google.gson.** { public protected *; }
 -keep,allowoptimization class com.dokar.quickjs.** { public protected *; }
+-keep,allowoptimization class com.ahmer.pdfium.** { public protected *; }
+-keep,allowoptimization class org.readium.r2.** { public protected *; }
 # Extension-facing JS engine. The `app.cash.quickjs.QuickJs` shim in this app
 # (see app/src/main/java/app/cash/quickjs/) is loaded reflectively by extensions
 # (Mangago, MangaHere, etc.) — no in-app code references it, so R8 would strip it.
@@ -54,6 +56,10 @@
 -keep class com.google.android.material.** { *; }
 -keep interface com.google.android.material.** { *; }
 -keep public class com.google.android.material.R$* { *; }
+
+# Firebase discovers ML Kit registrars from manifest metadata and constructs them
+# reflectively. R8 full mode otherwise removes their no-arg constructors.
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
 
 # AndroidX Window reflects optional platform extension/sidecar APIs that are
 # only present on devices which provide them.
@@ -119,10 +125,6 @@
 # XmlUtil
 -keep public enum nl.adaptivity.xmlutil.EventType { *; }
 ##---------------End: proguard configuration for kotlinx.serialization  ----------
-
-# Firebase
--keep class com.google.firebase.installations.** { *; }
--keep interface com.google.firebase.installations.** { *; }
 
 # EXH metadata serialization
 -keep class exh.metadata.metadata.** { *; }

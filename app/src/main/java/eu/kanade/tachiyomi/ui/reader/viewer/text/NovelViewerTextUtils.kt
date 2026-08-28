@@ -6,6 +6,7 @@ import eu.kanade.presentation.reader.settings.RegexReplacement
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import hayai.novel.reader.security.NovelHtmlSanitizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -17,8 +18,9 @@ import org.intellij.markdown.parser.MarkdownParser
 import yokai.domain.ui.settings.ReaderPreferences
 
 /**
- * Shared utility functions used by both [NovelViewer] (native TextView) and
- * [NovelWebViewViewer] (WebView).  Extracted to eliminate code duplication.
+ * Shared text-processing utilities used by the canonical [NovelWebViewViewer].
+ * Kept separate from the viewer so sanitization, markdown conversion and TTS chunking are
+ * deterministic and testable without a rendering surface.
  */
 object NovelViewerTextUtils {
 
@@ -100,7 +102,8 @@ object NovelViewerTextUtils {
         return try {
             // parseBodyFragment so a chapter HTML snippet isn't wrapped in a synthetic
             // <html><body>; we only need to iterate the elements the user actually sees.
-            val doc = org.jsoup.Jsoup.parseBodyFragment(html)
+            val sanitizedHtml = NovelHtmlSanitizer.sanitize(html)
+            val doc = org.jsoup.Jsoup.parseBodyFragment(sanitizedHtml)
             val elements = doc.body().select(PARAGRAPH_SELECTOR)
             val paragraphs = mutableListOf<String>()
             for (el in elements) {
@@ -113,7 +116,10 @@ object NovelViewerTextUtils {
             TaggedChapter(doc.body().html(), paragraphs)
         } catch (e: Exception) {
             Logger.w { "Tagging chapter paragraphs failed, falling back untagged: ${e.message}" }
-            TaggedChapter(html, emptyList())
+            // Never fall back to the untrusted input. If paragraph tagging fails after the
+            // sanitizer pass, render escaped visible text instead of executable markup.
+            val visibleText = runCatching { org.jsoup.Jsoup.parse(html).text() }.getOrDefault("")
+            TaggedChapter(plainTextToHtml(visibleText), emptyList())
         }
     }
 
@@ -464,7 +470,7 @@ object NovelViewerTextUtils {
     /**
      * Waits for [page] to finish loading text, triggering the load if still queued.
      *
-     * @param tag       Log tag for diagnostics (e.g. "NovelViewer" or "NovelWebViewViewer").
+     * @param tag       Log tag for diagnostics (normally "NovelWebViewViewer").
      * @param page      The [ReaderPage] whose text we need.
      * @param loader    The [PageLoader] that knows how to load [page].
      * @param timeoutMs Timeout in milliseconds.

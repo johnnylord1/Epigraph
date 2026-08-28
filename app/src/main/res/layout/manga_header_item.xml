@@ -391,7 +391,7 @@
     <!-- minHeight reserves space for MangaContinueReadingButton (~56dp Material Button) so the
          ComposeView doesn't grow from 0 to button-height on first composition, which pushed
          chapter rows down two slots on initial render. Yokai used a plain MaterialButton View
-         here (measured synchronously); Hayai's compose version needs this stability hint. -->
+         here (measured synchronously); Epigraph's compose version needs this stability hint. -->
     <androidx.compose.ui.platform.ComposeView
         android:id="@+id/button_group_compose"
         android:layout_width="0dp"

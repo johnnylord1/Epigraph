@@ -2,7 +2,10 @@ package hayai.novel.plugin
 
 import android.content.Context
 import co.touchlab.kermit.Logger
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.preference.plusAssign
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.util.system.withIOContext
 import hayai.novel.js.JsPluginLoader
 import hayai.novel.js.NovelJsBridgeImpl
 import hayai.novel.plugin.model.NovelPlugin
@@ -25,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import okhttp3.Request
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import yokai.domain.base.models.Version
 
@@ -36,6 +40,7 @@ class NovelPluginManager(
     private val context: Context,
     private val repoRepository: NovelRepoRepository,
     private val networkHelper: NetworkHelper,
+    private val preferences: PreferencesHelper,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
@@ -209,6 +214,17 @@ class NovelPluginManager(
                 return
             }
             loadInstalledPlugins()
+            // One-shot: surface installed plugin languages in Browse (mirrors
+            // ExtensionManager's first-run sub-language enablement). Languages are
+            // also enabled at install time; this covers plugins installed before the
+            // language preference existed or restored from disk.
+            val enabledLangs = preferences.enabledLanguages().get()
+            val missingLangs = _installedPluginsFlow.value
+                .mapNotNull { it.lang.takeIf { lang -> lang.isNotBlank() && lang !in enabledLangs } }
+                .toSet()
+            if (missingLangs.isNotEmpty()) {
+                preferences.enabledLanguages() += missingLangs
+            }
             installedPluginsLoaded = true
             _loadedFlow.value = true
         }
@@ -232,29 +248,7 @@ class NovelPluginManager(
         val allPlugins = mutableListOf<NovelPluginIndex>()
 
         for (repo in repos) {
-            try {
-                val request = Request.Builder()
-                    .url(repo.baseUrl)
-                    .addHeader("pragma", "no-cache")
-                    .addHeader("cache-control", "no-cache")
-                    .build()
-
-                val response = networkHelper.client.newCall(request).execute()
-                val body = response.use { it.body.string() }
-                if (body.isNullOrBlank()) {
-                    allPlugins += cache.readRepoPlugins(repo.baseUrl)
-                    continue
-                }
-
-                val plugins = json.decodeFromString<List<NovelPluginIndex>>(body)
-                cache.writeRepoPlugins(repo.baseUrl, plugins)
-                allPlugins.addAll(plugins)
-
-                Logger.d { "NovelPluginManager: Fetched ${plugins.size} plugins from ${repo.baseUrl}" }
-            } catch (e: Exception) {
-                Logger.e(e) { "NovelPluginManager: Failed to fetch plugins from ${repo.baseUrl}" }
-                allPlugins += cache.readRepoPlugins(repo.baseUrl)
-            }
+            allPlugins += refreshRepositoryPlugins(repo.baseUrl)
         }
 
         val resolvedPlugins = dedupePlugins(allPlugins)
@@ -262,18 +256,95 @@ class NovelPluginManager(
     }
 
     /**
+     * Reads one configured LNReader repository without mixing entries from other repositories.
+     * Sync reconciliation uses this boundary so a plugin can only be resolved from the repository
+     * that declared it on the paired profile.
+     */
+    suspend fun refreshRepositoryPlugins(repoUrl: String): List<NovelPluginIndex> {
+        return try {
+            // Network I/O must run off the main thread (NetworkOnMainThreadException otherwise).
+            val body = withIOContext {
+                val request = Request.Builder()
+                    .url(repoUrl)
+                    .addHeader("pragma", "no-cache")
+                    .addHeader("cache-control", "no-cache")
+                    .build()
+                val response = networkHelper.client.newCall(request).execute()
+                response.use {
+                    if (!it.isSuccessful) return@use null
+                    it.body.string()
+                }
+            }
+            if (body.isNullOrBlank()) return cache.readRepoPlugins(repoUrl)
+
+            val plugins = json.decodeFromString<List<NovelPluginIndex>>(body)
+            cache.writeRepoPlugins(repoUrl, plugins)
+            Logger.d { "NovelPluginManager: Fetched ${plugins.size} plugins from $repoUrl" }
+            plugins
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Logger.e(e) { "NovelPluginManager: Failed to fetch plugins from $repoUrl" }
+            cache.readRepoPlugins(repoUrl)
+        }
+    }
+
+    /**
      * Install a plugin by downloading its JS code.
      */
-    suspend fun installPlugin(plugin: NovelPluginIndex): Boolean {
-        return try {
-            val request = Request.Builder()
-                .url(plugin.url)
-                .addHeader("pragma", "no-cache")
-                .addHeader("cache-control", "no-cache")
-                .build()
+    suspend fun installPlugin(plugin: NovelPluginIndex): Boolean =
+        installPlugin(plugin, expectedSha256 = null, expectedByteLength = null)
 
-            val response = networkHelper.client.newCall(request).execute()
-            val code = response.use { it.body.string() }
+    /**
+     * Installs bytes fetched from the LNReader manifest only after optional Core evidence matches.
+     */
+    suspend fun installPlugin(
+        plugin: NovelPluginIndex,
+        expectedSha256: String?,
+        expectedByteLength: Long?,
+    ): Boolean {
+        return try {
+            // Network I/O must run off the main thread (NetworkOnMainThreadException otherwise).
+            val bytes = withIOContext {
+                val request = Request.Builder()
+                    .url(plugin.url)
+                    .addHeader("pragma", "no-cache")
+                    .addHeader("cache-control", "no-cache")
+                    .build()
+                val response = networkHelper.client.newCall(request).execute()
+                response.use {
+                    if (!it.isSuccessful) return@use null
+                    it.body.bytes()
+                }
+            } ?: return false
+            installPluginArtifact(plugin, bytes, expectedSha256, expectedByteLength)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            Logger.e(e) { "NovelPluginManager: Failed to fetch plugin ${plugin.id}" }
+            false
+        }
+    }
+
+    /**
+     * Installs already-materialized plugin bytes after immutable evidence validation.
+     *
+     * This is also the boundary used by Epigraph Core for an exact desktop plugin artifact that is
+     * no longer present in its declared public repository. Callers must still require an explicit
+     * user install action; this method never runs as part of background reconciliation.
+     */
+    suspend fun installPluginArtifact(
+        plugin: NovelPluginIndex,
+        bytes: ByteArray,
+        expectedSha256: String?,
+        expectedByteLength: Long?,
+    ): Boolean {
+        return try {
+            if (!NovelPluginArtifactVerifier.matches(bytes, expectedSha256, expectedByteLength)) {
+                Logger.w { "NovelPluginManager: Plugin artifact did not match declared evidence for ${plugin.id}" }
+                return false
+            }
+            val code = bytes.toString(Charsets.UTF_8)
 
             // Validate plugin loads correctly
             val metadata = pluginLoader.extractMetadata(code) ?: return false
@@ -332,12 +403,23 @@ class NovelPluginManager(
                 Logger.d { "NovelPluginManager: Installed plugin '${metadata.name}'" }
             }
 
+            // Surface the plugin in Browse by enabling its language, mirroring
+            // ExtensionManager.enableAdditionalSubLanguages for manga extensions. Without
+            // this, sources whose language isn't in enabledLanguages are filtered out of
+            // the Novel tab even though the plugin is installed.
+            val lang = langFromLnReaderLang(plugin.lang)
+            if (lang.isNotBlank() && lang !in preferences.enabledLanguages().get()) {
+                preferences.enabledLanguages() += lang
+            }
+
             // Fire-and-forget icon download. Failures are silent — the UI falls back to the
             // network-loaded iconUrl until the next install/prefetch attempt succeeds (#10).
             if (!plugin.iconUrl.isNullOrBlank()) {
                 scope.launch { downloadPluginIcon(pluginDir, plugin.iconUrl) }
             }
             true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             Logger.e(e) { "NovelPluginManager: Failed to install plugin ${plugin.id}" }
             false
@@ -373,6 +455,18 @@ class NovelPluginManager(
      */
     fun getInstalledVersion(pluginId: String): String? {
         return _installedPluginsFlow.value.find { it.id == pluginId }?.version
+    }
+
+    fun installedArtifactMatches(
+        pluginId: String,
+        expectedVersion: String,
+        expectedSha256: String,
+        expectedByteLength: Long,
+    ): Boolean {
+        if (getInstalledVersion(pluginId) != expectedVersion) return false
+        val artifact = File(pluginsDir, pluginId).resolve("index.js")
+        val bytes = runCatching { artifact.readBytes() }.getOrNull() ?: return false
+        return NovelPluginArtifactVerifier.matches(bytes, expectedSha256, expectedByteLength)
     }
 
     fun getPluginLastModified(pluginId: String): Long {
@@ -556,4 +650,20 @@ class NovelPluginManager(
             }
         }
     }
+}
+
+internal object NovelPluginArtifactVerifier {
+    fun matches(bytes: ByteArray, expectedSha256: String?, expectedByteLength: Long?): Boolean {
+        if (expectedByteLength != null && expectedByteLength >= 0 && bytes.size.toLong() != expectedByteLength) {
+            return false
+        }
+        if (expectedSha256 == null) return true
+        if (!SHA_256.matches(expectedSha256)) return false
+        val actual = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        return actual == expectedSha256
+    }
+
+    private val SHA_256 = Regex("[0-9a-f]{64}")
 }

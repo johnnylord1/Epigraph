@@ -1040,8 +1040,8 @@ class RecentsController(bundle: Bundle? = null) :
 
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
         android.os.Trace.beginSection(
-            if (type.isEnter) "Hayai/RecentsController.onChangeStarted.enter"
-            else "Hayai/RecentsController.onChangeStarted.exit",
+            if (type.isEnter) "Epigraph/RecentsController.onChangeStarted.enter"
+            else "Epigraph/RecentsController.onChangeStarted.exit",
         )
         try {
             super.onChangeStarted(handler, type)

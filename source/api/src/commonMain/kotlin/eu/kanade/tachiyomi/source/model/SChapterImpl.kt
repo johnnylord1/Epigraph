@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.source.model
 
+import kotlinx.serialization.json.JsonObject
+
 class SChapterImpl : SChapter {
 
     override lateinit var url: String
@@ -13,6 +15,8 @@ class SChapterImpl : SChapter {
     override var scanlator: String? = null
 
     override var chapterLocked: Boolean = false
+
+    override var memo: JsonObject = JsonObject(emptyMap())
 
     override var read: Boolean = false
 

@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.tasks.testing.Test
 
 plugins {
     kotlin("multiplatform")
@@ -14,6 +15,9 @@ tasks {
             "-Xwarning-level=DEPRECATION:disabled",
             "-Xwarning-level=OVERRIDE_DEPRECATION:disabled",
         )
+    }
+    withType<Test> {
+        useJUnitPlatform()
     }
 }
 
@@ -32,12 +36,23 @@ kotlin {
             dependencies {
                 api(project(":domain"))
                 api(libs.bundles.db)
+                // SQLDelight emits JsonObject for AS-mapped columns; expose the artifact so
+                // generated commonMain code (and the memo column adapter) can reference it.
+                api(kotlinx.serialization.json)
             }
         }
         val androidMain by getting {
             dependencies {
                 api(libs.bundles.db.android)
                 implementation(project(":source:api"))
+            }
+        }
+        val androidHostTest by getting {
+            dependencies {
+                implementation(libs.bundles.test)
+                implementation(libs.sqldelight.sqlite.driver)
+                implementation(kotlinx.coroutines.test)
+                runtimeOnly(libs.bundles.test.runtime)
             }
         }
     }

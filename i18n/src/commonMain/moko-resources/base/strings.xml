@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">Hayai</string>
-    <string name="app_short_name" translatable="false">Hayai</string>
-    <string name="app_normalized_name" translatable="false">Hayai</string>
+    <string name="app_name" translatable="false">Epigraph</string>
+    <string name="app_short_name" translatable="false">Epigraph</string>
+    <string name="app_normalized_name" translatable="false">Epigraph</string>
 
     <string name="action_menu_overflow_description">More options</string>
     <string name="action_bar_up_description">Navigate up</string>
@@ -501,6 +501,7 @@
     <string name="vertical_viewer">Vertical</string>
     <string name="continuous_vertical">Continuous vertical</string>
     <string name="paged">Paged</string>
+    <string name="reader_pages">Pages</string>
     <string name="scale_type">Scale type</string>
     <string name="tap_zones">Tap zones</string>
     <string name="fit_screen">Fit screen</string>
@@ -688,6 +689,7 @@
     <string name="komga" translatable="false">Komga</string>
     <string name="kavita" translatable="false">Kavita</string>
     <string name="suwayomi" translatable="false">Suwayomi</string>
+    <string name="hardcover" translatable="false">Hardcover</string>
     <string name="update_tracking_scoring_type">Update %1$s\'s scoring type</string>
     <string name="scoring_type_updated">Scoring type updated</string>
     <string name="could_not_update_scoring_">Could not update scoring type: %1$s</string>
@@ -865,6 +867,7 @@
     <string name="backup_restore_invalid_uri">Error: empty URI</string>
     <string name="creating_backup">Creating backup</string>
     <string name="backup_info">Automatic backups are highly recommended. You should keep copies in other places as well.</string>
+    <string name="epigraph_backup_migration_info">Epigraph backups use the .epigraphbk suffix. You can import .aethonbk, .tachibk, .proto.gz, and existing JSON backups. The Epigraph app is installed separately from Aethon, so Android private app data must be moved through backup/import or a folder you choose.</string>
     <string name="what_should_backup">What do you want to backup?</string>
     <string name="restoring_backup">Restoring backup</string>
     <string name="restore_duration">%1$02d min, %2$02d sec</string>
@@ -1921,9 +1924,9 @@
     <string name="pref_translation_provider_not_configured">%1$s needs setup</string>
     <string name="pref_translation_configure_provider">Configure provider</string>
     <string name="pref_translation_configure_provider_title">Configure %1$s</string>
-    <string name="pref_translation_provider_no_setup">%1$s can run without a key in Hayai. If it stops working, choose an API-backed or local engine.</string>
+    <string name="pref_translation_provider_no_setup">%1$s can run without a key in Epigraph. If it stops working, choose an API-backed or local engine.</string>
     <string name="pref_translation_provider_setup_saved">%1$s setup saved</string>
-    <string name="pref_translation_subscription_note">ChatGPT Plus/Pro and Google AI subscriptions do not provide API access to Hayai. Use an API key, an OpenAI-compatible endpoint, or a local engine such as Ollama.</string>
+    <string name="pref_translation_subscription_note">ChatGPT Plus/Pro and Google AI subscriptions do not provide API access to Epigraph. Use an API key, an OpenAI-compatible endpoint, or a local engine such as Ollama.</string>
     <string name="pref_translation_apply_now">Apply to current chapter</string>
     <string name="chapter_translation_translate">Translate chapter</string>
     <string name="chapter_translation_translating">Translating chapter</string>
@@ -2224,4 +2227,92 @@
     <string name="novel_no_style_presets">No saved presets yet</string>
     <string name="novel_style_preset_name">Preset name</string>
     <string name="novel_style_preset_name_taken">A preset with this name already exists</string>
+
+    <!-- Epigraph Core / syncd -->
+    <string name="epigraph_core">Epigraph Core</string>
+    <string name="epigraph_core_summary">Pair and synchronize with your Epigraph desktop over the local network</string>
+    <string name="epigraph_core_status">Connection status</string>
+    <string name="epigraph_core_not_paired">Not paired</string>
+    <string name="epigraph_core_loading">Checking encrypted credentials…</string>
+    <string name="epigraph_core_paired">Paired with profile %1$s at %2$s</string>
+    <string name="epigraph_core_connection_saved">Connection saved for profile %1$s at %2$s; waiting for Core validation</string>
+    <string name="epigraph_core_scan_qr">Scan desktop QR code</string>
+    <string name="epigraph_core_scan_qr_summary">Open Epigraph desktop, start pairing, then scan its secure bundle</string>
+    <string name="epigraph_core_paste_bundle">Paste pairing bundle</string>
+    <string name="epigraph_core_paste_bundle_summary">Fallback when the camera is unavailable</string>
+    <string name="epigraph_core_pairing_bundle">Pairing bundle</string>
+    <string name="epigraph_core_pair">Pair</string>
+    <string name="epigraph_core_sync_selection_title">Choose what to sync</string>
+    <string name="epigraph_core_sync_selection_summary">You can change these options later. Turning one off does not delete local data.</string>
+    <string name="epigraph_core_sync_comics">Comics</string>
+    <string name="epigraph_core_sync_comics_summary">Library, categories, chapters, progress and bookmarks</string>
+    <string name="epigraph_core_sync_novels">Novels</string>
+    <string name="epigraph_core_sync_novels_summary">Library, categories, progress and bookmarks</string>
+    <string name="epigraph_core_sync_books">Books</string>
+    <string name="epigraph_core_sync_books_summary">Metadata, covers, categories, progress and annotations</string>
+    <string name="epigraph_core_sync_selection_install_notice">Extensions and repositories are reviewed separately. EPUB and PDF files remain on demand.</string>
+    <string name="epigraph_core_sync_comic_repositories">Compare comics repositories</string>
+    <string name="epigraph_core_sync_comic_extensions">Compare comics extensions</string>
+    <string name="epigraph_core_sync_novel_repositories">Compare LNReader repositories</string>
+    <string name="epigraph_core_sync_novel_plugins">Compare LNReader plugins</string>
+    <string name="epigraph_core_sync_authorization_required">Authorize the newly selected domain on the desktop first.</string>
+    <string name="epigraph_core_sync_continue">Request access</string>
+    <string name="epigraph_core_sync_save_selection">Save selection</string>
+    <string name="epigraph_core_disconnect">Forget connection on this device</string>
+    <string name="epigraph_core_disconnect_summary">Revoke this device from Epigraph desktop to remove server access</string>
+    <string name="epigraph_core_pairing_validating">Validating the desktop bundle…</string>
+    <string name="epigraph_core_pairing_claiming">Requesting the connection…</string>
+    <string name="epigraph_core_pairing_waiting">Waiting for approval on the desktop…</string>
+    <string name="epigraph_core_pairing_exchanging">Exchanging the approved token…</string>
+    <string name="epigraph_core_pairing_saving">Encrypting the credential on this device…</string>
+    <string name="epigraph_core_error_invalid_bundle">The QR code is not a valid Epigraph Core pairing bundle.</string>
+    <string name="epigraph_core_error_expired">The pairing request expired. Generate a new QR code on the desktop.</string>
+    <string name="epigraph_core_error_rejected">The desktop rejected this device.</string>
+    <string name="epigraph_core_error_tls">The desktop certificate does not match the QR code. Pairing was blocked.</string>
+    <string name="epigraph_core_error_network">The Epigraph Core could not be reached on the local network.</string>
+    <string name="epigraph_core_error_upgrade">This app or the Epigraph Core must be updated before pairing.</string>
+    <string name="epigraph_core_error_generic">Pairing failed before a secure connection was completed.</string>
+    <string name="epigraph_core_error_credentials">The approved token could not be encrypted or saved on this device.</string>
+    <string name="epigraph_core_extensions_title">Extensions from this computer</string>
+    <string name="epigraph_core_extensions_summary">%1$d installed · %2$d available to download · %3$d unavailable</string>
+    <string name="epigraph_core_extensions_review">Review</string>
+    <string name="epigraph_core_extensions_download_all">Download all</string>
+    <string name="epigraph_core_extensions_add_all_repositories">Add all repositories</string>
+    <string name="epigraph_core_extensions_download">Download</string>
+    <string name="epigraph_core_extensions_later">Not now</string>
+    <string name="epigraph_core_extensions_missing">Missing</string>
+    <string name="epigraph_core_extensions_installed">Already installed</string>
+    <string name="epigraph_core_extensions_unavailable">Unavailable or incompatible</string>
+    <string name="epigraph_core_extensions_blocked_title">Untrusted or blocked</string>
+    <string name="epigraph_core_extensions_no_inventory">Sync with Epigraph Core to compare extensions.</string>
+    <string name="epigraph_core_extensions_install_progress">%1$d/%2$d complete · %3$d installed · %4$d cancelled · %5$d failed</string>
+    <string name="epigraph_core_extensions_repositories_title">Repositories from this computer</string>
+    <string name="epigraph_core_extensions_repository_required">Approval is required before this repository can be used.</string>
+    <string name="epigraph_core_extensions_repository_review">Review</string>
+    <string name="epigraph_core_extensions_repository_add">Add repository</string>
+    <string name="epigraph_core_extensions_repository_confirm_title">Trust this repository?</string>
+    <string name="epigraph_core_extensions_repository_confirm_body">Epigraph will validate %1$s and add it to this device. Extensions will still require Android installation confirmation.</string>
+    <string name="epigraph_core_extensions_repository_added">Repository added. Extension availability was refreshed.</string>
+    <string name="epigraph_core_extensions_repository_already_added">This repository is already configured.</string>
+    <string name="epigraph_core_extensions_repository_invalid">The repository could not be validated.</string>
+    <string name="epigraph_core_extensions_repository_conflict">This repository conflicts with an existing signing fingerprint. Review repositories in Sources.</string>
+    <string name="epigraph_core_extensions_repository_failed">The repository could not be added.</string>
+    <string name="epigraph_core_extension_repository_required">Repository approval required</string>
+    <string name="epigraph_core_novel_dependencies_title">Novel repositories and plugins</string>
+    <string name="epigraph_core_novel_dependencies_summary">%1$d repositories · %2$d plugins</string>
+    <string name="epigraph_core_novel_dependencies_no_inventory">Sync with Epigraph Core to compare LNReader dependencies.</string>
+    <string name="epigraph_core_novel_repositories">Repositories</string>
+    <string name="epigraph_core_novel_plugins">Plugins</string>
+    <string name="epigraph_core_novel_repository_approve">Add repository</string>
+    <string name="epigraph_core_novel_plugin_install">Install</string>
+    <string name="epigraph_core_novel_dependency_completed">The requested action completed.</string>
+    <string name="epigraph_core_novel_dependency_approval_required">Approve the repository before installing this plugin.</string>
+    <string name="epigraph_core_novel_dependency_failed">The dependency could not be validated. Nothing was installed.</string>
+    <string name="epigraph_core_extension_installed">Installed</string>
+    <string name="epigraph_core_extension_update_available">Update available on mobile</string>
+    <string name="epigraph_core_extension_missing">Available from a configured mobile repository</string>
+    <string name="epigraph_core_extension_unavailable">Not available from configured mobile repositories</string>
+    <string name="epigraph_core_extension_mismatch">Installed package does not expose the expected source</string>
+    <string name="epigraph_core_extension_blocked">Untrusted or blocked on this device</string>
+    <string name="epigraph_core_extension_trust">Trust</string>
 </resources>

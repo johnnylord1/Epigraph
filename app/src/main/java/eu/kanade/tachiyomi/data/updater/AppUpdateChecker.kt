@@ -102,11 +102,9 @@ val RELEASE_TAG: String by lazy {
 }
 
 val GITHUB_REPO: String by lazy {
-    if (BuildConfig.NIGHTLY) {
-        "HayaiApp/hayai-nightly"
-    } else {
-        "HayaiApp/hayai"
-    }
+    // Stable, beta, and nightly artifacts are published by the canonical Epigraph repository.
+    // Keep this centralized so a future feed migration cannot leave a variant pointing upstream.
+    "johnnylord1/Epigraph"
 }
 
 val RELEASE_URL = "https://github.com/$GITHUB_REPO/releases/tag/$RELEASE_TAG"

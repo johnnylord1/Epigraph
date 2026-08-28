@@ -12,12 +12,16 @@ import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import com.hippo.unifile.UniFile
+import epigraph.sync.core.http.CoreHttpResult
+import epigraph.sync.core.suwayomi.EpigraphCoreCoverClient
+import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
+import hayai.novel.source.NovelSource
 import java.io.File
 import java.net.HttpURLConnection
 import java.util.Date
@@ -29,6 +33,8 @@ import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.FileSystem
 import okio.IOException
 import okio.Path.Companion.toOkioPath
@@ -37,6 +43,7 @@ import okio.buffer
 import okio.sink
 import okio.source
 import yokai.util.koin.injectLazy
+import yokai.util.koin.get
 import yokai.domain.manga.models.MangaCover
 
 class MangaCoverFetcher(
@@ -44,12 +51,14 @@ class MangaCoverFetcher(
     private val url: String?,
     private val isInLibrary: Boolean,
     private val sourceLazy: Lazy<HttpSource?>,
+    private val novelSourceLazy: Lazy<NovelSource?>,
     private val options: Options,
     private val callFactoryLazy: Lazy<Call.Factory>,
     private val diskCacheKeyLazy: Lazy<String>,
     private val coverFileLazy: Lazy<File?>,
     private val customCoverFileLazy: Lazy<File>,
     private val imageLoader: ImageLoader,
+    private val coreCoverClientLazy: Lazy<EpigraphCoreCoverClient>,
 ) : Fetcher {
 
     private val diskCacheKey: String
@@ -174,6 +183,31 @@ class MangaCoverFetcher(
     }
 
     private suspend fun executeNetworkRequest(): Response {
+        if (url?.startsWith(SuwayomiCoreThumbnailReference.SCHEME, ignoreCase = true) == true) {
+            val result = coreCoverClientLazy.value.fetch(url!!)
+            val bytes = when (result) {
+                is CoreHttpResult.Success -> result.value
+                is CoreHttpResult.Failure -> error("Core cover request failed with ${result.statusCode}")
+            }
+            return Response.Builder()
+                .request(Request.Builder().url(CORE_COVER_RESPONSE_URL).build())
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(bytes.toResponseBody(IMAGE_MEDIA_TYPE))
+                .build()
+        }
+        novelSourceLazy.value?.let { novelSource ->
+            val coverUrl = requireNotNull(url)
+            val bytes = novelSource.fetchCoverBytes(coverUrl)
+            return Response.Builder()
+                .request(Request.Builder().url(coverUrl).build())
+                .protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(bytes.toResponseBody(IMAGE_MEDIA_TYPE))
+                .build()
+        }
         val client = sourceLazy.value?.client ?: callFactoryLazy.value
         val response = client.newCall(newRequest()).await()
         if (!response.isSuccessful && response.code != HttpURLConnection.HTTP_NOT_MODIFIED) {
@@ -321,7 +355,9 @@ class MangaCoverFetcher(
     private fun getResourceType(cover: String?): Type? {
         return when {
             cover.isNullOrEmpty() -> null
-            cover.startsWith("http", true) || cover.startsWith("Custom-", true) -> Type.URL
+            cover.startsWith("http", true) ||
+                cover.startsWith("Custom-", true) ||
+                cover.startsWith(SuwayomiCoreThumbnailReference.SCHEME, true) -> Type.URL
             cover.startsWith("/") || cover.startsWith("file://") -> Type.File
             cover.startsWith("content") -> Type.URI
             else -> null
@@ -341,12 +377,14 @@ class MangaCoverFetcher(
                 url = data.thumbnail_url,
                 isInLibrary = data.favorite,
                 sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
+                novelSourceLazy = lazy { sourceManager.get(data.source) as? NovelSource },
                 options = options,
                 callFactoryLazy = callFactoryLazy,
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 coverFileLazy = lazy { coverCache.getCoverFile(data.thumbnail_url, !data.favorite) },
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data) },
                 imageLoader = imageLoader,
+                coreCoverClientLazy = lazy { get<EpigraphCoreCoverClient>() },
             )
         }
     }
@@ -364,12 +402,14 @@ class MangaCoverFetcher(
                 url = data.url,
                 isInLibrary = data.inLibrary,
                 sourceLazy = lazy { sourceManager.get(data.sourceId) as? HttpSource },
+                novelSourceLazy = lazy { sourceManager.get(data.sourceId) as? NovelSource },
                 options = options,
                 callFactoryLazy = callFactoryLazy,
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
                 coverFileLazy = lazy { coverCache.getCoverFile(data.url, !data.inLibrary) },
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.mangaId) },
                 imageLoader = imageLoader,
+                coreCoverClientLazy = lazy { get<EpigraphCoreCoverClient>() },
             )
         }
     }
@@ -379,6 +419,8 @@ class MangaCoverFetcher(
     }
 
     companion object {
+        private const val CORE_COVER_RESPONSE_URL = "https://aethon-core.invalid/cover"
+        private val IMAGE_MEDIA_TYPE = "image/*".toMediaType()
         private val CACHE_CONTROL_FORCE_NETWORK_NO_CACHE = CacheControl.Builder().noCache().noStore().build()
         private val CACHE_CONTROL_NO_NETWORK_NO_CACHE = CacheControl.Builder().noCache().onlyIfCached().build()
     }

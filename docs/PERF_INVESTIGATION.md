@@ -1,4 +1,4 @@
-# Hayai navigation & source-browse performance investigation
+# Epigraph navigation & source-browse performance investigation
 
 ## 2026-07-14 re-audit — persistent navigation, chrome, and Android motion
 
@@ -313,9 +313,9 @@ To kill the first-entry burst, attempted a `LazyVerticalGrid`-based rewrite of t
   in grid mode; list mode kept the legacy `RecyclerView` path.
 - AppBar collapse re-implemented as a `NestedScrollConnection` translating Compose scroll
   deltas back into the legacy `ExpandedAppBarLayout.updateAppBarAfterY()` machinery.
-- Favourite-badge reactivity via a `composeRevision` counter (Hayai doesn't have Mihon's per-
+- Favourite-badge reactivity via a `composeRevision` counter (Epigraph doesn't have Mihon's per-
   item `StateFlow<Manga>` so direct DB-observation per cell wasn't available).
-- Reused Hayai's existing `MangaCompactGridItem` / `MangaComfortableGridItem` composables.
+- Reused Epigraph's existing `MangaCompactGridItem` / `MangaComfortableGridItem` composables.
 
 **Outcome:** built and ran, but the user reported it was "not smooth at all". Causes
 (post-mortem): the per-cell composition cost is still paid; Mihon's smoothness comes from
@@ -493,7 +493,7 @@ The transition is `CrossFadeChangeHandler` (200 ms alpha + 20 % translateX), NOT
 Compose composition cost paid synchronously on the main thread before the animator's
 first frame can render.
 
-Hayai added three ComposeViews to the header layout that Yokai didn't have:
+Epigraph added three ComposeViews to the header layout that Yokai didn't have:
 
 - `buttonGroupCompose` (`MangaContinueReadingButton`)
 - `metadataCompose` (`MangaMetadataSection` — EH metadata, empty for non-EH)
@@ -804,12 +804,12 @@ Baseline (mixed 6-swap run across all three roots, post sources-sheet fixes):
   with peaks at 740ms / 506ms / 438ms
 
 Diagnosis driven by a perfetto trace with `android.os.Trace.beginSection`
-markers around all suspect functions (`Hayai/...`). Markers persist in the
+markers around all suspect functions (`Epigraph/...`). Markers persist in the
 code for future re-runs — capture with:
 
 ```
 adb shell perfetto -o /data/misc/perfetto-traces/trace.pftrace -t 15s \
-  -a dev.ahmedmohamed.hayai.debug \
+  -a app.epigraph.mobile.debug \
   sched gfx view input am wm res binder_driver
 ```
 
@@ -884,7 +884,7 @@ entire visible set. Mostly unavoidable without:
   the only controller's enter hook over 30ms (~35ms each). Likely candidates:
   the `setupTabbedView` / `teardownTabbedView` path.
 
-The Trace markers (`Hayai/...`) stay in the source — re-running the perfetto
+The Trace markers (`Epigraph/...`) stay in the source — re-running the perfetto
 workflow above will show the same regions if these get revisited.
 
 ## Remaining problem flows (untouched)
@@ -991,8 +991,8 @@ Guard surface for the defer window:
   split init; `initBottomSheet` method; guards on showSheet/hideSheet/toggleSheet,
   onChangeEnded, onActivityResumed, updateTitleAndMenu, onDestroyView.
 
-Trace markers: `Hayai/Browse.initBottomSheet`, plus the pre-existing
-`Hayai/BrowseController.onChangeStarted.*` and `Hayai/Browse.refresh*` regions.
+Trace markers: `Epigraph/Browse.initBottomSheet`, plus the pre-existing
+`Epigraph/BrowseController.onChangeStarted.*` and `Epigraph/Browse.refresh*` regions.
 
 ## Image-loading audit: site-specific loaders defeating the singleton
 
@@ -1023,7 +1023,7 @@ scroll grids), `fetcherCoroutineContext = Dispatchers.IO.limitedParallelism(8)`,
   Coil tries factories in reverse-registration order, so the source-specific
   factory wins for requests the source can serve while everything else (JXL,
   AVIF, animated GIF, BufferedSource, MangaCover) stays available.
-- `ImageRequest.Builder.hayaiPagePreviewDefaults()` → `precision(INEXACT)
+- `ImageRequest.Builder.epigraphPagePreviewDefaults()` → `precision(INEXACT)
   .maxBitmapSize(Size(1024, 1024)).crossfade(false)`. Applied in
   `PagePreviewItem` and `PreviewThumb`. The maxBitmapSize cap matters because
   both use `ContentScale.FillWidth` on 108–120dp cells — without the cap they'd
@@ -1040,7 +1040,7 @@ scroll grids), `fetcherCoroutineContext = Dispatchers.IO.limitedParallelism(8)`,
    (preview pages, source-rendered thumbs), use
    `loaderForSource(context, sourceClient)` — never `ImageLoader.Builder(context)`.
 3. If the request is a small thumbnail in a scroll grid, apply
-   `.hayaiPagePreviewDefaults()` to the request builder so the bitmap cap +
+   `.epigraphPagePreviewDefaults()` to the request builder so the bitmap cap +
    precision match.
 4. Never set `.crossfade(true)` per-request unless the surface is explicitly
    a one-shot non-scrolling display.
@@ -1193,7 +1193,7 @@ Carrying forward — pick any of these next session.
   `coil3.load(...)` callsites (`RecentMangaHeaderItem`, `ExtensionHolder`,
   plus a third `SourceHolder` pattern) consolidate. Wraps the singleton +
   `PaddedSourceIconTransformation` + the standard placeholder/error fallback.
-- **Apply `hayaiPagePreviewDefaults()` to the Recommends thumbs** (100dp wide).
+- **Apply `epigraphPagePreviewDefaults()` to the Recommends thumbs** (100dp wide).
   Today's change just dropped crossfade; the maxBitmapSize cap still isn't
   applied so a 4k cover decodes to RAM for a 300px-wide card.
 - **`PagePreviewItem` / `PreviewThumb` shimmer**: replace the per-frame
@@ -1212,5 +1212,5 @@ Carrying forward — pick any of these next session.
 - Re-run the `perfetto -t 15s sched gfx view input am wm res hal binder_driver`
   baseline against the current build to capture the post-defer + post-warmup
   numbers. Today's work is wired with `android.os.Trace` markers
-  (`Hayai/Browse.initBottomSheet`, `Hayai/BrowseController.onChangeStarted.*`)
+  (`Epigraph/Browse.initBottomSheet`, `Epigraph/BrowseController.onChangeStarted.*`)
   so the new spans show up under the same query.

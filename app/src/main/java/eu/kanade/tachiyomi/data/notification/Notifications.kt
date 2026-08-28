@@ -102,6 +102,8 @@ object Notifications {
      */
     const val CHANNEL_TTS_PLAYBACK = "tts_playback_channel"
     const val ID_TTS_PLAYBACK = -801
+    /** Notification id used by the local EPUB/PDF playback service. */
+    const val ID_BOOK_TTS_PLAYBACK = -802
 
     private val deprecatedChannels = listOf(
         "backup_restore_channel",

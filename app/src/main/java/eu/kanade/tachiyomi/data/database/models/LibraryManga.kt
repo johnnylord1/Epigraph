@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.database.models
 
 import eu.kanade.tachiyomi.domain.manga.models.Manga
+import kotlinx.serialization.json.JsonObject
 import kotlin.math.roundToInt
 
 data class LibraryManga(
@@ -42,6 +43,7 @@ data class LibraryManga(
             coverLastModified: Long,
             nextUpdate: Long,
             fetchInterval: Long,
+            mangaMemo: JsonObject,
             // libraryManga
             total: Long,
             readCount: Double,
@@ -74,6 +76,7 @@ data class LibraryManga(
                 coverLastModified = coverLastModified,
                 nextUpdate = nextUpdate,
                 fetchInterval = fetchInterval,
+                memo = mangaMemo,
             ),
             read = readCount.roundToInt(),
             unread = maxOf((total - readCount).roundToInt(), 0),

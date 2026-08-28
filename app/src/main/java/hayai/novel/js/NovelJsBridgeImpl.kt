@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import android.util.Base64
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.network.NetworkHelper
+import hayai.novel.security.NovelNetworkPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -14,7 +15,9 @@ import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import java.nio.charset.Charset
+import java.io.ByteArrayOutputStream
 
 /**
  * Kotlin implementation of the JS bridge.
@@ -27,6 +30,7 @@ class NovelJsBridgeImpl(
     private val networkHelper: NetworkHelper = get()
     private val client get() = networkHelper.client
     private val json = Json { ignoreUnknownKeys = true }
+    private val networkPolicy = NovelNetworkPolicy()
 
     private fun getPrefs(pluginId: String): SharedPreferences {
         return context.getSharedPreferences("novel_plugin_$pluginId", Context.MODE_PRIVATE)
@@ -44,18 +48,18 @@ class NovelJsBridgeImpl(
         try {
             val init = json.decodeFromString<FetchInit>(initJson)
             val request = buildRequest(url, init)
-            val response = client.newCall(request).execute()
+            executeWithRedirects(request).use { response ->
+                val bodyBytes = response.readBounded(MAX_TEXT_RESPONSE_BYTES)
+                val bodyText = String(bodyBytes, Charsets.UTF_8)
+                val bodyBase64 = Base64.encodeToString(bodyBytes, Base64.NO_WRAP)
 
-            val bodyBytes = response.body.bytes()
-            val bodyText = String(bodyBytes, Charsets.UTF_8)
-            val bodyBase64 = Base64.encodeToString(bodyBytes, Base64.NO_WRAP)
+                val headersMap = mutableMapOf<String, String>()
+                response.headers.forEach { (name, value) ->
+                    headersMap[name.lowercase()] = value
+                }
 
-            val headersMap = mutableMapOf<String, String>()
-            response.headers.forEach { (name, value) ->
-                headersMap[name.lowercase()] = value
+                buildJsonResponse(response.code, response.message, bodyText, bodyBase64, headersMap)
             }
-
-            buildJsonResponse(response.code, response.message, bodyText, bodyBase64, headersMap)
         } catch (e: Exception) {
             Logger.e(e) { "NovelJsBridge.fetch failed: $url" }
             buildJsonResponse(0, e.message ?: "Error", "", "", emptyMap())
@@ -66,15 +70,15 @@ class NovelJsBridgeImpl(
         try {
             val init = json.decodeFromString<FetchInit>(initJson)
             val request = buildRequest(url, init)
-            val response = client.newCall(request).execute()
-
-            val bodyBytes = response.body.bytes()
-            val charset = try {
-                Charset.forName(encoding)
-            } catch (_: Exception) {
-                Charsets.UTF_8
+            executeWithRedirects(request).use { response ->
+                val bodyBytes = response.readBounded(MAX_TEXT_RESPONSE_BYTES)
+                val charset = try {
+                    Charset.forName(encoding)
+                } catch (_: Exception) {
+                    Charsets.UTF_8
+                }
+                String(bodyBytes, charset)
             }
-            String(bodyBytes, charset)
         } catch (e: Exception) {
             Logger.e(e) { "NovelJsBridge.fetchText failed: $url" }
             ""
@@ -85,10 +89,9 @@ class NovelJsBridgeImpl(
         try {
             val init = json.decodeFromString<FetchInit>(initJson)
             val request = buildRequest(url, init)
-            val response = client.newCall(request).execute()
-
-            val bodyBytes = response.body.bytes()
-            Base64.encodeToString(bodyBytes, Base64.NO_WRAP)
+            executeWithRedirects(request).use { response ->
+                Base64.encodeToString(response.readBounded(MAX_FILE_RESPONSE_BYTES), Base64.NO_WRAP)
+            }
         } catch (e: Exception) {
             Logger.e(e) { "NovelJsBridge.fetchFile failed: $url" }
             ""
@@ -130,6 +133,7 @@ class NovelJsBridgeImpl(
     // --- Helpers ---
 
     private fun buildRequest(url: String, init: FetchInit): Request {
+        networkPolicy.validate(url)
         val builder = Request.Builder().url(url)
 
         init.headers?.forEach { (key, value) ->
@@ -176,6 +180,50 @@ class NovelJsBridgeImpl(
         return builder.build()
     }
 
+    private fun executeWithRedirects(initial: Request): Response {
+        var request = initial
+        repeat(MAX_REDIRECTS + 1) { redirectIndex ->
+            val response = client.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
+                .newCall(request)
+                .execute()
+            if (!response.isRedirect) return response
+            if (redirectIndex == MAX_REDIRECTS) {
+                response.close()
+                throw IllegalStateException("The plugin exceeded the redirect limit")
+            }
+            val location = response.header("Location")
+            val nextUrl = location?.let { request.url.resolve(it) }
+            response.close()
+            if (nextUrl == null) throw IllegalStateException("The plugin returned an invalid redirect")
+            networkPolicy.validate(nextUrl)
+            request = request.newBuilder().url(nextUrl).build()
+        }
+        error("The plugin redirect loop did not terminate")
+    }
+
+    private fun Response.readBounded(maxBytes: Long): ByteArray {
+        val declaredLength = body.contentLength()
+        if (declaredLength > maxBytes) {
+            throw IllegalStateException("The plugin response exceeds the size limit")
+        }
+        val output = ByteArrayOutputStream(minOf(declaredLength.coerceAtLeast(0), maxBytes).toInt())
+        body.byteStream().use { input ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (output.size().toLong() > maxBytes - count) {
+                    throw IllegalStateException("The plugin response exceeds the size limit")
+                }
+                output.write(buffer, 0, count)
+            }
+        }
+        return output.toByteArray()
+    }
+
     /**
      * `Accept-Encoding` values that OkHttp will negotiate + decompress automatically.
      * Anything else (e.g. `identity` to disable compression) is honored as-is.
@@ -202,5 +250,12 @@ class NovelJsBridgeImpl(
             val headers: Map<String, String>,
         )
         return json.encodeToString(FetchResponse.serializer(), FetchResponse(status, statusText, body, bodyBase64, headers))
+    }
+
+    private companion object {
+        const val BUFFER_SIZE = 32 * 1024
+        const val MAX_TEXT_RESPONSE_BYTES = 8L * 1024 * 1024
+        const val MAX_FILE_RESPONSE_BYTES = 32L * 1024 * 1024
+        const val MAX_REDIRECTS = 5
     }
 }

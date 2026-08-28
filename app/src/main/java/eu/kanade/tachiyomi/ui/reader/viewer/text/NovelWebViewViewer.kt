@@ -22,6 +22,7 @@ import androidx.annotation.Keep
 import co.touchlab.kermit.Logger
 import eu.kanade.presentation.reader.settings.CodeSnippet
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.ui.reader.NovelTextPosition
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
@@ -32,7 +33,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterDifference
 import eu.kanade.tachiyomi.util.system.openInBrowserSheet
-import hayai.novel.reader.showSelectionWebSheet
+import epigraph.reader.selection.showSelectionWebSheet
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -96,6 +97,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     // Track scroll progress
     private var lastSavedProgress = 0f
     private val lastSavedProgressByChapterId = LinkedHashMap<Long, Float>()
+    /** Prevents a cached teardown write from racing and overwriting the exact WebView locator. */
+    private var exactTeardownFlushRequested = false
 
     // Infinite scroll state tracking
     private var isInfiniteScrollPrepend = false
@@ -117,7 +120,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     // webView.scrollBy(0, dy) on every vsync, which stuttered because the IPC + WebView
     // layout pipeline both fought the user's gesture loop. The actual scroll now runs as
     // a `requestAnimationFrame` loop *inside* the WebView (see autoScrollRafScript in
-    // injectCustomScript) — Kotlin only sets `window.__hayaiSetAutoScroll(on, speed)`
+    // injectCustomScript) — Kotlin only sets `window.__epigraphSetAutoScroll(on, speed)`
     // globals via evaluateJavascript. These flags stay in Kotlin for UI state queries
     // (button highlight, double-tap toggle, pause-on-touch).
     private var isAutoScrolling = false
@@ -372,6 +375,17 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         )
     }
 
+    /** Search the currently rendered chapter without leaving the reader. */
+    fun searchInChapter(query: String) {
+        if (!::webView.isInitialized) return
+        val normalized = query.trim()
+        if (normalized.isEmpty()) {
+            webView.clearMatches()
+            return
+        }
+        webView.findAllAsync(normalized)
+    }
+
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun initWebView() {
         container.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
@@ -609,6 +623,15 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 builtInZoomControls = false
                 displayZoomControls = false
                 cacheMode = WebSettings.LOAD_DEFAULT
+                // Chapter markup is untrusted. All online access belongs to the audited source
+                // layer; the rendered document may only consume app-owned/data resources.
+                blockNetworkLoads = true
+                allowFileAccess = false
+                allowContentAccess = false
+                javaScriptCanOpenWindowsAutomatically = false
+                setSupportMultipleWindows(false)
+                mediaPlaybackRequiresUserGesture = true
+                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 // Block images/videos if preference is set
                 val shouldBlock = preferences.novelBlockMedia.get()
                 blockNetworkImage = shouldBlock
@@ -621,8 +644,13 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     request: android.webkit.WebResourceRequest?,
                 ): android.webkit.WebResourceResponse? {
                     val url = request?.url?.toString() ?: return null
-                    if (url.startsWith("hayai-novel-image://")) {
-                        val imagePath = android.net.Uri.decode(url.removePrefix("hayai-novel-image://"))
+                    val imageScheme = when {
+                        url.startsWith("epigraph-novel-image://") -> "epigraph-novel-image://"
+                        url.startsWith("hayai-novel-image://") -> "hayai-novel-image://"
+                        else -> null
+                    }
+                    if (imageScheme != null) {
+                        val imagePath = android.net.Uri.decode(url.removePrefix(imageScheme))
                         val loader = activity.viewModel.state.value.viewerChapters?.currChapter?.pageLoader
                         if (loader != null) {
                             val stream = kotlinx.coroutines.runBlocking { loader.getPageDataStream(imagePath) }
@@ -640,7 +668,18 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                             }
                         }
                     }
-                    return super.shouldInterceptRequest(view, request)
+                    // Fail closed: a malicious src/style/import must not bypass the source broker
+                    // and make an anonymous request with WebView cookies or ambient credentials.
+                    return blockedWebResource()
+                }
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: android.webkit.WebResourceRequest?,
+                ): Boolean {
+                    // Links remain selectable/copyable, but never navigate the privileged reader
+                    // document. A future explicit "open externally" action can leave this sandbox.
+                    return true
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -713,11 +752,18 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         bar.setProgress((offset / maxOffset).coerceIn(0f, 1f))
     }
 
+    private fun blockedWebResource(): android.webkit.WebResourceResponse =
+        android.webkit.WebResourceResponse(
+            "text/plain",
+            "UTF-8",
+            java.io.ByteArrayInputStream(ByteArray(0)),
+        )
+
     private fun observePreferences() {
 
         // Every novel pref the settings sheet exposes routes through this merged observer
         // (ported from Tsundoku's NovelWebViewPreferenceObserver) so changes apply live
-        // instead of needing a chapter reopen. The callbacks below are wired to Hayai's
+        // instead of needing a chapter reopen. The callbacks below are wired to Epigraph's
         // existing apply paths.
         NovelWebViewPreferenceObserver(
             preferences = preferences,
@@ -792,7 +838,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     if (isAutoScrolling && !isAutoScrollPaused) {
                         val clamped = newSpeed.coerceIn(1, 50)
                         evaluateJavascriptSafe(
-                            "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(true, $clamped);}",
+                            "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(true, $clamped);}",
                         )
                     }
                 }
@@ -1198,7 +1244,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         if (isAutoScrolling && !isAutoScrollPaused) {
             val speed = preferences.novelAutoScrollSpeed.get().coerceIn(1, 50)
             evaluateJavascriptSafe(
-                "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(true, $speed);}",
+                "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(true, $speed);}",
             )
         }
     }
@@ -1257,7 +1303,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
                     if (window.Android && typeof Android.startTtsAtParagraph === 'function') {
                         // chapId is passed as a String because JS numbers can't represent the
-                        // full Long range Hayai's DB uses for chapter ids — Kotlin parses
+                        // full Long range Epigraph's DB uses for chapter ids — Kotlin parses
                         // toLongOrNull and rejects malformed payloads.
                         Android.startTtsAtParagraph(chapId, paraIdx);
                     }
@@ -1295,8 +1341,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     }
 
     private fun injectScrollTracking() {
-        // Continuous chapter loading is core in Hayai; honor novelInfiniteScroll only as an
-        // explicit user override (its tsundoku default is false but Hayai treats unset/absent
+        // Continuous chapter loading is core in Epigraph; honor novelInfiniteScroll only as an
+        // explicit user override (its tsundoku default is false but Epigraph treats unset/absent
         // as on). The auto-load fraction is the user's novelAutoLoadNextChapterAt pref (a
         // 0..100 percentage) converted to a fraction; a legacy 0 falls back to the default.
         val infiniteScrollActuallyEnabled = true
@@ -1337,6 +1383,60 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 // Track chapter boundaries for multi-chapter infinite scroll
                 window.chapterBoundaries = window.chapterBoundaries || [];
                 window.__tsundokuLastBoundaryUpdate = window.__tsundokuLastBoundaryUpdate || 0;
+
+                // Stable chapter-local anchor. Tagged block indexes come from the canonical
+                // Kotlin HTML normalizer and do not depend on viewport size or font metrics.
+                window.__epigraphNovelTextLocator = function(chapterId) {
+                    if (!chapterId) return null;
+                    var containers = document.querySelectorAll('.chapter-content[data-chapter-id]');
+                    var container = null;
+                    for (var c = 0; c < containers.length; c++) {
+                        if (String(containers[c].getAttribute('data-chapter-id')) === String(chapterId)) {
+                            container = containers[c];
+                            break;
+                        }
+                    }
+                    if (!container) return null;
+                    var blocks = container.hasAttribute('data-paragraph-index')
+                        ? [container]
+                        : Array.prototype.slice.call(container.querySelectorAll('[data-paragraph-index]'));
+                    if (!blocks.length) return null;
+
+                    var anchorY = Math.max(1, Math.min(window.innerHeight - 1, 8));
+                    var block = blocks[blocks.length - 1];
+                    for (var i = 0; i < blocks.length; i++) {
+                        if (blocks[i].getBoundingClientRect().bottom > anchorY) {
+                            block = blocks[i];
+                            break;
+                        }
+                    }
+                    var parsedIndex = parseInt(block.getAttribute('data-paragraph-index') || '0', 10);
+                    var blockIndex = isNaN(parsedIndex) ? 0 : Math.max(parsedIndex, 0);
+                    var textLength = (block.textContent || '').length;
+                    var textOffset = 0;
+                    var rect = block.getBoundingClientRect();
+                    if (rect.top < anchorY && textLength > 0) {
+                        var x = Math.max(rect.left + 1, Math.min(rect.right - 1, window.innerWidth / 2));
+                        var y = Math.max(rect.top + 1, Math.min(rect.bottom - 1, anchorY));
+                        var caret = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+                        if (caret && block.contains(caret.startContainer)) {
+                            try {
+                                var prefix = document.createRange();
+                                prefix.selectNodeContents(block);
+                                prefix.setEnd(caret.startContainer, caret.startOffset);
+                                textOffset = prefix.toString().length;
+                            } catch (_) {
+                                textOffset = 0;
+                            }
+                        } else if (rect.height > 0) {
+                            textOffset = Math.round(textLength * Math.max(0, Math.min(1, (anchorY - rect.top) / rect.height)));
+                        }
+                    }
+                    return {
+                        blockIndex: blockIndex,
+                        textOffset: Math.max(0, Math.min(textOffset, textLength))
+                    };
+                };
 
                 window.addEventListener('scroll', function() {
                     // Keep chapter boundaries in sync with actual DOM markers.
@@ -1403,12 +1503,22 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                         lastProgress = currentChapterProgress;
                         var chapterIdForCallback = activeChapterId ? String(activeChapterId) : '';
                         var progressForCallback = currentChapterProgress;
+                        var textLocatorForCallback = chapterIdForCallback
+                            ? window.__epigraphNovelTextLocator(chapterIdForCallback)
+                            : null;
+                        var blockIndexForCallback = textLocatorForCallback ? textLocatorForCallback.blockIndex : 0;
+                        var textOffsetForCallback = textLocatorForCallback ? textLocatorForCallback.textOffset : 0;
 
                         // Immediate update for UI (throttled)
                         if (!window.lastScrollUpdate || Date.now() - window.lastScrollUpdate > 50) {
                             window.lastScrollUpdate = Date.now();
                             if (chapterIdForCallback) {
-                                Android.onChapterScrollUpdate(chapterIdForCallback, progressForCallback);
+                                Android.onChapterScrollUpdate(
+                                    chapterIdForCallback,
+                                    progressForCallback,
+                                    blockIndexForCallback,
+                                    textOffsetForCallback
+                                );
                             } else {
                                 Android.onScrollUpdate(progressForCallback);
                             }
@@ -1417,7 +1527,12 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                         clearTimeout(saveTimeout);
                         saveTimeout = setTimeout(function() {
                             if (chapterIdForCallback) {
-                                Android.onChapterScrollProgress(chapterIdForCallback, progressForCallback);
+                                Android.onChapterScrollProgress(
+                                    chapterIdForCallback,
+                                    progressForCallback,
+                                    blockIndexForCallback,
+                                    textOffsetForCallback
+                                );
                             } else {
                                 Android.onScrollProgress(progressForCallback);
                             }
@@ -1516,7 +1631,13 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                             var shortBoundary = window.chapterBoundaries[0];
                             var shortChapterId = shortBoundary && shortBoundary.chapterId;
                             if (shortChapterId) {
-                                Android.onChapterScrollProgress(String(shortChapterId), 1.0);
+                                var shortLocator = window.__epigraphNovelTextLocator(String(shortChapterId));
+                                Android.onChapterScrollProgress(
+                                    String(shortChapterId),
+                                    1.0,
+                                    shortLocator ? shortLocator.blockIndex : 0,
+                                    shortLocator ? shortLocator.textOffset : 0
+                                );
                             } else {
                                 Android.onScrollProgress(1.0);
                             }
@@ -1529,11 +1650,6 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     }
 
     private fun restoreScrollPosition() {
-        // The chapter loaded into the WebView is THE chapter we want to restore — the VM's
-        // `chapterId` (savedState-backed) bootstraps init() to the right chapter, and the
-        // chapter's own `last_page_read` carries the within-chapter percent. No separate
-        // "saved active chapter" lookup needed; see ReaderViewModel.setNovelVisibleChapter
-        // invariant.
         currentPage?.let { page ->
             val chapterId = page.chapter.chapter.id
             val savedProgress = page.chapter.chapter.last_page_read
@@ -1553,49 +1669,15 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 val progress = savedProgress / 100f
                 lastSavedProgress = progress
                 chapterId?.let { lastSavedProgressByChapterId[it] = progress }
-
-                // Wait for the WebView to actually have laid out content before scrolling.
-                // The previous `postDelayed(100)` raced with layout and frequently fired before
-                // scrollHeight was non-zero, leaving the user stuck unable to scroll. Now we
-                // poll inside JS via requestAnimationFrame until content height appears, then
-                // restore against this chapter's own boundary rather than the whole document.
-                // That matters when transition cards or adjacent infinite-scroll chapters are
-                // present: the stored percent is chapter-local, not document-global.
-                val js = """
-                    (function() {
-                        var attempts = 0;
-                        var chapterId = ${JSONObject.quote(chapterId?.toString().orEmpty())};
-                        function tryScroll() {
-                            var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                            if (scrollHeight > 0 && document.readyState !== 'loading') {
-                                if (typeof window.updateChapterBoundaries === 'function') {
-                                    window.updateChapterBoundaries();
-                                }
-                                var target = scrollHeight * $progress;
-                                if (chapterId && window.chapterBoundaries && window.chapterBoundaries.length) {
-                                    for (var i = 0; i < window.chapterBoundaries.length; i++) {
-                                        var boundary = window.chapterBoundaries[i];
-                                        if (String(boundary.chapterId) === chapterId) {
-                                            var effectiveHeight = Math.max(boundary.height - window.innerHeight, 1);
-                                            target = boundary.startOffset + (effectiveHeight * $progress);
-                                            break;
-                                        }
-                                    }
-                                }
-                                target = Math.max(0, Math.min(target, scrollHeight));
-                                window.scrollTo(0, target);
-                                console.log('Restored chapter scroll to ' + Math.round($progress * 100) + '% (' + Math.round(target) + 'px) after ' + attempts + ' frames');
-                                return;
-                            }
-                            attempts++;
-                            if (attempts < 60) {  // give up after ~1s at 60fps
-                                requestAnimationFrame(tryScroll);
-                            }
-                        }
-                        requestAnimationFrame(tryScroll);
-                    })();
-                """
-                evaluateJavascriptSafe(js, null)
+                scope.launch {
+                    val textPosition = if (chapterId != null) {
+                        activity.viewModel.getNovelRestoreTextPosition(chapterId)
+                    } else {
+                        null
+                    }
+                    if (currentPage?.chapter?.chapter?.id != chapterId) return@launch
+                    restoreScrollPosition(page, progress, textPosition)
+                }
             } else {
                 // Ensure we are at top for read chapters
                 webView.scrollTo(0, 0)
@@ -1605,13 +1687,111 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         }
     }
 
+    private fun restoreScrollPosition(
+        page: ReaderPage,
+        progress: Float,
+        textPosition: NovelTextPosition?,
+    ) {
+        val chapterId = page.chapter.chapter.id
+        val exactBlockIndex = textPosition?.blockIndex ?: -1
+        val exactTextOffset = textPosition?.textOffset ?: -1
+        val js = """
+            (function() {
+                var attempts = 0;
+                var chapterId = ${JSONObject.quote(chapterId?.toString().orEmpty())};
+                var exactBlockIndex = $exactBlockIndex;
+                var exactTextOffset = $exactTextOffset;
+                function tryScroll() {
+                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+                    if (scrollHeight > 0 && document.readyState !== 'loading') {
+                        if (typeof window.updateChapterBoundaries === 'function') {
+                            window.updateChapterBoundaries();
+                        }
+                        if (exactBlockIndex >= 0 && chapterId) {
+                            var containers = document.querySelectorAll('.chapter-content[data-chapter-id]');
+                            var container = null;
+                            for (var c = 0; c < containers.length; c++) {
+                                if (String(containers[c].getAttribute('data-chapter-id')) === chapterId) {
+                                    container = containers[c];
+                                    break;
+                                }
+                            }
+                            if (container) {
+                                var candidates = container.hasAttribute('data-paragraph-index')
+                                    ? [container]
+                                    : Array.prototype.slice.call(container.querySelectorAll('[data-paragraph-index]'));
+                                var block = null;
+                                for (var b = 0; b < candidates.length; b++) {
+                                    if (parseInt(candidates[b].getAttribute('data-paragraph-index') || '-1', 10) === exactBlockIndex) {
+                                        block = candidates[b];
+                                        break;
+                                    }
+                                }
+                                if (block) {
+                                    var remaining = Math.max(0, exactTextOffset);
+                                    var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+                                    var node = walker.nextNode();
+                                    var anchorNode = node;
+                                    var anchorOffset = 0;
+                                    while (node) {
+                                        var length = (node.nodeValue || '').length;
+                                        anchorNode = node;
+                                        anchorOffset = Math.min(remaining, length);
+                                        if (remaining <= length) break;
+                                        remaining -= length;
+                                        node = walker.nextNode();
+                                    }
+                                    var anchorRect = block.getBoundingClientRect();
+                                    if (anchorNode) {
+                                        try {
+                                            var range = document.createRange();
+                                            range.setStart(anchorNode, anchorOffset);
+                                            range.collapse(true);
+                                            var rangeRect = range.getBoundingClientRect();
+                                            if (rangeRect && (rangeRect.height || rangeRect.width)) anchorRect = rangeRect;
+                                        } catch (_) {}
+                                    }
+                                    var exactTarget = (window.scrollY || window.pageYOffset || 0) + anchorRect.top - 8;
+                                    window.scrollTo(0, Math.max(0, Math.min(exactTarget, scrollHeight)));
+                                    console.log('Restored exact novel locator block=' + exactBlockIndex + ' offset=' + exactTextOffset);
+                                    return;
+                                }
+                            }
+                        }
+                        var target = scrollHeight * $progress;
+                        if (chapterId && window.chapterBoundaries && window.chapterBoundaries.length) {
+                            for (var i = 0; i < window.chapterBoundaries.length; i++) {
+                                var boundary = window.chapterBoundaries[i];
+                                if (String(boundary.chapterId) === chapterId) {
+                                    var effectiveHeight = Math.max(boundary.height - window.innerHeight, 1);
+                                    target = boundary.startOffset + (effectiveHeight * $progress);
+                                    break;
+                                }
+                            }
+                        }
+                        target = Math.max(0, Math.min(target, scrollHeight));
+                        window.scrollTo(0, target);
+                        console.log('Restored legacy chapter progress to ' + Math.round($progress * 100) + '%');
+                        return;
+                    }
+                    attempts++;
+                    if (attempts < 60) requestAnimationFrame(tryScroll);
+                }
+                requestAnimationFrame(tryScroll);
+            })();
+        """.trimIndent()
+        evaluateJavascriptSafe(js, null)
+    }
+
     private fun getThemeColors(theme: String): Pair<Int, Int> =
         NovelViewerTextUtils.getThemeColors(activity, preferences, theme)
 
     override fun destroy() {
         // Save progress before destroying — but mark as teardown so the VM's read-gate
         // never flips chapter.read = true on the way out (Phase A #19).
-        saveProgress(isTeardown = true)
+        // ReaderActivity.onPause normally requested the exact DOM locator already. Writing the
+        // cached percentage again here can complete later and overwrite that newer locator.
+        if (!exactTeardownFlushRequested) saveProgress(isTeardown = true)
 
         // Stop any active TTS playback through the controller — the engine instance now
         // lives in the service, so the viewer no longer owns shutdown; the activity's
@@ -1859,6 +2039,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private fun saveProgressForChapter(
         chapterId: Long,
         progress: Float,
+        textPosition: NovelTextPosition? = null,
         isTeardown: Boolean = false,
     ) {
         val page = chapterById(chapterId)?.pages?.firstOrNull() ?: return
@@ -1870,7 +2051,12 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         }
 
         val progressValue = (clamped * 100).roundToInt().coerceIn(0, 100)
-        activity.saveNovelProgress(page, progressValue, isTeardown = isTeardown)
+        activity.saveNovelProgress(
+            page,
+            progressValue,
+            textPosition = textPosition,
+            isTeardown = isTeardown,
+        )
         Logger.d {
             "NovelWebViewViewer: Saving progress $progressValue% chapter=$chapterId teardown=$isTeardown"
         }
@@ -1903,8 +2089,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         Logger.d {
             "NovelWebViewViewer: flushPersistentState chapter=${active.chapter.id} progress=${(lastSavedProgress * 100).toInt()}%"
         }
+        exactTeardownFlushRequested = true
         requestImmediateProgressSave(isTeardown = true)
-        saveProgress(isTeardown = true)
     }
 
     private fun requestImmediateProgressSave(isTeardown: Boolean) {
@@ -1951,7 +2137,15 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     }
                 }
                 if (chapterId) {
-                    Android.$methodName(String(chapterId), chapterProgress);
+                    var textLocator = window.__epigraphNovelTextLocator
+                        ? window.__epigraphNovelTextLocator(String(chapterId))
+                        : null;
+                    Android.$methodName(
+                        String(chapterId),
+                        chapterProgress,
+                        textLocator ? textLocator.blockIndex : 0,
+                        textLocator ? textLocator.textOffset : 0
+                    );
                 }
             })();
             """.trimIndent(),
@@ -2720,24 +2914,15 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     </script>
                 """.trimIndent()
             } else {
-                try {
-                    val doc = org.jsoup.Jsoup.parse(finalContent)
-                    doc.select("style, link[rel=stylesheet]").remove()
-                    doc.select("script, noscript").remove()
-                    val bodyNode = doc.body()
-                    val sanitized = if (bodyNode.hasText() || bodyNode.children().isNotEmpty()) {
-                        bodyNode.html()
-                    } else {
-                        finalContent
-                    }
-                    val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(sanitized, normalizedChapterUrl)
-                    finalContent = tagged.html
-                    paragraphsForChapter = tagged.paragraphs
-                } catch (e: Exception) {
-                    Logger.w {
-                        "NovelWebViewViewer: loadHtmlContent Jsoup pass failed: ${e.message}"
-                    }
-                }
+                // normalizeAndTagContentForHtml owns the single fail-closed Jsoup sanitizer pass.
+                // Keeping this path unconditional prevents a parser error from falling back to
+                // raw source HTML in the privileged reader document.
+                val tagged = NovelViewerTextUtils.normalizeAndTagContentForHtml(
+                    finalContent,
+                    normalizedChapterUrl,
+                )
+                finalContent = tagged.html
+                paragraphsForChapter = tagged.paragraphs
             }
 
             val chapterDivider = if (chapterId != null) {
@@ -3052,8 +3237,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
     /**
      * Phase C #17: thin wrapper that defers tagging + paragraph capture to the shared
-     * [NovelViewerTextUtils.normalizeAndTagContentForHtml] helper so both the WebView
-     * viewer and the native [NovelViewer] go through one tagger. Stores the captured
+     * [NovelViewerTextUtils.normalizeAndTagContentForHtml] helper so all WebView paths
+     * go through one tagger. Stores the captured
      * paragraph list into [chapterParagraphsById] keyed by chapter id and returns the
      * tagged HTML for the JS payload.
      *
@@ -3127,7 +3312,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private fun showLoadingIndicator() {
         // Render a blank background-only WebView underneath, then layer the M3 Expressive
         // LoadingIndicator on top via [showComposeLoadingOverlay] so the loader matches
-        // the native viewer.
+                // the reader host.
         val theme = preferences.novelTheme.get()
         val backgroundColor = preferences.novelBackgroundColor.get()
         val fontColor = preferences.novelFontColor.get()
@@ -3457,27 +3642,57 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         }
 
         @JavascriptInterface
-        fun onChapterScrollProgress(chapterIdStr: String, progress: Float) {
+        fun onChapterScrollProgress(
+            chapterIdStr: String,
+            progress: Float,
+            blockIndex: Int,
+            textOffset: Int,
+        ) {
             val chapterId = chapterIdStr.toLongOrNull() ?: return
             activity.runOnUiThread {
-                saveProgressForChapter(chapterId, progress, isTeardown = false)
+                saveProgressForChapter(
+                    chapterId = chapterId,
+                    progress = progress,
+                    textPosition = NovelTextPosition(blockIndex.coerceAtLeast(0), textOffset.coerceAtLeast(0)),
+                    isTeardown = false,
+                )
             }
         }
 
         @JavascriptInterface
-        fun onChapterTeardownProgress(chapterIdStr: String, progress: Float) {
+        fun onChapterTeardownProgress(
+            chapterIdStr: String,
+            progress: Float,
+            blockIndex: Int,
+            textOffset: Int,
+        ) {
             val chapterId = chapterIdStr.toLongOrNull() ?: return
             activity.runOnUiThread {
-                saveProgressForChapter(chapterId, progress, isTeardown = true)
+                saveProgressForChapter(
+                    chapterId = chapterId,
+                    progress = progress,
+                    textPosition = NovelTextPosition(blockIndex.coerceAtLeast(0), textOffset.coerceAtLeast(0)),
+                    isTeardown = true,
+                )
             }
         }
 
         @JavascriptInterface
-        fun onChapterScrollUpdate(chapterIdStr: String, progress: Float) {
+        fun onChapterScrollUpdate(
+            chapterIdStr: String,
+            progress: Float,
+            blockIndex: Int,
+            textOffset: Int,
+        ) {
             val chapterId = chapterIdStr.toLongOrNull() ?: return
             activity.runOnUiThread {
                 if (chapterById(chapterId) == null) return@runOnUiThread
+                exactTeardownFlushRequested = false
                 val clamped = progress.coerceIn(0f, 1f)
+                activity.viewModel.rememberNovelTextPosition(
+                    chapterId,
+                    NovelTextPosition(blockIndex.coerceAtLeast(0), textOffset.coerceAtLeast(0)),
+                )
                 lastSavedProgressByChapterId[chapterId] = clamped
                 if (currentActiveChapter()?.chapter?.id == chapterId) {
                     lastSavedProgress = clamped
@@ -3506,6 +3721,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         fun onActiveChapterChanged(chapterIdStr: String, progress: Float) {
             val newChapterId = chapterIdStr.toLongOrNull() ?: return
             activity.runOnUiThread {
+                exactTeardownFlushRequested = false
                 val clamped = progress.coerceIn(0f, 1f)
                 val currentId = currentChapters?.currChapter?.chapter?.id
                 if (newChapterId == currentId) {
@@ -3897,7 +4113,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         // setter is idempotent and will (re-)kick the loop with the current speed.
         val speed = preferences.novelAutoScrollSpeed.get().coerceIn(1, 50)
         evaluateJavascriptSafe(
-            "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(true, $speed);}",
+            "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(true, $speed);}",
         )
     }
 
@@ -3906,7 +4122,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         isAutoScrolling = false
         isAutoScrollPaused = false
         evaluateJavascriptSafe(
-            "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(false, 0);}",
+            "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(false, 0);}",
         )
     }
 
@@ -3914,7 +4130,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         if (!isAutoScrolling) return
         isAutoScrollPaused = true
         evaluateJavascriptSafe(
-            "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(false, 0);}",
+            "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(false, 0);}",
         )
     }
 
@@ -3925,7 +4141,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         isAutoScrollPaused = false
         val speed = preferences.novelAutoScrollSpeed.get().coerceIn(1, 50)
         evaluateJavascriptSafe(
-            "if(window.__hayaiSetAutoScroll){window.__hayaiSetAutoScroll(true, $speed);}",
+            "if(window.__epigraphSetAutoScroll){window.__epigraphSetAutoScroll(true, $speed);}",
         )
     }
 
@@ -3939,56 +4155,56 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         evaluateJavascriptSafe(
             """
             (function(){
-                window.__hayaiAutoScroll = window.__hayaiAutoScroll || { running:false, speed:15, selPaused:false };
-                if (window.__hayaiAutoStep) return;
+                window.__epigraphAutoScroll = window.__epigraphAutoScroll || { running:false, speed:15, selPaused:false };
+                if (window.__epigraphAutoStep) return;
                 // True while a non-collapsed selection exists: the WebView re-lays out the
                 // selection handles + highlight rect on every scrolled frame, so stepping
                 // during a selection is the source of the reported lag.
-                window.__hayaiHasSelection = function(){
+                window.__epigraphHasSelection = function(){
                     var sel = window.getSelection();
                     return !!(sel && sel.rangeCount > 0 && !sel.isCollapsed && sel.toString().length > 0);
                 };
-                window.__hayaiAutoStep = function(ts){
-                    var s = window.__hayaiAutoScroll;
+                window.__epigraphAutoStep = function(ts){
+                    var s = window.__epigraphAutoScroll;
                     if (!s || !s.running) return;
                     // Gate on selection state, not just touch state: a finished selection
                     // leaves no finger down, so without this the loop runs concurrently with
                     // an active selection. Keep the rAF alive (reset timing) so scrolling
                     // resumes seamlessly once the selection clears.
-                    if (window.__hayaiHasSelection()) {
+                    if (window.__epigraphHasSelection()) {
                         s.last = 0;
-                        requestAnimationFrame(window.__hayaiAutoStep);
+                        requestAnimationFrame(window.__epigraphAutoStep);
                         return;
                     }
                     if (!s.last) s.last = ts;
                     var dt = Math.min(0.05, (ts - s.last) / 1000);
                     s.last = ts;
                     window.scrollBy(0, s.speed * 30 * dt);
-                    requestAnimationFrame(window.__hayaiAutoStep);
+                    requestAnimationFrame(window.__epigraphAutoStep);
                 };
-                window.__hayaiSetAutoScroll = function(on, speed){
-                    var s = window.__hayaiAutoScroll;
+                window.__epigraphSetAutoScroll = function(on, speed){
+                    var s = window.__epigraphAutoScroll;
                     s.speed = Math.max(1, Math.min(50, speed|0));
                     if (on && !s.running) {
                         s.running = true;
                         s.last = 0;
-                        requestAnimationFrame(window.__hayaiAutoStep);
+                        requestAnimationFrame(window.__epigraphAutoStep);
                     }
                     if (!on) { s.running = false; }
                 };
                 // selectionchange drives selPaused so selection state (not only touch state)
                 // controls the loop. The step's own guard already early-returns; this listener
                 // resets timing on selection end so the next stepped frame starts cleanly.
-                if (!window.__hayaiSelListener) {
-                    window.__hayaiSelListener = function(){
+                if (!window.__epigraphSelListener) {
+                    window.__epigraphSelListener = function(){
                         try { if (window.Android && Android.onSelectionChanged) { Android.onSelectionChanged(window.getSelection().toString()); } } catch(e){}
-                        var s = window.__hayaiAutoScroll;
+                        var s = window.__epigraphAutoScroll;
                         if (!s) return;
-                        var has = window.__hayaiHasSelection();
+                        var has = window.__epigraphHasSelection();
                         s.selPaused = has;
                         if (!has) s.last = 0;
                     };
-                    document.addEventListener('selectionchange', window.__hayaiSelListener);
+                    document.addEventListener('selectionchange', window.__epigraphSelListener);
                 }
             })();
             """.trimIndent(),

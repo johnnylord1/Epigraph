@@ -66,6 +66,80 @@ import yokai.i18n.MR
 import yokai.util.lang.getString
 
 /**
+ * Promotes a fully written temporary entry to its final name.
+ *
+ * The rename is the commit point: callers must not delete their source data or publish the
+ * download before this function returns. In particular, a provider returning `false` from
+ * `renameTo` leaves the temporary entry untouched and is treated as a hard failure.
+ */
+internal object DownloadFinalizer {
+    fun finalizeDirectory(
+        parent: UniFile,
+        temporary: UniFile,
+        temporaryName: String,
+        finalName: String,
+        isComplete: (UniFile) -> Boolean,
+    ): UniFile = finalizeEntry(
+        temporary = temporary,
+        temporaryName = temporaryName,
+        finalName = finalName,
+        findSibling = { name -> parent.findFile(name) },
+        rename = { file, name -> file.renameTo(name) },
+        isComplete = { it.isDirectory && isComplete(it) },
+    )
+
+    fun finalizeFile(
+        parent: UniFile,
+        temporary: UniFile,
+        temporaryName: String,
+        finalName: String,
+        isComplete: (UniFile) -> Boolean,
+    ): UniFile = finalizeEntry(
+        temporary = temporary,
+        temporaryName = temporaryName,
+        finalName = finalName,
+        findSibling = { name -> parent.findFile(name) },
+        rename = { file, name -> file.renameTo(name) },
+        isComplete = { it.isFile && isComplete(it) },
+    )
+
+    internal fun <T> finalizeEntry(
+        temporary: T,
+        temporaryName: String,
+        finalName: String,
+        findSibling: (String) -> T?,
+        rename: (T, String) -> Boolean,
+        isComplete: (T) -> Boolean,
+    ): T {
+        require(temporaryName != finalName) { "Temporary and final download names must differ" }
+        check(isComplete(temporary)) { "Temporary download is incomplete: $temporaryName" }
+        check(findSibling(finalName) == null) { "Final download already exists: $finalName" }
+
+        check(rename(temporary, finalName)) {
+            "Unable to finalize download: $temporaryName -> $finalName"
+        }
+
+        val finalized = findSibling(finalName)
+        if (finalized == null || !isComplete(finalized)) {
+            // Some SAF providers invalidate the original handle after rename, while others keep
+            // it usable. Prefer the freshly resolved destination and fall back to the original
+            // handle so a failed post-rename validation has the best chance of restoring the
+            // recoverable `_tmp` entry.
+            val rollbackCandidate = finalized ?: temporary
+            val rollbackSucceeded = runCatching {
+                rename(rollbackCandidate, temporaryName)
+            }.getOrDefault(false)
+            val restored = findSibling(temporaryName)
+            check(rollbackSucceeded && restored != null && isComplete(restored)) {
+                "Finalized download could not be validated and temporary recovery failed: $finalName"
+            }
+            error("Finalized download could not be validated; temporary download was restored: $finalName")
+        }
+        return finalized
+    }
+}
+
+/**
  * This class is the one in charge of downloading chapters.
  *
  * Its queue contains the list of chapters to download.
@@ -383,9 +457,14 @@ class Downloader(
         // Write .nomedia BEFORE the rename: UniFile.renameTo invalidates the SAF DocumentFile
         // handle on many devices, so `tmpDir` cannot be relied on after the rename returns.
         DiskUtil.createNoMediaFile(tmpDir, context)
-        check(tmpDir.renameTo(chapterDirname)) { "Unable to finalize the novel chapter download" }
-        val finalChapterFile = mangaDir.findFile(chapterDirname)?.findFile(NOVEL_CHAPTER_FILE)
-        check(finalChapterFile?.isFile == true) { "Novel chapter file was not saved" }
+        DownloadFinalizer.finalizeDirectory(
+            parent = mangaDir,
+            temporary = tmpDir,
+            temporaryName = chapterDirname + TMP_DIR_SUFFIX,
+            finalName = chapterDirname,
+        ) { directory ->
+            directory.findFile(NOVEL_CHAPTER_FILE)?.let { it.isFile && it.length() > 0L } == true
+        }
         cache.addChapter(chapterDirname, mangaDir, download.manga)
         download.status = Download.State.DOWNLOADED
     }
@@ -456,7 +535,14 @@ class Downloader(
             // Write .nomedia BEFORE rename: UniFile.renameTo invalidates the SAF DocumentFile
             // handle on many devices, so `tmpDir` cannot be relied on after the rename returns.
             DiskUtil.createNoMediaFile(tmpDir, context)
-            tmpDir.renameTo(chapterDirname)
+            DownloadFinalizer.finalizeDirectory(
+                parent = mangaDir,
+                temporary = tmpDir,
+                temporaryName = chapterDirname + TMP_DIR_SUFFIX,
+                finalName = chapterDirname,
+            ) { directory ->
+                isDownloadSuccessful(download, directory)
+            }
         }
         cache.addChapter(chapterDirname, mangaDir, download.manga)
         download.status = Download.State.DOWNLOADED
@@ -646,14 +732,29 @@ class Downloader(
         dirname: String,
         tmpDir: UniFile,
     ) {
-        val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")
+        val temporaryArchiveName = "$dirname.cbz$TMP_DIR_SUFFIX"
+        val finalArchiveName = "$dirname.cbz"
+        mangaDir.findFile(temporaryArchiveName)?.let { staleArchive ->
+            check(staleArchive.delete()) { "Failed to replace stale temporary CBZ archive" }
+        }
+        val zip = mangaDir.createFile(temporaryArchiveName)
         if (zip?.isFile != true) throw Exception("Failed to create CBZ file for downloaded chapter")
         ZipWriter(context, zip).use { writer ->
             tmpDir.listFiles()?.forEach { file ->
                 writer.write(file)
             }
         }
-        zip.renameTo("$dirname.cbz")
+
+        DownloadFinalizer.finalizeFile(
+            parent = mangaDir,
+            temporary = zip,
+            temporaryName = temporaryArchiveName,
+            finalName = finalArchiveName,
+        ) { archive ->
+            archive.length() > 0L
+        }
+
+        // The page directory is retained for every archive creation/finalization failure above.
         tmpDir.delete()
     }
 

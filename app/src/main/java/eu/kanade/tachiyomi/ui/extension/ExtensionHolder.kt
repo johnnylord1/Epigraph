@@ -165,10 +165,11 @@ class ExtensionHolder(view: View, val adapter: ExtensionAdapter) :
                     InstallStep.Loading -> MR.strings.loading
                     InstallStep.Installing -> MR.strings.installing
                     InstallStep.Installed -> MR.strings.installed
+                    InstallStep.Cancelled -> MR.strings.retry
                     InstallStep.Error -> MR.strings.retry
                 },
             )
-            if (installStep != InstallStep.Error) {
+            if (installStep != InstallStep.Error && installStep != InstallStep.Cancelled) {
                 isEnabled = false
                 isClickable = false
             }

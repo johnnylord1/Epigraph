@@ -74,10 +74,15 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
             200,
         )
         sheetBehavior = BottomSheetBehavior.from(this)
+        // Keep the collapsed reader HUD fixed.  The chapter list is opened explicitly from the
+        // chapters button; only that expanded state is allowed to be dragged back down.
+        sheetBehavior?.isDraggable = false
         binding.chaptersButton.setOnClickListener {
             if (sheetBehavior.isExpanded()) {
+                sheetBehavior?.isDraggable = false
                 sheetBehavior?.collapse()
             } else {
+                sheetBehavior?.isDraggable = true
                 sheetBehavior?.expand()
             }
         }
@@ -122,6 +127,8 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
                 override fun onStateChanged(p0: View, state: Int) {
                     val canShowNav = activity.viewer is NovelWebViewViewer || (viewModel.getCurrentChapter()?.pages?.size ?: 1) > 1
                     if (state == BottomSheetBehavior.STATE_COLLAPSED) {
+                        // Return to a fixed HUD after the chapter surface is dismissed.
+                        sheetBehavior?.isDraggable = false
                         sheetBehavior?.isHideable = false
                         (binding.chapterRecycler.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(
                             adapter?.getPosition(viewModel.getCurrentChapter()?.chapter?.id ?: 0L)
@@ -144,6 +151,8 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
                         activity.novelActionBarComposeView?.isVisible = true
                     }
                     if (state == BottomSheetBehavior.STATE_EXPANDED) {
+                        // The expanded chapter surface may be dismissed with a downward drag.
+                        sheetBehavior?.isDraggable = true
                         if (canShowNav) {
                             activity.binding.readerNav.root.isInvisible = true
                         }
@@ -159,6 +168,7 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
                         }
                     }
                     if (state == BottomSheetBehavior.STATE_HIDDEN) {
+                        sheetBehavior?.isDraggable = false
                         activity.binding.readerNav.root.alpha = 0f
                         if (canShowNav) {
                             activity.binding.readerNav.root.isInvisible = true
@@ -265,6 +275,10 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
             object : RecyclerView.OnScrollListener() {
                 override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                     super.onScrollStateChanged(recyclerView, newState)
+                    if (!sheetBehavior.isExpanded()) {
+                        sheetBehavior?.isDraggable = false
+                        return
+                    }
                     if (newState == RecyclerView.SCROLL_STATE_IDLE ||
                         newState == RecyclerView.SCROLL_STATE_SETTLING
                     ) {

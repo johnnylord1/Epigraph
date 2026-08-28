@@ -46,7 +46,8 @@ abstract class PageLoader {
 
     /**
      * Returns an [InputStream] for an arbitrary asset referenced by [path] inside the chapter
-     * (e.g. an EPUB image at `hayai-novel-image://chapter/img.png`). Implementations that don't
+     * (e.g. an EPUB image at `epigraph-novel-image://chapter/img.png`; legacy
+     * `hayai-novel-image://` is also accepted). Implementations that don't
      * carry packaged assets return null, in which case callers should silently skip the asset.
      */
     open fun getPageDataStream(path: String): java.io.InputStream? = null

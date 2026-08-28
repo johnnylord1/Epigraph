@@ -152,6 +152,74 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
         ReaderBottomButton.BUTTONS_DEFAULTS,
     )
 
+    fun readerVerticalSeekbarModes() = preferenceStore.getStringSet(
+        Keys.readerVerticalSeekbarModes,
+        ReadingModeType.entries.filter { it != ReadingModeType.DEFAULT && it != ReadingModeType.NOVEL }
+            .map { it.prefValue.toString() }.toSet(),
+    )
+
+    fun novelVerticalSeekbar() = preferenceStore.getBoolean(Keys.novelVerticalSeekbar, true)
+
+    fun bookVerticalSeekbarFormats() = preferenceStore.getStringSet(Keys.bookVerticalSeekbarFormats, setOf("epub", "pdf"))
+
+    fun readerVerticalSeekbarDockLeft() = preferenceStore.getBoolean(Keys.readerVerticalSeekbarDockLeft, false)
+
+    fun readerVerticalSeekbarHeightPercent() = preferenceStore.getInt(Keys.readerVerticalSeekbarHeightPercent, 65)
+
+    /**
+     * Restores reader-only preferences to Epigraph's documented defaults.  This intentionally
+     * writes values instead of clearing the store: progress, library, downloads and unrelated
+     * app settings must never be affected by the reader reset action.
+     */
+    fun resetReaderSettingsToDefaults() {
+        pageTransitions().set(true)
+        showPageNumber().set(true)
+        fullscreen().set(true)
+        keepScreenOn().set(true)
+        customBrightness().set(false)
+        customBrightnessValue().set(0)
+        colorFilter().set(false)
+        colorFilterValue().set(0)
+        colorFilterMode().set(0)
+        defaultReadingMode().set(ReadingModeType.RIGHT_TO_LEFT.flagValue)
+        defaultOrientationType().set(OrientationType.FREE.flagValue)
+        imageScaleType().set(1)
+        zoomStart().set(1)
+        readerTheme().set(2) // Smart (by page)
+        cropBorders().set(false)
+        cropBordersWebtoon().set(false)
+        navigateToPan().set(true)
+        landscapeZoom().set(false)
+        grayscale().set(false)
+        invertedColors().set(false)
+        webtoonSidePadding().set(0)
+        webtoonEnableZoomOut().set(false)
+        readWithLongTap().set(true)
+        readWithVolumeKeys().set(false)
+        readWithVolumeKeysInverted().set(false)
+        navigationModePager().set(0)
+        navigationModeWebtoon().set(0)
+        pagerNavInverted().set(ViewerNavigation.TappingInvertMode.NONE)
+        webtoonNavInverted().set(ViewerNavigation.TappingInvertMode.NONE)
+        pageLayout().set(PageLayout.AUTOMATIC.value)
+        automaticSplitsPage().set(false)
+        invertDoublePages().set(false)
+        webtoonPageLayout().set(PageLayout.SINGLE_PAGE.value)
+        webtoonInvertDoublePages().set(false)
+        readerBottomButtons().set(ReaderBottomButton.BUTTONS_DEFAULTS)
+        readerVerticalSeekbarModes().set(
+            ReadingModeType.entries
+                .filter { it != ReadingModeType.DEFAULT && it != ReadingModeType.NOVEL }
+                .map { it.prefValue.toString() }
+                .toSet(),
+        )
+        novelVerticalSeekbar().set(true)
+        bookVerticalSeekbarFormats().set(setOf("epub", "pdf"))
+        readerVerticalSeekbarDockLeft().set(false)
+        readerVerticalSeekbarHeightPercent().set(65)
+        alwaysShowChapterTransition().set(true)
+    }
+
     fun showNavigationOverlayNewUser() = preferenceStore.getBoolean(Keys.showNavigationOverlayNewUser, true)
 
     fun showNavigationOverlayNewUserWebtoon() = preferenceStore.getBoolean(Keys.showNavigationOverlayNewUserWebtoon, true)

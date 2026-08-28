@@ -1,0 +1,42 @@
+# Epigraph Mobile contributor rules
+
+## Scope
+
+- This repository contains the Android application only.
+- Do not modify `C:\Users\jhow-\Documents\Projetos\ForkMoku\Aethon` from this workspace.
+- Do not reintroduce Sorayomi code or artifacts.
+- Preserve the Hayai/J2K interaction model. Product-facing identity is Epigraph; internal legacy package names may remain when changing them has no user benefit.
+- The Android product is installed as `app.epigraph.mobile`, alongside (not over) the legacy `app.aethon.mobile`. Android private app sandboxes are isolated: users must export a backup from Aethon and import it in Epigraph, or explicitly select a shared storage directory. Do not claim that an APK update can read the old private sandbox automatically.
+- New backups use `.epigraphbk`; restore/import must continue accepting `.aethonbk`, `.tachibk`, `.proto.gz`, and the existing JSON formats. Persisted SQLDelight table names, migration filenames, preference keys, and wire identifiers are compatibility contracts.
+
+## Git safety
+
+- Work in detached HEAD unless the user explicitly changes this rule.
+- Do not create branches and do not push to `upstream`.
+- Never commit keystores, tokens, cookies, Firebase credentials, local SDK paths, generated APKs, or emulator data.
+- Keep upstream provenance in `docs/audit/BASELINE.md` current when changing the pinned commit.
+
+## Build gates
+
+- Supported minimum is Android API 24 for Epigraph, even if upstream currently declares API 23.
+- Use Java 17 in CI. JBR 21 is accepted only as a documented local fallback.
+- Every database change needs a numbered SQLDelight migration, an upgrade fixture, schema verification, and a rollback note.
+- Every domain mutation that syncs must write its outbox command in the same database transaction.
+- `assembleDevDebug`, `assembleStandardRelease`, unit tests, lint, migration verification, and emulator smoke are release gates.
+
+## Product invariants
+
+- Public Android application ID: `app.epigraph.mobile`.
+- Content types: manga, novel, EPUB, and PDF.
+- Local IDs are preserved; Epigraph identity is added through side tables.
+- Manga and novel chapters are not copied between devices by default. EPUB/PDF assets use immutable SHA-256 identities and download on demand.
+- Android APK extensions always require the visible Package Installer flow.
+- Cookies, tracker tokens, sessions, passwords, and other secrets never enter backup or sync.
+- The UI must never report `synced` while the outbox has pending commands.
+
+## Security
+
+- Do not ship upstream Firebase/Crashlytics configuration.
+- Remote novel HTML must be sanitized with an allowlist and rendered without a privileged JavaScript bridge.
+- Network access for novel plugins must go through an audited broker with host permissions, private-address blocking, deadlines, response limits, and cancellation.
+- Downloads and backups publish only after verified atomic finalization.

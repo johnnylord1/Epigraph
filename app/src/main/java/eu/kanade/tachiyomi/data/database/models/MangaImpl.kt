@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.library.CustomMangaManager
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import kotlinx.serialization.json.JsonObject
 import yokai.util.koin.injectLazy
 
 open class MangaImpl(
@@ -53,6 +54,8 @@ open class MangaImpl(
         set(value) { ogStatus = value }
 
     override var thumbnail_url: String? = null
+
+    override var memo: JsonObject = JsonObject(emptyMap())
 
     override var favorite: Boolean = false
 

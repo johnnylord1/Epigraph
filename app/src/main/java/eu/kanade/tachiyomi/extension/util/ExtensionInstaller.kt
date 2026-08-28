@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.toast
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -72,6 +73,7 @@ internal class ExtensionInstaller(private val context: Context) {
      * returned by the download manager.
      */
     val activeDownloads = hashMapOf<String, Long>()
+    private val visibleInstallerPackages = ConcurrentHashMap.newKeySet<String>()
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var installer: ShizukuInstaller? = null
@@ -113,8 +115,17 @@ internal class ExtensionInstaller(private val context: Context) {
      * @param url The url of the apk.
      * @param extension The extension to install.
      */
-    suspend fun downloadAndInstall(url: String, extension: ExtensionManager.ExtensionInfo, scope: CoroutineScope): Flow<ExtensionIntallInfo> {
+    suspend fun downloadAndInstall(
+        url: String,
+        extension: ExtensionManager.ExtensionInfo,
+        scope: CoroutineScope,
+        requireUserConfirmation: Boolean = false,
+    ): Flow<ExtensionIntallInfo> {
         val pkgName = extension.pkgName
+
+        if (requireUserConfirmation) {
+            visibleInstallerPackages += pkgName
+        }
 
         val oldDownload = activeDownloads[pkgName]
         if (oldDownload != null) {
@@ -239,14 +250,19 @@ internal class ExtensionInstaller(private val context: Context) {
                 delay(500)
             }
         }
-            .takeWhile { info ->
-                val sessionId = downloadInstallerMap[pkgName]
-                if (sessionId != null) {
-                    info.second != null || installer?.isInQueue(pkgName) == true
-                } else {
-                    true
-                }
+        .takeWhile { info ->
+            val sessionId = downloadInstallerMap[pkgName]
+            if (sessionId != null) {
+                // The install session id is only registered after the extension APK is fully
+                // written; until then getSessionInfo returns null. Keep polling while the
+                // PackageInstaller flow is still pending (user-confirmation installs launch
+                // ExtensionInstallActivity), so the APK is never deleted before it is read.
+                info.second != null || pkgName in visibleInstallerPackages ||
+                    installer?.isInQueue(pkgName) == true
+            } else {
+                true
             }
+        }
             .catch {
                 Logger.e(it)
             }
@@ -263,6 +279,20 @@ internal class ExtensionInstaller(private val context: Context) {
      */
     fun installApk(downloadId: Long, uri: Uri) {
         val pkgName = activeDownloads.entries.find { it.value == downloadId }?.key
+        if (pkgName != null && pkgName in visibleInstallerPackages) {
+            setInstalling(pkgName, uri.hashCode())
+            context.startActivity(
+                Intent(context, ExtensionInstallActivity::class.java)
+                    .setDataAndType(uri, APK_MIME)
+                    .putExtra(EXTRA_DOWNLOAD_ID, downloadId)
+                    // Core reconciliation is an explicit user action. Keep that intent marked
+                    // all the way through PackageInstaller so Android cannot optimize this
+                    // session into a silent install on API 31+.
+                    .putExtra(EXTRA_REQUIRE_USER_ACTION, true)
+                    .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            )
+            return
+        }
         val useActivity =
             (pkgName?.let { !ExtensionLoader.isExtensionInstalledByApp(context, pkgName) } ?: true) ||
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.S
@@ -397,11 +427,15 @@ internal class ExtensionInstaller(private val context: Context) {
      * @param downloadId The id of the download.
      * @param result Whether the extension was installed or not.
      */
-    fun setInstallationResult(pkgName: String, result: Boolean) {
+    fun setInstallationResult(pkgName: String, result: Boolean, cancelled: Boolean = false) {
         if (result) {
             deleteDownload(pkgName)
         }
-        val step = if (result) InstallStep.Installed else InstallStep.Error
+        val step = when {
+            result -> InstallStep.Installed
+            cancelled -> InstallStep.Cancelled
+            else -> InstallStep.Error
+        }
         downloadInstallerMap.remove(pkgName)
         emitToFlow(pkgName, ExtensionIntallInfo(step, null))
     }
@@ -412,6 +446,7 @@ internal class ExtensionInstaller(private val context: Context) {
      * @param pkgName The package name of the download to delete.
      */
     private fun deleteDownload(pkgName: String) {
+        visibleInstallerPackages -= pkgName
         val downloadId = activeDownloads.remove(pkgName)
         if (downloadId != null) {
             downloadManager.remove(downloadId)
@@ -492,6 +527,7 @@ internal class ExtensionInstaller(private val context: Context) {
     companion object {
         const val APK_MIME = "application/vnd.android.package-archive"
         const val EXTRA_DOWNLOAD_ID = "ExtensionInstaller.extra.DOWNLOAD_ID"
+        const val EXTRA_REQUIRE_USER_ACTION = "ExtensionInstaller.extra.REQUIRE_USER_ACTION"
         const val FILE_SCHEME = "file://"
     }
 }

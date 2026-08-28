@@ -1,0 +1,25 @@
+-- Repair development profiles that crossed migrations 45/47 before these additive
+-- cache and scope-membership tables were introduced. Released upgrade paths still
+-- create them in their original migrations; these guards keep the repair idempotent.
+CREATE TABLE IF NOT EXISTS aethon_core_novel_dependency_inventory_cache (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    inventory_hash TEXT NOT NULL CHECK(length(inventory_hash) = 64 AND inventory_hash NOT GLOB '*[^0-9a-f]*'),
+    inventory_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL CHECK(generated_at >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id)
+);
+
+CREATE TABLE IF NOT EXISTS aethon_portable_manifest_work (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    portable_id TEXT NOT NULL,
+    observed_at INTEGER NOT NULL CHECK(observed_at >= 0),
+    PRIMARY KEY(server_id, profile_id, portable_id),
+    FOREIGN KEY(portable_id) REFERENCES aethon_portable_work_binding(portable_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS aethon_portable_manifest_work_scope_index
+ON aethon_portable_manifest_work(server_id, profile_id, observed_at);

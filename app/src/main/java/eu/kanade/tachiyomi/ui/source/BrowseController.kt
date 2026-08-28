@@ -291,7 +291,7 @@ class BrowseController :
         if (!isBindingInitialized || view == null) return
         bottomSheetReady = true
 
-        android.os.Trace.beginSection("Hayai/Browse.initBottomSheet")
+        android.os.Trace.beginSection("Epigraph/Browse.initBottomSheet")
         try {
             binding.bottomSheet.root.onCreate(this)
 
@@ -689,8 +689,8 @@ class BrowseController :
 
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
         android.os.Trace.beginSection(
-            if (type.isEnter) "Hayai/BrowseController.onChangeStarted.enter"
-            else "Hayai/BrowseController.onChangeStarted.exit",
+            if (type.isEnter) "Epigraph/BrowseController.onChangeStarted.enter"
+            else "Epigraph/BrowseController.onChangeStarted.exit",
         )
         try {
             super.onChangeStarted(handler, type)
@@ -761,18 +761,18 @@ class BrowseController :
             // Without this, the refresh calls below would no-op because the sheet's
             // presenter has no `view` attached yet.
             if (!bottomSheetReady) initBottomSheet()
-            android.os.Trace.beginSection("Hayai/Browse.refreshExtensions")
+            android.os.Trace.beginSection("Epigraph/Browse.refreshExtensions")
             binding.bottomSheet.root.updateExtTitle()
             binding.bottomSheet.root.presenter.refreshExtensions()
             android.os.Trace.endSection()
-            android.os.Trace.beginSection("Hayai/Browse.refreshNovelPlugins")
+            android.os.Trace.beginSection("Epigraph/Browse.refreshNovelPlugins")
             binding.bottomSheet.root.presenter.refreshNovelPlugins()
             android.os.Trace.endSection()
-            android.os.Trace.beginSection("Hayai/Browse.updateSources")
+            android.os.Trace.beginSection("Epigraph/Browse.updateSources")
             presenter.updateSources()
             android.os.Trace.endSection()
             if (type.isEnter && isControllerVisible) {
-                android.os.Trace.beginSection("Hayai/Browse.updateSheetMenu")
+                android.os.Trace.beginSection("Epigraph/Browse.updateSheetMenu")
                 updateSheetMenu()
                 android.os.Trace.endSection()
             }
@@ -795,11 +795,11 @@ class BrowseController :
                 if (!isBindingInitialized) return@postDelayed
                 if (!bottomSheetReady) return@postDelayed
                 if (!type.isPush) {
-                    android.os.Trace.beginSection("Hayai/Browse.refreshMigrations")
+                    android.os.Trace.beginSection("Epigraph/Browse.refreshMigrations")
                     binding.bottomSheet.root.presenter.refreshMigrations()
                     android.os.Trace.endSection()
                 }
-                android.os.Trace.beginSection("Hayai/Browse.updateTitleAndMenu")
+                android.os.Trace.beginSection("Epigraph/Browse.updateTitleAndMenu")
                 updateTitleAndMenu()
                 android.os.Trace.endSection()
             }

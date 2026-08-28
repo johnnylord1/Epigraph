@@ -33,7 +33,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/open_tts_settings"
-            style="?attr/materialButtonOutlinedStyle"
+            style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"

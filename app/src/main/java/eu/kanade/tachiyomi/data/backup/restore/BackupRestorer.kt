@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesBackupRestorer
+import eu.kanade.tachiyomi.data.backup.restore.restorers.LocalBookBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
 import eu.kanade.tachiyomi.util.BackupUtil
@@ -21,6 +22,7 @@ class BackupRestorer(
     val notifier: BackupNotifier,
     private val categoriesBackupRestorer: CategoriesBackupRestorer = CategoriesBackupRestorer(),
     private val mangaBackupRestorer: MangaBackupRestorer = MangaBackupRestorer(),
+    private val localBookBackupRestorer: LocalBookBackupRestorer = LocalBookBackupRestorer(),
     private val preferenceBackupRestorer: PreferenceBackupRestorer = PreferenceBackupRestorer(context),
 ) {
     private var restoreAmount = 0
@@ -51,7 +53,7 @@ class BackupRestorer(
     private suspend fun performRestore(uri: Uri) {
         val backup = BackupUtil.decodeBackup(context, uri)
 
-        restoreAmount = backup.backupManga.size + 3 // +3 for categories, app prefs, source prefs
+        restoreAmount = backup.backupManga.size + backup.backupLocalBooks.size + 3 // +3 for categories, app prefs, source prefs
 
         sourceMapping = backup.backupSources.associate { it.sourceId to it.name }
 
@@ -92,6 +94,21 @@ class BackupRestorer(
                     },
                 )
             }
+
+            // Restore local EPUB/PDF metadata and reader state. Their private bytes are not part
+            // of the backup, so a restored entry remains visibly relinkable until the user picks
+            // the original file again.
+            backup.backupLocalBooks.forEach { localBook ->
+                ensureActive()
+                runCatching { localBookBackupRestorer.restore(localBook) }
+                    .onSuccess {
+                        restoreProgress += 1
+                        showRestoreProgress(restoreProgress, restoreAmount, localBook.displayName)
+                    }
+                    .onFailure { error ->
+                        errors.add(Date() to "${localBook.displayName} [local book]: ${error.message}")
+                    }
+            }
         }
         // TODO: optionally trigger online library + tracker update
     }
@@ -114,7 +131,7 @@ class BackupRestorer(
     internal fun writeErrorLog(): File {
         try {
             if (errors.isNotEmpty()) {
-                val file = context.createFileInCacheDir("hayai_restore.txt")
+                val file = context.createFileInCacheDir("epigraph_restore.txt")
                 val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
 
                 file.bufferedWriter().use { out ->

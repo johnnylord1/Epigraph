@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.database.models
 
 import eu.kanade.tachiyomi.domain.manga.models.Manga
+import kotlinx.serialization.json.JsonObject
 
 class MangaChapter(val manga: Manga, val chapter: Chapter) {
     companion object {
@@ -28,6 +29,7 @@ class MangaChapter(val manga: Manga, val chapter: Chapter) {
             coverLastModified: Long,
             nextUpdate: Long,
             fetchInterval: Long,
+            mangaMemo: JsonObject,
             // chapter
             chapterId: Long,
             _mangaId: Long,
@@ -42,6 +44,7 @@ class MangaChapter(val manga: Manga, val chapter: Chapter) {
             sourceOrder: Long,
             dateFetch: Long,
             dateUpload: Long,
+            chapterMemo: JsonObject,
         ) = MangaChapter(
             Manga.mapper(
                 id = mangaId,
@@ -66,6 +69,7 @@ class MangaChapter(val manga: Manga, val chapter: Chapter) {
                 coverLastModified = coverLastModified,
                 nextUpdate = nextUpdate,
                 fetchInterval = fetchInterval,
+                memo = mangaMemo,
             ),
             Chapter.mapper(
                 id = chapterId,
@@ -81,6 +85,7 @@ class MangaChapter(val manga: Manga, val chapter: Chapter) {
                 sourceOrder = sourceOrder,
                 dateFetch = dateFetch,
                 dateUpload = dateUpload,
+                memo = chapterMemo,
             ),
         )
     }

@@ -1,0 +1,120 @@
+CREATE TABLE aethon_portable_work_binding (
+    portable_id TEXT NOT NULL PRIMARY KEY,
+    ecosystem TEXT NOT NULL CHECK(ecosystem IN ('SUWAYOMI', 'LNREADER')),
+    source_id TEXT,
+    plugin_id TEXT,
+    provider_key TEXT NOT NULL CHECK(length(provider_key) BETWEEN 1 AND 4096),
+    dependency_key TEXT,
+    local_reference TEXT,
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    title_hint TEXT,
+    provider_label_hint TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    CHECK(
+        (ecosystem = 'SUWAYOMI' AND source_id IS NOT NULL AND plugin_id IS NULL) OR
+        (ecosystem = 'LNREADER' AND source_id IS NULL AND plugin_id IS NOT NULL)
+    ),
+    CHECK(source_id IS NULL OR (
+        length(source_id) > 0 AND
+        ((source_id NOT GLOB '*[^0-9]*' AND (source_id = '0' OR source_id NOT LIKE '0%')) OR
+         (source_id LIKE '-%' AND substr(source_id, 2) NOT GLOB '*[^0-9]*' AND
+          length(source_id) > 1 AND substr(source_id, 2, 1) <> '0'))
+    )),
+    CHECK(resolution_state <> 'BOUND' OR (local_reference IS NOT NULL AND resolution_reason IS NULL)),
+    UNIQUE(ecosystem, source_id, plugin_id, provider_key)
+);
+
+CREATE INDEX aethon_portable_work_resolution_index
+ON aethon_portable_work_binding(resolution_state, ecosystem, updated_at);
+
+CREATE TABLE aethon_portable_chapter_binding (
+    portable_chapter_id TEXT NOT NULL PRIMARY KEY,
+    portable_work_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL CHECK(length(provider_key) BETWEEN 1 AND 4096),
+    local_reference TEXT,
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    FOREIGN KEY(portable_work_id) REFERENCES aethon_portable_work_binding(portable_id) ON DELETE CASCADE,
+    CHECK(resolution_state <> 'BOUND' OR (local_reference IS NOT NULL AND resolution_reason IS NULL)),
+    UNIQUE(portable_work_id, provider_key)
+);
+
+CREATE INDEX aethon_portable_chapter_resolution_index
+ON aethon_portable_chapter_binding(resolution_state, portable_work_id, updated_at);
+
+CREATE TABLE aethon_portable_manifest_work (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    portable_id TEXT NOT NULL,
+    observed_at INTEGER NOT NULL CHECK(observed_at >= 0),
+    PRIMARY KEY(server_id, profile_id, portable_id),
+    FOREIGN KEY(portable_id) REFERENCES aethon_portable_work_binding(portable_id) ON DELETE CASCADE
+);
+
+CREATE INDEX aethon_portable_manifest_work_scope_index
+ON aethon_portable_manifest_work(server_id, profile_id, observed_at);
+
+CREATE TABLE aethon_comic_dependency_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    required_source_ids_json TEXT NOT NULL,
+    observed_version_code TEXT,
+    extension_store_index_url TEXT,
+    observed_manifest_sha256 TEXT,
+    display_name_hint TEXT,
+    trust_state TEXT NOT NULL CHECK(trust_state IN ('TRUSTED', 'APPROVAL_REQUIRED', 'REJECTED')),
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, package_name)
+);
+
+CREATE TABLE aethon_novel_dependency_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    observed_version TEXT,
+    repository_index_url TEXT,
+    observed_manifest_sha256 TEXT,
+    observed_artifact_sha256 TEXT,
+    display_name_hint TEXT,
+    trust_state TEXT NOT NULL CHECK(trust_state IN ('TRUSTED', 'APPROVAL_REQUIRED', 'REJECTED')),
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, plugin_id)
+);
+
+CREATE TABLE aethon_portable_bootstrap_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    bootstrap_id TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN (
+        'NEGOTIATING', 'RECEIVING_MANIFEST', 'RESOLVING_DEPENDENCIES', 'WAITING_TRUST',
+        'IMPORTING_REFERENCES', 'HYDRATING_LIBRARY', 'RESOLVING_CHAPTERS', 'APPLYING_STATE',
+        'COMPLETED', 'PARTIAL', 'CANCELLED', 'FAILED'
+    )),
+    manifest_fingerprint TEXT,
+    current_item TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    last_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id)
+);

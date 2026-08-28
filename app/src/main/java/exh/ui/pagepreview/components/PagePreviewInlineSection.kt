@@ -56,7 +56,7 @@ import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
 import yokai.presentation.theme.rememberShimmerAlpha
 import yokai.util.coil.appImageLoader
-import yokai.util.coil.hayaiPagePreviewDefaults
+import yokai.util.coil.epigraphPagePreviewDefaults
 import yokai.util.coil.loaderForSource
 
 private sealed class PreviewState {
@@ -209,7 +209,7 @@ private fun PreviewThumb(
     val request = remember(preview.imageUrl, context) {
         ImageRequest.Builder(context)
             .data(preview.imageUrl)
-            .hayaiPagePreviewDefaults()
+            .epigraphPagePreviewDefaults()
             .build()
     }
     Box(

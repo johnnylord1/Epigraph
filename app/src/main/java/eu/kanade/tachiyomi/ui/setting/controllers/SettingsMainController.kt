@@ -24,6 +24,7 @@ import eu.kanade.tachiyomi.ui.setting.onClick
 import eu.kanade.tachiyomi.ui.setting.onLongClick
 import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.preferenceLongClickable
+import eu.kanade.tachiyomi.ui.setting.summaryMRes as summaryRes
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.fadeTransactionHandler
@@ -33,6 +34,7 @@ import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import yokai.i18n.MR
 import yokai.util.lang.getString
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
+import epigraph.books.ui.LocalBooksController
 
 class SettingsMainController : SettingsLegacyController(), FloatingSearchInterface {
 
@@ -74,6 +76,13 @@ class SettingsMainController : SettingsLegacyController(), FloatingSearchInterfa
             iconTint = tintColor
             titleRes = MR.strings.library
             onClick { navigateTo(SettingsLibraryController()) }
+        }
+        preference {
+            iconRes = R.drawable.ic_book_open_variant_24dp
+            iconTint = tintColor
+            title = "Books (EPUB/PDF)"
+            summary = "Import and read files kept offline on this device"
+            onClick { navigateTo(LocalBooksController()) }
         }
         preference {
             iconRes = R.drawable.ic_read_outline_24dp
@@ -120,6 +129,13 @@ class SettingsMainController : SettingsLegacyController(), FloatingSearchInterfa
             iconTint = tintColor
             titleRes = MR.strings.tracking
             onClick { navigateTo(SettingsTrackingController()) }
+        }
+        preference {
+            iconRes = R.drawable.ic_sync_24dp
+            iconTint = tintColor
+            titleRes = MR.strings.epigraph_core
+            summaryRes = MR.strings.epigraph_core_summary
+            onClick { navigateTo(SettingsEpigraphCoreController()) }
         }
         // Data & Storage (backup/restore/cache) — kept as its own top-level
         // entry because it covers app-data ops, not download-cache cleanup.

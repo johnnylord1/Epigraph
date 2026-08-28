@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.databinding.ReaderColorFilterBinding
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.bindToPreference
@@ -56,38 +57,38 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
     override fun initGeneralPreferences() {
         activity = context as? ReaderActivity ?: return
 
-        preferences.colorFilter().changes()
+        colorFilterPref().changes()
             .onEach { setColorFilter(it) }
             .launchIn(activity.scope)
 
-        preferences.colorFilterMode().changes()
-            .onEach { setColorFilter(preferences.colorFilter().get()) }
+        colorFilterModePref().changes()
+            .onEach { setColorFilter(colorFilterPref().get()) }
             .launchIn(activity.scope)
 
-        preferences.customBrightness().changes()
+        customBrightnessPref().changes()
             .onEach { setCustomBrightness(it) }
             .launchIn(activity.scope)
 
-        binding.grayscale.bindToPreference(preferences.grayscale())
-        binding.invertedColors.bindToPreference(preferences.invertedColors())
+        binding.grayscale.bindToPreference(grayscalePref())
+        binding.invertedColors.bindToPreference(invertedColorsPref())
 
         // Set initial values
-        setValues(preferences.colorFilterValue().get())
-        brightnessValue = preferences.customBrightnessValue().get().toFloat()
-        filterEnabled = preferences.colorFilter().get()
-        brightnessEnabled = preferences.customBrightness().get()
+        setValues(colorFilterValuePref().get())
+        brightnessValue = customBrightnessValuePref().get().toFloat()
+        filterEnabled = colorFilterPref().get()
+        brightnessEnabled = customBrightnessPref().get()
 
         binding.switchColorFilter.isChecked = filterEnabled
         binding.switchColorFilter.setOnCheckedChangeListener { _, isChecked ->
-            preferences.colorFilter().set(isChecked)
+            colorFilterPref().set(isChecked)
         }
 
         binding.customBrightness.isChecked = brightnessEnabled
         binding.customBrightness.setOnCheckedChangeListener { _, isChecked ->
-            preferences.customBrightness().set(isChecked)
+            customBrightnessPref().set(isChecked)
         }
 
-        binding.colorFilterMode.bindToPreference(preferences.colorFilterMode())
+        binding.colorFilterMode.bindToPreference(colorFilterModePref())
 
         // Color filter sliders (A, R, G, B) — Compose
         binding.colorSlidersCompose.setContent {
@@ -153,7 +154,7 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
                         value = brightnessValue,
                         onValueChange = {
                             brightnessValue = it
-                            preferences.customBrightnessValue().set(it.roundToInt())
+                            customBrightnessValuePref().set(it.roundToInt())
                         },
                         valueRange = -75f..100f,
                         enabled = brightnessEnabled,
@@ -175,7 +176,7 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
     private fun setColorFilter(enabled: Boolean) {
         filterEnabled = enabled
         if (enabled) {
-            preferences.colorFilterValue().changes()
+            colorFilterValuePref().changes()
                 .sample(100)
                 .onEach { setColorFilterValue(it) }
                 .launchIn(activity.scope)
@@ -185,7 +186,7 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
     private fun setCustomBrightness(enabled: Boolean) {
         brightnessEnabled = enabled
         if (enabled) {
-            preferences.customBrightnessValue().changes()
+            customBrightnessValuePref().changes()
                 .sample(100)
                 .onEach { setCustomBrightnessValue(it) }
                 .launchIn(activity.scope)
@@ -196,8 +197,8 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
 
     fun setWindowBrightness() {
         setCustomBrightnessValue(
-            preferences.customBrightnessValue().get(),
-            !preferences.customBrightness().get(),
+            customBrightnessValuePref().get(),
+            !customBrightnessPref().get(),
         )
     }
 
@@ -226,10 +227,33 @@ class ReaderFilterView @JvmOverloads constructor(context: Context, attrs: Attrib
     }
 
     fun setColorValue(color: Int, mask: Long, bitShift: Int) {
-        val currentColor = preferences.colorFilterValue().get()
+        val currentColor = colorFilterValuePref().get()
         val updatedColor = (color shl bitShift) or (currentColor and mask.inv().toInt())
-        preferences.colorFilterValue().set(updatedColor)
+        colorFilterValuePref().set(updatedColor)
     }
+
+    private fun isNovelDomain(): Boolean = ReadingModeType.isNovelType(activity.viewModel.getMangaReadingMode())
+
+    private fun colorFilterPref(): Preference<Boolean> =
+        if (isNovelDomain()) readerPreferences.novelColorFilter else preferences.colorFilter()
+
+    private fun colorFilterValuePref(): Preference<Int> =
+        if (isNovelDomain()) readerPreferences.novelColorFilterValue else preferences.colorFilterValue()
+
+    private fun colorFilterModePref(): Preference<Int> =
+        if (isNovelDomain()) readerPreferences.novelColorFilterMode else preferences.colorFilterMode()
+
+    private fun customBrightnessPref(): Preference<Boolean> =
+        if (isNovelDomain()) readerPreferences.novelCustomBrightness else preferences.customBrightness()
+
+    private fun customBrightnessValuePref(): Preference<Int> =
+        if (isNovelDomain()) readerPreferences.novelCustomBrightnessValue else preferences.customBrightnessValue()
+
+    private fun grayscalePref(): Preference<Boolean> =
+        if (isNovelDomain()) readerPreferences.novelGrayscale else preferences.grayscale()
+
+    private fun invertedColorsPref(): Preference<Boolean> =
+        if (isNovelDomain()) readerPreferences.novelInvertedColors else preferences.invertedColors()
 
     fun getAlphaFromColor(color: Int): Int = color shr 24 and 0xFF
     fun getRedFromColor(color: Int): Int = color shr 16 and 0xFF

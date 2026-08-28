@@ -861,7 +861,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         }
 
     open fun setFloatingToolbar(show: Boolean, solidBG: Boolean = false, changeBG: Boolean = true, showSearchAnyway: Boolean = false) {
-        Trace.beginSection("Hayai/setFloatingToolbar")
+        Trace.beginSection("Epigraph/setFloatingToolbar")
         try {
             setFloatingToolbarInner(show, solidBG, changeBG, showSearchAnyway)
         } finally {
@@ -940,7 +940,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         // Doing this synchronously during onChangeStarted blocks the Conductor crossfade
         // (200ms) and was a major source of the 250–700ms frames during root nav swaps.
         binding.toolbar.post {
-            Trace.beginSection("Hayai/setupSearchTBMenu")
+            Trace.beginSection("Epigraph/setupSearchTBMenu")
             try {
                 setupSearchTBMenu(binding.toolbar.menu)
             } finally {
@@ -1344,7 +1344,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 )
             }
             Intent.ACTION_VIEW -> {
-                if (intent.scheme == "tachiyomi" && intent.data?.host == "add-repo") {
+                if (intent.scheme in setOf("epigraph", "aethon", "hayai", "tachiyomi") && intent.data?.host == "add-repo") {
                     intent.data?.getQueryParameter("url")?.let { repoUrl ->
                         ensureRootTabReady(R.id.nav_browse)
                         router.popToRoot()
@@ -1570,7 +1570,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 container: ViewGroup,
                 handler: ControllerChangeHandler,
             ) {
-                Trace.beginSection("Hayai/MainActivity.onChangeStarted")
+                Trace.beginSection("Epigraph/MainActivity.onChangeStarted")
                 // Hold the collapse-suppression flag up for the whole change (see field doc).
                 controllerChangeInProgress = true
                 binding.root.removeCallbacks(clearControllerChangeFlag)
@@ -1584,7 +1584,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                     return
                 }
                 syncActivityAppBarVisibility(to)
-                Trace.beginSection("Hayai/syncActivityViewWithController")
+                Trace.beginSection("Epigraph/syncActivityViewWithController")
                 syncActivityViewWithController(to, from, isPush)
                 Trace.endSection()
                 binding.appBar.alpha = 1f

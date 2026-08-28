@@ -13,7 +13,9 @@ import kotlinx.coroutines.withContext
 /**
  * Activity that handles MangaDex OAuth login callbacks.
  *
- * Registered in AndroidManifest for the hayai://mangadex-auth redirect URI.
+ * Registered in AndroidManifest for the epigraph://mangadex-auth redirect URI.
+ * The manifest also keeps the legacy aethon://, hayai://, and tachiyomi:// URIs
+ * for existing OAuth sessions.
  * When MangaDex completes OAuth, it redirects back here with an authorization code.
  * This activity extracts the code, performs the token exchange via the MangaDex source,
  * and finishes.

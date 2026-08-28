@@ -1,0 +1,32 @@
+CREATE TABLE aethon_core_remote_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    remote_type TEXT NOT NULL CHECK(length(remote_type) > 0),
+    remote_id TEXT NOT NULL CHECK(length(remote_id) > 0),
+    binding_status TEXT NOT NULL CHECK(binding_status IN ('BOUND', 'LEGACY_UNBOUND', 'PENDING', 'CONFLICT')),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    UNIQUE(server_id, profile_id, remote_type, remote_id)
+);
+
+CREATE INDEX aethon_core_remote_identity_scope_index
+ON aethon_core_remote_identity(server_id, profile_id, remote_type);
+
+CREATE TABLE aethon_core_extension_inventory_cache (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version >= 1),
+    inventory_hash TEXT NOT NULL CHECK(length(inventory_hash) = 64 AND inventory_hash NOT GLOB '*[^0-9a-f]*'),
+    report_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL CHECK(generated_at >= 0),
+    notified_inventory_hash TEXT,
+    acknowledged_inventory_hash TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id),
+    CHECK(notified_inventory_hash IS NULL OR (length(notified_inventory_hash) = 64 AND notified_inventory_hash NOT GLOB '*[^0-9a-f]*')),
+    CHECK(acknowledged_inventory_hash IS NULL OR (length(acknowledged_inventory_hash) = 64 AND acknowledged_inventory_hash NOT GLOB '*[^0-9a-f]*'))
+);
+
+CREATE INDEX aethon_core_extension_inventory_latest_index
+ON aethon_core_extension_inventory_cache(updated_at DESC);

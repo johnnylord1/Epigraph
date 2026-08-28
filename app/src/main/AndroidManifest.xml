@@ -6,6 +6,10 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <!-- For background jobs -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -62,6 +66,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
+                <data android:scheme="epigraph" />
+                <!-- Legacy links remain accepted for repository migration. -->
+                <data android:scheme="aethon" />
+                <data android:scheme="hayai" />
                 <data android:scheme="tachiyomi" />
                 <data android:host="add-repo" />
             </intent-filter>
@@ -104,8 +112,8 @@
             android:targetActivity=".ui.main.MainActivity"
             android:enabled="false"
             android:label="@string/app_name"
-            android:icon="@mipmap/ic_launcher_blue"
-            android:roundIcon="@mipmap/ic_launcher_round_blue"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:exported="true">
 
             <intent-filter>
@@ -119,8 +127,8 @@
             android:targetActivity=".ui.main.MainActivity"
             android:enabled="false"
             android:label="@string/app_name"
-            android:icon="@mipmap/ic_launcher_orange"
-            android:roundIcon="@mipmap/ic_launcher_round_orange"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:exported="true">
 
             <intent-filter>
@@ -134,8 +142,8 @@
             android:targetActivity=".ui.main.MainActivity"
             android:enabled="false"
             android:label="@string/app_name"
-            android:icon="@mipmap/ic_launcher_gray"
-            android:roundIcon="@mipmap/ic_launcher_round_gray"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:exported="true">
 
             <intent-filter>
@@ -149,8 +157,8 @@
             android:targetActivity=".ui.main.MainActivity"
             android:enabled="false"
             android:label="@string/app_name"
-            android:icon="@mipmap/ic_launcher_classic"
-            android:roundIcon="@mipmap/ic_launcher_round_classic"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:exported="true">
 
             <intent-filter>
@@ -195,6 +203,10 @@
                 android:resource="@xml/s_pen_actions" />
         </activity>
         <activity
+            android:name="epigraph.books.ui.LocalBookReaderActivity"
+            android:configChanges="uiMode|orientation|screenSize|keyboardHidden|locale|fontScale|density|smallestScreenSize|screenLayout|navigation"
+            android:exported="false" />
+        <activity
             android:name=".ui.webview.WebViewActivity"
             android:configChanges="uiMode|orientation|screenSize"/>
         <activity
@@ -211,7 +223,16 @@
 
                 <data
                     android:host="myanimelist-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="myanimelist-auth"
                     android:scheme="hayai" />
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="tachiyomi" />
             </intent-filter>
         </activity>
         <activity
@@ -226,7 +247,16 @@
 
                 <data
                     android:host="anilist-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="anilist-auth"
                     android:scheme="hayai" />
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="tachiyomi" />
             </intent-filter>
         </activity>
         <activity
@@ -241,7 +271,16 @@
 
                 <data
                     android:host="shikimori-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="shikimori-auth"
                     android:scheme="hayai" />
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="tachiyomi" />
             </intent-filter>
         </activity>
         <activity
@@ -256,7 +295,16 @@
 
                 <data
                     android:host="bangumi-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="bangumi-auth"
                     android:scheme="hayai" />
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="tachiyomi" />
             </intent-filter>
         </activity>
 
@@ -270,6 +318,16 @@
             android:name=".extension.util.ExtensionInstallActivity"
             android:icon="@mipmap/ic_launcher"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+
+        <activity
+            android:name="epigraph.sync.core.extensions.ExtensionReconciliationActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
+
+        <activity
+            android:name="epigraph.sync.core.novels.LnReaderDependencyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
 
         <!-- EXH -->
         <activity
@@ -374,7 +432,16 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:host="mangadex-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="mangadex-auth"
                     android:scheme="hayai" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="tachiyomi" />
             </intent-filter>
         </activity>
         <!-- EXH -->
@@ -430,6 +497,11 @@
             android:foregroundServiceType="mediaPlayback" />
 
         <service
+            android:name="epigraph.books.tts.BookTtsPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <service
             android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
             android:enabled="false"
             android:exported="false">
@@ -446,10 +518,10 @@
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
-        <!-- Loading global exception handler before crashlytics (order: 100) -->
+        <!-- Load the global exception handler before the rest of app startup. -->
         <provider
             android:name="eu.kanade.tachiyomi.AppProvider"
-            android:authorities="${applicationId}.hayai"
+            android:authorities="${applicationId}.epigraph"
             android:exported="false"
             android:initOrder="101" />
 

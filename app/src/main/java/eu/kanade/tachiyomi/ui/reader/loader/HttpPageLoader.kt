@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 import yokai.util.koin.get
+import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.source.isNovelSource
@@ -115,14 +116,13 @@ class HttpPageLoader(
         val pages = if (source.isNovelSource()) {
             source.getPageList(chapter.chapter)
         } else {
-            try {
-                chapterCache.getPageListFromCache(chapter.chapter)
-            } catch (e: Throwable) {
-                if (e is CancellationException) {
-                    throw e
+            runCatching { chapterCache.getPageListFromCache(chapter.chapter) }
+                .onSuccess { Logger.d { "Reader cache hit: ${it.size} pages for ${chapter.chapter.id}" } }
+                .getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    Logger.d(error) { "Reader cache miss: resolving page list for ${chapter.chapter.id}" }
+                    source.getPageList(chapter.chapter)
                 }
-                source.getPageList(chapter.chapter)
-            }
         }
         return pages.mapIndexed { index, page ->
             // Don't trust sources and use our own indexing
@@ -231,6 +231,12 @@ class HttpPageLoader(
                 return
             }
 
+            // Older cache entries may contain only the logical page URL. If its bytes are already
+            // present, use them directly instead of asking the source/Core to resolve the URL.
+            // This makes an explicitly cached chapter readable after the PC is offline.
+            if (page.imageUrl.isNullOrEmpty() && chapterCache.isImageInCache(page.url)) {
+                page.imageUrl = page.url
+            }
             if (page.imageUrl.isNullOrEmpty()) {
                 page.status = Page.State.LoadPage
                 page.imageUrl = source.getImageUrl(page)
@@ -244,7 +250,11 @@ class HttpPageLoader(
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
-            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+            val cachedFile = chapterCache.getImageFile(imageUrl)
+            check(cachedFile.isFile && cachedFile.length() > 0L) {
+                "Cached page bytes are unavailable"
+            }
+            page.stream = { cachedFile.inputStream() }
             page.status = Page.State.Ready
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)

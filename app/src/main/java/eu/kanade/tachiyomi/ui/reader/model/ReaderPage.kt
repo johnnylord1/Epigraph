@@ -26,6 +26,8 @@ open class ReaderPage(
     var isolatedPage: Boolean = false
     var firstHalf: Boolean? = null
     var longPage: Boolean? = null
+    var sourcePageIndex: Int? = null
+    var sourcePageCount: Int? = null
     var endPageConfidence: Int? = null
     var startPageConfidence: Int? = null
     open lateinit var chapter: ReaderChapter

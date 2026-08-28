@@ -187,13 +187,13 @@
         <item name="android:textColorHint">@color/material_on_background_disabled</item>
     </style>
 
-    <style name="Theme.Widget.Hayai.AlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
-        <item name="alertDialogStyle">@style/Widget.Hayai.AlertDialog</item>
+    <style name="Theme.Widget.Epigraph.AlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="alertDialogStyle">@style/Widget.Epigraph.AlertDialog</item>
         <item name="elevationOverlayEnabled">true</item>
         <item name="elevationOverlayColor">?colorSecondary</item>
     </style>
 
-    <style name="Widget.Hayai.AlertDialog" parent="MaterialAlertDialog.Material3">
+    <style name="Widget.Epigraph.AlertDialog" parent="MaterialAlertDialog.Material3">
         <item name="backgroundTint">?attr/colorSurface</item>
     </style>
 
@@ -320,6 +320,22 @@
         <item name="android:stateListAnimator">@animator/icon_btn_state_list_anim</item>
         <item name="android:textColor">?attr/colorOnBackground</item>
         <item name="cornerRadius">20dp</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3Expressive.MaterialButtonGroup.Connected" />
+
+    <!-- Reader settings buttons shared by novels, EPUB and PDF. Keep the same outline,
+         accent and ripple tokens as the manga reader while avoiding the stock square button
+         surface that slipped into the novel-only layouts. -->
+    <style name="Widget.Tachiyomi.Button.ReaderOutlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="strokeColor">?attr/colorOutlineVariant</item>
+        <item name="iconTint">?attr/colorSecondary</item>
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
     </style>
 
     <style name="Widget.Tachiyomi.Button.OutlinedButton" parent="Widget.Material3.Button.OutlinedButton">

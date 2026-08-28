@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.library
 
+import epigraph.books.local.LocalBook
+import epigraph.contract.ContentType
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
 import eu.kanade.tachiyomi.data.database.models.MangaImpl
@@ -31,6 +33,17 @@ class LibraryItemTest {
         assertNotEquals(original.bindingContentSignature(), changed.bindingContentSignature())
     }
 
+    @Test
+    fun `local book item keeps its domain identity and filters by book metadata`() {
+        val original = bookItem(title = "Example PDF", type = ContentType.PDF)
+        val changed = bookItem(title = "Other EPUB", type = ContentType.EPUB)
+
+        assertNotEquals(original.bindingContentSignature(), changed.bindingContentSignature())
+        assertEquals(true, original.filter("pdf"))
+        assertEquals(true, original.filter("example"))
+        assertEquals(false, original.filter("missing"))
+    }
+
     private fun item(
         unread: Int = 1,
         title: String = "Example",
@@ -54,5 +67,33 @@ class LibraryItemTest {
         ).apply {
             this.downloadCount = downloadCount
         }
+    }
+
+    private fun bookItem(title: String, type: ContentType): LibraryBookItem {
+        val category = Category.create("Books").apply {
+            id = -2
+        }
+        val header = LibraryHeaderItem({ category }, category.id!!)
+        return LibraryBookItem(
+            book = LocalBook(
+                bookId = "${type.name.lowercase()}-${"a".repeat(64)}",
+                contentType = type,
+                sha256 = "a".repeat(64),
+                displayName = title,
+                author = "Author",
+                description = null,
+                coverPath = null,
+                coverAssetSha256 = null,
+                coverAssetByteSize = null,
+                coverAssetMimeType = null,
+                privatePath = "C:\\missing\\$title",
+                mimeType = if (type == ContentType.PDF) "application/pdf" else "application/epub+zip",
+                byteSize = 1,
+                importedAt = 1,
+                updatedAt = 1,
+            ),
+            header = header,
+            context = null,
+        )
     }
 }

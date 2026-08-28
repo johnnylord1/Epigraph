@@ -58,7 +58,7 @@ import yokai.i18n.MR
  * [FilterSheetCommon] so this file stays focused on per-type rendering.
  */
 
-// region CheckBox — Switch on the right, matches Hayai's SwitchPreferenceWidget.
+// region CheckBox — Switch on the right, matches Epigraph's SwitchPreferenceWidget.
 
 @Composable
 internal fun FilterCheckBoxRow(filter: Filter.CheckBox, stateVersion: Int) {
@@ -70,7 +70,7 @@ internal fun FilterCheckBoxRow(filter: Filter.CheckBox, stateVersion: Int) {
             checked = filter.state
         },
         trailing = {
-            // Plain Switch (no colour override) so it matches Hayai's SwitchPreferenceWidget and
+            // Plain Switch (no colour override) so it matches Epigraph's SwitchPreferenceWidget and
             // every other toggle in the app — the Expressive theme supplies the colours.
             Switch(
                 checked = checked,

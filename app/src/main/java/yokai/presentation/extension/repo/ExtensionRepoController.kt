@@ -9,7 +9,10 @@ import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
 import yokai.i18n.MR
 
-class ExtensionRepoController(private val repoUrl: String? = null) :
+class ExtensionRepoController(
+    private val repoUrl: String? = null,
+    private val initialPage: Int = 0,
+) :
     BaseComposeController() {
 
     override val hostsOwnAppBar: Boolean = true
@@ -20,6 +23,7 @@ class ExtensionRepoController(private val repoUrl: String? = null) :
             screen = ExtensionRepoScreen(
                 title = stringResource(MR.strings.repositories),
                 repoUrl = repoUrl,
+                initialPage = initialPage,
             ),
             content = { navigator ->
                 this.navigator = navigator

@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.ui.setting.intListPreference
 import eu.kanade.tachiyomi.ui.setting.listPreference
 import eu.kanade.tachiyomi.ui.setting.multiSelectListPreferenceMat
 import eu.kanade.tachiyomi.ui.setting.onClick
+import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.seekBarPreference
@@ -431,6 +432,32 @@ fun SettingsLegacyController.populateMangaReaderPreferences(screen: PreferenceSc
 
                 preferences.readWithVolumeKeys().changesIn(viewScope) { isVisible = it }
             }
+
+            multiSelectListPreferenceMat(activity) {
+                key = Keys.readerVerticalSeekbarModes
+                title = context.getString(R.string.reader_vertical_progress_modes)
+                val modes = ReadingModeType.entries.filter { it != ReadingModeType.DEFAULT && it != ReadingModeType.NOVEL }
+                entriesRes = modes.map { it.stringRes }.toTypedArray()
+                entryValues = modes.map { it.prefValue.toString() }
+                defaultValue = modes.map { it.prefValue.toString() }
+                allSelectionRes = MR.strings.display_options
+            }
+            seekBarPreference {
+                key = Keys.readerVerticalSeekbarHeightPercent
+                title = context.getString(R.string.reader_vertical_progress_height)
+                min = 60
+                max = 100
+                seekBarIncrement = 5
+                showSeekBarValue = true
+                setDefaultValue(65)
+                preferences.readerVerticalSeekbarModes().changesIn(viewScope) { isVisible = it.isNotEmpty() }
+            }
+            switchPreference {
+                key = Keys.readerVerticalSeekbarDockLeft
+                title = context.getString(R.string.reader_vertical_progress_place_left)
+                defaultValue = false
+                preferences.readerVerticalSeekbarModes().changesIn(viewScope) { isVisible = it.isNotEmpty() }
+            }
         }
 
         preferenceCategory {
@@ -446,6 +473,67 @@ fun SettingsLegacyController.populateMangaReaderPreferences(screen: PreferenceSc
                 titleRes = MR.strings.save_pages_separately
                 summaryRes = MR.strings.create_folders_by_manga_title
             }
+        }
+
+        preferenceCategory {
+            title = context.getString(MR.strings.custom_filter)
+            switchPreference {
+                key = Keys.colorFilter
+                title = context.getString(MR.strings.use_custom_color_filter)
+                defaultValue = false
+            }
+            colorChannel(preferences.colorFilterValue(), "A", 24)
+            colorChannel(preferences.colorFilterValue(), "R", 16)
+            colorChannel(preferences.colorFilterValue(), "G", 8)
+            colorChannel(preferences.colorFilterValue(), "B", 0)
+            intListPreference(activity) {
+                key = Keys.colorFilterMode
+                title = context.getString(MR.strings.color_filter_blend_mode)
+                entries = context.resources.getStringArray(R.array.color_filter_modes).toList()
+                entryRange = context.resources.getStringArray(R.array.color_filter_modes).indices
+                defaultValue = 0
+            }
+            switchPreference {
+                key = Keys.customBrightness
+                title = context.getString(MR.strings.use_custom_brightness)
+                defaultValue = false
+            }
+            seekBarPreference {
+                key = Keys.customBrightnessValue
+                title = context.getString(MR.strings.use_custom_brightness)
+                min = -75
+                max = 100
+                showSeekBarValue = true
+                setDefaultValue(0)
+            }
+            switchPreference {
+                bindTo(preferences.grayscale())
+                title = context.getString(MR.strings.grayscale)
+            }
+            switchPreference {
+                bindTo(preferences.invertedColors())
+                title = context.getString(MR.strings.pref_inverted_colors)
+            }
+        }
+    }
+}
+
+private fun androidx.preference.PreferenceCategory.colorChannel(
+    preference: eu.kanade.tachiyomi.core.preference.Preference<Int>,
+    label: String,
+    shift: Int,
+) {
+    seekBarPreference {
+        isPersistent = false
+        title = label
+        min = 0
+        max = 255
+        showSeekBarValue = true
+        defaultValue = preference.get() shr shift and 0xFF
+        onChange { value ->
+            val mask = (0xFF shl shift).inv()
+            preference.set((preference.get() and mask) or ((value as Int).coerceIn(0, 255) shl shift))
+            true
         }
     }
 }

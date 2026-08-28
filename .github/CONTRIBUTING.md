@@ -1,15 +1,15 @@
 > [!IMPORTANT]
-> Looking to report an issue/bug or make a feature request? Please refer to the [README file](https://github.com/HayaiApp/hayai#contributing).
+> Looking to report an issue/bug or make a feature request? Please refer to the [Epigraph README](https://github.com/johnnylord1/Epigraph#contributing).
 
 ---
 
-Thanks for your interest in contributing to Hayai!
+Thanks for your interest in contributing to Epigraph!
 
 # Code contributions
 
 Pull requests are welcome!
 
-If you're interested in taking on [an open issue](https://github.com/HayaiApp/hayai/issues), please comment on it so others are aware.
+If you're interested in taking on [an open issue](https://github.com/johnnylord1/Epigraph/issues), please comment on it so others are aware.
 You do not need to ask for permission nor an assignment.
 
 ## Prerequisites

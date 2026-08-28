@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.source
 
 import android.content.Context
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.extension.ExtensionManager
@@ -55,6 +56,7 @@ import yokai.util.lang.getString
 class SourceManager(
     private val context: Context,
     private val extensionManager: ExtensionManager,
+    private val epigraphCoreSource: EpigraphCoreSource,
 ) {
 
     private val scope = CoroutineScope(Job() + Dispatchers.IO)
@@ -98,7 +100,12 @@ class SourceManager(
             ) { extensions, enableExhentai, novelSources ->
                 Triple(extensions, enableExhentai, novelSources)
             }.collectLatest { (extensions, enableExhentai, novelSources) ->
-                val mutableMap = ConcurrentHashMap<Long, Source>(mapOf(LocalSource.ID to LocalSource(context)))
+                val mutableMap = ConcurrentHashMap<Long, Source>(
+                    mapOf(
+                        LocalSource.ID to LocalSource(context),
+                        EpigraphCoreSource.ID to epigraphCoreSource,
+                    ),
+                )
 
                 // EXH -->
                 mutableMap[EH_SOURCE_ID] = EHentai(EH_SOURCE_ID, false, context)
@@ -218,7 +225,7 @@ class SourceManager(
      */
     fun getVisibleOnlineSources() = sourcesMapFlow.value.values
         .filterIsInstance<HttpSource>()
-        .filter { it.id !in BlacklistedSources.HIDDEN_SOURCES }
+        .filter { it.id !in BlacklistedSources.HIDDEN_SOURCES && it.id != EpigraphCoreSource.ID }
 
     /**
      * Catalogue sources excluding those flagged as user-hidden (e.g. MergedSource). Use this
@@ -227,7 +234,7 @@ class SourceManager(
      */
     fun getVisibleCatalogueSources() = sourcesMapFlow.value.values
         .filterIsInstance<CatalogueSource>()
-        .filter { it.id !in BlacklistedSources.HIDDEN_SOURCES }
+        .filter { it.id !in BlacklistedSources.HIDDEN_SOURCES && it.id != EpigraphCoreSource.ID }
 
     @Suppress("OverridingDeprecatedMember")
     inner class StubSource(override val id: Long) : Source {

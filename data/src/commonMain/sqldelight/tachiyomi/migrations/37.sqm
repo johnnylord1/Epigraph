@@ -1,0 +1,164 @@
+CREATE TABLE aethon_content_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK(content_type IN ('MANGA', 'NOVEL', 'EPUB', 'PDF')),
+    local_reference TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(content_type, local_reference)
+);
+
+CREATE TABLE aethon_source_binding (
+    binding_id TEXT NOT NULL PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    plugin_package TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    normalized_url TEXT NOT NULL,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    UNIQUE(ecosystem, repository, plugin_package, source_id, normalized_url)
+);
+CREATE INDEX aethon_source_binding_entity_index ON aethon_source_binding(entity_id);
+CREATE UNIQUE INDEX aethon_source_binding_primary_index
+ON aethon_source_binding(entity_id) WHERE is_primary = 1;
+
+CREATE TABLE aethon_category_scope (
+    category_id INTEGER NOT NULL PRIMARY KEY,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+CREATE TABLE aethon_category_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    local_category_id INTEGER NOT NULL UNIQUE,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+CREATE TABLE aethon_chapter_binding (
+    chapter_entity_id TEXT NOT NULL PRIMARY KEY,
+    work_entity_id TEXT NOT NULL,
+    local_chapter_id INTEGER NOT NULL,
+    normalized_url TEXT NOT NULL,
+    ordinal REAL NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(work_entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(local_chapter_id) REFERENCES chapters(_id) ON DELETE CASCADE,
+    UNIQUE(work_entity_id, local_chapter_id),
+    UNIQUE(work_entity_id, normalized_url)
+);
+CREATE INDEX aethon_chapter_binding_work_index ON aethon_chapter_binding(work_entity_id, ordinal);
+
+CREATE TABLE aethon_reader_progress (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    chapter_entity_id TEXT,
+    locator_json TEXT NOT NULL,
+    chapter_ordinal REAL,
+    progression REAL NOT NULL CHECK(progression >= 0 AND progression <= 1),
+    server_revision INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(chapter_entity_id) REFERENCES aethon_chapter_binding(chapter_entity_id) ON DELETE SET NULL
+);
+
+CREATE TABLE aethon_sync_outbox (
+    sequence INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'IN_FLIGHT', 'ERROR')),
+    last_error TEXT,
+    in_flight_at INTEGER,
+    lease_until INTEGER,
+    UNIQUE(device_id, client_mutation_id)
+);
+CREATE INDEX aethon_sync_outbox_ready_index ON aethon_sync_outbox(status, next_attempt_at, created_at);
+
+CREATE TABLE aethon_sync_receipt (
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    canonical_entity_id TEXT,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY(device_id, client_mutation_id)
+);
+
+CREATE TABLE aethon_sync_checkpoint (
+    scope_id TEXT NOT NULL PRIMARY KEY,
+    cursor TEXT,
+    schema_version INTEGER NOT NULL,
+    snapshot_at INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE aethon_sync_inbox (
+    scope_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    server_revision INTEGER NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    applied_at INTEGER NOT NULL,
+    PRIMARY KEY(scope_id, event_id)
+);
+
+CREATE TABLE aethon_sync_tombstone (
+    scope_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    deleted_at INTEGER NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    server_revision INTEGER NOT NULL,
+    PRIMARY KEY(scope_id, entity_id, entity_type)
+);
+
+CREATE TABLE aethon_asset_manifest (
+    sha256 TEXT NOT NULL PRIMARY KEY CHECK(length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF', 'NOVEL_CHAPTER')),
+    byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+    mime_type TEXT NOT NULL,
+    local_uri TEXT,
+    remote_available INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK(state IN ('LOCAL_ONLY', 'PENDING_UPLOAD', 'AVAILABLE', 'PENDING_DOWNLOAD', 'ERROR')),
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE aethon_entity_asset (
+    entity_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    role TEXT NOT NULL,
+    relative_path TEXT NOT NULL DEFAULT '',
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(entity_id, sha256, role, relative_path),
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(sha256) REFERENCES aethon_asset_manifest(sha256) ON DELETE RESTRICT
+);
+
+CREATE TABLE aethon_paired_core (
+    core_id TEXT NOT NULL PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    certificate_sha256 TEXT NOT NULL CHECK(length(certificate_sha256) = 64 AND certificate_sha256 NOT GLOB '*[^0-9a-f]*'),
+    capabilities_json TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    paired_at INTEGER NOT NULL,
+    last_seen_at INTEGER
+);
+CREATE UNIQUE INDEX aethon_paired_core_active_index
+ON aethon_paired_core(is_active) WHERE is_active = 1;
+
+CREATE TABLE aethon_entity_alias (
+    alias_entity_id TEXT NOT NULL PRIMARY KEY,
+    canonical_entity_id TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    FOREIGN KEY(canonical_entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE
+);

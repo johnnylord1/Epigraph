@@ -1,0 +1,13 @@
+-- lib 1.6 extensions carry an opaque per-source payload (e.g. Asura Scans stores the
+-- mangaSlug needed to rebuild the chapter page URL). Without it, getChapterUrl throws
+-- "Refresh Chapter List" and the reader cannot fetch pages, so the payload is persisted
+-- alongside the row like mihon does.
+ALTER TABLE mangas ADD COLUMN memo BLOB NOT NULL DEFAULT '{}';
+ALTER TABLE chapters ADD COLUMN memo BLOB NOT NULL DEFAULT '{}';
+
+-- SQLite stores the '{}' default with TEXT affinity for pre-existing rows; the requery
+-- driver's getBlob then returns corrupt bytes ("{} + garbage"). Rewrite as real BLOBs.
+-- SQLDelight's SQLite dialect accepts CAST here while rejecting the X'..' blob literal.
+-- CAST preserves the two UTF-8 bytes for the empty JSON object.
+UPDATE mangas SET memo = CAST('{}' AS BLOB) WHERE typeof(memo) = 'text';
+UPDATE chapters SET memo = CAST('{}' AS BLOB) WHERE typeof(memo) = 'text';

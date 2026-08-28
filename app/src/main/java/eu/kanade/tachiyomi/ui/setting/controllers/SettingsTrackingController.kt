@@ -138,6 +138,14 @@ class SettingsTrackingController :
                     ),
                 )
             }
+            trackPreference(trackManager.hardcover) {
+                // Hardcover uses an API token as the password field. The username field is
+                // only a local label (the API validates the token), so it may be the account
+                // name or any non-empty identifier.
+                val dialog = TrackLoginDialog(trackManager.hardcover, MR.strings.username)
+                dialog.targetController = this@SettingsTrackingController
+                dialog.showDialog(router)
+            }
         }
         preferenceCategory {
             titleRes = MR.strings.enhanced_services
@@ -193,6 +201,7 @@ class SettingsTrackingController :
         updatePreference(trackManager.bangumi)
         updatePreference(trackManager.novelUpdates)
         updatePreference(trackManager.novelList)
+        updatePreference(trackManager.hardcover)
     }
 
     private fun updatePreference(service: TrackService) {

@@ -46,6 +46,7 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
                 val isWebtoonView = ReadingModeType.isWebtoonType(mangaViewer)
                 updatePagedGroup(!isWebtoonView)
             }
+            automaticSplitPages.bindToPreference(preferences.automaticSplitsPage())
 
             invertDoublePages.bindToPreference(preferences.invertDoublePages())
 
@@ -87,6 +88,7 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
             binding.pagerNav,
             binding.pagerInvert,
             binding.pageLayout,
+            binding.automaticSplitPages,
             binding.landscapeZoom,
             binding.navigatePan,
         ).forEach { it.isVisible = show }
@@ -125,5 +127,6 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
             )
         }
         binding.invertDoublePages.isVisible = show && preferences.pageLayout().get() != PageLayout.SINGLE_PAGE.value
+        binding.automaticSplitPages.isVisible = show && preferences.pageLayout().get() == PageLayout.AUTOMATIC.value
     }
 }

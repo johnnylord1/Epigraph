@@ -28,6 +28,17 @@ class FloatingToolbar @JvmOverloads constructor(context: Context, attrs: Attribu
     private val defStyleRes = com.google.android.material.R.style.Widget_Material3_Toolbar
     private val subtitleTextAppearance: Int
 
+    /**
+     * Some single-surface datasets (such as the unified Books library) render their category in
+     * the list header and must never duplicate it inside the search pill. Keeping the rule in the
+     * pill prevents late controller/view-state restoration from bringing a stale subtitle back.
+     */
+    var allowSubtitle: Boolean = true
+        set(value) {
+            field = value
+            if (!value && ::toolbarsubTitle.isInitialized) setCustomSubtitle(null)
+        }
+
     val isSearchExpanded: Boolean
         get() {
             return searchItem?.isActionViewExpanded == true
@@ -108,8 +119,9 @@ class FloatingToolbar @JvmOverloads constructor(context: Context, attrs: Attribu
     }
 
     private fun setCustomSubtitle(title: CharSequence?) {
-        toolbarsubTitle.isVisible = !title.isNullOrBlank()
-        toolbarsubTitle.text = title
+        val effectiveTitle = title.takeIf { allowSubtitle }
+        toolbarsubTitle.isVisible = !effectiveTitle.isNullOrBlank()
+        toolbarsubTitle.text = effectiveTitle
         super.setSubtitle(null)
     }
 

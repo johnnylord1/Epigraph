@@ -38,6 +38,15 @@
         android:layout_height="match_parent"
         android:visibility="gone" />
 
+    <!-- Reader filters belong to the content plane.  Keeping brightness below the app bar,
+         navigation and chapter/settings sheet prevents a dimmed page from making the HUD and
+         settings controls look broken. -->
+    <View
+        android:id="@+id/brightness_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
     <eu.kanade.tachiyomi.ui.reader.ReaderNavigationOverlayView
         android:id="@+id/navigation_overlay"
         android:layout_width="match_parent"
@@ -74,12 +83,14 @@
         android:id="@+id/nav_layout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_gravity="top"
         android:layout_marginStart="6dp"
         android:layout_marginEnd="6dp"
         android:paddingBottom="6dp"
-        app:layout_anchorGravity="top"
-        android:layout_gravity="top"
-        app:layout_anchor="@id/chapters_sheet" >
+        android:clipChildren="false"
+        android:elevation="4dp"
+        app:layout_anchor="@id/chapters_sheet"
+        app:layout_anchorGravity="top" >
 
         <include layout="@layout/reader_nav"
             android:id="@+id/reader_nav" />
@@ -87,11 +98,5 @@
 
     <include layout="@layout/reader_chapters_sheet"
         android:id="@+id/chapters_sheet"/>
-
-    <View
-        android:id="@+id/brightness_overlay"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

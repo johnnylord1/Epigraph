@@ -33,8 +33,6 @@ class BasePreferences(private val preferenceStore: PreferenceStore) {
 
     fun hasShownOnboarding() = preferenceStore.getBoolean(Preference.appStateKey("onboarding_complete"), false)
 
-    fun crashReport() = preferenceStore.getBoolean("pref_crash_report", true)
-
     fun longTapLibraryNavBehaviour() = preferenceStore.getEnum("pref_library_long_tap", LibraryNavAction.UPDATE_LIBRARY)
 
     fun doubleTapLibraryNavBehaviour() = preferenceStore.getEnum("pref_library_double_tap", LibraryNavAction.FILTERS)

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.source.model
 
 import java.io.Serializable
+import kotlinx.serialization.json.JsonObject
 
 interface SChapter : Serializable {
 
@@ -15,6 +16,12 @@ interface SChapter : Serializable {
     var scanlator: String?
 
     var chapterLocked: Boolean
+
+    // lib 1.6: opaque per-source payload carried between the extension and the
+    // source-api (e.g. Asura Scans stores the mangaSlug needed to rebuild the
+    // chapter page URL). Persisted in the chapters table like mihon does.
+    // Non-null to match mihonapi — extensions index it directly (chapter.memo["key"]).
+    var memo: JsonObject
 
     var read: Boolean
         get() = false
@@ -31,6 +38,7 @@ interface SChapter : Serializable {
         chapter_number = other.chapter_number
         scanlator = other.scanlator
         chapterLocked = other.chapterLocked
+        memo = other.memo
     }
 
     companion object {

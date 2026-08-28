@@ -17,8 +17,7 @@
         android:paddingTop="0dp"
         android:paddingBottom="16dp">
 
-        <!-- Rendering mode spinner removed: novel reading is WebView-only after the
-             viewer consolidation. The native NovelViewer was deleted; no fallback exists. -->
+        <!-- The canonical novel reader is WebView-based; there is no second rendering engine. -->
 
         <!-- Per-novel orientation override. Mirrors the manga reader's rotation_mode spinner
              in reader_general_layout.xml: same spinner widget, same string-array, same
@@ -108,7 +107,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/text_align_left"
-                style="?attr/materialButtonOutlinedStyle"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -118,7 +117,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/text_align_center"
-                style="?attr/materialButtonOutlinedStyle"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -128,7 +127,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/text_align_right"
-                style="?attr/materialButtonOutlinedStyle"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -138,7 +137,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/text_align_justify"
-                style="?attr/materialButtonOutlinedStyle"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"

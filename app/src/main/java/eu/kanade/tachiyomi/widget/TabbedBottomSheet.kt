@@ -24,18 +24,38 @@ abstract class TabbedBottomSheetDialog(private val activity: Activity) :
     override fun createBinding(inflater: LayoutInflater) = TabbedBottomSheetBinding.inflate(inflater)
 
     open var offset = -1
+    protected open val initialTab: Int = 0
+
+    private var tabsInitialized = false
+
     init {
         val height = activity.window.decorView.rootWindowInsetsCompat!!.getInsets(systemBars()).top
         binding.pager.maxHeight = activity.window.decorView.height - height - 125.dpToPx
+    }
 
+    /**
+     * Tab views belong to subclasses, so they must not be queried from this superclass'
+     * constructor. Kotlin initializes subclass fields only after the superclass returns.
+     * Initializing the pager on start keeps the existing Epigraph API while making sheets whose
+     * tab list is held in a field (such as the local-book reader) safe.
+     */
+    private fun initializeTabs() {
+        if (tabsInitialized) return
         val adapter = TabbedSheetAdapter()
         binding.pager.offscreenPageLimit = 2
         binding.pager.adapter = adapter
         binding.tabs.setupWithViewPager(binding.pager)
+        binding.pager.currentItem = initialTab.coerceIn(0, (adapter.count - 1).coerceAtLeast(0))
+        tabsInitialized = true
     }
 
     override fun onStart() {
+        initializeTabs()
         super.onStart()
+        // Reader settings are an explicitly opened surface.  It starts expanded, and this is
+        // the only reader settings surface that accepts a downward drag to dismiss.  The
+        // collapsed reader HUDs use their own BottomSheetBehavior and keep dragging disabled.
+        sheetBehavior.isDraggable = true
         sheetBehavior.skipCollapsed = true
         sheetBehavior.expand()
         getTabViews().forEachIndexed { index, nestedScrollView ->
@@ -94,6 +114,18 @@ class MeasuredViewPager @JvmOverloads constructor(context: Context, attrs: Attri
             requestLayout()
         }
 
+    /**
+     * Embedded reader settings only need to measure the selected page.  Measuring every
+     * attached tab makes a short General tab inherit the height of a long Filters tab, leaving a
+     * large empty sheet on first open.  Dialog based sheets keep the historical behaviour when
+     * this is null.
+     */
+    var currentPageView: View? = null
+        set(value) {
+            field = value
+            requestLayout()
+        }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         var heightSpec = heightMeasureSpec
         super.onMeasure(widthMeasureSpec, heightSpec)
@@ -102,8 +134,10 @@ class MeasuredViewPager @JvmOverloads constructor(context: Context, attrs: Attri
             max(0, MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight),
             MeasureSpec.getMode(widthMeasureSpec),
         )
-        for (i in 0 until childCount) {
-            val child = getChildAt(i)
+        val children = currentPageView?.let { page ->
+            if (page.parent === this) listOf(page) else emptyList()
+        } ?: (0 until childCount).map(::getChildAt)
+        for (child in children) {
             child.measure(childWidthSpec, MeasureSpec.UNSPECIFIED)
             val h = child.measuredHeight
             if (h > height) height = h

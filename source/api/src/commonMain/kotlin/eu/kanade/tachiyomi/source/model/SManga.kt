@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.source.model
 
 import java.io.Serializable
+import kotlinx.serialization.json.JsonObject
 
 interface SManga : Serializable {
 
@@ -24,6 +25,12 @@ interface SManga : Serializable {
 
     var initialized: Boolean
 
+    // lib 1.6: opaque per-source payload carried between the extension and the
+    // source-api (e.g. extra page/reader metadata). Persisted in the mangas table
+    // like mihon does. Non-null to match mihonapi — extensions index it directly
+    // (manga.memo["key"]).
+    var memo: JsonObject
+
     fun getGenres(): List<String>? {
         if (genre.isNullOrBlank()) return null
         // Split on comma only, then trim — sources are inconsistent: some emit "A, B, C", others
@@ -42,6 +49,7 @@ interface SManga : Serializable {
         it.status = status
         it.thumbnail_url = thumbnail_url
         it.initialized = initialized
+        it.memo = memo
     }
 
     companion object {
@@ -70,6 +78,7 @@ fun SManga.copy(
     status: Int = this.status,
     thumbnail_url: String? = this.thumbnail_url,
     initialized: Boolean = this.initialized,
+    memo: JsonObject = this.memo,
 ) = SManga.create().also {
     it.url = url
     it.title = title
@@ -80,5 +89,6 @@ fun SManga.copy(
     it.status = status
     it.thumbnail_url = thumbnail_url
     it.initialized = initialized
+    it.memo = memo
 }
 // EXH <--

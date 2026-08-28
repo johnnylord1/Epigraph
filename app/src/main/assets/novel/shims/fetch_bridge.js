@@ -17,7 +17,7 @@
 var __userAgent = '';  // Set by Kotlin runtime
 
 // Mirror LNReader's makeInit defaults from src/lib/fetch.ts so plugin behavior matches the
-// reference exactly. Notable: we don't add 'Cache-Control: max-age=0' (Hayai used to, which
+// reference exactly. Notable: we don't add 'Cache-Control: max-age=0' (Epigraph used to, which
 // caused unnecessary origin hits on plugins that benefit from CDN caching). Accept-Encoding
 // is allowed in the default but stripped by the Kotlin bridge — OkHttp negotiates compression
 // itself, so leaking gzip framing into the JS layer would break body decoding.

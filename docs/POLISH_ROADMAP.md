@@ -1,6 +1,6 @@
-# Hayai Polish & Redesign Roadmap
+# Epigraph Polish & Redesign Roadmap
 
-Synthesized from a 13-area reconnaissance pass across Hayai + the reference clones (mihon, tsundoku, TachiyomiSY, yokai, lnreader). This is both the **morning briefing** and the **autonomous-overnight work order**.
+Synthesized from a 13-area reconnaissance pass across Epigraph's Android product (built on the Hayai foundation) + the reference clones (mihon, tsundoku, TachiyomiSY, yokai, lnreader). This is both the **morning briefing** and the **autonomous-overnight work order**.
 
 ## How to read this
 - Every distinct work item has a stable `id`, an **action** (PROCEED = implement now without user input; DEFER = needs a user repro/preference first), an effort (S/M/L/XL) and a risk.
@@ -9,7 +9,7 @@ Synthesized from a 13-area reconnaissance pass across Hayai + the reference clon
 
 ## House rules baked into every item
 - **Tsundoku data/logic ports are line-by-line / verbatim** — do not synthesize abstractions Tsundoku lacks. Keep verbatim key names for backup/migration compat.
-- **UI is composed from Hayai's own `yokai.presentation.component.*` + M3 Expressive**, never ported from Tsundoku UI primitives.
+- **UI is composed from Epigraph's own `yokai.presentation.component.*` + M3 Expressive**, never ported from Tsundoku UI primitives.
 - **Material 3 Expressive only** (`MaterialExpressiveTheme` + material3 1.5.0-alpha14, already on classpath) — never fall back to plain `MaterialTheme`.
 - **Fix the CORE invariant, not symptoms.** Name the broken invariant and restore it everywhere.
 - **No shortcuts / no TODOs / no silent fallbacks.** Implement every legacy feature point-by-point.
@@ -78,7 +78,7 @@ These unblock all redesign work; the theme swap must land before any Expressive-
 ### `theme-font` — Outfit font app-wide  (PROCEED · S · low)
 **What/why:** No app-wide custom font exists today; `Typography.kt` has only a `header` extension, so the whole UI is default Roboto. User wants Outfit everywhere.
 **Key files:** `app/src/main/java/yokai/presentation/theme/Typography.kt`; new `app/src/main/res/font/` (Outfit-Regular/Medium/SemiBold/Bold .ttf); `app/src/main/java/yokai/presentation/theme/Theme.kt:45`.
-**Approach:** Drop Outfit `.ttf` into `res/font/`, build a `FontFamily`, construct a `Typography()` applying it to all roles (keep default sizes/line-heights), pass to `MaterialExpressiveTheme(typography = …)`. No in-repo reference (neither mihon/tsundoku/yokai ship a UI font — their `Typography.kt` is identical to Hayai's); this is the standard Compose approach. Note the reader *content* font is separate (user-selectable in `ReaderPreferences`/`NovelWebViewViewer`) — leave it alone.
+**Approach:** Drop Outfit `.ttf` into `res/font/`, build a `FontFamily`, construct a `Typography()` applying it to all roles (keep default sizes/line-heights), pass to `MaterialExpressiveTheme(typography = …)`. No in-repo reference (neither mihon/tsundoku/yokai ship a UI font — their `Typography.kt` is identical to Epigraph's); this is the standard Compose approach. Note the reader *content* font is separate (user-selectable in `ReaderPreferences`/`NovelWebViewViewer`) — leave it alone.
 **Deps:** none. **Parallel:** with nothing (shares files with `theme-expressive`). **Verify:** every Compose surface renders Outfit; reader content font unaffected.
 
 ### `theme-expressive` — Global MaterialExpressiveTheme swap  (PROCEED · M · med)
@@ -98,8 +98,8 @@ These three all edit `NovelWebViewViewer.kt` (+ adjacent reader/viewmodel files)
 
 #### `novel-autoscroll-sel` — Auto-scroll pauses while text selected  (PROCEED · S · low)
 **What/why:** The in-WebView rAF auto-scroll loop pauses only while a finger is physically down (ACTION_DOWN). A completed selection leaves no finger down → scrolling continues, WebView re-lays-out selection handles + highlight rects every frame → jank. High confidence, no repro needed.
-**Key files:** `NovelWebViewViewer.kt:3439-3467` (`installAutoScrollScript`/`__hayaiAutoStep`), `:655-665` (touch pause/resume), `:1116-1118` (existing sentence-tap selection guard to mirror).
-**Approach:** In `__hayaiAutoStep`, early-return (without stopping the loop) while `window.getSelection().toString().length > 0`, mirroring the sentence-tap guard. Keep Kotlin `isAutoScrolling` intact so it self-resumes when the selection clears. Optionally call `removeAllRanges()` on chapter-nav like tsundoku (`NovelWebViewViewer.kt:1292,1322`).
+**Key files:** `NovelWebViewViewer.kt:3439-3467` (`installAutoScrollScript`/`__epigraphAutoStep`), `:655-665` (touch pause/resume), `:1116-1118` (existing sentence-tap selection guard to mirror).
+**Approach:** In `__epigraphAutoStep`, early-return (without stopping the loop) while `window.getSelection().toString().length > 0`, mirroring the sentence-tap guard. Keep Kotlin `isAutoScrolling` intact so it self-resumes when the selection clears. Optionally call `removeAllRanges()` on chapter-nav like tsundoku (`NovelWebViewViewer.kt:1292,1322`).
 **Verify:** highlight text mid-auto-scroll → scrolling stops; dismiss selection → resumes.
 
 #### `novel-skipmsg` — Reason-aware chapter-skip messaging  (PROCEED · M · med)
@@ -120,7 +120,7 @@ These three all edit `NovelWebViewViewer.kt` (+ adjacent reader/viewmodel files)
 #### `tts-stop` — In-reader TTS Stop affordance  (PROCEED · M · med)
 **What/why:** Stop exists at controller/service/notification/lockscreen (all functional), but the in-reader UI collapsed to ONE icon whose only stop affordance is an undiscoverable long-press. `controller.toggle()` has no Speaking→Stop arm. User: "no way to stop." Discoverability gap, high confidence.
 **Key files:** `hayai/novel/reader/bars/NovelReaderActionBar.kt:145-167,169-171`; `ReaderActivity.kt:1481-1497`; `NovelTtsController.kt:94-101` (`toggle()`).
-**Approach (preferred, matches tsundoku):** Expand `NovelReaderActionBar` to render an inline TTS controls row when active — `[prev-para, play/pause, stop, next-para, read-from-here]` — modeled on tsundoku `NovelReaderAppBars.kt` `NovelTtsControlsOverlay` (`:611-657`). Wire stop → `novelWeb.stopTts()` + `stopBackgroundTtsIfRunning()`. Add a `Speaking→Stop` variant (or `toggleStop()`) to the controller. Keep notification/lockscreen stop as-is. Build the row from Hayai's own Compose components + M3 Expressive (not tsundoku primitives).
+**Approach (preferred, matches tsundoku):** Expand `NovelReaderActionBar` to render an inline TTS controls row when active — `[prev-para, play/pause, stop, next-para, read-from-here]` — modeled on tsundoku `NovelReaderAppBars.kt` `NovelTtsControlsOverlay` (`:611-657`). Wire stop → `novelWeb.stopTts()` + `stopBackgroundTtsIfRunning()`. Add a `Speaking→Stop` variant (or `toggleStop()`) to the controller. Keep notification/lockscreen stop as-is. Build the row from Epigraph's own Compose components + M3 Expressive (not tsundoku primitives).
 **Verify:** during playback an explicit Stop button is one tap away and stops the engine + clears highlight.
 
 #### `tts-tapstart` — Tap-to-start-from-Idle gate fix  (PROCEED · S · med)
@@ -199,13 +199,13 @@ All PROCEED, all in `data/`/presenter layer (no UI redesign). `db-n1`, `db-pagin
 # Phase 3 — NET-NEW FEATURES [parallel — each lands in its own area]
 
 ### `inapp-browser` — Partial Custom Tab sheet for selection actions  (PROCEED · M · low)
-**What/why:** Selecting text → Translate/Web Search/Define fires external `ACTION_PROCESS_TEXT`/`ACTION_WEB_SEARCH` intents that context-switch out of Hayai. User wants results in an in-app sheet using their browser engine. Infra already present: `androidx.browser:1.8.0` on classpath, `Context.openInBrowser()` wraps `CustomTabsIntent`.
+**What/why:** Selecting text → Translate/Web Search/Define fires external `ACTION_PROCESS_TEXT`/`ACTION_WEB_SEARCH` intents that context-switch out of Epigraph. User wants results in an in-app sheet using their browser engine. Infra already present: `androidx.browser:1.8.0` on classpath, `Context.openInBrowser()` wraps `CustomTabsIntent`.
 **Key files:** `util/system/ContextExtensions.kt:263,332`; `NovelWebViewViewer.kt:1518,1573,1632` (the three `launch*Intent` bodies to REPLACE), `:1491,1548,1607` (selection readers to KEEP), `:386-576` (action-mode dispatch), `:3804` (menu IDs); `gradle/androidx.versions.toml:14`.
 **Approach (primary = Custom Tabs, matches "user browser engine"):** Add `openInBrowserSheet(url, heightPx)` to `ContextExtensions.kt` building a `CustomTabsIntent` with `setInitialActivityHeightPx(heightPx, ACTIVITY_HEIGHT_ADJUSTABLE)`, themed toolbar color, corner radius (per developer.chrome.com partial-custom-tabs guide). Replace the three `launch*Intent` bodies so each builds a URL and calls `activity.openInBrowserSheet(url)`: Define → define search URL; Translate → translate URL; Web Search → search URL. Keep the async `getSelection()` readers unchanged. Delete the external-intent bodies + their `*_no_handler` strings. No reference clone implements partial tabs (all use full Custom Tabs) — this follows the Chrome guide.
 **Deps:** none. **Verify:** selecting text → Translate opens a bottom-sheet Custom Tab in the default browser; app is not backgrounded. (`inapp-identify` and the embedded-WebView fallback are DEFER — see questions.)
 
 ### `md-multiselect` — Chapter multi-select (mihon model)  (PROCEED · L · med)
-**What/why:** Confirmed feature gap — Hayai has only transient 2-tap RangeMode + bulk menu items; no persistent checkbox multi-select, no select-all/invert, no multi-action contextual bar. The selection-visual primitive already exists (`ChapterHolder.bind:99` renders CHECKED when `adapter.isSelected()`), only used transiently. High confidence, well-referenced.
+**What/why:** Confirmed feature gap — Epigraph has only transient 2-tap RangeMode + bulk menu items; no persistent checkbox multi-select, no select-all/invert, no multi-action contextual bar. The selection-visual primitive already exists (`ChapterHolder.bind:99` renders CHECKED when `adapter.isSelected()`), only used transiently. High confidence, well-referenced.
 **Key files:** `ui/manga/MangaDetailsController.kt:1002-1099,1601-1616,1967-2022` (range action mode), `ui/manga/chapter/ChapterHolder.kt:99-104`, `ui/manga/MangaDetailsAdapter.kt`, `res/menu/manga_details.xml`.
 **Approach (port mihon selection model onto FlexibleAdapter):** FlexibleAdapter already supports `SelectableAdapter.MULTI`. Replace the long-press `MaterialMenuSheet` with: long-press = enter selection mode + select that row; tap-in-mode = toggle; long-press a second row = select in-between range (mihon `MangaScreenModel.toggleSelection(item, selected, fromLongPress)` `:961` + `selectedPositions` trick). Add a contextual ActionMode with download/delete/bookmark/mark-read/mark-unread + overflow select-all (`toggleAllSelection` `:1024`)/invert (`invertSelection` `:1036`) — mirror `MangaBottomActionMenu.kt`'s action set. Update `ChapterHolder` to show activated state in selection mode. Whether this fully replaces RangeMode is a DEFER decision; default to **coexist** (keep custom-range menu entries) unless told otherwise.
 **Deps:** none. **Verify:** long-press → contextual bar with count; range-select via second long-press; select-all/invert work; each bulk action applies to the set.
@@ -213,7 +213,7 @@ All PROCEED, all in `data/`/presenter layer (no UI redesign). `db-n1`, `db-pagin
 ### `smart-update` — FetchInterval port + smart-skip restriction  (PROCEED · L · med)
 **What/why:** Never existed in the Yokai fork base. No per-manga fetch-interval learning, no predicted next-release, no "skip outside release window." Confirmed by grep (`next_update`/`fetch_interval`/`calculateInterval` match nothing). mihon/SY implement it fully.
 **Key files:** `data/library/LibraryUpdateJob.kt:477-518,711-742`; `data/.../sqldelight/tachiyomi/data/mangas.sq:3-23,65-85`; `domain/.../manga/models/MangaUpdate.kt`; `yokai/data/manga/MangaRepositoryImpl.kt:65-92`; `yokai/domain/manga/interactor/UpdateManga.kt`; `util/chapter/ChapterSourceSync.kt`; `data/database/models/Manga.kt`; `data/preference/PreferencesHelper.kt:215-217`; `ui/setting/controllers/SettingsLibraryController.kt:150-205`.
-**Approach (port mihon line-by-line into data/domain):** (1) New migration `33.sqm` adding `next_update INTEGER` + `fetch_interval INTEGER DEFAULT 0` to `mangas`; add binds to the `update:` query (mihon coalesce pattern). (2) Add fields to `Manga`/`MangaImpl`/`copyFrom`/mapper + `MangaUpdate` + `MangaRepositoryImpl.partialUpdate()`. (3) Copy `FetchInterval.kt` **verbatim** (mihon/SY identical) into a Hayai domain package, adapting imports to `yokai.domain` models + `GetChapter`; add `awaitUpdateFetchInterval()` to `UpdateManga`. (4) In `ChapterSourceSync.syncChaptersWithSource` call `awaitUpdateFetchInterval` after computing new chapters (mihon `SyncChaptersWithSource.kt:143`); in `LibraryUpdateJob.filterMangaToUpdate` add a `MANGA_OUTSIDE_RELEASE_PERIOD` branch skipping manga whose `next_update > upperBound` via `getWindow()`. (5) Add the `MANGA_OUTSIDE_RELEASE_PERIOD` pref constant + checkbox in `SettingsLibraryController`. (6) Add the 7 mihon strings verbatim. Novels covered automatically (same `LibraryUpdateJob` path). **Ship as opt-in** restriction so existing fixed-interval behavior is unchanged unless enabled (default-on vs opt-in is a DEFER question; default to opt-in to preserve behavior).
+**Approach (port mihon line-by-line into data/domain):** (1) New migration `33.sqm` adding `next_update INTEGER` + `fetch_interval INTEGER DEFAULT 0` to `mangas`; add binds to the `update:` query (mihon coalesce pattern). (2) Add fields to `Manga`/`MangaImpl`/`copyFrom`/mapper + `MangaUpdate` + `MangaRepositoryImpl.partialUpdate()`. (3) Copy `FetchInterval.kt` **verbatim** (mihon/SY identical) into an Epigraph domain package, adapting imports to `yokai.domain` models + `GetChapter`; add `awaitUpdateFetchInterval()` to `UpdateManga`. (4) In `ChapterSourceSync.syncChaptersWithSource` call `awaitUpdateFetchInterval` after computing new chapters (mihon `SyncChaptersWithSource.kt:143`); in `LibraryUpdateJob.filterMangaToUpdate` add a `MANGA_OUTSIDE_RELEASE_PERIOD` branch skipping manga whose `next_update > upperBound` via `getWindow()`. (5) Add the `MANGA_OUTSIDE_RELEASE_PERIOD` pref constant + checkbox in `SettingsLibraryController`. (6) Add the 7 mihon strings verbatim. Novels covered automatically (same `LibraryUpdateJob` path). **Ship as opt-in** restriction so existing fixed-interval behavior is unchanged unless enabled (default-on vs opt-in is a DEFER question; default to opt-in to preserve behavior).
 **Deps:** DB migration. **Verify:** with the restriction on, a manga whose predicted next-update is in the future is skipped; `fetch_interval` is recomputed after a chapter sync.
 
 ### Novel parity reader-config ports — `novel-window`, `novel-brightness`, `novel-thresholds`, `novel-csspriority` [batch into ONE iteration]
@@ -227,7 +227,7 @@ Each adds one pref to `ReaderPreferences.kt` (verbatim tsundoku key names) + wir
 
 #### `novel-brightness` — Reader custom brightness  (PROCEED · S · low)
 **Key files:** `ReaderPreferences.kt`, `ReaderActivity.kt` (apply when a novel viewer is active); tsundoku `ReaderPreferences.kt:270-273`, `NovelPage.kt:495-509`.
-**Approach:** Add `novelCustomBrightness`/`novelCustomBrightnessValue` (verbatim); apply via `WindowManager.LayoutParams.screenBrightness` when a novel viewer is active (reuse Hayai's manga equivalent if present). **Verify:** brightness slider changes screen brightness live in the novel reader.
+**Approach:** Add `novelCustomBrightness`/`novelCustomBrightnessValue` (verbatim); apply via `WindowManager.LayoutParams.screenBrightness` when a novel viewer is active (reuse Epigraph's manga equivalent if present). **Verify:** brightness slider changes screen brightness live in the novel reader.
 
 #### `novel-thresholds` — Auto-load + mark-read thresholds  (PROCEED · M · med)
 **Key files:** `ReaderPreferences.kt`, `NovelWebViewViewer.kt` (`injectScrollTracking` hardcoded `AUTO_LOAD_NEXT_THRESHOLD`/98%); tsundoku `ReaderPreferences.kt:325,328,331`.

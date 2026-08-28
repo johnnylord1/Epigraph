@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.widget.TabbedBottomSheetDialog
 class TabbedRecentsOptionsSheet(val controller: RecentsController, @IntRange(from = 0, to = 2) startingTab: Int) :
     TabbedBottomSheetDialog(controller.activity!!) {
 
+    override val initialTab: Int = startingTab
+
     private val generalView = inflate(controller.activity!!, R.layout.recents_general_view, null) as RecentsGeneralView
     private val historyView = inflate(controller.activity!!, R.layout.recents_history_view, null) as RecentsHistoryView
     private val updatesView = inflate(controller.activity!!, R.layout.recents_updates_view, null) as RecentsUpdatesView
@@ -33,8 +35,6 @@ class TabbedRecentsOptionsSheet(val controller: RecentsController, @IntRange(fro
         generalView.controller = controller
         historyView.controller = controller
         updatesView.controller = controller
-
-        binding.tabs.getTabAt(startingTab)?.select()
     }
 
     override fun dismiss() {

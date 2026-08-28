@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.awaitSingle
 import java.net.URI
 import java.net.URISyntaxException
@@ -224,9 +225,8 @@ abstract class HttpSource : CatalogueSource, KoinComponent {
      * @param manga the manga to update.
      * @return the updated manga.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getMangaDetails(manga: SManga): SManga {
-        return fetchMangaDetails(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getMangaDetails"))
@@ -262,9 +262,32 @@ abstract class HttpSource : CatalogueSource, KoinComponent {
      * @param manga the manga to update.
      * @return the chapters for the manga.
      */
-    @Suppress("DEPRECATION")
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return fetchChapterList(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+    }
+
+    /**
+     * Combined manga update (details and/or chapters).
+     *
+     * lib 1.6 sources override this directly. The default implementation keeps the
+     * legacy per-call API working for older extensions.
+     *
+     * @since extensions-lib 1.6
+     * @param manga the manga to fetch updates for.
+     * @param chapters the chapters already known for the manga.
+     * @param fetchDetails whether to fetch updated manga details.
+     * @param fetchChapters whether to fetch the available chapters.
+     */
+    @Suppress("DEPRECATION")
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
+        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getChapterList"))

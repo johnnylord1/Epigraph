@@ -78,6 +78,16 @@ object PreferenceKeys {
 
     const val readerBottomButtons = "reader_bottom_buttons"
 
+    const val readerVerticalSeekbarModes = "reader_vertical_seekbar_modes"
+
+    const val readerVerticalSeekbarDockLeft = "reader_vertical_seekbar_dock_left"
+
+    const val readerVerticalSeekbarHeightPercent = "reader_vertical_seekbar_height_percent"
+
+    const val novelVerticalSeekbar = "novel_vertical_seekbar"
+
+    const val bookVerticalSeekbarFormats = "book_vertical_seekbar_formats"
+
     const val showNavigationOverlayNewUser = "reader_navigation_overlay_new_user"
     const val showNavigationOverlayNewUserWebtoon = "reader_navigation_overlay_new_user_webtoon"
 

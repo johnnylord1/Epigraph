@@ -23,6 +23,6 @@
         android:elevation="0dp"
         android:stateListAnimator="@null">
 
-        <include layout="@layout/hayai_app_bar_contents" />
+        <include layout="@layout/epigraph_app_bar_contents" />
     </eu.kanade.tachiyomi.ui.base.ExpandedAppBarLayout>
 </FrameLayout>

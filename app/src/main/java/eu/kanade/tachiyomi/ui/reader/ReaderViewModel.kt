@@ -56,8 +56,10 @@ import eu.kanade.tachiyomi.util.system.launchNonCancellableIO
 import eu.kanade.tachiyomi.util.system.localeContext
 import eu.kanade.tachiyomi.util.system.withIOContext
 import eu.kanade.tachiyomi.util.system.withUIContext
+import epigraph.sync.EpigraphReaderProgressRouter
 import java.util.Date
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -120,6 +122,7 @@ class ReaderViewModel(
     private val getTrack: GetTrack by injectLazy()
     // Lazy because we only need it for novel-specific paths (orientation default, etc.).
     private val readerPreferences: yokai.domain.ui.settings.ReaderPreferences by injectLazy()
+    private val epigraphProgressRouter: EpigraphReaderProgressRouter by injectLazy()
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
@@ -163,6 +166,9 @@ class ReaderViewModel(
      * a chapter the user never scrolled to completion this session.
      */
     private val sessionReachedThreshold: MutableMap<Long, Boolean> = mutableMapOf()
+
+    /** Latest exact DOM anchor per chapter; percentage remains the legacy fallback. */
+    private val novelTextPositionByChapterId: MutableMap<Long, NovelTextPosition> = ConcurrentHashMap()
 
     /**
      * The chapter loader for the loaded manga. It'll be null until [manga] is set.
@@ -280,7 +286,12 @@ class ReaderViewModel(
                     // context. The old lazy runBlocking wrapper hid a synchronous database wait
                     // and made correctness depend on this warm-up line running first.
                     unfilteredChapterList = getChapter.awaitAll(manga, filterScanlators = false)
-                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id }, page)
+                    // A failed Core/source request must not leave the reader's loading indicator
+                    // spinning forever. The activity turns this failure into an inline retry
+                    // surface, while cached page lists/images still complete immediately.
+                    kotlinx.coroutines.withTimeout(INITIAL_CHAPTER_LOAD_TIMEOUT_MS) {
+                        loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id }, page)
+                    }
                     Result.success(true)
                 } else {
                     // Unlikely but okay
@@ -290,9 +301,29 @@ class ReaderViewModel(
                 if (e is CancellationException) {
                     throw e
                 }
+                Logger.e(e) { "ReaderViewModel.init: initial chapter load failed" }
+                loader?.recycle()
+                loader = null
+                // Keep the ViewModel retryable. The manga flow may already have created a
+                // viewer before page loading failed; clearing the state lets the next retry
+                // resolve the source and rebuild that viewer instead of short-circuiting at
+                // needsInit().
+                state.value.viewerChapters?.unref()
+                mutableState.update { it.copy(manga = null, viewerChapters = null) }
                 Result.failure(e)
             }
         }
+    }
+
+    /**
+     * Clears a failed initial-load state before the activity starts a user-requested retry.
+     * This is intentionally local to the reader and does not enqueue any sync mutation.
+     */
+    fun resetInitialLoad() {
+        loader?.recycle()
+        loader = null
+        state.value.viewerChapters?.unref()
+        mutableState.update { it.copy(manga = null, viewerChapters = null) }
     }
 
     private suspend fun getChapterList(selectedChapterId: Long = chapterId): List<ReaderChapter> {
@@ -526,22 +557,77 @@ class ReaderViewModel(
 
     fun toggleRead(chapter: Chapter) {
         chapter.read = !chapter.read
-        val lastPageToSave = if (chapter.read) chapter.last_page_read.toLong() else 0L
         viewModelScope.launchNonCancellableIO {
-            updateChapter.await(
-                ChapterUpdate(
-                    id = chapter.id!!,
-                    read = chapter.read,
-                    bookmark = chapter.bookmark,
-                    lastPageRead = lastPageToSave,
-                    pagesLeft = if (chapter.read) 0 else chapter.pages_left.toLong()
-                )
-            )
+            if (!chapter.read) chapter.last_page_read = 0
+            if (chapter.read) chapter.pages_left = 0
+            persistChapterState(chapter, emitReadState = true)
         }
     }
     fun toggleBookmark(chapter: Chapter) {
         chapter.bookmark = !chapter.bookmark
         viewModelScope.launchNonCancellableIO {
+            persistChapterState(chapter, emitBookmarkState = true)
+        }
+    }
+
+    private suspend fun persistChapterState(
+        chapter: Chapter,
+        pageCountOverride: Int? = null,
+        sourcePageIndexOverride: Int? = null,
+        sourcePageCountOverride: Int? = null,
+        novelTextPosition: NovelTextPosition? = null,
+        emitReadState: Boolean = false,
+        emitBookmarkState: Boolean = false,
+    ) {
+        val localMangaId = manga?.id
+        val localChapterId = chapter.id
+        val resolvedNovelTextPosition = novelTextPosition
+            ?: localChapterId?.let(novelTextPositionByChapterId::get)
+        val emitted = if (localMangaId != null && localChapterId != null) {
+            try {
+                if (source?.isNovelSource() == true) {
+                    epigraphProgressRouter.setNovelProgress(
+                        localMangaId = localMangaId,
+                        localChapterId = localChapterId,
+                        progression = (chapter.last_page_read / 100.0).coerceIn(0.0, 1.0),
+                        blockIndex = resolvedNovelTextPosition?.blockIndex ?: 0,
+                        textOffset = resolvedNovelTextPosition?.textOffset ?: 0,
+                        read = chapter.read.takeIf { emitReadState },
+                        bookmarked = chapter.bookmark.takeIf { emitBookmarkState },
+                        lastPageRead = chapter.last_page_read.toLong(),
+                        pagesLeft = chapter.pages_left.toLong(),
+                    ).emitted
+                } else {
+                    val localPageCount = pageCountOverride ?: (chapter.last_page_read + chapter.pages_left)
+                        .takeIf { it > 0 }
+                    val localPageIndex = chapter.last_page_read.coerceAtLeast(0)
+                    val pageIndex = sourcePageIndexOverride ?: localPageIndex
+                    val pageCount = sourcePageCountOverride ?: localPageCount
+                    val progression = when {
+                        chapter.read -> 1.0
+                        pageCount != null -> ((pageIndex + 1).toDouble() / pageCount).coerceIn(0.0, 1.0)
+                        else -> 0.0
+                    }
+                    epigraphProgressRouter.setComicProgress(
+                        localMangaId = localMangaId,
+                        localChapterId = localChapterId,
+                        pageIndex = pageIndex,
+                        pageCount = pageCount,
+                        progression = progression,
+                        read = chapter.read.takeIf { emitReadState },
+                        bookmarked = chapter.bookmark.takeIf { emitBookmarkState },
+                        lastPageRead = localPageIndex.toLong(),
+                        pagesLeft = chapter.pages_left.toLong(),
+                    ).emitted
+                }
+            } catch (error: Exception) {
+                Logger.w(error) { "Unable to persist Epigraph reader progress atomically" }
+                false
+            }
+        } else {
+            false
+        }
+        if (!emitted) {
             updateChapter.await(
                 ChapterUpdate(
                     id = chapter.id!!,
@@ -549,7 +635,7 @@ class ReaderViewModel(
                     bookmark = chapter.bookmark,
                     lastPageRead = chapter.last_page_read.toLong(),
                     pagesLeft = chapter.pages_left.toLong(),
-                )
+                ),
             )
         }
     }
@@ -692,10 +778,20 @@ class ReaderViewModel(
         }
     }
 
-    fun onNovelScrollProgress(page: ReaderPage) {
+    fun onNovelScrollProgress(page: ReaderPage, textPosition: NovelTextPosition? = null) {
         if (source?.isNovelSource() != true) return
+        val chapterId = page.chapter.chapter.id
+        if (chapterId != null && textPosition != null) {
+            novelTextPositionByChapterId[chapterId] = textPosition
+        }
         viewModelScope.launchNonCancellableIO {
-            saveChapterProgress(page.chapter, page, hasExtraPage = false, sessionScrollAdvance = true)
+            saveChapterProgress(
+                page.chapter,
+                page,
+                hasExtraPage = false,
+                sessionScrollAdvance = true,
+                novelTextPosition = textPosition,
+            )
         }
     }
 
@@ -704,10 +800,20 @@ class ReaderViewModel(
      * percent without ever flipping `chapter.read = true`. The `sessionScrollAdvance=false`
      * flag short-circuits the mark-read gate inside `saveChapterProgress`.
      */
-    fun onNovelTeardownProgress(page: ReaderPage) {
+    fun onNovelTeardownProgress(page: ReaderPage, textPosition: NovelTextPosition? = null) {
         if (source?.isNovelSource() != true) return
+        val chapterId = page.chapter.chapter.id
+        if (chapterId != null && textPosition != null) {
+            novelTextPositionByChapterId[chapterId] = textPosition
+        }
         viewModelScope.launchNonCancellableIO {
-            saveChapterProgress(page.chapter, page, hasExtraPage = false, sessionScrollAdvance = false)
+            saveChapterProgress(
+                page.chapter,
+                page,
+                hasExtraPage = false,
+                sessionScrollAdvance = false,
+                novelTextPosition = textPosition,
+            )
         }
     }
 
@@ -778,15 +884,8 @@ class ReaderViewModel(
         val id = readerChapter.chapter.id ?: return
         Logger.d { "markChapterReadOnTransition chapter=$id (forward transition)" }
         onChapterReadComplete(readerChapter)
-        updateChapter.await(
-            ChapterUpdate(
-                id = id,
-                read = true,
-                bookmark = readerChapter.chapter.bookmark,
-                lastPageRead = readerChapter.chapter.last_page_read.toLong(),
-                pagesLeft = 0L,
-            )
-        )
+        readerChapter.chapter.pages_left = 0
+        persistChapterState(readerChapter.chapter, emitReadState = true)
     }
 
     /**
@@ -950,6 +1049,7 @@ class ReaderViewModel(
         page: ReaderPage,
         hasExtraPage: Boolean,
         sessionScrollAdvance: Boolean = true,
+        novelTextPosition: NovelTextPosition? = null,
     ) {
         val isTextSource = source?.isNovelSource() == true
         val chapterIdLog = readerChapter.chapter.id
@@ -1017,16 +1117,32 @@ class ReaderViewModel(
                 }
             }
 
-            updateChapter.await(
-                ChapterUpdate(
-                    id = readerChapter.chapter.id!!,
-                    read = readerChapter.chapter.read,
-                    bookmark = readerChapter.chapter.bookmark,
-                    lastPageRead = readerChapter.chapter.last_page_read.toLong(),
-                    pagesLeft = readerChapter.chapter.pages_left.toLong(),
-                )
+            persistChapterState(
+                readerChapter.chapter,
+                pageCountOverride = if (isTextSource) null else readerChapter.pages?.size?.takeIf { it > 0 },
+                sourcePageIndexOverride = if (isTextSource) null else page.sourcePageIndex,
+                sourcePageCountOverride = if (isTextSource) null else page.sourcePageCount,
+                novelTextPosition = if (isTextSource) {
+                    novelTextPosition ?: readerChapter.chapter.id?.let(novelTextPositionByChapterId::get)
+                } else {
+                    null
+                },
+                emitReadState = !readBefore && readerChapter.chapter.read,
             )
         }
+    }
+
+    /** Resolves an exact synced novel anchor. Null deliberately means percentage fallback. */
+    suspend fun getNovelRestoreTextPosition(localChapterId: Long): NovelTextPosition? {
+        val localMangaId = manga?.id ?: return null
+        val locator = epigraphProgressRouter.getNovelLocator(localMangaId, localChapterId) ?: return null
+        val position = NovelTextPosition(locator.blockIndex, locator.textOffset)
+        return position.takeIf { it.isExactAnchor(locator.progression) }
+            ?.also { novelTextPositionByChapterId[localChapterId] = it }
+    }
+
+    fun rememberNovelTextPosition(localChapterId: Long, position: NovelTextPosition) {
+        if (localChapterId > 0) novelTextPositionByChapterId[localChapterId] = position
     }
 
     private suspend fun onChapterReadComplete(readerChapter: ReaderChapter) {
@@ -1541,6 +1657,7 @@ class ReaderViewModel(
          * boot; 5s covers ~7 installed plugins comfortably.
          */
         private const val SOURCE_AWAIT_TIMEOUT_MS = 5_000L
+        private const val INITIAL_CHAPTER_LOAD_TIMEOUT_MS = 45_000L
     }
 }
 

@@ -34,7 +34,7 @@ object ReducedMotion {
     /**
      * Synchronous read suitable for any thread. Android's system-wide "Remove animations"
      * setting is part of the contract too; app motion must never override that accessibility
-     * choice just because Hayai's own preference is off.
+     * choice just because Epigraph's own preference is off.
      */
     fun isEnabled(): Boolean = pref.get() ||
         (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled())

@@ -77,9 +77,9 @@ class RecommendationSearchHelper(val context: Context) {
         try {
             // Take wake + wifi locks
             ignore { wakeLock?.release() }
-            wakeLock = ignore { context.createPartialWakeLock("hayai:RecommendationSearchWakelock") }
+            wakeLock = ignore { context.createPartialWakeLock("epigraph:RecommendationSearchWakelock") }
             ignore { wifiLock?.release() }
-            wifiLock = ignore { context.createWifiLock("hayai:RecommendationSearchWifiLock") }
+            wifiLock = ignore { context.createWifiLock("epigraph:RecommendationSearchWifiLock") }
 
             // Map of results grouped by recommendation source
             val resultsMap = java.util.Collections.synchronizedMap(mutableMapOf<String, SearchResults>())

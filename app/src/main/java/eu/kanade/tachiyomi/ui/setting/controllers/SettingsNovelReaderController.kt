@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.ui.setting.bindTo
 import eu.kanade.tachiyomi.ui.setting.defaultValue
 import eu.kanade.tachiyomi.ui.setting.editTextPreference
 import eu.kanade.tachiyomi.ui.setting.infoPreference
+import eu.kanade.tachiyomi.ui.setting.intListPreference
 import eu.kanade.tachiyomi.ui.setting.listPreference
 import eu.kanade.tachiyomi.ui.setting.multiSelectListPreferenceMat
 import eu.kanade.tachiyomi.ui.setting.onChange
@@ -15,6 +16,8 @@ import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.seekBarPreference
 import eu.kanade.tachiyomi.ui.setting.switchPreference
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.data.translation.TranslationEngineManager
 import tachiyomi.domain.translation.model.LanguageCodes
@@ -61,8 +64,8 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
         preferenceCategory {
             titleRes = MR.strings.display
 
-            // Rendering mode toggle removed: novel reading is WebView-only after the
-            // viewer consolidation. The native NovelViewer was deleted; no fallback exists.
+            // Novel reading has one canonical WebView engine, so no rendering-mode toggle is
+            // exposed here.
 
             listPreference(activity) {
                 bindTo(readerPreferences.novelTheme)
@@ -178,25 +181,64 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
                 titleRes = MR.strings.novel_show_progress_slider
             }
 
-            listPreference(activity) {
-                bindTo(readerPreferences.novelProgressSliderPosition)
-                titleRes = MR.strings.novel_progress_slider_position
-                entries = listOf(
-                    context.getString(MR.strings.novel_progress_slider_position_top_left),
-                    context.getString(MR.strings.novel_progress_slider_position_top_center),
-                    context.getString(MR.strings.novel_progress_slider_position_top_right),
-                    context.getString(MR.strings.novel_progress_slider_position_center_left),
-                    context.getString(MR.strings.novel_progress_slider_position_center_center),
-                    context.getString(MR.strings.novel_progress_slider_position_center_right),
-                    context.getString(MR.strings.novel_progress_slider_position_bottom_left),
-                    context.getString(MR.strings.novel_progress_slider_position_bottom_center),
-                    context.getString(MR.strings.novel_progress_slider_position_bottom_right),
-                )
-                entryValues = listOf(
-                    "top-left", "top-center", "top-right",
-                    "center-left", "center-center", "center-right",
-                    "bottom-left", "bottom-center", "bottom-right",
-                )
+            switchPreference {
+                key = Keys.novelVerticalSeekbar
+                title = context.getString(R.string.reader_vertical_progress_modes)
+                defaultValue = true
+            }
+            seekBarPreference {
+                key = Keys.readerVerticalSeekbarHeightPercent
+                title = context.getString(R.string.reader_vertical_progress_height)
+                min = 60
+                max = 100
+                seekBarIncrement = 5
+                showSeekBarValue = true
+                setDefaultValue(65)
+            }
+            switchPreference {
+                key = Keys.readerVerticalSeekbarDockLeft
+                title = context.getString(R.string.reader_vertical_progress_place_left)
+                defaultValue = false
+            }
+        }
+
+        preferenceCategory {
+            title = context.getString(MR.strings.custom_filter)
+
+            switchPreference {
+                bindTo(readerPreferences.novelColorFilter)
+                title = context.getString(MR.strings.use_custom_color_filter)
+            }
+            novelColorChannel(readerPreferences.novelColorFilterValue, "A", 24)
+            novelColorChannel(readerPreferences.novelColorFilterValue, "R", 16)
+            novelColorChannel(readerPreferences.novelColorFilterValue, "G", 8)
+            novelColorChannel(readerPreferences.novelColorFilterValue, "B", 0)
+            intListPreference(activity) {
+                isPersistent = false
+                title = context.getString(MR.strings.color_filter_blend_mode)
+                entries = context.resources.getStringArray(R.array.color_filter_modes).toList()
+                entryRange = context.resources.getStringArray(R.array.color_filter_modes).indices
+                defaultValue = readerPreferences.novelColorFilterMode.get()
+                onChange { value -> readerPreferences.novelColorFilterMode.set(value as Int); true }
+            }
+            switchPreference {
+                bindTo(readerPreferences.novelCustomBrightness)
+                title = context.getString(MR.strings.use_custom_brightness)
+            }
+            seekBarPreference {
+                bindTo(readerPreferences.novelCustomBrightnessValue)
+                title = context.getString(MR.strings.use_custom_brightness)
+                min = -75
+                max = 100
+                showSeekBarValue = true
+            }
+            switchPreference {
+                bindTo(readerPreferences.novelGrayscale)
+                title = context.getString(MR.strings.grayscale)
+            }
+            switchPreference {
+                bindTo(readerPreferences.novelInvertedColors)
+                title = context.getString(MR.strings.pref_inverted_colors)
             }
         }
 
@@ -302,6 +344,26 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
             }
 
             infoPreference(MR.strings.novel_tts_more_in_reader)
+        }
+    }
+}
+
+private fun androidx.preference.PreferenceCategory.novelColorChannel(
+    preference: eu.kanade.tachiyomi.core.preference.Preference<Int>,
+    label: String,
+    shift: Int,
+) {
+    seekBarPreference {
+        isPersistent = false
+        title = label
+        min = 0
+        max = 255
+        showSeekBarValue = true
+        defaultValue = preference.get() shr shift and 0xFF
+        onChange { value ->
+            val mask = (0xFF shl shift).inv()
+            preference.set((preference.get() and mask) or ((value as Int).coerceIn(0, 255) shl shift))
+            true
         }
     }
 }

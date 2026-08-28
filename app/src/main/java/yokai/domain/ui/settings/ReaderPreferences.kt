@@ -142,7 +142,7 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     // Let source/EPUB CSS win — when on, skip the `!important` overrides and don't force the font.
     val novelSourceCssPriority: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_source_css_priority", false)
 
-    // Infinite scroll - automatically load next/previous chapters. Hayai's continuous-scroll
+    // Infinite scroll - automatically load next/previous chapters. Epigraph's continuous-scroll
     // is core (always-on in the viewer); the key is ported verbatim for tsundoku migration
     // compat and is honored only as an explicit user override of continuous loading.
     val novelInfiniteScroll: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_infinite_scroll", false)
@@ -155,6 +155,11 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     // Brightness value for novel reader (-75 to 100, 0 = system)
     val novelCustomBrightnessValue: Preference<Int> = preferenceStore.getInt("pref_novel_custom_brightness_value", 0)
+    val novelColorFilter: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_color_filter", false)
+    val novelColorFilterValue: Preference<Int> = preferenceStore.getInt("pref_novel_color_filter_value", 0)
+    val novelColorFilterMode: Preference<Int> = preferenceStore.getInt("pref_novel_color_filter_mode", 0)
+    val novelGrayscale: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_grayscale", false)
+    val novelInvertedColors: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_inverted_colors", false)
 
     // Auto-load next chapter at percentage (legacy 0 may exist; treated as default)
     val novelAutoLoadNextChapterAt: Preference<Int> = preferenceStore.getInt("pref_novel_auto_load_next_at", 95)
@@ -194,12 +199,8 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
         true,
     )
 
-    // 3x3 grid position for the horizontal progress slider. Format: "<v>-<h>" where v is
-    // top/center/bottom and h is left/center/right. The *-center positions stretch the
-    // slider full width (matching the manga reader); the *-left/*-right positions render
-    // a compact pill (~360dp) anchored to that side. Default "bottom-center" matches the
-    // manga-reader behaviour. Backward-compat: legacy values "top"/"center"/"bottom" are
-    // mapped to the *-center equivalent at read time in applyNovelNavLayoutPosition.
+    // Legacy 3x3 slider position retained for rollback compatibility. The active HUD now uses
+    // the shared vertical-mode, height and side preferences from PreferencesHelper.
     val novelProgressSliderPosition: Preference<String> = preferenceStore.getString(
         "pref_novel_progress_slider_position",
         "bottom-center",
@@ -282,5 +283,84 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
         "pref_novel_default_orientation_type_key",
         OrientationType.FREE.flagValue,
     )
+
+    /**
+     * Restores novel reader controls and appearance without touching reading progress or TTS
+     * resume state.  Keeping this list explicit makes the reset safe when new app preferences
+     * are added to the same PreferenceStore.
+     */
+    fun resetNovelReaderSettingsToDefaults() {
+        novelFontSize.set(16)
+        novelFontFamily.set("sans-serif")
+        novelTheme.set("app")
+        novelLineHeight.set(1.6f)
+        novelTextAlign.set("left")
+        novelAutoScrollSpeed.set(15)
+        novelVolumeKeysScroll.set(false)
+        novelTapToScroll.set(false)
+        novelDoubleTapAction.set(hayai.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal)
+        novelLongTapAction.set(hayai.novel.reader.NovelTapAction.NONE.ordinal)
+        novelTextSelectable.set(true)
+        novelBlockMedia.set(false)
+        novelFontColor.set(0)
+        novelBackgroundColor.set(0)
+        novelParagraphIndent.set(0f)
+        novelMarginLeft.set(16)
+        novelMarginRight.set(16)
+        novelMarginTop.set(50)
+        novelMarginBottom.set(16)
+        novelMarginsCropped.set(false)
+        enableEpubStyles.set(true)
+        enableEpubJs.set(false)
+        novelSourceCssPriority.set(false)
+        novelInfiniteScroll.set(false)
+        novelKeepChaptersLoaded.set(0)
+        novelCustomBrightness.set(false)
+        novelCustomBrightnessValue.set(0)
+        novelColorFilter.set(false)
+        novelColorFilterValue.set(0)
+        novelColorFilterMode.set(0)
+        novelGrayscale.set(false)
+        novelInvertedColors.set(false)
+        novelAutoLoadNextChapterAt.set(95)
+        novelMarkAsReadThreshold.set(95)
+        novelMarkShortChapterAsRead.set(true)
+        novelCustomCss.set("")
+        novelCustomJs.set("")
+        novelCustomCssSnippets.set("[]")
+        novelCustomJsSnippets.set("[]")
+        novelRegexReplacements.set(DEFAULT_NOVEL_REGEX_RULES)
+        novelStylePresets.set("[]")
+        novelTextNormalize.set(true)
+        novelTextAggressiveCleanup.set(false)
+        novelShowProgressSlider.set(true)
+        novelProgressSliderPosition.set("bottom-center")
+        novelVerticalScrollbar.set(false)
+        novelVerticalScrollbarPosition.set("right")
+        novelVerticalProgressSliderSize.set("half")
+        novelHideChapterTitle.set(false)
+        novelForceTextLowercase.set(false)
+        novelAutoSplitText.set(false)
+        novelAutoSplitWordCount.set(50)
+        novelUseOriginalFonts.set(false)
+        novelKeepScreenOn.set(false)
+        novelParagraphSpacing.set(0.5f)
+        novelSwipeNavigation.set(false)
+        novelChapterTitleDisplay.set(2)
+        novelShowRawHtml.set(false)
+        novelTtsSpeed.set(1.0f)
+        novelTtsPitch.set(1.0f)
+        novelTtsVoice.set("")
+        novelTtsEngine.set("")
+        novelTtsAutoNextChapter.set(true)
+        novelTtsHighlightStyle.set("background")
+        novelTtsHighlightColor.set(0xFFFFD54F.toInt())
+        novelTtsHighlightTextColor.set(0xFF1A1A1A.toInt())
+        novelTtsEnableHighlight.set(true)
+        novelTtsKeepHighlightInView.set(true)
+        novelTtsBackgroundPlayback.set(false)
+        novelTtsTapToStart.set(true)
+        novelDefaultOrientationType.set(OrientationType.FREE.flagValue)
+    }
     // endregion
 }

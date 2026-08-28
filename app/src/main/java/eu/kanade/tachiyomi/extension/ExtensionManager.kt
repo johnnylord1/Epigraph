@@ -52,7 +52,6 @@ class ExtensionManager(
     private val preferences: PreferencesHelper = get(),
     private val trustExtension: TrustExtension = get(),
 ) {
-
     /**
      * API where all the available extensions can be found.
      */
@@ -190,13 +189,15 @@ class ExtensionManager(
     /**
      * Finds the available extensions in the [api] and updates [availableExtensionsFlow].
      */
-    suspend fun findAvailableExtensions() {
-        val extensions: List<Extension.Available> = try {
-            api.findExtensions()
+    suspend fun findAvailableExtensions(): Boolean {
+        val discovery = try {
+            api.findExtensionsWithStatus()
         } catch (e: Exception) {
             Logger.e(e) { "Failed to find available extensions" }
-            return
+            return false
         }
+        if (!discovery.catalogReachable) return false
+        val extensions = discovery.extensions
 
         enableAdditionalSubLanguages(extensions)
 
@@ -204,6 +205,7 @@ class ExtensionManager(
         updatedInstalledExtensionsStatuses(extensions)
         setupAvailableSourcesMap()
         emitToInstaller("Finished/Available/${extensions.size}", (InstallStep.Done to null))
+        return true
     }
 
     /**
@@ -304,22 +306,37 @@ class ExtensionManager(
     }
 
     /**
+     * Installs an extension discovered through the official repositories while always requiring
+     * the Android Package Installer UI. Core reconciliation must never inherit a silent/private
+     * installer preference.
+     */
+    suspend fun installExtensionWithUserConfirmation(
+        extension: ExtensionInfo,
+        scope: CoroutineScope,
+    ): Flow<ExtensionIntallInfo> = installer.downloadAndInstall(
+        url = api.getApkUrl(extension),
+        extension = extension,
+        scope = scope,
+        requireUserConfirmation = true,
+    )
+
+    /**
      * Sets the result of the installation of an extension.
      *
      * @param downloadId The id of the download.
      * @param result Whether the extension was installed or not.
      */
-    fun setInstallationResult(downloadId: Long, result: Boolean) {
+    fun setInstallationResult(downloadId: Long, result: Boolean, cancelled: Boolean = false) {
         val pkgName = getExtension(downloadId) ?: return
-        setInstallationResult(pkgName, result)
+        setInstallationResult(pkgName, result, cancelled)
     }
 
     fun cleanUpInstallation(pkgName: String) {
         installer.cleanUpInstallation(pkgName)
     }
 
-    fun setInstallationResult(pkgName: String, result: Boolean) {
-        installer.setInstallationResult(pkgName, result)
+    fun setInstallationResult(pkgName: String, result: Boolean, cancelled: Boolean = false) {
+        installer.setInstallationResult(pkgName, result, cancelled)
     }
 
     /** Sets the result of the installation of an extension.

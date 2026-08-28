@@ -132,7 +132,7 @@ class AboutScreen : Screen() {
                             contentAlignment = Alignment.Center,
                         ) {
                             Image(
-                                painter = painterResource(R.drawable.ic_hayai),
+                                painter = painterResource(R.drawable.ic_epigraph_mark),
                                 contentDescription = stringResource(MR.strings.app_name),
                                 modifier = Modifier.size(88.dp),
                             )
@@ -198,7 +198,7 @@ class AboutScreen : Screen() {
 
                             TextPreferenceWidget(
                                 title = stringResource(MR.strings.help_translate),
-                                onPreferenceClick = { context.openInBrowser("https://hosted.weblate.org/engage/hayai/") },
+                                onPreferenceClick = { context.openInBrowser("https://github.com/johnnylord1/Epigraph#contributing") },
                             )
                         }
                     }
@@ -238,7 +238,7 @@ class AboutScreen : Screen() {
                             LinkIcon(
                                 label = "GitHub",
                                 icon = CustomIcons.GitHub,
-                                url = "https://github.com/HayaiApp/hayai",
+                                url = "https://github.com/johnnylord1/Epigraph",
                             )
                         }
                     }
@@ -310,4 +310,4 @@ fun getFormattedBuildTime(dateFormat: DateFormat): String {
     }
 }
 
-private const val SOURCE_URL = "https://github.com/HayaiApp/hayai/commits/master"
+private const val SOURCE_URL = "https://github.com/johnnylord1/Epigraph/commits/master"

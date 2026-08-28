@@ -108,7 +108,7 @@ class NovelUpdates(private val context: Context, id: Long) : TrackService(id) {
         }
         val currentStatus = api.getReadingListStatus(track.media_id.toString())
         // Tsundoku heuristic: if the user has any progress on the novel, default to READING;
-        // otherwise PLAN_TO_READ. Hayai's TrackService.bind doesn't take the hasReadChapters
+        // otherwise PLAN_TO_READ. Epigraph's TrackService.bind doesn't take the hasReadChapters
         // flag Tsundoku does, so we derive it from track.last_chapter_read.
         track.status = currentStatus
             ?: if (track.last_chapter_read > 0f) READING else PLAN_TO_READ

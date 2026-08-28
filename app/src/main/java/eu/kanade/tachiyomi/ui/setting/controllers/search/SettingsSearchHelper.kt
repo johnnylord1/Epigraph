@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.ui.setting.SettingsControllerInterface
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsAppearanceController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsBrowseController
+import eu.kanade.tachiyomi.ui.setting.controllers.SettingsBooksReaderController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsDownloadController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsGeneralController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsLibraryController
@@ -44,6 +45,7 @@ object SettingsSearchHelper {
         SettingsLibraryController::class,
         SettingsMangaReaderController::class,
         SettingsNovelReaderController::class,
+        SettingsBooksReaderController::class,
         SettingsTrackingController::class,
     )
 

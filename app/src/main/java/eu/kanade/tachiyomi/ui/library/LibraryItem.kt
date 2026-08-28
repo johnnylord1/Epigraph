@@ -115,6 +115,19 @@ abstract class LibraryItem(
                 include(unreadType)
                 include(sourceLanguage)
             }
+            is LibraryBookItem -> {
+                include(book.bookId)
+                include(book.displayName)
+                include(book.author)
+                include(book.contentType)
+                include(book.sha256)
+                include(book.coverPath)
+                include(book.privatePath)
+                include(book.isAvailable)
+                include(book.chapterCount)
+                include(book.pageCount)
+                include(book.updatedAt)
+            }
             is LibraryPlaceholderItem -> {
                 include(category)
                 when (val type = type) {

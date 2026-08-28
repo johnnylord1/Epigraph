@@ -1,0 +1,24 @@
+CREATE TABLE aethon_sync_replica_wait (
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    canonical_entity_id TEXT,
+    result_status TEXT NOT NULL CHECK(result_status IN ('APPLIED', 'SUPERSEDED')),
+    required_server_version INTEGER NOT NULL CHECK(required_server_version >= 0),
+    applied_lamport INTEGER CHECK(applied_lamport IS NULL OR applied_lamport >= 0),
+    event_clock_json TEXT,
+    canonical_record_sha256 TEXT CHECK(
+        canonical_record_sha256 IS NULL OR (
+            length(canonical_record_sha256) = 64 AND canonical_record_sha256 NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    received_at INTEGER NOT NULL CHECK(received_at >= 0),
+    PRIMARY KEY(device_id, client_mutation_id),
+    FOREIGN KEY(device_id, client_mutation_id)
+        REFERENCES aethon_sync_receipt(device_id, client_mutation_id) ON DELETE CASCADE
+);
+
+CREATE INDEX aethon_sync_replica_wait_entity_index
+ON aethon_sync_replica_wait(scope_id, entity_type, entity_id, required_server_version);

@@ -14,7 +14,7 @@ import okhttp3.OkHttpClient
  * Network layer for [NovelUpdates]. Cookie-based, scrapes WordPress markup. Each method ports
  * the corresponding Tsundoku counterpart line-by-line, only adapting the logger
  * (`tachiyomi.core.common.util.system.logcat` → `co.touchlab.kermit.Logger`) and using
- * Hayai's `Track.media_id` (numeric) where Tsundoku uses `track.remote_id`.
+ * Epigraph's `Track.media_id` (numeric) where Tsundoku uses `track.remote_id`.
  */
 class NovelUpdatesApi(
     private val tracker: NovelUpdates,

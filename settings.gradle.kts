@@ -28,7 +28,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Hayai"
+rootProject.name = "Epigraph"
 include(":app")
 include(":core:archive")
 include(":core:main")

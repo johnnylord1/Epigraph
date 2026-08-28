@@ -1,38 +1,40 @@
 <div align="center">
 
-<a href="https://github.com/HayaiApp/hayai">
-    <img src="./.github/readme-images/app-icon.webp" alt="Hayai logo" height="200px" width="200px" />
+<a href="https://github.com/johnnylord1/Epigraph">
+    <img src="./.github/readme-images/app-icon.webp" alt="Epigraph logo" height="200px" width="200px" />
 </a>
 
-# Hayai
+# Epigraph
 
 </div>
 
 <div align="center">
 
-A free and open source manga & novel reader
+A free and open source manga, novel, EPUB, and PDF reader
 
-[![CI](https://github.com/HayaiApp/hayai/actions/workflows/build_push.yml/badge.svg?labelColor=27303D)](https://github.com/HayaiApp/hayai/actions/workflows/build_push.yml)
-[![License: Apache-2.0](https://img.shields.io/github/license/HayaiApp/hayai?labelColor=27303D&color=0877d2)](/LICENSE)
+[![CI](https://github.com/johnnylord1/Epigraph/actions/workflows/build_push.yml/badge.svg?labelColor=27303D)](https://github.com/johnnylord1/Epigraph/actions/workflows/build_push.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/johnnylord1/Epigraph?labelColor=27303D&color=0877d2)](/LICENSE)
 
 ## Download
 
-[![Hayai Stable](https://img.shields.io/github/v/release/HayaiApp/hayai?maxAge=3600&label=Stable&labelColor=06599d&color=043b69&filter=v*)](https://github.com/HayaiApp/hayai/releases)
-[![Hayai Beta](https://img.shields.io/github/v/release/HayaiApp/hayai?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39&filter=v*-b*)](https://github.com/HayaiApp/hayai/releases)
-[![Hayai Nightly](https://img.shields.io/github/v/release/HayaiApp/hayai-nightly?maxAge=3600&label=Nightly&labelColor=B11A3B&color=1c1c39)](https://github.com/HayaiApp/hayai-nightly/releases)
+[![Epigraph Stable](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Stable&labelColor=06599d&color=043b69&filter=v*)](https://github.com/johnnylord1/Epigraph/releases)
+[![Epigraph Beta](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39&filter=v*-b*)](https://github.com/johnnylord1/Epigraph/releases)
+[![Epigraph Nightly](https://img.shields.io/github/v/release/johnnylord1/Epigraph?maxAge=3600&label=Nightly&labelColor=B11A3B&color=1c1c39)](https://github.com/johnnylord1/Epigraph/releases)
 
-*Requires Android 6.0 or higher.*
+*Requires Android 7.0 or higher.*
 
 ## About Fork
 
-Hayai is a fork of [Yōkai](https://github.com/null2264/yokai), which itself is a fork of [TachiyomiJ2K](https://github.com/Jays2Kings/tachiyomiJ2K) and [Mihon](https://github.com/mihonapp/mihon) (formerly Tachiyomi). It cherry-picks pieces from across the Tachiyomi ecosystem and adds first-class novel support.
+Epigraph is the product identity of this fork. Its Android foundation is [Hayai](https://github.com/HayaiApp/hayai), itself a fork of [Yōkai](https://github.com/null2264/yokai), [TachiyomiJ2K](https://github.com/Jays2Kings/tachiyomiJ2K), and [Mihon](https://github.com/mihonapp/mihon) (formerly Tachiyomi). Epigraph keeps those upstream credits and adds first-class novel, EPUB, PDF, and cross-device Core support.
+
+The Epigraph Android package is `app.epigraph.mobile` and is installed separately from the legacy `app.aethon.mobile`. Because Android isolates private app sandboxes, migration from Aethon is performed by exporting a backup and importing it into Epigraph, or by selecting shared storage explicitly; the new app cannot read the old private sandbox automatically.
 
 ## Features
 
 <div align="left">
 
 <details open="">
-    <summary><h3>From Hayai</h3></summary>
+    <summary><h3>Epigraph features from the Hayai foundation</h3></summary>
 
 * **Performance & accessibility**
   * **Reduce motion** toggle (Settings → Appearance → Motion) — disables screen-transition animations, in-app fades, image crossfades, and skeleton-loader pulses across the whole app. Aimed at low-end devices, motion-sensitive users, and battery-saver scenarios. Wired centrally so every Conductor controller transition, Compose animation, Coil image load, and activity transition honors the toggle without per-screen opt-in.
@@ -159,7 +161,7 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 <details><summary>Issues</summary>
 
-**Before reporting a new issue, take a look at the [changelog](https://github.com/HayaiApp/hayai/releases) and the already opened [issues](https://github.com/HayaiApp/hayai/issues).**
+**Before reporting a new issue, take a look at the [changelog](https://github.com/johnnylord1/Epigraph/releases) and the already opened [issues](https://github.com/johnnylord1/Epigraph/issues).**
 
 </details>
 
@@ -187,7 +189,7 @@ Pull requests are welcome. For major changes, please open an issue first to disc
 
 ### Credits
 
-Thank you to all the people who have contributed to Hayai and to the upstream projects it builds on: [Yōkai](https://github.com/null2264/yokai), [Mihon](https://github.com/mihonapp/mihon), [TachiyomiJ2K](https://github.com/Jays2Kings/tachiyomiJ2K), [TachiyomiSY](https://github.com/jobobby04/TachiyomiSY), and [LNReader](https://github.com/LNReader/lnreader).
+Thank you to all the people who have contributed to Epigraph and its Hayai foundation, and to the upstream projects it builds on: [Yōkai](https://github.com/null2264/yokai), [Mihon](https://github.com/mihonapp/mihon), [TachiyomiJ2K](https://github.com/Jays2Kings/tachiyomiJ2K), [TachiyomiSY](https://github.com/jobobby04/TachiyomiSY), and [LNReader](https://github.com/LNReader/lnreader).
 
 ### Disclaimer
 

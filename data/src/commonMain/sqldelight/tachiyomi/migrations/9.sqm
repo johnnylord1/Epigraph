@@ -1,1 +1,2 @@
-ALTER TABLE categories ADD COLUMN manga_order TEXT;
+-- Existing categories need a value because the current schema and generated mapper are non-null.
+ALTER TABLE categories ADD COLUMN manga_order TEXT NOT NULL DEFAULT '';

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- Keep the same expandable chapter-search affordance as MangaDetailsController. -->
+    <item
+        android:id="@+id/action_search"
+        android:icon="@drawable/ic_search_24dp"
+        android:title="@string/search"
+        app:actionViewClass="eu.kanade.tachiyomi.ui.base.MiniSearchView"
+        app:showAsAction="collapseActionView|ifRoom" />
+
+    <!-- Domain-specific actions stay in the canonical overflow surface. -->
+    <item
+        android:id="@+id/action_file_info"
+        android:icon="@drawable/ic_info_outline_24dp"
+        android:title="File information"
+        app:showAsAction="never" />
+
+</menu>

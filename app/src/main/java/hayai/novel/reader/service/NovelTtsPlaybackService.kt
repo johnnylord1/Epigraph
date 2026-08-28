@@ -131,9 +131,10 @@ class NovelTtsPlaybackService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        // The playback service is foreground-owned, so removing the reader task must not stop
+        // speech. Explicit Stop, natural completion, force-stop, and Android service policy still
+        // terminate playback through the normal paths below.
         super.onTaskRemoved(rootIntent)
-        stopForegroundCompat()
-        stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

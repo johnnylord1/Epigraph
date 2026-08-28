@@ -23,7 +23,7 @@ import yokai.util.lang.getString
 /**
  * NovelList tracker — https://www.novellist.co (LNReader-compatible API).
  *
- * Logic ported line-by-line from Tsundoku; class structure adapted to Hayai's [TrackService].
+ * Logic ported line-by-line from Tsundoku; class structure adapted to Epigraph's [TrackService].
  * The user logs in via WebView; the resulting JWT access token is stored as the tracker
  * password and used as a `Bearer` header by [NovelListApi].
  */

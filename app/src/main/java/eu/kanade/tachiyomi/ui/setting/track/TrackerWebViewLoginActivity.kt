@@ -58,7 +58,7 @@ import android.webkit.WebView as AndroidWebView
  *
  * Used for NovelUpdates (cookie session) and NovelList (base64-JSON cookie containing JWT).
  * Mirrors the [exh.ui.login.EhLoginActivity] pattern: Compose host using [setComposeContent],
- * Hayai's [YokaiScaffold] for the chrome, and the Accompanist WebView wrapper
+ * Epigraph's [YokaiScaffold] for the chrome, and the Accompanist WebView wrapper
  * (`com.kevinnzou.web.WebView`) so back-stack navigation/state hoisting matches the rest of
  * the app's WebView screens.
  */

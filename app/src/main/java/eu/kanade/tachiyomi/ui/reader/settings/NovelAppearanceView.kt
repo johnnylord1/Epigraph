@@ -93,7 +93,7 @@ class NovelAppearanceView @JvmOverloads constructor(context: Context, attrs: Att
             // action bar so we don't need a tab just for those two switches.
             enableEpubStyles.bindToPreference(readerPreferences.enableEpubStyles)
             enableEpubJs.bindToPreference(readerPreferences.enableEpubJs)
-            // Let source/EPUB CSS win — skips Hayai's !important overrides + font force.
+            // Let source/EPUB CSS win — skips Epigraph's !important overrides + font force.
             sourceCssPriority.bindToPreference(readerPreferences.novelSourceCssPriority)
             // Content cleanup: normalize fancy/fullwidth Unicode + strip ads/links.
             textNormalize.bindToPreference(readerPreferences.novelTextNormalize)

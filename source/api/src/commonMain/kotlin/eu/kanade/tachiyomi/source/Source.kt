@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.util.awaitSingle
 import rx.Observable
 
@@ -60,25 +61,55 @@ interface Source {
     /**
      * Get the updated details for a manga.
      *
+     * Routes through [getMangaUpdate] so lib 1.6 sources that implement the combined
+     * API are honored; sources that only implement the legacy per-call API fall back
+     * to [fetchMangaDetails].
+     *
      * @since extensions-lib 1.5
      * @param manga the manga to update.
      * @return the updated manga.
      */
-    @Suppress("DEPRECATION")
     suspend fun getMangaDetails(manga: SManga): SManga {
-        return fetchMangaDetails(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
     }
 
     /**
      * Get all the available chapters for a manga.
      *
+     * Routes through [getMangaUpdate] so lib 1.6 sources that implement the combined
+     * API are honored; sources that only implement the legacy per-call API fall back
+     * to [fetchChapterList].
+     *
      * @since extensions-lib 1.5
      * @param manga the manga to update.
      * @return the chapters for the manga.
      */
-    @Suppress("DEPRECATION")
     suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return fetchChapterList(manga).awaitSingle()
+        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+    }
+
+    /**
+     * Fetches updated information for a manga (metadata and/or chapters).
+     *
+     * lib 1.6 sources override this method directly. The default implementation keeps
+     * legacy sources working by delegating to the classic per-call API.
+     *
+     * @since extensions-lib 1.6
+     * @param manga the manga to fetch updates for.
+     * @param chapters the chapters already known for the manga.
+     * @param fetchDetails whether to fetch updated manga details.
+     * @param fetchChapters whether to fetch the available chapters.
+     */
+    @Suppress("DEPRECATION")
+    suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        val updatedManga = if (fetchDetails) fetchMangaDetails(manga).awaitSingle() else manga
+        val updatedChapters = if (fetchChapters) fetchChapterList(manga).awaitSingle() else chapters
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
     /**

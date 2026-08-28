@@ -8,7 +8,7 @@ import java.net.URLEncoder
 
 /**
  * Data saver interface for bandwidth optimization.
- * Supports wsrv.nl CDN proxy and custom Hayai image proxy servers.
+ * Supports wsrv.nl CDN proxy and custom Epigraph image proxy servers.
  */
 interface DataSaver {
 
@@ -60,7 +60,7 @@ interface DataSaver {
                     blur = blur,
                     filter = filter,
                 )
-                2 -> HayaiProxyDataSaver(
+                2 -> EpigraphProxyDataSaver(
                     serverUrl = exhPreferences.dataSaverServerUrl.get(),
                     apiKey = exhPreferences.dataSaverApiKey.get().nullIfBlank(),
                     quality = quality,
@@ -158,9 +158,9 @@ class WsrvNlDataSaver(
 }
 
 /**
- * Custom Hayai image proxy server for self-hosted image optimization.
+ * Custom Epigraph image proxy server for self-hosted image optimization.
  */
-class HayaiProxyDataSaver(
+class EpigraphProxyDataSaver(
     private val serverUrl: String,
     private val apiKey: String? = null,
     private val quality: Int = 80,

@@ -1,6 +1,7 @@
 package hayai.novel.repo
 
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.util.system.withIOContext
 import hayai.novel.repo.interactor.NovelRepoIndexValidation
 import hayai.novel.repo.interactor.NovelRepoIndexValidator
 import kotlinx.serialization.json.Json
@@ -31,33 +32,41 @@ class NovelRepoIndexValidatorImpl(
 
     private suspend fun fetchRepoState(indexUrl: String): RepoState {
         return try {
-            val request = Request.Builder()
-                .url(indexUrl)
-                .addHeader("pragma", "no-cache")
-                .addHeader("cache-control", "no-cache")
-                .build()
+            // Network I/O must run off the main thread (NetworkOnMainThreadException otherwise).
+            withIOContext {
+                android.util.Log.w("LNREPO-DIAG", "fetching $indexUrl on ${Thread.currentThread().name}")
+                val request = Request.Builder()
+                    .url(indexUrl)
+                    .addHeader("pragma", "no-cache")
+                    .addHeader("cache-control", "no-cache")
+                    .build()
 
-            val response = networkHelper.client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                response.close()
-                return RepoState.Invalid
+                val response = networkHelper.client.newCall(request).execute()
+                android.util.Log.w("LNREPO-DIAG", "response ${response.code}")
+                if (!response.isSuccessful) {
+                    response.close()
+                    RepoState.Invalid
+                } else {
+                    val body = response.body.string()
+                    response.close()
+
+                    val payload = json.parseToJsonElement(body) as? JsonArray
+                    when {
+                        payload == null -> RepoState.Invalid
+                        payload.isEmpty() -> RepoState.Empty
+                        else -> {
+                            val hasValidEntries = payload.any { element ->
+                                val item = element as? JsonObject ?: return@any false
+                                item["id"] != null && item["name"] != null && item["url"] != null
+                            }
+                            if (hasValidEntries) RepoState.Valid else RepoState.Invalid
+                        }
+                    }
+                }
             }
-
-            val body = response.body.string()
-            response.close()
-
-            val payload = json.parseToJsonElement(body) as? JsonArray ?: return RepoState.Invalid
-            if (payload.isEmpty()) {
-                return RepoState.Empty
-            }
-
-            val hasValidEntries = payload.any { element ->
-                val item = element as? JsonObject ?: return@any false
-                item["id"] != null && item["name"] != null && item["url"] != null
-            }
-
-            if (hasValidEntries) RepoState.Valid else RepoState.Invalid
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            android.util.Log.e("LNREPO-DIAG", "fetch failed for $indexUrl", error)
+            co.touchlab.kermit.Logger.w(error) { "NovelRepoIndexValidator fetch failed for $indexUrl" }
             RepoState.Invalid
         }
     }

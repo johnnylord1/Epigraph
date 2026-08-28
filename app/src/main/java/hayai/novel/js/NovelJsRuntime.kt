@@ -7,6 +7,8 @@ import com.dokar.quickjs.binding.asyncFunction
 import com.dokar.quickjs.binding.define
 import com.dokar.quickjs.binding.function
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -21,6 +23,7 @@ class NovelJsRuntime(
     private val bridge: NovelJsBridge,
     private val pluginId: String,
     private val userAgent: String = "",
+    private val limits: NovelRuntimeLimits = NovelRuntimeLimits(),
 ) {
     private var quickJs: QuickJs? = null
     private var initialized = false
@@ -39,8 +42,18 @@ class NovelJsRuntime(
      * Must be called before any plugin method calls.
      */
     suspend fun initialize(pluginCode: String) {
-        withContext(jsDispatcher) {
-            doInitialize(pluginCode)
+        require(pluginCode.toByteArray(Charsets.UTF_8).size <= limits.maxPluginCodeBytes) {
+            "Novel plugin '$pluginId' exceeds the code size limit"
+        }
+        try {
+            withTimeout(limits.initializationTimeoutMs) {
+                withContext(jsDispatcher) {
+                    doInitialize(pluginCode)
+                }
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            closeQuickJsOnly()
+            throw NovelRuntimeTimeoutException(pluginId, "initialization", timeout)
         }
     }
 
@@ -215,16 +228,33 @@ class NovelJsRuntime(
         val qjs = quickJs ?: throw IllegalStateException("Runtime not initialized for plugin '$pluginId'")
         if (!initialized) throw IllegalStateException("Plugin '$pluginId' not initialized")
 
-        return withContext(jsDispatcher) {
-            try {
-                qjs.evaluate<String?>(
-                    "JSON.stringify(await __plugin.${method}($argsJs))",
-                    "$pluginId.$method",
-                ) ?: "null"
-            } catch (e: Exception) {
-                Logger.e(e) { "NovelJsRuntime: Error calling $pluginId.$method" }
-                throw e
+        require(METHOD_NAME.matches(method)) { "Unsupported plugin method: $method" }
+        val timeout = if (method == "parseChapter" || method == "chapter") {
+            limits.chapterTimeoutMs
+        } else {
+            limits.operationTimeoutMs
+        }
+        return try {
+            withTimeout(timeout) {
+                withContext(jsDispatcher) {
+                    try {
+                        qjs.evaluate<String?>(
+                            "JSON.stringify(await __plugin.${method}($argsJs))",
+                            "$pluginId.$method",
+                        )?.also { result ->
+                            require(result.toByteArray(Charsets.UTF_8).size <= limits.maxResultBytes) {
+                                "Novel plugin '$pluginId' returned too much data"
+                            }
+                        } ?: "null"
+                    } catch (e: Exception) {
+                        Logger.e(e) { "NovelJsRuntime: Error calling $pluginId.$method" }
+                        throw e
+                    }
+                }
             }
+        } catch (timeoutException: TimeoutCancellationException) {
+            closeQuickJsOnly()
+            throw NovelRuntimeTimeoutException(pluginId, method, timeoutException)
         }
     }
 
@@ -233,13 +263,21 @@ class NovelJsRuntime(
      */
     suspend fun getProperty(property: String): String {
         val qjs = quickJs ?: throw IllegalStateException("Runtime not initialized")
-        return withContext(jsDispatcher) {
-            try {
-                qjs.evaluate<String?>("JSON.stringify(__plugin.$property)") ?: "null"
-            } catch (e: Exception) {
-                Logger.e(e) { "NovelJsRuntime: Error getting property $pluginId.$property" }
-                "null"
+        require(METHOD_NAME.matches(property)) { "Unsupported plugin property: $property" }
+        return try {
+            withTimeout(limits.operationTimeoutMs) {
+                withContext(jsDispatcher) {
+                    try {
+                        qjs.evaluate<String?>("JSON.stringify(__plugin.$property)") ?: "null"
+                    } catch (e: Exception) {
+                        Logger.e(e) { "NovelJsRuntime: Error getting property $pluginId.$property" }
+                        "null"
+                    }
+                }
             }
+        } catch (timeoutException: TimeoutCancellationException) {
+            closeQuickJsOnly()
+            throw NovelRuntimeTimeoutException(pluginId, property, timeoutException)
         }
     }
 
@@ -248,9 +286,16 @@ class NovelJsRuntime(
      */
     suspend fun evaluateRaw(script: String): String {
         val qjs = quickJs ?: throw IllegalStateException("Runtime not initialized")
-        return withContext(jsDispatcher) {
-            val result = qjs.evaluate<Any?>(script)
-            result?.toString() ?: "null"
+        return try {
+            withTimeout(limits.operationTimeoutMs) {
+                withContext(jsDispatcher) {
+                    val result = qjs.evaluate<Any?>(script)
+                    result?.toString() ?: "null"
+                }
+            }
+        } catch (timeoutException: TimeoutCancellationException) {
+            closeQuickJsOnly()
+            throw NovelRuntimeTimeoutException(pluginId, "evaluate", timeoutException)
         }
     }
 
@@ -295,4 +340,22 @@ class NovelJsRuntime(
         val code = context.assets.open(assetPath).bufferedReader().use { it.readText() }
         qjs.evaluate<Any?>(code, assetPath)
     }
+
+    companion object {
+        private val METHOD_NAME = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
+    }
 }
+
+data class NovelRuntimeLimits(
+    val initializationTimeoutMs: Long = 15_000,
+    val operationTimeoutMs: Long = 15_000,
+    val chapterTimeoutMs: Long = 30_000,
+    val maxPluginCodeBytes: Int = 2 * 1024 * 1024,
+    val maxResultBytes: Int = 8 * 1024 * 1024,
+)
+
+class NovelRuntimeTimeoutException(
+    val pluginId: String,
+    val operation: String,
+    cause: Throwable,
+) : IllegalStateException("Novel plugin '$pluginId' exceeded the deadline for $operation", cause)

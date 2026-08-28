@@ -68,7 +68,7 @@ fun loaderForSource(context: Context, sourceClient: OkHttpClient): ImageLoader {
  *   restating it here keeps previews aligned even if a future per-request
  *   builder accidentally turns it on.
  */
-fun ImageRequest.Builder.hayaiPagePreviewDefaults(): ImageRequest.Builder = this
+fun ImageRequest.Builder.epigraphPagePreviewDefaults(): ImageRequest.Builder = this
     .precision(Precision.INEXACT)
     .maxBitmapSize(Size(PAGE_PREVIEW_MAX_BITMAP, PAGE_PREVIEW_MAX_BITMAP))
     .crossfade(false)

@@ -91,6 +91,53 @@
             android:text="@string/novel_show_progress_slider"
             android:textColor="?attr/colorOnBackground" />
 
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/reader_vertical_progress_modes"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/hud_vertical_progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/reader_vertical_progress_modes"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/hud_vertical_progress_height"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:stepSize="5"
+            android:valueFrom="60"
+            android:valueTo="100" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/hud_vertical_progress_side"
+            style="@style/Widget.Tachiyomi.MaterialButtonGroup.Connected"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layoutDirection="ltr"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/hud_vertical_progress_left"
+                style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                android:text="@string/reader_progress_left"
+                app:toggleCheckedStateOnClick="true" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/hud_vertical_progress_right"
+                style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                android:text="@string/reader_progress_right"
+                app:toggleCheckedStateOnClick="true" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
         <!-- Scrollbar group -->
         <TextView
             android:layout_width="match_parent"

@@ -36,8 +36,10 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.allowRgb565
 import coil3.request.crossfade
 import coil3.util.DebugLogger
-import com.google.firebase.Firebase
-import com.google.firebase.crashlytics.crashlytics
+import epigraph.sync.core.epigraphSyncModule
+import epigraph.sync.core.events.CoreLiveEventSupervisor
+import epigraph.sync.core.work.EpigraphCoreSyncWorker
+import epigraph.sync.core.extensions.InstalledExtensionRelinkObserver
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.appwidget.TachiyomiWidgetManager
 import eu.kanade.tachiyomi.core.preference.Preference
@@ -79,8 +81,6 @@ import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import org.koin.core.component.get
 import org.koin.core.logger.Level
-import yokai.core.CrashlyticsLogWriter
-import yokai.core.RollingUniFileLogWriter
 // EXH -->
 import exh.di.exhModule
 // EXH <--
@@ -131,6 +131,7 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
                 preferenceModule(this@App),
                 appModule(this@App),
                 domainModule(),
+                epigraphSyncModule(this@App),
                 // EXH -->
                 exhModule(),
                 // EXH <--
@@ -139,6 +140,7 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
                 // NOVEL <--
             )
         }
+        EpigraphCoreSyncWorker.setup(this)
         // Eagerly warm up heavy singletons on IO so the main thread isn't blocked when
         // MainActivity later calls into them. See AppModule.initExpensiveComponents.
         initExpensiveComponents(this)
@@ -154,6 +156,13 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
         // ── 3. Process-lifetime observers and scope ──────────────────────────────────────
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         val scope = ProcessLifecycleOwner.get().lifecycleScope
+
+        // WorkManager remains the durable/killed-process path. While this process is alive, keep
+        // one filtered SSE feed per selected Core scope for near-real-time library/progress
+        // convergence. The supervisor is read/review-only for extension dependencies; it never
+        // approves repositories or launches the Android Package Installer.
+        GlobalContext.get().get<CoreLiveEventSupervisor>().start(scope)
+        GlobalContext.get().get<InstalledExtensionRelinkObserver>().start(scope)
 
         // Source icons otherwise perform PackageManager.loadIcon() Binder calls from the first
         // visible Library/Recents/Browse bind. Resolve the shared extension cache from IO once
@@ -216,16 +225,6 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
             .onEach { enabled ->
                 // FlexibleAdapter.enableLogs(if (enabled) Level.VERBOSE else Level.SUPPRESS)
                 Logger.setToDefault(buildLogWritersToAdd(storageManager.getLogsDirectory(), enabled))
-            }
-            .launchIn(scope)
-
-        basePreferences.crashReport().changes()
-            .onEach {
-                try {
-                    Firebase.crashlytics.setCrashlyticsCollectionEnabled(it)
-                } catch (e: Exception) {
-                    // Probably already enabled/disabled
-                }
             }
             .launchIn(scope)
 
@@ -416,12 +415,8 @@ fun buildLogWritersToAdd(logPath: UniFile?): List<LogWriter> {
 }
 
 fun buildLogWritersToAdd(
-    logPath: UniFile?,
-    isVerbose: Boolean,
-) = buildList {
-    if (!BuildConfig.DEBUG) add(CrashlyticsLogWriter())
-
- //   if (logPath != null && !BuildConfig.DEBUG) add(RollingUniFileLogWriter(logPath = logPath, isVerbose = isVerbose))
-}
+    @Suppress("UNUSED_PARAMETER") logPath: UniFile?,
+    @Suppress("UNUSED_PARAMETER") isVerbose: Boolean,
+): List<LogWriter> = emptyList()
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"

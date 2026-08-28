@@ -1,5 +1,6 @@
 package hayai.novel.source
 
+import android.util.Base64
 import android.content.Context
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.source.CatalogueSource
@@ -22,6 +23,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.floatOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -243,12 +245,50 @@ class NovelSource(
      * Resolve a relative URL to absolute using the plugin's resolveUrl or site URL.
      */
     fun resolveUrl(path: String): String {
-        if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("//")) {
-            return path
+        val normalized = path.trim()
+        if (normalized.startsWith("//")) {
+            // LNReader plugins commonly return protocol-relative CDN URLs. Coil's fetcher only
+            // accepts absolute HTTP(S) URLs, so make the scheme explicit before it reaches the
+            // library database/cache.
+            return "https:$normalized"
+        }
+        if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+            return normalized
         }
         val site = siteUrl.trimEnd('/')
-        val cleanPath = path.trimStart('/')
+        val cleanPath = normalized.trimStart('/')
         return "$site/$cleanPath"
+    }
+
+    /**
+     * Loads a novel cover through the same broker used by the plugin runtime.
+     *
+     * Coil's generic manga fetcher only knows [HttpSource] headers, while LNReader sources are
+     * [TextSource] implementations and frequently require the plugin User-Agent or Referer.
+     * Keeping this bridge here preserves those headers and the plugin network policy instead of
+     * silently falling back to an unauthenticated request.
+     */
+    suspend fun fetchCoverBytes(url: String): ByteArray {
+        val normalized = resolveUrl(url)
+        val init = buildJsonObject {
+            putJsonObject("headers") {
+                if (userAgent.isNotBlank()) put("User-Agent", userAgent)
+                if (siteUrl.isNotBlank()) put("Referer", siteUrl)
+                put("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+            }
+        }.toString()
+        val raw = bridge.fetch(normalized, init)
+        val response = runCatching { json.decodeFromString<JsonObject>(raw) }
+            .getOrElse { error -> throw IllegalStateException("Novel cover response was invalid", error) }
+        val status = response["status"]?.jsonPrimitive?.intOrNull ?: 0
+        if (status !in 200..299) {
+            throw IllegalStateException("Novel cover request failed with HTTP $status")
+        }
+        val encoded = response["bodyBase64"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("Novel cover response was empty")
+        return runCatching { Base64.decode(encoded, Base64.DEFAULT) }
+            .getOrElse { error -> throw IllegalStateException("Novel cover response was not base64", error) }
     }
 
     suspend fun destroy() = runtimeMutex.withLock {

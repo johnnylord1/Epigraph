@@ -25,15 +25,20 @@ import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
  */
 class SettingsReaderHubController : SettingsLegacyController() {
 
-    private enum class ReaderTab { MANGA, NOVEL }
+    private enum class ReaderTab { MANGA, NOVEL, BOOKS }
 
     private var selectedTab: ReaderTab = ReaderTab.MANGA
+
+    fun selectInitialTab(tab: String?): SettingsReaderHubController = apply {
+        selectedTab = ReaderTab.entries.firstOrNull { it.name == tab } ?: selectedTab
+    }
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = MR.strings.reader
         when (selectedTab) {
             ReaderTab.MANGA -> populateMangaReaderPreferences(this)
             ReaderTab.NOVEL -> populateNovelReaderPreferences(this)
+            ReaderTab.BOOKS -> populateBooksReaderPreferences(this)
         }
     }
 
@@ -60,7 +65,11 @@ class SettingsReaderHubController : SettingsLegacyController() {
 
     private fun applyTabs() {
         val act = activity ?: return
-        val labels = listOf(act.getString(MR.strings.manga), act.getString(MR.strings.novel))
+        val labels = listOf(
+            act.getString(MR.strings.manga),
+            act.getString(MR.strings.novel),
+            act.getString(eu.kanade.tachiyomi.R.string.epigraph_books),
+        )
         activityBinding?.appBar?.applyTabs(
             items = labels.map { TabItem.Label(it) },
             selectedIndex = selectedTab.ordinal,

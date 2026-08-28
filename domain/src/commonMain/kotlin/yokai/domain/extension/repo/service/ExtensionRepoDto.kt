@@ -11,7 +11,10 @@ data class ExtensionRepoMetaDto(
 @Serializable
 data class ExtensionRepoDto(
     val name: String,
-    val shortName: String?,
+    // Newer repositories omit shortName from repo.json. Nullable fields without a
+    // default are still required by kotlinx.serialization, which made valid repos
+    // fail with MissingFieldException before the catalog was ever requested.
+    val shortName: String? = null,
     val website: String,
     val signingKeyFingerprint: String,
 )

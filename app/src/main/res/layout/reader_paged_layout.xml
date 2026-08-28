@@ -64,6 +64,14 @@
             app:title="@string/page_layout"
             android:entries="@array/page_layouts" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/automatic_split_pages"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/split_double_pages_portrait"
+            android:textColor="?attr/colorOnBackground" />
+
         <eu.kanade.tachiyomi.widget.MaterialSpinnerView
             android:id="@+id/extend_past_cutout"
             android:layout_width="match_parent"

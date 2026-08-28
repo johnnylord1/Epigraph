@@ -15,4 +15,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hayai-buildSrc"
+rootProject.name = "epigraph-buildSrc"

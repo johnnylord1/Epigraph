@@ -65,7 +65,7 @@ __Storage.prototype.getAllKeys = function() {
 // in-memory object dict with a single get() returning the dict. LNReader keeps these as
 // stubs at the plugin layer because the real localStorage only exists in the WebView
 // runtime (where the browser provides it natively). Matching that surface keeps semantic
-// parity — the previous Hayai impl returned a single SharedPreferences blob, which
+// parity — the previous Epigraph impl returned a single SharedPreferences blob, which
 // silently broke any plugin that tried to read individual keys off the returned object.
 function __LocalStorage() {
     this._db = {};

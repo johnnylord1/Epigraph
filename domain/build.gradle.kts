@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.tasks.testing.Test
 
 plugins {
     kotlin("multiplatform")
@@ -13,6 +14,9 @@ tasks {
             "-Xwarning-level=DEPRECATION:disabled",
             "-Xwarning-level=OVERRIDE_DEPRECATION:disabled",
         )
+    }
+    withType<Test> {
+        useJUnitPlatform()
     }
 }
 
@@ -36,6 +40,7 @@ kotlin {
             dependencies {
                 implementation(libs.bundles.test)
                 implementation(kotlinx.coroutines.test)
+                runtimeOnly(libs.bundles.test.runtime)
             }
         }
         androidMain {

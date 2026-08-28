@@ -21,7 +21,6 @@ import eu.kanade.tachiyomi.util.chapter.ChapterUtil
 import eu.kanade.tachiyomi.util.manga.MangaUtil
 import eu.kanade.tachiyomi.util.system.launchNow
 import kotlin.math.max
-import yokai.data.DatabaseHandler
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.chapter.interactor.GetChapter
@@ -40,7 +39,6 @@ import yokai.domain.track.interactor.InsertTrack
 class MangaBackupRestorer(
     private val context: Context = get(),
     private val customMangaManager: CustomMangaManager = get(),
-    private val handler: DatabaseHandler = get(),
     private val getCategories: GetCategories = get(),
     private val setMangaCategories: SetMangaCategories = get(),
     private val getChapter: GetChapter = get(),
@@ -180,7 +178,7 @@ class MangaBackupRestorer(
         novelQuotes: List<BackupNovelQuote>,
     ) {
         restoreCategories(manga, categories, backupCategories)
-        restoreHistoryForManga(history)
+        restoreHistoryForManga(manga, history)
         restoreTrackForManga(manga, tracks)
         restoreFilteredScanlatorsForManga(manga, filteredScanlators)
         // EXH -->
@@ -255,30 +253,44 @@ class MangaBackupRestorer(
      *
      * @param history list containing history to be restored
      */
-    internal suspend fun restoreHistoryForManga(history: List<BackupHistory>) {
-        // List containing history to be updated
-        val historyToBeUpdated = ArrayList<History>(history.size)
-        for ((url, lastRead, readDuration) in history) {
-            val dbHistory = handler.awaitOneOrNull { historyQueries.getByChapterUrl(url, History::mapper) }
-            // Check if history already in database and update
-            if (dbHistory != null) {
-                dbHistory.apply {
-                    last_read = max(lastRead, dbHistory.last_read)
-                    time_read = max(readDuration, dbHistory.time_read)
-                }
-                historyToBeUpdated.add(dbHistory)
-            } else {
-                // If not in database create
-                getChapter.awaitByUrl(url, false)?.let {
-                    val historyToAdd = History.create(it).apply {
-                        last_read = lastRead
-                        time_read = readDuration
-                    }
-                    historyToBeUpdated.add(historyToAdd)
-                }
+    internal suspend fun restoreHistoryForManga(manga: Manga, history: List<BackupHistory>) {
+        val mangaId = manga.id ?: return
+
+        // A chapter URL is only unique inside a series. Looking it up globally can
+        // attach restored history to another work whose source reuses the same URL.
+        val chaptersByUrl = getChapter.awaitAll(mangaId, false).associateBy { it.url }
+        val existingHistoryByChapterId = getHistory.awaitAllByMangaId(mangaId).associateBy { it.chapter_id }
+
+        // Legacy and current backup fields may contain the same chapter. Collapse
+        // those entries before writing so one restore never counts the same time twice.
+        val mergedBackupHistory = history
+            .groupBy { it.url }
+            .map { (url, entries) ->
+                BackupHistory(
+                    url = url,
+                    lastRead = entries.maxOf { it.lastRead },
+                    readDuration = entries.maxOf { it.readDuration },
+                )
+            }
+
+        val historyToBeUpdated = mergedBackupHistory.mapNotNull { backupHistory ->
+            val chapter = chaptersByUrl[backupHistory.url] ?: return@mapNotNull null
+            val existingHistory = existingHistoryByChapterId[chapter.id]
+            val currentReadDuration = existingHistory?.time_read ?: 0L
+            val restoredReadDuration = max(backupHistory.readDuration, currentReadDuration)
+
+            History.create(chapter).apply {
+                last_read = max(backupHistory.lastRead, existingHistory?.last_read ?: 0L)
+                // HistoryRepository uses additive updates during normal reading.
+                // Supply only the missing delta so importing the same backup again
+                // is idempotent while keeping the greater accumulated duration.
+                time_read = restoredReadDuration - currentReadDuration
             }
         }
-        upsertHistory.awaitBulk(historyToBeUpdated)
+
+        if (historyToBeUpdated.isNotEmpty()) {
+            upsertHistory.awaitBulk(historyToBeUpdated)
+        }
     }
 
     /**

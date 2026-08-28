@@ -24,6 +24,7 @@ fun novelModule() = module {
             context = get<Application>(),
             repoRepository = get(),
             networkHelper = get(),
+            preferences = get(),
         )
     }
 }

@@ -122,7 +122,7 @@ class LibraryUpdateNotifier(private val context: Context) {
                 )
                 setContentIntent(reportIntent)
                 setAutoCancel(true)
-                setSmallIcon(R.drawable.ic_hayai)
+                setSmallIcon(R.drawable.ic_epigraph)
                 addAction(
                     R.drawable.ic_file_open_24dp,
                     context.getString(MR.strings.open_log),
@@ -162,7 +162,7 @@ class LibraryUpdateNotifier(private val context: Context) {
                 )
                 setContentIntent(reportIntent)
                 setAutoCancel(true)
-                setSmallIcon(R.drawable.ic_hayai)
+                setSmallIcon(R.drawable.ic_epigraph)
                 addAction(
                     R.drawable.ic_file_open_24dp,
                     context.getString(MR.strings.open_log),
@@ -198,7 +198,7 @@ class LibraryUpdateNotifier(private val context: Context) {
                     notifications.add(
                         Pair(
                             context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
-                                setSmallIcon(R.drawable.ic_hayai)
+                                setSmallIcon(R.drawable.ic_epigraph)
                                 try {
                                     val request = ImageRequest.Builder(context).data(manga.manga.cover())
                                         .networkCachePolicy(CachePolicy.DISABLED)
@@ -272,7 +272,7 @@ class LibraryUpdateNotifier(private val context: Context) {
                 notify(
                     Notifications.ID_NEW_CHAPTERS,
                     context.notification(Notifications.CHANNEL_NEW_CHAPTERS) {
-                        setSmallIcon(R.drawable.ic_hayai)
+                        setSmallIcon(R.drawable.ic_epigraph)
                         setLargeIcon(notificationBitmap)
                         setContentTitle(context.getString(MR.strings.new_chapters_found))
                         color = ContextCompat.getColor(context, R.color.secondaryTachiyomi)

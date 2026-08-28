@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.util.chapter
 
+import epigraph.sync.core.protocol.SuwayomiCoreContentReference
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -114,6 +116,7 @@ suspend fun syncChaptersWithSource(
                     dateUpload = chapter.date_upload,
                     chapterNumber = chapter.chapter_number.toDouble(),
                     sourceOrder = chapter.source_order.toLong(),
+                    memo = chapter.memo,
                 )
                 toChange.add(update)
             }
@@ -208,6 +211,40 @@ suspend fun syncChaptersWithSource(
             )
         }
 
+        if (source.id == EpigraphCoreSource.ID && manga.id != null) {
+            val mangaReference = SuwayomiCoreContentReference.parseManga(manga.url)
+            val workIdentity = aethon_syncQueries
+                .selectIdentityByLocalReference("MANGA", manga.id!!.toString())
+                .executeAsOneOrNull()
+            if (mangaReference != null && workIdentity != null) {
+                sourceChapters.forEach { sourceChapter ->
+                    val chapterReference = SuwayomiCoreContentReference.parseChapter(sourceChapter.url)
+                        ?: return@forEach
+                    if (
+                        chapterReference.serverId != mangaReference.serverId ||
+                        chapterReference.profileId != mangaReference.profileId
+                    ) {
+                        return@forEach
+                    }
+                    val localChapter = chaptersQueries
+                        .getChaptersByUrlAndMangaId(sourceChapter.url, manga.id!!, 0)
+                        .executeAsOneOrNull()
+                        ?: return@forEach
+                    val chapterEntityId = chapterReference.serverId?.let { serverId ->
+                        "suwayomi:server:$serverId:profile:${chapterReference.profileId}:chapter:${chapterReference.chapterId}"
+                    } ?: "suwayomi:profile:${chapterReference.profileId}:chapter:${chapterReference.chapterId}"
+                    aethon_syncQueries.upsertChapterBinding(
+                        chapterEntityId = chapterEntityId,
+                        workEntityId = workIdentity.entity_id,
+                        localChapterId = localChapter._id,
+                        normalizedUrl = sourceChapter.url,
+                        ordinal = localChapter.chapter_number,
+                        updatedAt = now,
+                    )
+                }
+            }
+        }
+
     }
 
     // Recompute the predicted next-release window now that the chapter list changed.
@@ -238,5 +275,8 @@ private fun shouldUpdateDbChapter(dbChapter: Chapter, sourceChapter: Chapter): B
         dbChapter.name != sourceChapter.name ||
         dbChapter.date_upload != sourceChapter.date_upload ||
         dbChapter.chapter_number != sourceChapter.chapter_number ||
-        dbChapter.source_order != sourceChapter.source_order
+        dbChapter.source_order != sourceChapter.source_order ||
+        // lib 1.6 payload (e.g. Asura mangaSlug) changes when the site re-randomizes its
+        // slug; the reader needs the fresh value to rebuild the page URL.
+        dbChapter.memo != sourceChapter.memo
 }

@@ -101,5 +101,107 @@
             android:layout_marginTop="16dp"
             android:text="@string/always_show_chapter_transition"
             android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.textview.MaterialTextView
+            style="?textAppearanceTitleSmall"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/reader_vertical_progress_modes"
+            android:textColor="?attr/colorSecondary"
+            android:textSize="15sp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="-24dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginEnd="-24dp"
+            android:clipToPadding="false"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.button.MaterialButtonToggleGroup
+                android:id="@+id/vertical_seekbar_modes"
+                style="@style/Widget.Tachiyomi.MaterialButtonGroup.Connected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:spacing="4dp" />
+        </HorizontalScrollView>
+
+        <LinearLayout
+            android:id="@+id/vertical_seekbar_extra_settings"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/vertical_seekbar_height_text"
+                    style="?textAppearanceBodyMedium"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="15sp"
+                    tools:text="Vertical bar height\n65%" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/vertical_seekbar_height"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_weight="1"
+                    android:stepSize="5"
+                    android:valueFrom="60"
+                    android:valueTo="100"
+                    tools:value="65" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    style="?textAppearanceBodyMedium"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/reader_vertical_progress_side"
+                    android:textSize="15sp" />
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/vertical_seekbar_placement"
+                    style="@style/Widget.Tachiyomi.MaterialButtonGroup.Connected"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layoutDirection="ltr"
+                    android:orientation="horizontal"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/place_left_button"
+                        style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                        android:text="@string/reader_progress_left"
+                        app:toggleCheckedStateOnClick="true" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/place_right_button"
+                        style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                        android:text="@string/reader_progress_right"
+                        app:toggleCheckedStateOnClick="true" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+            </LinearLayout>
+        </LinearLayout>
     </LinearLayout>
 </eu.kanade.tachiyomi.ui.reader.settings.ReaderGeneralView>

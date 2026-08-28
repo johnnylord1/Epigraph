@@ -72,6 +72,12 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
     private var filterJob: Job? = null
     private var submittedSnapshot: SubmittedSnapshot? = null
 
+    // FlexibleAdapter creates its ItemTouchHelper only after RecyclerView attaches the adapter.
+    // A library flow can emit before that happens (notably the Books surface, which is hidden
+    // until the user switches modes), so retain the requested value and apply it at attach time.
+    private var requestedLongPressDragEnabled = false
+    private var isAttachedToRecyclerView = false
+
     val libraryListener: LibraryListener? = controller
 
     val isSingleCategory
@@ -96,8 +102,13 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
     private fun setItemsPerCategoryMap() {
         val controller = controller ?: return
         itemsPerCategory = headerItems.associate { header ->
-            (header as LibraryHeaderItem).catId to
-                controller.presenter.getItemCountInCategories(header.catId)
+            val category = (header as LibraryHeaderItem).category
+            val categoryId = category.id ?: return@associate 0 to 0
+            categoryId to if (categoryId < 0) {
+                mangas.count { it.sectionHeader.catId == categoryId }
+            } else {
+                controller.presenter.getItemCountInCategories(categoryId)
+            }
         }
     }
 
@@ -219,13 +230,27 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
                 updateDataSetIfChanged(filteredManga)
             }
         }
-        isLongPressDragEnabled = libraryListener?.canDrag() == true && s.isNullOrBlank()
+        requestedLongPressDragEnabled = libraryListener?.canDrag() == true && s.isNullOrBlank()
+        if (isAttachedToRecyclerView) {
+            isLongPressDragEnabled = requestedLongPressDragEnabled
+        }
         setItemsPerCategoryMap()
+    }
+
+    override fun onAttachedToRecyclerView(recyclerView: androidx.recyclerview.widget.RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        isAttachedToRecyclerView = true
+        isLongPressDragEnabled = requestedLongPressDragEnabled
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: androidx.recyclerview.widget.RecyclerView) {
+        isAttachedToRecyclerView = false
+        super.onDetachedFromRecyclerView(recyclerView)
     }
 
     private fun updateDataSetIfChanged(items: List<LibraryItem>): Boolean {
         visibleItemsPerCategory = items.asSequence()
-            .filterIsInstance<LibraryMangaItem>()
+            .filterIsInstance<LibraryItem>()
             .groupingBy { it.sectionHeader.catId }
             .eachCount()
         val snapshot = SubmittedSnapshot(
@@ -363,6 +388,15 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
                     isSingleCategory -> text
                     recyclerView.resources.isLTR -> text + " - " + item.header?.category?.name.orEmpty()
                     else -> item.header?.category?.name.orEmpty() + " - " + text
+                }
+            }
+            is LibraryBookItem -> {
+                vibrateOnCategoryChange(item.sectionHeader.category.name)
+                when (getSort(position)) {
+                    LibrarySort.Title,
+                    LibrarySort.DragAndDrop,
+                    -> getFirstLetter(item.book.displayName)
+                    else -> item.book.contentType.name
                 }
             }
             else -> ""

@@ -350,7 +350,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         val extensions = items?.mapNotNull {
             val extItem = (extAdapter?.getItem(it) as? ExtensionItem) ?: return
             val extension = (extAdapter?.getItem(it) as? ExtensionItem)?.extension ?: return
-            if ((extItem.installStep == null || extItem.installStep == InstallStep.Error) &&
+            if ((extItem.installStep == null || extItem.installStep == InstallStep.Error || extItem.installStep == InstallStep.Cancelled) &&
                 extension is Extension.Installed && extension.hasUpdate
             ) {
                 extension
@@ -514,7 +514,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         val items = extAdapter?.getSectionItemPositions(updateHeader) ?: return
         val canUpdate = items.any {
             val extItem = (extAdapter?.getItem(it) as? ExtensionItem) ?: return
-            extItem.installStep == null || extItem.installStep == InstallStep.Error
+            extItem.installStep == null || extItem.installStep == InstallStep.Error || extItem.installStep == InstallStep.Cancelled
         }
         if (updateHeader.canUpdate == canUpdate) return
         updateHeader.canUpdate = canUpdate
@@ -664,13 +664,19 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         val frameLayout = novelPluginFrameLayout ?: return
         if (!displayedPluginsEmpty) {
             frameLayout.hideEmptyState()
+            frameLayout.isVisible = selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS
             return
         }
 
         val actions = if (novelPlugins.isEmpty()) {
             listOf(
-                EmptyView.Action(MR.strings.repos) {
-                    controller.router.pushController(ExtensionRepoController().withFadeTransaction())
+                // Novel repositories are opt-in. Keep the action explicit so an empty
+                // catalogue does not look like a broken extension feed and never implies
+                // that the app selected or installed a repository for the user.
+                EmptyView.Action(MR.strings.action_add_repo) {
+                    controller.router.pushController(
+                        ExtensionRepoController(initialPage = 1).withFadeTransaction(),
+                    )
                 },
             )
         } else {
@@ -688,6 +694,9 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
             message = message,
             actions = actions,
         )
+        // showEmptyState may make the host visible again. The Manga tab must never inherit
+        // the novel repository empty state while both pages share the extension sheet.
+        frameLayout.isVisible = selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS
     }
     // NOVEL <--
 

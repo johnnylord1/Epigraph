@@ -25,11 +25,16 @@ internal class ArchivePageLoader(private val reader: ArchiveReader) : PageLoader
      * Returns the pages found on this archive ordered with a natural comparator.
      */
     override suspend fun getPages(): List<ReaderPage> = reader.useEntries { entries ->
-        entries
+        val imageEntries = entries
             .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
             .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
+            .toList()
+        val sourcePositions = archiveSourcePagePositions(imageEntries.map { it.name })
+        imageEntries
             .mapIndexed { i, entry ->
                 ReaderPage(i).apply {
+                    sourcePageIndex = sourcePositions[i]?.index
+                    sourcePageCount = sourcePositions[i]?.count
                     stream = { reader.getInputStream(entry.name)!! }
                     status = Page.State.Ready
                 }
@@ -44,3 +49,22 @@ internal class ArchivePageLoader(private val reader: ArchiveReader) : PageLoader
         check(!isRecycled)
     }
 }
+
+internal data class ArchiveSourcePagePosition(
+    val index: Int,
+    val count: Int,
+)
+
+internal fun archiveSourcePagePositions(entryNames: List<String>): List<ArchiveSourcePagePosition?> {
+    val indexes = entryNames.map { name ->
+        ARCHIVE_PAGE_NAME.matchEntire(name)?.groupValues?.get(1)?.toIntOrNull()?.minus(1)
+    }
+    val distinct = indexes.filterNotNull().toSortedSet()
+    val count = distinct.lastOrNull()?.plus(1) ?: return entryNames.map { null }
+    if (indexes.any { it == null } || distinct.toList() != (0 until count).toList()) {
+        return entryNames.map { null }
+    }
+    return indexes.map { ArchiveSourcePagePosition(requireNotNull(it), count) }
+}
+
+private val ARCHIVE_PAGE_NAME = Regex("^(\\d+)(?:__\\d+)?\\.[^.]+$")

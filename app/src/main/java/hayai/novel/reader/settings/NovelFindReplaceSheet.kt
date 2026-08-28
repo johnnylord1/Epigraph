@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -36,10 +39,11 @@ fun NovelFindReplaceSheet(
     ModalBottomSheet(
         sheetState = sheetState,
         onDismissRequest = onDismissRequest,
-        // RegexReplacementSection already provides its own header row; suppress the
-        // drag handle and any default top padding so the title sits flush with the top.
-        dragHandle = null,
-        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(color = MaterialTheme.colorScheme.onSurfaceVariant)
+        },
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
         // The inner section uses a plain Column (it has to — the Advanced tab caller already
         // wraps it in a verticalScroll, and nesting two would crash on unbounded height).

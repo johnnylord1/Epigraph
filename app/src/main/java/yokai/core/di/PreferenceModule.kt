@@ -21,6 +21,7 @@ import yokai.domain.storage.StoragePreferences
 import yokai.domain.ui.UiPreferences
 import yokai.domain.ui.settings.ReaderPreferences
 import tachiyomi.domain.translation.service.TranslationPreferences
+import epigraph.books.reader.BookReaderPreferences
 
 fun preferenceModule(application: Application) = module {
     single<PreferenceStore> { AndroidPreferenceStore(application) }
@@ -34,6 +35,8 @@ fun preferenceModule(application: Application) = module {
     single { UiPreferences(get()) }
 
     single { ReaderPreferences(get()) }
+
+    single { BookReaderPreferences(get()) }
 
     single { TranslationPreferences(get()) }
 

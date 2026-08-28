@@ -50,6 +50,7 @@ kotlin {
                 api(libs.okhttp.logging.interceptor)
                 api(libs.okhttp.dnsoverhttps)
                 api(libs.okhttp.brotli)
+                api(libs.okhttp.zstd)
 
                 api(androidx.preference)
 

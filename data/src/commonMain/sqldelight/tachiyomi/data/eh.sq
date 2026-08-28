@@ -1,3 +1,5 @@
+import kotlinx.serialization.json.JsonObject;
+
 deleteBySyncId:
 DELETE FROM manga_sync WHERE sync_id = :syncId;
 

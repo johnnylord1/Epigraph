@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -21,7 +22,9 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -213,9 +216,14 @@ fun QuotesSheet(
     ModalBottomSheet(
         sheetState = sheetState,
         onDismissRequest = onDismiss,
-        // Drop the default drag handle and trim the top padding so the sheet starts flush
-        // with the screen edge instead of leaving a chunk of empty surface.
-        dragHandle = null,
+        // Match the comic reader's rounded sheet and visible drag affordance. The previous
+        // handle-less sheet looked like a square dialog floating above the reader.
+        shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -306,6 +314,10 @@ private fun QuoteCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = Size.tiny),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
     ) {
         Column(modifier = Modifier.padding(Size.smedium)) {
             Text(

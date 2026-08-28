@@ -48,6 +48,7 @@ import eu.kanade.tachiyomi.source.getExtension
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.ui.manga.track.TrackItem
@@ -270,15 +271,15 @@ class MangaDetailsPresenter(
             .onEach { onUpdateManga() }
             .launchIn(presenterScope)
 
-        val fetchMangaNeeded = !manga.initialized
-
         initialContentJob?.cancel()
         initialContentJob = presenterScope.launch {
             isLoading = true
             withUIContext {
                 controller.updateHeader()
             }
-            val fetchChaptersNeeded = getChaptersNow().isEmpty()
+            val coreSessionAvailable = (source as? EpigraphCoreSource)?.hasActiveSession() != false
+            val fetchMangaNeeded = !manga.initialized && coreSessionAvailable
+            val fetchChaptersNeeded = getChaptersNow().isEmpty() && coreSessionAvailable
             val tasks = listOf(
                 async { if (fetchMangaNeeded) fetchMangaFromSource() },
                 async { if (fetchChaptersNeeded) fetchChaptersFromSource(false) },

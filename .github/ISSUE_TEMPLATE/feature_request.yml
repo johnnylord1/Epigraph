@@ -1,5 +1,5 @@
 name: 🌟 Feature request
-description: Suggest a feature to improve Hayai
+description: Suggest a feature to improve Epigraph
 labels: [enhancement]
 body:
 
@@ -7,7 +7,7 @@ body:
     id: feature-description
     attributes:
       label: Describe your suggested feature
-      description: How can Hayai be improved?
+      description: How can Epigraph be improved?
       placeholder: |
         Example:
           "It should work like this..."
@@ -31,11 +31,11 @@ body:
           required: true
         - label: I have written a short but informative title.
           required: true
-        - label: If this is an request for a feature in the original Tachiyomi, I am opening because multiple versions of Hayai have been released without this feature.
+        - label: If this is a request for a feature in the original Tachiyomi, I am opening it because multiple Epigraph releases have shipped without this feature.
           required: true
         - label: If this is an issue with an extension, or a request for an extension, I should be contacting the extensions repository's maintainer/support for help.
           required: true
-        - label: I have updated the app to version **[1.9.7.4](https://github.com/HayaiApp/hayai/releases/latest)**.
+        - label: I have updated the app to the latest [Epigraph release](https://github.com/johnnylord1/Epigraph/releases/latest).
           required: true
         - label: I have checked through the app settings for my feature.
           required: true
@@ -55,4 +55,4 @@ body:
         Add a :+1: [reaction] to [issues you find important].
 
         [reaction]: https://github.blog/2016-03-10-add-reactions-to-pull-requests-issues-and-comments/
-        [issues you find important]: https://github.com/HayaiApp/hayai/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc
+        [issues you find important]: https://github.com/johnnylord1/Epigraph/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc

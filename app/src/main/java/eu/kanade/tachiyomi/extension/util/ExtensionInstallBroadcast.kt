@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import com.hippo.unifile.UniFile
+import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallBroadcast.Companion.EXTRA_SESSION_ID
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallBroadcast.Companion.PACKAGE_INSTALLED_ACTION
@@ -42,7 +43,14 @@ class ExtensionInstallBroadcast : BroadcastReceiver() {
                 SessionParams.MODE_FULL_INSTALL,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                params.setRequireUserAction(USER_ACTION_NOT_REQUIRED)
+                val requireUserAction = intent.getBooleanExtra(
+                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
+                    false,
+                )
+                params.setRequireUserAction(
+                    if (requireUserAction) SessionParams.USER_ACTION_REQUIRED
+                    else USER_ACTION_NOT_REQUIRED,
+                )
             }
             val sessionId = packageInstaller.createSession(params)
             val session = packageInstaller.openSession(sessionId)
@@ -54,6 +62,10 @@ class ExtensionInstallBroadcast : BroadcastReceiver() {
                 .setAction(PACKAGE_INSTALLED_ACTION)
                 .putExtra(ExtensionInstaller.EXTRA_DOWNLOAD_ID, downloadId)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
+                .putExtra(
+                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
+                    intent.getBooleanExtra(ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION, false),
+                )
 
             val mutableFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_MUTABLE
@@ -100,7 +112,11 @@ class ExtensionInstallBroadcast : BroadcastReceiver() {
                         extensionManager.setInstallationResult(downloadId, true)
                     }
                     PackageInstaller.STATUS_FAILURE, PackageInstaller.STATUS_FAILURE_ABORTED, PackageInstaller.STATUS_FAILURE_BLOCKED, PackageInstaller.STATUS_FAILURE_CONFLICT, PackageInstaller.STATUS_FAILURE_INCOMPATIBLE, PackageInstaller.STATUS_FAILURE_INVALID, PackageInstaller.STATUS_FAILURE_STORAGE -> {
-                        extensionManager.setInstallationResult(downloadId, false)
+                        extensionManager.setInstallationResult(
+                            downloadId,
+                            result = false,
+                            cancelled = status == PackageInstaller.STATUS_FAILURE_ABORTED,
+                        )
                         if (status != PackageInstaller.STATUS_FAILURE_ABORTED) {
                             if (DeviceUtil.isMiui) {
                                 context.toast(MR.strings.extensions_miui_warning, Toast.LENGTH_LONG)
@@ -141,7 +157,14 @@ class ExtensionInstallActivity : Activity() {
                 SessionParams.MODE_FULL_INSTALL,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                params.setRequireUserAction(USER_ACTION_NOT_REQUIRED)
+                val requireUserAction = intent.getBooleanExtra(
+                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
+                    false,
+                )
+                params.setRequireUserAction(
+                    if (requireUserAction) SessionParams.USER_ACTION_REQUIRED
+                    else USER_ACTION_NOT_REQUIRED,
+                )
             }
             val sessionId = packageInstaller.createSession(params)
             val session = packageInstaller.openSession(sessionId)
@@ -153,6 +176,10 @@ class ExtensionInstallActivity : Activity() {
                 .setAction(PACKAGE_INSTALLED_ACTION)
                 .putExtra(ExtensionInstaller.EXTRA_DOWNLOAD_ID, downloadId)
                 .putExtra(EXTRA_SESSION_ID, sessionId)
+                .putExtra(
+                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
+                    intent.getBooleanExtra(ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION, false),
+                )
             val mutableFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 PendingIntent.FLAG_MUTABLE
             } else {
@@ -170,6 +197,9 @@ class ExtensionInstallActivity : Activity() {
         } catch (error: Exception) {
             // Either install package can't be found (probably bots) or there's a security exception
             // with the download manager. Nothing we can workaround.
+            Logger.e(error) {
+                "ExtensionInstallActivity failed: ${error.javaClass.simpleName}: ${error.message}"
+            }
             toast(error.message)
         }
         finish()

@@ -3,6 +3,13 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application>
+        <receiver
+            android:name="epigraph.sync.debug.PairingDebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="epigraph.debug.PAIRING_INJECT" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="eu.kanade.tachiyomi.debug.LeakCanaryConfigProvider"
             android:authorities="${applicationId}.leakcanary-config"

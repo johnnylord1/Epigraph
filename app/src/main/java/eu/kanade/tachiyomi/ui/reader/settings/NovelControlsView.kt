@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.util.bindToPreference
 import eu.kanade.tachiyomi.widget.BaseReaderSettingsView
 import yokai.i18n.MR
 import yokai.util.lang.getString
+import kotlin.math.roundToInt
 
 class NovelControlsView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) :
     BaseReaderSettingsView<ReaderNovelControlsBinding>(context, attrs) {
@@ -37,6 +38,22 @@ class NovelControlsView @JvmOverloads constructor(context: Context, attrs: Attri
             swipeNavigation.bindToPreference(readerPreferences.novelSwipeNavigation)
             textSelectable.bindToPreference(readerPreferences.novelTextSelectable)
             showProgressSlider.bindToPreference(readerPreferences.novelShowProgressSlider)
+            hudVerticalProgress.bindToPreference(preferences.novelVerticalSeekbar())
+            hudVerticalProgressHeight.value = preferences.readerVerticalSeekbarHeightPercent().get().coerceIn(60, 100).toFloat()
+            hudVerticalProgressHeight.setLabelFormatter { "${it.roundToInt()}%" }
+            hudVerticalProgressHeight.addOnChangeListener { _, value, fromUser ->
+                if (fromUser) preferences.readerVerticalSeekbarHeightPercent().set(value.roundToInt())
+            }
+            hudVerticalProgressSide.check(
+                if (preferences.readerVerticalSeekbarDockLeft().get()) {
+                    hudVerticalProgressLeft.id
+                } else {
+                    hudVerticalProgressRight.id
+                },
+            )
+            hudVerticalProgressSide.addOnButtonCheckedListener { _, checkedId, checked ->
+                if (checked) preferences.readerVerticalSeekbarDockLeft().set(checkedId == hudVerticalProgressLeft.id)
+            }
             verticalScrollbar.bindToPreference(readerPreferences.novelVerticalScrollbar)
 
             // Scrollbar position

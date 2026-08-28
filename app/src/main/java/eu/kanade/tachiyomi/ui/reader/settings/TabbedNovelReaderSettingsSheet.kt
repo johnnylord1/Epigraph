@@ -30,6 +30,9 @@ class TabbedNovelReaderSettingsSheet(
     private val controlsView: NovelControlsView = View.inflate(
         readerActivity, R.layout.reader_novel_controls, null,
     ) as NovelControlsView
+    private val filterView: ReaderFilterView = View.inflate(
+        readerActivity, R.layout.reader_color_filter, null,
+    ) as ReaderFilterView
     private val translationView: NovelTranslationView = View.inflate(
         readerActivity, R.layout.reader_novel_translation, null,
     ) as NovelTranslationView
@@ -38,7 +41,7 @@ class TabbedNovelReaderSettingsSheet(
     ) as NovelTtsView
 
     override fun getTabViews(): List<View> = listOf(
-        readingView, appearanceView, controlsView, translationView, ttsView,
+        readingView, appearanceView, controlsView, filterView, translationView, ttsView,
     )
 
     // "Display" is shorter than "Appearance" and prevents tab-text wrap on narrower phones.
@@ -48,6 +51,7 @@ class TabbedNovelReaderSettingsSheet(
         MR.strings.reading,
         MR.strings.display,
         MR.strings.controls,
+        MR.strings.custom_filter,
         MR.strings.novel_translation_tab,
         MR.strings.novel_tts_tab,
     )
@@ -56,10 +60,17 @@ class TabbedNovelReaderSettingsSheet(
         readingView.activity = readerActivity
         appearanceView.activity = readerActivity
         controlsView.activity = readerActivity
+        filterView.activity = readerActivity
+        filterView.window = window
         translationView.activity = readerActivity
         ttsView.activity = readerActivity
 
-        binding.menu.isVisible = false
+        binding.menu.isVisible = true
+        binding.menu.setImageResource(R.drawable.ic_outline_settings_24dp)
+        binding.menu.setOnClickListener {
+            readerActivity.openGlobalReaderSettings()
+            dismiss()
+        }
         binding.tabs.tabMode = TabLayout.MODE_SCROLLABLE
         binding.tabs.tabGravity = TabLayout.GRAVITY_START
     }

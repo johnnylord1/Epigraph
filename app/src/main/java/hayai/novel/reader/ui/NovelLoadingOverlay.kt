@@ -25,9 +25,8 @@ import yokai.presentation.theme.YokaiTheme
  * M3 Expressive shape-morphing loading indicator with an optional caption. Mounted as a
  * [ComposeView] over a viewer's content container while a chapter is being fetched.
  *
- * Rationale: replaces the previous "Loading..." `TextView` (in [NovelViewer]) and the
- * blank loading HTML (in [NovelWebViewViewer]) with the same Material 3 Expressive
- * `LoadingIndicator` so both renderers feel the same and pick up Material You theming.
+ * Rationale: keeps the canonical [NovelWebViewViewer] loading state consistent with the
+ * surrounding reader chrome and Material You theming.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable

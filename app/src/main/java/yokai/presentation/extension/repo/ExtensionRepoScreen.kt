@@ -65,6 +65,7 @@ import android.R as AR
 class ExtensionRepoScreen(
     private val title: String,
     private var repoUrl: String? = null,
+    private val initialPage: Int = 0,
 ) : Screen() {
 
     @Composable
@@ -89,7 +90,10 @@ class ExtensionRepoScreen(
         var extensionError by rememberSaveable { mutableStateOf<String?>(null) }
         var novelError by rememberSaveable { mutableStateOf<String?>(null) }
 
-        val pagerState = rememberPagerState(pageCount = { 2 })
+        val pagerState = rememberPagerState(
+            initialPage = initialPage.coerceIn(0, 1),
+            pageCount = { 2 },
+        )
         val extensionCount = (extensionState as? ExtensionRepoScreenModel.State.Success)?.repos?.size
         val novelCount = (novelState as? NovelRepoScreenModel.State.Success)?.repos?.size
 

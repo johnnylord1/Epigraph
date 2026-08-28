@@ -9,7 +9,7 @@ import yokai.domain.ui.settings.ReaderPreferences
 /**
  * Merges every novel pref flow exposed by the settings sheet into one of five buckets so
  * each preference applies live without a chapter reopen. Ported from Tsundoku's
- * NovelWebViewPreferenceObserver; the bucket structure is verbatim, the pref set is Hayai's.
+ * NovelWebViewPreferenceObserver; the bucket structure is verbatim, the pref set is Epigraph's.
  *
  * - [onStyleChanged]: re-applies CSS in place (font, theme, margins, colors, custom CSS,
  *   source-CSS-priority …).

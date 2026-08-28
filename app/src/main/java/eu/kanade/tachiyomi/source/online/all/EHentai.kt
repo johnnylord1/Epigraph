@@ -1232,7 +1232,7 @@ class EHentai(
                     },
                 )
                 // `namespace=1` returns tags as namespaced strings (e.g. "language:english")
-                // rather than the legacy flat list. Matches what Hayai's parser expects.
+                // rather than the legacy flat list. Matches what Epigraph's parser expects.
                 put("namespace", 1)
             }
             val response = postApi(payload)

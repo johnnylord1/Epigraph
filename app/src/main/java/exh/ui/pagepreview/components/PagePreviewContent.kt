@@ -48,7 +48,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
 import yokai.presentation.YokaiScaffold
-import yokai.util.coil.hayaiPagePreviewDefaults
+import yokai.util.coil.epigraphPagePreviewDefaults
 
 @Composable
 fun PagePreviewContent(
@@ -205,7 +205,7 @@ private fun PagePreviewItem(
     val request = remember(page.imageUrl, context) {
         ImageRequest.Builder(context)
             .data(page.imageUrl)
-            .hayaiPagePreviewDefaults()
+            .epigraphPagePreviewDefaults()
             .build()
     }
 

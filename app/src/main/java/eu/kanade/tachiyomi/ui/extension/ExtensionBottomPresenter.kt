@@ -87,7 +87,7 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
                         it.first == item.extension.pkgName
                     } ?: return@collect
                     when (it.second.first) {
-                        InstallStep.Installed, InstallStep.Error -> {
+                        InstallStep.Installed, InstallStep.Cancelled, InstallStep.Error -> {
                             currentDownloads.remove(extension.extension.pkgName)
                         }
                         else -> {
@@ -242,7 +242,7 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
             )
                 .collect {
                     when (it.first) {
-                        InstallStep.Installed, InstallStep.Error -> {
+                        InstallStep.Installed, InstallStep.Cancelled, InstallStep.Error -> {
                             currentDownloads.remove(extension.pkgName)
                         }
                         else -> {

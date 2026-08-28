@@ -8,6 +8,7 @@ import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
+import epigraph.books.ui.UnifiedLibraryBooksView
 import androidx.annotation.DrawableRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
@@ -431,6 +432,16 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
                 binding.collapseArrow.isVisible = category.isHidden && !adapter.isSingleCategory
                 binding.updateButton.isVisible = false
                 setSelection()
+            }
+            category.id == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID -> {
+                // Books has no remote library job, but its section keeps the same refresh affordance
+                // as Comics. The controller handles this synthetic category locally.
+                // Keep the arrow visible: the synthetic Books category is still a real section and
+                // can be collapsed/expanded through the shared header click handler.
+                binding.collapseArrow.isVisible = true
+                binding.checkbox.isVisible = false
+                setRefreshing(isReloading)
+                binding.updateButton.isVisible = true
             }
             (category.id ?: -1) < 0 || adapter.libraryListener is FilteredLibraryController -> {
                 binding.collapseArrow.isVisible = false

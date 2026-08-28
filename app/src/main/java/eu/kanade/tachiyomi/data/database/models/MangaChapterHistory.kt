@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.database.models
 
 import eu.kanade.tachiyomi.domain.manga.models.Manga
+import kotlinx.serialization.json.JsonObject
 
 /**
  * Object containing manga, chapter and history
@@ -42,6 +43,7 @@ data class MangaChapterHistory(val manga: Manga, val chapter: Chapter, val histo
             coverLastModified: Long,
             nextUpdate: Long,
             fetchInterval: Long,
+            mangaMemo: JsonObject,
             // chapter
             chapterId: Long?,
             chapterMangaId: Long?,
@@ -56,6 +58,7 @@ data class MangaChapterHistory(val manga: Manga, val chapter: Chapter, val histo
             sourceOrder: Long?,
             dateFetch: Long?,
             dateUpload: Long?,
+            chapterMemo: JsonObject?,
             // history
             historyId: Long?,
             historyChapterId: Long?,
@@ -85,6 +88,7 @@ data class MangaChapterHistory(val manga: Manga, val chapter: Chapter, val histo
                 coverLastModified = coverLastModified,
                 nextUpdate = nextUpdate,
                 fetchInterval = fetchInterval,
+                memo = mangaMemo,
             )
 
             val chapter = try {
@@ -102,6 +106,7 @@ data class MangaChapterHistory(val manga: Manga, val chapter: Chapter, val histo
                     sourceOrder = sourceOrder!!,
                     dateFetch = dateFetch!!,
                     dateUpload = dateUpload!!,
+                    memo = chapterMemo ?: JsonObject(emptyMap()),
                 )
             } catch (_: NullPointerException) {
                 ChapterImpl()

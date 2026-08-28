@@ -94,7 +94,7 @@ fun domainModule() = module {
     factory { GetCustomManga(get()) }
     factory { RelinkCustomManga(get()) }
 
-    single<MangaRepository> { MangaRepositoryImpl(get()) }
+    single<MangaRepository> { MangaRepositoryImpl(get(), get(), get(), get()) }
     factory { GetManga(get()) }
     factory { GetLibraryManga(get()) }
     factory { GetUpcomingManga(get()) }

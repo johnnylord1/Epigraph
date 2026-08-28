@@ -36,7 +36,6 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material.icons.outlined.VerticalAlignTop
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
@@ -49,6 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.icerock.moko.resources.compose.stringResource
 import com.google.android.material.R as materialR
 import eu.kanade.tachiyomi.R
@@ -107,8 +107,11 @@ fun NovelReaderActionBar(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    // Resolve the same platform colors used by reader_nav.xml and the manga chapter sheet.
+    // `surface_alpha` is the exact translucent surface applied by ReaderActivity to the comics
+    // chrome; using it here keeps the novel-only controls visually continuous with that shell.
     val backgroundColor = remember(context) {
-        Color(context.getResourceColor(materialR.attr.colorSurface)).copy(alpha = 200f / 255f)
+        Color(ContextCompat.getColor(context, R.color.surface_alpha))
     }
     val iconTint = remember(context) {
         Color(context.getResourceColor(R.attr.actionBarTintColor))
@@ -116,7 +119,9 @@ fun NovelReaderActionBar(
     val rippleColor = remember(context) {
         Color(context.getResourceColor(android.R.attr.colorControlHighlight))
     }
-    val activeTint = MaterialTheme.colorScheme.primary
+    val activeTint = remember(context) {
+        Color(context.getResourceColor(materialR.attr.colorSecondary))
+    }
     val iconSize = 24.dp
     val buttonSize = 48.dp
     val reducedMotion = isReducedMotion
@@ -137,7 +142,7 @@ fun NovelReaderActionBar(
         // Inline TTS controls row: shown only while TTS is active so the user gets explicit
         // prev/next-paragraph + an explicit Stop that fully halts playback and dismisses the
         // row (Speaking → Stopped). Modeled on tsundoku's NovelTtsControlsOverlay but built
-        // from Hayai's own M3 components.
+        // from Epigraph's own M3 components.
         NovelTtsControlsRow(
             visible = isTtsActive,
             isTtsPaused = isTtsPaused,

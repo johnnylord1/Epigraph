@@ -15,14 +15,21 @@ data class Backup(
     @ProtoNumber(101) var backupSources: List<BackupSource> = emptyList(),
     @ProtoNumber(104) var backupPreferences: List<BackupPreference> = emptyList(),
     @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
+    @ProtoNumber(106) var backupLocalBooks: List<BackupLocalBook> = emptyList(),
 ) {
 
     companion object {
-        val filenameRegex = """(${BuildConfig.APPLICATION_ID}|tachiyomi)?_\d+-\d+-\d+_\d+-\d+\.(tachibk|proto\.gz)""".toRegex()
+        /**
+         * Epigraph's canonical backup suffix. The decoder is content based, so these names are
+         * only used for new files and for pruning scheduled backups. Keep every historical
+         * suffix here so upgrading never deletes or rejects a user's Aethon/Tachiyomi backup.
+         */
+        private const val CANONICAL_EXTENSION = "epigraphbk"
+        val filenameRegex = """(?i)(?:${BuildConfig.APPLICATION_ID}|app\.aethon\.mobile(?:\.(?:debug|beta|nightly))?|aethon|tachiyomi)?_\d+-\d+-\d+_\d+-\d+\.(epigraphbk|aethonbk|tachibk|proto\.gz|json)""".toRegex()
 
         fun getBackupFilename(): String {
             val date = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.getDefault()).format(Date())
-            return "${BuildConfig.APPLICATION_ID}_$date.tachibk"
+            return "${BuildConfig.APPLICATION_ID}_$date.$CANONICAL_EXTENSION"
         }
     }
 }
