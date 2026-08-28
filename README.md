@@ -51,6 +51,24 @@ The desktop client is the operational hub for the full library:
 - Managed Suwayomi runtime updates with ownership checks, snapshots,
   checksums, rollback, and health gates.
 
+The desktop-only and desktop-hosted capabilities are documented in the
+[complete desktop feature catalog](docs/desktop-features.md). The highlights
+are:
+
+- A unified Browse/Search workspace with local-first search, installed-source
+  search, Discover feeds, source filters, and keyboard-accessible results.
+- A recommendation engine that combines library taste signals, ratings,
+  tracker consensus, source availability, recency, momentum, and diversity,
+  with explainable Taste Insights.
+- Epigraph Core/Syncd as the persistent PC host for authenticated pairing,
+  QR/manual bootstrap, LAN discovery, scoped replication, replay, snapshots,
+  pause/resume, reconnect, and secure reader assets.
+- A managed Suwayomi lifecycle with ownership checks, extension stores,
+  transactional extension updates, health gates, snapshots, and rollback.
+- Native desktop workflows for local EPUB/PDF books, offline comic reading,
+  individual and mass migration, unified backup/restore, trackers, Discord
+  Rich Presence, themes, and desktop window/keybind controls.
+
 <p align="center">
   <img src="docs/assets/epigraph-app-tour.gif" alt="Epigraph desktop app tour" width="78%" />
 </p>
