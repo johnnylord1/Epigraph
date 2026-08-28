@@ -81,7 +81,7 @@ pub fn remove(executable: &Path) -> anyhow::Result<bool> {
         if let Ok(existing) = key.get_value::<String, _>(LEGACY_RUN_VALUE) {
             if registered_command_targets(&existing, &legacy_executable) {
                 key.delete_value(LEGACY_RUN_VALUE)
-                    .context("failed to remove legacy Aethon Core autostart registration")?;
+                    .context("failed to remove legacy Core autostart registration")?;
                 removed = true;
             }
         }

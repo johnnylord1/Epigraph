@@ -34,7 +34,7 @@ each content type.
   from Suwayomi extensions.
 - FlareSolverr is optional. Suwayomi owns its use for manga extensions; the
   LNReader runtime has its own bounded anti-bot recovery path.
-- Epigraph Mobile is a separate native Android fork of Hayai, implemented with Kotlin/Compose/SQLDelight in `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`. It is not implemented or packaged from this repository, and the upstream Hayai repository must not receive a new branch or push as part of this work.
+- Epigraph Mobile is a separate native Android fork of Hayai, implemented with Kotlin/Compose/SQLDelight in its own workspace. It is not implemented or packaged from this repository, and its upstream repository must not receive a new branch or push as part of this work.
 - This desktop app hosts the shared Epigraph Core and Syncd services consumed by mobile. The Core owns pairing, TLS, discovery, secure LAN access, the managed Suwayomi lifecycle, and the authenticated Suwayomi GraphQL proxy; mobile UI and platform code remain isolated in its own workspace.
 
 ## Cross-device authority contract

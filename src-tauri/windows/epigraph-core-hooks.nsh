@@ -8,10 +8,10 @@
   Goto epigraph_core_preinstall_done
 epigraph_core_preinstall_legacy:
   IfFileExists "$INSTDIR\aethon-syncd.exe" 0 epigraph_core_preinstall_done
-  DetailPrint "Stopping legacy Aethon Core before update..."
+  DetailPrint "Stopping legacy Core before update..."
   ExecWait '"$INSTDIR\aethon-syncd.exe" shutdown --reason pre-update --timeout-seconds 45' $0
   ${If} $0 != 0
-    Abort "Legacy Aethon Core could not be stopped safely. Installation was not changed; close Aethon and retry."
+    Abort "Legacy Core could not be stopped safely. Installation was not changed; close the previous app and retry."
   ${EndIf}
 epigraph_core_preinstall_done:
 !macroend
@@ -41,14 +41,14 @@ epigraph_core_postinstall_done:
   Goto epigraph_core_preuninstall_done
 epigraph_core_preuninstall_legacy:
   IfFileExists "$INSTDIR\aethon-syncd.exe" 0 epigraph_core_preuninstall_done
-  DetailPrint "Stopping legacy Aethon Core and owned Suwayomi before uninstall..."
+  DetailPrint "Stopping legacy Core and owned Suwayomi before uninstall..."
   ExecWait '"$INSTDIR\aethon-syncd.exe" shutdown --reason uninstall --timeout-seconds 45' $0
   ${If} $0 != 0
-    Abort "Legacy Aethon Core could not be stopped safely. No application data was removed; retry the uninstall."
+    Abort "Legacy Core could not be stopped safely. No application data was removed; retry the uninstall."
   ${EndIf}
   ExecWait '"$INSTDIR\aethon-syncd.exe" autostart remove' $0
   ${If} $0 != 0
-    Abort "Legacy Aethon Core autostart could not be removed safely. No application data was removed."
+    Abort "Legacy Core autostart could not be removed safely. No application data was removed."
   ${EndIf}
 epigraph_core_preuninstall_done:
 !macroend

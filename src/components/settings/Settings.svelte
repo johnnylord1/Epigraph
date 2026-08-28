@@ -1556,7 +1556,7 @@
       multiple: false,
       directory: false,
       filters: [
-        { name: "Epigraph backups (including legacy Aethon)", extensions: ["epigraphbk", "aethonbk"] },
+        { name: "Epigraph backups (including supported legacy formats)", extensions: ["epigraphbk", "aethonbk"] },
         { name: "Manga backups", extensions: ["tachibk", "proto", "gz"] },
       ],
     });

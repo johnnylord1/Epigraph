@@ -6569,7 +6569,7 @@ pub fn run() {
             // Do not hold the first paint hostage to a potentially large legacy
             // data tree. The merge is idempotent and conflict-safe; running it
             // in the Tauri blocking pool lets the Epigraph window become usable
-            // while old Aethon data is copied in the background.
+            // while legacy data is copied in the background.
             tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
             configure_webdriver_window(app.handle());
             maybe_start_phase_gate_temporary_lan_session();

@@ -150,7 +150,7 @@ describe("epigraph unified backup container", () => {
     expect(filename).toBe("epigraph-backup-2026-04-08.epigraphbk");
   });
 
-  it("imports the legacy Aethon container format without rewriting its payload contract", async () => {
+  it("imports the supported legacy container format without rewriting its payload contract", async () => {
     const zip = new JSZip();
     const manifest = {
       format: "aethon-backup",

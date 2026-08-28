@@ -101,7 +101,7 @@ This roadmap records known development priorities without committing to dates or
 ## Long Term
 
 - Epigraph Core host: productize managed Suwayomi, Syncd, pairing, TLS, discovery, secure LAN access, and headless Suwayomi startup so this desktop app can host the separate Epigraph Mobile client while its window is closed.
-- Mobile boundary: keep all Kotlin/Compose Android UI, SQLDelight device storage, packaging, and release work in `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`; share only explicit protocols, schemas, design tokens, and compatibility fixtures. Do not create a branch in upstream Hayai.
+- Mobile boundary: keep all Kotlin/Compose Android UI, SQLDelight device storage, packaging, and release work in the separate Android workspace; share only explicit protocols, schemas, design tokens, and compatibility fixtures. Do not create a branch in the upstream Android repository.
 - Comics authority: keep catalog, library, categories, chapters, chapter progress, sources, extensions, and server downloads in the hosted Suwayomi profile. The desktop Core exposes a profile-scoped read-only catalog bridge alongside the authenticated GraphQL proxy; mobile materializes it locally and sends supported writes back through the official queue. Syncd complements the boundary mainly with history/page bookmarks and remains the authority for books/novels scopes.
 - Planned capabilities: expand migration, tracking, and source-management
   workflows only after release blockers stay stable.

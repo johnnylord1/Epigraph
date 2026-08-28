@@ -35,7 +35,7 @@ de lifecycle e empacotamento.
 
 | Repositorio | Commit | Licenca | Arquivos relevantes | Observacao | Decisao no Epigraph |
 | --- | --- | --- | --- | --- | --- |
-| `moku-project/Moku` | `f6f59524529a9eac6c165c51e1254f667441c1da` | LICENSE do repositorio | `src-tauri/src/commands/server.rs`, `src-tauri/src/server/mod.rs`, `src-tauri/src/server/resolve.rs`, `src-tauri/src/server/conf.rs`, `src-tauri/src/commands/updater.rs`, `src-tauri/tauri.windows.conf.json` | Empacota JRE + JAR, define `server.rootDir`, usa loopback, perfil local e shutdown do processo iniciado pelo app. | Preservar JRE/JAR empacotados, root explicito, attach remoto e lifecycle local; nao copiar o gerenciamento destrutivo por nome global de `java.exe`. |
+| Referência de runtime desktop | commit de referência fixado | LICENSE do repositório | lifecycle do servidor e empacotamento | Empacota JRE + JAR, define `server.rootDir`, usa loopback, perfil local e shutdown do processo iniciado pelo app. | Preservar JRE/JAR empacotados, root explícito, attach remoto e lifecycle local; não copiar o gerenciamento destrutivo por nome global de `java.exe`. |
 | `Suwayomi/Suwayomi-JUI` | `d98ae70c91bea02b10d2410e4d0ad3f63f8d1343` | LICENSE do repositorio | fontes do launcher e lifecycle local | Referencia oficial de cliente desktop e de separacao entre servidor local e servidor remoto. | Usar como referencia comportamental, sem importar arquitetura Compose/Java para Rust. |
 | `Suwayomi/Suwayomi-Server` | `b3410a214bd0b83363a38b0b60f048c523909582` | LICENSE MPL-2.0 | `server/server-config`, `server/src/main/.../ServerSetup.kt`, `ExtensionStoreService.kt`, `Extension.kt`, `H2Migration.kt`, `CEFManager.kt` | `server.rootDir` e propriedade JVM oficial; Extension Stores sao o fluxo moderno; JCEF e carregado sob demanda. | Delegar extensoes e migrations ao runtime oficial; nao criar scraper, classloader, APK->JAR ou fork. |
 
@@ -43,7 +43,6 @@ Fontes oficiais consultadas:
 
 - https://github.com/Suwayomi/Suwayomi-Server/wiki/Configuring-Suwayomi%E2%80%90Server
 - https://github.com/Suwayomi/Suwayomi-Server
-- https://github.com/moku-project/Moku
 - https://github.com/Suwayomi/Suwayomi-JUI
 
 ## Arquitetura atual do Epigraph
@@ -220,7 +219,7 @@ versoes nao aprovadas, e instalar somente uma versao exata apos SR7.
 ### SR3 - Supervisor local do Suwayomi
 
 - Objetivo: lifecycle convencional, perfil dedicado, readiness, logs e shutdown.
-- Referencias: Moku server lifecycle; Suwayomi `server.rootDir` e bundles.
+- Referências: lifecycle convencional de servidor desktop; Suwayomi `server.rootDir` e bundles.
 - Arquivos: `src-tauri/src/lib.rs`, `src-tauri/src/suwayomi_runtime.rs`, testes
   Rust e `src/lib/serverLifecycle.ts` somente se um estado de UI for consumido.
 - Core: nenhuma reescrita; manter adapter e wake existentes.

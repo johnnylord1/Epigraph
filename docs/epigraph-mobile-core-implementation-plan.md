@@ -10,8 +10,8 @@ Device B limpo após desemparelhar ainda não estão certificados de ponta a pon
 
 ## 1. Decisões fechadas
 
-- O Epigraph Mobile é uma fork Android nativa do Hayai, em
-  `C:\Users\jhow-\Documents\Projetos\Aethon-Mobile\Hayai`.
+- O Epigraph Mobile é uma fork Android nativa do Hayai, mantida em um
+  workspace separado.
 - A base usa Kotlin, Compose, SQLDelight e o runtime do Epigraph baseado em Hayai.
 - Não criar branch no repositório upstream do Hayai e não fazer push sem um
   remote de fork explicitamente autorizado.
@@ -392,7 +392,7 @@ vertical até haver documentos oficiais, confirmação e testes equivalentes.
 
 - Preservar todas as alterações atuais dos dois workspaces.
 - Não usar `reset`, `clean`, troca de branch ou `git add -A`.
-- Confirmar que o mobile permanece em `Aethon-Mobile\Hayai` e sem branch
+- Confirmar que o mobile permanece em seu workspace separado e sem branch
   upstream.
 - Rodar baseline de testes, migrations SQLDelight, lint e APK debug.
 - Registrar quais dados já estão no Core antes de qualquer bootstrap destrutivo.

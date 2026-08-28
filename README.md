@@ -86,8 +86,8 @@ built from the Hayai-based native foundation:
   tooling.
 
 The Android application ID is <code>app.epigraph.mobile</code>. It is a new
-installation alongside the legacy <code>app.aethon.mobile</code>; Android does
-not allow the new app to read the old app's private sandbox automatically.
+installation alongside the previous package; Android does not allow the new
+app to read the previous app's private sandbox automatically.
 Use a backup/import flow or explicitly selected shared storage when moving
 data.
 
@@ -97,17 +97,17 @@ Epigraph keeps the persisted database and protocol identifiers stable where
 compatibility requires it, while presenting the new product identity at the
 edges:
 
-- New deep links use <code>epigraph://</code>; <code>aethon://</code>,
-  <code>hayai://</code>, and <code>tachiyomi://</code> remain accepted.
-- New backups use <code>.epigraphbk</code>; existing
-  <code>.aethonbk</code> and supported legacy formats remain importable.
+- New deep links use <code>epigraph://</code>; supported legacy aliases
+  remain accepted during the transition.
+- New backups use <code>.epigraphbk</code>; supported legacy formats remain
+  importable.
 - New desktop and mobile headers use <code>X-Epigraph-*</code>; compatible
-  <code>X-Aethon-*</code> headers are still understood.
+  legacy headers are still understood.
 - New discovery publishes <code>_epigraph-sync._tcp.local.</code> and can
   discover the legacy service during transition.
-- Desktop migration recognizes legacy <code>Aethon/aethon</code> storage and
-  the new <code>Epigraph/epigraph</code> locations without silently
-  overwriting newer data.
+- Desktop migration recognizes legacy storage roots and the new
+  <code>Epigraph/epigraph</code> locations without silently overwriting newer
+  data.
 - Pairing can be established between new clients and supported legacy clients
   while the migration is in progress.
 
@@ -202,9 +202,8 @@ Android uses the authenticated contracts exposed by that boundary.
 ## Credits and legal
 
 Epigraph is an independent product identity with its own release
-infrastructure, UI direction, and runtime policy. Its desktop lineage began
-as a fork of Moku; that origin remains documented for legal attribution and
-license continuity.
+infrastructure, UI direction, and runtime policy. Its desktop lineage
+preserves the required upstream license continuity and attribution.
 
 The Android foundation preserves the historical contributions and credits of
 Hayai, Yōkai, Mihon, TachiyomiJ2K, TachiyomiSY, and LNReader. Their names and

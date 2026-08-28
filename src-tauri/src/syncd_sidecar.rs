@@ -407,7 +407,7 @@ async fn ensure_spawned(
         .or_else(|canonical_error| {
             app.shell().sidecar("aethon-syncd").map_err(|legacy_error| {
                 format!(
-                    "failed to create Epigraph syncd sidecar ({canonical_error}); legacy Aethon sidecar also unavailable ({legacy_error})"
+                    "failed to create Epigraph syncd sidecar ({canonical_error}); legacy sidecar also unavailable ({legacy_error})"
                 )
             })
         })?

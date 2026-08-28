@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
-/// Promote legacy AETHON environment variables to their EPIGRAPH names.
+/// Promote legacy environment variables to their EPIGRAPH names.
 ///
 /// The canonical variable always wins when both names are present.  This is
 /// deliberately process-local: it does not mutate the user's shell profile.
@@ -39,7 +39,7 @@ fn canonical_environment_key(key: &OsStr) -> Option<OsString> {
 /// Migrate the known desktop storage roots without deleting the source.
 ///
 /// Files are copied atomically one by one, and conflicts are left untouched so
-/// a newer Epigraph file can never be silently overwritten by an older Aethon
+/// a newer Epigraph file can never be silently overwritten by an older
 /// file.  Re-running the function is safe: existing destinations are skipped
 /// and missing files are filled in on the next run.
 pub fn migrate_legacy_storage() {
