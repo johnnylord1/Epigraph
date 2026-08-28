@@ -66,8 +66,8 @@ More desktop screens are available in
 ## Android
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/johnnylord1/Epigraph/mobile/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Epigraph Android launcher icon" width="180" />
-  <img src="https://raw.githubusercontent.com/johnnylord1/Epigraph/mobile/.github/readme-images/screens.gif" alt="Epigraph Android library and reader screens" width="68%" />
+  <img src="https://github.com/johnnylord1/Epigraph/raw/refs/heads/mobile/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="Epigraph Android launcher icon" width="180" />
+  <img src="https://github.com/johnnylord1/Epigraph/raw/refs/heads/mobile/.github/readme-images/screens.gif" alt="Epigraph Android library and reader screens" width="68%" />
 </p>
 
 The Android client lives in the
