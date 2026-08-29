@@ -235,3 +235,11 @@ limitation rather than an application failure. The API 24 gate remains open
 and requires an older compatible emulator or a physical API 24 device. Both
 temporary AVDs were stopped after the run; no emulator, Gradle or QEMU process
 remains active.
+
+## Gradle functional gates rerun (2026-08-29)
+
+The current mobile checkout was revalidated with one Gradle worker, no daemon,
+in-process Kotlin compilation and a capped JVM heap. SQLDelight migration
+verification, Android host tests, `standardRelease` unit tests and
+`:app:lintDevDebug` all completed successfully. Lint produced zero errors,
+714 existing warnings and two hints; no warning was suppressed or excluded.
