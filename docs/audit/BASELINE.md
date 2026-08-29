@@ -207,13 +207,15 @@ variant was rebuilt with the production package id and the Android debug key:
 
 | Artifact | Result |
 |---|---|
-| `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `76ce6c051c9591e431dc67de969fa912ff66f039ba253e5a42ebb233654e79cc`; APK Signature Scheme v2 valid |
+| `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `452df9138ed57f0e61c5b2e2991aaa401b006841c9081db6ee48f1f82a0ddb70`; rebuilt at current `HEAD` (`local6650`); APK Signature Scheme v2 valid |
 | package/minimum/target | `app.epigraph.mobile`, minSdk 24, targetSdk 36 |
 | `app-standard-universal-release-unsigned.apk` | Release/minified artifact remains unsigned until the project keystore is supplied |
 
-The first internal packaging attempt was deliberately capped at 2 GB and
-failed with Kotlin `OutOfMemoryError`; it was retried at 4 GB with one worker
-and completed successfully. All Gradle processes were stopped after the build.
+The release/minified build was attempted with one worker but the local JDK
+ran out of native memory during R8; it did not produce a signed release APK.
+The device-test `standardLocal` build was then completed with one worker and
+in-process Kotlin compilation, producing the artifact listed above. All
+Gradle, Kotlin and D8 processes were stopped after the build.
 API 24/29 emulator rows and a fresh physical two-device run remain open for
 the release gate; the deterministic two-device Core run above is retained as
 the current evidence.
