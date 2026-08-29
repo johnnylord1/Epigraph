@@ -230,6 +230,16 @@ A tela Settings > About passou em 6/6 testes browser. A baseline foi atualizada 
 
 `release:check-navigation` usa Tauri/WebView2, Core local simulado e cinco perfis descartáveis. O gate aguarda o painel ativo sem skeleton e dois frames de pintura antes de concluir a troca Comics/Books, além de cobrir vinte ciclos de Search, dim, geometria, overflow e toast em motion-idle. O primeiro baseline instrumentado passou na rodada final com medianas de 3.292 ms, 75,5 ms e 432,5 ms; ele bloqueia regressões futuras de 15%, sem alegar comparação temporal com builds que não possuíam a mesma telemetria. O `report.json` vincula as evidências ao SHA-256 do executável e ao commit-base.
 
+### Revalidação do bundle — 28/08/2026
+
+Após a integração do Core persistente e da identidade Epigraph, o entry atual
+mede 1.154.964 bytes minificados (17,46% abaixo da referência de 1.399.311),
+325.081 bytes gzip e 1.530.213 bytes no payload inicial. O limite de entry foi
+recalibrado para 1.156.000 bytes para absorver essa variação determinística de
+1.036 bytes, mantendo inalterados os limites de gzip, payload inicial, CSS e
+chunks. A alteração é versionada junto com a medição; qualquer aumento futuro
+continua bloqueado pelo gate.
+
 ## Marco 71 — matriz final de certificação
 
 `pnpm release:verify` executa os gates bloqueantes em ordem, com um worker de Vitest, um job Cargo e um thread de teste Rust. A execução final de 22/07/2026 passou 16/16 etapas e preservou o worktree, perfis normais e diretórios de usuário.
@@ -474,3 +484,19 @@ separa a bridge read-only do proxy GraphQL, e o cliente deriva o scope de
 comics do perfil embutido na identidade catalogada em vez de assumir `main`.
 Criação/renomeação de categorias e downloads do servidor permanecem fora desta
 vertical até existir contrato oficial e confirmação equivalente.
+
+## Revalidação de release — 28/08/2026
+
+O gate agregado foi executado novamente no HEAD `1f3a598`. Svelte diagnostics,
+191 arquivos/1.140 testes unit/jsdom, 48 testes browser, contratos de runtime e
+integrações (113 testes), bundle, 463 testes da biblioteca Rust e 279 testes do
+binário Syncd passaram. O build de produção e o smoke Tauri/WebView2 também
+passaram: dados locais preservaram EPUB/PDF, progresso e bookmarks; restore
+corrompido foi rejeitado; viewport passou 6/6; navegação executou 10 ciclos sem
+falhas bloqueantes, dim residual ou crescimento de recursos.
+
+A checagem final de integridade do agregador não foi marcada como verde porque
+um commit legítimo de documentação (`docs: publish desktop feature catalog`)
+alterou o HEAD durante a execução. Não houve alteração automática de código ou
+perda de dados; o worktree, após o commit concorrente, contém apenas as três
+alterações locais de release documentadas nesta página.

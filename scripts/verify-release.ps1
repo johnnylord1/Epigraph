@@ -21,14 +21,25 @@ function Get-WorktreeFingerprint([string]$Label) {
   foreach ($relativePath in $untrackedPaths) {
     $absolutePath = Join-Path $projectRoot $relativePath
     if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
-      $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $absolutePath).Hash
+      $hash = Get-Sha256 $absolutePath
       $entries.Add("$relativePath`t$hash")
     }
   }
   [System.IO.File]::WriteAllLines($untrackedManifest, $entries, [System.Text.Encoding]::UTF8)
-  $trackedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $trackedPatch).Hash
-  $untrackedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $untrackedManifest).Hash
+  $trackedHash = Get-Sha256 $trackedPatch
+  $untrackedHash = Get-Sha256 $untrackedManifest
   return "$trackedHash`:$untrackedHash"
+}
+
+function Get-Sha256([string]$Path) {
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $stream.Dispose()
+    $algorithm.Dispose()
+  }
 }
 
 function Test-GitWhitespace {
