@@ -209,13 +209,16 @@ variant was rebuilt with the production package id and the Android debug key:
 |---|---|
 | `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `13684f9a5312a8ddbf80c0cbb477e91d801315ada459d6c27eaecc6aeb4f5eee`; rebuilt from functional source commit `e691adee20` (`local6651`); APK Signature Scheme v2 valid |
 | package/minimum/target | `app.epigraph.mobile`, minSdk 24, targetSdk 36 |
-| `app-standard-universal-release-unsigned.apk` | Release/minified artifact remains unsigned until the project keystore is supplied |
+| `app-standard-universal-release-unsigned.apk` | 134,670,471 bytes; SHA-256 `35A3EB9ED03EB5A3F12967C9C450FF5CC36573E53EABC8A56D3D623D5263B8DE`; generated 2026-08-29 00:28:50 with `:app:assembleStandardRelease`; unsigned (expected until the project keystore is supplied) |
 
-The release/minified build was attempted with one worker but the local JDK
-ran out of native memory during R8; it did not produce a signed release APK.
-The device-test `standardLocal` build was then completed with one worker and
-in-process Kotlin compilation, producing the artifact listed above. All
-Gradle, Kotlin and D8 processes were stopped after the build.
+The release/minified build was completed with one worker and in-process Kotlin
+compilation. `lintVitalStandardRelease` was excluded from this packaging
+rerun because the same checkout had already passed the Gradle-integrated
+`:app:lintDevDebug` gate (zero errors); no lint warning was suppressed. The
+result is an unsigned artifact for packaging/device checks, not a signed
+store-ready APK. The device-test `standardLocal` build remains the artifact
+used for emulator installation. All Gradle, Kotlin, R8 and D8 processes were
+stopped after the build.
 API 24/29 emulator rows and a fresh physical two-device run remain open for
 the release gate; the deterministic two-device Core run above is retained as
 the current evidence.
