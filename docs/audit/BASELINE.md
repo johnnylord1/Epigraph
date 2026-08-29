@@ -223,21 +223,24 @@ API 24/29 emulator rows and a fresh physical two-device run remain open for
 the release gate; the deterministic two-device Core run above is retained as
 the current evidence.
 
-## API matrix rerun (2026-08-28)
+## API matrix rerun (2026-08-29)
 
-The API 29 row was rerun against the current checkout with a clean emulator:
+The API 29 row was rerun against the current checkout with a clean emulator.
+The API 24 image was also booted with the current emulator by using the
+SwiftShader renderer and a fresh disposable data partition:
 
 | Gate | Result |
 |---|---|
 | `:app:connectedDevDebugAndroidTest` on `Epigraph_API29` (SDK 29) | Passed: 2/2 instrumented tests; Gradle build successful in 5m20s |
-| API 24 x86_64 AVD boot | Blocked before `system_server`; emulator 36.1.9 reported missing OpenGL emulation symbols |
-| API 24 x86 AVD boot | Blocked by the same pre-app system boot failure |
+| API 24 x86 AVD boot + release smoke (SDK 24) | Passed: booted with `-gpu swiftshader_indirect`, release APK installed from a temporary debug-signed copy, `MainActivityDefaultDummy` launched and survived force-stop/restart; no crash buffer entries |
+| API 36 release smoke (SDK 36) | Passed: fresh `Aethon_Test_API36` data partition, temporary debug-signed release copy installed/launched and survived force-stop/restart; no crash buffer entries |
 
-No Aethon process ran on API 24, so this is an emulator/image compatibility
-limitation rather than an application failure. The API 24 gate remains open
-and requires an older compatible emulator or a physical API 24 device. Both
-temporary AVDs were stopped after the run; no emulator, Gradle or QEMU process
-remains active.
+The default API 24 x86_64 configuration still fails before `system_server`
+when it asks the installed emulator for unavailable OpenGL emulation symbols;
+the x86/SwiftShader configuration above is the reproducible workaround used
+for the smoke gate. Full API 24 instrumented coverage and a physical-device
+run remain release follow-ups. Both temporary AVDs were stopped after the
+run; no emulator, Gradle or QEMU process remains active.
 
 ## Gradle functional gates rerun (2026-08-29)
 
