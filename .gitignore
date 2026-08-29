@@ -20,4 +20,5 @@ weblate.conf
 *.jks
 *.keystore
 *.p12
-epigraph-keystore.properties
+*-keystore.properties
+*-signing.properties
