@@ -66,7 +66,7 @@ The following results supersede the older rows above for the current detached ch
 | SQLDelight migration verification | Passed through schema 39 (`36.sqm`, `37.sqm`, `38.sqm`) |
 | `lintDevDebug` | Passed: 0 errors, 585 warnings, 2 hints |
 | Current universal debug APK | 97,481,313 bytes; SHA-256 `A295EC27558A747463A7B64F96B2AC363B33284BB266A2B5AD3DD4BEDBBD49EB` |
-| Current universal release APK | 134,695,047 bytes; signed with the protected Aethon release key (APK Signature Scheme v2); SHA-256 `0D0613EC7C3B48834D84C742D7D1437286DE0ECB0B3AC850EF7833438338E19C` |
+| Superseded universal release APK | 134,695,047 bytes; signed with an obsolete local test key (do not distribute); SHA-256 `0D0613EC7C3B48834D84C742D7D1437286DE0ECB0B3AC850EF7833438338E19C` |
 | API 36.1 user-flow smoke | Latest APK installed after DI/replay changes; launcher resumed, PID stayed alive, and logcat showed no fatal exception. Earlier flow also covered onboarding, SAF, Library/Recents/Browse, Core settings, invalid bundle rejection and QR scanner launch |
 
 The mobile side now has the Core-v1 outbox adapter and drainer, WorkManager scheduling, encrypted credentials, pinned HTTP/WebSocket transport, SQLDelight schema 39 confirmed-replica tables, Lamport clock, idempotent inbox/checkpoint handling, and cursor-aware replica synchronization. A scope uses `/v1/changes` from its durable cursor and falls back to `/v1/snapshot` only for first bootstrap or replay-window expiry. The worker reports `outbox_drained`; it never labels a replica as fully synchronized while pending work or a replica error remains.
@@ -264,7 +264,7 @@ SwiftShader renderer and a fresh disposable data partition:
 |---|---|
 | `:app:connectedDevDebugAndroidTest` on `Epigraph_API29` (SDK 29) | Passed: 2/2 instrumented tests; Gradle build successful in 5m20s |
 | API 24 x86 AVD boot + release smoke (SDK 24) | Passed: booted with `-gpu swiftshader_indirect`, release APK installed from a temporary debug-signed copy, `MainActivityDefaultDummy` launched and survived force-stop/restart; no crash buffer entries |
-| API 36 release smoke (SDK 36) | Passed: fresh `Aethon_Test_API36` data partition, temporary debug-signed release copy installed/launched and survived force-stop/restart; no crash buffer entries |
+| API 36 release smoke (SDK 36) | Passed: fresh API 36 data partition, temporary debug-signed release copy installed/launched and survived force-stop/restart; no crash buffer entries |
 
 The default API 24 x86_64 configuration still fails before `system_server`
 when it asks the installed emulator for unavailable OpenGL emulation symbols;
