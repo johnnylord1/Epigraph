@@ -196,3 +196,40 @@ Cleanup: disposable rootDir removed; no process or listener remained
 This closes the populated-Suwayomi category mutation gate. Creation remains
 server-authoritative: the bridge does not invent IDs for a new category; an
 ID must be allocated by Suwayomi before rename/order/delete projection.
+
+## Release artifact validation (2026-08-28)
+
+The current source still passes the previously recorded migration, host-test,
+unit-test and Gradle-integrated lint gates (0 fatal lint errors). A production
+variant was packaged as an unsigned APK because this checkout intentionally
+does not contain a release keystore. For device testing, the `standardLocal`
+variant was rebuilt with the production package id and the Android debug key:
+
+| Artifact | Result |
+|---|---|
+| `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `76ce6c051c9591e431dc67de969fa912ff66f039ba253e5a42ebb233654e79cc`; APK Signature Scheme v2 valid |
+| package/minimum/target | `app.epigraph.mobile`, minSdk 24, targetSdk 36 |
+| `app-standard-universal-release-unsigned.apk` | Release/minified artifact remains unsigned until the project keystore is supplied |
+
+The first internal packaging attempt was deliberately capped at 2 GB and
+failed with Kotlin `OutOfMemoryError`; it was retried at 4 GB with one worker
+and completed successfully. All Gradle processes were stopped after the build.
+API 24/29 emulator rows and a fresh physical two-device run remain open for
+the release gate; the deterministic two-device Core run above is retained as
+the current evidence.
+
+## API matrix rerun (2026-08-28)
+
+The API 29 row was rerun against the current checkout with a clean emulator:
+
+| Gate | Result |
+|---|---|
+| `:app:connectedDevDebugAndroidTest` on `Epigraph_API29` (SDK 29) | Passed: 2/2 instrumented tests; Gradle build successful in 5m20s |
+| API 24 x86_64 AVD boot | Blocked before `system_server`; emulator 36.1.9 reported missing OpenGL emulation symbols |
+| API 24 x86 AVD boot | Blocked by the same pre-app system boot failure |
+
+No Aethon process ran on API 24, so this is an emulator/image compatibility
+limitation rather than an application failure. The API 24 gate remains open
+and requires an older compatible emulator or a physical API 24 device. Both
+temporary AVDs were stopped after the run; no emulator, Gradle or QEMU process
+remains active.
