@@ -91,7 +91,10 @@ Validated through user-visible interactions:
 
 The generic `monkey` launcher selected LeakCanary rather than the application alias, so smoke automation must launch `MainActivityDefaultDummy` explicitly until the debug manifest is hardened.
 
-API 24 and 29 emulator images were not installed because the machine currently has only the API 36.1 AVD. Those matrix rows remain open.
+At the time of the initial baseline only the API 36.1 AVD was available. API 29
+was later revalidated through the Gradle connected test task, and API 24 was
+revalidated with the reproducible x86/SwiftShader configuration; the current
+results are recorded in the API matrix rerun and instrumentation sections below.
 
 ## Baseline decision
 
@@ -219,9 +222,10 @@ result is an unsigned artifact for packaging/device checks, not a signed
 store-ready APK. The device-test `standardLocal` build remains the artifact
 used for emulator installation. All Gradle, Kotlin, R8 and D8 processes were
 stopped after the build.
-API 24/29 emulator rows and a fresh physical two-device run remain open for
-the release gate; the deterministic two-device Core run above is retained as
-the current evidence.
+The API 24/29 emulator rows are now closed by the matrix rerun below. A fresh
+physical two-device run with a real populated user profile remains a release
+gate; the deterministic two-device Core run above is retained as current
+evidence and does not claim that populated-profile behavior.
 
 ## API matrix rerun (2026-08-29)
 
@@ -238,9 +242,11 @@ SwiftShader renderer and a fresh disposable data partition:
 The default API 24 x86_64 configuration still fails before `system_server`
 when it asks the installed emulator for unavailable OpenGL emulation symbols;
 the x86/SwiftShader configuration above is the reproducible workaround used
-for the smoke gate. Full API 24 instrumented coverage and a physical-device
-run remain release follow-ups. Both temporary AVDs were stopped after the
-run; no emulator, Gradle or QEMU process remains active.
+for the smoke gate. Full API 24 instrumentation was subsequently completed
+with the prebuilt APKs and the standard AndroidJUnitRunner (2/2 passed; see
+the detailed section below). A physical-device run remains a release
+follow-up. Both temporary AVDs were stopped after the run; no emulator,
+Gradle or QEMU process remains active.
 
 ## Gradle functional gates rerun (2026-08-29)
 
@@ -249,3 +255,26 @@ in-process Kotlin compilation and a capped JVM heap. SQLDelight migration
 verification, Android host tests, `standardRelease` unit tests and
 `:app:lintDevDebug` all completed successfully. Lint produced zero errors,
 714 existing warnings and two hints; no warning was suppressed or excluded.
+
+## API 24 LNReader instrumentation (2026-08-29)
+
+The API 24 x86 emulator was booted with SwiftShader and a fresh data partition.
+The prebuilt `devDebug` and `androidTest` APKs were installed through the normal
+Package Manager, and the AndroidJUnitRunner executed the two production-runtime
+tests directly:
+
+| Test | Result |
+|---|---|
+| Synthetic LNReader plugin through QuickJS/bridge | Passed |
+| Pinned Royal Road plugin from the official LNReader repository through the production broker | Passed |
+| Instrumentation total | **2/2 passed** |
+
+The live plugin is fetched from the exact tagged LNReader file via jsDelivr. This
+keeps the test on the production `NovelJsBridgeImpl`/OkHttp/network-policy path
+while using a certificate chain trusted by the legacy API 24 image; the GitHub
+`raw` endpoint currently chains through a root absent from that image. The test
+does not disable TLS verification or add a permissive trust manager. The Gradle
+connected-device task was not used for this row because the 768 MiB disposable
+AVD cannot package the application splitter reliably; compilation and APK
+packaging succeeded with Gradle, and the resulting APKs were run by the standard
+instrumentation runner. The AVD and all build processes were stopped afterward.

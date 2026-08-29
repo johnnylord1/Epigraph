@@ -1,5 +1,6 @@
 package hayai.novel.js
 
+import android.os.Build
 import android.util.Base64
 import android.util.Log
 import androidx.test.InstrumentationRegistry
@@ -7,15 +8,16 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.conscrypt.Conscrypt
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
+import java.security.Security
 
 /**
  * Executes the same QuickJS/bridge path used by LNReader sources, without relying on a
@@ -35,11 +37,15 @@ class NovelJsRuntimeAndroidTest {
     @Test
     fun officialRoyalRoadPluginRunsThroughProductionRuntime() = runBlocking {
         val context = InstrumentationRegistry.getTargetContext()
-        val pluginUrl = "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/english/royalroad.js"
-        val pluginCode = downloadPinnedPlugin(pluginUrl)
+        // jsDelivr serves the exact tagged file from the official LNReader repository while
+        // using a certificate chain present in the API 24 system trust store. GitHub's raw
+        // endpoint currently chains through a root missing from the legacy emulator image.
+        val pluginUrl = "https://cdn.jsdelivr.net/gh/lnreader/lnreader-plugins@plugins/v3.0.0/.js/src/plugins/english/royalroad.js"
+        val bridge = NovelJsBridgeImpl(context)
+        val pluginCode = downloadPinnedPlugin(pluginUrl, bridge)
         val runtime = NovelJsRuntime(
             context = context,
-            bridge = NovelJsBridgeImpl(context),
+            bridge = bridge,
             pluginId = "royalroad",
             userAgent = "EpigraphTest/1.0 (LNReader compatibility)",
         )
@@ -154,24 +160,17 @@ class NovelJsRuntimeAndroidTest {
         override suspend fun sleep(durationMs: Int) = Unit
     }
 
-    private suspend fun downloadPinnedPlugin(url: String): String = withContext(Dispatchers.IO) {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 15_000
-            readTimeout = 15_000
-            requestMethod = "GET"
-            setRequestProperty("User-Agent", "EpigraphTest/1.0")
-        }
-        try {
-            assertEquals("official plugin download status", 200, connection.responseCode)
-            val bytes = connection.inputStream.use { it.readBytes() }
-            assertTrue("official plugin must stay within runtime's 2 MiB limit", bytes.size <= 2 * 1024 * 1024)
-            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-                .joinToString("") { "%02X".format(it) }
-            assertEquals("pinned Royal Road plugin changed", ROYAL_ROAD_SHA256, digest)
-            bytes.toString(Charsets.UTF_8)
-        } finally {
-            connection.disconnect()
-        }
+    private suspend fun downloadPinnedPlugin(url: String, bridge: NovelJsBridge): String = withContext(Dispatchers.IO) {
+        // Use the exact production bridge rather than HttpURLConnection. This keeps the live
+        // compatibility check on the same OkHttp, TLS and network-policy path used by plugins.
+        val response = JSONObject(bridge.fetch(url, "{}"))
+        assertEquals("official plugin download status", 200, response.optInt("status"))
+        val bytes = Base64.decode(response.optString("bodyBase64"), Base64.NO_WRAP)
+        assertTrue("official plugin must stay within runtime's 2 MiB limit", bytes.size <= 2 * 1024 * 1024)
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02X".format(it) }
+        assertEquals("pinned Royal Road plugin changed", ROYAL_ROAD_SHA256, digest)
+        bytes.toString(Charsets.UTF_8)
     }
 
     private fun jsonString(value: String): String =
@@ -179,5 +178,13 @@ class NovelJsRuntimeAndroidTest {
 
     private companion object {
         const val ROYAL_ROAD_SHA256 = "9EB6ACC6DF7BDC66E320380D0882435BB480B2CFA28B0B8E9013D0F8B60AB806"
+
+        @BeforeClass
+        @JvmStatic
+        fun installProductionTlsProvider() {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && Security.getProvider("Conscrypt") == null) {
+                Security.insertProviderAt(Conscrypt.newProvider(), 1)
+            }
+        }
     }
 }
