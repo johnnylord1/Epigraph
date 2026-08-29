@@ -38,12 +38,12 @@ val buildTime: String by lazy {
 
 // Production signing material is deliberately kept outside this repository. The default path
 // follows the local developer's secrets directory, while CI/release jobs can point at a protected
-// file with -Paethon.signing.properties or AETHON_SIGNING_PROPERTIES. Keeping this optional lets
+// file with -Pepigraph.signing.properties or EPIGRAPH_SIGNING_PROPERTIES. Keeping this optional lets
 // contributors build debug variants without access to the private release key; release jobs can
-// opt into a fail-closed gate with -Paethon.requireSigning=true.
-val signingPropertiesPath = providers.gradleProperty("aethon.signing.properties").orNull
-    ?: providers.environmentVariable("AETHON_SIGNING_PROPERTIES").orNull
-    ?: File(System.getProperty("user.home"), "secrets/aethon-keystore.properties").path
+// opt into a fail-closed gate with -Pepigraph.requireSigning=true.
+val signingPropertiesPath = providers.gradleProperty("epigraph.signing.properties").orNull
+    ?: providers.environmentVariable("EPIGRAPH_SIGNING_PROPERTIES").orNull
+    ?: File(System.getProperty("user.home"), "secrets/epigraph-keystore.properties").path
 val signingPropertiesFile = File(signingPropertiesPath)
 val signingProperties = Properties().apply {
     if (signingPropertiesFile.isFile) {
@@ -54,18 +54,18 @@ val signingStoreFile = signingProperties.getProperty("storeFile")?.let { path ->
     val candidate = File(path)
     if (candidate.isAbsolute) candidate else File(signingPropertiesFile.parentFile, path)
 }
-val hasAethonReleaseSigning = signingStoreFile?.isFile == true &&
+val hasEpigraphReleaseSigning = signingStoreFile?.isFile == true &&
     !signingProperties.getProperty("storePassword").isNullOrBlank() &&
     !signingProperties.getProperty("keyAlias").isNullOrBlank() &&
     !signingProperties.getProperty("keyPassword").isNullOrBlank()
-val requireAethonReleaseSigning = providers.gradleProperty("aethon.requireSigning").orNull
-    ?.toBoolean() == true || providers.environmentVariable("AETHON_REQUIRE_SIGNING").orNull
+val requireEpigraphReleaseSigning = providers.gradleProperty("epigraph.requireSigning").orNull
+    ?.toBoolean() == true || providers.environmentVariable("EPIGRAPH_REQUIRE_SIGNING").orNull
     ?.toBoolean() == true
 
-if (requireAethonReleaseSigning && !hasAethonReleaseSigning) {
+if (requireEpigraphReleaseSigning && !hasEpigraphReleaseSigning) {
     error(
-        "Aethon release signing is required, but no valid keystore was found. " +
-            "Provide -Paethon.signing.properties=<path> (or AETHON_SIGNING_PROPERTIES) " +
+        "Epigraph release signing is required, but no valid keystore was found. " +
+            "Provide -Pepigraph.signing.properties=<path> (or EPIGRAPH_SIGNING_PROPERTIES) " +
             "with storeFile, storePassword, keyAlias and keyPassword.",
     )
 }
@@ -108,8 +108,8 @@ android {
     }
 
     signingConfigs {
-        if (hasAethonReleaseSigning) {
-            create("aethonRelease") {
+        if (hasEpigraphReleaseSigning) {
+            create("epigraphRelease") {
                 storeFile = signingStoreFile
                 storePassword = signingProperties.getProperty("storePassword")
                 keyAlias = signingProperties.getProperty("keyAlias")
@@ -139,16 +139,16 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
-            if (hasAethonReleaseSigning) {
-                signingConfig = signingConfigs.getByName("aethonRelease")
+            if (hasEpigraphReleaseSigning) {
+                signingConfig = signingConfigs.getByName("epigraphRelease")
             }
         }
         create("beta") {
             initWith(getByName("release"))
             buildConfigField("boolean", "BETA", "true")
 
-            if (hasAethonReleaseSigning) {
-                signingConfig = signingConfigs.getByName("aethonRelease")
+            if (hasEpigraphReleaseSigning) {
+                signingConfig = signingConfigs.getByName("epigraphRelease")
             }
             matchingFallbacks.add("release")
             versionNameSuffix = "-b${betaCount}"

@@ -20,4 +20,4 @@ weblate.conf
 *.jks
 *.keystore
 *.p12
-aethon-keystore.properties
+epigraph-keystore.properties

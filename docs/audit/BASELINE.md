@@ -230,14 +230,15 @@ evidence and does not claim that populated-profile behavior.
 ## Signed release validation (2026-08-29)
 
 The release signing configuration now reads a protected properties file outside
-the checkout (`%USERPROFILE%\secrets\aethon-keystore.properties`) and never
+the checkout (`%USERPROFILE%\secrets\epigraph-keystore.properties`) and never
 stores signing material in Git. With the gate
-`--project-prop "aethon.requireSigning=true"`, `:app:assembleStandardRelease`
+`--project-prop "epigraph.requireSigning=true"`, `:app:assembleStandardRelease`
 completed with Gradle-integrated `lintVitalStandardRelease` enabled. The key is
-an RSA-4096 certificate with alias `aethon-release`; its public certificate
+an RSA-4096 certificate with alias `epigraph-release`; its public certificate
 SHA-256 fingerprint is
-`4D:DB:42:D5:55:CA:80:3C:9D:66:FB:EB:EB:56:51:E7:1C:08:72:36:37:18:B8:EF:15:90:B8:F9:3F:0E:50:E4`.
-The final artifacts below were rebuilt from committed checkout `befb28f4371b`.
+`15:EA:77:B5:EB:98:32:D6:50:9A:1B:B6:00:E5:F2:09:29:1C:C0:BD:10:91:D4:53:CF:D7:5F:3F:77:61:AE:B8`.
+The final artifacts below will be rebuilt from the committed Epigraph signing
+configuration after this identity correction.
 
 | Artifact | Size | SHA-256 | Verification |
 |---|---:|---|---|
