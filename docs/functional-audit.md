@@ -487,7 +487,7 @@ vertical até existir contrato oficial e confirmação equivalente.
 
 ## Revalidação de release — 28/08/2026
 
-O gate agregado foi executado novamente no HEAD `1f3a598`. Svelte diagnostics,
+O gate agregado foi executado novamente no HEAD `ee4d8eb`. Svelte diagnostics,
 191 arquivos/1.140 testes unit/jsdom, 48 testes browser, contratos de runtime e
 integrações (113 testes), bundle, 463 testes da biblioteca Rust e 279 testes do
 binário Syncd passaram. O build de produção e o smoke Tauri/WebView2 também
@@ -495,8 +495,8 @@ passaram: dados locais preservaram EPUB/PDF, progresso e bookmarks; restore
 corrompido foi rejeitado; viewport passou 6/6; navegação executou 10 ciclos sem
 falhas bloqueantes, dim residual ou crescimento de recursos.
 
-A checagem final de integridade do agregador não foi marcada como verde porque
-um commit legítimo de documentação (`docs: publish desktop feature catalog`)
-alterou o HEAD durante a execução. Não houve alteração automática de código ou
-perda de dados; o worktree, após o commit concorrente, contém apenas as três
-alterações locais de release documentadas nesta página.
+A checagem final de integridade concluiu sem alterações durante a execução:
+`pnpm release:verify` passou os 16/16 gates bloqueantes, incluindo a verificação
+de whitespace e o fingerprint final do worktree. Não houve alteração automática
+de código ou perda de dados; o commit contém somente os ajustes documentais e
+de orçamento de bundle registrados nesta página.
