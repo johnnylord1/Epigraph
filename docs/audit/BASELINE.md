@@ -237,14 +237,15 @@ completed with Gradle-integrated `lintVitalStandardRelease` enabled. The key is
 an RSA-4096 certificate with alias `aethon-release`; its public certificate
 SHA-256 fingerprint is
 `4D:DB:42:D5:55:CA:80:3C:9D:66:FB:EB:EB:56:51:E7:1C:08:72:36:37:18:B8:EF:15:90:B8:F9:3F:0E:50:E4`.
+The final artifacts below were rebuilt from committed checkout `befb28f4371b`.
 
 | Artifact | Size | SHA-256 | Verification |
 |---|---:|---|---|
-| `app-standard-universal-release.apk` | 134,695,047 bytes | `325A2CD19A76C24147E2C14995D2EE60E2B9F8C1125089DBD74E41785C0C2640` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-arm64-v8a-release.apk` | 48,444,398 bytes | `F22A15D39994E8FD174291DDA9D1A0D6F962367D6796063089E0C6F42F4DFE03` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-armeabi-v7a-release.apk` | 38,678,520 bytes | `9A1FE11E1F01AF710F688B39E2C10F2CF46216CFF72B752E0B67157B883705F9` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-x86_64-release.apk` | 51,773,093 bytes | `D468B21F3565300E34BB3CBA307805E5381E05A8A75A846F4C07428A3574AF34` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-x86-release.apk` | 50,290,560 bytes | `39A4576468CA342D0F2362C20FA00DC75265841D889C0FE8865B71CE9D51F7C4` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-universal-release.apk` | 134,695,047 bytes | `0D0613EC7C3B48834D84C742D7D1437286DE0ECB0B3AC850EF7833438338E19C` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-arm64-v8a-release.apk` | 48,444,398 bytes | `2E9C9EE47E1E7E5B1A569F0C1287B49E7899A97F5AA47877303D7AAF51934194` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-armeabi-v7a-release.apk` | 38,678,520 bytes | `CA04BA4A799FB23A1823B258FFF92AFE195A647495A2D3C8FC6E00235CA6501A` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86_64-release.apk` | 51,773,093 bytes | `37F88746592964F8F635F00F1378143F1C9F91863FFA9A868E8C7D8380E42BA8` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86-release.apk` | 50,290,560 bytes | `674484CE103B44A2142D07C8EB0EDE97CFB887C1C2107DB4935E5D27816DB839` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
 
 The artifacts report package `app.epigraph.mobile`, minSdk 24 and targetSdk 36.
 `standardLocal` and `nightly` remain debug-signed by design for emulator/dev
