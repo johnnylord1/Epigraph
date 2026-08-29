@@ -207,7 +207,7 @@ variant was rebuilt with the production package id and the Android debug key:
 
 | Artifact | Result |
 |---|---|
-| `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `13684f9a5312a8ddbf80c0cbb477e91d801315ada459d6c27eaecc6aeb4f5eee`; rebuilt at current `HEAD` (`local6651`); APK Signature Scheme v2 valid |
+| `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `13684f9a5312a8ddbf80c0cbb477e91d801315ada459d6c27eaecc6aeb4f5eee`; rebuilt from functional source commit `e691adee20` (`local6651`); APK Signature Scheme v2 valid |
 | package/minimum/target | `app.epigraph.mobile`, minSdk 24, targetSdk 36 |
 | `app-standard-universal-release-unsigned.apk` | Release/minified artifact remains unsigned until the project keystore is supplied |
 
