@@ -665,6 +665,7 @@
   --component-toast-offset: var(--sp-5);
   --component-toast-width: min(360px, calc(100vw - (var(--space-md) * 2)));
   --component-toast-stack-gap: var(--space-sm);
+  --component-toast-height: 88px;
   --component-toast-padding: var(--space-sm) var(--space-md);
   --component-toast-gap: var(--space-sm);
   --component-toast-icon-size: var(--space-md);

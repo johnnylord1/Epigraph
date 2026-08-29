@@ -69,11 +69,13 @@
   });
 
   const icons: Record<Toast["kind"], string> = {
-    success:  "M20 6L9 17l-5-5",
-    error:    "M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
-    info:     "M12 16v-4M12 8h.01M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z",
-    download: "M12 3v13M7 11l5 5 5-5M5 21h14",
+    success:  "M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z",
+    error:    "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z",
+    info:     "M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z",
+    download: "M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z",
   };
+
+  const closeIcon = "M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z";
 
   function roleForKind(kind: Toast["kind"]): "alert" | "status" {
     return kind === "error" ? "alert" : "status";
@@ -94,8 +96,7 @@
         <div class="state-border" aria-hidden="true"></div>
         <div class="toast-main">
           <span class="icon" aria-hidden="true">
-            <svg class="toast-icon" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="toast-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
               <path d={icons[p.kind]} />
             </svg>
           </span>
@@ -109,8 +110,8 @@
             {/if}
           </div>
           <button class="toast-close" type="button" aria-label={$_("ui_dismissLibraryUpdateProgress")} onclick={() => setLibraryUpdateProgress(null)}>
-            <svg class="toast-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
-              <path d="M18 6 6 18M6 6l12 12" />
+            <svg class="toast-close-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d={closeIcon} />
             </svg>
           </button>
         </div>
@@ -142,8 +143,7 @@
         <div class="state-border" aria-hidden="true"></div>
         <div class="toast-main">
           <span class="icon" aria-hidden="true">
-            <svg class="toast-icon" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="toast-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
               <path d={icons[t.kind]} />
             </svg>
           </span>
@@ -152,8 +152,8 @@
             {#if t.body}<p class="sub">{t.body}</p>{/if}
           </div>
           <button class="toast-close" type="button" aria-label={$_("ui_dismissNotification")} onclick={() => dismissToast(t.id)}>
-            <svg class="toast-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
-              <path d="M18 6 6 18M6 6l12 12" />
+            <svg class="toast-close-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+              <path d={closeIcon} />
             </svg>
           </button>
         </div>
@@ -209,42 +209,90 @@
   }
 
   .toast {
+    --toast-glow-z-index: calc(var(--z-toast) - 3);
+    --toast-mask-z-index: calc(var(--z-toast) - 2);
+    --toast-content-z-index: calc(var(--z-toast) - 1);
+    --toast-life-z-index: var(--z-toast);
+    --toast-rail-z-index: calc(var(--z-toast) + 1);
+    --toast-accent: var(--component-toast-info-fg);
+    --toast-surface: var(--component-toast-mask-bg);
+    --toast-glow: var(--component-toast-info-glow);
     position: relative;
     display: flex;
     flex-direction: column;
+    width: 100%;
+    height: var(--component-toast-height);
+    overflow: hidden;
+    isolation: isolate;
+    box-sizing: border-box;
+    justify-content: center;
     gap: 0;
     font-family: var(--component-toast-font);
-    padding: var(--component-toast-padding);
-    border-radius: var(--component-toast-radius);
-    background: transparent;
+    padding: var(--component-nocturne-state-compact-padding);
     border: var(--component-toast-border-width) solid transparent;
-    box-shadow: var(--component-toast-shadow), var(--component-toast-state-shadow);
-    backdrop-filter: var(--component-toast-blur);
-    -webkit-backdrop-filter: var(--component-toast-blur);
+    border-radius: var(--component-nocturne-state-compact-radius, var(--component-toast-accent-radius));
+    background: transparent;
+    color: var(--component-nocturne-state-title-fg);
+    box-shadow: var(--component-nocturne-state-panel-shadow);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     pointer-events: all;
-    width: 100%;
     min-width: 0;
-    overflow: hidden;
-    animation: slideIn var(--duration-normal) var(--easing-emphasized) both;
+    animation: toast-enter 360ms var(--easing-emphasized) both;
     transition: border-color var(--t-base), background var(--t-base), opacity var(--t-base), transform var(--t-base);
   }
 
-  .toast:hover  { border-color: transparent; background: transparent; }
+  .toast::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    z-index: var(--toast-glow-z-index);
+    width: 250%;
+    height: 250%;
+    background: var(--toast-glow);
+    opacity: var(--component-toast-glow-min-opacity);
+    transform: translate(-50%, -50%) rotate(0deg);
+    transform-origin: center center;
+    pointer-events: none;
+    animation: epigraph-glow-rotate var(--component-toast-glow-rotate-duration) linear infinite, toast-glow-pulse var(--component-toast-glow-pulse-duration) ease-in-out infinite alternate;
+  }
+
+  .toast::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--toast-mask-z-index);
+    border-radius: var(--component-nocturne-state-compact-radius);
+    background: var(--toast-surface);
+    pointer-events: none;
+  }
+
+  .toast > :not(.state-border) {
+    position: relative;
+    z-index: var(--toast-content-z-index);
+  }
+
+  .toast:hover {
+    --toast-surface: var(--component-toast-mask-bg-hover);
+  }
+
   .toast:active { transform: scale(0.99); }
 
   .toast-main {
     display: grid;
-    grid-template-columns: var(--component-toast-icon-size) minmax(0, 1fr) var(--component-toast-close-size);
+    grid-template-columns: var(--component-nocturne-state-compact-icon-size) minmax(0, 1fr) var(--component-toast-close-size);
     align-items: center;
-    column-gap: var(--component-toast-gap);
+    column-gap: var(--component-nocturne-state-gap);
     min-width: 0;
   }
 
   .toast-life {
     position: absolute;
-    right: 0;
-    bottom: 0;
-    left: 0;
+    right: var(--component-toast-border-width);
+    bottom: var(--component-toast-border-width);
+    left: var(--component-toast-border-width);
+    z-index: var(--toast-life-z-index);
     height: var(--component-toast-progress-height);
     background: var(--component-toast-life-bg);
     transform-origin: left;
@@ -255,9 +303,9 @@
     display: none;
   }
 
-  @keyframes slideIn {
-    from { opacity: 0; transform: translateX(16px) scale(0.98); }
-    to   { opacity: 1; transform: translateX(0)    scale(1); }
+  @keyframes toast-enter {
+    from { opacity: 0; transform: translate3d(18px, 0, 0) scale(0.985); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
   }
 
   @keyframes toastLife {
@@ -265,99 +313,63 @@
     to { transform: scaleX(0); }
   }
 
+  @keyframes toast-glow-pulse {
+    from { opacity: var(--component-toast-glow-min-opacity); }
+    to { opacity: calc(var(--component-toast-glow-min-opacity) * 1.28); }
+  }
+
   .state-border {
     position: absolute;
-    inset: var(--component-toast-accent-inset);
-    width: auto;
-    border-radius: var(--component-toast-accent-radius);
-    border: var(--component-toast-accent-width) solid currentColor;
-    overflow: hidden;
+    inset: var(--component-nocturne-state-rail-inset);
+    bottom: var(--component-toast-border-width);
+    z-index: var(--toast-rail-z-index);
+    width: var(--component-toast-border-width);
+    border-radius: var(--component-nocturne-state-rail-radius);
+    background: var(--toast-accent);
+    opacity: var(--component-nocturne-state-rail-opacity);
     pointer-events: none;
   }
 
-  .state-border::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 250%;
-    height: 250%;
-    background: var(--component-toast-info-glow);
-    transform: translate(-50%, -50%) rotate(0deg);
-    transform-origin: center;
-    opacity: var(--component-toast-glow-min-opacity);
-    animation:
-      toastGlowRotate var(--component-toast-glow-rotate-duration) linear infinite,
-      toastGlowPulse var(--component-toast-glow-pulse-duration) ease-in-out infinite alternate;
-  }
-
-  .state-border::after {
-    content: "";
-    position: absolute;
-    inset: var(--component-toast-accent-width);
-    border-radius: var(--component-toast-accent-radius);
-    background: var(--component-toast-texture), var(--component-toast-mask-bg);
-    transition: background var(--t-base);
-  }
-
   .toast-success {
-    color: var(--component-toast-success-fg);
-    --component-toast-icon-state-fg: var(--component-toast-success-fg);
+    --toast-accent: var(--component-toast-success-fg);
+    --toast-glow: var(--component-toast-success-glow);
   }
-  .toast-success  .state-border { color: var(--component-toast-success-fg); }
-  .toast-success  .state-border::before { background: var(--component-toast-success-glow); }
   .toast-error {
-    color: var(--component-toast-error-fg);
-    --component-toast-icon-state-fg: var(--component-toast-error-fg);
+    --toast-accent: var(--component-toast-error-fg);
+    --toast-glow: var(--component-toast-error-glow);
   }
-  .toast-error    .state-border { color: var(--component-toast-error-fg); }
-  .toast-error    .state-border::before { background: var(--component-toast-error-glow); }
   .toast-info {
-    color: var(--component-toast-info-fg);
-    --component-toast-icon-state-fg: var(--component-toast-info-fg);
+    --toast-accent: var(--component-toast-info-fg);
+    --toast-glow: var(--component-toast-info-glow);
   }
-  .toast-info     .state-border { color: var(--component-toast-info-fg); }
   .toast-download {
-    color: var(--component-toast-download-fg);
-    --component-toast-icon-state-fg: var(--component-toast-download-fg);
-  }
-  .toast-download .state-border { color: var(--component-toast-download-fg); }
-  .toast-download .state-border::before { background: var(--component-toast-download-glow); }
-
-  .toast:hover .state-border::after {
-    background: var(--component-toast-texture), var(--component-toast-mask-bg-hover);
-  }
-
-  .toast > :not(.state-border) {
-    position: relative;
-  }
-
-  @keyframes toastGlowRotate {
-    from { transform: translate(-50%, -50%) rotate(0deg); }
-    to { transform: translate(-50%, -50%) rotate(360deg); }
-  }
-
-  @keyframes toastGlowPulse {
-    from { opacity: var(--component-toast-glow-min-opacity); }
-    to { opacity: var(--component-toast-glow-min-opacity); }
+    --toast-accent: var(--component-toast-download-fg);
+    --toast-glow: var(--component-toast-download-glow);
   }
 
   .icon {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: var(--component-toast-icon-size);
-    height: var(--component-toast-icon-size);
-    color: var(--component-toast-body-fg);
-    background: var(--component-toast-icon-bg);
-    border: var(--component-toast-icon-border);
-    border-radius: var(--radius-md);
+    width: var(--component-nocturne-state-compact-icon-size);
+    height: var(--component-nocturne-state-compact-icon-size);
+    color: var(--toast-accent);
+    background: transparent;
+    border: 0;
+    border-radius: var(--component-nocturne-state-compact-icon-radius);
+    box-shadow: var(--component-nocturne-state-icon-shadow);
+    font-size: var(--component-nocturne-state-compact-icon-font-size);
+    align-self: flex-start;
+    margin-top: calc(var(--sp-1) / 2);
   }
 
-  .toast-icon {
-    width: var(--text-sm);
-    height: var(--text-sm);
-    stroke-width: var(--component-toast-icon-stroke-width);
+  .toast-icon,
+  .toast-close-icon {
+    display: block;
+    width: 1em;
+    height: 1em;
+    overflow: visible;
   }
 
   .toast-success  .icon { color: var(--component-toast-success-fg); }
@@ -369,26 +381,33 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-xs);
+    align-items: flex-start;
+    gap: var(--component-nocturne-state-content-gap);
   }
 
   .title {
     margin: 0;
-    font-size: var(--component-toast-title-font-size);
-    font-family: inherit;
-    color: var(--component-toast-title-fg);
-    font-weight: var(--component-toast-title-font-weight);
-    letter-spacing: var(--tracking-normal);
-    line-height: var(--component-toast-title-line-height);
+    font-family: var(--component-nocturne-state-font-ui);
+    color: var(--component-nocturne-state-title-fg);
+    font-size: var(--component-nocturne-state-compact-title-font-size);
+    font-weight: var(--component-nocturne-state-title-font-weight);
+    line-height: var(--component-nocturne-state-title-line-height);
+    letter-spacing: var(--component-nocturne-state-title-letter-spacing);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sub {
     margin: 0;
-    font-family: inherit;
-    font-size: var(--component-toast-body-font-size);
-    color: var(--component-toast-body-fg);
+    max-width: 100%;
+    font-family: var(--component-nocturne-state-font-ui);
+    color: var(--component-nocturne-state-body-fg);
+    font-size: var(--component-nocturne-state-body-font-size);
+    line-height: var(--component-nocturne-state-body-line-height);
     letter-spacing: var(--tracking-normal);
-    line-height: var(--component-toast-body-line-height);
     white-space: normal;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -398,8 +417,14 @@
     line-clamp: 2;
   }
 
+  .toast-with-actions .sub,
+  .library-update-toast .sub {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+  }
+
   .library-update-toast .body {
-    gap: var(--space-xs);
+    gap: var(--component-nocturne-state-content-gap);
   }
 
   .library-progress-track {
@@ -421,27 +446,32 @@
 
   .toast-action {
     flex-shrink: 0;
-    font-family: inherit;
-    font-size: var(--component-toast-action-font-size);
-    font-weight: var(--component-toast-action-font-weight);
-    letter-spacing: var(--component-toast-action-letter-spacing);
-    color: var(--component-toast-action-fg);
-    background: var(--component-toast-action-bg);
-    border: var(--component-toast-border-width) solid var(--component-toast-action-border);
-    border-radius: var(--component-toast-action-radius);
-    padding: var(--component-toast-action-padding);
+    min-height: var(--component-nocturne-state-compact-icon-size);
+    padding: 0 var(--space-sm);
+    border: var(--component-nocturne-state-action-border, var(--component-toast-action-border));
+    border-radius: var(--component-nocturne-state-action-radius, var(--component-toast-action-radius));
+    background: var(--component-nocturne-state-action-bg, var(--component-toast-action-bg));
+    color: var(--component-nocturne-state-action-fg, var(--component-toast-action-fg));
+    font-family: var(--component-nocturne-state-font-ui);
+    font-size: var(--text-2xs, var(--component-toast-action-font-size));
+    font-weight: var(--component-nocturne-state-action-font-weight, var(--component-toast-action-font-weight));
+    letter-spacing: var(--component-nocturne-state-action-letter-spacing, var(--component-toast-action-letter-spacing));
+    line-height: 1;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
     cursor: pointer;
     transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
   }
 
   .toast-action:hover {
-    color: var(--component-toast-action-fg);
-    background: var(--component-toast-action-bg-hover);
+    color: var(--component-nocturne-state-action-hover-fg, var(--component-toast-action-fg));
+    background: var(--component-nocturne-state-action-hover-bg, var(--component-toast-action-bg-hover));
+    border-color: var(--component-nocturne-state-action-hover-border, var(--component-toast-action-border));
   }
 
   .toast-action:first-child {
-    background: var(--component-toast-action-bg);
-    border-color: var(--component-toast-action-border);
+    background: var(--component-nocturne-state-action-bg, var(--component-toast-action-bg));
+    border-color: var(--component-nocturne-state-action-border, var(--component-toast-action-border));
   }
 
   .toast-action:not(:first-child) {
@@ -454,8 +484,8 @@
     flex-wrap: wrap;
     gap: var(--component-toast-gap);
     justify-content: flex-start;
-    margin-top: var(--space-xs);
-    margin-left: calc(var(--component-toast-icon-size) + var(--component-toast-gap));
+    margin-top: var(--component-nocturne-state-content-gap);
+    margin-left: calc(var(--component-nocturne-state-compact-icon-size) + var(--component-nocturne-state-gap));
   }
 
   .toast-close {
@@ -464,18 +494,12 @@
     justify-content: center;
     width: var(--component-toast-close-size);
     height: var(--component-toast-close-size);
-    border: var(--component-toast-border-width) solid var(--component-toast-close-border);
+    border: 0;
     border-radius: var(--component-toast-close-radius);
     color: var(--component-toast-close-fg);
-    background: var(--component-toast-close-bg);
+    background: transparent;
     cursor: pointer;
     transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform var(--t-base);
-  }
-
-  .toast-close-icon {
-    width: var(--text-xs);
-    height: var(--text-xs);
-    stroke-width: var(--component-toast-close-icon-stroke-width);
   }
 
   .toast-action:focus-visible,
@@ -490,7 +514,6 @@
 
   .toast-close:hover {
     color: var(--component-toast-close-fg-hover);
-    border-color: var(--component-toast-close-border-hover);
     background: var(--component-toast-close-bg-hover);
   }
 
@@ -502,7 +525,7 @@
       width: auto;
     }
 
-    .toast-main { grid-template-columns: var(--component-toast-icon-size) minmax(0, 1fr) var(--component-toast-close-size); }
+    .toast-main { grid-template-columns: var(--component-nocturne-state-compact-icon-size) minmax(0, 1fr) var(--component-toast-close-size); }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -511,9 +534,11 @@
       transition: none;
     }
 
-    .library-progress-fill,
-    .state-border::before {
+    .toast::before {
       animation: none;
+    }
+
+    .library-progress-fill {
       transition: none;
     }
   }

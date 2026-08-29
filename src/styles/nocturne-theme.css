@@ -120,6 +120,7 @@
   --component-toast-icon-border: 1px solid color-mix(in srgb, var(--component-toast-icon-state-fg) 28%, transparent);
   --component-toast-offset: 20px;
   --component-toast-width: min(360px, calc(100vw - 32px));
+  --component-toast-height: 88px;
   --component-toast-stack-gap: 8px;
   --component-toast-padding: var(--space-sm) var(--space-md);
   --component-toast-gap: var(--space-sm);

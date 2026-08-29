@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="nocturne">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Epigraph toast redesign mockup</title>
+    <link rel="stylesheet" href="../../src/styles/global.css" />
+    <style>
+      /* Mockup only. Production values continue to come from the Nocturne token stack. */
+      html,
+      body {
+        width: 1280px;
+        height: 800px;
+        min-width: 1280px;
+        min-height: 800px;
+        overflow: hidden;
+        background: var(--bg-void);
+      }
+
+      body {
+        position: relative;
+      }
+
+      .mockup {
+        position: relative;
+        width: 1280px;
+        height: 800px;
+        overflow: hidden;
+        isolation: isolate;
+        background: var(--bg-void);
+      }
+
+      .app-backdrop {
+        position: absolute;
+        inset: 0;
+        background: url("../screenshots/epigraph-Settings.png") center / cover no-repeat;
+        transform: scale(1.01);
+      }
+
+      .app-backdrop::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--component-overlay-bg);
+        pointer-events: none;
+      }
+
+      .toast-stack {
+        position: absolute;
+        right: var(--component-toast-offset);
+        bottom: var(--component-toast-offset);
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: var(--component-toast-stack-gap);
+        width: var(--component-toast-width);
+      }
+
+      .toast {
+        --toast-standard-height: var(--component-toast-height);
+        --toast-accent: var(--component-toast-info-fg);
+        --toast-surface: var(--component-toast-mask-bg);
+        --toast-rail: var(--component-toast-info-fg);
+        --toast-icon-bg: transparent;
+        --toast-icon-border: 0;
+        --toast-glow: var(--component-toast-info-glow);
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: var(--toast-standard-height);
+        overflow: hidden;
+        isolation: isolate;
+        box-sizing: border-box;
+        justify-content: center;
+        padding: var(--component-nocturne-state-compact-padding);
+        border: var(--component-toast-border-width) solid transparent;
+        border-radius: var(--component-nocturne-state-compact-radius);
+        background: transparent;
+        color: var(--component-toast-title-fg);
+        box-shadow: var(--component-nocturne-state-panel-shadow);
+        animation: toast-enter 360ms var(--easing-emphasized) both;
+      }
+
+      .toast::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        z-index: 0;
+        width: 250%;
+        height: 250%;
+        background: var(--toast-glow);
+        opacity: var(--component-toast-glow-min-opacity);
+        transform: translate(-50%, -50%) rotate(0deg);
+        transform-origin: center center;
+        pointer-events: none;
+        animation: epigraph-glow-rotate var(--component-toast-glow-rotate-duration) linear infinite, toast-glow-pulse var(--component-toast-glow-pulse-duration) ease-in-out infinite alternate;
+      }
+
+      .toast::after {
+        content: "";
+        position: absolute;
+        /* The transparent outer border is the only reveal window for the glow. */
+        inset: 0;
+        z-index: 1;
+        border-radius: var(--component-nocturne-state-compact-radius);
+        background: var(--toast-surface);
+        pointer-events: none;
+      }
+
+      .toast > * {
+        position: relative;
+        z-index: 2;
+      }
+
+      .toast-rail {
+        position: absolute;
+        inset: var(--component-nocturne-state-rail-inset);
+        bottom: var(--component-toast-border-width);
+        z-index: 3;
+        /* Keep the semantic rail inside the animated frame's lower edge. */
+        width: var(--component-toast-border-width);
+        border-radius: var(--component-nocturne-state-rail-radius);
+        background: var(--toast-rail);
+        opacity: var(--component-nocturne-state-rail-opacity);
+        pointer-events: none;
+      }
+
+      .toast-main {
+        display: grid;
+        grid-template-columns: var(--component-nocturne-state-compact-icon-size) minmax(0, 1fr) var(--component-toast-close-size);
+        align-items: center;
+        column-gap: var(--component-nocturne-state-gap);
+        min-width: 0;
+      }
+
+      .toast-icon {
+        flex: 0 0 auto;
+        width: var(--component-nocturne-state-compact-icon-size);
+        height: var(--component-nocturne-state-compact-icon-size);
+        display: grid;
+        place-items: center;
+        color: var(--toast-accent);
+        background: var(--toast-icon-bg);
+        border: var(--toast-icon-border);
+        border-radius: var(--component-nocturne-state-compact-icon-radius);
+        box-shadow: var(--component-nocturne-state-icon-shadow);
+        font-size: var(--component-nocturne-state-compact-icon-font-size);
+        align-self: flex-start;
+        margin-top: calc(var(--sp-1) / 2);
+      }
+
+      .toast-icon svg,
+      .toast-close svg {
+        display: block;
+        width: 1em;
+        height: 1em;
+        overflow: visible;
+      }
+
+      .toast-copy {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--component-nocturne-state-content-gap);
+      }
+
+      .toast-title,
+      .toast-body {
+        margin: 0;
+        font-family: var(--component-nocturne-state-font-ui);
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+      }
+
+      .toast-title {
+        color: var(--component-nocturne-state-title-fg);
+        font-size: var(--component-nocturne-state-compact-title-font-size);
+        font-weight: var(--component-nocturne-state-title-font-weight);
+        line-height: var(--component-nocturne-state-title-line-height);
+        letter-spacing: var(--component-nocturne-state-title-letter-spacing);
+      }
+
+      .toast-body {
+        color: var(--component-nocturne-state-body-fg);
+        font-size: var(--component-nocturne-state-body-font-size);
+        line-height: var(--component-nocturne-state-body-line-height);
+        letter-spacing: var(--tracking-normal);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+      }
+
+      /* Action variants keep one concise description in the shared copy column. */
+      .toast--with-action .toast-body {
+        -webkit-line-clamp: 1;
+        line-clamp: 1;
+      }
+
+      .toast-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: var(--component-toast-close-size);
+        height: var(--component-toast-close-size);
+        color: var(--component-toast-close-fg);
+        border: 0;
+        border-radius: var(--component-toast-close-radius);
+        background: transparent;
+      }
+
+      .toast-life {
+        position: absolute;
+        right: var(--component-toast-border-width);
+        bottom: var(--component-toast-border-width);
+        left: var(--component-toast-border-width);
+        z-index: 2;
+        height: var(--component-toast-progress-height);
+        background: var(--component-toast-life-bg);
+        transform-origin: left;
+        animation: toast-life 5200ms linear forwards;
+      }
+
+      .toast-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--component-toast-gap);
+        margin-top: var(--component-nocturne-state-content-gap);
+        margin-left: calc(var(--component-nocturne-state-compact-icon-size) + var(--component-nocturne-state-gap));
+      }
+
+      .toast-action {
+        min-height: var(--component-nocturne-state-compact-icon-size);
+        padding: 0 var(--space-sm);
+        border: var(--component-nocturne-state-action-border);
+        border-radius: var(--component-nocturne-state-action-radius);
+        background: var(--component-nocturne-state-action-bg);
+        color: var(--component-nocturne-state-action-fg);
+        font-family: var(--component-nocturne-state-font-ui);
+        font-size: var(--text-2xs);
+        font-weight: var(--component-nocturne-state-action-font-weight);
+        letter-spacing: var(--component-nocturne-state-action-letter-spacing);
+        line-height: 1;
+      }
+
+      .toast-action + .toast-action {
+        border-color: transparent;
+        background: transparent;
+      }
+
+      .toast-progress {
+        width: 100%;
+        height: var(--component-toast-progress-height);
+        margin-top: var(--component-nocturne-state-content-gap);
+        overflow: hidden;
+        border-radius: var(--component-toast-progress-radius);
+        background: var(--component-toast-progress-track);
+      }
+
+      .toast-progress-fill {
+        width: 61%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--component-toast-progress-fill);
+      }
+
+      .toast--success {
+        --toast-accent: var(--component-toast-success-fg);
+        --toast-rail: var(--component-toast-success-fg);
+        --toast-glow: var(--component-toast-success-glow);
+      }
+
+      .toast--error {
+        --toast-accent: var(--component-toast-error-fg);
+        --toast-rail: var(--component-toast-error-fg);
+        --toast-glow: var(--component-toast-error-glow);
+      }
+
+      .toast--info {
+        --toast-accent: var(--component-toast-info-fg);
+        --toast-rail: var(--component-toast-info-fg);
+        --toast-glow: var(--component-toast-info-glow);
+      }
+
+      .toast--download {
+        --toast-accent: var(--component-toast-download-fg);
+        --toast-rail: var(--component-toast-download-fg);
+        --toast-glow: var(--component-toast-download-glow);
+      }
+
+      .toast--persistent .toast-life {
+        display: none;
+      }
+
+      .toast--persistent .toast-actions {
+        margin-top: 0;
+      }
+
+      /* These paths mirror the phosphor-svelte regular glyphs used by NocturneState. */
+
+      .toast:nth-child(2) {
+        animation-delay: 90ms;
+      }
+
+      .toast:nth-child(3) {
+        animation-delay: 180ms;
+      }
+
+      @keyframes toast-enter {
+        from {
+          opacity: 0;
+          transform: translate3d(18px, 0, 0) scale(0.985);
+        }
+        to {
+          opacity: 1;
+          transform: translate3d(0, 0, 0) scale(1);
+        }
+      }
+
+      @keyframes toast-life {
+        from {
+          transform: scaleX(1);
+        }
+        to {
+          transform: scaleX(0);
+        }
+      }
+
+      @keyframes toast-glow-pulse {
+        from {
+          opacity: var(--component-toast-glow-min-opacity);
+        }
+        to {
+          opacity: calc(var(--component-toast-glow-min-opacity) * 1.28);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .toast,
+        .toast::before,
+        .toast-life {
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="mockup" aria-label="Mockup visual dos novos toasts">
+      <div class="app-backdrop" aria-hidden="true"></div>
+      <section class="toast-stack" aria-label="Exemplos de notificações">
+        <article class="toast toast--error" role="alert">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Falha na sincronização</p>
+              <p class="toast-body">O desktop remoto não respondeu.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--success" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Biblioteca sincronizada</p>
+              <p class="toast-body">Suas alterações foram salvas.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--info" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Atualização concluída com pendências</p>
+              <p class="toast-body">2 fontes não responderam e serão tentadas novamente.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--download" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Download iniciado</p>
+              <p class="toast-body">3 capítulos adicionados à fila.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--error toast--with-action" role="alert">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">FlareSolverr indisponível</p>
+              <p class="toast-body">Ative o FlareSolverr para continuar.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-actions">
+            <button class="toast-action" type="button">Abrir configurações</button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--success toast--with-action" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Fonte migrada</p>
+              <p class="toast-body">A nova fonte foi aplicada ao título.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-actions">
+            <button class="toast-action" type="button">Desfazer</button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--info toast--with-action" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Atualização do Suwayomi disponível</p>
+              <p class="toast-body">Uma nova versão está pronta para instalar.</p>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-actions">
+            <button class="toast-action" type="button">Atualizar agora</button>
+            <button class="toast-action" type="button">Lembrar mais tarde</button>
+          </div>
+          <div class="toast-life" aria-hidden="true"></div>
+        </article>
+
+        <article class="toast toast--download toast--persistent toast--with-action" role="status">
+          <span class="toast-rail" aria-hidden="true"></span>
+          <div class="toast-main">
+            <span class="toast-icon" aria-hidden="true">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M224,144v64a8,8,0,0,1-8,8H40a8,8,0,0,1-8-8V144a8,8,0,0,1,16,0v56H208V144a8,8,0,0,1,16,0Zm-101.66,5.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0-11.32-11.32L136,124.69V32a8,8,0,0,0-16,0v92.69L93.66,98.34a8,8,0,0,0-11.32,11.32Z" /></svg>
+            </span>
+            <div class="toast-copy">
+              <p class="toast-title">Atualização da biblioteca</p>
+              <p class="toast-body">37/61 obras verificadas · 61% concluído.</p>
+              <div class="toast-progress" aria-hidden="true"><div class="toast-progress-fill"></div></div>
+            </div>
+            <button class="toast-close" type="button" aria-label="Dispensar notificação">
+              <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,1,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z" /></svg>
+            </button>
+          </div>
+          <div class="toast-actions">
+            <button class="toast-action" type="button">Parar</button>
+          </div>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

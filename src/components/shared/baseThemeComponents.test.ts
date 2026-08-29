@@ -119,16 +119,70 @@ describe("base themed components", () => {
     const source = readFileSync(join(process.cwd(), "src/components/layout/Toaster.svelte"), "utf8");
 
     expect(source).toContain("--component-toast-font");
-    expect(source).toContain("--component-toast-title-font-size");
-    expect(source).toContain("--component-toast-body-fg");
-    expect(source).toContain("--component-toast-action-bg");
-    expect(source).toContain("--component-toast-icon-border");
-    expect(source).toContain("--component-toast-accent-inset");
-    expect(source).toContain("--component-toast-mask-bg");
-    expect(source).toContain("--component-toast-mask-bg-hover");
-    expect(source).toContain("--component-toast-texture");
+    expect(source).toContain("--component-nocturne-state-compact-title-font-size");
+    expect(source).toContain("--component-nocturne-state-body-fg");
+    expect(source).toContain("--component-nocturne-state-action-bg");
+    expect(source).toContain("--component-toast-success-fg");
+    expect(source).toContain("--component-toast-error-fg");
+    expect(source).toContain("--component-toast-info-fg");
+    expect(source).toContain("--component-toast-download-fg");
     expect(source).toContain("state-border");
-    expect(source).toContain("--component-toast-action-padding");
+    expect(source).toContain("--component-nocturne-state-action-radius");
+    expect(source).toContain("padding: 0 var(--space-sm)");
+    expect(source).toContain("backdrop-filter: none");
+  });
+
+  test("matches the approved standardized toast frame contract", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/layout/Toaster.svelte"), "utf8");
+    const tokens = readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8");
+    const nocturne = readFileSync(join(process.cwd(), "src/styles/nocturne-theme.css"), "utf8");
+
+    expect(tokens).toMatch(/--component-toast-height:\s*88px;/);
+    expect(nocturne).toMatch(/--component-toast-height:\s*88px;/);
+    expect(source).toContain("height: var(--component-toast-height)");
+    expect(source).toContain("padding: var(--component-nocturne-state-compact-padding)");
+    expect(source).toContain(".toast::before");
+    expect(source).toContain(".toast::after");
+    expect(source).toContain("epigraph-glow-rotate");
+    expect(source).toContain("toast-glow-pulse");
+  });
+
+  test("uses the approved regular semantic glyphs and keeps library progress inline", async () => {
+    render(Toaster);
+    addToast({
+      id: "semantic-error-toast",
+      kind: "error",
+      title: "Error state",
+      duration: 0,
+    });
+    addToast({
+      id: "semantic-success-toast",
+      kind: "success",
+      title: "Success state",
+      duration: 0,
+    });
+    store.libraryUpdateInFlight = true;
+    store.libraryUpdateProgress = {
+      kind: "download",
+      title: "Library update",
+      body: "Checking titles 37/61 - 61% complete.",
+      active: true,
+      current: 37,
+      total: 61,
+      percent: 61,
+      updatedAt: Date.now(),
+    };
+
+    expect(await screen.findByText("Error state")).toBeTruthy();
+    expect(screen.getByText("Success state")).toBeTruthy();
+    expect(screen.getByText("Checking titles 37/61 - 61% complete.")).toBeTruthy();
+
+    const iconPaths = [...document.querySelectorAll(".toast-icon path")].map((path) => path.getAttribute("d"));
+    expect(iconPaths).toContain("M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z");
+    expect(iconPaths).toContain("M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z");
+    expect(document.querySelector(".library-progress-track")).toBeTruthy();
+    expect(document.querySelector(".library-progress-fill")?.getAttribute("style")).toContain("61%");
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
   });
 
   test("keeps the toast lifetime indicator functional with reduced motion", () => {
