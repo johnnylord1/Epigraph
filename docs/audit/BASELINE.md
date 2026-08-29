@@ -209,7 +209,7 @@ variant was rebuilt with the production package id and the Android debug key:
 |---|---|
 | `app-standard-universal-local.apk` | 172,322,997 bytes; SHA-256 `13684f9a5312a8ddbf80c0cbb477e91d801315ada459d6c27eaecc6aeb4f5eee`; rebuilt from functional source commit `e691adee20` (`local6651`); APK Signature Scheme v2 valid |
 | package/minimum/target | `app.epigraph.mobile`, minSdk 24, targetSdk 36 |
-| `app-standard-universal-release-unsigned.apk` | 134,670,471 bytes; SHA-256 `35A3EB9ED03EB5A3F12967C9C450FF5CC36573E53EABC8A56D3D623D5263B8DE`; generated 2026-08-29 00:28:50 with `:app:assembleStandardRelease`; unsigned (expected until the project keystore is supplied) |
+| `app-standard-universal-release-unsigned.apk` | 134,670,471 bytes; SHA-256 `35A3EB9ED03EB5A3F12967C9C450FF5CC36573EABC8A56D3D623D5263B8DE`; generated 2026-08-29 00:28:50 from source `5392586402` with `:app:assembleStandardRelease`; unsigned (expected until the project keystore is supplied) |
 
 The release/minified build was completed with one worker and in-process Kotlin
 compilation. `lintVitalStandardRelease` was excluded from this packaging
