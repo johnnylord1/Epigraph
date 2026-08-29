@@ -1,6 +1,8 @@
+import java.io.File
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -32,6 +34,40 @@ val commitHash by lazy { runCommand("git rev-parse --short HEAD") }
 val buildTime: String by lazy {
     val df = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
     LocalDateTime.now(ZoneOffset.UTC).format(df)
+}
+
+// Production signing material is deliberately kept outside this repository. The default path
+// follows the local developer's secrets directory, while CI/release jobs can point at a protected
+// file with -Paethon.signing.properties or AETHON_SIGNING_PROPERTIES. Keeping this optional lets
+// contributors build debug variants without access to the private release key; release jobs can
+// opt into a fail-closed gate with -Paethon.requireSigning=true.
+val signingPropertiesPath = providers.gradleProperty("aethon.signing.properties").orNull
+    ?: providers.environmentVariable("AETHON_SIGNING_PROPERTIES").orNull
+    ?: File(System.getProperty("user.home"), "secrets/aethon-keystore.properties").path
+val signingPropertiesFile = File(signingPropertiesPath)
+val signingProperties = Properties().apply {
+    if (signingPropertiesFile.isFile) {
+        signingPropertiesFile.inputStream().use(::load)
+    }
+}
+val signingStoreFile = signingProperties.getProperty("storeFile")?.let { path ->
+    val candidate = File(path)
+    if (candidate.isAbsolute) candidate else File(signingPropertiesFile.parentFile, path)
+}
+val hasAethonReleaseSigning = signingStoreFile?.isFile == true &&
+    !signingProperties.getProperty("storePassword").isNullOrBlank() &&
+    !signingProperties.getProperty("keyAlias").isNullOrBlank() &&
+    !signingProperties.getProperty("keyPassword").isNullOrBlank()
+val requireAethonReleaseSigning = providers.gradleProperty("aethon.requireSigning").orNull
+    ?.toBoolean() == true || providers.environmentVariable("AETHON_REQUIRE_SIGNING").orNull
+    ?.toBoolean() == true
+
+if (requireAethonReleaseSigning && !hasAethonReleaseSigning) {
+    error(
+        "Aethon release signing is required, but no valid keystore was found. " +
+            "Provide -Paethon.signing.properties=<path> (or AETHON_SIGNING_PROPERTIES) " +
+            "with storeFile, storePassword, keyAlias and keyPassword.",
+    )
 }
 
 val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
@@ -71,6 +107,18 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasAethonReleaseSigning) {
+            create("aethonRelease") {
+                storeFile = signingStoreFile
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+                storeType = signingProperties.getProperty("storeType", "PKCS12")
+            }
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             applicationIdSuffix = ".debug"
@@ -91,11 +139,17 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
+            if (hasAethonReleaseSigning) {
+                signingConfig = signingConfigs.getByName("aethonRelease")
+            }
         }
         create("beta") {
             initWith(getByName("release"))
             buildConfigField("boolean", "BETA", "true")
 
+            if (hasAethonReleaseSigning) {
+                signingConfig = signingConfigs.getByName("aethonRelease")
+            }
             matchingFallbacks.add("release")
             versionNameSuffix = "-b${betaCount}"
             applicationIdSuffix = ".beta"

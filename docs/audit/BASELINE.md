@@ -227,6 +227,31 @@ physical two-device run with a real populated user profile remains a release
 gate; the deterministic two-device Core run above is retained as current
 evidence and does not claim that populated-profile behavior.
 
+## Signed release validation (2026-08-29)
+
+The release signing configuration now reads a protected properties file outside
+the checkout (`%USERPROFILE%\secrets\aethon-keystore.properties`) and never
+stores signing material in Git. With the gate
+`--project-prop "aethon.requireSigning=true"`, `:app:assembleStandardRelease`
+completed with Gradle-integrated `lintVitalStandardRelease` enabled. The key is
+an RSA-4096 certificate with alias `aethon-release`; its public certificate
+SHA-256 fingerprint is
+`4D:DB:42:D5:55:CA:80:3C:9D:66:FB:EB:EB:56:51:E7:1C:08:72:36:37:18:B8:EF:15:90:B8:F9:3F:0E:50:E4`.
+
+| Artifact | Size | SHA-256 | Verification |
+|---|---:|---|---|
+| `app-standard-universal-release.apk` | 134,695,047 bytes | `325A2CD19A76C24147E2C14995D2EE60E2B9F8C1125089DBD74E41785C0C2640` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-arm64-v8a-release.apk` | 48,444,398 bytes | `F22A15D39994E8FD174291DDA9D1A0D6F962367D6796063089E0C6F42F4DFE03` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-armeabi-v7a-release.apk` | 38,678,520 bytes | `9A1FE11E1F01AF710F688B39E2C10F2CF46216CFF72B752E0B67157B883705F9` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86_64-release.apk` | 51,773,093 bytes | `D468B21F3565300E34BB3CBA307805E5381E05A8A75A846F4C07428A3574AF34` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86-release.apk` | 50,290,560 bytes | `39A4576468CA342D0F2362C20FA00DC75265841D889C0FE8865B71CE9D51F7C4` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+
+The artifacts report package `app.epigraph.mobile`, minSdk 24 and targetSdk 36.
+`standardLocal` and `nightly` remain debug-signed by design for emulator/dev
+iterations. The keystore and its password must be backed up separately; losing
+either makes future updates with this signing identity impossible. This local
+certificate is not asserted to be an existing Google Play upload key.
+
 ## API matrix rerun (2026-08-29)
 
 The API 29 row was rerun against the current checkout with a clean emulator.
