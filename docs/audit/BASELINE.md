@@ -237,16 +237,16 @@ completed with Gradle-integrated `lintVitalStandardRelease` enabled. The key is
 an RSA-4096 certificate with alias `epigraph-release`; its public certificate
 SHA-256 fingerprint is
 `15:EA:77:B5:EB:98:32:D6:50:9A:1B:B6:00:E5:F2:09:29:1C:C0:BD:10:91:D4:53:CF:D7:5F:3F:77:61:AE:B8`.
-The final artifacts below will be rebuilt from the committed Epigraph signing
-configuration after this identity correction.
+The final artifacts below were rebuilt from committed checkout `12a0d6d88a`
+with the Epigraph signing configuration.
 
 | Artifact | Size | SHA-256 | Verification |
 |---|---:|---|---|
-| `app-standard-universal-release.apk` | 134,695,047 bytes | `0D0613EC7C3B48834D84C742D7D1437286DE0ECB0B3AC850EF7833438338E19C` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-arm64-v8a-release.apk` | 48,444,398 bytes | `2E9C9EE47E1E7E5B1A569F0C1287B49E7899A97F5AA47877303D7AAF51934194` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-armeabi-v7a-release.apk` | 38,678,520 bytes | `CA04BA4A799FB23A1823B258FFF92AFE195A647495A2D3C8FC6E00235CA6501A` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-x86_64-release.apk` | 51,773,093 bytes | `37F88746592964F8F635F00F1378143F1C9F91863FFA9A868E8C7D8380E42BA8` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
-| `app-standard-x86-release.apk` | 50,290,560 bytes | `674484CE103B44A2142D07C8EB0EDE97CFB887C1C2107DB4935E5D27816DB839` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-universal-release.apk` | 134,695,047 bytes | `49EA0C7608899B0A5BD86992EAE852CEA8AF97C06994657CD40F9FB545FDA3C9` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-arm64-v8a-release.apk` | 48,444,398 bytes | `BF19E4387EBE3387D7230268B793809919237773A01F1F7A21036EADC49B7145` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-armeabi-v7a-release.apk` | 38,678,520 bytes | `B06A4D3B680D758D18940BB693B65A589EBA0A065D894F3ED38B067372001F6A` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86_64-release.apk` | 51,773,093 bytes | `91E5A04A8D74BF22E3650A7D79539F981D5438FF82E55ECA26E6F5116E059A63` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
+| `app-standard-x86-release.apk` | 50,290,560 bytes | `C64E9BBB9368B10D6782B27C7BA34119701D0E71C0FEC779A9B0C2EB883D259E` | `apksigner` verified; APK Signature Scheme v2; zipalign OK |
 
 The artifacts report package `app.epigraph.mobile`, minSdk 24 and targetSdk 36.
 `standardLocal` and `nightly` remain debug-signed by design for emulator/dev
