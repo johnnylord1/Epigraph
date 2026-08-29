@@ -16,7 +16,9 @@ To build a store-style APK from PowerShell, run from the repository root:
 
 ```powershell
 $env:GRADLE_USER_HOME = "$PWD/.gradle-user-home"
-$env:GRADLE_OPTS = '-Dorg.gradle.jvmargs=-Xmx2048m -Xss256k -XX:ReservedCodeCacheSize=64m -XX:+TieredCompilation -Dorg.gradle.workers.max=1'
+# Release packaging needs a temporary 4 GiB heap for ApkFlinger; --no-daemon
+# ensures it is reclaimed when this command exits.
+$env:GRADLE_OPTS = '-Dorg.gradle.jvmargs=-Xmx4096m -Xss256k -XX:ReservedCodeCacheSize=128m -XX:+TieredCompilation -Dorg.gradle.workers.max=1'
 .\gradlew.bat :app:assembleStandardRelease `
   --no-daemon --no-parallel --max-workers=1 --no-configuration-cache `
   --project-prop 'epigraph.requireSigning=true' --console=plain
