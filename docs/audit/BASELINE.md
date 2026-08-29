@@ -44,9 +44,9 @@ The selected baseline is `248146acfb87e97540d719f4a34bf1f362754882`. The checkou
 | Syncd v1 Android foundation focused tests | Passed: 47/47 app tests plus 13/13 data tests |
 | Full regression after Syncd foundation | Passed: app 205/205, domain 49/49, data 13/13; migrations passed |
 | Current `lintDevDebug` after Syncd foundation | Passed in 8m37s with 0 errors, 583 warnings and 2 hints |
-| Current `assembleDevDebug assembleStandardRelease` | Passed in 3m42s; release artifacts are unsigned as expected without a repository keystore |
+| Earlier `assembleDevDebug assembleStandardRelease` | Passed in 3m42s; the pre-signing release artifacts were unsigned because no project keystore was configured |
 | Current universal debug APK | 98,093,879 bytes; SHA-256 `CEA02119D3F6D3FB059750A3E2CE77BB71340D6D4BC482AD2CE322FAC481F35D` |
-| Current universal release APK | 63,810,191 bytes; unsigned; SHA-256 `406C2E1D6B5C8F1616E0DEA101DEC7A662249FADE7DC650EFDB08D66CD4D208F` |
+| Earlier universal release APK | 63,810,191 bytes; unsigned; SHA-256 `406C2E1D6B5C8F1616E0DEA101DEC7A662249FADE7DC650EFDB08D66CD4D208F` |
 | API 36 Syncd-foundation smoke | Fresh APK installed; cold launch reached Epigraph onboarding in 8.154s; PID remained alive; no fatal exception |
 | Full regression after pinned pairing/replay/credentials | Passed: app 234/234, domain 49/49, data 13/13; migrations passed |
 | `lintDevDebug` after pinned pairing/replay/credentials | Passed in 6m28s with 0 errors, 584 warnings and 2 hints |
@@ -66,7 +66,7 @@ The following results supersede the older rows above for the current detached ch
 | SQLDelight migration verification | Passed through schema 39 (`36.sqm`, `37.sqm`, `38.sqm`) |
 | `lintDevDebug` | Passed: 0 errors, 585 warnings, 2 hints |
 | Current universal debug APK | 97,481,313 bytes; SHA-256 `A295EC27558A747463A7B64F96B2AC363B33284BB266A2B5AD3DD4BEDBBD49EB` |
-| Current universal release APK | 64,134,926 bytes; unsigned; SHA-256 `80EC50E394E46E46032CB90716B4FA33B4B8CA343A7D9A941666B1D7D0970A79` |
+| Current universal release APK | 134,695,047 bytes; signed with the protected Aethon release key (APK Signature Scheme v2); SHA-256 `0D0613EC7C3B48834D84C742D7D1437286DE0ECB0B3AC850EF7833438338E19C` |
 | API 36.1 user-flow smoke | Latest APK installed after DI/replay changes; launcher resumed, PID stayed alive, and logcat showed no fatal exception. Earlier flow also covered onboarding, SAF, Library/Recents/Browse, Core settings, invalid bundle rejection and QR scanner launch |
 
 The mobile side now has the Core-v1 outbox adapter and drainer, WorkManager scheduling, encrypted credentials, pinned HTTP/WebSocket transport, SQLDelight schema 39 confirmed-replica tables, Lamport clock, idempotent inbox/checkpoint handling, and cursor-aware replica synchronization. A scope uses `/v1/changes` from its durable cursor and falls back to `/v1/snapshot` only for first bootstrap or replay-window expiry. The worker reports `outbox_drained`; it never labels a replica as fully synchronized while pending work or a replica error remains.
