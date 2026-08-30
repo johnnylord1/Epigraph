@@ -126,7 +126,8 @@ jobs:
       - name: Stage Suwayomi bundle
         shell: bash
         run: |
-          mkdir -p src-tauri/binaries
+          rm -rf src-tauri/binaries/suwayomi-bundle
+          mkdir -p src-tauri/binaries/suwayomi-bundle
           JAVA=$(find suwayomi-extracted -path "*/jre/bin/java.exe" | head -1)
           JAR=$(find suwayomi-extracted -name "Suwayomi-Server.jar" | head -1)
           if [ -z "$JAVA" ]; then
@@ -139,15 +140,15 @@ jobs:
             find suwayomi-extracted -type f | head -50
             exit 1
           fi
-          cp -r suwayomi-extracted src-tauri/binaries/suwayomi-bundle
+          cp -r suwayomi-extracted/. src-tauri/binaries/suwayomi-bundle/
 
       - name: Validate staging
         shell: bash
         run: |
-          find src-tauri/binaries/suwayomi-bundle -path "*/jre/bin/java.exe" \
-            | grep -q . || (echo "ERROR: jre/bin/java.exe missing" && exit 1)
-          find src-tauri/binaries/suwayomi-bundle -name "Suwayomi-Server.jar" \
-            | grep -q . || (echo "ERROR: Suwayomi-Server.jar missing" && exit 1)
+          test -f src-tauri/binaries/suwayomi-bundle/jre/bin/java.exe \
+            || (echo "ERROR: jre/bin/java.exe missing at bundle root" && exit 1)
+          test -f src-tauri/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar \
+            || (echo "ERROR: bin/Suwayomi-Server.jar missing at bundle root" && exit 1)
           echo "Staging OK"
 
       - name: Build and smoke-test Syncd sidecar
