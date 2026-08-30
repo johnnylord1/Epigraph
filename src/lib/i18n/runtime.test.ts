@@ -54,7 +54,7 @@ describe("resolveMessageLocale", () => {
     for (const catalog of Object.values(catalogs)) {
       expect(Object.keys(catalog)).toEqual(englishKeys);
       for (const key of englishKeys) {
-        expect(placeholders(catalog[key as keyof typeof catalog])).toEqual(placeholders(en[key as keyof typeof en]));
+        expect(placeholders(catalog[key as keyof typeof catalog]).sort()).toEqual(placeholders(en[key as keyof typeof en]).sort());
       }
     }
   });

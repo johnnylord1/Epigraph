@@ -292,9 +292,9 @@
           {#if folderOpen}
             <div class="folder-menu">
               {#if catsLoading}
-                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_loading")} />
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail_folders_loading")} />
               {:else if allCategories.length === 0 && !creatingFolder}
-                <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_emptyTitle")} body="Create a folder in Settings to organize this series." />
+                <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail_folders_emptyTitle")} body={$_("detail.folders.emptyBody")} />
               {/if}
               {#each allCategories as cat}
                 {@const isIn = mangaCategories.some(c => c.id === cat.id)}
@@ -344,7 +344,7 @@
             layout="compact"
             tone="warning"
             icon="warning"
-            eyebrow="Preview"
+            eyebrow={$_("bookDetail.preview")}
             title={$_("ui_couldNotRefreshThisManga")}
             body={fetchError}
           />
@@ -460,9 +460,9 @@
         </div>
         <div class="link-list">
         {#if loadingLinkList}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_loadingLibrary")} />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_loadingLibrary")} />
         {:else if linkPickerResults.length === 0}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noMatchingManga")} body="Try another title from your library." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_noMatchingManga")} body={$_("feedback.tryAnotherLibraryTitle")} />
         {:else}
           {#each linkPickerResults as m (m.id)}
             {@const isLinked = linkedIds.includes(m.id)}

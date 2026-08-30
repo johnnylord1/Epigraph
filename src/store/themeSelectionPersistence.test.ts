@@ -3,14 +3,18 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 const STORE_KEY = "epigraph-store";
 const STORE_VERSION = 7;
 
-async function loadSettingsTheme(settings: Record<string, unknown>) {
+async function loadSettings(settings: Record<string, unknown>) {
   vi.resetModules();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => key === STORE_KEY ? JSON.stringify({ storeVersion: STORE_VERSION, settings }) : null,
     setItem: vi.fn(),
   });
   const module = await import("./state.svelte");
-  return module.store.settings.theme;
+  return module.store.settings;
+}
+
+async function loadSettingsTheme(settings: Record<string, unknown>) {
+  return (await loadSettings(settings)).theme;
 }
 
 describe("theme selection persistence", () => {
@@ -28,10 +32,37 @@ describe("theme selection persistence", () => {
     await expect(loadSettingsTheme({ theme: "custom:missing", customThemes: [] })).resolves.toBe("nocturne");
   });
 
-  test("preserves a saved custom theme when its document is present", async () => {
-    await expect(loadSettingsTheme({
+  test("preserves a saved valid custom theme when its document is present", async () => {
+    const settings = await loadSettings({
       theme: "custom:present",
-      customThemes: [{ id: "custom:present", name: "Present" }],
-    })).resolves.toBe("custom:present");
+      customThemes: [{
+        version: 5,
+        id: "custom:present",
+        name: "Present",
+        base: "dark",
+        primitives: { accent: "#abcdef" },
+        motion: "soft",
+      }],
+    });
+
+    expect(settings.theme).toBe("custom:present");
+    expect(settings.customThemes).toEqual([{
+      version: 5,
+      id: "custom:present",
+      name: "Present",
+      base: "dark",
+      primitives: { accent: "#abcdef" },
+      motion: "soft",
+    }]);
+  });
+
+  test("drops a corrupt saved custom document and falls back to Nocturne", async () => {
+    const settings = await loadSettings({
+      theme: "custom:corrupt",
+      customThemes: [{ id: "custom:corrupt", name: "Corrupt" }],
+    });
+
+    expect(settings.theme).toBe("nocturne");
+    expect(settings.customThemes).toEqual([]);
   });
 });

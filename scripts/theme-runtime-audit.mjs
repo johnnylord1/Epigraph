@@ -47,14 +47,26 @@ export function parseRuntimeAuditArgs(argv) {
 }
 
 export function parseComputedColor(value) {
-  const match = String(value).trim().match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i);
-  if (!match) throw new Error(`Unsupported computed color: ${value}`);
-  return {
-    red: Number(match[1]),
-    green: Number(match[2]),
-    blue: Number(match[3]),
-    alpha: match[4] === undefined ? 1 : Number(match[4]),
-  };
+  const input = String(value).trim();
+  const rgb = input.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i);
+  if (rgb) {
+    return {
+      red: Number(rgb[1]),
+      green: Number(rgb[2]),
+      blue: Number(rgb[3]),
+      alpha: rgb[4] === undefined ? 1 : Number(rgb[4]),
+    };
+  }
+  const srgb = input.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/i);
+  if (srgb) {
+    return {
+      red: Number(srgb[1]) * 255,
+      green: Number(srgb[2]) * 255,
+      blue: Number(srgb[3]) * 255,
+      alpha: srgb[4] === undefined ? 1 : Number(srgb[4]),
+    };
+  }
+  throw new Error(`Unsupported computed color: ${value}`);
 }
 
 function composite(foreground, background) {
@@ -183,8 +195,10 @@ async function restoreRuntime(page, snapshot) {
     if (snapshot.state.librarySection === "books") await page.evaluate(() => globalThis.__epigraphAudit.openBooksLibrary());
     else await page.evaluate(() => globalThis.__epigraphAudit.openLibrary());
   } else {
-    const navLabel = { home: "Home", search: "Browse", downloads: "Downloads" }[snapshot.state.navPage];
-    if (navLabel) await page.getByRole("button", { name: navLabel, exact: true }).click();
+    const navId = ["home", "search", "downloads"].includes(snapshot.state.navPage)
+      ? snapshot.state.navPage
+      : null;
+    if (navId) await page.locator(`[data-nav-id="${navId}"]`).click();
   }
 }
 
@@ -242,7 +256,7 @@ export async function runThemeRuntimeAudit(options) {
     await capture("nocturne-context-menu");
     await page.keyboard.press("Escape");
 
-    await page.getByRole("button", { name: "Browse", exact: true }).click();
+    await page.locator('[data-nav-id="search"]').click();
     await page.locator(".browseSubtab").first().waitFor({ state: "visible", timeout: 25_000 });
     await page.locator(".browseSubtab").nth(0).click();
     await capture("nocturne-browse-search");

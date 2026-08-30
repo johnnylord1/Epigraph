@@ -347,6 +347,7 @@
   const sliderPct = $derived(sliderMax > 1 ? ((sliderPage - 1) / (sliderMax - 1)) * 100 : 0);
   let lastDiscordMangaId: number | null = null;
   let lastDiscordChapterId: number | null = null;
+  let lastDiscordPrivacySignature: string | null = null;
   let mangaTrackerStateVersion = $state(0);
   let discordCoverMangaId: number | null = null;
   let discordCoverLookupKey: string | null = null;
@@ -465,15 +466,28 @@
     mangaTrackerStateVersion;
     const chapter = displayChapter;
     const manga   = store.activeManga;
-    if (!store.settings.discordRpc || !chapter || !manga) return;
+    if (!store.settings.discordRpc || !chapter || !manga) {
+      lastDiscordPrivacySignature = null;
+      return;
+    }
     refreshDiscordCoverForManga(manga);
+    const privacySignature = JSON.stringify({
+      privateMode: store.settings.discordRpcPrivateMode,
+      showCover: store.settings.discordRpcShowCover,
+      improveCovers: store.settings.discordRpcImproveCovers,
+      showProgress: store.settings.discordRpcShowProgress,
+      showTitle: store.settings.discordRpcShowTitle,
+    });
     const reason = manga.id !== lastDiscordMangaId
       ? "work-change"
       : chapter.id !== lastDiscordChapterId
         ? "chapter-change"
-        : "progress";
+        : privacySignature !== lastDiscordPrivacySignature
+          ? "privacy-change"
+          : "progress";
     lastDiscordMangaId = manga.id;
     lastDiscordChapterId = chapter.id;
+    lastDiscordPrivacySignature = privacySignature;
     void setReading(manga, chapter, {
       progressPercent: sliderPct,
       publicCoverUrl: discordPublicCoverUrl,

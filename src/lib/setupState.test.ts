@@ -28,7 +28,12 @@ describe("setup state", () => {
       errorMessage: null,
     };
 
-    const presentation = getSetupStatePresentation(state, "search");
+    const messages: Record<string, string> = {
+      "setup.initializingTitle": "Suwayomi is preparing this profile",
+      "setup.initializingBody": "The local server is running, but its database is not ready yet.",
+      "setup.retry": "Retry",
+    };
+    const presentation = getSetupStatePresentation(state, "search", (id) => messages[id] ?? id);
 
     expect(presentation.title).toContain("preparing");
     expect(presentation.body).toContain("database");

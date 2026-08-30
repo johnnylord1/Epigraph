@@ -1,7 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
-  import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Warning, Sparkle, ArrowsClockwise } from "phosphor-svelte";
+  import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Sparkle } from "phosphor-svelte";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
@@ -20,6 +20,7 @@
   } from "../../lib/migration/manga";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   interface Props {
     manga:           Manga;
@@ -315,12 +316,15 @@
             <CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" />
           </div>
         {:else if sourceLoadError}
-          <div class="centered source-load-error">
-            <span class="hint">{sourceLoadError}</span>
-            <button class="search-btn" onclick={loadSources}>
-              <ArrowsClockwise size={12} weight="bold" /> {$_("sources.actions.refresh")}
-            </button>
-          </div>
+          <NocturneState
+            layout="compact"
+            tone="danger"
+            icon="warning"
+            eyebrow={$_("ui_migration")}
+            title={$_("ui_migrationFailed")}
+            body={sourceLoadError}
+            actions={[{ label: $_("sources.actions.refresh"), kind: "primary", icon: "retry", onClick: loadSources }]}
+          />
         {:else if sources.length === 0}
           <div class="centered"><span class="hint">{$_("ui_noOtherSourcesInstalled")}</span></div>
         {:else}
@@ -387,7 +391,9 @@
             </button>
           </div>
 
-          {#if error}<p class="error"><Warning size={13} weight="light" /> {error}</p>{/if}
+          {#if error}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
+          {/if}
 
           <div class="results">
             {#if searching}
@@ -486,15 +492,21 @@
           </div>
 
           {#if chapterDiff < -5}
-            <div class="warn-box">
-              <Warning size={13} weight="light" />
-              {$_("ui_newSourceHas")} {Math.abs(chapterDiff)} {$_("ui_fewerChaptersSomeContentMayBeMissing")}
-            </div>
+            <NocturneState
+              layout="compact"
+              tone="warning"
+              icon="warning"
+              eyebrow={$_("ui_migration")}
+              title={$_("ui_warning")}
+              body={`${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`}
+            />
           {/if}
 
           <p class="confirm-note">{$_("ui_theCurrentEntryWillBeRemovedFromYour")}</p>
 
-          {#if error}<p class="error"><Warning size={13} weight="light" /> {error}</p>{/if}
+          {#if error}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
+          {/if}
 
           <div class="confirm-actions">
             <button class="back-btn" onclick={() => step = "search"} disabled={migrating}>{$_("ui_back")}</button>
@@ -536,7 +548,6 @@
   /* Body */
   .body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   .centered { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-8); }
-  .source-load-error { flex-direction: column; gap: var(--sp-3); text-align: center; }
   .hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
 
   /* Source list */
@@ -618,7 +629,6 @@
   .stat-warn { color: var(--component-migrate-modal-warning-fg) !important; }
   .stat-bad  { color: var(--color-error) !important; }
   .chapter-diff { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--component-migrate-modal-warning-fg); letter-spacing: var(--tracking-wide); margin-left: var(--sp-2); }
-  .warn-box { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); background: var(--component-migrate-modal-warning-bg); border: 1px solid var(--component-migrate-modal-warning-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--component-migrate-modal-warning-fg); line-height: var(--leading-snug); }
   .confirm-note { font-size: var(--text-xs); color: var(--text-faint); line-height: var(--leading-base); }
   .confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); flex-shrink: 0; }
   .back-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 6px 10px; border-radius: var(--radius-md); background: none; color: var(--text-muted); border: 1px solid var(--border-dim); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
@@ -627,9 +637,6 @@
   .migrate-btn { display: flex; align-items: center; gap: var(--sp-2); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 7px 16px; border-radius: var(--radius-md); background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-fg); cursor: pointer; transition: background var(--t-base), border-color var(--t-base); }
   .migrate-btn:hover:not(:disabled) { background: var(--accent-muted); border-color: var(--accent-bright); }
   .migrate-btn:disabled { opacity: var(--component-migrate-modal-disabled-opacity-strong); cursor: default; }
-
-  /* Error */
-  .error { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-xs); color: var(--component-migration-error-fg); padding: var(--sp-2) var(--sp-3); background: var(--component-migration-error-bg); border-radius: var(--radius-md); border: 1px solid var(--component-migration-error-border); }
 
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 </style>

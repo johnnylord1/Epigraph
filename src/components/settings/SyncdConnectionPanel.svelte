@@ -2,11 +2,10 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
-  import { ArrowsClockwise, CheckCircle, CircleNotch, Gear, Info, ShieldCheck, X } from "phosphor-svelte";
+  import { CircleNotch, X } from "phosphor-svelte";
   import { addToast } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
   import NocturneState from "../shared/NocturneState.svelte";
-  import SyncdSessionDetails from "./SyncdSessionDetails.svelte";
   import {
     listenSyncdDesktopState,
     listenSyncdPairingStatus,
@@ -52,6 +51,7 @@
   let { profileId = null, scopeLabel, onClose = () => {} }: Props = $props();
 
   type SyncdModalView = "pairing" | "details" | "options";
+  type SyncdPairingMode = "create" | "use";
 
   let host = $state<SyncdHostPairingState | null>(null);
   let connect = $state<SyncdConnectState | null>(null);
@@ -88,6 +88,8 @@
   let bootstrapBundleTextarea = $state<HTMLTextAreaElement | null>(null);
   let panelSubscriptionsReady = $state(false);
   let modalView = $state<SyncdModalView>("pairing");
+  let pairingMode = $state<SyncdPairingMode>("create");
+  let advancedConnectOpen = $state(false);
   let modalElement = $state<HTMLElement | null>(null);
   let modalBodyElement = $state<HTMLElement | null>(null);
   let runtimeIdentity = $state<SyncdRuntimeIdentity | null>(null);
@@ -148,6 +150,48 @@
       return { tone: "info", label: translate("syncd_status_working"), title: translate("syncd_modal_preparingSecurePairing"), body: translate("syncd_modal_creatingEncryptedSession") };
     }
     return { tone: "neutral", label: statusLabel("ready"), title: translate("syncd_modal_pairAnotherDesktop"), body: translate("syncd_modal_pairAnotherDesktopHint") };
+  });
+
+  const activeSession = $derived.by(() => {
+    const activeKey = replicationSnapshot?.activeSessionKey;
+    return activeKey ? persistedSessions.find((session) => session.sessionKey === activeKey) ?? null : null;
+  });
+
+  const localDeviceName = $derived(
+    connect?.localDeviceName?.trim()
+      || runtimeIdentity?.deviceName?.trim()
+      || translate("syncd_modal_currentDevice"),
+  );
+
+  const remoteDeviceName = $derived.by(() => {
+    const claimedDeviceId = host?.claimedDeviceId ?? connect?.claimedDeviceId ?? null;
+    const pairedDevice = claimedDeviceId
+      ? pairedDevices.find((device) => device.deviceId === claimedDeviceId)
+      : null;
+    return host?.claimedDeviceName?.trim()
+      || connect?.remoteDeviceName?.trim()
+      || activeSession?.remoteDeviceName?.trim()
+      || pairedDevice?.deviceName?.trim()
+      || activeSession?.remoteServerId?.trim()
+      || claimedDeviceId?.trim()
+      || translate("syncd_status_waiting");
+  });
+
+  const remotePlatformLabel = $derived.by(() => {
+    const claimedDeviceId = host?.claimedDeviceId ?? connect?.claimedDeviceId ?? null;
+    const pairedDevice = claimedDeviceId
+      ? pairedDevices.find((device) => device.deviceId === claimedDeviceId)
+      : null;
+    return host?.claimedPlatform?.trim()
+      || pairedDevice?.platform
+      || translate("syncd_modal_pairDesktop");
+  });
+
+  const pairingStage = $derived.by(() => {
+    if (host?.status === "claimed") return "approval" as const;
+    if (connect?.status === "connected" || replicationSnapshot?.activeSessionKey) return "connected" as const;
+    if (host && ["pending", "approved"].includes(host.status)) return "waiting" as const;
+    return "start" as const;
   });
 
   function portal(node: HTMLElement) {
@@ -959,381 +1003,116 @@
 </script>
 
 <div class="syncd-modal-backdrop" role="presentation" use:portal>
-<div
-  bind:this={modalElement}
-  class="syncd-modal"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="syncd-modal-title"
-  tabindex="-1"
-  onkeydown={handleModalKeydown}
->
-  <div
-    class="syncd-panel-grid"
-    data-testid="syncd-panel-grid"
-    data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}
-  >
-    <header class="syncd-modal__header">
-      <div class="syncd-modal__heading">
-        <span class="syncd-modal__heading-icon" aria-hidden="true"><ShieldCheck size={18} weight="duotone" /></span>
-        <div>
-          <p class="syncd-card__title">{$_("syncd_modal_secureSync")}</p>
+  <div bind:this={modalElement} class="syncd-modal" role="dialog" aria-modal="true" aria-labelledby="syncd-modal-title" tabindex="-1" onkeydown={handleModalKeydown}>
+    <div class="syncd-panel-grid" data-testid="syncd-panel-grid" data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}>
+      <header class="syncd-modal__header">
+        <div class="syncd-modal__heading">
           <h2 id="syncd-modal-title">{$_("settings_inline_desktopSyncPairing")}</h2>
-          <p class="syncd-card__intro">{scopeLabel}</p>
+          <p>{scopeLabel}</p>
         </div>
-      </div>
-      <button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}>
-        <X size={16} weight="bold" />
-      </button>
-    </header>
+        <button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}><X size={16} weight="bold" /></button>
+      </header>
 
-    <div bind:this={modalBodyElement} class="syncd-modal__body">
-      <section class="syncd-view" hidden={modalView !== "pairing"} aria-hidden={modalView !== "pairing"} data-testid="syncd-pairing-view">
-        <div class={`syncd-status syncd-status--${overviewStatus.tone}`} aria-live="polite">
-          <div class="syncd-status__icon" aria-hidden="true">
-            {#if operationBusy}
-              <CircleNotch size={26} weight="bold" class="syncd-status__spinner" />
-            {:else if overviewStatus.tone === "success"}
-              <CheckCircle size={26} weight="duotone" />
+      <div bind:this={modalBodyElement} class="syncd-modal__body">
+        <section class="syncd-view" hidden={modalView !== "pairing"} aria-hidden={modalView !== "pairing"} data-testid="syncd-pairing-view">
+          <div class="syncd-status-line">
+            <span class="syncd-status-copy"><span class:syncd-status-dot--live={pairingStage !== "start"} class="syncd-status-dot"></span>{pairingStage === "start" ? $_("syncd_modal_noActiveDesktop") : overviewStatus.title}</span>
+            <button class="syncd-link" type="button" data-testid="syncd-modal-details" onclick={() => showView("details")}>{$_("syncd_modal_connectionDetails")}</button>
+          </div>
+
+          {#if pairingStage === "start"}
+            <div class="syncd-mode-switch" aria-label={$_("syncd_modal_pairingOptions")}>
+              <button class:is-active={pairingMode === "create"} type="button" aria-pressed={pairingMode === "create"} onclick={() => (pairingMode = "create")}>{$_("syncd_action_createPairingQr")}</button>
+              <button class:is-active={pairingMode === "use"} type="button" aria-pressed={pairingMode === "use"} onclick={() => (pairingMode = "use")}>{$_("ui_loadQrImage")}</button>
+            </div>
+
+            {#if pairingMode === "create"}
+              <div class="syncd-start-copy" data-testid="syncd-host-card">
+                <h3>{$_("syncd_modal_pairDesktop")}</h3>
+                <p>{$_("syncd_modal_createShortLivedQr")}</p>
+                <div class="syncd-note">{$_("syncd_modal_approveOnlyIfStarted")}</div>
+                <span class="syncd-hidden-value" data-testid="syncd-host-status">{statusLabel("idle")}</span>
+                <span class="syncd-hidden-value" data-testid="syncd-host-start-stage">{hostStartStage}</span>
+              </div>
             {:else}
-              <ShieldCheck size={26} weight="duotone" />
-            {/if}
-          </div>
-          <div class="syncd-status__copy">
-            <div class="syncd-status__line">
-              <p class="syncd-card__title">{$_("syncd_modal_liveStatus")}</p>
-              <span class={`syncd-pill syncd-pill--${overviewStatus.tone}`}>{overviewStatus.label}</span>
-            </div>
-            <h3>{overviewStatus.title}</h3>
-            <p>{overviewStatus.body}</p>
-            <div class="syncd-progress" aria-hidden="true">
-              <span class:syncd-progress__fill--busy={operationBusy} class:syncd-progress__fill--complete={overviewStatus.tone === "success"}></span>
-            </div>
-          </div>
-        </div>
-
-        <div class="syncd-card" data-testid="syncd-host-card">
-          <div class="syncd-card__head">
-            <div>
-              <p class="syncd-card__title">{$_("syncd_modal_pairDesktop")}</p>
-              <p class="syncd-card__intro">{$_("syncd_modal_createShortLivedQr")}</p>
-            </div>
-            <span class={"syncd-pill syncd-pill--" + connectStatusTone(host?.status ?? "pending")} data-testid="syncd-host-status">
-              {host ? statusLabel(host.status) : statusLabel("idle")}
-            </span>
-          </div>
-
-          <div class="syncd-row">
-            <div>
-              <p class="syncd-row__label">{$_("syncd_modal_currentDevice")}</p>
-              <p class="syncd-row__hint">{scopeLabel}</p>
-            </div>
-            <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>
-              {loadingHost ? $_("syncd_action_preparing") : host ? $_("ui_refreshBundle") : $_("syncd_action_createPairingQr")}
-            </button>
-          </div>
-          <p class="syncd-row__hint" data-testid="syncd-host-start-stage">{$_("ui_hostStartStage")} {hostStartStage}</p>
-
-          {#if host}
-            <div class="syncd-pairing-live">
-              <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">
-                {#if qrCodeDataUrl}
-                  <img
-                    class="syncd-qr-image"
-                    data-testid="syncd-host-qr-image"
-                    data-session-id={host.sessionId}
-                    data-origin={host.advertisedBaseUrl}
-                    src={qrCodeDataUrl}
-                    alt={$_("ui_syncBootstrapQrCode")}
-                  />
-                {:else if qrBusy}
-                  <CircleNotch size={28} weight="bold" class="syncd-status__spinner" />
-                {:else}
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("syncd_modal_pairing")} title={$_("ui_qrWaiting")} />
-                {/if}
-              </div>
-              <div class="syncd-pairing-live__copy">
-                <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)} data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
-                <div>
-                  <p class="syncd-row__label">{$_("ui_pairingCode")}</p>
-                  <p class="syncd-pairing-code">{host.pairingCode}</p>
-                </div>
-                <p class="syncd-row__hint">{$_("ui_expires")} {formatWhen(host.expiresAtMs)}</p>
-                <div class="syncd-actions">
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>
-                    {copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}
-                  </button>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>
-                    {$_("ui_saveQrImage")}
-                  </button>
-                </div>
-              </div>
-            </div>
-            {#if host.status === "claimed"}
-              <div class="syncd-approval">
-                <div>
-                  <p class="syncd-row__label">{$_("syncd_modal_connectionRequest")}</p>
-                  <p class="syncd-row__hint">{$_("syncd_modal_approveOnlyIfStarted")}</p>
-                  <div class="syncd-scope-list" data-testid="syncd-requested-scopes">
-                    {#each host.requestedScopes as scope}
-                      <span class="syncd-pill syncd-pill--info">{permissionScopeLabel(scope)}</span>
-                    {/each}
-                  </div>
-                </div>
-                <div class="syncd-actions">
-                  <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>
-                    {hostDecisionBusy === "approve" ? $_("syncd_action_approving") : $_("syncd_action_approve")}
-                  </button>
-                  <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>
-                    {hostDecisionBusy === "reject" ? $_("syncd_action_rejecting") : $_("syncd_action_reject")}
-                  </button>
-                </div>
-              </div>
-            {/if}
-            {#if host.error}
-              <div data-testid="syncd-host-error">
-                <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_host")} title={$_("ui_hostPairingFailed")} body={host.error} />
-              </div>
-            {/if}
-          {/if}
-        </div>
-
-        {#if connect}
-          <div class="syncd-surface" data-testid="syncd-connect-state">
-            <div class="syncd-row">
-              <div>
-                <p class="syncd-row__label">{$_("ui_currentConnection")}</p>
-                <p class="syncd-row__hint">{connect.remoteOrigin}</p>
-              </div>
-              <span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)} data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>
-            </div>
-            {#if connect.error}
-              <div data-testid="syncd-connect-error">
-                <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_connect")} title={$_("ui_pairingFailed")} body={connect.error} />
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <div class="syncd-surface syncd-replication-summary">
-          <div class="syncd-row">
-            <div>
-              <p class="syncd-row__label">{$_("ui_replication")}</p>
-              <p class="syncd-row__hint">{replicationSnapshot?.activeSessionKey ? $_("syncd_modal_trustedDesktopUpdates") : $_("syncd_modal_noActiveDesktop")}</p>
-            </div>
-            <span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")} data-testid="syncd-replication-status" data-status={replicationSnapshot?.replicationStatus ?? "idle"}>
-              {statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}
-            </span>
-          </div>
-          <span class="syncd-hidden-value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
-          <div class="syncd-actions">
-            <button
-              class="n-btn n-btn--sm n-btn-ghost"
-              type="button"
-              data-testid="syncd-replication-toggle"
-              onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication}
-              disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}
-            >
-              {#if replicationActionBusy === "pause"}{$_("ui_pausing")}{:else if replicationActionBusy === "resume"}{$_("ui_resuming")}{:else}{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}{/if}
-            </button>
-            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>
-              {replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}
-            </button>
-          </div>
-        </div>
-
-        {#if panelError}
-          <div data-testid="syncd-panel-error">
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_sync")} title={$_("ui_syncActionFailed")} body={panelError} />
-          </div>
-        {/if}
-      </section>
-
-      <section class="syncd-view" hidden={modalView !== "details"} aria-hidden={modalView !== "details"} data-testid="syncd-details-view">
-        <div class="syncd-view__intro">
-          <Info size={18} weight="duotone" />
-          <div>
-            <h3>{$_("syncd_modal_connectionDetails")}</h3>
-            <p>{$_("syncd_modal_connectionDetailsHint")}</p>
-          </div>
-        </div>
-
-        {#if host}
-          <div class="syncd-surface">
-            <div class="syncd-row">
-              <p class="syncd-row__label">{$_("syncd_modal_hostSession")}</p>
-              <span class={"syncd-pill syncd-pill--" + connectStatusTone(host.status)}>{statusLabel(host.status)}</span>
-            </div>
-            <div class="syncd-meta-grid">
-              <div><span class="syncd-meta__label">{$_("ui_advertisedOrigin")}</span><span class="syncd-meta__value">{host.advertisedBaseUrl}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_claimedDevice")}</span><span class="syncd-meta__value">{host.claimedDeviceId ?? $_("syncd_status_waiting")}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_expires")}</span><span class="syncd-meta__value">{formatWhen(host.expiresAtMs)}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_tlsFingerprint")}</span><span class="syncd-meta__value syncd-meta__value--mono">{host.tlsCertSha256}</span></div>
-            </div>
-            <label class="syncd-field">
-              <span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span>
-              <textarea class="syncd-textarea" data-testid="syncd-bootstrap-bundle-host" readonly value={host.bootstrapBundle}></textarea>
-            </label>
-          </div>
-        {/if}
-
-        {#if connect}
-          <div class="syncd-surface">
-            <div class="syncd-row"><p class="syncd-row__label">{$_("syncd_modal_connectionAttempt")}</p><span class={"syncd-pill syncd-pill--" + connectStatusTone(connect.status)}>{statusLabel(connect.status)}</span></div>
-            <div class="syncd-meta-grid">
-              <div><span class="syncd-meta__label">{$_("ui_attemptedOrigin")}</span><span class="syncd-meta__value">{connect.attemptedOrigin}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_remoteProfile")}</span><span class="syncd-meta__value">{connect.remoteProfileId || $_("syncd_status_waiting")}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_fallbacks")}</span><span class="syncd-meta__value">{connect.fallbackOrigins.length}</span></div>
-              <div><span class="syncd-meta__label">{$_("ui_claimedDevice")}</span><span class="syncd-meta__value">{connect.claimedDeviceId ?? $_("syncd_status_waiting")}</span></div>
-            </div>
-          </div>
-        {/if}
-
-        <div class="syncd-surface">
-          <div class="syncd-row"><p class="syncd-row__label">{$_("syncd_modal_replicationDiagnostics")}</p><span class={"syncd-pill syncd-pill--" + replicationStatusTone(replicationSnapshot?.replicationStatus ?? "idle")}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span></div>
-          <div class="syncd-meta-grid">
-            <div><span class="syncd-meta__label">{$_("ui_activeSession")}</span><span class="syncd-meta__value">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span></div>
-            <div><span class="syncd-meta__label">{$_("ui_lastConnected")}</span><span class="syncd-meta__value">{formatWhen(replicationSnapshot?.lastConnectedAtMs)}</span></div>
-            <div><span class="syncd-meta__label">{$_("ui_booksCheckpoint")}</span><span class="syncd-meta__value">{replicationSnapshot?.booksScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span></div>
-            <div><span class="syncd-meta__label">{$_("ui_novelsCheckpoint")}</span><span class="syncd-meta__value">{replicationSnapshot?.novelsScopeCheckpoint?.lastAppliedServerVersion ?? 0}</span></div>
-          </div>
-          {#if replicationSnapshot?.lastError}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_replication")} title={$_("ui_syncReplayFailed")} body={replicationSnapshot.lastError} />
-          {/if}
-        </div>
-
-        <div class="syncd-surface">
-          <div class="syncd-row">
-            <div><p class="syncd-row__label">{$_("ui_sessions")}</p><p class="syncd-row__hint">{$_("syncd_modal_trustedDesktopsStored")}</p></div>
-            <span class="syncd-pill syncd-pill--neutral">{loadingPersisted ? "..." : persistedSessions.length}</span>
-          </div>
-          {#if persistedSessions.length > 0}
-            <div class="syncd-list" data-testid="syncd-persisted-sessions">
-              {#each persistedSessions as session}
-                <div
-                  class="syncd-list__item"
-                  data-testid="syncd-persisted-session-item"
-                  data-session-key={session.sessionKey}
-                  data-connection-status={effectiveSessionConnectionStatus(session)}
-                >
-                  <SyncdSessionDetails
-                    session={session}
-                    summary={sessionStatusSummary(session)}
-                    statusLabel={statusLabel(effectiveSessionConnectionStatus(session))}
-                    statusTone={connectStatusTone(effectiveSessionConnectionStatus(session))}
-                    lastValidatedLabel={lastReconnectStatuses[session.sessionKey] ? $_("syncd_status_justRevalidated") : formatWhen(session.lastValidatedAtMs)}
-                    replicationLabel={statusLabel((session.isActiveForSync ? replicationSnapshot?.replicationStatus : session.replicationStatus) ?? "idle")}
-                    reconnectError={lastReconnectStatuses[session.sessionKey]?.error ?? null}
-                    isReplicationPaused={replicationSnapshot?.paused ?? false}
-                    setActiveBusy={activeSessionBusyKey === session.sessionKey}
-                    revalidateBusy={singleRevalidateBusyKey === session.sessionKey}
-                    pauseResumeBusy={replicationActionBusy !== null}
-                    disconnectBusy={disconnectBusyKey === session.sessionKey}
-                    forgetBusy={forgetBusyKey === session.sessionKey}
-                    onSetActive={() => setActiveSession(session.sessionKey)}
-                    onRevalidate={() => revalidateSessionEntry(session.sessionKey)}
-                    onPauseResume={session.isActiveForSync ? (replicationSnapshot?.paused ? resumeReplication : pauseReplication) : undefined}
-                    onDisconnect={() => disconnectSession(session.sessionKey)}
-                    onForget={() => forgetSession(session.sessionKey)}
-                  />
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_sessions")} title={$_("ui_noApprovedSessions")} body={$_("syncd_modal_pairToStartContinuousSync")} />
-          {/if}
-        </div>
-      </section>
-
-      <section class="syncd-view" hidden={modalView !== "options"} aria-hidden={modalView !== "options"} data-testid="syncd-options-view">
-        <div class="syncd-view__intro">
-          <Gear size={18} weight="duotone" />
-          <div><h3>{$_("syncd_modal_pairingOptions")}</h3><p>{$_("syncd_modal_pairingOptionsHint")}</p></div>
-        </div>
-
-        <div class="syncd-card" data-testid="syncd-paired-device-permissions">
-          <div class="syncd-card__head">
-            <div>
-              <p class="syncd-card__title">{$_("ui_scope")}</p>
-              <p class="syncd-card__intro">{$_("syncd_modal_trustedDesktopsStored")}</p>
-            </div>
-            <span class="syncd-pill syncd-pill--neutral">{loadingPairedDevices ? "..." : pairedDevices.length}</span>
-          </div>
-          {#if pairedDevices.length > 0}
-            <div class="syncd-list">
-              {#each pairedDevices as device}
-                <div class="syncd-list__item syncd-device-permission" data-testid="syncd-paired-device-permission">
-                  <div class="syncd-list__body">
-                    <p class="syncd-list__title">{device.deviceName}</p>
-                    <p class="syncd-list__hint">{device.platform} · {device.profileId}</p>
-                  </div>
-                  <div class="syncd-scope-list">
-                    {#each allowedDeviceScopes(device) as scope}
-                      <label class="syncd-scope-toggle">
-                        <input
-                          type="checkbox"
-                          checked={device.grantedScopes.includes(scope)}
-                          disabled={pairedDeviceScopeBusy !== null}
-                          onchange={() => togglePairedDeviceScope(device, scope)}
-                        />
-                        <span>{permissionScopeLabel(scope)}</span>
-                      </label>
-                    {/each}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_scope")} title={$_("ui_noApprovedSessions")} />
-          {/if}
-        </div>
-
-        <div class="syncd-card" data-testid="syncd-connect-card">
-          <div class="syncd-card__head">
-            <div><p class="syncd-card__title">{$_("ui_syncConnect")}</p><p class="syncd-card__intro">{$_("syncd_modal_useHostPairingPackage")}</p></div>
-            <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>
-              <ArrowsClockwise size={14} weight="bold" /> {loadingCandidates ? $_("common_refreshing") : $_("ui_refreshPeers")}
-            </button>
-          </div>
-
-          <div class="syncd-stack">
-            <div class="syncd-surface">
-              <div class="syncd-row"><div><p class="syncd-row__label">{$_("ui_discoveredPeers")}</p><p class="syncd-row__hint">{$_("syncd_modal_nearbyDesktops")}</p></div><span class="syncd-pill syncd-pill--neutral">{candidates.length}</span></div>
-              {#if candidates.length > 0}
-                <div class="syncd-list" data-testid="syncd-discovered-peers">
-                  {#each candidates as candidate}
-                    <div class="syncd-list__item" data-testid="syncd-peer-item">
-                      <div class="syncd-list__body"><p class="syncd-list__title">{candidate.instanceName}</p><p class="syncd-list__hint">{candidate.effectiveOrigin}</p><p class="syncd-list__meta">{sourceLabel(candidate.effectiveSource)}</p></div>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button>
+              <div class="syncd-start-copy" data-testid="syncd-options-view">
+                <h3>{$_("syncd_modal_connect")}</h3>
+                <p>{$_("syncd_modal_useHostPairingPackage")}</p>
+                <label class="syncd-field"><span>{$_("ui_bootstrapBundle")}</span><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></label>
+                <input bind:this={qrFileInput} class="syncd-hidden-input" data-testid="syncd-qr-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={handleQrFilePicked} />
+                <div class="syncd-field-actions"><span>{$_("syncd_modal_pairing")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>{qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}</button></div>
+                <div class:syncd-disclosure--open={advancedConnectOpen} class="syncd-disclosure">
+                  <button type="button" data-testid="syncd-modal-options" aria-expanded={advancedConnectOpen} onclick={() => (advancedConnectOpen = !advancedConnectOpen)}>{$_("syncd_modal_pairingOptions")}</button>
+                  {#if advancedConnectOpen}
+                    <div class="syncd-disclosure__body">
+                      <div class="syncd-row"><span>{$_("ui_discoveredPeers")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>{loadingCandidates ? $_("common_refreshing") : $_("ui_refreshPeers")}</button></div>
+                      {#if candidates.length > 0}<div class="syncd-list" data-testid="syncd-discovered-peers">{#each candidates as candidate}<div class="syncd-list__item" data-testid="syncd-peer-item"><div><strong>{candidate.instanceName}</strong><small>{candidate.effectiveOrigin}</small></div><button class="syncd-link" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button></div>{/each}</div>{/if}
+                      <label class="syncd-field"><span>{$_("ui_manualOriginFallback")}</span><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></label>
                     </div>
-                  {/each}
+                  {/if}
                 </div>
-              {/if}
+              </div>
+            {/if}
+          {:else if pairingStage === "waiting" && host}
+            <div class="syncd-pairing-live">
+              <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">{#if qrCodeDataUrl}<img class="syncd-qr-image" data-testid="syncd-host-qr-image" data-session-id={host.sessionId} data-origin={host.advertisedBaseUrl} src={qrCodeDataUrl} alt={$_("ui_syncBootstrapQrCode")} />{:else}<CircleNotch size={24} weight="bold" class="syncd-status__spinner" />{/if}</div>
+              <div class="syncd-pairing-live__copy"><span>{$_("ui_pairingCode")}</span><strong class="syncd-pairing-code">{host.pairingCode}</strong><small>{$_("ui_expires")} {formatWhen(host.expiresAtMs)}</small><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>{copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}</button><button class="syncd-link" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>{$_("ui_saveQrImage")}</button></div></div>
+              <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
             </div>
+            <div class="syncd-note">{$_("syncd_modal_keepWindowsOpen")}</div>
+          {:else if pairingStage === "approval" && host}
+            <div class="syncd-start-copy"><h3>{$_("syncd_modal_desktopWantsConnect")}</h3><p>{$_("syncd_modal_reviewApprove")}</p></div>
+            <div class="syncd-request"><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div><span>{statusLabel("claimed")}</span></div>
+            <div class="syncd-scope-list" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<span>{permissionScopeLabel(scope)}</span>{/each}</div>
+            <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
+          {:else}
+            <div class="syncd-device-pair">
+              <div><small>{$_("syncd_modal_currentDevice")}</small><strong>{localDeviceName}</strong><span>{scopeLabel}</span></div>
+              <em>{statusLabel("connected")}</em>
+              <div><small>{$_("ui_claimedDevice")}</small><strong>{remoteDeviceName}</strong><span>{remotePlatformLabel}</span></div>
+            </div>
+            <div class="syncd-session-summary"><div><strong>{$_("ui_replication")}</strong><span>{overviewStatus.body}</span></div><span>{statusLabel(replicationSnapshot?.replicationStatus ?? "connected")}</span></div>
+            <span class="syncd-hidden-value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
+            <span class="syncd-hidden-value" data-testid="syncd-replication-status" data-status={replicationSnapshot?.replicationStatus ?? "idle"}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span>
+          {/if}
 
-            <label class="syncd-field"><span class="syncd-row__label">{$_("ui_manualOriginFallback")}</span><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></label>
-            <label class="syncd-field"><span class="syncd-row__label">{$_("ui_bootstrapBundle")}</span><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></label>
-            <input bind:this={qrFileInput} class="syncd-hidden-input" data-testid="syncd-qr-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={handleQrFilePicked} />
-            <div class="syncd-actions">
-              <button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>
-              <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>{qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}</button>
-              <button class="n-btn n-btn--sm n-btn-ghost" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("ui_revalidateSavedSessions")}</button>
-            </div>
+          {#if connect}<div class="syncd-hidden-value" data-testid="syncd-connect-state"><span data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>{#if connect.error}<span data-testid="syncd-connect-error">{connect.error}</span>{/if}</div>{/if}
+          {#if host?.error}<div data-testid="syncd-host-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_host")} title={$_("ui_hostPairingFailed")} body={host.error} /></div>{/if}
+          {#if panelError}<div data-testid="syncd-panel-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_sync")} title={$_("ui_syncActionFailed")} body={panelError} /></div>{/if}
+        </section>
+
+        <section class="syncd-view syncd-manage" hidden={modalView !== "details"} aria-hidden={modalView !== "details"} data-testid="syncd-details-view">
+          <div class="syncd-status-line"><button class="syncd-link" type="button" data-testid="syncd-modal-pairing" onclick={() => showView("pairing")}>{$_("syncd_modal_pairing")}</button><span class="syncd-status-copy"><span class:syncd-status-dot--live={Boolean(replicationSnapshot?.activeSessionKey)} class="syncd-status-dot"></span>{replicationSnapshot?.activeSessionKey ? $_("ui_activeSession") : $_("syncd_modal_connectionDetails")}</span></div>
+          <div class="syncd-start-copy"><h3>{remoteDeviceName}</h3><p>{$_("syncd_modal_connectionDetailsHint")}</p></div>
+          <div class="syncd-meta-grid">
+            <div><small>{$_("syncd_modal_currentDevice")}</small><strong>{localDeviceName}</strong></div>
+            <div><small>{$_("ui_claimedDevice")}</small><strong>{remoteDeviceName}</strong></div>
+            <div><small>{$_("ui_advertisedOrigin")}</small><strong class="is-mono">{activeSession?.canonicalOrigin ?? connect?.remoteOrigin ?? host?.advertisedBaseUrl ?? $_("syncd_status_waiting")}</strong></div>
+            <div><small>{$_("ui_lastConnected")}</small><strong>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</strong></div>
+            <div><small>{$_("ui_replication")}</small><strong>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</strong></div>
+            <div><small>{$_("syncd_action_revalidate")}</small><strong>{statusLabel(activeSession?.lastKnownStatus ?? "ready")}</strong></div>
           </div>
-        </div>
-      </section>
-    </div>
-
-    <footer class="syncd-modal__footer">
-      <div class="syncd-modal__views" aria-label={$_("syncd_modal_viewsLabel")}>
-        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "pairing"} type="button" data-testid="syncd-modal-pairing" aria-pressed={modalView === "pairing"} onclick={() => showView("pairing")}><ShieldCheck size={14} weight="duotone" /> {$_("syncd_modal_pairing")}</button>
-        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "details"} type="button" data-testid="syncd-modal-details" aria-pressed={modalView === "details"} onclick={() => showView("details")}><Info size={14} weight="duotone" /> {$_("syncd_modal_details")}</button>
-        <button class="n-btn n-btn--sm n-btn-ghost" class:is-active={modalView === "options"} type="button" data-testid="syncd-modal-options" aria-pressed={modalView === "options"} onclick={() => showView("options")}><Gear size={14} weight="duotone" /> {$_("syncd_modal_options")}</button>
+          <div class="syncd-permissions" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each pairedDevices as device}{#if device.deviceName === remoteDeviceName || device.deviceId === host?.claimedDeviceId || device.deviceId === connect?.claimedDeviceId}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><span><strong>{permissionScopeLabel(scope)}</strong><small>{device.deviceName}</small></span><input type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}</div>{/if}{/each}</div>
+          {#if persistedSessions.length > 0}<div class="syncd-hidden-value" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
+        </section>
       </div>
-      <button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("common_close")}</button>
-    </footer>
+
+      <footer class="syncd-modal__footer">
+        {#if modalView === "details"}
+          <div><button class="n-btn n-btn--sm n-btn-danger" type="button" disabled={!activeSession || forgetBusyKey !== null} onclick={() => activeSession && forgetSession(activeSession.sessionKey)}>{forgetBusyKey ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}</button></div>
+          <div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" disabled={!activeSession || disconnectBusyKey !== null} onclick={() => activeSession && disconnectSession(activeSession.sessionKey)}>{$_("syncd_action_disconnect")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("syncd_action_revalidate")}</button><button class="syncd-link" type="button" onclick={() => showView("pairing")}>{$_("sources_actions_done")}</button></div>
+        {:else if pairingStage === "start"}
+          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("ui_cancel")}</button>{#if pairingMode === "create"}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>{loadingHost ? $_("syncd_action_preparing") : $_("syncd_action_createPairingQr")}</button>{:else}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>{/if}</div>
+        {:else if pairingStage === "approval"}
+          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "reject" ? $_("syncd_action_rejecting") : $_("syncd_action_reject")}</button><button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "approve" ? $_("syncd_action_approving") : $_("syncd_action_approve")}</button></div>
+        {:else if pairingStage === "connected"}
+          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-toggle" onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}</button><button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button></div>
+        {:else}
+          <button class="n-btn n-btn--sm" type="button" onclick={startHostPairing}>{$_("ui_refreshBundle")}</button><button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>
+        {/if}
+      </footer>
+    </div>
   </div>
-</div>
 </div>
 
 <style>
@@ -1424,8 +1203,11 @@
   .syncd-view__intro h3 {
     margin: 0;
     color: var(--text-primary);
-    font-family: var(--font-ui);
+    font-family: var(--component-settings-font);
+    font-synthesis: none;
+    font-weight: var(--weight-semibold);
     letter-spacing: 0;
+    text-rendering: optimizeLegibility;
   }
 
   .syncd-modal__heading h2 {
@@ -1835,6 +1617,376 @@
 
     .syncd-pairing-live .syncd-qr-surface {
       width: 100%;
+    }
+  }
+
+  /* Compact state-driven pairing flow approved for the Nocturne desktop shell. */
+  .syncd-modal {
+    height: auto;
+    min-height: min(500px, calc(100vh - 64px));
+  }
+
+  .syncd-modal__header {
+    align-items: flex-start;
+  }
+
+  .syncd-modal__heading {
+    display: block;
+  }
+
+  .syncd-modal__heading h2 {
+    font-size: var(--text-base);
+    letter-spacing: var(--tracking-normal);
+    line-height: var(--leading-snug);
+  }
+
+  .syncd-modal__heading p {
+    margin: var(--space-xs) 0 0;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-input-font-size);
+  }
+
+  .syncd-modal__body {
+    min-height: 350px;
+  }
+
+  .syncd-status-line,
+  .syncd-field-actions,
+  .syncd-request,
+  .syncd-session-summary,
+  .syncd-device-pair {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--component-syncd-control-gap);
+  }
+
+  .syncd-status-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--component-syncd-pill-gap);
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--component-syncd-pill-radius);
+    background: var(--component-syncd-pill-fg);
+  }
+
+  .syncd-status-dot--live {
+    background: var(--component-syncd-status-icon-fg);
+  }
+
+  .syncd-link {
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-link:hover {
+    color: var(--component-syncd-status-icon-fg);
+  }
+
+  .syncd-mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--component-syncd-pill-gap);
+    margin-top: var(--component-syncd-grid-gap);
+    padding: var(--component-syncd-pill-gap);
+    border: 1px solid var(--component-syncd-input-border);
+    border-radius: var(--component-syncd-input-radius);
+    background: var(--component-syncd-input-bg);
+  }
+
+  .syncd-mode-switch button {
+    min-height: 34px;
+    border: 1px solid transparent;
+    border-radius: calc(var(--component-syncd-input-radius) - 3px);
+    background: transparent;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-input-font-size);
+    font-weight: var(--weight-semibold);
+  }
+
+  .syncd-mode-switch button.is-active {
+    border-color: var(--component-syncd-surface-border);
+    background: var(--component-syncd-status-icon-bg);
+    color: var(--text-primary);
+  }
+
+  .syncd-start-copy {
+    padding-top: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-start-copy h3,
+  .syncd-permissions h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .syncd-start-copy > p {
+    max-width: 52ch;
+    margin: var(--space-xs) 0 0;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-input-font-size);
+    line-height: var(--leading-normal);
+  }
+
+  .syncd-note {
+    margin-top: var(--component-syncd-grid-gap);
+    padding: var(--component-syncd-stack-gap) var(--component-syncd-surface-padding);
+    border-left: 2px solid var(--component-syncd-status-icon-border);
+    background: var(--component-syncd-status-bg);
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+    line-height: var(--leading-normal);
+  }
+
+  .syncd-field {
+    margin-top: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-field > span,
+  .syncd-field-actions > span {
+    color: var(--component-syncd-label-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-textarea {
+    min-height: 72px;
+    resize: none;
+  }
+
+  .syncd-field-actions {
+    margin-top: var(--component-syncd-pill-gap);
+  }
+
+  .syncd-disclosure {
+    margin-top: var(--component-syncd-grid-gap);
+    border-top: 1px solid var(--component-syncd-modal-divider);
+  }
+
+  .syncd-disclosure > button {
+    width: 100%;
+    min-height: 38px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--component-syncd-muted-fg);
+    text-align: left;
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-disclosure__body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--component-syncd-stack-gap);
+    padding-bottom: var(--component-syncd-stack-gap);
+  }
+
+  .syncd-list__item strong,
+  .syncd-list__item small {
+    display: block;
+  }
+
+  .syncd-list__item strong {
+    color: var(--text-secondary);
+    font-size: var(--component-syncd-input-font-size);
+  }
+
+  .syncd-list__item small {
+    margin-top: var(--component-syncd-pill-gap);
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-pairing-live {
+    display: grid;
+    grid-template-columns: var(--component-syncd-qr-column-width) 1fr;
+    margin-top: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-pairing-live .syncd-qr-surface {
+    width: var(--component-syncd-qr-column-width);
+    background: var(--component-syncd-status-icon-fg);
+    border-style: solid;
+  }
+
+  .syncd-qr-image {
+    width: 100%;
+    border-radius: calc(var(--component-syncd-qr-radius) - 4px);
+  }
+
+  .syncd-pairing-live__copy > span,
+  .syncd-pairing-live__copy > small {
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-request,
+  .syncd-session-summary {
+    margin-top: var(--component-syncd-grid-gap);
+    padding: var(--component-syncd-surface-padding) 0;
+    border-top: 1px solid var(--component-syncd-modal-divider);
+    border-bottom: 1px solid var(--component-syncd-modal-divider);
+  }
+
+  .syncd-request strong,
+  .syncd-request small,
+  .syncd-session-summary strong,
+  .syncd-session-summary span {
+    display: block;
+  }
+
+  .syncd-request strong,
+  .syncd-session-summary strong {
+    color: var(--text-primary);
+    font-size: var(--component-syncd-input-font-size);
+  }
+
+  .syncd-request small,
+  .syncd-session-summary span {
+    margin-top: var(--component-syncd-pill-gap);
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-request > span,
+  .syncd-session-summary > span {
+    color: var(--component-syncd-status-icon-fg);
+  }
+
+  .syncd-scope-list > span {
+    padding: var(--component-syncd-pill-padding);
+    border: 1px solid var(--component-syncd-pill-border);
+    border-radius: var(--component-syncd-input-radius);
+    background: var(--component-syncd-pill-bg);
+    color: var(--component-syncd-pill-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-device-pair {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    margin-top: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-device-pair > div:last-child {
+    text-align: right;
+  }
+
+  .syncd-device-pair small,
+  .syncd-device-pair strong,
+  .syncd-device-pair span {
+    display: block;
+  }
+
+  .syncd-device-pair small,
+  .syncd-device-pair span {
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-device-pair strong {
+    margin: var(--component-syncd-pill-gap) 0;
+    color: var(--text-primary);
+    font-size: var(--component-syncd-input-font-size);
+  }
+
+  .syncd-device-pair em {
+    padding: var(--component-syncd-pill-padding);
+    border-top: 1px solid var(--component-syncd-status-icon-border);
+    border-bottom: 1px solid var(--component-syncd-status-icon-border);
+    color: var(--component-syncd-status-icon-fg);
+    font-size: var(--component-syncd-pill-font-size);
+    font-style: normal;
+  }
+
+  .syncd-manage .syncd-meta-grid {
+    margin-top: var(--component-syncd-grid-gap);
+    padding-bottom: var(--component-syncd-grid-gap);
+    border-bottom: 1px solid var(--component-syncd-modal-divider);
+  }
+
+  .syncd-manage .syncd-meta-grid small,
+  .syncd-manage .syncd-meta-grid strong {
+    display: block;
+  }
+
+  .syncd-manage .syncd-meta-grid small {
+    color: var(--component-syncd-label-fg);
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-manage .syncd-meta-grid strong {
+    margin-top: var(--component-syncd-pill-gap);
+    color: var(--text-secondary);
+    font-size: var(--component-syncd-input-font-size);
+    font-weight: var(--weight-medium);
+  }
+
+  .syncd-manage .syncd-meta-grid .is-mono {
+    font-family: var(--font-mono, "Cascadia Mono", monospace);
+    overflow-wrap: anywhere;
+  }
+
+  .syncd-permissions {
+    margin-top: var(--component-syncd-grid-gap);
+  }
+
+  .syncd-permission-device label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 38px;
+    color: var(--text-secondary);
+  }
+
+  .syncd-permission-device label strong,
+  .syncd-permission-device label small {
+    display: block;
+    font-size: var(--component-syncd-pill-font-size);
+  }
+
+  .syncd-permission-device label small {
+    margin-top: var(--component-syncd-pill-gap);
+    color: var(--component-syncd-muted-fg);
+  }
+
+  .syncd-permission-device input {
+    accent-color: var(--component-syncd-input-border-focus);
+  }
+
+  @media (max-width: 620px) {
+    .syncd-modal {
+      width: calc(100vw - 24px);
+      max-width: calc(100vw - 24px);
+    }
+
+    .syncd-device-pair {
+      grid-template-columns: 1fr;
+    }
+
+    .syncd-device-pair > div:last-child {
+      text-align: left;
+    }
+
+    .syncd-device-pair em {
+      width: max-content;
+      padding-inline: 0;
+    }
+
+    .syncd-modal__footer,
+    .syncd-modal__footer .syncd-actions {
+      flex-wrap: wrap;
     }
   }
 </style>

@@ -17,6 +17,8 @@ export interface DiscordPresenceDriver {
   setActivity(activity: Activity): Promise<void>;
   now(): number;
   sleep?(ms: number): Promise<void>;
+  schedule?(callback: () => void, ms: number): unknown;
+  cancelScheduled?(handle: unknown): void;
 }
 
 const defaultDriver: DiscordPresenceDriver = {
@@ -26,9 +28,18 @@ const defaultDriver: DiscordPresenceDriver = {
   setActivity: (activity: Activity) => invoke("discord_rpc_set_activity", { activityJson: activity.toString() }),
   now: () => Date.now(),
   sleep: (ms: number) => new Promise((resolve) => globalThis.setTimeout(resolve, ms)),
+  schedule: (callback: () => void, ms: number) => globalThis.setTimeout(callback, ms),
+  cancelScheduled: (handle: unknown) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
 const CLEAR_FLUSH_DELAY_MS = 750;
+const RECONNECT_INTERVAL_MS = 15_000;
+
+interface PendingPresence {
+  payload: DiscordPresencePayload;
+  settings: DiscordPrivacySettings;
+  reason: DiscordPresenceReason;
+}
 
 const IMMEDIATE_REASONS = new Set<DiscordPresenceReason>([
   "app-open",
@@ -98,8 +109,10 @@ export class DiscordPresenceService {
   private lastProgressBucket: number | null = null;
   private desiredEnabled = false;
   private driverReady = false;
-  private lifecycleGeneration = 0;
   private lifecycleQueue: Promise<void> = Promise.resolve();
+  private connectionAttempt: Promise<boolean> | null = null;
+  private reconnectHandle: unknown | null = null;
+  private pendingPresence: PendingPresence | null = null;
 
   constructor(private readonly driver: DiscordPresenceDriver = defaultDriver) {}
 
@@ -107,35 +120,87 @@ export class DiscordPresenceService {
     return this.sessionStart;
   }
 
-  async start(): Promise<void> {
+  async start(): Promise<boolean> {
     this.desiredEnabled = true;
-    const generation = ++this.lifecycleGeneration;
-    await this.enqueueLifecycle(async () => {
-      if (!this.desiredEnabled || generation !== this.lifecycleGeneration) return;
-      this.sessionStart = this.driver.now();
-      this.lastSentAt = 0;
-      this.lastSentSignature = null;
-      this.lastProgressSentAt = 0;
-      this.lastProgressBucket = null;
-      this.driverReady = await this.driver.start(EPIGRAPH_DISCORD_APPLICATION_ID)
-        .then(() => true)
-        .catch(() => false);
-    });
+    if (this.driverReady) return true;
+    if (this.connectionAttempt) return this.connectionAttempt;
+
+    const attempt = this.connect();
+    this.connectionAttempt = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (this.connectionAttempt === attempt) this.connectionAttempt = null;
+    }
   }
 
   async stop(): Promise<void> {
     this.desiredEnabled = false;
-    const generation = ++this.lifecycleGeneration;
+    this.cancelReconnect();
+    this.pendingPresence = null;
     await this.enqueueLifecycle(async () => {
       await this.clearAndStop();
-      if (generation === this.lifecycleGeneration) this.resetState();
+      this.resetState();
     });
   }
 
   async clear(): Promise<void> {
+    this.pendingPresence = null;
     await this.enqueueLifecycle(async () => {
       await this.driver.clearActivity().catch(() => {});
+      this.lastSentSignature = null;
+      this.lastSentLargeImage = null;
     });
+  }
+
+  private async connect(): Promise<boolean> {
+    let connected = false;
+    await this.enqueueLifecycle(async () => {
+      if (!this.desiredEnabled || this.driverReady) {
+        connected = this.driverReady;
+        return;
+      }
+      this.sessionStart ??= this.driver.now();
+      connected = await this.driver.start(EPIGRAPH_DISCORD_APPLICATION_ID)
+        .then(() => true)
+        .catch(() => false);
+      if (!this.desiredEnabled) {
+        if (connected) await this.driver.stop().catch(() => {});
+        connected = false;
+        return;
+      }
+      this.driverReady = connected;
+      if (connected) {
+        this.cancelReconnect();
+        this.lastSentAt = 0;
+        this.lastSentSignature = null;
+        this.lastSentLargeImage = null;
+        this.lastProgressSentAt = 0;
+        this.lastProgressBucket = null;
+      } else {
+        this.scheduleReconnect();
+      }
+    });
+
+    if (connected && this.pendingPresence) {
+      const pending = this.pendingPresence;
+      await this.setPresence(pending.payload, pending.settings, pending.reason);
+    }
+    return connected;
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.desiredEnabled || this.reconnectHandle !== null || !this.driver.schedule) return;
+    this.reconnectHandle = this.driver.schedule(() => {
+      this.reconnectHandle = null;
+      if (this.desiredEnabled) void this.start();
+    }, RECONNECT_INTERVAL_MS);
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectHandle === null) return;
+    this.driver.cancelScheduled?.(this.reconnectHandle);
+    this.reconnectHandle = null;
   }
 
   private resetState(): void {
@@ -146,6 +211,9 @@ export class DiscordPresenceService {
     this.lastProgressSentAt = 0;
     this.lastProgressBucket = null;
     this.driverReady = false;
+    this.connectionAttempt = null;
+    this.reconnectHandle = null;
+    this.pendingPresence = null;
   }
 
   private async clearAndStop(): Promise<void> {
@@ -166,8 +234,14 @@ export class DiscordPresenceService {
     reason: DiscordPresenceReason,
   ): Promise<boolean> {
     if (!settings.discordRpc || !this.desiredEnabled) return false;
+    const pending: PendingPresence = { payload: rawPayload, settings, reason };
+    this.pendingPresence = pending;
     await this.lifecycleQueue;
-    if (!settings.discordRpc || !this.desiredEnabled || !this.driverReady) return false;
+    if (!settings.discordRpc || !this.desiredEnabled) return false;
+    if (!this.driverReady) {
+      this.scheduleReconnect();
+      return false;
+    }
 
     const now = this.driver.now();
     const filtered = applyPrivacyFilter(
@@ -196,7 +270,13 @@ export class DiscordPresenceService {
       await (this.driver.sleep?.(250) ?? Promise.resolve());
     }
 
-    await this.driver.setActivity(toActivity(filtered)).catch(() => {});
+    try {
+      await this.driver.setActivity(toActivity(filtered));
+    } catch {
+      this.driverReady = false;
+      this.scheduleReconnect();
+      return false;
+    }
     this.lastSentAt = now;
     this.lastSentSignature = signature;
     this.lastSentLargeImage = filtered.largeImage ?? null;
@@ -204,6 +284,7 @@ export class DiscordPresenceService {
       this.lastProgressBucket = filtered.progressBucket;
       this.lastProgressSentAt = now;
     }
+    if (this.pendingPresence === pending) this.pendingPresence = null;
     return true;
   }
 }

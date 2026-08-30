@@ -33,7 +33,9 @@ pub fn install(executable: &Path) -> anyhow::Result<()> {
         }
         let legacy_executable = executable.with_file_name("aethon-syncd.exe");
         if let Ok(legacy_command) = key.get_value::<String, _>(LEGACY_RUN_VALUE) {
-            if registered_command_targets(&legacy_command, &legacy_executable) {
+            if registered_command_targets(&legacy_command, &legacy_executable)
+                || legacy_command_targets_aethon(&legacy_command)
+            {
                 let _ = key.delete_value(LEGACY_RUN_VALUE);
             }
         }
@@ -79,7 +81,9 @@ pub fn remove(executable: &Path) -> anyhow::Result<bool> {
         }
         let legacy_executable = executable.with_file_name("aethon-syncd.exe");
         if let Ok(existing) = key.get_value::<String, _>(LEGACY_RUN_VALUE) {
-            if registered_command_targets(&existing, &legacy_executable) {
+            if registered_command_targets(&existing, &legacy_executable)
+                || legacy_command_targets_aethon(&existing)
+            {
                 key.delete_value(LEGACY_RUN_VALUE)
                     .context("failed to remove legacy Core autostart registration")?;
                 removed = true;
@@ -117,7 +121,10 @@ pub fn is_registered(executable: &Path) -> anyhow::Result<bool> {
         let legacy_executable = executable.with_file_name("aethon-syncd.exe");
         let legacy = key
             .get_value::<String, _>(LEGACY_RUN_VALUE)
-            .map(|existing| registered_command_targets(&existing, &legacy_executable))
+            .map(|existing| {
+                registered_command_targets(&existing, &legacy_executable)
+                    || legacy_command_targets_aethon(&existing)
+            })
             .unwrap_or(false);
         Ok(canonical || legacy)
     }
@@ -157,13 +164,48 @@ fn registered_command_targets(command: &str, executable: &Path) -> bool {
     }
 }
 
+/// Recognize the old product-wide autostart entry during a rebrand migration.
+///
+/// The legacy entry can point at a separate `%LOCALAPPDATA%\\Aethon` install,
+/// so checking only for a sibling binary beside the new executable leaves the
+/// old Core running at login.  Keep the match deliberately narrow: only a
+/// quoted/unquoted `aethon-syncd.exe` directly inside an `Aethon` directory is
+/// eligible for removal.
+fn legacy_command_targets_aethon(command: &str) -> bool {
+    let trimmed = command.trim();
+    let raw_path = if let Some(rest) = trimmed.strip_prefix('"') {
+        rest.split_once('"').map(|(path, _)| path)
+    } else {
+        trimmed.split_whitespace().next()
+    };
+    let Some(raw_path) = raw_path else {
+        return false;
+    };
+    let path = Path::new(raw_path);
+    let is_local_app_data = raw_path
+        .replace('/', "\\")
+        .to_ascii_lowercase()
+        .contains("\\appdata\\local\\");
+    let is_legacy_binary = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("aethon-syncd.exe"));
+    let is_legacy_install = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("Aethon"));
+    is_local_app_data && is_legacy_binary && is_legacy_install
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn autostart_command_is_quoted_and_uses_lan_serve_mode() {
-        let executable = Path::new(r"C:\Users\Epigraph User\AppData\Local\Epigraph\epigraph-syncd.exe");
+        let executable =
+            Path::new(r"C:\Users\Epigraph User\AppData\Local\Epigraph\epigraph-syncd.exe");
         assert_eq!(
             autostart_command(executable).unwrap(),
             r#""C:\Users\Epigraph User\AppData\Local\Epigraph\epigraph-syncd.exe" serve --lan"#
@@ -194,6 +236,25 @@ mod tests {
         assert!(!registered_command_targets(
             r#""D:\Other\Aethon\aethon-syncd.exe" serve --lan"#,
             &legacy
+        ));
+    }
+
+    #[test]
+    fn legacy_product_autostart_is_migrated_even_when_it_uses_a_separate_install() {
+        assert!(legacy_command_targets_aethon(
+            r#""C:\Users\me\AppData\Local\Aethon\aethon-syncd.exe" serve --lan"#
+        ));
+        assert!(legacy_command_targets_aethon(
+            r#""C:\Users\me\AppData\Local\Packages\OpenAI.Codex\LocalCache\Local\Aethon\aethon-syncd.exe" serve --lan"#
+        ));
+        assert!(!legacy_command_targets_aethon(
+            r#""D:\Other\Aethon\aethon-syncd.exe" serve --lan"#
+        ));
+        assert!(!legacy_command_targets_aethon(
+            r#""C:\Users\me\AppData\Local\Epigraph\aethon-syncd.exe" serve --lan"#
+        ));
+        assert!(!legacy_command_targets_aethon(
+            r#""C:\Users\me\AppData\Local\Aethon\aethon.exe" serve --lan"#
         ));
     }
 

@@ -1008,6 +1008,7 @@
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--component-downloads-topbar-gap);
+    padding: 0 var(--shell-topbar-padding-x);
   }
 
   .downloads-topbar-shell :global(.n-topbar__left),

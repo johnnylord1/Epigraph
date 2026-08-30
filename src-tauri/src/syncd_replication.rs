@@ -6294,6 +6294,7 @@ mod tests {
             local_profile_id: local_profile_id.to_string(),
             remote_server_id: format!("server-{remote_profile_id}"),
             remote_profile_id: remote_profile_id.to_string(),
+            remote_device_name: None,
             canonical_origin: format!("https://{remote_profile_id}.example"),
             fallback_origins: vec![format!("https://fallback-{remote_profile_id}.example")],
             tls_cert_sha256: "sha256".to_string(),

@@ -3,7 +3,7 @@
   "cdp": "http://127.0.0.1:9223",
   "viewport": {
     "width": 1280,
-    "height": 800
+    "height": 810
   },
   "surfaces": [
     "nocturne-library-books.png",
@@ -11,11 +11,11 @@
     "nocturne-browse-search.png",
     "nocturne-browse-discover.png",
     "nocturne-browse-sources.png",
-    "nocturne-source-overlay.png",
     "nocturne-downloads.png",
     "nocturne-settings.png",
     "theme-nocturne-settings.png",
     "theme-dark-settings.png",
+    "theme-amoled-settings.png",
     "theme-high-contrast-settings.png",
     "theme-light-settings.png",
     "theme-light-contrast-settings.png",
@@ -24,6 +24,7 @@
     "nocturne-reader-pdf-hud.png"
   ],
   "limitations": [
+    "nocturne-source-overlay: no real repository action was available.",
     "nocturne-toast-runtime: no real toast event was active; no synthetic toast was created."
   ],
   "themes": [
@@ -70,19 +71,19 @@
         {
           "label": "toast",
           "foreground": "rgb(232, 228, 235)",
-          "background": "rgba(0, 0, 0, 0)",
+          "background": "rgb(21, 20, 25)",
           "canvas": "rgb(19, 19, 19)",
-          "ratio": 14.801
+          "ratio": 14.597
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "n-sidebar-btn is-active",
+        "className": "n-sidebar__brand",
         "outline": "rgb(129, 115, 214) solid 1px",
         "outlineStyle": "solid",
         "outlineWidth": "1px",
         "boxShadow": "none",
-        "borderColor": "rgb(211, 196, 255)"
+        "borderColor": "rgb(229, 226, 225)"
       }
     },
     {
@@ -92,55 +93,113 @@
       "pairs": [
         {
           "label": "text-primary/background",
-          "foreground": "rgb(240, 239, 236)",
-          "background": "rgb(12, 12, 12)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 17.012
+          "foreground": "rgb(233, 231, 237)",
+          "background": "rgb(11, 11, 13)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 16.029
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(200, 198, 192)",
-          "background": "rgb(12, 12, 12)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 11.453
+          "foreground": "rgb(195, 191, 201)",
+          "background": "rgb(11, 11, 13)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 10.877
         },
         {
           "label": "text-primary/card",
-          "foreground": "rgb(240, 239, 236)",
-          "background": "rgb(21, 21, 21)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 15.881
+          "foreground": "rgb(233, 231, 237)",
+          "background": "rgb(20, 20, 24)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 14.976
         },
         {
           "label": "button",
-          "foreground": "rgb(240, 239, 236)",
-          "background": "rgb(21, 21, 21)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 15.881
+          "foreground": "rgb(233, 231, 237)",
+          "background": "color(srgb 0.0763137 0.0763137 0.0915294)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 15.048
         },
         {
           "label": "input",
-          "foreground": "rgb(240, 239, 236)",
-          "background": "rgb(21, 21, 21)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 15.881
+          "foreground": "rgb(233, 231, 237)",
+          "background": "color(srgb 0.0741961 0.0741961 0.0889412)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 15.118
         },
         {
           "label": "toast",
-          "foreground": "rgb(240, 239, 236)",
-          "background": "rgb(26, 26, 26)",
-          "canvas": "rgb(12, 12, 12)",
-          "ratio": 15.136
+          "foreground": "rgb(233, 231, 237)",
+          "background": "rgb(24, 24, 29)",
+          "canvas": "rgb(11, 11, 13)",
+          "ratio": 14.418
         }
       ],
       "focus": {
-        "tag": "INPUT",
-        "className": "n-search__input s-2ckRRjO5Xah_",
-        "outline": "rgb(74, 92, 74) solid 1px",
+        "tag": "BUTTON",
+        "className": "n-sidebar__brand",
+        "outline": "rgb(131, 115, 194) solid 1px",
         "outlineStyle": "solid",
         "outlineWidth": "1px",
-        "boxShadow": "oklab(0.999994 0.0000455678 0.0000200868 / 0.00395405) 0px 0.197703px 0px 0px inset",
-        "borderColor": "oklab(0.282225 0.000436156 -0.000531879 / 0.692944)"
+        "boxShadow": "none",
+        "borderColor": "rgb(233, 231, 237)"
+      }
+    },
+    {
+      "theme": "amoled",
+      "appliedTheme": "amoled",
+      "customTheme": null,
+      "pairs": [
+        {
+          "label": "text-primary/background",
+          "foreground": "rgb(238, 238, 238)",
+          "background": "rgb(0, 0, 0)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 18.1
+        },
+        {
+          "label": "text-secondary/background",
+          "foreground": "rgb(199, 199, 199)",
+          "background": "rgb(0, 0, 0)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 12.422
+        },
+        {
+          "label": "text-primary/card",
+          "foreground": "rgb(238, 238, 238)",
+          "background": "rgb(0, 0, 0)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 18.1
+        },
+        {
+          "label": "button",
+          "foreground": "rgb(238, 238, 238)",
+          "background": "color(srgb 0 0 0)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 18.1
+        },
+        {
+          "label": "input",
+          "foreground": "rgb(238, 238, 238)",
+          "background": "color(srgb 0 0 0)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 18.1
+        },
+        {
+          "label": "toast",
+          "foreground": "rgb(238, 238, 238)",
+          "background": "rgb(7, 7, 7)",
+          "canvas": "rgb(0, 0, 0)",
+          "ratio": 17.362
+        }
+      ],
+      "focus": {
+        "tag": "BUTTON",
+        "className": "n-sidebar__brand",
+        "outline": "rgb(155, 131, 214) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(238, 238, 238)"
       }
     },
     {
@@ -151,54 +210,54 @@
         {
           "label": "text-primary/background",
           "foreground": "rgb(255, 255, 255)",
-          "background": "rgb(8, 8, 8)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 20.027
+          "background": "rgb(7, 7, 7)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 20.144
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(232, 230, 224)",
-          "background": "rgb(8, 8, 8)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 16.047
+          "foreground": "rgb(235, 232, 239)",
+          "background": "rgb(7, 7, 7)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 16.615
         },
         {
           "label": "text-primary/card",
           "foreground": "rgb(255, 255, 255)",
-          "background": "rgb(17, 17, 17)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 18.883
+          "background": "rgb(20, 20, 20)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 18.423
         },
         {
           "label": "button",
           "foreground": "rgb(255, 255, 255)",
-          "background": "rgb(17, 17, 17)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 18.883
+          "background": "color(srgb 0.0753726 0.0753726 0.0753726)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 18.546
         },
         {
           "label": "input",
           "foreground": "rgb(255, 255, 255)",
-          "background": "rgb(17, 17, 17)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 18.883
+          "background": "color(srgb 0.0723137 0.0723137 0.0723137)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 18.667
         },
         {
           "label": "toast",
           "foreground": "rgb(255, 255, 255)",
-          "background": "rgb(23, 23, 23)",
-          "canvas": "rgb(8, 8, 8)",
-          "ratio": 17.928
+          "background": "rgb(27, 27, 27)",
+          "canvas": "rgb(7, 7, 7)",
+          "ratio": 17.224
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "n-icon-btn activity-btn s-ItLS4TuY7a9v has-new-activity",
-        "outline": "rgb(90, 122, 90) solid 1px",
+        "className": "n-sidebar__brand",
+        "outline": "rgb(180, 156, 240) solid 1px",
         "outlineStyle": "solid",
         "outlineWidth": "1px",
         "boxShadow": "none",
-        "borderColor": "rgb(48, 48, 48)"
+        "borderColor": "rgb(255, 255, 255)"
       }
     },
     {
@@ -208,55 +267,55 @@
       "pairs": [
         {
           "label": "text-primary/background",
-          "foreground": "rgb(26, 25, 22)",
-          "background": "rgb(238, 236, 232)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 14.9
+          "foreground": "rgb(36, 33, 39)",
+          "background": "rgb(243, 242, 245)",
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 14.245
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(46, 44, 40)",
-          "background": "rgb(238, 236, 232)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 11.81
+          "foreground": "rgb(69, 64, 72)",
+          "background": "rgb(243, 242, 245)",
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 9.053
         },
         {
           "label": "text-primary/card",
-          "foreground": "rgb(26, 25, 22)",
-          "background": "rgb(250, 248, 244)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 16.574
+          "foreground": "rgb(36, 33, 39)",
+          "background": "rgb(255, 255, 255)",
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 15.887
         },
         {
           "label": "button",
-          "foreground": "rgb(26, 25, 22)",
-          "background": "rgb(250, 248, 244)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 16.574
+          "foreground": "rgb(36, 33, 39)",
+          "background": "color(srgb 0.997176 0.996941 0.997647)",
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 15.785
         },
         {
           "label": "input",
-          "foreground": "rgb(26, 25, 22)",
-          "background": "rgb(250, 248, 244)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 16.574
+          "foreground": "rgb(36, 33, 39)",
+          "background": "color(srgb 0.994353 0.993882 0.995294)",
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 15.684
         },
         {
           "label": "toast",
-          "foreground": "rgb(26, 25, 22)",
+          "foreground": "rgb(36, 33, 39)",
           "background": "rgb(255, 255, 255)",
-          "canvas": "rgb(238, 236, 232)",
-          "ratio": 17.58
+          "canvas": "rgb(243, 242, 245)",
+          "ratio": 15.887
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "n-icon-btn s-2ckRRjO5Xah_",
-        "outline": "rgb(90, 122, 90) solid 1px",
+        "className": "n-sidebar__brand",
+        "outline": "rgb(103, 80, 164) solid 1px",
         "outlineStyle": "solid",
         "outlineWidth": "1px",
         "boxShadow": "none",
-        "borderColor": "rgb(208, 204, 198)"
+        "borderColor": "rgb(36, 33, 39)"
       }
     },
     {
@@ -266,55 +325,55 @@
       "pairs": [
         {
           "label": "text-primary/background",
-          "foreground": "rgb(8, 8, 6)",
-          "background": "rgb(226, 222, 218)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 14.98
+          "foreground": "rgb(23, 20, 27)",
+          "background": "rgb(236, 234, 240)",
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 15.268
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(24, 22, 18)",
-          "background": "rgb(226, 222, 218)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 13.503
+          "foreground": "rgb(48, 43, 53)",
+          "background": "rgb(236, 234, 240)",
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 11.555
         },
         {
           "label": "text-primary/card",
-          "foreground": "rgb(8, 8, 6)",
-          "background": "rgb(245, 242, 236)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 17.939
+          "foreground": "rgb(23, 20, 27)",
+          "background": "rgb(255, 255, 255)",
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 18.224
         },
         {
           "label": "button",
-          "foreground": "rgb(8, 8, 6)",
-          "background": "rgb(245, 242, 236)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 17.939
+          "foreground": "rgb(23, 20, 27)",
+          "background": "color(srgb 0.995529 0.995059 0.996471)",
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 18.038
         },
         {
           "label": "input",
-          "foreground": "rgb(8, 8, 6)",
-          "background": "rgb(245, 242, 236)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 17.939
+          "foreground": "rgb(23, 20, 27)",
+          "background": "color(srgb 0.991059 0.990118 0.992941)",
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 17.852
         },
         {
           "label": "toast",
-          "foreground": "rgb(8, 8, 6)",
+          "foreground": "rgb(23, 20, 27)",
           "background": "rgb(255, 255, 255)",
-          "canvas": "rgb(226, 222, 218)",
-          "ratio": 20.044
+          "canvas": "rgb(236, 234, 240)",
+          "ratio": 18.224
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "window-controls-inline__btn s-b5UVb5G8prfs",
-        "outline": "rgb(56, 52, 46) none 3px",
-        "outlineStyle": "none",
-        "outlineWidth": "3px",
-        "boxShadow": "color(srgb 0.117647 0.305882 0.117647 / 0.18) 0px 0px 0px 3px",
-        "borderColor": "rgb(56, 52, 46)"
+        "className": "n-sidebar__brand",
+        "outline": "rgb(79, 55, 139) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(23, 20, 27)"
       }
     },
     {
@@ -324,55 +383,55 @@
       "pairs": [
         {
           "label": "text-primary/background",
-          "foreground": "rgb(238, 238, 248)",
-          "background": "rgb(8, 12, 24)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 16.932
+          "foreground": "rgb(236, 238, 248)",
+          "background": "rgb(12, 15, 26)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 16.519
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(192, 196, 216)",
-          "background": "rgb(8, 12, 24)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 11.271
+          "foreground": "rgb(196, 201, 220)",
+          "background": "rgb(12, 15, 26)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 11.589
         },
         {
           "label": "text-primary/card",
-          "foreground": "rgb(238, 238, 248)",
-          "background": "rgb(16, 20, 40)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 15.807
+          "foreground": "rgb(236, 238, 248)",
+          "background": "rgb(22, 27, 45)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 14.772
         },
         {
           "label": "button",
-          "foreground": "rgb(238, 238, 248)",
-          "background": "rgb(16, 20, 40)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 15.807
+          "foreground": "rgb(236, 238, 248)",
+          "background": "color(srgb 0.0839216 0.103059 0.172)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 14.889
         },
         {
           "label": "input",
-          "foreground": "rgb(238, 238, 248)",
-          "background": "rgb(16, 20, 40)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 15.807
+          "foreground": "rgb(236, 238, 248)",
+          "background": "color(srgb 0.0815686 0.100235 0.167529)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 15.004
         },
         {
           "label": "toast",
-          "foreground": "rgb(238, 238, 248)",
-          "background": "rgb(21, 26, 48)",
-          "canvas": "rgb(8, 12, 24)",
-          "ratio": 14.907
+          "foreground": "rgb(236, 238, 248)",
+          "background": "rgb(28, 34, 55)",
+          "canvas": "rgb(12, 15, 26)",
+          "ratio": 13.614
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "window-controls-inline__btn s-b5UVb5G8prfs",
-        "outline": "rgb(128, 132, 152) none 3px",
-        "outlineStyle": "none",
-        "outlineWidth": "3px",
-        "boxShadow": "color(srgb 0.533333 0.588235 0.815686 / 0.18) 0px 0px 0px 3px",
-        "borderColor": "rgb(128, 132, 152)"
+        "className": "n-sidebar__brand",
+        "outline": "rgb(130, 148, 209) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(236, 238, 248)"
       }
     },
     {
@@ -382,55 +441,55 @@
       "pairs": [
         {
           "label": "text-primary/background",
-          "foreground": "rgb(245, 240, 224)",
-          "background": "rgb(16, 14, 8)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 16.927
+          "foreground": "rgb(240, 233, 221)",
+          "background": "rgb(18, 16, 13)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 15.742
         },
         {
           "label": "text-secondary/background",
-          "foreground": "rgb(216, 208, 176)",
-          "background": "rgb(16, 14, 8)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 12.468
+          "foreground": "rgb(210, 199, 182)",
+          "background": "rgb(18, 16, 13)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 11.383
         },
         {
           "label": "text-primary/card",
-          "foreground": "rgb(245, 240, 224)",
-          "background": "rgb(28, 24, 16)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 15.514
+          "foreground": "rgb(240, 233, 221)",
+          "background": "rgb(30, 26, 20)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 14.348
         },
         {
           "label": "button",
-          "foreground": "rgb(245, 240, 224)",
-          "background": "rgb(28, 24, 16)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 15.514
+          "foreground": "rgb(240, 233, 221)",
+          "background": "color(srgb 0.114824 0.0996078 0.0767843)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 14.439
         },
         {
           "label": "input",
-          "foreground": "rgb(245, 240, 224)",
-          "background": "rgb(28, 24, 16)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 15.514
+          "foreground": "rgb(240, 233, 221)",
+          "background": "color(srgb 0.112 0.0972549 0.0751373)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 14.53
         },
         {
           "label": "toast",
-          "foreground": "rgb(245, 240, 224)",
-          "background": "rgb(34, 30, 20)",
-          "canvas": "rgb(16, 14, 8)",
-          "ratio": 14.577
+          "foreground": "rgb(240, 233, 221)",
+          "background": "rgb(37, 32, 25)",
+          "canvas": "rgb(18, 16, 13)",
+          "ratio": 13.395
         }
       ],
       "focus": {
         "tag": "BUTTON",
-        "className": "window-controls-inline__btn window-controls-inline__btn--close s-b5UVb5G8prfs",
-        "outline": "rgb(152, 140, 96) none 3px",
-        "outlineStyle": "none",
-        "outlineWidth": "3px",
-        "boxShadow": "color(srgb 0.815686 0.627451 0.25098 / 0.18) 0px 0px 0px 3px",
-        "borderColor": "rgb(152, 140, 96)"
+        "className": "n-sidebar__brand",
+        "outline": "rgb(170, 137, 81) solid 1px",
+        "outlineStyle": "solid",
+        "outlineWidth": "1px",
+        "boxShadow": "none",
+        "borderColor": "rgb(240, 233, 221)"
       }
     }
   ]

@@ -432,6 +432,10 @@ pub struct PairingStatusEvent {
     pub expires_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claimed_device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_device_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_platform: Option<String>,
     pub requested_scopes: Vec<String>,
 }
 
@@ -460,6 +464,10 @@ pub struct PairingHostDecisionResponse {
     pub session_id: String,
     pub status: PairingSessionStatus,
     pub claimed_device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_device_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed_platform: Option<String>,
     pub expires_at_ms: i64,
     pub requested_scopes: Vec<String>,
 }
@@ -557,6 +565,7 @@ pub struct BootstrapSuwayomiHint {
 pub struct BootstrapPayloadResponse {
     pub schema_version: u32,
     pub server_id: String,
+    pub device_name: String,
     pub pairing_session_id: String,
     pub pairing_code: String,
     pub syncd_base_url: String,

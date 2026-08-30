@@ -8,7 +8,6 @@
     CircleNotch,
     MagnifyingGlass,
     StackSimple,
-    Warning,
     X,
   } from "phosphor-svelte";
   import { onMount } from "svelte";
@@ -373,10 +372,7 @@
     </div>
 
     {#if cohortBlocker}
-      <div class="notice">
-        <Warning size={14} weight="light" />
-        <span>{cohortBlocker}</span>
-      </div>
+      <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={cohortBlocker} />
     {:else}
       <div class="body">
         <div class="mode-tabs">
@@ -409,19 +405,13 @@
                 </button>
               </div>
             {:else}
-              <div class="notice inline">
-                <StackSimple size={14} weight="light" />
-                <span>{$_("ui_thisPreviewsAllLibraryNovelsFromTheCurrent")}</span>
-              </div>
+              <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_migration")} title={$_("ui_thisPreviewsAllLibraryNovelsFromTheCurrent")} />
             {/if}
 
             {#if loadingSources}
               <div class="centered"><CircleNotch size={16} weight="light" class="anim-spin" /></div>
             {:else if sources.length === 0}
-              <div class="notice">
-                <Warning size={14} weight="light" />
-                <span>{$_("ui_noInstalledTrustedNovelSourceIsMarkedMigration")}</span>
-              </div>
+              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={$_("ui_noInstalledTrustedNovelSourceIsMarkedMigration")} />
             {:else}
               <div class="source-list">
                 {#each sources as source (source.pluginId)}
@@ -457,7 +447,7 @@
           <div class="section">
             <button class="back-btn" type="button" onclick={() => step = "source"}>{$_("ui_back")}</button>
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_searchFailed")} body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
             {/if}
             <div class="results">
               {#each results as result (result.path)}
@@ -488,7 +478,7 @@
               <div class="stat-row"><span>{$_("ui_selectedToApply")}</span><strong>{massSelectedIds.size}</strong></div>
             </div>
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_massMigrationFailed")} body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_massMigrationFailed")} body={error} />
             {/if}
             <div class="results">
               {#each massPreview.items as item (item.currentNovelId)}
@@ -556,14 +546,11 @@
               <div class="stat-row"><span>{$_("ui_chapterDiff")}</span><strong>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff}</strong></div>
             </div>
             {#if preview.confidence < 0.5}
-              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Migration" title={$_("ui_lowConfidenceMatch")} body="Review carefully before replacing the source." />
+              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_lowConfidenceMatch")} body={$_("feedback.reviewMigration")} />
             {/if}
-            <div class="notice inline">
-              <Check size={14} weight="light" />
-              <span>{$_("ui_theOldNovelWillBeReplaceHiddenThrough")}</span>
-            </div>
+            <NocturneState layout="compact" tone="success" icon="info" eyebrow={$_("ui_migration")} title={$_("ui_theOldNovelWillBeReplaceHiddenThrough")} />
             {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("ui_migrationFailed")} body={error} />
+              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
             {/if}
             <div class="actions-row">
               <button class="search-btn primary" type="button" disabled={migrating} onclick={applyMigration}>
@@ -598,22 +585,6 @@
   .mode-tabs { display: flex; gap: 4px; }
   .mode-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: none; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; }
   .mode-tab-active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .notice {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--sp-2);
-    padding: var(--sp-3) var(--sp-4);
-    background:
-      var(--component-novel-migrate-notice-layer),
-      var(--bg-elevated);
-    border: 1px solid var(--component-novel-migrate-notice-border);
-    border-radius: var(--radius-md);
-    color: var(--text-muted);
-    box-shadow: var(--component-novel-migrate-notice-shadow);
-  }
-  .notice.inline {
-    border-color: var(--border-dim);
-  }
   .search-bar { display: flex; align-items: center; gap: var(--sp-2); }
   .search-input { flex: 1; min-height: 34px; padding: 0 var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); color: var(--text-primary); }
   .source-list, .results { display: flex; flex-direction: column; gap: 6px; overflow: auto; }

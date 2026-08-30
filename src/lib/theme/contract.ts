@@ -145,13 +145,13 @@ export interface BuiltinThemeMetadata {
 
 export const BUILTIN_THEMES: readonly BuiltinThemeMetadata[] = [
   { id: "nocturne", label: "Nocturne", description: "Default lunar graphite HUD", swatches: ["#080813", "#0d0d1b", "#8f82e6", "#f1eefc"] },
-  { id: "dark", label: "Dark", description: "Neutral graphite with neon violet accents", swatches: ["#0a0a0b", "#17171a", "#9d7cff", "#f2eff7"] },
-  { id: "amoled", label: "AMOLED", description: "True black with neon violet accents", swatches: ["#000000", "#000000", "#b36dff", "#f7f2ff"] },
-  { id: "high-contrast", label: "High Contrast", description: "True black, sharper text and violet focus", swatches: ["#080808", "#111111", "#b89cff", "#ffffff"] },
-  { id: "light", label: "Light", description: "Warm off-white with violet accents", swatches: ["#f4f2ee", "#faf8f4", "#6d3bd1", "#1a1916"] },
-  { id: "light-contrast", label: "Light Contrast", description: "Light with maximum contrast and violet focus", swatches: ["#ece8e2", "#f5f2ec", "#4d158f", "#080806"] },
-  { id: "midnight", label: "Midnight", description: "Deep blue-black tint", swatches: ["#0c1020", "#101428", "#a8b4e8", "#eeeef8"] },
-  { id: "warm", label: "Warm", description: "Amber and sepia tones", swatches: ["#16130c", "#1c1810", "#e0b860", "#f5f0e0"] },
+  { id: "dark", label: "Dark", description: "Near-black neutral graphite", swatches: ["#080809", "#0e0e11", "#9f8ed9", "#e9e7ed"] },
+  { id: "amoled", label: "AMOLED", description: "True black with neutral dark-gray layers", swatches: ["#000000", "#000000", "#a88bd8", "#eeeeee"] },
+  { id: "high-contrast", label: "High Contrast", description: "Dark surfaces with explicit boundaries", swatches: ["#070707", "#141414", "#b49cf0", "#ffffff"] },
+  { id: "light", label: "Light", description: "Cool off-white with restrained violet", swatches: ["#f3f2f5", "#ffffff", "#6750a4", "#242127"] },
+  { id: "light-contrast", label: "Light Contrast", description: "Cool light surfaces with stronger boundaries", swatches: ["#eceaf0", "#ffffff", "#4f378b", "#17141b"] },
+  { id: "midnight", label: "Midnight", description: "Blue-black with muted periwinkle", swatches: ["#0c0f1a", "#161b2d", "#92a3dc", "#eceef8"] },
+  { id: "warm", label: "Warm", description: "Deep umber with muted amber", swatches: ["#12100d", "#1e1a14", "#c9a45f", "#f0e9dd"] },
 ] as const;
 
 export const THEME_TOKEN_KEYS = [
@@ -189,16 +189,16 @@ export const HUD_THEME_TOKEN_KEYS = [
 ] as const satisfies readonly (keyof HudThemeTokens)[];
 
 export const DEFAULT_THEME_TOKENS: ThemeTokens = {
-  "bg-void": "#050505", "bg-base": "#0a0a0b", "bg-surface": "#111113", "bg-raised": "#17171a", "bg-overlay": "#1d1d21", "bg-subtle": "#242429",
-  "border-dim": "#1d1d22", "border-base": "#292930", "border-strong": "#3b3a45", "border-focus": "#9d7cff",
-  "text-primary": "#f2eff7", "text-secondary": "#cbc6d2", "text-muted": "#918a9c", "text-faint": "#55505e", "text-disabled": "#302d36", "text-tertiary": "#918a9c", "text-inverse": "#050505",
-  "accent": "#9d7cff", "accent-dim": "#4d357f", "accent-muted": "rgba(157, 124, 255, 0.14)", "accent-fg": "#efe9ff", "accent-bright": "#b79cff",
+  "bg-void": "#040405", "bg-base": "#080809", "bg-surface": "#0b0b0d", "bg-raised": "#0e0e11", "bg-overlay": "#111115", "bg-subtle": "#15151a",
+  "border-dim": "#111114", "border-base": "#1b1b20", "border-strong": "#29292f", "border-focus": "#8373c2",
+  "text-primary": "#e9e7ed", "text-secondary": "#c3bfc9", "text-muted": "#89838f", "text-faint": "#59545f", "text-disabled": "#3a363f", "text-tertiary": "#89838f", "text-inverse": "#060607",
+  "accent": "#9f8ed9", "accent-dim": "#493e63", "accent-muted": "rgba(159, 142, 217, 0.11)", "accent-fg": "#d9d1f2", "accent-bright": "#b4a6e3",
   "color-error": "#c47a7a", "color-error-bg": "#1f1212", "color-success": "#7aab7a", "color-success-bg": "rgba(122, 171, 122, 0.12)",
   "color-warning": "#c0a66a", "color-warning-bg": "rgba(192, 166, 106, 0.12)", "color-danger": "#c47a7a", "color-danger-bg": "#1f1212",
-  "color-info": "#7a9ec4", "color-info-bg": "#121a1f", "color-background": "#0a0a0b", "color-background-void": "#050505",
-  "color-surface": "#111113", "color-surface-secondary": "#242429", "color-elevated": "#17171a", "color-card": "#17171a",
-  "color-modal": "#1d1d21", "color-popover": "#1d1d21", "color-menu": "#1d1d21", "color-overlay": "rgba(0, 0, 0, 0.68)",
-  "color-border": "#292930", "color-outline": "#9d7cff", "color-divider": "#1d1d22", "color-accent": "#9d7cff", "color-accent-muted": "rgba(157, 124, 255, 0.14)",
+  "color-info": "#7a9ec4", "color-info-bg": "#0d1418", "color-background": "#080809", "color-background-void": "#040405",
+  "color-surface": "#0b0b0d", "color-surface-secondary": "#15151a", "color-elevated": "#0e0e11", "color-card": "#0e0e11",
+  "color-modal": "#111115", "color-popover": "#111115", "color-menu": "#111115", "color-overlay": "rgba(0, 0, 0, 0.8)",
+  "color-border": "#1b1b20", "color-outline": "#8373c2", "color-divider": "#111114", "color-accent": "#9f8ed9", "color-accent-muted": "rgba(159, 142, 217, 0.11)",
   "color-shadow-source": "#000000", "color-highlight-source": "#ffffff",
 };
 
@@ -272,10 +272,10 @@ function deriveBuiltinThemeTokens(overrides: Partial<ThemeTokens>): ThemeTokens 
 }
 
 export const DEFAULT_HUD_THEME_TOKENS: HudThemeTokens = {
-  "hud-control-height": "30px", "hud-icon-button-size": "30px", "hud-control-radius": "5px", "hud-chip-radius": "9999px",
-  "hud-popover-radius": "5px", "hud-status-radius": "3px", "hud-toast-radius": "7px", "hud-chapter-row-radius": "5px",
-  "hud-surface-opacity": "1", "hud-sidebar-width": "52px", "hud-toolbar-gap": "8px", "hud-reader-chrome-opacity": "1",
-  "hud-selection-bg": "rgba(157, 124, 255, 0.14)", "hud-selection-border": "#4d357f", "hud-progress-height": "3px",
+  "hud-control-height": "28px", "hud-icon-button-size": "28px", "hud-control-radius": "8px", "hud-chip-radius": "9999px",
+  "hud-popover-radius": "12px", "hud-status-radius": "9999px", "hud-toast-radius": "12px", "hud-chapter-row-radius": "9px",
+  "hud-surface-opacity": "0.96", "hud-sidebar-width": "56px", "hud-toolbar-gap": "6px", "hud-reader-chrome-opacity": "0.92",
+  "hud-selection-bg": "rgba(159, 142, 217, 0.11)", "hud-selection-border": "#493e63", "hud-progress-height": "2px",
 };
 
 export const NOCTURNE_THEME_TOKENS: ThemeTokens = {
@@ -315,48 +315,58 @@ export interface BuiltinThemeContract {
 }
 
 const HIGH_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#000000", "bg-base": "#080808", "bg-surface": "#0d0d0d", "bg-raised": "#111111", "bg-overlay": "#171717", "bg-subtle": "#1e1e1e",
-  "border-dim": "#252525", "border-base": "#303030", "border-strong": "#3e3e3e", "border-focus": "#a986ff",
-  "text-primary": "#ffffff", "text-secondary": "#e8e6e0", "text-muted": "#b0aea8", "text-faint": "#6e6c68", "text-disabled": "#303030",
-  "accent": "#b89cff", "accent-dim": "#5b3f91", "accent-muted": "#2a1f3f", "accent-fg": "#f0e9ff", "accent-bright": "#d0beff",
+  "bg-void": "#000000", "bg-base": "#070707", "bg-surface": "#0d0d0d", "bg-raised": "#141414", "bg-overlay": "#1b1b1b", "bg-subtle": "#222222",
+  "border-dim": "#292929", "border-base": "#404040", "border-strong": "#666666", "border-focus": "#b49cf0",
+  "text-primary": "#ffffff", "text-secondary": "#ebe8ef", "text-muted": "#bbb6c1", "text-faint": "#817b88", "text-disabled": "#55505a",
+  "accent": "#b49cf0", "accent-dim": "#604f89", "accent-muted": "rgba(180, 156, 240, 0.18)", "accent-fg": "#f3edff", "accent-bright": "#d1c0fa",
 });
 
 const AMOLED_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#000000", "bg-base": "#000000", "bg-surface": "#000000", "bg-raised": "#000000", "bg-overlay": "#08080c", "bg-subtle": "#111117",
-  "border-dim": "#242424", "border-base": "#5a5a5a", "border-strong": "#737373", "border-focus": "#b36dff",
-  "text-primary": "#f7f2ff", "text-secondary": "#d8cfe4", "text-muted": "#9f94ad", "text-faint": "#7d7487", "text-disabled": "#51485b",
-  "accent": "#b36dff", "accent-dim": "#623595", "accent-muted": "#241334", "accent-fg": "#f5e9ff", "accent-bright": "#d09cff",
-  "color-overlay": "rgba(0, 0, 0, 0.82)",
+  "bg-void": "#000000", "bg-base": "#000000", "bg-surface": "#000000", "bg-raised": "#000000", "bg-overlay": "#070707", "bg-subtle": "#0d0d0d",
+  "border-dim": "#101010", "border-base": "#1a1a1a", "border-strong": "#292929", "border-focus": "#9b83d6",
+  "text-primary": "#eeeeee", "text-secondary": "#c7c7c7", "text-muted": "#808080", "text-faint": "#505050", "text-disabled": "#333333",
+  "accent": "#a88bd8", "accent-dim": "#4a3b60", "accent-muted": "rgba(168, 139, 216, 0.12)", "accent-fg": "#dfd3f2", "accent-bright": "#c0a7e5",
+  "color-overlay": "rgba(0, 0, 0, 0.86)",
 });
 
 const LIGHT_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#e8e6e2", "bg-base": "#eeece8", "bg-surface": "#f4f2ee", "bg-raised": "#faf8f4", "bg-overlay": "#ffffff", "bg-subtle": "#f0ede8",
-  "border-dim": "#dedad4", "border-base": "#d0ccc6", "border-strong": "#bbb6ae", "border-focus": "#7845dc",
-  "text-primary": "#1a1916", "text-secondary": "#2e2c28", "text-muted": "#5a5750", "text-faint": "#9a9890", "text-disabled": "#c8c4bc",
-  "accent": "#6d3bd1", "accent-dim": "#d9c9fa", "accent-muted": "#eee7ff", "accent-fg": "#4e1aa8", "accent-bright": "#7c45e8",
-  "color-error": "#a03030", "color-error-bg": "#fce8e8", "color-success": "#2a6a2a", "color-info": "#2a4a7a", "color-info-bg": "#e8eef8",
+  "bg-void": "#e9e8ec", "bg-base": "#f3f2f5", "bg-surface": "#f8f7fa", "bg-raised": "#ffffff", "bg-overlay": "#ffffff", "bg-subtle": "#efedf2",
+  "border-dim": "#e3e0e7", "border-base": "#d4d0da", "border-strong": "#bcb6c4", "border-focus": "#6750a4",
+  "text-primary": "#242127", "text-secondary": "#454048", "text-muted": "#6d6671", "text-faint": "#9b949f", "text-disabled": "#c4bec8",
+  "accent": "#6750a4", "accent-dim": "#c7b8e8", "accent-muted": "rgba(103, 80, 164, 0.10)", "accent-fg": "#4c3588", "accent-bright": "#7962b7",
+  "color-error": "#9f3447", "color-error-bg": "#f8e9ed", "color-success": "#356b4c", "color-success-bg": "#e8f3ec",
+  "color-warning": "#7b5d24", "color-warning-bg": "#f5efe1", "color-danger": "#9f3447", "color-danger-bg": "#f8e9ed",
+  "color-info": "#3e5f91", "color-info-bg": "#e9eef7", "color-overlay": "rgba(21, 17, 28, 0.36)",
 });
 
 const LIGHT_CONTRAST_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#d8d4ce", "bg-base": "#e2deda", "bg-surface": "#ece8e2", "bg-raised": "#f5f2ec", "bg-overlay": "#ffffff", "bg-subtle": "#e4e0d8",
-  "border-dim": "#c4c0b8", "border-base": "#b0aca4", "border-strong": "#989490", "border-focus": "#57209c",
-  "text-primary": "#080806", "text-secondary": "#181612", "text-muted": "#38342e", "text-faint": "#706c64", "text-disabled": "#b0aca4",
-  "accent": "#4d158f", "accent-dim": "#cbb2ef", "accent-muted": "#dfd0f6", "accent-fg": "#351061", "accent-bright": "#5b1eaa",
-  "color-error": "#8a1a1a", "color-error-bg": "#f8e0e0",
+  "bg-void": "#dfdce4", "bg-base": "#eceaf0", "bg-surface": "#f5f3f7", "bg-raised": "#ffffff", "bg-overlay": "#ffffff", "bg-subtle": "#e7e4eb",
+  "border-dim": "#d1ccd7", "border-base": "#aaa3b2", "border-strong": "#756e7d", "border-focus": "#4f378b",
+  "text-primary": "#17141b", "text-secondary": "#302b35", "text-muted": "#544d5b", "text-faint": "#7c7484", "text-disabled": "#aaa3b2",
+  "accent": "#4f378b", "accent-dim": "#bba9df", "accent-muted": "rgba(79, 55, 139, 0.13)", "accent-fg": "#372363", "accent-bright": "#62499d",
+  "color-error": "#871f35", "color-error-bg": "#f6e2e7", "color-success": "#245c3d", "color-success-bg": "#e0efe6",
+  "color-warning": "#694b13", "color-warning-bg": "#f4ead5", "color-danger": "#871f35", "color-danger-bg": "#f6e2e7",
+  "color-info": "#2d5184", "color-info-bg": "#e2e9f4", "color-overlay": "rgba(16, 12, 22, 0.42)",
 });
 
 const MIDNIGHT_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#050810", "bg-base": "#080c18", "bg-surface": "#0c1020", "bg-raised": "#101428", "bg-overlay": "#151a30", "bg-subtle": "#1a2038",
-  "border-dim": "#1a2035", "border-base": "#222840", "border-strong": "#2c3450", "border-focus": "#4a5c8a",
-  "text-primary": "#eeeef8", "text-secondary": "#c0c4d8", "text-muted": "#808498", "text-faint": "#404860", "text-disabled": "#202840",
-  "accent": "#6a7ab8", "accent-dim": "#252d50", "accent-muted": "#181e38", "accent-fg": "#a8b4e8", "accent-bright": "#8896d0",
+  "bg-void": "#070912", "bg-base": "#0c0f1a", "bg-surface": "#111524", "bg-raised": "#161b2d", "bg-overlay": "#1c2237", "bg-subtle": "#222a42",
+  "border-dim": "#1b2134", "border-base": "#293149", "border-strong": "#3b4663", "border-focus": "#8294d1",
+  "text-primary": "#eceef8", "text-secondary": "#c4c9dc", "text-muted": "#8790aa", "text-faint": "#555e76", "text-disabled": "#343c52",
+  "accent": "#92a3dc", "accent-dim": "#3d496d", "accent-muted": "rgba(146, 163, 220, 0.12)", "accent-fg": "#d8def5", "accent-bright": "#aab8e7",
+  "color-error": "#d2879e", "color-error-bg": "#25141e", "color-success": "#79b59a", "color-success-bg": "rgba(121, 181, 154, 0.12)",
+  "color-warning": "#c6ae78", "color-warning-bg": "rgba(198, 174, 120, 0.12)", "color-danger": "#d2879e", "color-danger-bg": "#25141e",
+  "color-info": "#88a7df", "color-info-bg": "#151d35",
 });
 
 const WARM_THEME_TOKENS = deriveBuiltinThemeTokens({
-  "bg-void": "#0c0a06", "bg-base": "#100e08", "bg-surface": "#16130c", "bg-raised": "#1c1810", "bg-overlay": "#221e14", "bg-subtle": "#28241a",
-  "border-dim": "#201c10", "border-base": "#2c2818", "border-strong": "#3a3420", "border-focus": "#6a5a30",
-  "text-primary": "#f5f0e0", "text-secondary": "#d8d0b0", "text-muted": "#988c60", "text-faint": "#584e30", "text-disabled": "#302a18",
-  "accent": "#c0902a", "accent-dim": "#3a2c10", "accent-muted": "#261e0c", "accent-fg": "#e0b860", "accent-bright": "#d0a040",
+  "bg-void": "#0c0a08", "bg-base": "#12100d", "bg-surface": "#181510", "bg-raised": "#1e1a14", "bg-overlay": "#252019", "bg-subtle": "#2b261e",
+  "border-dim": "#211d17", "border-base": "#302a20", "border-strong": "#463c2c", "border-focus": "#aa8951",
+  "text-primary": "#f0e9dd", "text-secondary": "#d2c7b6", "text-muted": "#928674", "text-faint": "#5f5547", "text-disabled": "#3d352a",
+  "accent": "#c9a45f", "accent-dim": "#5e4927", "accent-muted": "rgba(201, 164, 95, 0.12)", "accent-fg": "#ead4a8", "accent-bright": "#dab975",
+  "color-error": "#c98278", "color-error-bg": "#241613", "color-success": "#8eaa78", "color-success-bg": "rgba(142, 170, 120, 0.12)",
+  "color-warning": "#d0ad69", "color-warning-bg": "rgba(208, 173, 105, 0.12)", "color-danger": "#c98278", "color-danger-bg": "#241613",
+  "color-info": "#839eb6", "color-info-bg": "#151d23",
 });
 
 export const BUILTIN_THEME_CONTRACTS: Readonly<Record<BuiltinTheme, BuiltinThemeContract>> = {

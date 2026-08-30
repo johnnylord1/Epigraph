@@ -42,6 +42,7 @@
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   interface Props {
     extension: ManagedExtension;
@@ -825,10 +826,16 @@
     {#if loading}
       <div class="center"><CircleNotch size={18} weight="bold" class="anim-spin" /></div>
     {:else if error && !preview && step !== "target"}
-      <div class="center errorPanel">
-        <Warning size={18} weight="bold" />
-        <strong>{error}</strong>
-        <button class="primaryButton" type="button" onclick={loadInitialState}>{$_("massMigration.retry")}</button>
+      <div class="center">
+        <NocturneState
+          layout="compact"
+          tone="danger"
+          icon="warning"
+          eyebrow={$_("massMigration.title")}
+          title={$_("ui_massMigrationFailed")}
+          body={error}
+          actions={[{ label: $_("massMigration.retry"), kind: "primary", icon: "retry", onClick: loadInitialState }]}
+        />
       </div>
     {:else if step === "origin"}
       <section class="pane">
@@ -877,7 +884,7 @@
           {/if}
         </div>
         {#if error}
-          <p class="targetError"><Warning size={13} weight="bold" /> {error}</p>
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.targetSource")} title={$_("ui_searchFailed")} body={error} />
         {/if}
         <footer class="modalFooter">
           <button class="secondaryButton" type="button" onclick={() => step = "origin"}>{$_("ui_back")}</button>
@@ -924,7 +931,7 @@
           </div>
 
           {#if runtimeErrors.get(manualSearchItem.currentManga.id)}
-            <p class="errorLine"><Warning size={13} weight="bold" /> {runtimeErrors.get(manualSearchItem.currentManga.id)}</p>
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.manualSearch")} title={$_("ui_searchFailed")} body={runtimeErrors.get(manualSearchItem.currentManga.id)} />
           {/if}
 
           <div class="manualResultGrid">
@@ -967,7 +974,7 @@
         </div>
 
         {#if error}
-          <p class="errorLine"><Warning size={13} weight="bold" /> {error}</p>
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.title")} title={$_("ui_massMigrationFailed")} body={error} />
         {/if}
 
         <div class="queueList">
@@ -1079,7 +1086,6 @@
   .steps span { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--component-migration-muted-fg); }
   .steps span.active { color: var(--component-migration-accent-fg); }
   .center { flex: 1; display: grid; place-items: center; gap: 12px; color: var(--component-migration-body-fg); text-align: center; }
-  .errorPanel { padding: 40px; }
   .pane, .reviewPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .paneIntro { display: grid; gap: 4px; padding: 14px 18px; color: var(--component-migration-body-fg); }
   .paneIntro strong, .reviewToolbar strong { color: var(--component-migration-strong-fg); }
@@ -1134,8 +1140,13 @@
   .cover { width: 100%; aspect-ratio: 2 / 3; border-radius: var(--component-migration-cover-radius); object-fit: cover; background: var(--component-migration-cover-bg); border: 1px solid var(--component-migration-cover-border); }
   .noCover { display: grid; place-items: center; color: var(--component-migration-muted-fg); }
   .itemNote { color: var(--component-migration-muted-fg); font-size: 11px; }
-  .itemError { color: var(--color-error); font-size: 11px; }
-  .targetError { margin: 0 18px 10px; display: flex; align-items: center; gap: 7px; padding: 10px 11px; border-radius: var(--component-migration-input-radius); border: 1px solid var(--component-migration-error-border); background: var(--component-migration-error-bg); color: var(--component-migration-error-fg); font-size: 12px; line-height: 1.35; }
+  .itemError {
+    padding-inline-start: var(--space-xs);
+    border-inline-start: 1px solid var(--component-migration-error-border);
+    color: var(--component-migration-error-fg);
+    background: var(--component-migration-error-bg);
+    font-size: 11px;
+  }
   .manualSearchHeader { gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--component-migration-divider); }
   .manualSearchHeader > div { min-width: 0; display: grid; gap: 2px; }
   .manualSearchHeader span { font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
@@ -1162,7 +1173,6 @@
   .bulkSelectButton { font-family: var(--font-ui); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--tracking-wide); text-transform: none; -webkit-font-smoothing: antialiased; }
   .primaryButton:disabled, .secondaryButton:disabled { opacity: var(--component-migration-disabled-opacity); }
   .iconButton:focus-visible, .sourceRow:focus-visible, .checkButton:focus-visible, .manualResultCard:focus-visible, .actionTrigger:focus-visible, .actionMenu button:focus-visible, .primaryButton:focus-visible, .secondaryButton:focus-visible { outline: 1px solid var(--component-migration-focus-border); outline-offset: 2px; border-color: var(--component-migration-focus-border); box-shadow: var(--component-migration-focus-ring); }
-  .errorLine { display: flex; align-items: center; gap: 8px; margin: 10px 18px 0; color: var(--color-error); font-size: 12px; }
   @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
   @keyframes scaleIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 </style>

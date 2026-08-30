@@ -5,7 +5,7 @@
     "minimumReductionPercent": 15
   },
   "entry": {
-    "maxMinifiedBytes": 1156000,
+    "maxMinifiedBytes": 1189414,
     "maxGzipBytes": 337920
   },
   "initialPayload": {

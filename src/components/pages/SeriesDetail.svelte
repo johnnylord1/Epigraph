@@ -1095,9 +1095,9 @@
         </div>
         <div class="link-list">
           {#if loadingLinkList}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_loadingLibrary")} />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_loadingLibrary")} />
           {:else if linkPickerResults.length === 0}
-            <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noMatchingSeries")} body="Try another title from your library." />
+            <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_noMatchingSeries")} body={$_("feedback.tryAnotherLibraryTitle")} />
           {:else}
             {#each linkPickerResults as m (m.id)}
               {@const isLinked = linkedIds.includes(m.id)}

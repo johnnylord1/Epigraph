@@ -64,6 +64,8 @@ pub enum SyncdDesktopConnectionStatus {
 pub struct SyncdBootstrapBundle {
     pub pairing_session_id: String,
     pub pairing_code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
     pub syncd_base_url: String,
     pub profile_id: String,
     pub expires_at_ms: i64,
@@ -98,6 +100,8 @@ pub struct SyncdHostPairingState {
     pub expires_at_ms: i64,
     pub status: PairingSessionStatus,
     pub claimed_device_id: Option<String>,
+    pub claimed_device_name: Option<String>,
+    pub claimed_platform: Option<String>,
     pub requested_scopes: Vec<String>,
     pub bootstrap_bundle: String,
     pub host_ready: bool,
@@ -117,6 +121,8 @@ pub struct SyncdConnectState {
     pub attempted_origin: String,
     pub fallback_origins: Vec<String>,
     pub claimed_device_id: Option<String>,
+    pub local_device_name: String,
+    pub remote_device_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -130,6 +136,8 @@ pub struct PersistedSyncSession {
     pub local_profile_id: String,
     pub remote_server_id: String,
     pub remote_profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_device_name: Option<String>,
     pub canonical_origin: String,
     pub fallback_origins: Vec<String>,
     pub tls_cert_sha256: String,
@@ -155,6 +163,7 @@ pub struct SyncdReconnectStatus {
 pub struct SyncdRuntimeIdentity {
     pub pid: u32,
     pub server_id: Option<String>,
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -384,6 +393,7 @@ pub async fn syncd_start_host_pairing(
     let bundle = SyncdBootstrapBundle {
         pairing_session_id: payload.pairing_session_id.clone(),
         pairing_code: payload.pairing_code.clone(),
+        device_name: Some(payload.device_name.clone()),
         syncd_base_url: payload.syncd_base_url.clone(),
         profile_id: payload.profile_id.clone(),
         expires_at_ms: payload.expires_at_ms,
@@ -402,6 +412,8 @@ pub async fn syncd_start_host_pairing(
         expires_at_ms: payload.expires_at_ms,
         status: PairingSessionStatus::Pending,
         claimed_device_id: None,
+        claimed_device_name: None,
+        claimed_platform: None,
         requested_scopes: Vec::new(),
         bootstrap_bundle,
         host_ready: true,
@@ -515,6 +527,8 @@ pub async fn syncd_connect_with_bootstrap(
         attempted_origin: claim.origin.clone(),
         fallback_origins: claim.fallback_origins.clone(),
         claimed_device_id: claim.response.claimed_device_id.clone(),
+        local_device_name: device_name.clone(),
+        remote_device_name: context.bundle.device_name.clone(),
         session_key: None,
         error: None,
     };
@@ -538,6 +552,7 @@ pub async fn syncd_connect_with_bootstrap(
                 local_profile_id: input.local_profile_id.clone(),
                 remote_server_id: claim.remote_server_id.clone(),
                 remote_profile_id: claim.response.profile_id.clone(),
+                remote_device_name: context.bundle.device_name.clone(),
                 canonical_origin: context.guidance.canonical_attempt.origin.clone(),
                 fallback_origins: claim.fallback_origins.clone(),
                 tls_cert_sha256: context.bundle.tls_cert_sha256.clone(),
@@ -639,6 +654,8 @@ pub async fn syncd_host_decide_pairing(
         };
         current.status = response.status;
         current.claimed_device_id = response.claimed_device_id.clone();
+        current.claimed_device_name = response.claimed_device_name.clone();
+        current.claimed_platform = response.claimed_platform.clone();
         current.requested_scopes = response.requested_scopes.clone();
         current.expires_at_ms = response.expires_at_ms;
         current.error = None;
@@ -739,6 +756,8 @@ pub async fn syncd_revalidate_persisted_sync_sessions(
             attempted_origin: last.remote_origin,
             fallback_origins: Vec::new(),
             claimed_device_id: None,
+            local_device_name: local_device_name(),
+            remote_device_name: None,
             session_key: Some(last.session_key),
             error: last.error,
         };
@@ -828,6 +847,8 @@ fn spawn_host_pairing_listener(
                         };
                         current.status = event.status;
                         current.claimed_device_id = event.claimed_device_id.clone();
+                        current.claimed_device_name = event.claimed_device_name.clone();
+                        current.claimed_platform = event.claimed_platform.clone();
                         current.requested_scopes = event.requested_scopes.clone();
                         current.expires_at_ms = event.expires_at_ms;
                         current.error = None;
@@ -861,6 +882,7 @@ async fn reconcile_runtime_identity(
     let next_identity = SyncdRuntimeIdentity {
         pid: sidecar_runtime.pid,
         server_id: sidecar_runtime.server_id.clone(),
+        device_name: local_device_name(),
     };
     let host_to_reconnect = {
         let mut runtime = state.runtime.lock().await;
@@ -1036,6 +1058,7 @@ async fn update_connect_from_pairing_event(
             local_profile_id: context.local_profile_id.clone(),
             remote_server_id: context.remote_server_id.clone(),
             remote_profile_id: context.remote_profile_id.clone(),
+            remote_device_name: context.bundle.device_name.clone(),
             canonical_origin: context.canonical_origin.clone(),
             fallback_origins: context.fallback_origins.clone(),
             tls_cert_sha256: context.tls_cert_sha256.clone(),
@@ -1140,6 +1163,8 @@ where
                             status: PairingSessionStatus::Expired,
                             expires_at_ms: previous.expires_at_ms,
                             claimed_device_id: previous.claimed_device_id,
+                            claimed_device_name: previous.claimed_device_name,
+                            claimed_platform: previous.claimed_platform,
                             requested_scopes: previous.requested_scopes,
                         })
                         .await?;
@@ -1819,6 +1844,7 @@ impl From<BootstrapPayloadResponse> for SyncdBootstrapBundle {
         Self {
             pairing_session_id: value.pairing_session_id,
             pairing_code: value.pairing_code,
+            device_name: Some(value.device_name),
             syncd_base_url: value.syncd_base_url,
             profile_id: value.profile_id,
             expires_at_ms: value.expires_at_ms,
@@ -1958,6 +1984,7 @@ mod tests {
             local_profile_id: "main".to_string(),
             remote_server_id: "server".to_string(),
             remote_profile_id: "main".to_string(),
+            remote_device_name: Some("Studio PC".to_string()),
             canonical_origin: "https://localhost:4777".to_string(),
             fallback_origins: vec!["https://192.168.0.10:4777".to_string()],
             tls_cert_sha256: "fingerprint".to_string(),

@@ -44,7 +44,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdDisconnectPersistedSession: vi.fn(),
   syncdForceReplicationReconnect: vi.fn(),
   syncdGetActiveHostPairing: vi.fn(async () => null),
-  syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "server-a" })),
+  syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "server-a", deviceName: "Jhow's desktop" })),
   syncdGetReplicationState: vi.fn(async () => ({
     localProfileId: "main",
     activeSessionKey: null,
@@ -97,7 +97,7 @@ describe("SyncdConnectionPanel", () => {
     desktopStateListener = null;
     vi.clearAllMocks();
     vi.mocked(syncdGetActiveHostPairing).mockResolvedValue(null);
-    vi.mocked(syncdGetRuntimeIdentity).mockResolvedValue({ pid: 100, serverId: "server-a" });
+    vi.mocked(syncdGetRuntimeIdentity).mockResolvedValue({ pid: 100, serverId: "server-a", deviceName: "Jhow's desktop" });
     vi.mocked(syncdHostDecidePairing).mockImplementation(async (_sessionId, decision) => ({
       ...hostState,
       status: decision === "approve" ? "approved" : "rejected",
@@ -110,7 +110,7 @@ describe("SyncdConnectionPanel", () => {
     cleanup();
   });
 
-  test("opens as a focused pairing flow and keeps technical content behind Details and Options", async () => {
+  test("opens as a focused pairing flow and keeps technical content behind Details and advanced connection options", async () => {
     const onClose = vi.fn();
     render(SyncdConnectionPanel, {
       props: { profileId: "main", scopeLabel: "Main profile", onClose },
@@ -120,19 +120,21 @@ describe("SyncdConnectionPanel", () => {
     expect(dialog.parentElement?.parentElement).toBe(document.body);
     expect(within(dialog).getByTestId("syncd-pairing-view").hidden).toBe(false);
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(true);
-    expect(within(dialog).getByTestId("syncd-options-view").hidden).toBe(true);
-    expect(within(dialog).getByText("Pair another desktop")).toBeTruthy();
+    expect(within(dialog).queryByTestId("syncd-options-view")).toBeNull();
+    expect(within(dialog).getByText("Pair a desktop")).toBeTruthy();
 
     await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(false);
-    expect(within(dialog).getByText("Connection details")).toBeTruthy();
+    expect(within(dialog).getAllByText("Connection details").length).toBeGreaterThan(0);
 
     const modalBody = dialog.querySelector<HTMLElement>(".syncd-modal__body");
     expect(modalBody).not.toBeNull();
     modalBody!.scrollTop = 240;
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-pairing"));
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Load QR image" }));
     await fireEvent.click(within(dialog).getByTestId("syncd-modal-options"));
     expect(modalBody!.scrollTop).toBe(0);
-    expect(within(dialog).getByTestId("syncd-options-view").hidden).toBe(false);
+    expect(within(dialog).getByTestId("syncd-options-view")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-bootstrap-bundle-input")).toBeTruthy();
 
     await fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
@@ -158,7 +160,7 @@ describe("SyncdConnectionPanel", () => {
       });
     });
 
-    expect(within(dialog).getByText("A desktop wants to connect")).toBeTruthy();
+    expect(within(dialog).getAllByText("A desktop wants to connect").length).toBeGreaterThan(0);
     expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("claimed");
     expect(within(dialog).getByTestId("syncd-host-approve")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-reject")).toBeTruthy();
@@ -210,7 +212,7 @@ describe("SyncdConnectionPanel", () => {
       desktopStateListener?.({
         host: null,
         connect: null,
-        runtimeIdentity: { pid: 101, serverId: "server-b" },
+        runtimeIdentity: { pid: 101, serverId: "server-b", deviceName: "Studio PC" },
       });
     });
 
@@ -219,6 +221,31 @@ describe("SyncdConnectionPanel", () => {
       expect(listenSyncdPairingStatus).toHaveBeenCalledTimes(2);
       expect(syncdGetActiveHostPairing).toHaveBeenCalledTimes(2);
     });
+  });
+
+  test("identifies both desktops in the connected state", async () => {
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await waitFor(() => expect(desktopStateListener).not.toBeNull());
+    await act(async () => {
+      desktopStateListener?.({
+        host: null,
+        connect: {
+          status: "connected",
+          remoteOrigin: "https://192.168.1.20:4777",
+          claimedDeviceId: "studio-pc",
+          localDeviceName: "Jhow's Desktop",
+          remoteDeviceName: "Studio PC",
+        },
+        runtimeIdentity: { pid: 101, serverId: "server-b", deviceName: "Jhow's Desktop" },
+      });
+    });
+
+    expect(within(dialog).getAllByText("Jhow's Desktop").length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText("Studio PC").length).toBeGreaterThan(0);
   });
 
   test("allows the modal to close while a host decision is pending", async () => {
@@ -278,9 +305,9 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getByTestId("syncd-requested-scopes").textContent).toContain("Comics");
     expect(within(dialog).getByTestId("syncd-requested-scopes").textContent).toContain("Books");
 
-    await fireEvent.click(within(dialog).getByTestId("syncd-modal-options"));
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
     const permission = await within(dialog).findByTestId("syncd-paired-device-permission");
-    const books = within(permission).getByRole("checkbox", { name: "Books" });
+    const books = within(permission).getByRole("checkbox", { name: /Books/ });
     await fireEvent.click(books);
 
     await waitFor(() => {

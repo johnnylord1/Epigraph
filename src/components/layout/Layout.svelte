@@ -244,7 +244,6 @@
             eyebrow={$_("shell.pageState.status")}
             title={$_("shell.pageState.failedTitle")}
             body={$_("shell.pageState.failedBody")}
-            detail={pageError}
             actions={[{
               label: $_("shell.pageState.retry"),
               kind: "primary",
@@ -283,7 +282,6 @@
               eyebrow={$_("shell.pageState.status")}
               title={$_("shell.pageState.failedTitle")}
               body={$_("shell.pageState.failedBody")}
-              detail={pageError}
               actions={[{
                 label: $_("shell.pageState.retry"),
                 kind: "primary",
@@ -340,7 +338,6 @@
             eyebrow={$_("shell.detailState.status")}
             title={$_("shell.detailState.failedTitle")}
             body={$_("shell.detailState.failedBody")}
-            detail={detailError}
             actions={[{
               label: $_("shell.detailState.retry"),
               kind: "primary",
@@ -365,7 +362,6 @@
             eyebrow={$_("shell.pageState.status")}
             title={$_("shell.pageState.failedTitle")}
             body={$_("shell.pageState.failedBody")}
-            detail={activityOverlayError}
             actions={[{
               label: $_("shell.pageState.retry"),
               kind: "primary",

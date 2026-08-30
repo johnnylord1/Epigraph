@@ -30,6 +30,7 @@
   import { SETTINGS_SEARCH_CATALOG } from "../../lib/search/settingsCatalog";
   import type { SearchBrowseContentType, SearchCatalog, SearchContext, SearchResult } from "../../lib/search/types";
   import type { Manga, Source } from "../../lib/types";
+  import NocturneState from "../shared/NocturneState.svelte";
   import {
     addToast,
     openMangaDetail,
@@ -989,7 +990,7 @@
     <div id="epigraph-search-results" class="search-palette__results" role="listbox" aria-label={$_("ui_searchTitles")}>
       {#if paletteView === "browse"}
         {#if browseLoadError}
-          <div class="search-palette__state">{browseLoadError}</div>
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("browse.search.eyebrow")} title={$_("ui_searchFailed")} body={browseLoadError} />
         {:else if browseLoadingSources}
           <div class="search-palette__state">{$_("ui_loading")}</div>
         {:else if browseGroups.length === 0}
@@ -1024,7 +1025,7 @@
                 {/if}
               </div>
               {#if group.error}
-                <div class="search-palette__compact-state" title={group.error}>{group.error}</div>
+                <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={group.label} title={$_("ui_searchFailed")} body={group.error} />
               {:else if group.loading}
                 <div class="search-palette__browse-loading" aria-hidden="true">
                   {#each Array(5) as _, index (index)}
@@ -1090,14 +1091,14 @@
           {/each}
         {/if}
       {:else if error && rankedResults.length === 0}
-        <div class="search-palette__state">{error}</div>
+        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("browse.search.eyebrow")} title={$_("ui_searchFailed")} body={error} />
       {:else if !renderedQuery.trim()}
         <div class="search-palette__state">{$_("ui_typeATitleToSearch")}</div>
       {:else if rankedResults.length === 0 && !loading && !browseSearchAction}
         <div class="search-palette__state">{$_("ui_noResults")}</div>
       {:else}
         {#if error}
-          <div class="search-palette__notice">{error}</div>
+          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("browse.search.eyebrow")} title={$_("ui_searchFailed")} body={error} />
         {/if}
         {#if rankedResults.length === 0 && !loading}
           <div class="search-palette__state search-palette__state--compact">{$_("ui_noResults")}</div>
@@ -1286,15 +1287,6 @@
   }
   .search-palette__source-state.is-error { color: var(--color-danger); }
   .search-palette__source-state.is-empty { font-weight: var(--weight-normal); }
-  .search-palette__compact-state {
-    margin: 0 var(--sp-2) var(--sp-2);
-    overflow: hidden;
-    color: var(--text-secondary);
-    font-size: var(--font-size-xs);
-    line-height: var(--leading-snug);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .search-palette__group-results.is-work-grid {
     display: flex;
     align-items: flex-start;
@@ -1495,7 +1487,6 @@
   }
   .search-palette__state { padding: var(--sp-8) var(--sp-4); color: var(--text-secondary); text-align: center; }
   .search-palette__state--compact { padding-block: var(--sp-4); }
-  .search-palette__notice { padding: var(--sp-2) var(--sp-3); color: var(--text-secondary); font-size: var(--font-size-xs); }
   @keyframes search-palette-in-narrow {
     from { opacity: 0; transform: translateY(-6px) scale(0.985); }
     to { opacity: 1; transform: translateY(0) scale(1); }

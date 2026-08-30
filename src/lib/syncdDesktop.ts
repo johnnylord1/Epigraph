@@ -27,6 +27,7 @@ export type SyncdDesktopConnectionStatus =
 export interface SyncdBootstrapBundle {
   pairingSessionId: string;
   pairingCode: string;
+  deviceName?: string | null;
   syncdBaseUrl: string;
   profileId: string;
   expiresAtMs: number;
@@ -57,6 +58,8 @@ export interface SyncdHostPairingState {
   expiresAtMs: number;
   status: PairingSessionStatus;
   claimedDeviceId?: string | null;
+  claimedDeviceName?: string | null;
+  claimedPlatform?: string | null;
   requestedScopes: string[];
   bootstrapBundle: string;
   hostReady: boolean;
@@ -73,6 +76,8 @@ export interface SyncdConnectState {
   attemptedOrigin: string;
   fallbackOrigins: string[];
   claimedDeviceId?: string | null;
+  localDeviceName: string;
+  remoteDeviceName?: string | null;
   sessionKey?: string | null;
   error?: string | null;
 }
@@ -82,6 +87,7 @@ export interface PersistedSyncSession {
   localProfileId: string;
   remoteServerId: string;
   remoteProfileId: string;
+  remoteDeviceName?: string | null;
   canonicalOrigin: string;
   fallbackOrigins: string[];
   tlsCertSha256: string;
@@ -165,6 +171,7 @@ export interface SyncdReplicationErrorPayload {
 export interface SyncdRuntimeIdentity {
   pid: number;
   serverId?: string | null;
+  deviceName: string;
 }
 
 export interface SyncdPairedDeviceView {

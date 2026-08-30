@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import en from "../../../messages/en.json";
 import es from "../../../messages/es.json";
 import ja from "../../../messages/ja.json";
+import ptBr from "../../../messages/pt-BR.json";
 import zhCn from "../../../messages/zh-CN.json";
 
 const syncdSources = [
@@ -17,12 +18,16 @@ const syncdSettingsLauncherKeys = [
   "ui_manage",
 ];
 
-const localizedCatalogs = { es, ja, "zh-CN": zhCn } as const;
+const localizedCatalogs = { es, ja, "pt-BR": ptBr, "zh-CN": zhCn } as const;
 const englishCatalog = en as Record<string, string>;
 
 // The manual-origin example is intentionally language-neutral and appears
 // only inside the advanced Options view.
-const englishCopyAllowlist = new Set(["ui_https1921681254777"]);
+const englishCopyAllowlist = new Set([
+  "ui_https1921681254777",
+  "syncd_modal_host",
+  "syncd_status_offline",
+]);
 const internalDetailAllowlist = new Set(["ui_https1921681254777"]);
 const preservedTechnicalTerms = ["Epigraph", "QR", "TLS", "mDNS", "URL", "ID", "TTL"];
 const internalDetailPattern = /(?:https?:\/\/|127\.0\.0\.1|localhost|serverId|profileId|pairingSessionId|tlsCertSha256|bootstrapBundle)/i;
@@ -51,7 +56,7 @@ describe("active Syncd translations", () => {
 
     const settingsSource = readFileSync(resolve("src/components/settings/Settings.svelte"), "utf8");
 
-    expect(keys).toHaveLength(135);
+    expect(keys).toHaveLength(109);
     expect(keys).toContain("settings_inline_desktopSyncPairing");
     expect(keys).toContain("settings_inline_connecting");
     expect(keys).toContain("syncd_status_tls_mismatch");

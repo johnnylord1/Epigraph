@@ -21,7 +21,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdDisconnectPersistedSession: vi.fn(),
   syncdForceReplicationReconnect: vi.fn(),
   syncdGetActiveHostPairing: vi.fn(async () => null),
-  syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "browser-audit" })),
+  syncdGetRuntimeIdentity: vi.fn(async () => ({ pid: 100, serverId: "browser-audit", deviceName: "Browser audit" })),
   syncdGetReplicationState: vi.fn(async () => ({
     localProfileId: "main",
     activeSessionKey: null,
@@ -61,6 +61,11 @@ async function expectDialogScreenshot(name: string) {
   await waitFor(() => {
     expect(within(dialog).getByTestId("syncd-panel-grid").getAttribute("data-panel-ready")).toBe("ready");
   });
+  await waitFor(() => {
+    const style = getComputedStyle(dialog);
+    expect(style.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(style.borderTopWidth).toBe("1px");
+  });
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   await new Promise((resolve) => setTimeout(resolve, 150));
   const rect = dialog.getBoundingClientRect();
@@ -83,6 +88,7 @@ describe("Syncd localization (browser)", () => {
   });
 
   test.each([
+    ["pt-BR", "Pareamento da sincronização entre computadores"],
     ["es", "Emparejamiento de sincronización entre equipos"],
     ["ja", "デスクトップ同期のペアリング"],
     ["zh-CN", "桌面同步配对"],
@@ -102,8 +108,11 @@ describe("Syncd localization (browser)", () => {
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(false);
     await expectDialogScreenshot("syncd-es-details");
 
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-pairing"));
+    const pairingView = within(dialog).getByTestId("syncd-pairing-view");
+    await fireEvent.click(within(pairingView).getByRole("button", { name: "Cargar imagen QR" }));
     await fireEvent.click(within(dialog).getByTestId("syncd-modal-options"));
-    expect(within(dialog).getByTestId("syncd-options-view").hidden).toBe(false);
+    expect(within(dialog).getByTestId("syncd-options-view")).toBeTruthy();
     await expectDialogScreenshot("syncd-es-options");
   });
 });

@@ -85,6 +85,30 @@ function createDriver() {
   };
 }
 
+function createScheduledDriver() {
+  const base = createDriver();
+  let scheduled: (() => void) | null = null;
+  const driver: DiscordPresenceDriver = {
+    ...base.driver,
+    schedule: vi.fn((callback) => {
+      scheduled = callback;
+      return 1;
+    }),
+    cancelScheduled: vi.fn(() => {
+      scheduled = null;
+    }),
+  };
+  return {
+    ...base,
+    driver,
+    runScheduled() {
+      const callback = scheduled;
+      scheduled = null;
+      callback?.();
+    },
+  };
+}
+
 const enabledSettings: DiscordPrivacySettings = {
   discordRpc: true,
   discordRpcShowTitle: true,
@@ -116,6 +140,7 @@ describe("Discord Rich Presence", () => {
     await service.start();
 
     expect(driver.start).toHaveBeenCalledWith(EPIGRAPH_DISCORD_APPLICATION_ID);
+    expect(EPIGRAPH_ICON_ASSET).toBe("aethon_icon");
   });
 
   test("reports an absent Discord client and recovers on a later start", async () => {
@@ -130,8 +155,55 @@ describe("Discord Rich Presence", () => {
     expect(sent).toHaveLength(0);
 
     await service.start();
-    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(true);
+    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(false);
     expect(sent).toHaveLength(1);
+  });
+
+  test("reconnects automatically and publishes the presence requested while Discord was unavailable", async () => {
+    const { driver, sent, runScheduled } = createScheduledDriver();
+    vi.mocked(driver.start)
+      .mockRejectedValueOnce(new Error("Discord client unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const service = new DiscordPresenceService(driver);
+
+    await service.start();
+    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(false);
+    expect(driver.schedule).toHaveBeenCalledTimes(1);
+
+    runScheduled();
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    expect(driver.start).toHaveBeenCalledTimes(2);
+    expect(sent[0].details).toBe("Reading Visible Title");
+  });
+
+  test("does not reconnect an already healthy client when start is requested twice", async () => {
+    const { driver } = createDriver();
+    const service = new DiscordPresenceService(driver);
+
+    await service.start();
+    await service.start();
+
+    expect(driver.start).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not mark a failed activity update as sent and retries it after reconnecting", async () => {
+    const { driver, sent, runScheduled } = createScheduledDriver();
+    vi.mocked(driver.setActivity)
+      .mockRejectedValueOnce(new Error("Discord pipe closed"))
+      .mockImplementation(async (activity: { toString(): string }) => {
+        sent.push(JSON.parse(activity.toString()));
+      });
+    const service = new DiscordPresenceService(driver);
+
+    await service.start();
+    expect(await service.setPresence(progressPayload(0), enabledSettings, "work-change")).toBe(false);
+
+    runScheduled();
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+
+    expect(driver.start).toHaveBeenCalledTimes(2);
+    expect(driver.setActivity).toHaveBeenCalledTimes(2);
   });
 
   test("clears the activity before stopping the RPC thread", async () => {

@@ -108,6 +108,10 @@ async fn build_bootstrap_payload(
     Ok(BootstrapPayloadResponse {
         schema_version: 2,
         server_id: server_identity.server_id,
+        device_name: std::env::var("COMPUTERNAME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "Epigraph Desktop".to_string()),
         pairing_session_id: session.session_id.clone(),
         pairing_code: session.pairing_code.clone(),
         syncd_base_url,

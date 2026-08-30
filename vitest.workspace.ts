@@ -75,6 +75,7 @@ export default defineWorkspace([
         "src/components/settings/SyncdConnectionThemeTokens.test.ts",
         "src/components/settings/SyncdConnectionPanel.test.ts",
         "src/components/settings/ThemeEditorThemeTokens.test.ts",
+        "src/components/settings/SettingsBrandCardThemeTokens.test.ts",
         "src/components/settings/SyncdSessionDetails.test.ts",
         "src/components/settings/SuwayomiUpdatePanel.test.ts",
         "src/components/settings/SuwayomiUpdateThemeTokens.test.ts",

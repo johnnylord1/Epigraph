@@ -380,6 +380,7 @@
     return JSON.stringify({
       privateMode: settings.discordRpcPrivateMode,
       showCover: settings.discordRpcShowCover,
+      improveCovers: settings.discordRpcImproveCovers,
       showProgress: settings.discordRpcShowProgress,
       showTitle: settings.discordRpcShowTitle,
     });

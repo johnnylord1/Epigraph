@@ -182,7 +182,8 @@ describe("SearchPalette contract", () => {
     expect(source).toContain("!sourceLabelAlreadyIncludesLanguage(group.label, group.lang)");
     expect(source).toContain("class:is-compact={groupIsCompact}");
     expect(source).toContain("search-palette__source-state is-empty");
-    expect(source).toContain("search-palette__compact-state");
+    expect(source).toContain('import NocturneState from "../shared/NocturneState.svelte"');
+    expect(source).toContain('eyebrow={group.label} title={$_("ui_searchFailed")} body={group.error}');
     expect(source).not.toContain("{:else if group.results.length === 0}");
     expect(source).toContain("border-top: 1px solid var(--divider)");
   });

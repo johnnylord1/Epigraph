@@ -6,6 +6,9 @@
 
 [data-theme="nocturne"] {
   /* Nocturne implementation of the shared semantic visual roles. */
+  --font-ui: "Manrope", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Manrope", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "DM Mono", "Fira Mono", ui-monospace, monospace;
   --color-popover-surface:
     linear-gradient(
       180deg,
@@ -189,6 +192,10 @@
   --component-toast-error-fg: var(--color-status-error-emphasis);
   --component-toast-info-fg: var(--color-text-accent-emphasis);
   --component-toast-download-fg: var(--color-text-accent-emphasis);
+  --component-toast-success-bg: color-mix(in srgb, var(--component-toast-success-fg) 5%, var(--color-surface));
+  --component-toast-error-bg: color-mix(in srgb, var(--component-toast-error-fg) 5%, var(--color-surface));
+  --component-toast-info-bg: color-mix(in srgb, var(--component-toast-info-fg) 5%, var(--color-surface));
+  --component-toast-download-bg: color-mix(in srgb, var(--component-toast-download-fg) 5%, var(--color-surface));
   --component-toast-progress-track: color-mix(in srgb, var(--color-accent-interactive) 12%, transparent);
   --component-toast-progress-fill: var(--gradient-toast-progress);
   --component-toast-progress-shadow: var(--shadow-toast-progress);
@@ -205,27 +212,27 @@
   --component-toast-close-border-hover: var(--color-toast-border-hover);
   --component-nocturne-state-fg: var(--text-muted);
   --component-nocturne-state-gap: 13px;
-  --component-nocturne-state-panel-padding: 18px 20px;
-  --component-nocturne-state-panel-border: 1px solid color-mix(in srgb, var(--border-dim) 58%, transparent);
-  --component-nocturne-state-panel-radius: 14px;
-  --component-nocturne-state-panel-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 3.5%, transparent), 0 18px 44px color-mix(in srgb, var(--color-shadow-source) 16%, transparent);
-  --component-nocturne-state-compact-padding: 15px 17px;
-  --component-nocturne-state-compact-border: 1px solid color-mix(in srgb, var(--border-dim) 52%, transparent);
-  --component-nocturne-state-compact-radius: 12px;
-  --component-nocturne-state-rail-inset: 12px auto 12px 0;
+  --component-nocturne-state-panel-padding: 14px 16px 15px 14px;
+  --component-nocturne-state-panel-border: 0;
+  --component-nocturne-state-panel-radius: 0;
+  --component-nocturne-state-panel-shadow: none;
+  --component-nocturne-state-compact-padding: 13px 16px 14px 14px;
+  --component-nocturne-state-compact-border: 0;
+  --component-nocturne-state-compact-radius: 0;
+  --component-nocturne-state-rail-inset: 0 auto 0 0;
   --component-nocturne-state-rail-width: 2px;
-  --component-nocturne-state-rail-radius: 99px;
-  --component-nocturne-state-rail-opacity: 0.72;
+  --component-nocturne-state-rail-radius: 0;
+  --component-nocturne-state-rail-opacity: 1;
   --component-nocturne-state-center-width: min(620px, calc(100% - 48px));
-  --component-nocturne-state-icon-size: 34px;
-  --component-nocturne-state-icon-radius: 11px;
-  --component-nocturne-state-icon-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
+  --component-nocturne-state-icon-size: 18px;
+  --component-nocturne-state-icon-radius: 0;
+  --component-nocturne-state-icon-shadow: none;
   --component-nocturne-state-icon-font-size: 18px;
-  --component-nocturne-state-compact-icon-size: 30px;
-  --component-nocturne-state-compact-icon-radius: 10px;
-  --component-nocturne-state-compact-icon-font-size: 15px;
-  --component-nocturne-state-content-gap: 5px;
-  --component-nocturne-state-font-ui: var(--font-ui);
+  --component-nocturne-state-compact-icon-size: 16px;
+  --component-nocturne-state-compact-icon-radius: 0;
+  --component-nocturne-state-compact-icon-font-size: 16px;
+  --component-nocturne-state-content-gap: 4px;
+  --component-nocturne-state-font-ui: var(--font-sans);
   --component-nocturne-state-eyebrow-font-size: var(--text-2xs);
   --component-nocturne-state-eyebrow-line-height: 1;
   --component-nocturne-state-eyebrow-letter-spacing: var(--tracking-wider);
@@ -271,15 +278,11 @@
   --component-nocturne-state-action-danger-bg: color-mix(in srgb, var(--color-state-danger-emphasis) 9%, var(--color-modal));
   --component-nocturne-state-neutral-accent: var(--accent-fg);
   --component-nocturne-state-neutral-glow: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 8%, transparent);
-  --component-nocturne-state-neutral-panel-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-neutral-glow), transparent 38%),
-    linear-gradient(180deg, var(--color-state-panel-top), var(--color-state-panel-bottom));
-  --component-nocturne-state-neutral-compact-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-neutral-glow), transparent 42%),
-    linear-gradient(180deg, var(--color-state-compact-top), var(--color-state-compact-bottom));
-  --component-nocturne-state-neutral-rail-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 72%, transparent);
-  --component-nocturne-state-neutral-icon-bg: color-mix(in srgb, var(--color-state-neutral-accent) 10%, var(--color-state-icon-surface));
-  --component-nocturne-state-neutral-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 22%, transparent);
+  --component-nocturne-state-neutral-panel-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 5%, var(--color-surface));
+  --component-nocturne-state-neutral-compact-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 5%, var(--color-surface));
+  --component-nocturne-state-neutral-rail-bg: var(--component-nocturne-state-neutral-accent);
+  --component-nocturne-state-neutral-icon-bg: transparent;
+  --component-nocturne-state-neutral-icon-border: 0;
   --component-nocturne-state-neutral-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 48%, var(--text-faint));
   --component-nocturne-state-neutral-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 28%, var(--border-dim));
   --component-nocturne-state-neutral-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 9%, var(--bg-overlay));
@@ -288,15 +291,11 @@
   --component-nocturne-state-neutral-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-neutral-accent) 13%, var(--bg-overlay));
   --component-nocturne-state-info-accent: var(--color-state-info-accent);
   --component-nocturne-state-info-glow: color-mix(in srgb, var(--component-nocturne-state-info-accent) 8%, transparent);
-  --component-nocturne-state-info-panel-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-info-glow), transparent 38%),
-    linear-gradient(180deg, var(--color-state-panel-top), var(--color-state-panel-bottom));
-  --component-nocturne-state-info-compact-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-info-glow), transparent 42%),
-    linear-gradient(180deg, var(--color-state-compact-top), var(--color-state-compact-bottom));
-  --component-nocturne-state-info-rail-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 72%, transparent);
-  --component-nocturne-state-info-icon-bg: color-mix(in srgb, var(--color-state-info-accent) 10%, var(--color-state-icon-surface));
-  --component-nocturne-state-info-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-info-accent) 22%, transparent);
+  --component-nocturne-state-info-panel-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 5%, var(--color-surface));
+  --component-nocturne-state-info-compact-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 5%, var(--color-surface));
+  --component-nocturne-state-info-rail-bg: var(--component-nocturne-state-info-accent);
+  --component-nocturne-state-info-icon-bg: transparent;
+  --component-nocturne-state-info-icon-border: 0;
   --component-nocturne-state-info-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 48%, var(--text-faint));
   --component-nocturne-state-info-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-info-accent) 28%, var(--border-dim));
   --component-nocturne-state-info-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 9%, var(--bg-overlay));
@@ -305,15 +304,11 @@
   --component-nocturne-state-info-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-info-accent) 13%, var(--bg-overlay));
   --component-nocturne-state-warning-accent: var(--color-state-warning-accent);
   --component-nocturne-state-warning-glow: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 8%, transparent);
-  --component-nocturne-state-warning-panel-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-warning-glow), transparent 38%),
-    linear-gradient(180deg, var(--color-state-panel-top), var(--color-state-panel-bottom));
-  --component-nocturne-state-warning-compact-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-warning-glow), transparent 42%),
-    linear-gradient(180deg, var(--color-state-compact-top), var(--color-state-compact-bottom));
-  --component-nocturne-state-warning-rail-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 72%, transparent);
-  --component-nocturne-state-warning-icon-bg: color-mix(in srgb, var(--color-state-warning-accent) 10%, var(--color-state-icon-surface));
-  --component-nocturne-state-warning-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-warning-accent) 22%, transparent);
+  --component-nocturne-state-warning-panel-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 5%, var(--color-surface));
+  --component-nocturne-state-warning-compact-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 5%, var(--color-surface));
+  --component-nocturne-state-warning-rail-bg: var(--component-nocturne-state-warning-accent);
+  --component-nocturne-state-warning-icon-bg: transparent;
+  --component-nocturne-state-warning-icon-border: 0;
   --component-nocturne-state-warning-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 48%, var(--text-faint));
   --component-nocturne-state-warning-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 28%, var(--border-dim));
   --component-nocturne-state-warning-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 9%, var(--bg-overlay));
@@ -322,15 +317,11 @@
   --component-nocturne-state-warning-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-warning-accent) 13%, var(--bg-overlay));
   --component-nocturne-state-danger-accent: var(--color-state-danger-accent);
   --component-nocturne-state-danger-glow: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 8%, transparent);
-  --component-nocturne-state-danger-panel-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-danger-glow), transparent 38%),
-    linear-gradient(180deg, var(--color-state-panel-top), var(--color-state-panel-bottom));
-  --component-nocturne-state-danger-compact-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-danger-glow), transparent 42%),
-    linear-gradient(180deg, var(--color-state-compact-top), var(--color-state-compact-bottom));
-  --component-nocturne-state-danger-rail-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 72%, transparent);
-  --component-nocturne-state-danger-icon-bg: color-mix(in srgb, var(--color-state-danger-accent) 10%, var(--color-state-icon-surface));
-  --component-nocturne-state-danger-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-danger-accent) 22%, transparent);
+  --component-nocturne-state-danger-panel-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 5%, var(--color-surface));
+  --component-nocturne-state-danger-compact-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 5%, var(--color-surface));
+  --component-nocturne-state-danger-rail-bg: var(--component-nocturne-state-danger-accent);
+  --component-nocturne-state-danger-icon-bg: transparent;
+  --component-nocturne-state-danger-icon-border: 0;
   --component-nocturne-state-danger-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 48%, var(--text-faint));
   --component-nocturne-state-danger-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 28%, var(--border-dim));
   --component-nocturne-state-danger-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 9%, var(--bg-overlay));
@@ -339,15 +330,11 @@
   --component-nocturne-state-danger-action-primary-bg: color-mix(in srgb, var(--component-nocturne-state-danger-accent) 13%, var(--bg-overlay));
   --component-nocturne-state-success-accent: var(--color-state-success-accent);
   --component-nocturne-state-success-glow: color-mix(in srgb, var(--component-nocturne-state-success-accent) 8%, transparent);
-  --component-nocturne-state-success-panel-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-success-glow), transparent 38%),
-    linear-gradient(180deg, var(--color-state-panel-top), var(--color-state-panel-bottom));
-  --component-nocturne-state-success-compact-bg:
-    linear-gradient(90deg, var(--component-nocturne-state-success-glow), transparent 42%),
-    linear-gradient(180deg, var(--color-state-compact-top), var(--color-state-compact-bottom));
-  --component-nocturne-state-success-rail-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 72%, transparent);
-  --component-nocturne-state-success-icon-bg: color-mix(in srgb, var(--color-state-success-accent) 10%, var(--color-state-icon-surface));
-  --component-nocturne-state-success-icon-border: 1px solid color-mix(in srgb, var(--component-nocturne-state-success-accent) 22%, transparent);
+  --component-nocturne-state-success-panel-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 5%, var(--color-surface));
+  --component-nocturne-state-success-compact-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 5%, var(--color-surface));
+  --component-nocturne-state-success-rail-bg: var(--component-nocturne-state-success-accent);
+  --component-nocturne-state-success-icon-bg: transparent;
+  --component-nocturne-state-success-icon-border: 0;
   --component-nocturne-state-success-eyebrow-fg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 48%, var(--text-faint));
   --component-nocturne-state-success-action-hover-border: color-mix(in srgb, var(--component-nocturne-state-success-accent) 28%, var(--border-dim));
   --component-nocturne-state-success-action-hover-bg: color-mix(in srgb, var(--component-nocturne-state-success-accent) 9%, var(--bg-overlay));
@@ -718,6 +705,17 @@
   --component-settings-button-border: color-mix(in srgb, var(--color-highlight-source) 5%, transparent);
   --component-settings-button-border-hover: color-mix(in srgb, var(--accent-bright) 25%, transparent);
   --component-settings-button-shadow-hover: 0 0 calc(12px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 4%, transparent);
+  --component-settings-brand-title-font-size: calc(11px * var(--hud-scale));
+  --component-settings-brand-title-font-weight: 600;
+  --component-settings-brand-title-line-height: 1.35;
+  --component-settings-brand-title-fg: color-mix(in srgb, var(--text-primary) 92%, transparent);
+  --component-settings-brand-meta-font-size: calc(9.5px * var(--hud-scale));
+  --component-settings-brand-meta-font-weight: 500;
+  --component-settings-brand-meta-line-height: 1.3;
+  --component-settings-brand-meta-fg: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+  --component-settings-brand-action-font-size: calc(10px * var(--hud-scale));
+  --component-settings-brand-action-font-weight: 600;
+  --component-settings-brand-action-letter-spacing: 0.015em;
   --component-settings-danger-fg: color-mix(in srgb, var(--color-settings-danger-text) 88%, transparent);
   --component-settings-danger-fg-hover: var(--color-settings-danger-text-hover);
   --component-settings-danger-bg-hover: color-mix(in srgb, var(--color-settings-danger-surface) 18%, transparent);
@@ -768,7 +766,6 @@
   --component-theme-editor-icon-button-hover-bg: var(--bg-overlay);
   --component-theme-editor-input-placeholder-fg: var(--text-faint);
   --component-theme-editor-input-focus-border: var(--border-focus);
-  --component-theme-editor-status-error-fg: var(--color-error);
   --component-theme-editor-action-border: var(--border-dim);
   --component-theme-editor-action-fg: var(--text-muted);
   --component-theme-editor-action-hover-border: var(--border-strong);
@@ -901,9 +898,9 @@
   --component-syncd-session-popover-offset: 6px;
   --component-syncd-session-title-fg: var(--text-primary);
   --component-syncd-session-summary-fg: var(--text-muted);
-  --component-syncd-modal-width: min(760px, calc(100vw - 48px));
-  --component-syncd-modal-height: min(760px, calc(100vh - 64px));
-  --component-syncd-modal-bg: var(--component-modal-bg);
+  --component-syncd-modal-width: min(610px, calc(100vw - 48px));
+  --component-syncd-modal-height: min(640px, calc(100vh - 64px));
+  --component-syncd-modal-bg: var(--component-settings-modal-bg);
   --component-syncd-modal-border: color-mix(in srgb, var(--accent) 24%, var(--component-modal-border));
   --component-syncd-modal-radius: var(--component-modal-radius);
   --component-syncd-modal-shadow: var(--component-modal-shadow);
@@ -938,7 +935,7 @@
   --component-syncd-progress-transition: var(--duration-normal) var(--easing-standard);
   --component-syncd-progress-animation: 1.4s var(--easing-standard);
   --component-syncd-spinner-animation: 0.8s linear;
-  --component-syncd-qr-column-width: 220px;
+  --component-syncd-qr-column-width: 178px;
   --component-updater-panel-gap: 16px;
   --component-updater-panel-compact-gap: 0;
   --component-updater-summary-margin: 0;
@@ -1160,7 +1157,7 @@
   --component-browse-browsesubtabactive-color:  var(--accent);
   --component-browse-browsesubtabactive-padding-bottom:  2px;
   --component-browse-browsesubtabactive-border-bottom:  1px solid var(--accent);
-  --component-browse-setup-banner-padding:  12px clamp(28px, 3vw, 56px) 0;
+  --component-browse-setup-banner-padding:  0;
   --component-browse-setup-banner-n-state-max-width:  1120px;
   --component-browse-catalogsidebar-width:  calc(230px * var(--hud-scale));
   --component-browse-catalogsidebar-gap:  calc(12px * var(--hud-scale));
@@ -1716,7 +1713,7 @@
   --component-library-refresh-option-accent-bg: color-mix(in srgb, var(--accent-bright) 42%, transparent);
   --component-library-refresh-option-accent-shadow: 0 0 12px color-mix(in srgb, var(--accent-bright) 38%, transparent);
   --component-sources-root-radius: clamp(18px, 1.6vw, 26px);
-  --component-sources-scale: var(--component-library-scale);
+  --component-sources-flat-radius: 0;
   --component-sources-root-border: color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
   --component-sources-root-bg:
     radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--accent-bright) 5.5%, transparent), transparent 30%),
@@ -1727,12 +1724,9 @@
   --component-sources-subtle-fg: color-mix(in srgb, var(--text-secondary) 50%, transparent);
   --component-sources-body-fg: color-mix(in srgb, var(--text-secondary) 62%, transparent);
   --component-sources-strong-fg: color-mix(in srgb, var(--color-sources-text-bright-source) 94%, transparent);
-  --component-sources-tabs-radius: 12px;
-  --component-sources-tabs-bg: color-mix(in srgb, var(--color-recessed-control-source) 58%, transparent);
-  --component-sources-tabs-border: color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
   --component-sources-tab-radius: 9px;
   --component-sources-tab-fg: color-mix(in srgb, var(--text-secondary) 58%, transparent);
-  --component-sources-tab-active-bg: color-mix(in srgb, var(--accent-bright) 76%, transparent);
+  --component-sources-tab-active-fg: var(--color-text-tab-active);
   --component-sources-primary-ink: var(--color-sources-primary-ink-source);
   --component-sources-search-radius: 11px;
   --component-sources-search-bg: color-mix(in srgb, var(--color-sources-control-surface-source) 62%, transparent);
@@ -1747,7 +1741,6 @@
   --component-sources-control-hover-bg: color-mix(in srgb, var(--accent-bright) 10%, transparent);
   --component-sources-control-hover-border: color-mix(in srgb, var(--accent-bright) 16%, transparent);
   --component-sources-control-hover-fg: var(--accent);
-  --component-sources-disabled-opacity: 0.45;
   --component-sources-setup-z-index: 9999;
   --component-sources-overlay-z-index: 2147483000;
   --component-sources-overlay-bg:
@@ -1773,23 +1766,44 @@
   --component-sources-panel-bg: color-mix(in srgb, var(--color-highlight-source) 2.2%, transparent);
   --component-sources-panel-border: color-mix(in srgb, var(--color-highlight-source) 6%, transparent);
   --component-sources-panel-divider: color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
-  --component-sources-hint-radius: 12px;
   --component-sources-hint-bg: color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
-  --component-sources-hint-border: color-mix(in srgb, var(--color-highlight-source) 5.5%, transparent);
   --component-sources-hint-fg: color-mix(in srgb, var(--text-secondary) 62%, transparent);
   --component-sources-field-radius: 13px;
   --component-sources-field-bg: color-mix(in srgb, var(--color-sources-field-surface-source) 82%, transparent);
   --component-sources-field-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);
   --component-sources-field-fg: color-mix(in srgb, var(--color-sources-text-bright-source) 86%, transparent);
   --component-sources-field-error-border: color-mix(in srgb, var(--color-sources-field-error-source) 45%, transparent);
+  --component-sources-apk-picker-radius: 12px;
+  --component-sources-apk-picker-bg: color-mix(in srgb, var(--color-sources-field-surface-source) 62%, transparent);
+  --component-sources-apk-picker-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);
+  --component-sources-apk-picker-hover-bg: color-mix(in srgb, var(--color-sources-field-surface-source) 78%, transparent);
+  --component-sources-apk-picker-hover-border: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-sources-apk-button-radius: 9px;
+  --component-sources-apk-button-bg: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
+  --component-sources-apk-button-border: color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
+  --component-sources-apk-button-fg: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  --component-sources-apk-button-hover-bg: color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-sources-apk-button-hover-border: color-mix(in srgb, var(--accent-bright) 20%, transparent);
+  --component-sources-apk-button-hover-fg: var(--text-primary);
+  --component-sources-apk-file-fg: color-mix(in srgb, var(--color-sources-text-bright-source) 90%, transparent);
+  --component-sources-apk-meta-fg: color-mix(in srgb, var(--text-secondary) 48%, transparent);
+  --component-sources-apk-focus-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-bright) 20%, transparent);
+  --component-sources-apk-install-bg: color-mix(in srgb, var(--accent-bright) 12%, transparent);
+  --component-sources-apk-install-border: color-mix(in srgb, var(--accent-bright) 24%, transparent);
+  --component-sources-apk-install-fg: color-mix(in srgb, var(--accent-bright) 88%, var(--text-primary));
+  --component-sources-apk-install-hover-bg: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-sources-apk-install-hover-border: color-mix(in srgb, var(--accent-bright) 38%, transparent);
+  --component-sources-apk-install-hover-fg: var(--text-primary);
+  --component-sources-apk-install-disabled-bg: color-mix(in srgb, var(--color-highlight-source) 3%, transparent);
+  --component-sources-apk-install-disabled-border: color-mix(in srgb, var(--color-highlight-source) 6%, transparent);
+  --component-sources-apk-install-disabled-fg: color-mix(in srgb, var(--text-secondary) 42%, transparent);
+  --component-sources-apk-install-success-bg: color-mix(in srgb, var(--color-success) 10%, transparent);
+  --component-sources-apk-install-success-border: color-mix(in srgb, var(--color-success) 26%, transparent);
+  --component-sources-apk-install-success-fg: var(--color-success);
   --component-sources-action-radius: 8px;
   --component-sources-primary-bg: color-mix(in srgb, var(--accent-bright) 78%, transparent);
-  --component-sources-primary-bg-success: color-mix(in srgb, var(--accent-bright) 90%, transparent);
   --component-sources-primary-border: color-mix(in srgb, var(--color-highlight-source) 12%, transparent);
   --component-sources-primary-shadow: 0 14px 30px color-mix(in srgb, var(--accent-bright) 16%, transparent);
-  --component-sources-ghost-bg: color-mix(in srgb, var(--color-highlight-source) 1.2%, transparent);
-  --component-sources-ghost-border: color-mix(in srgb, var(--color-highlight-source) 4.5%, transparent);
-  --component-sources-ghost-fg: color-mix(in srgb, var(--text-secondary) 58%, transparent);
   --component-sources-danger-fg: color-mix(in srgb, var(--color-sources-danger-source) 82%, transparent);
   --component-sources-danger-border: color-mix(in srgb, var(--color-sources-danger-source) 18%, transparent);
   --component-sources-error-fg: color-mix(in srgb, var(--color-sources-danger-source) 72%, transparent);
@@ -1797,19 +1811,18 @@
   --component-sources-warning-bg: color-mix(in srgb, var(--color-sources-warning-source) 8%, transparent);
   --component-sources-warning-border: color-mix(in srgb, var(--color-sources-warning-source) 14%, transparent);
   --component-sources-scrollbar-thumb: color-mix(in srgb, var(--accent-bright) 18%, transparent);
+  --component-sources-footer-action-radius: 8px;
+  --component-sources-footer-action-bg: transparent;
+  --component-sources-footer-action-fg: var(--text-secondary);
+  --component-sources-footer-action-hover-bg: color-mix(in srgb, var(--accent-bright) 7%, transparent);
+  --component-sources-footer-action-hover-fg: var(--accent);
+  --component-sources-footer-action-disabled-fg: var(--text-tertiary);
   --component-sources-repo-row-radius: 11px;
   --component-sources-repo-row-bg: color-mix(in srgb, var(--color-sources-repo-row-source) 92%, transparent);
   --component-sources-repo-row-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);
   --component-sources-repo-action-radius: 9px;
   --component-sources-repo-action-bg: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
-  --component-sources-table-head-radius: 10px 10px 0 0;
-  --component-sources-table-head-bg: color-mix(in srgb, var(--color-surface-ink-raised-source) 58%, transparent);
-  --component-sources-table-head-border: color-mix(in srgb, var(--color-highlight-source) 4.5%, transparent);
-  --component-sources-table-head-border-bottom: color-mix(in srgb, var(--color-highlight-source) 3.5%, transparent);
   --component-sources-table-head-fg: color-mix(in srgb, var(--text-secondary) 46%, transparent);
-  --component-sources-card-radius: 0;
-  --component-sources-card-end-radius: 0 0 10px 10px;
-  --component-sources-card-bg: color-mix(in srgb, var(--color-surface-ink-raised-source) 42%, transparent);
   --component-sources-card-border: color-mix(in srgb, var(--color-highlight-source) 3.8%, transparent);
   --component-sources-card-hover-bg: color-mix(in srgb, var(--color-sources-card-hover-source) 72%, transparent);
   --component-sources-card-hover-border: color-mix(in srgb, var(--accent-bright) 12%, transparent);
@@ -1823,13 +1836,10 @@
   --component-sources-badge-bg: color-mix(in srgb, var(--color-highlight-source) 2.4%, transparent);
   --component-sources-badge-border: color-mix(in srgb, var(--color-highlight-source) 5.2%, transparent);
   --component-sources-badge-fg: color-mix(in srgb, var(--text-secondary) 62%, transparent);
-  --component-sources-installed-bg: color-mix(in srgb, var(--accent-bright) 7%, transparent);
-  --component-sources-installed-border: color-mix(in srgb, var(--accent-bright) 12%, transparent);
   --component-sources-installed-fg: color-mix(in srgb, var(--color-sources-installed-source) 82%, transparent);
   --component-sources-update-bg: color-mix(in srgb, var(--color-sources-warning-source) 8%, transparent);
   --component-sources-update-border: color-mix(in srgb, var(--color-sources-warning-source) 14%, transparent);
   --component-sources-update-fg: color-mix(in srgb, var(--color-sources-warning-source) 80%, transparent);
-  --component-sources-available-bg: color-mix(in srgb, var(--color-highlight-source) 1.4%, transparent);
   --component-sources-available-border: color-mix(in srgb, var(--color-highlight-source) 4%, transparent);
   --component-sources-available-fg: color-mix(in srgb, var(--text-secondary) 52%, transparent);
   --component-sources-variant-radius: 9px;
@@ -1850,7 +1860,6 @@
   --component-sources-settings-icon-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);
   --component-sources-settings-meta-radius: 999px;
   --component-sources-settings-close-radius: 8px;
-  --component-sources-settings-section-radius: 12px;
   --component-sources-settings-item-radius: 9px;
   --component-sources-toggle-track-bg: color-mix(in srgb, var(--color-highlight-source) 18%, transparent);
   --component-sources-toggle-knob-bg: color-mix(in srgb, var(--color-sources-text-bright-source) 85%, transparent);
@@ -1961,8 +1970,6 @@
   --component-migrate-modal-row-active-bg: color-mix(in srgb, var(--accent-bright) 12%, transparent);
   --component-migrate-modal-row-active-border: color-mix(in srgb, var(--accent-bright) 18%, transparent);
   --component-migrate-modal-warning-fg: var(--color-migrate-warning-source);
-  --component-migrate-modal-warning-bg: color-mix(in srgb, var(--color-migrate-warning-source) 8%, transparent);
-  --component-migrate-modal-warning-border: color-mix(in srgb, var(--color-migrate-warning-source) 25%, transparent);
   --component-migrate-modal-step-opacity: 0.4;
   --component-migrate-modal-step-done-opacity: 0.6;
   --component-migrate-modal-link-hover-opacity: 0.75;
@@ -1971,9 +1978,6 @@
   --component-novel-migrate-modal-width: 640px;
   --component-novel-migrate-modal-max-height: 82vh;
   --component-novel-migrate-modal-z-index: 1;
-  --component-novel-migrate-notice-layer: linear-gradient(135deg, color-mix(in srgb, var(--accent-bright) 9%, transparent), color-mix(in srgb, var(--accent-bright) 2.5%, transparent));
-  --component-novel-migrate-notice-border: color-mix(in srgb, var(--accent-bright) 14%, transparent);
-  --component-novel-migrate-notice-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 2.5%, transparent);
   --component-novel-migrate-ready-border: color-mix(in srgb, var(--color-success) 18%, var(--border-dim));
   --component-novel-migrate-blocked-border: color-mix(in srgb, var(--color-error) 18%, var(--border-dim));
   --component-novel-migrate-disabled-opacity: 0.35;

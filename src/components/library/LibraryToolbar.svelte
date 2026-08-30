@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, MagnifyingGlass, SortAscending } from "phosphor-svelte";
+  import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, SortAscending } from "phosphor-svelte";
   import type { BooksTypeOptionVM, LibraryDisplaySettings, LibraryToolbarVM } from "../../lib/library/contracts";
   import { _ } from "../../lib/i18n/runtime";
   import BooksTypeSelector from "./BooksTypeSelector.svelte";
@@ -133,7 +133,7 @@
 <div class="toolbar" class:toolbar--actions-only={!showSearch && showActions}>
   {#if showSearch}
     <div class="n-search library-search" data-component="search-bar">
-      <MagnifyingGlass size={13} class="n-search__icon" weight="light" />
+      <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
       <input
         class="n-search__input"
         role="combobox"

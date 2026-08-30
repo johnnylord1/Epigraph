@@ -458,7 +458,7 @@
         {#if folderPickerOpen}
           <div class="fp-menu">
             {#if allBookCategories.length === 0 && !folderCreating}
-              <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Folders" title={$_("detail_folders_emptyTitle")} body="Create a folder in Settings to organize this novel." />
+              <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("detail.actions.folders")} title={$_("detail_folders_emptyTitle")} body={$_("feedback.createFolderNovel")} />
             {/if}
             {#each allBookCategories as category}
               <button class="fp-item" class:fp-item-active={assignedNovelCategoryIds.includes(category.id)} type="button" onclick={() => toggleNovelFolder(category.id)}>
@@ -595,7 +595,7 @@
 
     {#snippet chapterList()}
       {#if !displayedNovel || displayedNovel.chapters.length === 0}
-        <NocturneState layout="compact" tone="info" icon="books" eyebrow="Chapters" title={$_("ui_noChapterMetadata")} body="This source did not expose chapter metadata for this novel." />
+        <NocturneState layout="compact" tone="info" icon="books" eyebrow={$_("detail.stats.chapters")} title={$_("ui_noChapterMetadata")} body={$_("feedback.noChapterMetadataBody")} />
       {:else}
         <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
           {#if viewMode === "grid"}
@@ -693,7 +693,7 @@
       </div>
       <div class="link-list">
         {#if linkPickerResults.length === 0}
-          <NocturneState layout="compact" tone="info" icon="search" eyebrow="Links" title={$_("ui_noNovelsToLink")} body="Add another novel to your library before linking duplicates." />
+          <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_noNovelsToLink")} body={$_("feedback.addNovelBeforeLink")} />
         {:else}
           {#each linkPickerResults as novel (novel.id)}
             {@const isLinked = linkedNovelIds.includes(novel.id)}

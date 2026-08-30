@@ -70,4 +70,29 @@ describe("Sources theme token contract", () => {
     expect(source).toMatch(/function handleUtilityPanelKeydown\(event: KeyboardEvent\)/);
     expect(source).toMatch(/<svelte:window onkeydown=\{handleUtilityPanelKeydown\}\s*\/>/);
   });
+
+  it("uses a readable foreground token for the active source tab", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+    const activeTabRule = source.match(/\.tab\.active\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(activeTabRule).toContain("var(--component-sources-tab-active-fg)");
+    expect(activeTabRule).not.toContain("var(--component-sources-primary-ink)");
+  });
+
+  it("keeps the footer refresh action readable as a secondary control", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+    const footerButtonRule = source.match(/\.sourcesFooter button\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(footerButtonRule).toContain("var(--component-sources-footer-action-fg)");
+    expect(footerButtonRule).not.toContain("var(--component-sources-primary-ink)");
+  });
+
+  it("keeps the APK install action readable with dedicated modal tokens", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+    const installButtonRule = source.match(/\.apkInstallButton\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(installButtonRule).toContain("var(--component-sources-apk-install-bg)");
+    expect(installButtonRule).toContain("var(--component-sources-apk-install-fg)");
+    expect(installButtonRule).not.toContain("var(--component-sources-primary-ink)");
+  });
 });

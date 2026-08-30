@@ -2,13 +2,17 @@
   import { translate } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import {
+    ArrowCircleUp,
     ArrowsClockwise,
     CaretDown,
     CaretRight,
     Check,
+    CheckCircle,
     CircleNotch,
+    FileArrowUp,
     GitBranch,
     MagnifyingGlass,
+    Package,
     Plus,
     X,
   } from "phosphor-svelte";
@@ -80,7 +84,6 @@
     { id: "installed", labelKey: "sources.filters.installed" },
     { id: "available", labelKey: "sources.filters.available" },
     { id: "updates", labelKey: "sources.filters.updates" },
-    { id: "all", labelKey: "sources.filters.all" },
   ];
   const LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL =
     "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
@@ -164,6 +167,8 @@
   });
 
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
+  const installedCount = $derived(extensions.filter((extension) => extension.isInstalled).length);
+  const availableCount = $derived(extensions.filter((extension) => !extension.isInstalled).length);
   const updateAllLabel = $derived(updateCount > 0
     ? $_("sources.actions.updateAllCount", { count: updateCount })
     : $_("sources.actions.updateAll"));
@@ -501,34 +506,50 @@
     return run === extensionLoadRun && (mode === "novels") === isNovelMode;
   }
 
-  async function fetchMangaExtensionNodes() {
-    try {
+  async function fetchMangaExtensionCatalog(refreshConfiguredCatalog = false) {
+    const readCatalog = async () => {
       const runtime = await getManagedSourceRuntime();
-      return runtime.listExtensions();
+      const [cached, stores] = await Promise.all([
+        runtime.listExtensions(),
+        runtime.listStores(),
+      ]);
+      const nodes = stores.length === 0
+        ? cached.filter((extension) => extension.isInstalled)
+        : refreshConfiguredCatalog || cached.length === 0
+          ? await runtime.refreshExtensions()
+          : cached;
+      return {
+        nodes,
+        repoUrls: stores.map((store) => store.indexUrl),
+      };
+    };
+
+    try {
+      return await readCatalog();
     } catch (firstError) {
       if (!(await ensureMangaServerAwake())) throw firstError;
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
         throw firstError;
       }
-      const runtime = await getManagedSourceRuntime();
-      return runtime.listExtensions();
+      return readCatalog();
     }
   }
 
   async function loadMangaExtensions(run = ++extensionLoadRun) {
     try {
-      const [nodes, compatibilityState] = await Promise.all([
-        fetchMangaExtensionNodes(),
+      const [catalog, compatibilityState] = await Promise.all([
+        fetchMangaExtensionCatalog(),
         loadExtensionCompatibilityState({
           profileId: store.runtimeResolvedLocalProfileId ?? "main",
           serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
         }).catch(() => null),
       ]);
       if (isCurrentExtensionLoad(run, "manga")) {
-        const next = nodes.map(toManagedMangaRuntimeExtension);
+        const next = catalog.nodes.map(toManagedMangaRuntimeExtension);
         mangaExtensionCatalogLoaded = true;
         lastMangaExtensions = next;
         extensions = next;
+        repos = catalog.repoUrls;
         compatibilityReports = compatibilityState?.reports ?? [];
         extensionLoadError = null;
       }
@@ -686,13 +707,13 @@
       if (!(await waitForSuwayomiGraphqlReady("extensions", { attempts: 8, delayMs: 800, timeoutMs: 5000 }))) {
         throw new Error(translate("sources_runtime_suwayomiStarting"));
       }
-      const runtime = await getManagedSourceRuntime();
-      const refreshedExtensions = await runtime.refreshExtensions();
+      const catalog = await fetchMangaExtensionCatalog(true);
       if (isCurrentExtensionLoad(run, "manga")) {
-        const next = refreshedExtensions.map(toManagedMangaRuntimeExtension);
+        const next = catalog.nodes.map(toManagedMangaRuntimeExtension);
         mangaExtensionCatalogLoaded = true;
         lastMangaExtensions = next;
         extensions = next;
+        repos = catalog.repoUrls;
         extensionLoadError = null;
       }
     } catch (error) {
@@ -741,6 +762,7 @@
       }
       repos = (await runtime.listStores()).map((store) => store.indexUrl);
       bumpContentSetupVersion();
+      await fetchFromRepo();
     } catch (error) {
       repoError = error instanceof Error ? error.message : translate("ui_couldNotSaveRepository");
     } finally {
@@ -1151,8 +1173,8 @@
     selectedPkgName = null;
   }
 
-  async function removeExtension(event: MouseEvent, extension: ManagedExtension) {
-    event.stopPropagation();
+  async function removeExtension(extension: ManagedExtension, event?: MouseEvent) {
+    event?.stopPropagation();
     if (extension.kind === "novels") {
       if (!novelRepositoryState || !extension.novelPluginId) return;
       startExtensionOperation(extension.pkgName, "remove");
@@ -1400,7 +1422,7 @@
     if (extension.hasUpdate) {
       void updateExtension(event, extension);
     } else if (extension.isInstalled) {
-      void removeExtension(event, extension);
+      void removeExtension(extension, event);
     } else {
       void installExtension(extension);
     }
@@ -1492,30 +1514,64 @@
 
 <svelte:window onkeydown={handleUtilityPanelKeydown} />
 
-<div class="sourcesRoot" class:hasSettingsPanel={!!selectedExtension}>
+<div
+  class="sourcesRoot"
+  class:hasSettingsPanel={!!selectedExtension}
+  class:updatesMode={filter === "updates"}
+  data-sources-workspace
+>
   <section class="sourcesMain">
     <div class="sourcesHeader">
       <div class="sourcesTitle">
-        <p class="eyebrow">{$_("sources.eyebrow")}</p>
         <h2>{sourceTitle}</h2>
-        <span>{sourceCountLabel}</span>
+        <span>{installedCount} {$_("sources.filters.installed")} · {availableCount} {$_("sources.filters.available")}</span>
       </div>
 
+      <div class="headerActions">
+        {#if isNovelMode}
+          <button class="headerAction" class:active={utilityPanel === "novelRepos"} type="button" title={$_("sources.repositories.manageNovel")} onclick={() => openUtilityPanel("novelRepos")}>
+            <GitBranch size={15} weight="bold" />
+            <span>{$_("sources.repositories.novelTitle")}</span>
+          </button>
+        {:else}
+          <button class="headerAction" class:active={utilityPanel === "repos"} type="button" title={$_("sources.repositories.manageManga")} onclick={() => openUtilityPanel("repos")}>
+            <GitBranch size={15} weight="bold" />
+            <span>{$_("sources.repositories.mangaTitle")}</span>
+          </button>
+          <button class="headerAction headerActionPrimary" class:active={utilityPanel === "apk"} type="button" title={$_("sources.apk.title")} onclick={() => openUtilityPanel("apk")}>
+            <Plus size={15} weight="bold" />
+            <span>{$_("sources.actions.install")} APK</span>
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="sourcesSurface">
       <div class="sourceTools">
         <div class="tabs">
           {#each activeFilters as item}
-            <button class="tab" class:active={filter === item.id} type="button" onclick={() => (filter = item.id)}>
-              {item.id === "updates" && updateCount > 0 ? $_("sources.filters.updatesCount", { count: updateCount }) : item.label}
+            {@const itemCount = item.id === "installed" ? installedCount : item.id === "available" ? availableCount : updateCount}
+            <button
+              class="tab"
+              class:active={filter === item.id}
+              type="button"
+              aria-label={item.label}
+              onclick={() => {
+                selectedPkgName = null;
+                filter = item.id;
+              }}
+            >
+              {item.label}<small>{itemCount}</small>
             </button>
           {/each}
         </div>
 
-        <div class="searchWrap">
-          <MagnifyingGlass size={13} weight="bold" />
-          <input bind:value={search} placeholder={searchPlaceholder} />
-        </div>
-
-        {#if updateCount > 0}
+        {#if filter !== "updates"}
+          <div class="searchWrap">
+            <MagnifyingGlass size={13} weight="bold" />
+            <input bind:value={search} placeholder={searchPlaceholder} />
+          </div>
+        {:else if updateCount > 0}
           <button class="toolbarActionBtn" type="button" disabled={updatingAll} onclick={updateAllExtensions}>
             {#if updatingAll}
               <CircleNotch size={13} weight="bold" class="anim-spin" />
@@ -1525,29 +1581,12 @@
             {/if}
           </button>
         {/if}
-
-        {#if isNovelMode}
-          <button class="iconBtn" class:active={utilityPanel === "novelRepos"} type="button" title={$_("sources.repositories.manageNovel")} onclick={() => openUtilityPanel("novelRepos")}>
-            <GitBranch size={15} weight="bold" />
-          </button>
-        {:else}
-          <button class="iconBtn" class:active={utilityPanel === "repos"} type="button" title={$_("sources.repositories.manageManga")} onclick={() => openUtilityPanel("repos")}>
-            <GitBranch size={15} weight="bold" />
-          </button>
-          <button class="iconBtn" class:active={utilityPanel === "apk"} type="button" title={$_("sources.apk.title")} onclick={() => openUtilityPanel("apk")}>
-            <Plus size={15} weight="bold" />
-          </button>
-        {/if}
-        <button class="iconBtn" type="button" title={isNovelMode ? $_("sources.actions.refreshNovelSources") : $_("sources.actions.refreshRepositories")} disabled={refreshing} onclick={fetchFromRepo}>
-          <ArrowsClockwise size={15} weight="bold" class={refreshing ? "anim-spin" : ""} />
-        </button>
       </div>
-    </div>
 
     {#if isNovelMode && utilityPanel === "novelRepos"}
       <div class="repoOverlay" role="presentation">
         <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.repositories.closePanel")} onclick={() => (utilityPanel = null)}></button>
-        <section class="utilityPanel repoWindow novelRepoPanel">
+        <div class="utilityPanel repoWindow novelRepoPanel" role="dialog" aria-modal="true" aria-label={$_("sources.repositories.novelTitle")}>
         <div class="utilityHeader">
           <div class="utilityHeaderCopy">
             <strong>{$_("sources.repositories.novelTitle")}</strong>
@@ -1613,26 +1652,25 @@
             <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.repositories.errorEyebrow")} title={$_("sources.repositories.errorTitle")} body={repoError} />
           {/if}
         {/if}
-        </section>
+        </div>
       </div>
     {/if}
 
     {#if !isNovelMode && utilityPanel === "apk"}
       <div class="repoOverlay" role="presentation">
         <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.apk.closePanel")} onclick={() => openUtilityPanel("apk")}></button>
-        <section class="utilityPanel repoWindow repoWindowNarrow">
+        <div class="utilityPanel repoWindow repoWindowNarrow apkInstallDialog" role="dialog" aria-modal="true" aria-label={$_("sources.apk.title")}>
           <div class="utilityHeader">
             <div class="utilityHeaderCopy">
               <strong>{$_("sources.apk.title")}</strong>
               <span>{$_("sources.apk.subtitle")}</span>
             </div>
-            <button class="closeUtility" type="button" onclick={() => openUtilityPanel("apk")}><X size={14} weight="bold" /></button>
+            <button class="closeUtility" type="button" aria-label={$_("sources.apk.closePanel")} onclick={() => openUtilityPanel("apk")}><X size={14} weight="bold" /></button>
           </div>
-          <div class="repoHint">
-            {$_("sources.apk.hint")}
-          </div>
-          <div class="inlineForm">
+          <p class="apkInstallHint">{$_("sources.apk.hint")}</p>
+          <div class="apkFilePicker" class:error={installError}>
             <input
+              class="apkFileInput"
               class:error={installError}
               type="file"
               accept=".apk,application/vnd.android.package-archive"
@@ -1640,7 +1678,17 @@
               disabled={installingExternal}
               onchange={selectExternalFile}
             />
-            <button type="button" class:success={installSuccess} disabled={installingExternal} onclick={installExternal}>
+            <button class="apkChooseFile" type="button" disabled={installingExternal} onclick={() => externalFileInput?.click()}>
+              <FileArrowUp size={14} weight="regular" />
+              <span>{$_("ui_chooseFile")}</span>
+            </button>
+            <div class="apkFileCopy">
+              <strong>{externalFile?.name ?? $_("sources.apk.noFile")}</strong>
+              <span>{externalFile ? $_("ui_selectedFile") : ".apk"}</span>
+            </div>
+          </div>
+          <div class="apkInstallActions">
+            <button class="apkInstallButton" type="button" class:success={installSuccess} disabled={installingExternal} onclick={installExternal}>
               {#if installingExternal}
                 <CircleNotch size={13} weight="bold" class="anim-spin" />
               {:else if installSuccess}
@@ -1653,14 +1701,14 @@
           {#if installError}
             <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.apk.errorEyebrow")} title={$_("sources.apk.errorTitle")} body={installError} />
           {/if}
-        </section>
+        </div>
       </div>
     {/if}
 
     {#if !isNovelMode && utilityPanel === "repos"}
       <div class="repoOverlay" role="presentation">
         <button class="repoOverlayBackdrop" type="button" aria-label={$_("sources.repositories.closePanel")} onclick={() => (utilityPanel = null)}></button>
-        <section class="utilityPanel repoWindow novelRepoPanel">
+        <div class="utilityPanel repoWindow novelRepoPanel" role="dialog" aria-modal="true" aria-label={$_("sources.repositories.mangaTitle")}>
           <div class="utilityHeader">
             <div class="utilityHeaderCopy">
               <strong>{$_("sources.repositories.mangaTitle")}</strong>
@@ -1714,7 +1762,7 @@
             <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("sources.repositories.errorEyebrow")} title={$_("sources.repositories.errorTitle")} body={repoError} />
           {/if}
         {/if}
-        </section>
+        </div>
       </div>
     {/if}
 
@@ -1772,19 +1820,19 @@
         {/if}
       </div>
     {:else}
-      <div class="extensionList">
-        <div class="extensionTableHead" aria-hidden="true">
-          <span>{$_("sources.table.source")}</span>
-          <span>{$_("sources.table.language")}</span>
-          <span>{$_("sources.table.version")}</span>
-          <span>{$_("sources.table.status")}</span>
-          <span>{$_("sources.table.repository")}</span>
-          <span>{$_("sources.table.actions")}</span>
-        </div>
+      <div class="extensionList" data-sources-updates-view={filter === "updates" ? "" : undefined}>
+        {#if filter === "updates"}
+          <div class="updatesHeading">
+            <div>
+              <strong>{$_("sources.filters.updates")}</strong>
+              <span>{sourceCountLabel}</span>
+            </div>
+            <ArrowCircleUp size={17} weight="bold" />
+          </div>
+        {/if}
         {#each visibleGroups as { base, primary, variants }}
           {@const isExpanded = expanded.has(base)}
           {@const hasVariants = variants.length > 0}
-          {@const compatibilityReport = latestCompatibilityReport(primary.pkgName)}
           <div
             class="extensionCard"
             class:selected={selectedPkgName === primary.pkgName}
@@ -1802,39 +1850,20 @@
               onerror={(event) => applyServiceIconFallback(event, "extension")}
             />
             <div class="extensionCardCopy">
-              <div class="extensionTitleRow">
-                <h3>{base}</h3>
-              </div>
-              <p>{primary.pkgName}</p>
+              <h3>{base}</h3>
+              <p>{primary.kind === "novels" ? primary.site || "LNReader" : primary.apkName || "Suwayomi"}</p>
             </div>
 
-            <div class="tableCell tableCellLang">
-              <span>{primary.lang.toUpperCase()}</span>
-              {#if hasVariants}<small>{$_("sources.card.variants", { count: variants.length + 1 })}</small>{/if}
-            </div>
+            <span class="extensionLanguage">{primary.lang.toUpperCase()}{#if hasVariants} · {variants.length + 1}{/if}</span>
 
-            <div class="tableCell">
-              <span>v{primary.versionName}</span>
-            </div>
-
-            <div class="tableCell tableCellStatus">
+            <div class="extensionState" aria-hidden="true">
               {#if primary.hasUpdate}
-                <span class="updateBadge">{$_("sources.actions.update")}</span>
+                <ArrowCircleUp size={16} weight="bold" />
               {:else if primary.isInstalled}
-                <span class="installedBadge">{$_("sources.status.installed")}</span>
+                <CheckCircle size={16} weight="bold" />
               {:else}
-                <span class="availableBadge">{$_("sources.status.available")}</span>
+                <Package size={16} weight="bold" />
               {/if}
-              {#if compatibilityReport}
-                <small class:compatibilityPassed={compatibilityReport.aggregateStatus === "PASS"}>
-                  {compatibilityStatusLabel(compatibilityReport)}
-                </small>
-              {/if}
-            </div>
-
-            <div class="tableCell tableCellRepo">
-              <span>{primary.kind === "novels" ? primary.site || "LNReader" : primary.apkName || "Suwayomi"}</span>
-              <small>{primary.kind === "novels" ? primary.repositoryUrl || $_("sources.repositories.novelRepository") : $_("sources.repositories.extensionRepository")}</small>
             </div>
 
             <div class="cardActions">
@@ -1842,10 +1871,7 @@
                 <CircleNotch size={16} weight="bold" class="anim-spin" />
               {:else if primary.hasUpdate}
                 <button class="actionBtn" type="button" onclick={(event) => updateExtension(event, primary)}>{$_("sources.actions.update")}</button>
-                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>{$_("sources.actions.remove")}</button>
-              {:else if primary.isInstalled}
-                <button class="ghostBtn" type="button" onclick={(event) => removeExtension(event, primary)}>{$_("sources.actions.remove")}</button>
-              {:else}
+              {:else if !primary.isInstalled}
                 <button class="actionBtn" type="button" onclick={(event) => installFromList(event, primary)}>{$_("sources.actions.install")}</button>
               {/if}
 
@@ -1908,7 +1934,48 @@
         {/if}
       </div>
     {/if}
+      <footer class="sourcesFooter">
+        <span>{sourceCountLabel}</span>
+        <button
+          type="button"
+          disabled={refreshing}
+          onclick={fetchFromRepo}
+        >
+          {#if refreshing}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}<ArrowsClockwise size={12} weight="bold" />{/if}
+          {$_("sources.actions.refresh")}
+        </button>
+      </footer>
+    </div>
   </section>
+
+  {#if !selectedExtension && filter !== "updates" && !loading}
+    <aside class="sourcesOverview" data-sources-overview>
+      <div class="overviewHeader">
+        <span>{$_("sources.eyebrow")}</span>
+        <strong>{sourceTitle}</strong>
+      </div>
+      <button type="button" onclick={() => (filter = "installed")}>
+        <CheckCircle size={16} weight="bold" />
+        <span><strong>{$_("sources.filters.installed")}</strong><small>{installedCount}</small></span>
+        <CaretRight size={13} weight="bold" />
+      </button>
+      <button type="button" onclick={() => (filter = "available")}>
+        <Package size={16} weight="bold" />
+        <span><strong>{$_("sources.filters.available")}</strong><small>{availableCount}</small></span>
+        <CaretRight size={13} weight="bold" />
+      </button>
+      <button class:overviewWarning={updateCount > 0} type="button" onclick={() => (filter = "updates")}>
+        <ArrowCircleUp size={16} weight="bold" />
+        <span><strong>{$_("sources.filters.updates")}</strong><small>{updateCount}</small></span>
+        <CaretRight size={13} weight="bold" />
+      </button>
+      <button type="button" onclick={() => openUtilityPanel(isNovelMode ? "novelRepos" : "repos")}>
+        <GitBranch size={16} weight="bold" />
+        <span><strong>{isNovelMode ? $_("sources.repositories.novelTitle") : $_("sources.repositories.mangaTitle")}</strong><small>{isNovelMode ? novelRepositoryCount : repos.length}</small></span>
+        <CaretRight size={13} weight="bold" />
+      </button>
+    </aside>
+  {/if}
 
   {#if selectedExtension}
     <ExtensionSettingsPanel
@@ -1916,6 +1983,7 @@
       busy={isExtensionWorking(selectedExtension.pkgName)}
       onClose={closeExtensionSettings}
       onInstall={installExtension}
+      onRemove={(extension) => void removeExtension(extension)}
       onMassMigration={openMassMigration}
       {preferenceGroups}
       {preferenceAccess}
@@ -1947,19 +2015,29 @@
 </div>
 
 <style>
+  /* Approved Nocturne Sources composition: full-area workspace, flat rows and a quiet rail. */
   .sourcesRoot {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(218px, 20vw, 258px);
+    gap: 22px;
     height: 100%;
     min-height: 0;
     overflow: hidden;
-    border-radius: var(--component-sources-root-radius);
-    border: 1px solid var(--component-sources-root-border);
-    background: var(--component-sources-root-bg);
+    border: 0;
+    border-radius: var(--component-sources-flat-radius);
+    background: transparent;
+    padding: 14px 18px 12px;
+  }
+
+  .sourcesRoot.updatesMode { grid-template-columns: minmax(0, 1fr); }
+
+  .sourcesRoot.hasSettingsPanel {
+    grid-template-columns: minmax(0, 1fr) clamp(292px, 23vw, 350px);
+    gap: 0;
   }
 
   .sourcesMain {
-    flex: 1 1 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -1971,30 +2049,16 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    min-height: calc(52px * var(--component-sources-scale));
-    padding: calc(8px * var(--component-sources-scale)) calc(16px * var(--component-sources-scale));
-    border-bottom: 1px solid var(--component-sources-header-divider);
+    min-height: 62px;
+    padding: 0 0 12px;
+    border-bottom: 0;
     background: transparent;
   }
 
   .sourcesTitle {
     display: grid;
-    grid-template-columns: auto auto;
-    align-items: baseline;
-    column-gap: 10px;
-    row-gap: 2px;
+    gap: 5px;
     min-width: 190px;
-  }
-
-  .eyebrow {
-    grid-column: 1 / -1;
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 900;
-    letter-spacing: 0.18em;
-    color: var(--component-sources-control-hover-fg);
-    text-transform: uppercase;
   }
 
   h2,
@@ -2005,7 +2069,8 @@
 
   h2 {
     color: var(--component-sources-title-fg);
-    font-size: 16px;
+    font-size: 21px;
+    font-weight: 760;
     line-height: 1.1;
   }
 
@@ -2013,9 +2078,49 @@
     color: var(--component-sources-muted-fg);
     font-family: var(--font-ui);
     font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .headerActions { display: flex; align-items: center; gap: 8px; }
+
+  .headerAction {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: var(--component-sources-control-radius);
+    color: var(--component-sources-control-fg);
+    background: transparent;
+    font-size: 10px;
+    font-weight: 760;
+  }
+
+  .headerAction:hover,
+  .headerAction.active {
+    color: var(--component-sources-control-hover-fg);
+    border-color: var(--component-sources-control-hover-border);
+    background: var(--component-sources-control-hover-bg);
+  }
+
+  .headerActionPrimary {
+    border-color: var(--component-sources-control-border);
+    background: var(--component-sources-control-bg);
+    color: var(--component-sources-strong-fg);
+  }
+
+  .sourcesSurface {
+    min-height: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--component-sources-root-border);
+    border-radius: var(--component-sources-root-radius);
+    background: var(--component-sources-root-bg);
   }
 
   .sourceTools {
@@ -2023,41 +2128,61 @@
     align-items: center;
     gap: 8px;
     min-width: 0;
-    flex: 1;
-    justify-content: flex-end;
+    flex: 0 0 46px;
+    justify-content: flex-start;
+    padding: 0 13px;
+    border-bottom: 1px solid var(--component-sources-header-divider);
   }
 
   .tabs {
     display: flex;
-    padding: 2px;
-    border-radius: var(--component-sources-tabs-radius);
-    border: 1px solid var(--component-sources-tabs-border);
-    background: var(--component-sources-tabs-bg);
+    align-self: stretch;
+    gap: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--component-sources-flat-radius);
+    background: transparent;
   }
 
   .tab {
-    min-height: 24px;
-    padding: 0 11px;
-    border-radius: var(--component-sources-tab-radius);
+    position: relative;
+    min-height: 100%;
+    padding: 0;
+    border-radius: var(--component-sources-flat-radius);
     color: var(--component-sources-tab-fg);
     font-size: 11px;
     font-weight: 900;
-    transition: color 160ms ease, background 160ms ease;
+    transition: color 160ms ease;
+  }
+
+  .tab small { margin-left: 6px; color: var(--component-sources-subtle-fg); font-size: 9px; }
+
+  .tab::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    height: 2px;
+    background: transparent;
   }
 
   .tab.active {
-    background: var(--component-sources-tab-active-bg);
-    color: var(--component-sources-primary-ink);
+    background: transparent;
+    color: var(--component-sources-tab-active-fg);
     box-shadow: none;
   }
+
+  .tab.active::after { background: var(--component-sources-primary-bg); }
 
   .searchWrap {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: min(240px, 22vw);
+    width: min(320px, 31vw);
     min-width: 170px;
-    height: 29px;
+    height: 30px;
+    margin-left: 18px;
     padding: 0 11px;
     border-radius: var(--component-sources-search-radius);
     border: 1px solid var(--component-sources-search-border);
@@ -2079,7 +2204,6 @@
     color: var(--component-sources-search-placeholder);
   }
 
-  .iconBtn,
   .closeUtility,
   .repoRow button {
     display: grid;
@@ -2093,17 +2217,11 @@
     transition: color 160ms ease, background 160ms ease, border-color 160ms ease;
   }
 
-  .iconBtn:hover:not(:disabled),
-  .iconBtn.active,
   .closeUtility:hover,
   .repoRow button:hover:not(:disabled) {
     color: var(--component-sources-control-hover-fg);
     border-color: var(--component-sources-control-hover-border);
     background: var(--component-sources-control-hover-bg);
-  }
-
-  .iconBtn:disabled {
-    opacity: var(--component-sources-disabled-opacity);
   }
 
   .setupWrap {
@@ -2168,7 +2286,7 @@
   }
 
   .repoWindowNarrow {
-    width: min(560px, 100%);
+    width: min(500px, 100%);
   }
 
   .utilityPanel {
@@ -2211,14 +2329,157 @@
     font-weight: 700;
   }
 
-  .repoHint {
-    border-radius: var(--component-sources-hint-radius);
-    border: 1px solid var(--component-sources-hint-border);
-    background: var(--component-sources-hint-bg);
+  .apkInstallDialog {
+    gap: 0;
+    padding: 0;
+  }
+
+  .apkInstallDialog .utilityHeader {
+    padding: 14px 16px 12px;
+  }
+
+  .apkInstallHint {
+    margin: 0;
+    padding: 13px 16px 0;
     color: var(--component-sources-hint-fg);
-    font-size: 12px;
-    line-height: 1.45;
-    padding: 10px 12px;
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  .apkFilePicker {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 11px;
+    margin: 13px 16px 0;
+    min-height: 54px;
+    padding: 8px;
+    border: 1px solid var(--component-sources-apk-picker-border);
+    border-radius: var(--component-sources-apk-picker-radius);
+    background: var(--component-sources-apk-picker-bg);
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+
+  .apkFilePicker:hover {
+    border-color: var(--component-sources-apk-picker-hover-border);
+    background: var(--component-sources-apk-picker-hover-bg);
+  }
+
+  .apkFilePicker.error {
+    border-color: var(--component-sources-field-error-border);
+  }
+
+  .apkFileInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .apkChooseFile {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 0 11px;
+    border: 1px solid var(--component-sources-apk-button-border);
+    border-radius: var(--component-sources-apk-button-radius);
+    background: var(--component-sources-apk-button-bg);
+    color: var(--component-sources-apk-button-fg);
+    font-size: 10.5px;
+    font-weight: 800;
+  }
+
+  .apkChooseFile:hover:not(:disabled) {
+    border-color: var(--component-sources-apk-button-hover-border);
+    background: var(--component-sources-apk-button-hover-bg);
+    color: var(--component-sources-apk-button-hover-fg);
+  }
+
+  .apkChooseFile:focus-visible,
+  .apkInstallButton:focus-visible {
+    outline: none;
+    box-shadow: var(--component-sources-apk-focus-shadow);
+  }
+
+  .apkFileCopy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .apkFileCopy strong {
+    overflow: hidden;
+    color: var(--component-sources-apk-file-fg);
+    font-size: 11.5px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .apkFileCopy span {
+    color: var(--component-sources-apk-meta-fg);
+    font-size: 9.5px;
+    font-weight: 700;
+  }
+
+  .apkInstallActions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 14px;
+    padding: 11px 16px 14px;
+    border-top: 1px solid var(--component-sources-panel-divider);
+  }
+
+  .apkInstallButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 82px;
+    min-height: 31px;
+    padding: 0 13px;
+    border: 1px solid var(--component-sources-apk-install-border);
+    border-radius: var(--component-sources-action-radius);
+    background: var(--component-sources-apk-install-bg);
+    color: var(--component-sources-apk-install-fg);
+    font-size: 10.5px;
+    font-weight: 900;
+  }
+
+  .apkInstallButton:hover:not(:disabled) {
+    border-color: var(--component-sources-apk-install-hover-border);
+    background: var(--component-sources-apk-install-hover-bg);
+    color: var(--component-sources-apk-install-hover-fg);
+  }
+
+  .apkInstallButton.success {
+    border-color: var(--component-sources-apk-install-success-border);
+    background: var(--component-sources-apk-install-success-bg);
+    color: var(--component-sources-apk-install-success-fg);
+  }
+
+  .apkInstallButton:disabled {
+    border-color: var(--component-sources-apk-install-disabled-border);
+    background: var(--component-sources-apk-install-disabled-bg);
+    color: var(--component-sources-apk-install-disabled-fg);
+  }
+
+  .apkChooseFile:disabled {
+    cursor: default;
+    opacity: 0.52;
+  }
+
+  .apkInstallButton:disabled {
+    cursor: default;
+  }
+
+  .apkInstallDialog :global(.n-state) {
+    margin: 12px 16px 0;
   }
 
   .inlineForm {
@@ -2244,7 +2505,6 @@
   .inlineForm button,
   .toolbarActionBtn,
   .actionBtn,
-  .ghostBtn,
   .variantAction {
     min-height: 26px;
     border-radius: var(--component-sources-action-radius);
@@ -2277,21 +2537,7 @@
     border-radius: var(--component-sources-tab-radius);
     padding: 0 12px;
     white-space: nowrap;
-  }
-
-  .inlineForm button.success {
-    background: var(--component-sources-primary-bg-success);
-  }
-
-  .ghostBtn {
-    color: var(--component-sources-ghost-fg);
-    border: 1px solid var(--component-sources-ghost-border);
-    background: var(--component-sources-ghost-bg);
-  }
-
-  .ghostBtn:hover {
-    color: var(--component-sources-danger-fg);
-    border-color: var(--component-sources-danger-border);
+    margin-left: auto;
   }
 
   .variantAction {
@@ -2437,58 +2683,24 @@
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 0;
-    padding: 8px 16px 14px;
+    padding: 0 14px;
     scrollbar-width: thin;
     scrollbar-color: var(--component-sources-scrollbar-thumb) transparent;
   }
 
-  .extensionTableHead {
-    display: grid;
-    grid-template-columns: 36px minmax(230px, 1.7fr) 74px 86px 96px minmax(180px, 0.95fr) minmax(104px, auto);
-    gap: 10px;
-    align-items: center;
-    min-height: 28px;
-    padding: 0 11px;
-    margin-bottom: 0;
-    border-radius: var(--component-sources-table-head-radius);
-    border: 1px solid var(--component-sources-table-head-border);
-    border-bottom-color: var(--component-sources-table-head-border-bottom);
-    background: var(--component-sources-table-head-bg);
-  }
-
-  .extensionTableHead span {
-    color: var(--component-sources-table-head-fg);
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 900;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-  }
-
-  .extensionTableHead span:first-child {
-    grid-column: 1 / span 2;
-  }
-
-  .hasSettingsPanel .extensionList {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .hasSettingsPanel .sourcesMain {
-    flex: 1 1 auto;
-    max-width: calc(100% - clamp(320px, 24vw, 390px));
-  }
+  .hasSettingsPanel .sourcesSurface { border-radius: var(--component-sources-root-radius) 0 0 var(--component-sources-root-radius); }
 
   .extensionCard {
     display: grid;
-    grid-template-columns: 36px minmax(230px, 1.7fr) 74px 86px 96px minmax(180px, 0.95fr) minmax(104px, auto);
-    gap: 10px;
+    grid-template-columns: 30px minmax(160px, 1fr) minmax(72px, 110px) 18px minmax(68px, auto);
+    gap: 11px;
     align-items: center;
-    min-height: 50px;
-    padding: 6px 11px;
-    border-radius: var(--component-sources-card-radius);
-    border: 1px solid var(--component-sources-card-border);
-    border-top: 0;
-    background: var(--component-sources-card-bg);
+    min-height: 52px;
+    padding: 5px 1px;
+    border-radius: var(--component-sources-flat-radius);
+    border: 0;
+    border-bottom: 1px solid var(--component-sources-card-border);
+    background: transparent;
     cursor: pointer;
     transition: background 160ms ease, border-color 160ms ease;
   }
@@ -2496,11 +2708,11 @@
   .extensionCard:hover,
   .extensionCard.selected {
     background: var(--component-sources-card-hover-bg);
-    border-color: var(--component-sources-card-hover-border);
+    border-bottom-color: var(--component-sources-card-hover-border);
   }
 
   .extensionCard:last-of-type {
-    border-radius: var(--component-sources-card-end-radius);
+    border-bottom-color: transparent;
   }
 
   .extensionCard:focus-visible {
@@ -2509,8 +2721,8 @@
   }
 
   .extensionCardIcon {
-    width: 31px;
-    height: 31px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--component-sources-icon-radius);
     object-fit: cover;
     background: var(--component-sources-icon-bg);
@@ -2520,19 +2732,13 @@
   .extensionCardCopy {
     min-width: 0;
     display: grid;
-    gap: 3px;
+    gap: 4px;
   }
 
-  .extensionTitleRow,
   .cardActions,
   .variantRow {
     display: flex;
     align-items: center;
-  }
-
-  .extensionTitleRow {
-    gap: 7px;
-    min-width: 0;
   }
 
   h3 {
@@ -2541,8 +2747,8 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--component-sources-strong-fg);
-    font-size: 13px;
-    font-weight: 850;
+    font-size: 12px;
+    font-weight: 760;
     line-height: 1.2;
   }
 
@@ -2551,64 +2757,23 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--component-sources-cell-muted-fg);
-    font-size: 10px;
+    font-size: 9px;
   }
 
-  .tableCell {
-    min-width: 0;
-    display: grid;
-    gap: 3px;
-    align-content: center;
-    color: var(--component-sources-cell-fg);
-    font-size: 10.5px;
-    font-weight: 760;
-  }
-
-  .tableCell span,
-  .tableCell small {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .tableCell small {
+  .extensionLanguage {
     color: var(--component-sources-cell-muted-fg);
     font-size: 9px;
-    font-weight: 700;
+    text-align: right;
   }
 
-  .tableCell small.compatibilityPassed {
+  .extensionState {
+    display: grid;
+    place-items: center;
     color: var(--component-sources-installed-fg);
   }
 
-  .tableCellLang span {
-    width: fit-content;
-    min-width: 30px;
-    padding: 2px 7px;
-    border-radius: var(--component-sources-badge-radius);
-    border: 1px solid var(--component-sources-control-border);
-    background: var(--component-sources-badge-bg);
-    color: var(--component-sources-cell-fg);
-    font-family: var(--font-ui);
-    font-size: 9px;
-    font-weight: 900;
-    letter-spacing: 0.06em;
-    text-align: center;
-  }
+  .extensionCard:has(.actionBtn) .extensionState { color: var(--component-sources-update-fg); }
 
-  .tableCellStatus {
-    justify-items: start;
-  }
-
-  .tableCellRepo span {
-    color: var(--component-sources-cell-fg);
-    font-size: 10.5px;
-  }
-
-  .installedBadge,
-  .updateBadge,
-  .availableBadge,
   .variantRow span,
   .variantRow small,
   .variantRow em {
@@ -2625,13 +2790,6 @@
     line-height: 1.2;
   }
 
-  .installedBadge {
-    color: var(--component-sources-installed-fg);
-    background: var(--component-sources-installed-bg);
-    border-color: var(--component-sources-installed-border);
-  }
-
-  .updateBadge,
   .variantRow em {
     color: var(--component-sources-update-fg);
     background: var(--component-sources-update-bg);
@@ -2639,17 +2797,89 @@
     font-style: normal;
   }
 
-  .availableBadge {
-    color: var(--component-sources-available-fg);
-    background: var(--component-sources-available-bg);
-    border-color: var(--component-sources-available-border);
-  }
-
   .cardActions {
     justify-content: flex-end;
     gap: 6px;
     color: var(--component-sources-available-fg);
   }
+
+  .updatesHeading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 58px;
+    padding: 0 2px;
+    border-bottom: 1px solid var(--component-sources-card-border);
+    color: var(--component-sources-update-fg);
+  }
+
+  .updatesHeading div { display: grid; gap: 4px; }
+  .updatesHeading strong { color: var(--component-sources-strong-fg); font-size: 14px; }
+  .updatesHeading span { color: var(--component-sources-cell-muted-fg); font-size: 9px; }
+
+  .sourcesFooter {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 32px;
+    padding: 0 14px;
+    border-top: 1px solid var(--component-sources-header-divider);
+    color: var(--component-sources-subtle-fg);
+    font-size: 9px;
+  }
+
+  .sourcesFooter button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    gap: 5px;
+    padding: 0 7px;
+    border-radius: var(--component-sources-footer-action-radius);
+    background: var(--component-sources-footer-action-bg);
+    color: var(--component-sources-footer-action-fg);
+    font-size: 9px;
+    font-weight: 750;
+  }
+
+  .sourcesFooter button:hover:not(:disabled) {
+    background: var(--component-sources-footer-action-hover-bg);
+    color: var(--component-sources-footer-action-hover-fg);
+  }
+
+  .sourcesFooter button:disabled {
+    color: var(--component-sources-footer-action-disabled-fg);
+    opacity: 0.72;
+  }
+
+  .sourcesOverview {
+    min-width: 0;
+    margin-top: 62px;
+    padding-left: 18px;
+    border-left: 1px solid var(--component-sources-header-divider);
+  }
+
+  .overviewHeader { display: grid; gap: 5px; padding: 11px 0 14px; }
+  .overviewHeader span { color: var(--component-sources-subtle-fg); font-size: 9px; }
+  .overviewHeader strong { color: var(--component-sources-strong-fg); font-size: 13px; }
+
+  .sourcesOverview > button {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 14px;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 52px;
+    padding: 0;
+    border-top: 1px solid var(--component-sources-header-divider);
+    color: var(--component-sources-control-fg);
+    text-align: left;
+  }
+
+  .sourcesOverview > button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sourcesOverview strong { color: var(--component-sources-strong-fg); font-size: 10px; }
+  .sourcesOverview small { color: var(--component-sources-subtle-fg); font-size: 9px; }
+  .sourcesOverview .overviewWarning { color: var(--component-sources-update-fg); }
+  .sourcesOverview > button:hover strong { color: var(--component-sources-primary-ink); }
 
   .variantBtn {
     display: grid;
@@ -2718,9 +2948,12 @@
   }
 
   @media (max-width: 980px) {
+    .sourcesRoot { grid-template-columns: minmax(0, 1fr); }
+    .sourcesOverview { display: none; }
+
     .sourcesHeader {
-      align-items: stretch;
-      flex-direction: column;
+      align-items: center;
+      flex-direction: row;
     }
 
     .sourceTools {
@@ -2733,36 +2966,26 @@
       min-width: 220px;
     }
 
-    .hasSettingsPanel .sourcesMain {
-      max-width: none;
-    }
-
-    .extensionTableHead {
-      display: none;
-    }
-
     .extensionCard {
-      grid-template-columns: 34px minmax(0, 1fr) auto;
-    }
-
-    .tableCell,
-    .tableCellRepo {
-      display: none;
+      grid-template-columns: 30px minmax(0, 1fr) minmax(60px, 90px) 18px minmax(68px, auto);
     }
   }
 
   @media (max-width: 760px) {
     .sourcesRoot {
       position: relative;
+      padding: 10px;
     }
 
     .extensionCard {
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: 30px minmax(0, 1fr) 18px;
     }
 
+    .extensionLanguage { display: none; }
+
     .cardActions {
-      grid-column: 2;
-      justify-content: flex-start;
+      grid-column: 2 / -1;
+      justify-content: flex-end;
     }
 
     .variantList {

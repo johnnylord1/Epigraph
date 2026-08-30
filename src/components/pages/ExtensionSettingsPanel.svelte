@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
-  import { CircleNotch, StackSimple, X } from "phosphor-svelte";
+  import { CircleNotch, StackSimple, Trash, X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import type {
@@ -10,6 +10,7 @@
     SourcePreferenceGroup,
     SourcePreferenceUpdateInput,
   } from "../../lib/manga/runtime";
+  import NocturneState from "../shared/NocturneState.svelte";
 
   let {
     extension,
@@ -27,6 +28,7 @@
     onClose,
     onCheckCompatibility,
     onInstall,
+    onRemove,
     onMassMigration,
     onSelectPreferenceSource,
     onUpdatePreference,
@@ -46,6 +48,7 @@
     onClose: () => void;
     onCheckCompatibility?: (extension: ManagedExtension) => void;
     onInstall: (extension: ManagedExtension) => void;
+    onRemove: (extension: ManagedExtension) => void;
     onMassMigration?: (extension: ManagedExtension) => void;
     onSelectPreferenceSource: (sourceId: string) => void;
     onUpdatePreference: (input: SourcePreferenceUpdateInput) => void;
@@ -290,10 +293,14 @@
           <span>{$_("extensionSettings_loadingPreferences")}</span>
         </div>
       {:else if preferenceLoadError}
-        <div class="preferenceState preferenceStateError" role="alert">
-          <strong>{$_("extensionSettings_preferencesLoadFailed")}</strong>
-          <span>{preferenceLoadError}</span>
-        </div>
+        <NocturneState
+          layout="compact"
+          tone="danger"
+          icon="warning"
+          eyebrow={$_("extensionSettings_sourcePreferences")}
+          title={$_("extensionSettings_preferencesLoadFailed")}
+          body={preferenceLoadError}
+        />
       {:else if extension.kind === "novels"}
         <div class="preferenceState">
           <strong>{$_("extensionSettings_readOnlySourceSettings")}</strong>
@@ -351,10 +358,14 @@
                 <span>{$_("extensionSettings_loadingSourcePreferences")}</span>
               </div>
             {:else if group.error}
-              <div class="preferenceState preferenceStateError" role="alert">
-                <strong>{$_("extensionSettings_sourcePreferencesFailed")}</strong>
-                <span>{group.error}</span>
-              </div>
+              <NocturneState
+                layout="compact"
+                tone="danger"
+                icon="warning"
+                eyebrow={group.source.displayName || group.source.name}
+                title={$_("extensionSettings_sourcePreferencesFailed")}
+                body={group.error}
+              />
             {:else if group.preferences.length === 0}
               <p class="preferenceEmpty">{$_("extensionSettings_sourceNoPreferences")}</p>
             {:else}
@@ -447,6 +458,13 @@
           </div>
       {/if}
     </section>
+
+    <section class="removePanel">
+      <button class="dangerCta" type="button" disabled={busy} onclick={() => onRemove(extension)}>
+        <Trash size={14} weight="bold" />
+        {$_("sources_actions_remove")}
+      </button>
+    </section>
   {/if}
 </aside>
 
@@ -456,13 +474,13 @@
   }
 
   .settingsPanel {
-    width: clamp(300px, 22vw, 360px);
-    min-width: 292px;
+    width: 100%;
+    min-width: 0;
     height: 100%;
     overflow-y: auto;
     border-left: 1px solid var(--component-sources-settings-panel-border);
     background: var(--component-sources-settings-panel-bg);
-    padding: calc(12px * var(--component-library-scale));
+    padding: 14px 16px;
     animation: panelIn 160ms ease both;
   }
 
@@ -485,8 +503,8 @@
   }
 
   .extensionIcon {
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     border-radius: var(--component-sources-settings-item-radius);
     object-fit: cover;
     background: var(--component-sources-settings-icon-bg);
@@ -511,7 +529,7 @@
 
   h2 {
     margin: 2px 0;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.15;
     color: var(--component-sources-title-fg);
     white-space: nowrap;
@@ -525,14 +543,16 @@
   }
 
   .extensionMeta span {
-    border: 1px solid var(--component-sources-settings-icon-border);
-    border-radius: var(--component-sources-settings-meta-radius);
-    padding: 1px 6px;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
     font-family: var(--font-ui);
     font-size: 9px;
     color: var(--component-sources-muted-fg);
-    background: var(--component-sources-badge-bg);
+    background: transparent;
   }
+
+  .extensionMeta span + span::before { content: "·"; margin-right: 5px; color: var(--component-sources-subtle-fg); }
 
   .closeBtn {
     display: grid;
@@ -554,7 +574,7 @@
   }
 
   .description {
-    margin: 9px 0 10px;
+    margin: 12px 0;
     color: var(--component-sources-body-fg);
     font-size: 12px;
     line-height: 1.45;
@@ -563,24 +583,26 @@
   .availablePanel,
   .detailsSection,
   .settingsSection {
-    border: 1px solid var(--component-sources-panel-border);
-    border-radius: var(--component-sources-settings-section-radius);
-    background: var(--component-sources-panel-bg);
-    padding: 10px;
+    border: 0;
+    border-top: 1px solid var(--component-sources-panel-border);
+    border-radius: 0;
+    background: transparent;
+    padding: 11px 0;
   }
 
   .detailsSection {
     display: grid;
     gap: 8px;
-    margin-bottom: 8px;
+    margin-bottom: 0;
   }
 
   .compatibilitySection {
-    margin-bottom: 8px;
-    border: 1px solid var(--component-sources-panel-border);
-    border-radius: var(--component-sources-settings-section-radius);
-    background: var(--component-sources-panel-bg);
-    padding: 10px;
+    margin-bottom: 0;
+    border: 0;
+    border-top: 1px solid var(--component-sources-panel-border);
+    border-radius: 0;
+    background: transparent;
+    padding: 11px 0;
   }
 
   .compatibilitySection summary,
@@ -724,10 +746,10 @@
     display: grid;
     gap: 3px;
     min-width: 0;
-    padding: 7px;
-    border-radius: var(--component-sources-settings-item-radius);
-    background: var(--component-sources-variant-bg);
-    border: 1px solid var(--component-sources-available-border);
+    padding: 5px 0;
+    border-radius: 0;
+    background: transparent;
+    border: 0;
   }
 
   .detailItemWide,
@@ -753,7 +775,7 @@
   }
 
   .primaryCta {
-    min-height: 34px;
+    min-height: 30px;
     border-radius: var(--component-sources-search-radius);
     background: var(--component-sources-primary-bg);
     color: var(--component-sources-primary-ink);
@@ -769,8 +791,30 @@
   .settingsSection {
     display: grid;
     gap: 8px;
-    margin-top: 8px;
+    margin-top: 0;
   }
+
+  .removePanel {
+    padding-top: 11px;
+    border-top: 1px solid var(--component-sources-panel-border);
+  }
+
+  .dangerCta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 30px;
+    border: 1px solid var(--component-sources-danger-border);
+    border-radius: var(--component-sources-control-radius);
+    color: var(--component-sources-danger-fg);
+    background: var(--component-sources-danger-bg);
+    font-size: 10px;
+    font-weight: 800;
+  }
+
+  .dangerCta:disabled { opacity: 0.55; }
 
   .sectionTitle {
     justify-content: space-between;
@@ -861,16 +905,8 @@
     min-width: 0;
   }
 
-  .preferenceStateError,
   .preferenceFeedbackError {
     color: var(--component-sources-danger-fg);
-  }
-
-  .preferenceStateError {
-    align-items: flex-start;
-    flex-direction: column;
-    border-color: var(--component-sources-danger-border);
-    background: var(--component-sources-danger-bg);
   }
 
   .preferenceSpinner {

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import NocturneState from "./NocturneState.svelte";
+import SetupStatusCard from "./SetupStatusCard.svelte";
 
 function readProjectFile(path: string) {
   return readFileSync(join(process.cwd(), path), "utf8");
@@ -46,6 +47,68 @@ describe("NocturneState theme tokens", () => {
     expect(screen.getByText("Audit")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("keeps message copy left-aligned inside centered empty-state parents", () => {
+    const source = readProjectFile("src/components/shared/NocturneState.svelte");
+    const rootRule = source.match(/\.n-state\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(rootRule).toContain("text-align: left");
+  });
+
+  test("uses the compact message layout for setup errors and actions", () => {
+    render(SetupStatusCard, {
+      props: {
+        surface: "extensions",
+        state: {
+          kind: "no_installed_extensions",
+          extensionRepoCount: 1,
+          installedExtensionCount: 0,
+          installedContentExtensionCount: 0,
+          installedHelperExtensionCount: 0,
+          totalSourceCount: 0,
+          usableSourceCount: 0,
+          hiddenSourceCount: 0,
+          errorMessage: null,
+        },
+      },
+    });
+
+    expect(screen.getByRole("status").classList.contains("n-state--compact")).toBe(true);
+  });
+
+  test("keeps full error and warning messages on the shared semantic surface", () => {
+    const legacyMessageMarkup = new Map<string, RegExp[]>([
+      ["src/components/pages/ExtensionSettingsPanel.svelte", [
+        /<div class="preferenceState preferenceStateError"/,
+      ]],
+      ["src/components/pages/MigrateModal.svelte", [
+        /<div class="centered source-load-error"/,
+        /<p class="error">/,
+        /<div class="warn-box">/,
+      ]],
+      ["src/components/pages/MassMigrateModal.svelte", [
+        /<div class="center errorPanel">/,
+        /<p class="targetError">/,
+        /<p class="errorLine">/,
+      ]],
+      ["src/components/pages/NovelMigrateModal.svelte", [
+        /<div class="notice/,
+      ]],
+      ["src/components/search/SearchPalette.svelte", [
+        /<div class="search-palette__notice">/,
+      ]],
+      ["src/components/settings/ThemeEditor.svelte", [
+        /<span class="te-import-err">/,
+      ]],
+    ]);
+
+    for (const [path, patterns] of legacyMessageMarkup) {
+      const source = readProjectFile(path);
+      for (const pattern of patterns) {
+        expect(source, `${path} should render full messages with NocturneState`).not.toMatch(pattern);
+      }
+    }
   });
 
   test("keeps the component free of direct visual values", () => {

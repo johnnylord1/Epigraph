@@ -23,25 +23,25 @@ const EXPECTED_FAMILY_COUNTS = {
   library: 98,
   manga: 191,
   menu: 14,
-  migrate: 19,
+  migrate: 17,
   migration: 88,
   modal: 4,
   nav: 15,
   "nocturne-state": 126,
-  novel: 9,
+  novel: 6,
   overlay: 1,
   popover: 11,
   reader: 168,
   search: 10,
-  settings: 106,
+  settings: 117,
   sidebar: 8,
   soft: 1,
-  sources: 138,
+  sources: 150,
   splash: 21,
   syncd: 99,
   taste: 51,
-  "theme-editor": 221,
-  toast: 69,
+  "theme-editor": 220,
+  toast: 74,
   toolbar: 11,
   topbar: 12,
   tracking: 117,
@@ -212,10 +212,10 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2707);
-    expect(scoped).toHaveLength(2707);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2704);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(3);
+    expect(inventory.entries).toHaveLength(2729);
+    expect(scoped).toHaveLength(2729);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2696);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(33);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -227,7 +227,7 @@ describe("exhaustive component theme inventory", () => {
         .map(([family, entries]) => [family, entries.length]),
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2472);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2494);
     expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(235);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
@@ -239,11 +239,41 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2686);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2680);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
-    expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(17);
+    expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(15);
     expect(legacyOnly).toHaveLength(0);
     expect(unconsumed.map(({ token }) => token).sort()).toEqual([
+      "--component-toast-accent-inset",
+      "--component-toast-accent-width",
+      "--component-toast-action-padding",
+      "--component-toast-blur",
+      "--component-toast-body-fg",
+      "--component-toast-body-font-size",
+      "--component-toast-body-line-height",
+      "--component-toast-border-hover",
+      "--component-toast-close-bg",
+      "--component-toast-close-border",
+      "--component-toast-close-border-hover",
+      "--component-toast-close-icon-stroke-width",
+      "--component-toast-download-bg",
+      "--component-toast-error-bg",
+      "--component-toast-icon-bg",
+      "--component-toast-icon-border",
+      "--component-toast-icon-size",
+      "--component-toast-icon-state-fg",
+      "--component-toast-icon-stroke-width",
+      "--component-toast-info-bg",
+      "--component-toast-padding",
+      "--component-toast-radius",
+      "--component-toast-shadow",
+      "--component-toast-state-shadow",
+      "--component-toast-success-bg",
+      "--component-toast-texture",
+      "--component-toast-title-fg",
+      "--component-toast-title-font-size",
+      "--component-toast-title-font-weight",
+      "--component-toast-title-line-height",
       "--component-tracking-record-tracker-icon-text-background",
       "--component-tracking-record-tracker-icon-text-border",
       "--component-tracking-record-tracker-icon-text-color",

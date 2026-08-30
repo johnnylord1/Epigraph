@@ -336,10 +336,11 @@ describe("ComicsLibraryBody", () => {
       .spyOn(HTMLImageElement.prototype, "decode")
       .mockRejectedValue(new Error("decode failed"));
 
+    const directThumbnail = `${window.location.origin}/__vitest__/favicon.svg`;
     const targetManga = manga({
       id: 19,
       title: "Bad Cached Cover",
-      thumbnailUrl: "/api/v1/manga/19/thumbnail",
+      thumbnailUrl: directThumbnail,
       downloadCount: 0,
       unreadCount: 0,
       chapterCount: 4,
@@ -382,7 +383,7 @@ describe("ComicsLibraryBody", () => {
       await waitFor(() => expect(getCachedLibraryCoverUrl).toHaveBeenCalled());
       await waitFor(() => {
         const src = container.querySelector("img.cover")?.getAttribute("src") ?? "";
-        expect(src).toContain("/api/v1/manga/19/thumbnail");
+        expect(src).toContain(directThumbnail);
         expect(src).not.toBe("cover://bad-cache");
       }, { timeout: 3000 });
       expect(setSessionLibraryCoverUrl).not.toHaveBeenCalledWith(expect.anything(), targetManga, "cover://bad-cache");

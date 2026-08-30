@@ -722,7 +722,7 @@
         layout="center"
         tone="info"
         icon="books"
-        eyebrow="Library"
+        eyebrow={$_("library.eyebrow")}
         title={$_("ui_noBooksHereYet")}
         body={vm.emptyMessage}
       />

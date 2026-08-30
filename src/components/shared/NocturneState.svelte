@@ -2,6 +2,7 @@
   import {
     ArrowsClockwise,
     Books,
+    CheckCircle,
     FolderOpen,
     Info,
     MagnifyingGlass,
@@ -10,7 +11,7 @@
   } from "phosphor-svelte";
 
   type Tone = "neutral" | "info" | "warning" | "danger" | "success";
-  type IconName = "info" | "warning" | "plug" | "retry" | "search" | "books" | "folder";
+  type IconName = "info" | "warning" | "plug" | "retry" | "search" | "books" | "folder" | "check";
   type Layout = "panel" | "compact" | "center";
 
   let {
@@ -46,15 +47,20 @@
     if (name === "search") return MagnifyingGlass;
     if (name === "books") return Books;
     if (name === "folder") return FolderOpen;
+    if (name === "check") return CheckCircle;
     return Info;
   }
 
   const StateIcon = $derived(iconFor(icon));
 </script>
 
-<section class="n-state n-state--{layout} n-state--{tone}" role={tone === "danger" ? "alert" : "status"}>
+<section
+  class="n-state n-state--{layout} n-state--{tone}"
+  role={tone === "danger" ? "alert" : "status"}
+  aria-label={eyebrow || undefined}
+>
   <div class="n-state__icon" aria-hidden="true">
-    <StateIcon size="1em" weight="duotone" />
+    <StateIcon size="1em" weight="regular" />
   </div>
 
   <div class="n-state__content">
@@ -109,12 +115,14 @@
     gap: var(--component-nocturne-state-gap);
     min-width: 0;
     color: var(--component-nocturne-state-fg);
+    text-align: left;
     position: relative;
     overflow: hidden;
   }
 
   .n-state--panel,
   .n-state--center {
+    align-items: center;
     padding: var(--component-nocturne-state-panel-padding);
     border: var(--component-nocturne-state-panel-border);
     border-radius: var(--component-nocturne-state-panel-radius);
@@ -222,6 +230,8 @@
     border: var(--state-icon-border);
     box-shadow: var(--component-nocturne-state-icon-shadow);
     font-size: var(--component-nocturne-state-icon-font-size);
+    align-self: flex-start;
+    margin-top: calc(var(--sp-1) / 2);
   }
 
   .n-state--compact .n-state__icon {
@@ -240,13 +250,10 @@
   }
 
   .n-state__eyebrow {
-    margin: 0;
-    font-family: var(--component-nocturne-state-font-ui);
+    display: none;
     font-size: var(--component-nocturne-state-eyebrow-font-size);
     line-height: var(--component-nocturne-state-eyebrow-line-height);
     letter-spacing: var(--component-nocturne-state-eyebrow-letter-spacing);
-    text-transform: uppercase;
-    color: var(--state-eyebrow-fg);
   }
 
   .n-state__title {
@@ -256,6 +263,8 @@
     font-weight: var(--component-nocturne-state-title-font-weight);
     color: var(--component-nocturne-state-title-fg);
     letter-spacing: var(--component-nocturne-state-title-letter-spacing);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
   }
 
   .n-state--compact .n-state__title {
@@ -288,6 +297,23 @@
     margin-top: var(--component-nocturne-state-actions-margin-top);
   }
 
+  .n-state--compact .n-state__content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--component-nocturne-state-actions-gap);
+  }
+
+  .n-state--compact :is(.n-state__title, .n-state__body, .n-state__detail) {
+    grid-column: 1;
+  }
+
+  .n-state--compact .n-state__actions {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+    margin-top: 0;
+  }
+
   .n-state__action {
     display: inline-flex;
     align-items: center;
@@ -299,10 +325,12 @@
     border: var(--component-nocturne-state-action-border);
     background: var(--component-nocturne-state-action-bg);
     color: var(--component-nocturne-state-action-fg);
-    font-family: var(--component-nocturne-state-font-ui);
+    font-family: var(--font-sans);
     font-size: var(--component-nocturne-state-action-font-size);
     font-weight: var(--component-nocturne-state-action-font-weight);
     letter-spacing: var(--component-nocturne-state-action-letter-spacing);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
     cursor: pointer;
     transition: var(--component-nocturne-state-action-transition);
   }
@@ -339,5 +367,17 @@
     color: var(--component-nocturne-state-action-danger-fg);
     border-color: var(--component-nocturne-state-action-danger-border);
     background: var(--component-nocturne-state-action-danger-bg);
+  }
+
+  @media (max-width: 560px) {
+    .n-state--compact .n-state__content {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .n-state--compact .n-state__actions {
+      grid-column: 1;
+      grid-row: auto;
+      margin-top: var(--component-nocturne-state-actions-margin-top);
+    }
   }
 </style>

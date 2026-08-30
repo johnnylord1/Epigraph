@@ -146,6 +146,8 @@ pub async fn post_pairing_host_decision(
         session_id: session.session_id,
         status,
         claimed_device_id: session.claimed_device_id,
+        claimed_device_name: session.claimed_device_name,
+        claimed_platform: session.claimed_platform,
         expires_at_ms: session.expires_at_ms,
         requested_scopes,
     }))
@@ -299,6 +301,8 @@ fn pairing_status_event(
         status: pairing_session_status(session),
         expires_at_ms: session.expires_at_ms,
         claimed_device_id: session.claimed_device_id.clone(),
+        claimed_device_name: session.claimed_device_name.clone(),
+        claimed_platform: session.claimed_platform.clone(),
         requested_scopes,
     }
 }

@@ -1,6 +1,7 @@
 export const EPIGRAPH_DISCORD_APPLICATION_ID = "1522314876649996368";
-export const EPIGRAPH_ICON_ASSET = "epigraph_icon";
-export const EPIGRAPH_LOGO_ASSET = "epigraph_logo";
+// These keys must match the assets registered on the public Discord application.
+export const EPIGRAPH_ICON_ASSET = "aethon_icon";
+export const EPIGRAPH_LOGO_ASSET = "aethon_logo";
 export const FALLBACK_COVER_ASSET = "fallback_cover";
 export const PRIVATE_DETAILS = "Reading in Epigraph";
 export const PROGRESS_UPDATE_INTERVAL_MS = 45_000;

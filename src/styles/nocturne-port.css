@@ -2291,10 +2291,9 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   background: var(--component-settings-button-bg);
   color: var(--component-settings-button-fg);
   font-family: var(--component-settings-font);
-  font-size: calc(10px * var(--hud-scale));
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--component-settings-brand-action-font-size);
+  font-weight: var(--component-settings-brand-action-font-weight);
+  letter-spacing: var(--component-settings-brand-action-letter-spacing);
   cursor: pointer;
   transition:
     border-color var(--duration-normal) ease,
@@ -3208,6 +3207,9 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   background: transparent;
   position: relative;
   overflow: hidden;
+  font-synthesis: none;
+  -webkit-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
   transition: border-color var(--duration-relaxed) ease, box-shadow var(--duration-relaxed) ease;
 }
 
@@ -3302,21 +3304,21 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
 
 .epigraph-port--settings .settings-brand-card__title {
   margin: 0;
-  font-family: "Outfit", "Manrope", var(--font-sans);
-  font-size: calc(12px * var(--hud-scale));
-  font-weight: 700;
-  line-height: 1.25;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
+  font-family: var(--component-settings-font);
+  font-size: var(--component-settings-brand-title-font-size);
+  font-weight: var(--component-settings-brand-title-font-weight);
+  line-height: var(--component-settings-brand-title-line-height);
+  color: var(--component-settings-brand-title-fg);
+  letter-spacing: 0;
 }
 
 .epigraph-port--settings .settings-brand-card__meta {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: calc(9.5px * var(--hud-scale));
-  line-height: 1.2;
-  color: var(--text-muted, color-mix(in srgb, var(--text-secondary) 62%, transparent));
-  opacity: 0.8;
+  font-size: var(--component-settings-brand-meta-font-size);
+  font-weight: var(--component-settings-brand-meta-font-weight);
+  line-height: var(--component-settings-brand-meta-line-height);
+  color: var(--component-settings-brand-meta-fg);
   letter-spacing: 0.02em;
 }
 

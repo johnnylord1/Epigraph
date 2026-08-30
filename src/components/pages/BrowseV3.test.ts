@@ -155,7 +155,7 @@ const {
     extension.isInstalled = false;
     extension.hasUpdate = false;
   });
-  const managedRuntimeListStoresMock = vi.fn(async () => []);
+  const managedRuntimeListStoresMock = vi.fn<() => Promise<Array<{ id: string; name: string; indexUrl: string }>>>(async () => []);
   const managedRuntimeAddStoreMock = vi.fn(async () => {});
   const managedRuntimeRemoveStoreMock = vi.fn(async () => {});
   const managedRuntimeSearchSourceMangaMock = vi.fn(async (variables: { type: string }) => {
@@ -498,7 +498,17 @@ const {
         coverUrl: null,
       },
     ]),
-    detectSetupStateMock: vi.fn(async () => ({ kind: "ready" })),
+    detectSetupStateMock: vi.fn<() => Promise<import("../../lib/setupState").SetupState>>(async () => ({
+      kind: "ready",
+      extensionRepoCount: 1,
+      installedExtensionCount: 1,
+      installedContentExtensionCount: 1,
+      installedHelperExtensionCount: 0,
+      totalSourceCount: 1,
+      usableSourceCount: 1,
+      hiddenSourceCount: 0,
+      errorMessage: null,
+    })),
     ensureServerAwakeForMock: vi.fn(async () => true),
     loadTrustedInstalledNovelSourcesMock: vi.fn(async () => [
       {
@@ -610,7 +620,8 @@ vi.mock("../../store/state.svelte", async () => {
   };
 });
 
-vi.mock("../../lib/setupState", () => ({
+vi.mock("../../lib/setupState", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/setupState")>()),
   detectSetupState: detectSetupStateMock,
 }));
 
@@ -659,8 +670,6 @@ vi.mock("../../lib/novels/libraryState", () => ({
   peekNovelLibraryState: vi.fn(() => null),
 }));
 
-vi.mock("../shared/SetupStatusCard.svelte", () => ({ default: class SetupStatusCardStub {} }));
-
 import BrowseV3 from "./BrowseV3.svelte";
 import { openMangaDetail as openMangaDetailMock, store as browseStore } from "../../store/state.svelte";
 
@@ -675,7 +684,12 @@ describe("BrowseV3", () => {
     managedRuntimeInstallExtensionMock.mockClear();
     managedRuntimeUpdateExtensionMock.mockClear();
     managedRuntimeUninstallExtensionMock.mockClear();
-    managedRuntimeListStoresMock.mockClear();
+    managedRuntimeListStoresMock.mockReset();
+    managedRuntimeListStoresMock.mockResolvedValue([{
+      id: "repo-default",
+      name: "Extension repository",
+      indexUrl: "https://example.test/index.min.json",
+    }]);
     managedRuntimeAddStoreMock.mockClear();
     managedRuntimeRemoveStoreMock.mockClear();
     managedRuntimeSearchSourceMangaMock.mockClear();
@@ -692,6 +706,17 @@ describe("BrowseV3", () => {
     vi.mocked(openMangaDetailMock).mockClear();
     browseInstalledNovelSourceMock.mockClear();
     detectSetupStateMock.mockClear();
+    detectSetupStateMock.mockResolvedValue({
+      kind: "ready",
+      extensionRepoCount: 1,
+      installedExtensionCount: 1,
+      installedContentExtensionCount: 1,
+      installedHelperExtensionCount: 0,
+      totalSourceCount: 1,
+      usableSourceCount: 1,
+      hiddenSourceCount: 0,
+      errorMessage: null,
+    });
     ensureServerAwakeForMock.mockReset();
     ensureServerAwakeForMock.mockResolvedValue(true);
   });
@@ -727,8 +752,122 @@ describe("BrowseV3", () => {
     expect(document.body.className).not.toContain("epigraph-browse-search-engaged");
 
     await waitFor(() => {
-      expect(screen.getByText("Manage extensions")).toBeTruthy();
+      expect(screen.getByRole("heading", { name: "Sources" })).toBeTruthy();
       expect(screen.getByText("Installed")).toBeTruthy();
+    });
+  });
+
+  test("does not present recommendation totals as source-backed while setup is incomplete", async () => {
+    detectSetupStateMock.mockResolvedValue({
+      kind: "no_extension_repos",
+      extensionRepoCount: 0,
+      installedExtensionCount: 0,
+      installedContentExtensionCount: 0,
+      installedHelperExtensionCount: 0,
+      totalSourceCount: 0,
+      usableSourceCount: 0,
+      hiddenSourceCount: 0,
+      errorMessage: null,
+    });
+
+    render(BrowseV3);
+
+    await waitFor(() => {
+      expect(screen.getByText("Finish setup to load recommendations from your sources.")).toBeTruthy();
+    });
+    expect(screen.queryByText(/recommendations from installed sources/i)).toBeNull();
+  });
+
+  test("refreshes an existing repository when the cached extension catalog is empty", async () => {
+    managedRuntimeListStoresMock.mockResolvedValueOnce([{
+      id: "repo-1",
+      name: "Extension repository",
+      indexUrl: "https://example.test/index.min.json",
+    }]);
+    managedRuntimeListExtensionsMock.mockResolvedValueOnce([]);
+
+    render(BrowseV3);
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(managedRuntimeRefreshExtensionsMock).toHaveBeenCalled();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Available" }));
+    await waitFor(() => {
+      expect(screen.getByText("Asura Scans")).toBeTruthy();
+    });
+  });
+
+  test("does not expose stale available extensions when no repository is configured", async () => {
+    managedRuntimeListStoresMock.mockResolvedValue([]);
+    managedRuntimeListExtensionsMock.mockResolvedValueOnce([{
+      packageName: "ext.stale",
+      name: "Stale cached extension",
+      language: "en",
+      versionName: "1.0",
+      versionCode: "1",
+      isInstalled: false,
+      isObsolete: false,
+      hasUpdate: false,
+      iconUrl: null,
+      storeId: null,
+      apkName: "stale.apk",
+      apkUrl: null,
+      jarUrl: null,
+    }]);
+    detectSetupStateMock.mockResolvedValue({
+      kind: "no_extension_repos",
+      extensionRepoCount: 0,
+      installedExtensionCount: 0,
+      installedContentExtensionCount: 0,
+      installedHelperExtensionCount: 0,
+      totalSourceCount: 0,
+      usableSourceCount: 0,
+      hiddenSourceCount: 0,
+      errorMessage: null,
+    });
+
+    render(BrowseV3);
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("0 Installed · 0 Available")).toBeTruthy();
+    });
+    expect(screen.queryByText("Stale cached extension")).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText("Add an extension repository first")).toBeTruthy();
+    });
+    expect(screen.getAllByText("0").length).toBeGreaterThan(0);
+  });
+
+  test("uses the full-area Sources workspace with overview and dedicated updates states", async () => {
+    const { container } = render(BrowseV3);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+    });
+
+    expect(document.querySelector("[data-sources-workspace]")).toBeTruthy();
+    expect(document.querySelector("[data-sources-overview]")).toBeTruthy();
+    expect(document.querySelector("[data-sources-updates-view]")).toBeNull();
+
+    const updatesTab = container.querySelector<HTMLButtonElement>('.tabs button[aria-label="Updates"]');
+    expect(updatesTab).toBeTruthy();
+    await fireEvent.click(updatesTab!);
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-sources-updates-view]")).toBeTruthy();
+    });
+    expect(document.querySelector("[data-sources-overview]")).toBeNull();
+    expect(screen.getByText("MangaDex")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Installed" }));
+
+    await waitFor(() => {
+      expect(document.querySelector("[data-sources-overview]")).toBeTruthy();
     });
   });
 
@@ -925,7 +1064,10 @@ describe("BrowseV3", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Asura Scans").length).toBeGreaterThan(0);
     });
-    await fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    await fireEvent.click(screen.getAllByText("Asura Scans")[0]);
+
+    const settingsPanel = await waitFor(() => screen.getByLabelText("Settings for Asura Scans"));
+    await fireEvent.click(within(settingsPanel).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => {
       expect(managedRuntimeUninstallExtensionMock).toHaveBeenCalledWith(expect.any(String));
@@ -976,10 +1118,12 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Update all (1)" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Updates" })).toBeTruthy();
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Update all (1)" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Updates" }));
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Update all (1)" }));
 
     await waitFor(() => {
       expect(addToastMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1005,9 +1149,14 @@ describe("BrowseV3", () => {
       expect(screen.getByText("Choose a local `.apk` extension package. Epigraph will install it through the same extension manager used by repository installs.")).toBeTruthy();
     });
 
+    const dialog = screen.getByRole("dialog", { name: "Install APK file" });
+    expect(dialog).toBeTruthy();
     const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
     expect(fileInput).toBeTruthy();
-    const panel = screen.getByText("Install APK file").closest("section");
+    expect(fileInput?.classList.contains("apkFileInput")).toBe(true);
+    expect(within(dialog).getByRole("button", { name: "Choose file" })).toBeTruthy();
+    expect(within(dialog).getByText("No APK selected")).toBeTruthy();
+    const panel = dialog;
     expect(panel).toBeTruthy();
     const installButton = within(panel as HTMLElement).getByRole("button", { name: "Install" });
 
@@ -1029,6 +1178,7 @@ describe("BrowseV3", () => {
     await fireEvent.change(fileInput!, {
       target: { files: [new File(["apk"], "source.apk", { type: "application/vnd.android.package-archive" })] },
     });
+    expect(within(dialog).getByText("source.apk")).toBeTruthy();
     await fireEvent.click(installButton);
 
     await waitFor(() => {

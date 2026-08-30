@@ -38,10 +38,17 @@ const textPairs = [
 ] as const;
 
 function parseRgba(value: string): Rgba {
-  const match = value.match(/^rgba?\(([^)]+)\)$/i);
-  if (!match) throw new Error(`Unsupported computed color: ${value}`);
-  const parts = match[1].split(/[,\s/]+/).filter(Boolean).map(Number);
-  return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+  const rgb = value.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgb) {
+    const parts = rgb[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    return [parts[0], parts[1], parts[2], parts[3] ?? 1];
+  }
+  const srgb = value.match(/^color\(srgb\s+([^)]*)\)$/i);
+  if (srgb) {
+    const parts = srgb[1].split(/[\s/]+/).filter(Boolean).map(Number);
+    return [parts[0] * 255, parts[1] * 255, parts[2] * 255, parts[3] ?? 1];
+  }
+  throw new Error(`Unsupported computed color: ${value}`);
 }
 
 function composite(foreground: Rgba, background: Rgba): Rgba {
@@ -223,7 +230,7 @@ describe("builtin theme matrix", () => {
         const background = computedTokenColor("--color-background", "backgroundColor");
         const controlBorder = computedTokenColor("--color-border", "backgroundColor");
         const focusBorder = computedTokenColor("--color-outline", "backgroundColor");
-        expect(contrast(controlBorder, background), "AMOLED control boundaries").toBeGreaterThanOrEqual(3);
+        expect(contrast(controlBorder, background), "AMOLED quiet control boundaries").toBeLessThan(2);
         expect(contrast(focusBorder, background), "AMOLED visible focus").toBeGreaterThanOrEqual(3);
       }
     }
@@ -238,8 +245,9 @@ describe("builtin theme matrix", () => {
       const frame = document.createElement("section");
       frame.setAttribute("aria-label", `${theme.label} builtin theme sample`);
       frame.style.cssText = `
-        display: grid;
-        gap: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
         width: 960px;
         min-height: 520px;
         padding: 24px;
@@ -247,39 +255,33 @@ describe("builtin theme matrix", () => {
         background: var(--color-background);
         font: 13px/1.4 system-ui, sans-serif;
       `;
-
-      const heading = document.createElement("strong");
-      heading.textContent = `${theme.label} - ${theme.description}`;
-      heading.style.cssText = "font-size: 20px; color: var(--text-primary);";
-      frame.appendChild(heading);
-
-      const grid = document.createElement("div");
-      grid.style.cssText = "display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;";
-
-      for (const token of [
-        "--color-card",
-        "--color-modal",
-        "--component-menu-bg",
-        "--component-button-bg",
-        "--component-input-bg",
-        "--component-toast-bg",
-      ]) {
-        const swatch = document.createElement("span");
-        swatch.textContent = token.replace("--", "");
-        swatch.style.cssText = `
-          min-height: 86px;
-          display: grid;
-          place-items: center;
-          padding: 6px;
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-sm);
-          color: var(--text-primary);
-          background: var(${token});
-        `;
-        grid.appendChild(swatch);
-      }
-
-      frame.appendChild(grid);
+      frame.innerHTML = `
+        <header style="display:flex;align-items:center;justify-content:space-between;padding-bottom:12px;border-bottom:1px solid var(--color-divider)">
+          <div><strong style="display:block;font-size:18px">${theme.label}</strong><span style="color:var(--text-muted)">${theme.description}</span></div>
+          <nav style="display:flex;gap:6px"><span style="padding:6px 10px;border-radius:var(--hud-control-radius);background:var(--hud-selection-bg);color:var(--accent-fg)">Biblioteca</span><span style="padding:6px 10px;color:var(--text-muted)">Descobrir</span></nav>
+        </header>
+        <div style="display:grid;grid-template-columns:1.35fr .65fr;gap:14px;flex:1">
+          <main style="display:grid;align-content:start;gap:12px">
+            <label style="height:var(--hud-control-height);display:flex;align-items:center;gap:8px;padding:0 11px;border:1px solid var(--component-input-border);border-radius:var(--hud-control-radius);background:var(--component-input-bg);color:var(--text-muted)">⌕ <span>Buscar na biblioteca</span></label>
+            <article style="padding:14px;border:1px solid var(--component-card-border);border-radius:var(--radius-card);background:var(--component-card-bg);box-shadow:var(--component-card-shadow)">
+              <div style="display:flex;justify-content:space-between;align-items:start;gap:12px"><div><strong style="font-size:15px">Coleção recente</strong><p style="margin:4px 0 0;color:var(--text-muted)">Superfície elevada sem competir com o conteúdo.</p></div><span style="color:var(--accent-fg)">12 itens</span></div>
+              <div style="display:flex;gap:8px;margin-top:14px"><button style="height:var(--hud-control-height);padding:0 12px;border:1px solid var(--component-button-border);border-radius:var(--hud-control-radius);background:var(--component-button-bg);color:var(--text-primary)">Abrir</button><button style="height:var(--hud-control-height);padding:0 12px;border:1px solid var(--color-outline);border-radius:var(--hud-control-radius);background:var(--hud-selection-bg);color:var(--accent-fg);box-shadow:var(--shadow-focus)">Em foco</button><button disabled style="height:var(--hud-control-height);padding:0 12px;border:1px solid var(--component-button-border);border-radius:var(--hud-control-radius);background:var(--component-button-bg);color:var(--text-disabled)">Indisponível</button></div>
+            </article>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+              <div style="padding:10px;border-left:2px solid var(--color-success);background:var(--color-success-bg)"><strong>Sucesso</strong><div style="color:var(--text-muted)">Sincronizado</div></div>
+              <div style="padding:10px;border-left:2px solid var(--color-warning);background:var(--color-warning-bg)"><strong>Aviso</strong><div style="color:var(--text-muted)">Atenção</div></div>
+              <div style="padding:10px;border-left:2px solid var(--color-danger);background:var(--color-danger-bg)"><strong>Erro</strong><div style="color:var(--text-muted)">Falhou</div></div>
+              <div style="padding:10px;border-left:2px solid var(--color-info);background:var(--color-info-bg)"><strong>Info</strong><div style="color:var(--text-muted)">Atualizado</div></div>
+            </div>
+          </main>
+          <aside style="display:grid;align-content:start;gap:12px">
+            <section style="padding:12px;border:1px solid var(--component-menu-border);border-radius:var(--component-menu-radius);background:var(--component-menu-bg);box-shadow:var(--component-menu-shadow)"><strong>Ordenar por</strong><div style="margin-top:8px;padding:7px 8px;border-radius:var(--hud-control-radius);background:var(--hud-selection-bg);color:var(--accent-fg)">Mais recentes</div><div style="padding:7px 8px;color:var(--text-secondary)">Título</div><div style="padding:7px 8px;color:var(--text-secondary)">Progresso</div></section>
+            <section style="padding:12px;border:1px solid var(--component-modal-border);border-radius:var(--component-modal-radius);background:var(--component-modal-bg);box-shadow:var(--component-modal-shadow)"><strong>Confirmar ação</strong><p style="margin:5px 0 10px;color:var(--text-muted)">Exemplo compacto de modal.</p><button style="height:var(--hud-control-height);padding:0 11px;border:1px solid var(--component-button-border);border-radius:var(--hud-control-radius);background:var(--component-button-bg);color:var(--text-primary)">Confirmar</button></section>
+          </aside>
+        </div>
+        <div style="height:var(--hud-progress-height);border-radius:9999px;background:var(--bg-subtle);overflow:hidden"><div style="width:62%;height:100%;background:var(--accent)"></div></div>
+        <div style="display:flex;align-items:center;gap:10px;min-height:58px;padding:10px 12px;border:1px solid var(--component-toast-border);border-radius:var(--component-toast-radius);background:var(--component-toast-bg);box-shadow:var(--component-toast-shadow)"><span style="color:var(--color-success)">✓</span><div><strong style="display:block">Biblioteca atualizada</strong><span style="color:var(--text-muted)">As informações foram sincronizadas.</span></div></div>
+      `;
       document.body.appendChild(frame);
       await new Promise(requestAnimationFrame);
       const screenshot = await page.screenshot({ base64: true });

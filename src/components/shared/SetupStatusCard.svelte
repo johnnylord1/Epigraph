@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SetupActionKind, SetupState, SetupSurface } from "../../lib/setupState";
   import { getSetupStatePresentation } from "../../lib/setupState";
+  import { _ } from "../../lib/i18n/runtime";
   import NocturneState from "./NocturneState.svelte";
 
   let {
@@ -25,10 +26,9 @@
     onRetry?: () => void;
   } = $props();
 
-  const content = $derived(getSetupStatePresentation(state, surface));
-  const tone = $derived(state.kind === "server_offline" ? "danger" : state.kind === "ready" ? "success" : "warning");
-  const icon = $derived(state.kind === "server_offline" ? "plug" : state.kind === "ready" ? "info" : "warning");
-  const detail = $derived(state.kind === "server_offline" && state.errorMessage ? state.errorMessage : "");
+  const content = $derived(getSetupStatePresentation(state, surface, $_));
+  const tone = $derived(state.kind === "server_offline" ? "danger" : state.kind === "ready" ? "success" : state.kind === "server_initializing" ? "info" : "warning");
+  const icon = $derived(state.kind === "server_offline" ? "plug" : state.kind === "ready" ? "check" : state.kind === "server_initializing" ? "retry" : "warning");
   const actions = $derived(content.actions.map((action) => ({
     label: action.label,
     kind: action.kind === "add_recommended_repo" || action.kind === "browse_available_extensions" ? "primary" as const : "secondary" as const,
@@ -48,10 +48,10 @@
 </script>
 
 <NocturneState
-  eyebrow="Setup status"
+  layout="compact"
+  eyebrow={$_("setup.status")}
   title={content.title}
   body={content.body}
-  {detail}
   {tone}
   {icon}
   actions={actions}

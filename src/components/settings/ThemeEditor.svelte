@@ -20,6 +20,7 @@
     serializeThemeDocument,
   } from "../../lib/theme/document";
   import { applyThemeContract, readBuiltinThemeContract } from "../../lib/theme/provider";
+  import NocturneState from "../shared/NocturneState.svelte";
   import {
     DEFAULT_BUILTIN_THEME_ID,
     THEME_PRIMITIVE_TOKEN_KEYS,
@@ -489,9 +490,6 @@
       </div>
 
       <div class="te-header-actions">
-        {#if importError}
-          <span class="te-import-err">{importError}</span>
-        {/if}
         <button class="te-action-btn" onclick={handleImport} title={$_("ui_importFromJson")}>
           <UploadSimple size={13} />
           <span>{$_("ui_import")}</span>
@@ -517,6 +515,10 @@
         </button>
       </div>
     </header>
+
+    {#if importError}
+      <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_themeEditor")} title={$_("ui_import")} body={importError} />
+    {/if}
 
     <!-- ── Body ───────────────────────────────────────────────────────── -->
     <div class="te-body">
@@ -818,14 +820,6 @@
 
   .te-header-actions {
     display: flex; align-items: center; gap: var(--component-theme-editor-header-actions-gap); flex-shrink: 0;
-  }
-
-  .te-import-err {
-    font-family: var(--component-theme-editor-label-font);
-    font-size: var(--component-theme-editor-tab-font-size);
-    letter-spacing: var(--component-theme-editor-preset-desc-letter-spacing);
-    color: var(--component-theme-editor-status-error-fg);
-    flex-shrink: 0;
   }
 
   .te-action-btn {

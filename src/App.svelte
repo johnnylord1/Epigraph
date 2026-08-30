@@ -838,29 +838,29 @@
       const totalUpdatedTitles = entries.length + novelNotifications.length;
       addSystemNotification({
         kind: updateIssues.length > 0 ? "info" : "success",
-        title: updateIssues.length > 0 ? "Library sync completed with issues" : totalUpdatedTitles > 0 ? "New chapters found" : "Library sync completed",
+        title: updateIssues.length > 0 ? $_("feedback.librarySyncIssues") : totalUpdatedTitles > 0 ? $_("ui_newChaptersFound") : $_("feedback.librarySyncComplete"),
         body: updateIssues.length > 0
-          ? `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update across ${new Set(updateIssues.map((issue) => issue.sourceId)).size} source${new Set(updateIssues.map((issue) => issue.sourceId)).size === 1 ? "" : "s"}.`
+          ? $_("feedback.libraryIssuesBody", { issues: updateIssues.length, sources: new Set(updateIssues.map((issue) => issue.sourceId)).size })
           : totalUpdatedTitles > 0
-            ? `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`
-            : `Automatic updates every ${store.settings.libraryUpdateIntervalHours ?? 12}h.`,
+            ? $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles })
+            : $_("feedback.automaticUpdatesBody", { hours: store.settings.libraryUpdateIntervalHours ?? 12 }),
         createdAt: updatedAt,
       });
       if (totalUpdatedTitles > 0) {
         addToast({
           kind: "success",
-          title: "New chapters found",
-          body: `${totalNewChapters} new chapters added across ${totalUpdatedTitles} titles.`,
+          title: $_("ui_newChaptersFound"),
+          body: $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles }),
         });
       } else if (updateIssues.length > 0) {
         addToast({
           kind: "info",
-          title: "Library updated with issues",
-          body: `${updateIssues.length} title${updateIssues.length === 1 ? "" : "s"} could not update. See Recent Activity.`,
+          title: $_("feedback.libraryUpdatedIssues"),
+          body: $_("feedback.libraryUpdatedIssuesBody", { count: updateIssues.length }),
         });
       }
       updateRuntime.showLibraryUpdateProgress(
-        updateRuntime.formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, comicsIssueCount),
+        updateRuntime.formatLibraryUpdateFinalSummary($_("feedback.comicsLibrary"), updateRun.jobsInfo, comicsIssueCount),
         1800,
         updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo),
       );
@@ -870,10 +870,10 @@
         console.warn("Automatic library update failed:", error);
         addSystemNotification({
           kind: "error",
-          title: "Automatic library update failed",
-          body: error instanceof Error ? error.message : "Epigraph could not refresh your library.",
+          title: $_("feedback.automaticLibraryUpdateFailed"),
+          body: error instanceof Error ? error.message : $_("feedback.libraryRefreshFailed"),
         });
-        updateRuntime.showLibraryUpdateProgress("Automatic library update failed.", 2200);
+        updateRuntime.showLibraryUpdateProgress($_("feedback.automaticLibraryUpdateFailed"), 2200);
       })
       .finally(() => {
         automaticLibraryUpdateInFlight = null;
@@ -1296,8 +1296,8 @@
     addToast({
       id: "release-performance-toast",
       kind: "info",
-      title: "Performance check",
-      body: "Validating notification motion.",
+      title: $_("feedback.performanceCheck"),
+      body: $_("feedback.performanceCheckBody"),
       duration: 6_000,
     });
   }
@@ -1441,7 +1441,7 @@
       if (item.state !== "DOWNLOADING") continue;
       if (!next.some(q => q.chapter.id === item.chapter.id)) {
         const manga = item.chapter.manga;
-        addToast({ kind: "success", title: "Chapter downloaded",
+        addToast({ kind: "success", title: $_("feedback.chapterDownloaded"),
           body: manga ? `${manga.title} — ${item.chapter.name}` : item.chapter.name,
           duration: 4000 });
       }
@@ -1596,8 +1596,8 @@
       if (status.update_available && status.version) {
         addToast({
           kind: "info",
-          title: `Update available — v${status.version}`,
-          body: "Open Settings → About to install.",
+          title: $_("feedback.updateAvailableVersion", { version: status.version }),
+          body: $_("feedback.openAboutToInstall"),
           duration: 8000,
         });
       }
@@ -1768,7 +1768,7 @@
       });
       addToast({
         kind: "error",
-        title: "Books restore audit failed",
+        title: $_("feedback.booksRestoreAuditFailed"),
         body: message,
       });
       throw error;
@@ -1943,7 +1943,7 @@
           : plan.recommendedSelection.length > 0
             ? "success"
             : "info",
-        title: "Unified backup restore plan loaded",
+        title: $_("feedback.unifiedRestorePlanLoaded"),
         body: plan.summary.summaryLabel,
         duration: 20000,
       });
@@ -1958,7 +1958,7 @@
       });
       addToast({
         kind: "error",
-        title: "Unified backup planning failed",
+        title: $_("feedback.unifiedBackupPlanningFailed"),
         body: message,
         duration: 15000,
       });
@@ -2059,7 +2059,7 @@
       });
       addToast({
         kind: "error",
-        title: "Novels restore audit failed",
+        title: $_("feedback.novelsRestoreAuditFailed"),
         body: message,
         duration: 15000,
       });
@@ -2211,7 +2211,7 @@
 
       addToast({
         kind: "success",
-        title: "Manga restore loaded",
+        title: $_("feedback.mangaRestoreLoaded"),
         body: `${finalStatus?.totalManga ?? parsed.parsedBackup.backupManga.length} manga restored into the current profile.`,
       });
     } catch (error) {
@@ -2224,7 +2224,7 @@
       });
       addToast({
         kind: "error",
-        title: "Manga restore audit failed",
+        title: $_("feedback.mangaRestoreAuditFailed"),
         body: message,
       });
       throw error;
@@ -2853,7 +2853,8 @@
       if (!discordRpcStarted) {
         discordRpcStarted = true;
         void initRpc(store.settings).then(() => {
-          void setNavigationPresence(store.navPage, store.settings, "app-open");
+          const hasActiveReader = Boolean(store.activeChapter || store.activeBookReaderId || store.activeNovelReader);
+          if (!hasActiveReader) void setNavigationPresence(store.navPage, store.settings, "app-open");
         });
       }
     } else {

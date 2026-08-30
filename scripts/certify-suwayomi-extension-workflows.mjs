@@ -488,7 +488,7 @@ async function defaultJavaExecutable() {
   return "java";
 }
 
-async function defaultBaselineJar() {
+export async function defaultBaselineJar() {
   if (process.env.EPIGRAPH_SUWAYOMI_BASELINE_JAR) return process.env.EPIGRAPH_SUWAYOMI_BASELINE_JAR;
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
     const bundled = path.join(
@@ -501,7 +501,7 @@ async function defaultBaselineJar() {
     );
     try {
       await access(bundled);
-      return bundled;
+      if (await isValidPinnedFile(bundled, WORKFLOW_BASELINE.sha256)) return bundled;
     } catch {
       // The release artifact is downloaded below when no managed baseline exists.
     }
@@ -551,10 +551,35 @@ export function summarizeDeterministicWorkflow({ inventory, search, details, cha
       sourceIds: extensionSources.map((item) => String(item.id)).sort(),
     },
     localSourceId: String(localSource.id),
-    localMangaId: manga.id,
-    localChapterId: chapter.id,
+    localManga: {
+      title: manga.title,
+      author: detail.author,
+    },
+    localChapter: {
+      name: chapter.name ?? null,
+      sourceOrder: chapter.sourceOrder ?? null,
+      pageCount: chapter.pageCount ?? null,
+    },
     pageCount: pageList.length,
   };
+}
+
+export async function waitForMatchingWorkflow(
+  expected,
+  collect,
+  { attempts = 10, intervalMs = 500 } = {},
+) {
+  let actual = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    actual = await collect();
+    if (JSON.stringify(actual) === JSON.stringify(expected)) return actual;
+    if (attempt + 1 < attempts && intervalMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+  throw new Error(
+    `Deterministic workflow identity did not stabilize after restart. candidate=${JSON.stringify(expected)} restart=${JSON.stringify(actual)}`,
+  );
 }
 
 async function collectWorkflow(endpoint) {
@@ -713,12 +738,16 @@ async function main() {
     await writeFile(path.join(runtimeRoot, "server.conf"), serverConfig(port, { extensionStores: [] }));
     const endpoint = `http://127.0.0.1:${port}/api/graphql`;
 
+    let candidateWorkflow = null;
     for (const name of ["candidate", "restart"]) {
       const runtime = startRuntime(java, candidateJar, runtimeRoot);
       try {
         await waitForHealth(endpoint, runtime, timeoutMs);
         await assertPortOwnedByProcess(port, runtime.child.pid);
-        const workflow = await collectWorkflow(endpoint);
+        const workflow = name === "restart" && candidateWorkflow
+          ? await waitForMatchingWorkflow(candidateWorkflow, () => collectWorkflow(endpoint))
+          : await collectWorkflow(endpoint);
+        if (name === "candidate") candidateWorkflow = workflow;
         assertNoStructuralRuntimeErrors(runtime.output);
         report.phases.push({ name, passed: true, workflow });
       } catch (error) {

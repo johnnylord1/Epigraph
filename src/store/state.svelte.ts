@@ -47,6 +47,7 @@ import {
   type CustomTheme,
   type Theme,
 } from "../lib/theme/contract";
+import { migrateThemeDocument } from "../lib/theme/document";
 import {
   DEFAULT_PROSE_READER_BACKGROUND_COLOR,
   DEFAULT_PROSE_READER_TEXT_COLOR,
@@ -872,6 +873,16 @@ function loadPersisted(): any {
   }
 }
 
+function normalizeSavedCustomThemes(value: unknown): CustomTheme[] {
+  if (!Array.isArray(value)) return [];
+  const valid = new Map<string, CustomTheme>();
+  for (const candidate of value) {
+    const migrated = migrateThemeDocument(candidate);
+    if (migrated.ok) valid.set(migrated.document.id, migrated.document);
+  }
+  return [...valid.values()];
+}
+
 function readPersistedAppReadingSnapshot(): {
   history: HistoryEntry[];
   readLog: ReadLogEntry[];
@@ -924,7 +935,7 @@ function mergeSettings(saved: any): Settings {
   const savedBooksLibraryState = peekBookLibraryState();
   const savedMangaReaderPrefs = saved?.settings?.mangaReaderPrefs ?? {};
   const customLocalProfiles = normalizeCustomLocalProfiles(saved?.settings?.customLocalProfiles);
-  const savedCustomThemes = Array.isArray(saved?.settings?.customThemes) ? saved.settings.customThemes : [];
+  const savedCustomThemes = normalizeSavedCustomThemes(saved?.settings?.customThemes);
   const savedDefaultProfileId = normalizeLocalProfileId(saved?.settings?.defaultLocalProfileId);
   const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
   const coercedDefaultProfileId = getLocalProfileMeta(savedDefaultProfileId, customLocalProfiles)?.id ?? DEFAULT_SETTINGS.defaultLocalProfileId;

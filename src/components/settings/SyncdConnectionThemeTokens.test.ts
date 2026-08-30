@@ -79,7 +79,7 @@ describe("syncd connection theme tokens", () => {
   test("derives modal surfaces from the active theme accent and semantic surfaces", () => {
     for (const file of TOKEN_FILES) {
       const source = readRepoFile(file);
-      expect(source).toContain("--component-syncd-modal-bg: var(--component-modal-bg);");
+      expect(source).toContain("--component-syncd-modal-bg: var(--component-settings-modal-bg);");
       expect(source).toContain("--component-syncd-modal-chrome-bg: var(--component-settings-card-bg);");
       expect(source).toContain("--component-syncd-status-bg: var(--component-settings-button-bg);");
       expect(source).toMatch(

@@ -38,10 +38,11 @@ body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-base);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
   font-feature-settings: "kern" 1, "liga" 1;
-  transform: translateZ(0);
 }
 
 body[data-app-shell-mode="standard"] .epigraph-app-shell .main > .root {

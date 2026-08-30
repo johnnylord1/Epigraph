@@ -56,23 +56,23 @@ describe("canonical theme contract", () => {
     }
     expect(getBuiltinThemeFallbackContract("dark")).toMatchObject({ tokens: DEFAULT_THEME_TOKENS });
     expect(getBuiltinThemeFallbackContract("light").tokens).toMatchObject({
-      "bg-base": "#eeece8",
-      "text-primary": "#1a1916",
-      "color-background": "#eeece8",
-      "color-danger": "#a03030",
+      "bg-base": "#f3f2f5",
+      "text-primary": "#242127",
+      "color-background": "#f3f2f5",
+      "color-danger": "#9f3447",
     });
   });
 
   test("keeps Epigraph accents violet and AMOLED surfaces truly black", () => {
     expect(BUILTIN_THEME_CONTRACTS.dark.tokens).toMatchObject({
-      "bg-base": "#0a0a0b",
-      "bg-surface": "#111113",
-      "accent": "#9d7cff",
-      "border-focus": "#9d7cff",
+      "bg-base": "#080809",
+      "bg-surface": "#0b0b0d",
+      "accent": "#9f8ed9",
+      "border-focus": "#8373c2",
     });
-    expect(BUILTIN_THEME_CONTRACTS["high-contrast"].tokens["accent"]).toBe("#b89cff");
-    expect(BUILTIN_THEME_CONTRACTS.light.tokens["accent"]).toBe("#6d3bd1");
-    expect(BUILTIN_THEME_CONTRACTS["light-contrast"].tokens["accent"]).toBe("#4d158f");
+    expect(BUILTIN_THEME_CONTRACTS["high-contrast"].tokens["accent"]).toBe("#b49cf0");
+    expect(BUILTIN_THEME_CONTRACTS.light.tokens["accent"]).toBe("#6750a4");
+    expect(BUILTIN_THEME_CONTRACTS["light-contrast"].tokens["accent"]).toBe("#4f378b");
 
     const amoled = BUILTIN_THEME_CONTRACTS.amoled.tokens;
     for (const token of ["bg-void", "bg-base", "bg-surface", "bg-raised"] as const) {
@@ -82,7 +82,7 @@ describe("canonical theme contract", () => {
       "color-background": "#000000",
       "color-surface": "#000000",
       "color-card": "#000000",
-      "accent": "#b36dff",
+      "accent": "#a88bd8",
     });
   });
 
@@ -102,6 +102,19 @@ describe("canonical theme contract", () => {
     for (const preset of Object.values(THEME_MOTION_VARS)) {
       expect(Object.keys(preset)).toEqual([...THEME_MOTION_PROPERTY_KEYS]);
     }
+  });
+
+  test.each(BUILTIN_THEME_IDS)("%s uses the shared modern HUD geometry", (id) => {
+    expect(BUILTIN_THEME_CONTRACTS[id].hud).toMatchObject({
+      "hud-control-height": "28px",
+      "hud-icon-button-size": "28px",
+      "hud-control-radius": "8px",
+      "hud-popover-radius": "12px",
+      "hud-status-radius": "9999px",
+      "hud-toast-radius": "12px",
+      "hud-chapter-row-radius": "9px",
+      "hud-progress-height": "2px",
+    });
   });
 
   test("preserves the store exports while consumers migrate to the contract", () => {

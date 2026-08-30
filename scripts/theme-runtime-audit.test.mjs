@@ -29,6 +29,12 @@ test("computed color and alpha-aware contrast follow WCAG math", () => {
     blue: 255,
     alpha: 0.62,
   });
+  assert.deepEqual(parseComputedColor("color(srgb 0.1 0.2 0.3 / 0.4)"), {
+    red: 25.5,
+    green: 51,
+    blue: 76.5,
+    alpha: 0.4,
+  });
   assert.equal(Number(computedContrastRatio("rgb(255, 255, 255)", "rgb(0, 0, 0)").toFixed(2)), 21);
   assert.ok(computedContrastRatio("rgba(255, 255, 255, 0.62)", "rgb(19, 19, 22)") >= 4.5);
   assert.ok(computedContrastRatio("rgb(229, 226, 225)", "rgba(255, 255, 255, 0.035)", "rgb(19, 19, 19)") >= 4.5);

@@ -492,7 +492,7 @@
       await invoke("open_app_logs");
     } catch (error) {
       console.error("Failed to open app logs:", error);
-      addToast({ kind: "error", title: "Couldn't open the app logs." });
+      addToast({ kind: "error", title: translate("ui_couldnTOpenTheAppLogs") });
     }
   }
   function clearSettingsSearchHighlight() {
@@ -717,7 +717,7 @@
       await invoke<boolean>("reset_local_profile_data", { profileId: normalized });
       addToast({
         kind: "success",
-        title: "Profile data reset",
+        title: translate("ui_profileDataReset"),
         body: currentRuntimeProfileId === normalized
           ? "Restart Epigraph to start this profile from a clean workspace."
           : "The profile workspace will be recreated cleanly next time it starts.",
@@ -1740,7 +1740,7 @@
       backupSavedPath = savedPath;
       addToast({
         kind: "success",
-        title: "Backup saved",
+        title: translate("ui_backupSaved"),
         body: savedPath,
       });
     } catch (e: any) {
@@ -1818,7 +1818,7 @@
       await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true });
       addToast({
         kind: "success",
-        title: "Extension installed",
+        title: translate("ui_extensionInstalled"),
         body: `${extension.name} was sent to Suwayomi. Epigraph will refresh restore readiness once the source inventory catches up.`,
       });
       if (refreshAfter && backupSelectedFile) {
@@ -1911,8 +1911,8 @@
         }
         addToast({
           kind: "success",
-          title: "Backup restored",
-          body: "Restart or refresh views to pick up restored library state.",
+          title: translate("ui_backupRestored"),
+          body: translate("ui_restartOrRefreshViewsToPickUpRestored"),
         });
         return { ok: true, finalState };
       } else {
@@ -2959,8 +2959,8 @@
     } catch {
       addToast({
         kind: "error",
-        title: "Folder unavailable",
-        body: "Could not open the local FlareSolverr folder.",
+        title: translate("ui_folderUnavailable"),
+        body: translate("ui_couldNotOpenTheLocalFlaresolverrFolder"),
       });
     }
   }
@@ -2970,8 +2970,8 @@
     } catch {
       addToast({
         kind: "error",
-        title: "Logs unavailable",
-        body: "Could not open the local FlareSolverr logs.",
+        title: translate("ui_logsUnavailable"),
+        body: translate("ui_couldNotOpenTheLocalFlaresolverrLogs"),
       });
     }
   }
@@ -3092,7 +3092,7 @@
       }, hardcoverTokenInput);
       hardcoverTokenInput = "";
       hardcoverAuthOpen = false;
-      addToast({ kind: "success", title: "Hardcover connected", body: hardcoverState.auth.username ?? "Novel tracking is ready." });
+      addToast({ kind: "success", title: translate("ui_hardcoverConnected"), body: hardcoverState.auth.username ?? translate("feedback.novelTrackingReady") });
     } catch (error: any) {
       hardcoverError = error?.message ?? "Failed to connect Hardcover";
     } finally {
@@ -3107,7 +3107,7 @@
     hardcoverTokenInput = "";
     hardcoverError = null;
     hardcoverAuthOpen = false;
-    addToast({ kind: "info", title: "Hardcover disconnected" });
+    addToast({ kind: "info", title: translate("ui_hardcoverDisconnected") });
   }
   function startHardcoverAuth() {
     closeTrackerDetail();
@@ -5106,7 +5106,7 @@
                     {/if}
                     {#if migrateError}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Migration" title={$_("settings_inline_pathMigrationFailed")} body={migrateError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("settings_inline_pathMigrationFailed")} body={migrateError} />
                       </div>
                     {/if}
                   </div>
@@ -5208,7 +5208,7 @@
                 </p>
                 {#if categoryDomain === "comics" && catsError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Categories" title={$_("settings_inline_couldNotLoadComicFolders")} body={catsError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_categories")} title={$_("settings_inline_couldNotLoadComicFolders")} body={catsError} />
                   </div>
                 {/if}
                 <div class="settings-card__footer settings-card__footer--editor">
@@ -5219,9 +5219,9 @@
                 </div>
                 {#if categoryDomain === "comics"}
                   {#if catsLoading}
-                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title={$_("settings_inline_loadingCategories")} />
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("ui_categories")} title={$_("settings_inline_loadingCategories")} />
                   {:else if store.categories.filter((c) => c.id !== 0).length === 0}
-                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow="Categories" title={$_("settings_inline_noCategoriesYet")} body="Create one above to organize your library." />
+                    <NocturneState layout="compact" tone="info" icon="folder" eyebrow={$_("ui_categories")} title={$_("settings_inline_noCategoriesYet")} body={$_("feedback.createCategoryAbove")} />
                   {:else}
                     {@const displayCats = store.categories
                       .filter((c) => c.id !== 0)
@@ -5324,7 +5324,7 @@
                     layout="compact"
                     tone="danger"
                     icon="warning"
-                    eyebrow="Trackers"
+                    eyebrow={$_("feedback.trackers")}
                     title={$_("settings_inline_couldNotLoadTrackers")}
                     body={trackersError}
                     actions={[{
@@ -5336,7 +5336,7 @@
                 </div>
               {/if}
               {#if trackersLoading}
-                <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Trackers" title={$_("settings_inline_loadingTrackers")} />
+                <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("feedback.trackers")} title={$_("settings_inline_loadingTrackers")} />
               {:else}
                 <div class="settings-card__stack">
                   {#each trackers as tracker}
@@ -5551,7 +5551,7 @@
               <div class="settings-card settings-card--wide">
                 <p class="settings-card__title">{$_("settings_inline_securityStatus")}</p>
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Security" title={$_("settings_inline_securitySettingFailed")} body={secError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_security")} title={$_("settings_inline_securitySettingFailed")} body={secError} />
                 </div>
               </div>
             {/if}
@@ -5662,7 +5662,7 @@
               </div>
               {#if store.settings.serverAuthEnabled}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Security" title={$_("settings_inline_imageProxyEnabled")} body="Images are proxied through Tauri while Basic Auth is active, so image loading can be slower." />
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_security")} title={$_("settings_inline_imageProxyEnabled")} body={$_("feedback.imageProxyBody")} />
                 </div>
               {/if}
             </div>
@@ -5765,7 +5765,7 @@
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved" : "Save"}</button>
                       </div>
                       {#if pinError}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="PIN" title={$_("settings_inline_pinNeedsAttention")} body={pinError} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_pin")} title={$_("settings_inline_pinNeedsAttention")} body={pinError} />
                       {/if}
                     </div>
                   </div>
@@ -6151,9 +6151,9 @@
                     <input class="settings-text-input" placeholder={$_("settings_inline_filterSources")} bind:value={sourceSearch} />
                   </div>
                   {#if contentSourcesLoading}
-                    <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Sources" title={$_("settings_inline_loadingSources")} />
+                    <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("sources.eyebrow")} title={$_("settings_inline_loadingSources")} />
                   {:else if contentSources.length === 0}
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Sources" title={$_("settings_inline_noSourcesFound")} body="Check your server connection or source visibility rules." />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("sources.eyebrow")} title={$_("settings_inline_noSourcesFound")} body={$_("feedback.checkSourceConnection")} />
                   {:else}
                     <div class="content-source-list">
                       {#each contentSourcesFiltered as group (group.name)}
@@ -6233,12 +6233,12 @@
               </div>
               {#if onLatestVersion}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="success" icon="info" eyebrow="Updates" title={$_("settings_inline_latestVersion")} />
+                  <NocturneState layout="compact" tone="success" icon="info" eyebrow={$_("settings_brand_updates")} title={$_("settings_inline_latestVersion")} />
                 </div>
               {/if}
               {#if updateCheckError && !releasesLoading}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Updates" title="Could not verify signed updates" body="Release history is still available. Try checking again before installing." />
+                  <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings_brand_updates")} title={$_("feedback.signedUpdatesTitle")} body={$_("feedback.signedUpdatesBody")} />
                 </div>
               {/if}
               {#if updatePhase === "downloading" && IS_WINDOWS}
@@ -6261,7 +6261,7 @@
               {/if}
               {#if updatePhase === "error"}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Updates" title={$_("settings_inline_updateFailed")} body={updateError ?? ""} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings_brand_updates")} title={$_("settings_inline_updateFailed")} body={updateError ?? ""} />
                 </div>
                 <div class="update-error-row">
                   <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>{$_("settings_inline_dismiss")}</button>
@@ -6275,12 +6275,12 @@
                 </div>
                 {#if releasesError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Releases" title={$_("settings_inline_couldNotFetchReleases")} body={releasesError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_releases")} title={$_("settings_inline_couldNotFetchReleases")} body={releasesError} />
                   </div>
                 {:else if releasesLoading}
-                  <NocturneState layout="compact" tone="info" icon="retry" eyebrow="Releases" title={$_("settings_inline_fetchingReleases")} />
+                  <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("ui_releases")} title={$_("settings_inline_fetchingReleases")} />
                 {:else if releases.length === 0}
-                  <NocturneState layout="compact" tone="info" icon="info" eyebrow="Releases" title={$_("settings_inline_noReleasesFound")} />
+                  <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_releases")} title={$_("settings_inline_noReleasesFound")} />
                 {:else}
                   <div class="release-list-scroll">
                     <div class="release-list">
@@ -6549,7 +6549,7 @@
                     </div>
                     {#if backupUnifiedPlan.executionBlockedReason}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title={$_("settings_inline_restoreBlocked")} body={backupUnifiedPlan.executionBlockedReason} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreBlocked")} body={backupUnifiedPlan.executionBlockedReason} />
                       </div>
                     {/if}
                     {#if backupUnifiedPlan.containerIssues.length > 0}
@@ -6687,7 +6687,7 @@
                     {/if}
                     {#if backupResolvedExecutionBlockedReason}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Restore" title={$_("settings_inline_restoreTargetNeedsAttention")} body={backupResolvedExecutionBlockedReason} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreTargetNeedsAttention")} body={backupResolvedExecutionBlockedReason} />
                       </div>
                     {/if}
                     <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
@@ -6927,7 +6927,7 @@
                       {/if}
                       {#if backupExtensionLookupError}
                         <div class="settings-state settings-state--spaced">
-                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow="Extensions" title={$_("settings_inline_couldNotInspectExtensionMatches")} body={backupExtensionLookupError} />
+                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_extensions")} title={$_("settings_inline_couldNotInspectExtensionMatches")} body={backupExtensionLookupError} />
                         </div>
                       {/if}
                     </div>
@@ -6975,7 +6975,7 @@
               {/if}
               {#if backupError}
                 <div class="settings-state settings-state--spaced">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Backup" title={$_("settings_inline_backupActionFailed")} body={backupError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.backup")} title={$_("settings_inline_backupActionFailed")} body={backupError} />
                 </div>
               {/if}
           {/if}

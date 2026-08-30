@@ -31,6 +31,13 @@ function stripAllowedAssetPayloads(css: string): string {
 }
 
 describe("Library theme token contract", () => {
+  it("uses the same search glyph contract as the other app topbars", () => {
+    const source = read("src/components/library/LibraryToolbar.svelte");
+
+    expect(source).toContain('<span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>');
+    expect(source).not.toContain("MagnifyingGlass");
+  });
+
   it("keeps active Library components free of direct color functions and Nocturne internals", () => {
     const directColorPattern = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(/i;
     const nocturneInternalPrefix = "--" + "n-";

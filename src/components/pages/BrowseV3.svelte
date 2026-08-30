@@ -2117,6 +2117,11 @@
   });
 
   const searchHeroStatusText = $derived.by(() => {
+    if (setupState?.kind && setupState.kind !== "ready") {
+      return setupState.kind === "server_offline"
+        ? $_("browse.search.suwayomiOffline")
+        : $_("browse.search.finishSetup");
+    }
     if (searchRecommendationHydrating) {
       return activeContentType === "novels"
         ? $_("browse.search.hydratingNovels")
@@ -5586,7 +5591,7 @@
                   layout="compact"
                   tone="warning"
                   icon="warning"
-                  eyebrow="Source"
+                  eyebrow={$_("sources.table.source")}
                   title={$_("ui_couldNotLoadThisNovelSource")}
                   body={error}
                 />
@@ -5672,7 +5677,7 @@
                 layout="compact"
                 tone="warning"
                 icon="warning"
-                eyebrow="Source"
+                eyebrow={$_("sources.table.source")}
                 title={$_("ui_couldNotLoadThisMangaSource")}
                 body={error}
               />
@@ -6381,7 +6386,9 @@
     padding: 0;
     font-family: var(--font-ui);
     font-size: var(--component-browse-browsesubtab-font-size);
-    font-weight: 800;
+    font-weight: var(--weight-semibold);
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
     letter-spacing: var(--component-browse-browsesubtab-letter-spacing);
     text-transform: uppercase;
     color: var(--component-browse-browsesubtab-color);
@@ -6756,8 +6763,9 @@
     background: var(--component-browse-searchinsightcard-background);
     box-shadow: var(--component-browse-searchinsightcard-box-shadow);
     font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
-    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: auto;
+    text-rendering: optimizeLegibility;
+    font-synthesis: none;
   }
   .searchPanelTitle,
   .searchDiversityHeader,
