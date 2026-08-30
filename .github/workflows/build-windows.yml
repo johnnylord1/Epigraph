@@ -101,9 +101,6 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not configured"
           }
 
-      - name: Build and smoke-test Syncd sidecar
-        run: pnpm syncd:prepare-sidecar:release
-
       - name: Download Suwayomi (Windows x64)
         shell: bash
         run: |
@@ -152,6 +149,9 @@ jobs:
           find src-tauri/binaries/suwayomi-bundle -name "Suwayomi-Server.jar" \
             | grep -q . || (echo "ERROR: Suwayomi-Server.jar missing" && exit 1)
           echo "Staging OK"
+
+      - name: Build and smoke-test Syncd sidecar
+        run: pnpm syncd:prepare-sidecar:release
 
       - name: Patch tauri.conf.json for CI
         shell: bash
