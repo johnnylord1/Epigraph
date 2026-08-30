@@ -19,7 +19,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.33.0
 
       - uses: actions/setup-node@v4
         with:
@@ -65,7 +65,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.33.0
 
       - uses: actions/setup-node@v4
         with:
@@ -74,6 +74,33 @@ jobs:
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $requested = "${{ github.event.inputs.version }}"
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"$' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($requested -ne $packageVersion -or $requested -ne $tauriVersion -or $requested -ne $cargoVersion) {
+            throw "Requested version $requested does not match package=$packageVersion, tauri=$tauriVersion, cargo=$cargoVersion"
+          }
+
+      - name: Validate updater signing secrets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is not configured"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not configured"
+          }
+
+      - name: Build and smoke-test Syncd sidecar
+        run: pnpm syncd:prepare-sidecar:release
 
       - name: Download Suwayomi (Windows x64)
         shell: bash
@@ -127,7 +154,7 @@ jobs:
       - name: Patch tauri.conf.json for CI
         shell: bash
         run: |
-          sed -i 's/"beforeBuildCommand": "pnpm build"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json
+          sed -i 's/"beforeBuildCommand": "npm run build"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json
 
       - name: Delete existing draft release if present
         shell: bash

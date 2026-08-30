@@ -16,7 +16,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.33.0
 
       - uses: actions/setup-node@v4
         with:
@@ -64,7 +64,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.33.0
 
       - uses: actions/setup-node@v4
         with:
@@ -136,7 +136,7 @@ jobs:
 
       - name: Patch tauri.conf.json for CI
         run: |
-          sed -i '' 's/"beforeBuildCommand": "pnpm build"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json
+          sed -i '' 's/"beforeBuildCommand": "npm run build"/"beforeBuildCommand": ""/' src-tauri/tauri.conf.json
 
       # ── aarch64 build ──────────────────────────────────────────────────────
       - name: Swap bundle for aarch64

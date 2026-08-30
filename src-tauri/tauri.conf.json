@@ -55,7 +55,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5RjNEMEZEMEM0NDg1MDcKUldRSGhVUU0vZER6S1lDRnhDaGVCZjBDZUhqQ3hZNjFRNm9uRXhzWFVzQUdWR2JSUUJMbU5rSVgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJEMUQyRjVGRThCNEZBNTcKUldSWCtyVG9YeThkdlQ1R3hxNmpqU0pZNjdIa1Z0cTIwU3FjOS9CMFpRaXBqY3ZxSkZXVG9kcmcK",
       "endpoints": [
         "https://github.com/johnnylord1/Epigraph/releases/latest/download/latest.json"
       ]
