@@ -20,7 +20,6 @@
   import TasteInsightsModal from "./TasteInsightsModal.svelte";
   import { detectSetupState, isSuwayomiSchemaInitializingError, type SetupState } from "../../lib/setupState";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
-  import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -602,7 +601,6 @@
   let consumedGenreHint = $state("");
   let setupState: SetupState | null = $state(null);
   let setupLoading = $state(true);
-  let setupActionBusy = $state(false);
   let discoverLoading = $state(false);
   let discoverLoadedKey = $state("");
   let discoverMangaResults: Manga[] = $state([]);
@@ -699,33 +697,6 @@
     setupState = nextState;
     setupLoading = false;
     return nextState;
-  }
-
-  async function addRecommendedRepo() {
-    setupActionBusy = true;
-    try {
-      const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
-      addToast({
-        kind: result.status === "added" ? "success" : "info",
-        title: result.status === "added" ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
-        body: result.status === "added"
-          ? `${result.repo.name} is ready. Next, install your first extension.`
-          : `${result.repo.name} is already configured. Next, install your first extension.`,
-      });
-      await refreshSetupState();
-      activeBrowseTab = "source";
-    } catch (error) {
-      const nextState = await refreshSetupState();
-      if (nextState.kind !== "server_offline" && nextState.kind !== "server_initializing") {
-        addToast({
-          kind: "error",
-          title: translate("ui_couldNotAddTheRecommendedRepo"),
-          body: error instanceof Error ? error.message : translate("ui_epigraphCouldnTSaveTheRecommendedRepo"),
-        });
-      }
-    } finally {
-      setupActionBusy = false;
-    }
   }
 
   function openRepoManagerFlow() {
@@ -5322,8 +5293,6 @@
                 <SetupStatusCard
                   state={setupState}
                   surface="search"
-                  actionBusy={setupActionBusy}
-                  onAddRecommendedRepo={addRecommendedRepo}
                   onAddManually={openRepoManagerFlow}
                   onOpenExtensions={() => { activeBrowseTab = "source"; }}
                   onRetry={refreshSetupState}

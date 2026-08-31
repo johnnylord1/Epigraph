@@ -117,6 +117,7 @@ export interface EpigraphRestorePlannerRuntime {
   activeProfileId?: LocalProfileId | null;
   manga?: {
     supported?: boolean;
+    repositoryUrls?: string[];
     inventory: SourceInventoryEntry[];
     availableExtensions: AvailableExtensionEntry[];
     trackers: Tracker[];
@@ -417,6 +418,26 @@ export async function planEpigraphMangaRestore(
     warningsCount: analysis.warnings.length,
   };
 
+  const currentRepositories = new Set(
+    (mangaRuntime.repositoryUrls ?? []).map((value) => value.trim().replace(/\/+$/, "")),
+  );
+  const missingRepositories = (payloadManifest.requiresRepositories ?? [])
+    .map((value) => value.trim().replace(/\/+$/, ""))
+    .filter((value) => value && !currentRepositories.has(value));
+  if (missingRepositories.length > 0) {
+    return finalizePayloadPlan({
+      kind: "manga",
+      present: true,
+      status: "warning-only",
+      defaultRestoreMode,
+      availableRestoreModes,
+      summaryLabel: "Extension repositories will be restored first",
+      reasons: [],
+      warnings: [toReason("missing-required-repository", `${missingRepositories.length} extension repositor${missingRepositories.length === 1 ? "y" : "ies"} will be added before restore.`)],
+      metadata: { ...baseMetadata, missingRepositories },
+    });
+  }
+
   if (analysis.needsReview.length > 0) {
     return finalizePayloadPlan({
       kind: "manga",
@@ -435,12 +456,12 @@ export async function planEpigraphMangaRestore(
     return finalizePayloadPlan({
       kind: "manga",
       present: true,
-      status: "blocked",
+      status: "warning-only",
       defaultRestoreMode,
       availableRestoreModes,
-      summaryLabel: "Manga restore requires extension installs",
-      reasons: [toReason("manga-requires-install", `${readiness.requiresInstallCount} reconciled source mapping${readiness.requiresInstallCount === 1 ? "" : "s"} still require extension install.`)],
-      warnings: [],
+      summaryLabel: "Required manga extensions will be installed first",
+      reasons: [],
+      warnings: [toReason("manga-requires-install", `${readiness.requiresInstallCount} source extension${readiness.requiresInstallCount === 1 ? "" : "s"} will be installed before the library is restored.`)],
       metadata: {
         ...baseMetadata,
         installableExtensions: readiness.installableExtensions.map((extension) => extension.pkgName),
@@ -758,27 +779,25 @@ export async function planEpigraphNovelsRestore(
     },
   );
 
-  const reasons: EpigraphRestoreReason[] = [];
+  const dependencyWarnings: EpigraphRestoreReason[] = [];
   if (classified.summary.restoredNeedsRepositoryCount > 0) {
-    reasons.push(toReason("missing-required-repository", `${classified.summary.restoredNeedsRepositoryCount} novel entr${classified.summary.restoredNeedsRepositoryCount === 1 ? "y needs" : "ies need"} a repository before restore can proceed.`));
+    dependencyWarnings.push(toReason("missing-required-repository", `${classified.summary.restoredNeedsRepositoryCount} novel entr${classified.summary.restoredNeedsRepositoryCount === 1 ? "y needs" : "ies need"} a repository that will be restored first.`));
   }
   if (classified.issues.some((issue) => issue.code === "missing-required-plugin")) {
     const count = classified.issues.filter((issue) => issue.code === "missing-required-plugin").length;
-    reasons.push(toReason("missing-required-plugin", `${count} novel entr${count === 1 ? "y needs" : "ies need"} a plugin before restore can proceed.`));
+    dependencyWarnings.push(toReason("missing-required-plugin", `${count} novel entr${count === 1 ? "y needs" : "ies need"} a plugin that Epigraph will try to install.`));
   }
   if (classified.issues.some((issue) => issue.code === "missing-required-source")) {
     const count = classified.issues.filter((issue) => issue.code === "missing-required-source").length;
-    reasons.push(toReason("missing-required-source", `${count} novel entr${count === 1 ? "y needs" : "ies need"} a source before restore can proceed.`));
+    dependencyWarnings.push(toReason("missing-required-source", `${count} novel entr${count === 1 ? "y needs" : "ies need"} a source that Epigraph will try to install.`));
   }
 
-  const warnings: EpigraphRestoreReason[] = [];
+  const warnings: EpigraphRestoreReason[] = [...dependencyWarnings];
   if (classified.summary.restoredMetadataOnlyCount > 0) {
     warnings.push(toReason("metadata-only-limitation", `${classified.summary.restoredMetadataOnlyCount} novel entr${classified.summary.restoredMetadataOnlyCount === 1 ? "y" : "ies"} will restore as metadata-only.`));
   }
 
-  const status: EpigraphRestorePayloadStatus = reasons.length > 0
-    ? "blocked"
-    : warnings.length > 0
+  const status: EpigraphRestorePayloadStatus = warnings.length > 0
       ? "warning-only"
       : "restorable";
 
@@ -788,12 +807,12 @@ export async function planEpigraphNovelsRestore(
     status,
     defaultRestoreMode,
     availableRestoreModes,
-    summaryLabel: status === "blocked"
-      ? "Novels payload needs repositories or plugins first"
-      : status === "warning-only"
-        ? "Novels payload can restore with metadata-only warnings"
+    summaryLabel: status === "warning-only"
+        ? dependencyWarnings.length > 0
+          ? "Novel sources will be prepared before restore"
+          : "Novels payload can restore with metadata-only warnings"
         : "Novels payload is ready for sandbox restore",
-    reasons,
+    reasons: [],
     warnings,
     metadata: {
       exportMode,

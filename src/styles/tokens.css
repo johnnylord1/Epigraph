@@ -2412,6 +2412,11 @@
   --component-sources-control-hover-bg: var(--component-button-bg-hover);
   --component-sources-control-hover-border: var(--color-outline);
   --component-sources-control-hover-fg: var(--color-accent);
+  --component-sources-overview-hover-bg: var(--component-button-bg-hover);
+  --component-sources-overview-hover-fg: var(--text-primary);
+  --component-sources-overview-active-bg: var(--color-accent-muted);
+  --component-sources-overview-active-fg: var(--text-primary);
+  --component-sources-overview-active-rail: var(--color-accent);
   --component-sources-setup-z-index: var(--z-toast);
   --component-sources-overlay-z-index: var(--z-modal);
   --component-sources-overlay-bg: var(--component-overlay-bg);
@@ -2473,12 +2478,6 @@
   --component-sources-warning-bg: var(--color-warning-bg);
   --component-sources-warning-border: var(--color-warning);
   --component-sources-scrollbar-thumb: var(--color-border);
-  --component-sources-footer-action-radius: var(--radius-md);
-  --component-sources-footer-action-bg: transparent;
-  --component-sources-footer-action-fg: var(--text-secondary);
-  --component-sources-footer-action-hover-bg: var(--component-button-bg-hover);
-  --component-sources-footer-action-hover-fg: var(--color-accent);
-  --component-sources-footer-action-disabled-fg: var(--text-tertiary);
   --component-sources-repo-row-radius: var(--radius-md);
   --component-sources-repo-row-bg: var(--component-card-bg);
   --component-sources-repo-row-border: var(--component-card-border);

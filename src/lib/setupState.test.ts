@@ -2,6 +2,26 @@ import { describe, expect, it } from "vitest";
 import { getSetupStatePresentation, isSuwayomiSchemaInitializingError, type SetupState } from "./setupState";
 
 describe("setup state", () => {
+  it("offers only manual repository setup when no extension stores exist", () => {
+    const state: SetupState = {
+      kind: "no_extension_repos",
+      extensionRepoCount: 0,
+      installedExtensionCount: 0,
+      installedContentExtensionCount: 0,
+      installedHelperExtensionCount: 0,
+      totalSourceCount: 0,
+      usableSourceCount: 0,
+      hiddenSourceCount: 0,
+      errorMessage: null,
+    };
+
+    const presentation = getSetupStatePresentation(state, "extensions", (id) => id);
+
+    expect(presentation.actions).toEqual([
+      { kind: "open_repo_manager", label: "setup.addManually" },
+    ]);
+  });
+
   it("classifies missing Suwayomi schema tables as profile initialization", () => {
     const error = new Error(
       'Exception while fetching data (/sources) : org.h2.jdbc.JdbcSQLSyntaxErrorException: Table "SOURCE" not found',

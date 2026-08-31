@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { canonicalizeExtensionStoreUrl } from "./storeUrl";
+import {
+  canonicalizeExtensionStoreUrl,
+  resolveExtensionStoreInputUrl,
+} from "./storeUrl";
 
 describe("extension store URL canonicalization", () => {
   test("normalizes only proven URL equivalences", () => {
@@ -21,5 +24,19 @@ describe("extension store URL canonicalization", () => {
       .toThrow(/credential-free/);
     expect(() => canonicalizeExtensionStoreUrl("file:///repo"))
       .toThrow(/credential-free/);
+  });
+
+  test("turns a GitHub extension repository page into its compatible raw index", () => {
+    expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions"))
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json");
+    expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/tree/repo"))
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json");
+  });
+
+  test("keeps direct index URLs and rejects unrelated GitHub pages", () => {
+    expect(resolveExtensionStoreInputUrl("https://example.com/extensions/index.min.json"))
+      .toBe("https://example.com/extensions/index.min.json");
+    expect(() => resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/issues"))
+      .toThrow(/repository root or a direct index/i);
   });
 });

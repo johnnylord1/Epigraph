@@ -158,6 +158,57 @@ As regras atualizam o estado de Content e são aplicadas como filtro às superf�
 
 Filtros dependentes de catálogo são aplicados somente às sources configuradas e compatíveis.
 
+## Sources e repositórios de extensões
+
+### Onde encontrar
+
+Abra **Browse > Sources** e use **Manage repos**.
+
+### Como utilizar
+
+1. Cole o endereço da página principal do repositório no GitHub ou o link
+   direto de `index.json`/`index.min.json`.
+2. Clique em **Add**. O Epigraph converte páginas válidas do GitHub para o
+   índice consumido pelo Suwayomi e atualiza o catálogo.
+3. Instale ou atualize as extensões exibidas e aguarde as sources aparecerem.
+
+O salvamento é aditivo: um repositório atual só é removido depois que os novos
+endereços foram aceitos. Links para páginas internas do GitHub que não
+representam um repositório ou índice mostram uma orientação sem alterar a
+configuração existente.
+
+## Backup e restauração
+
+### Onde encontrar
+
+Abra **Settings > System > Storage**, escolha **Create backup** ou
+**Restore backup**.
+
+### Como criar
+
+1. Escolha o backup unificado ou apenas Comics, Books, Novels ou dados do app.
+2. No backup unificado, marque os tipos de conteúdo desejados.
+3. Clique em **Export backup** e escolha o destino.
+
+O backup unificado de Comics registra os repositórios de extensões configurados.
+Books preserva arquivos quando o modo completo está ativo; o modo metadata-only
+preserva somente metadados e estado de leitura.
+
+### Como restaurar
+
+1. Clique em **Choose file** e selecione `.epigraphbk`, um backup nativo de
+   manga ou um ZIP compatível com LNReader.
+2. Revise os cards com tipos de conteúdo, quantidade de títulos e avisos.
+3. Escolha o perfil de destino e confirme explicitamente a restauração no
+   perfil atual.
+4. Inicie o restore e acompanhe o indicador de progresso.
+
+Quando necessário, o Epigraph adiciona os repositórios registrados no backup,
+atualiza os catálogos e instala extensões/plugins disponíveis antes de incluir
+as obras na Library. Repositórios que já existem não são duplicados nem
+apagados. Se uma dependência não existir mais, os dados recuperáveis são
+preservados e o resumo final informa o que exige atenção.
+
 ## About e atualizações
 
 ### Onde encontrar

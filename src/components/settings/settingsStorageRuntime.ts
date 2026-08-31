@@ -10,6 +10,7 @@ export type SettingsStorageRuntime = {
   buildEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").buildEpigraphBooksPayload;
   restoreEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").restoreEpigraphBooksPayload;
   extractEpigraphMangaPayloadFile: typeof import("../../lib/backup/mangaBackup").extractEpigraphMangaPayloadFile;
+  parseEpigraphMangaPayload: typeof import("../../lib/backup/mangaBackup").parseEpigraphMangaPayload;
   buildEpigraphMangaPayload: typeof import("../../lib/backup/mangaBackup").buildEpigraphMangaPayload;
   buildEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").buildEpigraphNovelsPayload;
   restoreEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").restoreEpigraphNovelsPayload;
@@ -20,6 +21,7 @@ export type SettingsStorageRuntime = {
   normalizeNativeMangaBackupBytes: typeof import("../../lib/backup/mangaNativeFormat").normalizeNativeMangaBackupBytes;
   buildEpigraphNovelsSnapshotFromAuthoritativeState: typeof import("../../lib/backup/novelsStateBridge").buildEpigraphNovelsSnapshotFromAuthoritativeState;
   applyRestoredNovelsSnapshotToLibraryState: typeof import("../../lib/backup/novelsStateBridge").applyRestoredNovelsSnapshotToLibraryState;
+  provisionEpigraphNovelDependencies: typeof import("../../lib/backup/novelsRestoreProvisioning").provisionEpigraphNovelDependencies;
   loadNovelsProfileSnapshot: typeof import("../../lib/backup/novelsProfileState").loadNovelsProfileSnapshot;
   applyRestoredNovelsProfileSnapshot: typeof import("../../lib/backup/novelsProfileState").applyRestoredNovelsProfileSnapshot;
   loadSourceInventory: typeof import("../../lib/reconciliation/sourceInventory").loadSourceInventory;
@@ -54,6 +56,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
     import("../../lib/backup/lnreaderBackup"),
     import("../../lib/backup/mangaNativeFormat"),
     import("../../lib/backup/novelsStateBridge"),
+    import("../../lib/backup/novelsRestoreProvisioning"),
     import("../../lib/backup/novelsProfileState"),
     import("../../lib/reconciliation/sourceInventory"),
     import("../../lib/reconciliation/overlay"),
@@ -76,6 +79,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       lnreaderBackup,
       mangaNativeFormat,
       novelsStateBridge,
+      novelsRestoreProvisioning,
       novelsProfileState,
       sourceInventory,
       overlay,
@@ -96,6 +100,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       buildEpigraphBooksPayload: booksBackup.buildEpigraphBooksPayload,
       restoreEpigraphBooksPayload: booksBackup.restoreEpigraphBooksPayload,
       extractEpigraphMangaPayloadFile: mangaBackup.extractEpigraphMangaPayloadFile,
+      parseEpigraphMangaPayload: mangaBackup.parseEpigraphMangaPayload,
       buildEpigraphMangaPayload: mangaBackup.buildEpigraphMangaPayload,
       buildEpigraphNovelsPayload: novelsBackup.buildEpigraphNovelsPayload,
       restoreEpigraphNovelsPayload: novelsBackup.restoreEpigraphNovelsPayload,
@@ -106,6 +111,7 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       normalizeNativeMangaBackupBytes: mangaNativeFormat.normalizeNativeMangaBackupBytes,
       buildEpigraphNovelsSnapshotFromAuthoritativeState: novelsStateBridge.buildEpigraphNovelsSnapshotFromAuthoritativeState,
       applyRestoredNovelsSnapshotToLibraryState: novelsStateBridge.applyRestoredNovelsSnapshotToLibraryState,
+      provisionEpigraphNovelDependencies: novelsRestoreProvisioning.provisionEpigraphNovelDependencies,
       loadNovelsProfileSnapshot: novelsProfileState.loadNovelsProfileSnapshot,
       applyRestoredNovelsProfileSnapshot: novelsProfileState.applyRestoredNovelsProfileSnapshot,
       loadSourceInventory: sourceInventory.loadSourceInventory,

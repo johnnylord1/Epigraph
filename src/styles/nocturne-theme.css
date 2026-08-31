@@ -461,7 +461,7 @@
     radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--color-activity-glow-source) 12%, transparent), transparent 34%),
     color-mix(in srgb, var(--color-activity-overlay-source) 96%, transparent);
   --component-activity-overlay-blur: blur(18px);
-  --component-activity-overlay-z-index: 42;
+  --component-activity-overlay-z-index: var(--z-modal);
   --component-activity-overlay-back-bg: color-mix(in srgb, var(--bg-surface) 45%, transparent);
   --component-activity-overlay-back-border: color-mix(in srgb, var(--border-strong) 14%, transparent);
   --component-activity-overlay-back-fg: color-mix(in srgb, var(--text-secondary) 68%, transparent);
@@ -1741,6 +1741,11 @@
   --component-sources-control-hover-bg: color-mix(in srgb, var(--accent-bright) 10%, transparent);
   --component-sources-control-hover-border: color-mix(in srgb, var(--accent-bright) 16%, transparent);
   --component-sources-control-hover-fg: var(--accent);
+  --component-sources-overview-hover-bg: color-mix(in srgb, var(--accent-bright) 6%, transparent);
+  --component-sources-overview-hover-fg: var(--text-primary);
+  --component-sources-overview-active-bg: color-mix(in srgb, var(--accent-bright) 8%, transparent);
+  --component-sources-overview-active-fg: var(--text-primary);
+  --component-sources-overview-active-rail: var(--accent-bright);
   --component-sources-setup-z-index: 9999;
   --component-sources-overlay-z-index: 2147483000;
   --component-sources-overlay-bg:
@@ -1811,12 +1816,6 @@
   --component-sources-warning-bg: color-mix(in srgb, var(--color-sources-warning-source) 8%, transparent);
   --component-sources-warning-border: color-mix(in srgb, var(--color-sources-warning-source) 14%, transparent);
   --component-sources-scrollbar-thumb: color-mix(in srgb, var(--accent-bright) 18%, transparent);
-  --component-sources-footer-action-radius: 8px;
-  --component-sources-footer-action-bg: transparent;
-  --component-sources-footer-action-fg: var(--text-secondary);
-  --component-sources-footer-action-hover-bg: color-mix(in srgb, var(--accent-bright) 7%, transparent);
-  --component-sources-footer-action-hover-fg: var(--accent);
-  --component-sources-footer-action-disabled-fg: var(--text-tertiary);
   --component-sources-repo-row-radius: 11px;
   --component-sources-repo-row-bg: color-mix(in srgb, var(--color-sources-repo-row-source) 92%, transparent);
   --component-sources-repo-row-border: color-mix(in srgb, var(--color-highlight-source) 7%, transparent);

@@ -133,6 +133,27 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | `run-syncd-discovery-phase-gate.ps1` | Passou | Formas mDNS com e sem ponto final são normalizadas antes da comparação; provider real chegou a `active` |
 | `run-syncd-mutations-phase-gate.ps1` | Passou | Mutações Syncd validadas |
 | `run-syncd-lan-hardening.ps1` | Passou | Loopback padrão, sessão temporária, limpeza de estado inválido e mismatch de perfil |
+
+### Revalidação de Library, About, Sources e backup — 31/08/2026
+
+Os fluxos reportados foram reproduzidos na orquestração da interface. O planner
+de restore reconhecia dependências, mas a execução não provisionava
+repositórios/plugins antes de escrever a Library; o export de manga também não
+registrava os stores configurados. Em Sources, a interface aceitava apenas o
+índice bruto embora solicitasse um “repository link”, e substituía a lista
+antes de confirmar o novo endereço.
+
+Após a correção, testes determinísticos cobrem: export com repositórios,
+provisionamento aditivo de repositórios e plugins de novels, restore planejável
+quando dependências podem ser instaladas, normalização de página GitHub para o
+índice raw, preservação dos stores atuais em falha, modal visual de restore,
+categorias/empty states de Library, Activity Center, About e bloqueio do updater
+Suwayomi. A suíte unit/jsdom concluiu 194 arquivos e 1.216 testes, com 1 teste
+live ignorado por ausência do servidor de integração; `svelte-check` terminou
+com 0 erros e o build de produção passou. O workflow Suwayomi em perfil
+temporário passou as cinco fases (conversão v21, install/restart v23 e
+candidate/restart), sem requests a websites. Validações de catálogos externos
+reais continuam condicionais a rede e disponibilidade das sources.
 | Runner nativo de duas instâncias desktop | Passou | 7/7 cenários nos Marcos 58, 61 e 62 com `LOCALAPPDATA` isolado; ver evidências em `theme-system-audit.md` |
 | Lint | Não configurado | Não existe script dedicado; nenhuma ferramenta foi instalada |
 

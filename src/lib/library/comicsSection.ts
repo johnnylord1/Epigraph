@@ -69,6 +69,10 @@ export interface ComicsSectionState {
   vm: ComicsSectionVM;
 }
 
+export function isComicsBaseLibraryFilter(filter: string): boolean {
+  return filter === "library" || filter === "downloaded" || filter === "finished";
+}
+
 export const COMICS_SORT_OPTIONS: LibrarySortOptionVM[] = [
   { id: "az", label: "A-Z" },
   { id: "unreadCount", label: "Unread chapters" },
@@ -156,7 +160,11 @@ export function buildCanonicalCategoryMangaMap(
   return map;
 }
 
-export function buildFilteredComics(input: BuildComicsSectionInput, categoryMangaMap: Map<number, Manga[]>): Manga[] {
+export function buildFilteredComics(
+  input: BuildComicsSectionInput,
+  categoryMangaMap: Map<number, Manga[]>,
+  finishedLibraryIds: ReadonlySet<number> = new Set(),
+): Manga[] {
   const query = input.search.trim().toLowerCase();
   let items: Manga[];
 
@@ -164,6 +172,8 @@ export function buildFilteredComics(input: BuildComicsSectionInput, categoryMang
     items = input.mangas;
   } else if (input.libraryFilter === "downloaded") {
     items = input.mangas.filter((manga) => (manga.downloadCount ?? 0) > 0);
+  } else if (input.libraryFilter === "finished") {
+    items = input.mangas.filter((manga) => finishedLibraryIds.has(manga.id));
   } else {
     items = categoryMangaMap.get(Number(input.libraryFilter)) ?? [];
   }
@@ -237,6 +247,7 @@ function buildComicsCollections(
   visibleCategories: Category[],
   counts: Record<string, number>,
 ): LibraryCollectionVM[] {
+  const customCategories = visibleCategories.filter((category) => !isCompletedCategory(category));
   return [
     {
       id: "library",
@@ -256,7 +267,16 @@ function buildComicsCollections(
       reorderable: false,
       isDefault: false,
     },
-    ...visibleCategories.map((category) => ({
+    {
+      id: "finished",
+      label: "Finished",
+      count: counts.finished ?? 0,
+      icon: "folder",
+      active: input.libraryFilter === "finished",
+      reorderable: false,
+      isDefault: false,
+    },
+    ...customCategories.map((category) => ({
       id: String(category.id),
       label: getCategoryDisplayName(category),
       count: counts[String(category.id)] ?? 0,
@@ -271,9 +291,9 @@ function buildComicsCollections(
 function buildComicsEmptyMessage(libraryFilter: LibraryFilter, profileLabel?: string | null, mangaCount = 0): string {
   if (libraryFilter === "library") {
     if (mangaCount === 0 && profileLabel) {
-      return `This ${profileLabel} profile is empty — browse sources to add manga.`;
+      return `This ${profileLabel} profile is empty. Browse sources to add manga.`;
     }
-    return "No manga saved to library — browse sources to add some.";
+    return "No manga saved to library. Browse sources to add some.";
   }
   if (libraryFilter === "downloaded") {
     return "No downloaded manga.";
@@ -562,10 +582,11 @@ export function buildComicsSectionState(input: BuildComicsSectionInput): ComicsS
     completedLibraryIds,
     completedCategory?.id ?? null,
   );
-  const filteredManga = buildFilteredComics(input, categoryMangaMap);
+  const filteredManga = buildFilteredComics(input, categoryMangaMap, completedLibraryIds);
   const counts: Record<string, number> = {
     library: input.mangas.length,
     downloaded: input.mangas.filter((manga) => (manga.downloadCount ?? 0) > 0).length,
+    finished: completedLibraryIds.size,
   };
 
   for (const category of visibleCategories) {

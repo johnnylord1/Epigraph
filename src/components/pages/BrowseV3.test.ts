@@ -799,6 +799,34 @@ describe("BrowseV3", () => {
     });
   });
 
+  test("accepts a GitHub repository page and adds its raw extension index safely", async () => {
+    render(BrowseV3);
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    const manageButton = await waitFor(() => {
+      const button = document.querySelector<HTMLButtonElement>('button[title="Manage repos"]');
+      expect(button).toBeTruthy();
+      return button!;
+    });
+    await fireEvent.click(manageButton);
+    const input = await waitFor(() => {
+      const dialog = screen.getByRole("dialog", { name: "Manga repositories" });
+      const field = within(dialog).queryByPlaceholderText("https://example.com/index.min.json");
+      expect(field).toBeTruthy();
+      return field!;
+    });
+    await fireEvent.input(input, { target: { value: "https://github.com/keiyoushi/extensions" } });
+    const dialog = screen.getByRole("dialog", { name: "Manga repositories" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+
+    await waitFor(() => {
+      expect(managedRuntimeAddStoreMock).toHaveBeenCalledWith({
+        indexUrl: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+      });
+    });
+    expect(managedRuntimeRemoveStoreMock).not.toHaveBeenCalled();
+  });
+
   test("does not expose stale available extensions when no repository is configured", async () => {
     managedRuntimeListStoresMock.mockResolvedValue([]);
     managedRuntimeListExtensionsMock.mockResolvedValueOnce([{
@@ -832,7 +860,7 @@ describe("BrowseV3", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
 
     await waitFor(() => {
-      expect(screen.getByText("0 Installed · 0 Available")).toBeTruthy();
+      expect(document.querySelectorAll("[data-sources-count]")).toHaveLength(4);
     });
     expect(screen.queryByText("Stale cached extension")).toBeNull();
     await waitFor(() => {
@@ -852,16 +880,25 @@ describe("BrowseV3", () => {
 
     expect(document.querySelector("[data-sources-workspace]")).toBeTruthy();
     expect(document.querySelector("[data-sources-overview]")).toBeTruthy();
-    expect(document.querySelector("[data-sources-updates-view]")).toBeNull();
+    expect(container.querySelectorAll("[data-sources-count]")).toHaveLength(4);
+    expect(container.querySelector(".sourcesTitle span")).toBeNull();
+    expect(container.querySelector(".tabs small")).toBeNull();
+    expect(container.querySelector(".sourcesFooter")).toBeNull();
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    expect(refreshButton.closest(".sourceTools")).toBeTruthy();
+    expect(container.querySelector(".searchWrap")?.parentElement).toBe(refreshButton.closest(".sourceTools"));
 
     const updatesTab = container.querySelector<HTMLButtonElement>('.tabs button[aria-label="Updates"]');
     expect(updatesTab).toBeTruthy();
     await fireEvent.click(updatesTab!);
 
     await waitFor(() => {
-      expect(document.querySelector("[data-sources-updates-view]")).toBeTruthy();
+      expect(container.querySelector('.tabs button[aria-label="Updates"]')?.getAttribute("aria-current")).toBe("page");
     });
-    expect(document.querySelector("[data-sources-overview]")).toBeNull();
+    expect(document.querySelector("[data-sources-overview]")).toBeTruthy();
+    expect(container.querySelector(".updatesHeading")).toBeNull();
+    expect(container.querySelector('[data-sources-workspace] .searchWrap input[placeholder="Search extensions..."]')).toBeTruthy();
     expect(screen.getByText("MangaDex")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Installed" }));
@@ -869,6 +906,32 @@ describe("BrowseV3", () => {
     await waitFor(() => {
       expect(document.querySelector("[data-sources-overview]")).toBeTruthy();
     });
+  });
+
+  test("finishes a manual Sources refresh when a server-ready reload supersedes its catalog run", async () => {
+    const refreshedExtensions = await managedRuntimeListExtensionsMock();
+    let resolveRefresh: ((value: Awaited<ReturnType<typeof managedRuntimeListExtensionsMock>>) => void) | null = null;
+    managedRuntimeRefreshExtensionsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    const { container } = render(BrowseV3);
+    await fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("MangaDex")).toBeTruthy();
+    });
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    await fireEvent.click(refreshButton);
+    await waitFor(() => expect((refreshButton as HTMLButtonElement).disabled).toBe(true));
+    await waitFor(() => expect(resolveRefresh).toBeTruthy());
+
+    window.dispatchEvent(new CustomEvent("epigraph:server-ready"));
+    (resolveRefresh as unknown as (value: Awaited<ReturnType<typeof managedRuntimeListExtensionsMock>>) => void)(refreshedExtensions);
+
+    await waitFor(() => expect((screen.getByRole("button", { name: "Refresh" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(container.querySelector(".refreshAction .anim-spin")).toBeNull();
   });
 
   test("routes Browse manga cards to the active SeriesDetail instead of the legacy preview", () => {
@@ -1199,7 +1262,7 @@ describe("BrowseV3", () => {
     await waitFor(() => {
       expect(screen.getByText("MangaDex")).toBeTruthy();
     });
-    expect(screen.getByText("2 extensions")).toBeTruthy();
+    expect(document.querySelector('.sourcesOverview button[aria-current="page"] [data-sources-count]')?.textContent).toBe("2");
   });
 
   test("keeps the last manga extension list during a transient reload failure", async () => {

@@ -83,6 +83,46 @@ describe("ComicsLibraryBody", () => {
     vi.mocked(setSessionLibraryCoverUrl).mockReset();
   });
 
+  test("uses the shared centered state design when the comics view is empty", () => {
+    const vm: ComicsSectionVM = {
+      kind: "comics",
+      sectionTabs: [],
+      collections: [],
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search",
+        sortMode: "az",
+        sortDir: "asc",
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      loading: false,
+      error: null,
+      emptyMessage: "No manga saved to library. Browse sources to add some.",
+      cards: [],
+      selectionEnabled: true,
+      selectedIds: new Set(),
+      showBulkBar: false,
+    };
+
+    const { container } = render(ComicsLibraryBody, {
+      props: {
+        vm,
+        mangas: [],
+        categories: [],
+        categoryMangaMap: new Map(),
+        renderLimit: 48,
+        viewKey: "library",
+      },
+    });
+
+    expect(screen.getByRole("status", { name: "Library" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Nothing found for this view" })).toBeTruthy();
+    expect(screen.getByText(vm.emptyMessage)).toBeTruthy();
+    expect(container.querySelector(".center .n-state--center")).toBeTruthy();
+  });
+
   test("keeps selection and context menu ownership outside the shared grid", async () => {
     const targetManga = manga({
       id: 1,

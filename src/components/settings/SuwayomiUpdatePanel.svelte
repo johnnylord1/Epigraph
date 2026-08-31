@@ -40,11 +40,14 @@
   let detailsButton: HTMLButtonElement | null = $state(null);
   let closeButton: HTMLButtonElement | null = $state(null);
   let operationSerial = 0;
+  let lastAppliedCachedCheckKey = "";
 
   const busy = $derived(["checking", "downloading", "installing", "restarting", "rollingBack"].includes(uiState));
-  const canCheck = $derived(Boolean(runtime?.updateAllowed) && !busy);
-  const canDownload = $derived(checkResult?.status === "updateAvailable" && !staged && !busy);
-  const canInstall = $derived(Boolean(staged) && uiState === "readyToInstall" && !busy);
+  const runtimeAllowsUpdate = $derived(Boolean(runtime?.updateAllowed));
+  const checkAllowsUpdate = $derived(Boolean(checkResult?.updateAllowed));
+  const canCheck = $derived(runtimeAllowsUpdate && !busy);
+  const canDownload = $derived(runtimeAllowsUpdate && checkAllowsUpdate && checkResult?.status === "updateAvailable" && !staged && !busy);
+  const canInstall = $derived(runtimeAllowsUpdate && checkAllowsUpdate && Boolean(staged) && uiState === "readyToInstall" && !busy);
   const releaseNotes = $derived((checkResult?.releaseNotes ?? "").trim());
   const hasChangelog = $derived(Boolean(releaseNotes));
   const currentVersion = $derived(checkResult?.currentVersion ?? runtime?.version ?? $_("suwayomi.update.unknown"));
@@ -54,16 +57,19 @@
   function applyRuntimeStatus(status: SuwayomiRuntimeStatus) {
     runtime = status;
     if (status.mode === "external") {
+      staged = null;
       uiState = "external";
       message = status.blockReason ?? $_("suwayomi.update.externalBlocked");
       return;
     }
     if (status.mode === "managed-user-binary") {
+      staged = null;
       uiState = "userManagedBinary";
       message = status.blockReason ?? $_("suwayomi.update.userBinaryBlocked");
       return;
     }
     if (!status.updateAllowed) {
+      staged = null;
       uiState = "blocked";
       message = status.blockReason ?? $_("suwayomi.update.runtimeBlocked");
       return;
@@ -106,6 +112,17 @@
 
   function applyCheckResult(result: SuwayomiUpdateCheckResult) {
     checkResult = result;
+    if (!result.updateAllowed || result.status === "blocked") staged = null;
+    if (runtime && !runtime.updateAllowed) {
+      applyRuntimeStatus(runtime);
+      return;
+    }
+    if (result.status === "updateAvailable" && !result.updateAllowed) {
+      staged = null;
+      uiState = "blocked";
+      message = result.blockReason ?? $_("suwayomi.update.runtimeBlocked");
+      return;
+    }
     if (result.status === "updateAvailable") {
       uiState = "updateAvailable";
       message = $_("suwayomi.update.availableMessage", { version: result.latestCompatibleVersion ?? result.releaseTag ?? $_("suwayomi.update.unknown") });
@@ -136,6 +153,10 @@
   }
 
   async function checkUpdates(force = false) {
+    if (!runtime?.updateAllowed) {
+      if (runtime) applyRuntimeStatus(runtime);
+      return;
+    }
     if (!force && !canCheck) return;
     const operation = nextOperation();
     uiState = "checking";
@@ -219,7 +240,17 @@
 
   $effect(() => {
     const result = suwayomiUpdateUx.lastCheck;
-    if (!result || busy || staged) return;
+    if (!result) return;
+    const cachedCheckKey = `${suwayomiUpdateUx.lastCheckedAt ?? ""}:${result.status}:${result.updateAllowed}:${result.latestCompatibleVersion ?? ""}:${result.blockReason ?? ""}`;
+    if (cachedCheckKey === lastAppliedCachedCheckKey && !staged) return;
+    if (!result.updateAllowed || result.status === "blocked") {
+      lastAppliedCachedCheckKey = cachedCheckKey;
+      nextOperation();
+      applyCheckResult(result);
+      return;
+    }
+    if (busy || staged) return;
+    lastAppliedCachedCheckKey = cachedCheckKey;
     applyCheckResult(result);
   });
 

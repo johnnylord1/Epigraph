@@ -8,10 +8,43 @@
 - Funcionando: 28; funcionando parcialmente: 5; quebradas: 0.
 - Somente interface: 0; implementadas mas inacessíveis: 1; não implementadas: 0.
 - Não foi possível testar: 9; dependem de configuração ausente: 5; dependem de serviço externo: 15.
-- Bugs registrados: **6** — todos resolvidos após revalidação.
+- Bugs registrados: **8** — todos resolvidos após revalidação.
 - O gate Svelte/TypeScript passou com 0 erros e 0 warnings em 21/07/2026. Os riscos abertos estão registrados como melhorias de certificação, acessibilidade, integrações e desempenho, não como bugs reproduzidos.
 
 Nenhum bug de severidade Crítica ou Alta foi reproduzido no caminho do usuário. Isso não significa ausência de risco: vários fluxos nativos e externos ficaram bloqueados pelas limitações registradas na auditoria.
+
+## BUG-007 — Restore não provisiona dependências nem materializa toda a Library
+
+**Severidade:** Alta
+**Prioridade sugerida:** P0
+**Status:** Resolvido
+**Área:** Settings > Storage / Backup
+
+O planner identificava repositórios, extensões e plugins ausentes, mas os
+classificava como bloqueio e a execução nunca os provisionava. O export de
+manga também omitia os stores, o ZIP do LNReader seguia pelo caminho de manga e
+o resultado podia terminar sem as obras esperadas na Library.
+
+A execução agora restaura dependências de forma aditiva, atualiza catálogos,
+instala o que está disponível, reclassifica os dados e só então aplica o estado
+da Library. O backup unificado grava stores de manga e o fluxo LNReader possui
+detecção e execução próprias. Falhas não recuperáveis aparecem no resumo sem
+apagar repositórios ou dados existentes.
+
+## BUG-008 — Link comum de repositório falha em Browse > Sources
+
+**Severidade:** Média
+**Prioridade sugerida:** P1
+**Status:** Resolvido
+**Área:** Browse > Sources
+
+O campo pedia um link de repositório, mas o runtime aceitava somente a URL do
+índice. Páginas como `https://github.com/keiyoushi/extensions` falhavam e a
+rotina de salvamento podia remover stores atuais antes de confirmar o novo.
+
+Links raiz, tree e blob válidos do GitHub agora são convertidos para o índice
+raw canônico; URLs diretas continuam aceitas. A atualização adiciona primeiro
+e remove por último, preservando a configuração anterior caso a inclusão falhe.
 
 ### Limitação de fronteira Core/Mobile
 

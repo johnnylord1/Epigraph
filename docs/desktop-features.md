@@ -288,12 +288,21 @@ The desktop owns the complete data-movement workflow:
 - Unified backup containers with checksums, format detection, audit-only mode,
   restore planning, sandboxed writes, corruption rejection, and explicit
   reconciliation of library identity/progress/category state.
+- Unified exports record configured manga extension stores. During an approved
+  restore, Epigraph adds missing stores without removing the current ones,
+  refreshes their catalogs, installs available required extensions, and waits
+  briefly for Suwayomi to publish the restored sources before writing Library.
+- Novel and LNReader restores use the same dependency-first sequence for
+  repositories and plugins. Dependencies that disappeared from a catalog are
+  reported as warnings while the recoverable library metadata is preserved.
 - Separate manga, book, novel, application, and provider bridges so a partial
   restore cannot silently overwrite an unrelated state domain.
 
-The import path accepts supported existing backup formats while new exports use
-the current Epigraph format. Restore is staged and verified before a state is
-committed.
+The import path accepts supported existing backup formats, including LNReader
+ZIP files, while new exports use the current Epigraph format. Restore is staged
+and verified before a state is committed. The review surface prioritizes
+content types, title counts, source icons, warnings, and progress; technical
+details remain available in a collapsed disclosure.
 
 Implementation: [migration modules](../src/lib/migration/),
 [backup modules](../src/lib/backup/),

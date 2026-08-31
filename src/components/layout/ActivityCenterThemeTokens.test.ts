@@ -27,6 +27,24 @@ function uniqueMatches(source: string, pattern: RegExp) {
   return Array.from(new Set(source.match(pattern) ?? [])).sort();
 }
 
+function resolveCssNumber(source: string, token: string): number {
+  const properties = new Map(
+    Array.from(source.matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm), (match) => [match[1], match[2].trim()] as const),
+  );
+  const resolveValue = (value: string, seen = new Set<string>()): number => {
+    const variable = value.match(/^var\((--[\w-]+)\)$/);
+    if (!variable) return Number(value);
+    const name = variable[1];
+    if (seen.has(name)) throw new Error(`Cyclic CSS number reference: ${name}`);
+    const next = properties.get(name);
+    if (!next) throw new Error(`Missing CSS number reference: ${name}`);
+    return resolveValue(next, new Set([...seen, name]));
+  };
+  const value = properties.get(token);
+  if (!value) throw new Error(`Missing ${token}`);
+  return resolveValue(value, new Set([token]));
+}
+
 function composite(color: [number, number, number, number], background: [number, number, number]) {
   return color.slice(0, 3).map((channel, index) => channel * color[3] + background[index] * (1 - color[3]));
 }
@@ -96,6 +114,13 @@ describe("Activity Center theme tokens", () => {
       const ratio = contrast(composite(resolveCssColor(theme, token), panel), panel);
       expect(ratio, `${token} should meet WCAG AA`).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("keeps the Activity Center above the Library header and hero", () => {
+    const theme = `${readProjectFile("src/styles/tokens.css")}\n${readProjectFile("src/styles/nocturne-theme.css")}`;
+
+    expect(resolveCssNumber(theme, "--component-activity-overlay-z-index"))
+      .toBeGreaterThan(resolveCssNumber(theme, "--component-library-header-z-index"));
   });
 
   it("renders the active Activity Center overlay", () => {

@@ -38,7 +38,10 @@ export type {
 } from "./sourceContract";
 export { runExplicitCompatibilityProbe } from "./observedCompatibility";
 export type { ExplicitCompatibilityProbeInput } from "./observedCompatibility";
-export { canonicalizeExtensionStoreUrl } from "./storeUrl";
+export {
+  canonicalizeExtensionStoreUrl,
+  resolveExtensionStoreInputUrl,
+} from "./storeUrl";
 export {
   SourceHealthProbeCache,
   classifyExtensionFailure,

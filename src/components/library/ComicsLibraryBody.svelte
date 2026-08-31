@@ -38,6 +38,7 @@
     store,
   } from "../../store/state.svelte";
   import ContextMenu from "../shared/ContextMenu.svelte";
+  import NocturneState from "../shared/NocturneState.svelte";
   import VirtualLibraryCardGrid from "./VirtualLibraryCardGrid.svelte";
   import { estimateLibraryVirtualRowSize } from "../../lib/library/virtualGrid";
 
@@ -1039,7 +1040,16 @@
       {/each}
     </div>
   {:else if mangas.length === 0}
-    <div class="center">{vm.emptyMessage}</div>
+    <div class="center comics-empty">
+      <NocturneState
+        layout="center"
+        tone="info"
+        icon="books"
+        eyebrow={$_("library.eyebrow")}
+        title={$_("ui_nothingFoundForThisView")}
+        body={vm.emptyMessage}
+      />
+    </div>
   {:else}
     {#if mangas.length > lazyVirtualizeAfter}
       <VirtualLibraryCardGrid
@@ -1098,6 +1108,7 @@
 
 <style>
   .content {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     padding:
@@ -1137,11 +1148,16 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 60%;
+    min-height: 100%;
     color: var(--text-muted);
     font-size: var(--text-sm);
     gap: var(--sp-2);
     text-align: center;
+    line-height: var(--leading-base);
+  }
+
+  .comics-empty {
+    font-size: var(--text-sm);
     line-height: var(--leading-base);
   }
 

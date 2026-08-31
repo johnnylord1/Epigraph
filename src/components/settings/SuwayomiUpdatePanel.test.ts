@@ -125,6 +125,54 @@ describe("SuwayomiUpdatePanel", () => {
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Check for updates" }).disabled).toBe(true);
   });
 
+  test("keeps a blocked managed runtime blocked when a cached check reports an available update", async () => {
+    const blockReason = "Suwayomi updates are temporarily disabled for this bundled runtime.";
+    getSuwayomiRuntimeStatusMock.mockResolvedValue(runtime({
+      updateAllowed: false,
+      blockReason,
+    }));
+
+    render(SuwayomiUpdatePanel);
+
+    await waitFor(() => expect(screen.getByText("Update blocked")).toBeTruthy());
+    await openDetails();
+
+    recordSuwayomiUpdateCheck(await checkSuwayomiRuntimeUpdateMock());
+    await tick();
+
+    expect(screen.getAllByText("Update blocked").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(blockReason).length).toBeGreaterThan(0);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Check for updates" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Download update" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install update" }).disabled).toBe(true);
+    expect(stageSuwayomiRuntimeUpdateMock).not.toHaveBeenCalled();
+    expect(installSuwayomiRuntimeUpdateMock).not.toHaveBeenCalled();
+  });
+
+  test("revokes install authorization when a cached denial arrives after staging", async () => {
+    render(SuwayomiUpdatePanel);
+
+    await waitFor(() => expect(screen.getByText("Up to date")).toBeTruthy());
+    await openDetails();
+    await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await waitFor(() => expect(screen.getAllByText("Update available").length).toBeGreaterThan(0));
+    await fireEvent.click(screen.getByRole("button", { name: "Download update" }));
+    await waitFor(() => expect(screen.getAllByText("Ready to install").length).toBeGreaterThan(0));
+
+    recordSuwayomiUpdateCheck({
+      ...await checkSuwayomiRuntimeUpdateMock(),
+      status: "blocked",
+      updateAllowed: false,
+      blockReason: "This runtime is no longer authorized for updates.",
+    });
+    await tick();
+
+    expect(screen.getAllByText("Update blocked").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("This runtime is no longer authorized for updates.").length).toBeGreaterThan(0);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Install update" }).disabled).toBe(true);
+    expect(installSuwayomiRuntimeUpdateMock).not.toHaveBeenCalled();
+  });
+
   test("checks, stages, snapshots and promotes a manual update", async () => {
     render(SuwayomiUpdatePanel);
 

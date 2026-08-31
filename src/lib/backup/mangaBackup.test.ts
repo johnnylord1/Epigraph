@@ -45,6 +45,18 @@ describe("manga backup payload", () => {
     ]);
   });
 
+  it("preserves extension repository indexes needed by a unified restore", async () => {
+    const payload = await buildEpigraphMangaPayload(SAMPLE_TACHIBK_BYTES, {
+      repositoryUrls: [
+        "https://example.com/index.min.json",
+        "https://example.com/index.min.json/",
+      ],
+    });
+
+    expect(payload.requiresRepositories).toEqual(["https://example.com/index.min.json"]);
+    expect(payload.metadata).toEqual(expect.objectContaining({ repositoryCount: 1 }));
+  });
+
   it("supports mixed unified containers where manga remains a separate payload beside books", async () => {
     const mangaPayload = await buildEpigraphMangaPayload(SAMPLE_TACHIBK_BYTES, {
       sourceFilename: "mixed-export.tachibk",

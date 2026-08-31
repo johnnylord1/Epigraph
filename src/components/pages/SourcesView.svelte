@@ -30,6 +30,7 @@
     loadExtensionCompatibilityState,
     runExplicitCompatibilityProbe,
     runTransactionalExtensionUpdates,
+    resolveExtensionStoreInputUrl,
     saveExtensionCompatibilityState,
     type ObservedCompatibilityReport,
     type SourcePreferenceAccess,
@@ -58,7 +59,6 @@
   import { readInstalledNovelSourceRuntimeSummary } from "../../lib/novels/sources";
   import { addToast, bumpContentSetupVersion, setExtensionsPanelHint, store } from "../../store/state.svelte";
   import { _ } from "../../lib/i18n/runtime";
-  import { ensureExtensionRepo, RECOMMENDED_EXTENSION_REPO } from "../../lib/defaultRepos";
   import { ensureServerAwakeFor, maybeStandbyLocalServer, SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
   import { getSuwayomiRuntimeStatus } from "../../lib/suwayomiRuntimeUpdate";
@@ -115,7 +115,6 @@
   let repoError = $state<string | null>(null);
   let savingRepos = $state(false);
   let setupState: SetupState | null = $state(null);
-  let setupActionBusy = $state(false);
   let renderVisible = $state(0);
   let novelRepositoryState: PersistedNovelRepositoryState | null = $state(null);
   let updatingAll = $state(false);
@@ -192,12 +191,6 @@
       true;
     return matchesSearch && matchesFilter;
   }));
-  const sourceCountLabel = $derived(
-    isNovelMode
-      ? $_(filtered.length === 1 ? "sources.count.source" : "sources.count.sources", { count: filtered.length })
-      : $_(filtered.length === 1 ? "sources.count.extension" : "sources.count.extensions", { count: filtered.length }),
-  );
-
   const groups = $derived.by(() => {
     const map = new Map<string, ManagedExtension[]>();
     for (const extension of filtered) {
@@ -720,10 +713,8 @@
       console.error(error);
       if (isCurrentExtensionLoad(run, mode)) extensionLoadError = extensionErrorMessage(error);
     } finally {
-      if (isCurrentExtensionLoad(run, mode)) {
-        refreshing = false;
-        if (mode === "manga") await refreshSetupState();
-      }
+      refreshing = false;
+      if (mode === "manga" && isCurrentExtensionLoad(run, mode)) await refreshSetupState();
     }
   }
 
@@ -746,6 +737,7 @@
 
   async function saveRepos(updated: string[]) {
     savingRepos = true;
+    repoError = null;
     try {
       if (!(await ensureMangaServerAwake())) return;
       const runtime = await getManagedSourceRuntime();
@@ -754,11 +746,12 @@
       const updatedUrls = new Set(
         updated.map((url) => url.trim()).filter(Boolean).map(canonicalizeExtensionStoreUrl),
       );
-      for (const url of currentUrls) {
-        if (!updatedUrls.has(url)) await runtime.removeStore(url);
-      }
+      // Add first so an invalid new URL cannot remove working repositories.
       for (const url of updatedUrls) {
         if (!currentUrls.has(url)) await runtime.addStore({ indexUrl: url });
+      }
+      for (const url of currentUrls) {
+        if (!updatedUrls.has(url)) await runtime.removeStore(url);
       }
       repos = (await runtime.listStores()).map((store) => store.indexUrl);
       bumpContentSetupVersion();
@@ -856,52 +849,26 @@
     }
   }
 
-  async function addRecommendedRepo() {
-    setupActionBusy = true;
-    try {
-      const result = await ensureExtensionRepo(RECOMMENDED_EXTENSION_REPO);
-      addToast({
-        kind: result.status === "added" ? "success" : "info",
-        title: result.status === "added" ? translate("ui_recommendedRepoAdded") : translate("ui_recommendedRepoAlreadyAdded"),
-        body: translate("sources_runtime_repositoryReady", { name: result.repo.name }),
-      });
-      filter = "available";
-      utilityPanel = null;
-      await loadRepos();
-      await fetchFromRepo();
-    } catch (error) {
-      const nextState = await refreshSetupState();
-      if (!isServerUnavailableState(nextState)) {
-        addToast({
-          kind: "error",
-          title: translate("ui_couldNotAddTheRecommendedRepo"),
-          body: error instanceof Error ? error.message : translate("ui_epigraphCouldnTSaveTheRecommendedRepo"),
-        });
-      }
-    } finally {
-      setupActionBusy = false;
-    }
-  }
-
   function browseAvailableExtensions() {
     filter = "available";
     utilityPanel = null;
   }
 
-  function addRepo() {
-    const url = newRepoUrl.trim();
-    if (!url) return;
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      repoError = translate("sources_runtime_invalidRepositoryUrl");
-      return;
+  async function addRepo() {
+    const rawUrl = newRepoUrl.trim();
+    if (!rawUrl) return;
+    try {
+      const url = resolveExtensionStoreInputUrl(rawUrl);
+      const existing = new Set(repos.map(canonicalizeExtensionStoreUrl));
+      if (existing.has(url)) {
+        repoError = translate("sources_runtime_repoAlreadyAdded");
+        return;
+      }
+      await saveRepos([...repos, url]);
+      if (!repoError) newRepoUrl = "";
+    } catch (error) {
+      repoError = error instanceof Error ? error.message : translate("sources_runtime_invalidRepositoryUrl");
     }
-    if (repos.includes(url)) {
-      repoError = translate("sources_runtime_repoAlreadyAdded");
-      return;
-    }
-    repoError = null;
-    newRepoUrl = "";
-    void saveRepos([...repos, url]);
   }
 
   function removeRepo(url: string) {
@@ -1517,14 +1484,12 @@
 <div
   class="sourcesRoot"
   class:hasSettingsPanel={!!selectedExtension}
-  class:updatesMode={filter === "updates"}
   data-sources-workspace
 >
   <section class="sourcesMain">
     <div class="sourcesHeader">
       <div class="sourcesTitle">
         <h2>{sourceTitle}</h2>
-        <span>{installedCount} {$_("sources.filters.installed")} · {availableCount} {$_("sources.filters.available")}</span>
       </div>
 
       <div class="headerActions">
@@ -1550,37 +1515,49 @@
       <div class="sourceTools">
         <div class="tabs">
           {#each activeFilters as item}
-            {@const itemCount = item.id === "installed" ? installedCount : item.id === "available" ? availableCount : updateCount}
             <button
               class="tab"
               class:active={filter === item.id}
               type="button"
               aria-label={item.label}
+              aria-current={filter === item.id ? "page" : undefined}
               onclick={() => {
                 selectedPkgName = null;
                 filter = item.id;
               }}
             >
-              {item.label}<small>{itemCount}</small>
+              {item.label}
             </button>
           {/each}
         </div>
 
-        {#if filter !== "updates"}
-          <div class="searchWrap">
-            <MagnifyingGlass size={13} weight="bold" />
-            <input bind:value={search} placeholder={searchPlaceholder} />
-          </div>
-        {:else if updateCount > 0}
-          <button class="toolbarActionBtn" type="button" disabled={updatingAll} onclick={updateAllExtensions}>
-            {#if updatingAll}
-              <CircleNotch size={13} weight="bold" class="anim-spin" />
-              {$_("sources.actions.updating")}
-            {:else}
-              {updateAllLabel}
-            {/if}
+        <div class="searchWrap">
+          <MagnifyingGlass size={13} weight="bold" />
+          <input aria-label={searchPlaceholder} bind:value={search} placeholder={searchPlaceholder} />
+        </div>
+
+        <div class="sourceToolActions">
+          {#if filter === "updates" && updateCount > 0}
+            <button class="toolbarActionBtn" type="button" disabled={updatingAll} onclick={updateAllExtensions}>
+              {#if updatingAll}
+                <CircleNotch size={13} weight="bold" class="anim-spin" />
+                {$_("sources.actions.updating")}
+              {:else}
+                {updateAllLabel}
+              {/if}
+            </button>
+          {/if}
+          <button
+            class="refreshAction"
+            type="button"
+            aria-label={$_("sources.actions.refresh")}
+            title={$_("sources.actions.refresh")}
+            disabled={refreshing}
+            onclick={fetchFromRepo}
+          >
+            {#if refreshing}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}<ArrowsClockwise size={13} weight="bold" />{/if}
           </button>
-        {/if}
+        </div>
       </div>
 
     {#if isNovelMode && utilityPanel === "novelRepos"}
@@ -1800,8 +1777,7 @@
             <SetupStatusCard
               state={setupState}
               surface="extensions"
-              actionBusy={setupActionBusy || savingRepos || refreshing}
-              onAddRecommendedRepo={addRecommendedRepo}
+              actionBusy={savingRepos || refreshing}
               onAddManually={() => openUtilityPanel("repos")}
               onBrowseAvailableExtensions={browseAvailableExtensions}
               onOpenRepoManager={() => openUtilityPanel("repos")}
@@ -1820,16 +1796,7 @@
         {/if}
       </div>
     {:else}
-      <div class="extensionList" data-sources-updates-view={filter === "updates" ? "" : undefined}>
-        {#if filter === "updates"}
-          <div class="updatesHeading">
-            <div>
-              <strong>{$_("sources.filters.updates")}</strong>
-              <span>{sourceCountLabel}</span>
-            </div>
-            <ArrowCircleUp size={17} weight="bold" />
-          </div>
-        {/if}
+      <div class="extensionList" data-sources-list={filter}>
         {#each visibleGroups as { base, primary, variants }}
           {@const isExpanded = expanded.has(base)}
           {@const hasVariants = variants.length > 0}
@@ -1934,44 +1901,32 @@
         {/if}
       </div>
     {/if}
-      <footer class="sourcesFooter">
-        <span>{sourceCountLabel}</span>
-        <button
-          type="button"
-          disabled={refreshing}
-          onclick={fetchFromRepo}
-        >
-          {#if refreshing}<CircleNotch size={12} weight="bold" class="anim-spin" />{:else}<ArrowsClockwise size={12} weight="bold" />{/if}
-          {$_("sources.actions.refresh")}
-        </button>
-      </footer>
     </div>
   </section>
 
-  {#if !selectedExtension && filter !== "updates" && !loading}
+  {#if !selectedExtension && !loading}
     <aside class="sourcesOverview" data-sources-overview>
       <div class="overviewHeader">
-        <span>{$_("sources.eyebrow")}</span>
         <strong>{sourceTitle}</strong>
       </div>
-      <button type="button" onclick={() => (filter = "installed")}>
+      <button class:active={filter === "installed"} aria-current={filter === "installed" ? "page" : undefined} type="button" onclick={() => (filter = "installed")}>
         <CheckCircle size={16} weight="bold" />
-        <span><strong>{$_("sources.filters.installed")}</strong><small>{installedCount}</small></span>
+        <span><strong>{$_("sources.filters.installed")}</strong><small data-sources-count>{installedCount}</small></span>
         <CaretRight size={13} weight="bold" />
       </button>
-      <button type="button" onclick={() => (filter = "available")}>
+      <button class:active={filter === "available"} aria-current={filter === "available" ? "page" : undefined} type="button" onclick={() => (filter = "available")}>
         <Package size={16} weight="bold" />
-        <span><strong>{$_("sources.filters.available")}</strong><small>{availableCount}</small></span>
+        <span><strong>{$_("sources.filters.available")}</strong><small data-sources-count>{availableCount}</small></span>
         <CaretRight size={13} weight="bold" />
       </button>
-      <button class:overviewWarning={updateCount > 0} type="button" onclick={() => (filter = "updates")}>
+      <button class:active={filter === "updates"} class:overviewWarning={updateCount > 0} aria-current={filter === "updates" ? "page" : undefined} type="button" onclick={() => (filter = "updates")}>
         <ArrowCircleUp size={16} weight="bold" />
-        <span><strong>{$_("sources.filters.updates")}</strong><small>{updateCount}</small></span>
+        <span><strong>{$_("sources.filters.updates")}</strong><small data-sources-count>{updateCount}</small></span>
         <CaretRight size={13} weight="bold" />
       </button>
       <button type="button" onclick={() => openUtilityPanel(isNovelMode ? "novelRepos" : "repos")}>
         <GitBranch size={16} weight="bold" />
-        <span><strong>{isNovelMode ? $_("sources.repositories.novelTitle") : $_("sources.repositories.mangaTitle")}</strong><small>{isNovelMode ? novelRepositoryCount : repos.length}</small></span>
+        <span><strong>{isNovelMode ? $_("sources.repositories.novelTitle") : $_("sources.repositories.mangaTitle")}</strong><small data-sources-count>{isNovelMode ? novelRepositoryCount : repos.length}</small></span>
         <CaretRight size={13} weight="bold" />
       </button>
     </aside>
@@ -2030,8 +1985,6 @@
     padding: 14px 18px 12px;
   }
 
-  .sourcesRoot.updatesMode { grid-template-columns: minmax(0, 1fr); }
-
   .sourcesRoot.hasSettingsPanel {
     grid-template-columns: minmax(0, 1fr) clamp(292px, 23vw, 350px);
     gap: 0;
@@ -2055,11 +2008,7 @@
     background: transparent;
   }
 
-  .sourcesTitle {
-    display: grid;
-    gap: 5px;
-    min-width: 190px;
-  }
+  .sourcesTitle { min-width: 190px; }
 
   h2,
   h3,
@@ -2072,15 +2021,6 @@
     font-size: 21px;
     font-weight: 760;
     line-height: 1.1;
-  }
-
-  .sourcesTitle span {
-    color: var(--component-sources-muted-fg);
-    font-family: var(--font-ui);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0;
-    text-transform: none;
   }
 
   .headerActions { display: flex; align-items: center; gap: 8px; }
@@ -2134,6 +2074,13 @@
     border-bottom: 1px solid var(--component-sources-header-divider);
   }
 
+  .sourceToolActions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-left: auto;
+  }
+
   .tabs {
     display: flex;
     align-self: stretch;
@@ -2154,8 +2101,6 @@
     font-weight: 900;
     transition: color 160ms ease;
   }
-
-  .tab small { margin-left: 6px; color: var(--component-sources-subtle-fg); font-size: 9px; }
 
   .tab::after {
     content: "";
@@ -2202,6 +2147,31 @@
 
   .searchWrap input::placeholder {
     color: var(--component-sources-search-placeholder);
+  }
+
+  .refreshAction {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--component-sources-control-radius);
+    background: transparent;
+    color: var(--component-sources-control-fg);
+  }
+
+  .refreshAction:hover:not(:disabled),
+  .refreshAction:focus-visible {
+    border-color: var(--component-sources-control-hover-border);
+    background: var(--component-sources-control-hover-bg);
+    color: var(--component-sources-control-hover-fg);
+  }
+
+  .refreshAction:disabled {
+    cursor: default;
+    opacity: 0.72;
   }
 
   .closeUtility,
@@ -2537,7 +2507,6 @@
     border-radius: var(--component-sources-tab-radius);
     padding: 0 12px;
     white-space: nowrap;
-    margin-left: auto;
   }
 
   .variantAction {
@@ -2803,54 +2772,6 @@
     color: var(--component-sources-available-fg);
   }
 
-  .updatesHeading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 58px;
-    padding: 0 2px;
-    border-bottom: 1px solid var(--component-sources-card-border);
-    color: var(--component-sources-update-fg);
-  }
-
-  .updatesHeading div { display: grid; gap: 4px; }
-  .updatesHeading strong { color: var(--component-sources-strong-fg); font-size: 14px; }
-  .updatesHeading span { color: var(--component-sources-cell-muted-fg); font-size: 9px; }
-
-  .sourcesFooter {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 32px;
-    padding: 0 14px;
-    border-top: 1px solid var(--component-sources-header-divider);
-    color: var(--component-sources-subtle-fg);
-    font-size: 9px;
-  }
-
-  .sourcesFooter button {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    gap: 5px;
-    padding: 0 7px;
-    border-radius: var(--component-sources-footer-action-radius);
-    background: var(--component-sources-footer-action-bg);
-    color: var(--component-sources-footer-action-fg);
-    font-size: 9px;
-    font-weight: 750;
-  }
-
-  .sourcesFooter button:hover:not(:disabled) {
-    background: var(--component-sources-footer-action-hover-bg);
-    color: var(--component-sources-footer-action-hover-fg);
-  }
-
-  .sourcesFooter button:disabled {
-    color: var(--component-sources-footer-action-disabled-fg);
-    opacity: 0.72;
-  }
-
   .sourcesOverview {
     min-width: 0;
     margin-top: 62px;
@@ -2858,8 +2779,7 @@
     border-left: 1px solid var(--component-sources-header-divider);
   }
 
-  .overviewHeader { display: grid; gap: 5px; padding: 11px 0 14px; }
-  .overviewHeader span { color: var(--component-sources-subtle-fg); font-size: 9px; }
+  .overviewHeader { padding: 11px 0 14px; }
   .overviewHeader strong { color: var(--component-sources-strong-fg); font-size: 13px; }
 
   .sourcesOverview > button {
@@ -2869,17 +2789,31 @@
     gap: 9px;
     width: 100%;
     min-height: 52px;
-    padding: 0;
+    padding-block: 0;
+    padding-inline: var(--space-sm);
     border-top: 1px solid var(--component-sources-header-divider);
     color: var(--component-sources-control-fg);
+    background: transparent;
     text-align: left;
   }
 
   .sourcesOverview > button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .sourcesOverview strong { color: var(--component-sources-strong-fg); font-size: 10px; }
   .sourcesOverview small { color: var(--component-sources-subtle-fg); font-size: 9px; }
-  .sourcesOverview .overviewWarning { color: var(--component-sources-update-fg); }
-  .sourcesOverview > button:hover strong { color: var(--component-sources-primary-ink); }
+  .sourcesOverview > button:hover {
+    color: var(--component-sources-overview-hover-fg);
+    background: var(--component-sources-overview-hover-bg);
+  }
+
+  .sourcesOverview > button.active {
+    color: var(--component-sources-overview-active-fg);
+    background: var(--component-sources-overview-active-bg);
+    box-shadow: inset 2px 0 var(--component-sources-overview-active-rail);
+  }
+
+  .sourcesOverview > button:hover strong,
+  .sourcesOverview > button.active strong { color: inherit; }
+  .sourcesOverview .overviewWarning:not(.active) { color: var(--component-sources-update-fg); }
 
   .variantBtn {
     display: grid;
@@ -2965,6 +2899,8 @@
       flex: 1;
       min-width: 220px;
     }
+
+    .sourceToolActions { margin-left: 0; }
 
     .extensionCard {
       grid-template-columns: 30px minmax(0, 1fr) minmax(60px, 90px) 18px minmax(68px, auto);

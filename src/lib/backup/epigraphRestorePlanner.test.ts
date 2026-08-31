@@ -245,7 +245,7 @@ describe("epigraph restore planner", () => {
 
   it.each([
     [{ needsReview: 1 }, "blocked", false, true, "manga-needs-review"],
-    [{ requiresInstall: 1 }, "blocked", false, true, "manga-requires-install"],
+    [{ requiresInstall: 1 }, "warning-only", true, false, "manga-requires-install"],
     [{ unavailable: 1 }, "blocked", false, true, "manga-unavailable-source"],
     [{ unresolved: 1 }, "warning-only", true, false, "manga-unresolved-source"],
     [{ warnings: 1 }, "warning-only", true, false, "non-blocking-warning"],
@@ -296,7 +296,7 @@ describe("epigraph restore planner", () => {
     expect(books.needsUserAction).toBe(true);
   });
 
-  it("marks novels missing repositories or plugins as blocked and metadata-only entries as warning-only", async () => {
+  it("keeps novel dependencies from the backup executable so restore can provision them", async () => {
     const missingRepoBuilt = await buildEpigraphBackupContainer({
       payloads: [await buildEpigraphNovelsPayload({
         ...SAMPLE_NOVELS_SNAPSHOT,
@@ -314,11 +314,14 @@ describe("epigraph restore planner", () => {
     const missingRepoPlan = await buildEpigraphRestorePlan(missingRepoBuilt.bytes, PLANNER_RUNTIME);
     expect(missingRepoPlan.payloads[0]).toEqual(
       expect.objectContaining({
-        status: "blocked",
-        canRestoreNow: false,
-        needsUserAction: true,
+        status: "warning-only",
+        canRestoreNow: true,
+        needsUserAction: false,
       }),
     );
+    expect(missingRepoPlan.payloads[0].warnings).toContainEqual(expect.objectContaining({
+      code: "missing-required-repository",
+    }));
 
     const metadataOnlyBuilt = await buildEpigraphBackupContainer({
       payloads: [await buildEpigraphNovelsPayload({
@@ -356,6 +359,30 @@ describe("epigraph restore planner", () => {
     expect(app.needsUserAction).toBe(false);
     expect(app.selectedByDefault).toBe(true);
     expect(app.warnings).toContainEqual(expect.objectContaining({ code: "portable-metadata-only" }));
+  });
+
+  it("keeps a manga payload executable when its recorded repository must be restored first", async () => {
+    const built = await buildEpigraphBackupContainer({
+      payloads: [await buildEpigraphMangaPayload(SAMPLE_MANGA_BYTES, {
+        repositoryUrls: ["https://example.com/index.min.json"],
+      })],
+    });
+
+    const plan = await buildEpigraphRestorePlan(
+      built.bytes,
+      { ...PLANNER_RUNTIME, manga: { ...PLANNER_RUNTIME.manga!, repositoryUrls: [] } },
+      {},
+      mangaDeps({ needsReview: 1 }),
+    );
+
+    expect(plan.payloads[0]).toEqual(expect.objectContaining({
+      status: "warning-only",
+      canRestoreNow: true,
+      selectedByDefault: true,
+    }));
+    expect(plan.payloads[0].warnings).toContainEqual(expect.objectContaining({
+      code: "missing-required-repository",
+    }));
   });
 
   it("surfaces unsupported payload versions and unknown payload kinds safely", async () => {

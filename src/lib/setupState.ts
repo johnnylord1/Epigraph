@@ -17,7 +17,6 @@ export type SetupStateKind =
 
 export type SetupSurface = "home" | "search" | "extensions";
 export type SetupActionKind =
-  | "add_recommended_repo"
   | "add_manually"
   | "browse_available_extensions"
   | "open_extensions"
@@ -167,10 +166,10 @@ export function getSetupStatePresentation(
       return {
         title: t(surface === "extensions" ? "setup.noReposExtensionsTitle" : "setup.noReposTitle"),
         body: t("setup.noReposBody"),
-        actions: [
-          { kind: "add_recommended_repo", label: t("setup.addRecommendedRepo") },
-          { kind: surface === "extensions" ? "open_repo_manager" : "add_manually", label: t("setup.addManually") },
-        ],
+        actions: [{
+          kind: surface === "extensions" ? "open_repo_manager" : "add_manually",
+          label: t("setup.addManually"),
+        }],
       };
     case "no_installed_extensions":
       {

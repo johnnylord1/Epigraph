@@ -79,12 +79,22 @@ describe("Sources theme token contract", () => {
     expect(activeTabRule).not.toContain("var(--component-sources-primary-ink)");
   });
 
-  it("keeps the footer refresh action readable as a secondary control", () => {
+  it("keeps the toolbar refresh action readable as a secondary control", () => {
     const source = read("src/components/pages/SourcesView.svelte");
-    const footerButtonRule = source.match(/\.sourcesFooter button\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    const refreshButtonRule = source.match(/\.refreshAction\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 
-    expect(footerButtonRule).toContain("var(--component-sources-footer-action-fg)");
-    expect(footerButtonRule).not.toContain("var(--component-sources-primary-ink)");
+    expect(refreshButtonRule).toContain("var(--component-sources-control-fg)");
+    expect(refreshButtonRule).not.toContain("var(--component-sources-primary-ink)");
+  });
+
+  it("uses dedicated overview tokens for hover and selected states", () => {
+    const source = read("src/components/pages/SourcesView.svelte");
+    const overviewButtonRule = source.match(/\.sourcesOverview > button\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    const activeRule = source.match(/\.sourcesOverview > button\.active\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+
+    expect(overviewButtonRule).toContain("padding-inline: var(--space-sm)");
+    expect(activeRule).toContain("var(--component-sources-overview-active-bg)");
+    expect(activeRule).toContain("var(--component-sources-overview-active-fg)");
   });
 
   it("keeps the APK install action readable with dedicated modal tokens", () => {

@@ -43,6 +43,7 @@
   import {
     buildComicsSectionState,
     createComicsLibraryActions,
+    isComicsBaseLibraryFilter,
   } from "../../lib/library/comicsSection";
   import type {
     BooksTypeFilterId,
@@ -848,7 +849,7 @@
   $effect(() => {
     const filter = store.libraryFilter;
     if (store.librarySection !== "comics") return;
-    if (filter === "library" || filter === "downloaded") return;
+    if (isComicsBaseLibraryFilter(filter)) return;
 
     const id = Number(filter);
     if (!store.categories.some((category) => category.id === id)) {
@@ -859,7 +860,7 @@
   $effect(() => {
     const filter = store.libraryFilter;
     if (store.librarySection !== "comics") return;
-    if (filter === "library" || filter === "downloaded") return;
+    if (isComicsBaseLibraryFilter(filter)) return;
 
     const id = Number(filter);
     if (!Number.isFinite(id) || id <= 0) return;
@@ -997,6 +998,7 @@
       all: "library.collections.all",
       library: "library.collections.saved",
       downloaded: "library.collections.downloaded",
+      finished: "library.collections.finished",
       "books:saved": "library.collections.saved",
       "books:downloaded": "library.collections.downloaded",
       "books:finished": "library.collections.finished",
@@ -1268,7 +1270,7 @@
   const activeHeroTitle = $derived(visualLibrarySection === "books" ? $_("library.sections.books") : $_("library.sections.comics"));
   const activeHeroCountLabel = $derived(
     visualLibrarySection === "books"
-      ? $_("library.count.booksSaved", { count: store.books.length + novelsLibraryState.entries.length })
+      ? $_("library.count.titles", { count: store.books.length + novelsLibraryState.entries.length })
       : $_("library.count.titles", { count: comicsSectionState?.counts.library ?? 0 }),
   );
   const booksStandardCollections = $derived<LibraryCollectionVM[]>([
@@ -1326,7 +1328,7 @@
   function isSystemHeroCollection(collection: LibraryCollectionVM) {
     const id = collection.id.toLowerCase();
     const label = collection.label.trim().toLowerCase();
-    return id === "all" || id === "library" || id === "downloaded" || label === "saved" || label === "downloaded" || label === "finished" || label === "all";
+    return id === "all" || id === "library" || id === "downloaded" || id === "finished" || label === "saved" || label === "downloaded" || label === "all";
   }
 
   const comicsActions = $derived(createComicsLibraryActions({

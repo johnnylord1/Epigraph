@@ -1,9 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Tracker } from "../../lib/types";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 
 const {
+  epigraphUpdateFixture,
   invokeMock,
   listenMock,
   emitToMock,
@@ -14,8 +15,27 @@ const {
   tauriFetchMock,
   gqlMock,
   loadSettingsStorageRuntimeMock,
-} = vi.hoisted(() => ({
-  invokeMock: vi.fn(async (command: string) => {
+} = vi.hoisted(() => {
+  const epigraphUpdateFixture = {
+    releases: [{
+      tag_name: "v4.2.0",
+      name: "Epigraph 4.2.0",
+      body: "Stable release.",
+      published_at: "2026-07-21T00:00:00Z",
+      html_url: "https://github.com/johnnylord1/Epigraph/releases/tag/v4.2.0",
+    }],
+    status: {
+      update_available: false,
+      current_version: "4.2.0",
+      version: null as string | null,
+      body: null as string | null,
+      published_at: null as string | null,
+    },
+  };
+
+  return {
+    epigraphUpdateFixture,
+    invokeMock: vi.fn(async (command: string) => {
     if (command === "get_storage_info") {
       return {
         manga_bytes: 32_000_000,
@@ -26,16 +46,10 @@ const {
     }
     if (command === "get_default_downloads_path") return "C:/Epigraph/Downloads";
     if (command === "list_releases") {
-      return [{
-        tag_name: "v4.2.0",
-        name: "Epigraph 4.2.0",
-        body: "Stable release.",
-        published_at: "2026-07-21T00:00:00Z",
-        html_url: "https://github.com/johnnylord1/Epigraph/releases/tag/v4.2.0",
-      }];
+      return epigraphUpdateFixture.releases;
     }
     if (command === "check_epigraph_update") {
-      return { update_available: false, current_version: "4.2.0", version: null, body: null, published_at: null };
+      return epigraphUpdateFixture.status;
     }
     if (command === "restart_app") return null;
     if (command === "get_suwayomi_runtime_status") {
@@ -71,19 +85,19 @@ const {
       return { installed: false, daemon: false, running: false, version: null, message: null };
     }
     return null;
-  }),
-  listenMock: vi.fn(async () => () => {}),
-  emitToMock: vi.fn(async () => {}),
-  getVersionMock: vi.fn(async () => "4.2.0"),
-  openUrlMock: vi.fn(async () => {}),
-  openDialogMock: vi.fn(async () => null),
-  saveDialogMock: vi.fn(async () => null),
-  tauriFetchMock: vi.fn(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => [],
-  })),
-  loadSettingsStorageRuntimeMock: vi.fn(async () => ({
+    }),
+    listenMock: vi.fn(async () => () => {}),
+    emitToMock: vi.fn(async () => {}),
+    getVersionMock: vi.fn(async () => "4.2.0"),
+    openUrlMock: vi.fn(async () => {}),
+    openDialogMock: vi.fn(async () => null),
+    saveDialogMock: vi.fn(async () => null),
+    tauriFetchMock: vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    })),
+    loadSettingsStorageRuntimeMock: vi.fn(async () => ({
     parseMihonBackup: vi.fn(async () => ({ trackerIds: [] })),
     buildEpigraphBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
     buildEpigraphRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
@@ -93,6 +107,7 @@ const {
     buildEpigraphBooksPayload: vi.fn(async () => ({})),
     restoreEpigraphBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
     extractEpigraphMangaPayloadFile: vi.fn(async () => new File([], "backup.tachibk")),
+    parseEpigraphMangaPayload: vi.fn(async () => ({ payloadManifest: { requiresRepositories: [] } })),
     buildEpigraphMangaPayload: vi.fn(async () => ({})),
     buildEpigraphNovelsPayload: vi.fn(async () => ({})),
     restoreEpigraphNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
@@ -117,7 +132,20 @@ const {
     readFileAsArrayBuffer: vi.fn(async () => new ArrayBuffer(0)),
     loadNovelRepositoryState: vi.fn(async () => ({ repositories: [], installedPlugins: [], catalogEntries: [] })),
     saveNovelRepositoryState: vi.fn(async (state) => state),
+    addNovelRepositoryToState: vi.fn((state) => state),
+    setNovelRepositoryTrustState: vi.fn((state) => state),
+    refreshNovelRepositoryCatalog: vi.fn(async (state, repositoryId) => ({
+      status: "success",
+      state,
+      repository: state.repositories.find((entry: { id: string }) => entry.id === repositoryId) ?? { lastError: null },
+    })),
     installNovelCatalogPlugin: vi.fn(async ({ state }) => state),
+    provisionEpigraphNovelDependencies: vi.fn(async ({ state }) => ({
+      state,
+      addedRepositories: 0,
+      installedPlugins: 0,
+      warnings: [],
+    })),
   })),
   gqlMock: vi.fn(async (query: string) => {
     const normalized = String(query).toLowerCase();
@@ -150,7 +178,8 @@ const {
     }
     return {};
   }),
-}));
+  };
+});
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
@@ -231,7 +260,7 @@ function resetSettingsStore() {
   store.categories = [];
 }
 
-function renderSettings() {
+function renderSettings(props: Record<string, unknown> = {}) {
   const appShell = document.createElement("div");
   appShell.id = "app-shell";
 
@@ -246,7 +275,7 @@ function renderSettings() {
   const onOpenThemeEditor = vi.fn();
   const result = render(Settings, {
     target: appShell,
-    props: { onOpenThemeEditor },
+    props: { onOpenThemeEditor, ...props },
   });
 
   return { ...result, appShell, opener, onOpenThemeEditor };
@@ -255,7 +284,25 @@ function renderSettings() {
 describe("Settings", () => {
   beforeEach(() => {
     resetSettingsStore();
+    epigraphUpdateFixture.releases = [{
+      tag_name: "v4.2.0",
+      name: "Epigraph 4.2.0",
+      body: "Stable release.",
+      published_at: "2026-07-21T00:00:00Z",
+      html_url: "https://github.com/johnnylord1/Epigraph/releases/tag/v4.2.0",
+    }];
+    epigraphUpdateFixture.status = {
+      update_available: false,
+      current_version: "4.2.0",
+      version: null,
+      body: null,
+      published_at: null,
+    };
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
     });
@@ -284,6 +331,41 @@ describe("Settings", () => {
     expect(screen.getByRole("button", { name: "Reader & Library" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "General" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Close settings" })).toBeNull();
+  });
+
+  test("keeps the available Epigraph update action visible when release history is hidden", async () => {
+    epigraphUpdateFixture.releases = [
+      {
+        tag_name: "v4.3.0",
+        name: "Epigraph 4.3.0",
+        body: "New reader fixes.",
+        published_at: "2026-08-30T00:00:00Z",
+        html_url: "https://github.com/johnnylord1/Epigraph/releases/tag/v4.3.0",
+      },
+      ...epigraphUpdateFixture.releases,
+    ];
+    epigraphUpdateFixture.status = {
+      update_available: true,
+      current_version: "4.2.0",
+      version: "4.3.0",
+      body: "New reader fixes.",
+      published_at: "2026-08-30T00:00:00Z",
+    };
+
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Open about settings" }));
+
+    const availableUpdate = await screen.findByTestId("epigraph-update-available");
+    expect(within(availableUpdate).getByText("v4.3.0 available")).toBeTruthy();
+    expect(within(availableUpdate).getByRole("button")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Browse" }));
+    const releaseHistory = screen.getByTestId("epigraph-release-history");
+    expect(within(releaseHistory).queryByRole("button", { name: "Install" })).toBeNull();
+    expect(within(releaseHistory).queryByRole("button", { name: "View" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+
+    expect(screen.getByTestId("epigraph-update-available")).toBeTruthy();
   });
 
   test("switches groups and contextual tabs without changing the imported shell", async () => {
@@ -404,6 +486,43 @@ describe("Settings", () => {
     expect(screen.getByText("Export")).toBeTruthy();
     await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
     expect(screen.queryByText("Export")).toBeNull();
+  });
+
+  test("presents a backup audit as a simple visual restore summary", async () => {
+    store.runtimeSettingsTab = "storage";
+    renderSettings({
+      backupAuditPlan: {
+        payloads: [{
+          kind: "manga",
+          present: true,
+          status: "warning-only",
+          defaultRestoreMode: "full",
+          availableRestoreModes: ["full"],
+          summaryLabel: "Extension repositories will be restored first",
+          reasons: [],
+          warnings: [{ code: "missing-required-repository", message: "One repository will be added." }],
+          metadata: { mangaCount: 24 },
+          selectedByDefault: true,
+          canRestoreNow: true,
+          needsUserAction: false,
+          canExecuteRestore: true,
+        }],
+        topLevelSkipped: [],
+        containerIssues: [],
+        recommendedSelection: ["manga"],
+        defaultTarget: "sandbox-profile",
+        canProceedWithRecommendedSelection: true,
+        hasBlockedPayloads: false,
+        hasUnsupportedPayloads: false,
+        executionBlockedReason: null,
+        summary: { summaryLabel: "Ready", summaryBody: "Choose what you want to restore." },
+      },
+    });
+
+    await waitFor(() => expect(document.querySelector("[data-backup-review]")).toBeTruthy());
+    expect(screen.getByText("24 titles")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Selected" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Info").closest("details")?.hasAttribute("open")).toBe(false);
   });
 
   test("rebinds the appearance pane theme editor affordances and help action", async () => {

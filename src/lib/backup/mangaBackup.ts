@@ -41,19 +41,26 @@ export async function buildEpigraphMangaPayload(
   options: {
     sourceFilename?: string | null;
     metadata?: Record<string, unknown>;
+    repositoryUrls?: string[];
   } = {},
 ): Promise<EpigraphBackupPayloadBuildInput> {
+  const repositoryUrls = [...new Set(
+    (options.repositoryUrls ?? [])
+      .map((value) => value.trim().replace(/\/+$/, ""))
+      .filter(Boolean),
+  )];
   return {
     kind: "manga",
     exportMode: "pipeline",
     restoreModesSupported: ["pipeline"],
     requiresRuntime: "suwayomi",
-    requiresRepositories: [],
+    requiresRepositories: repositoryUrls,
     portableByDefault: true,
     metadata: {
       schemaVersion: 1,
       embeddedFormat: "tachibk",
       sourceFilename: ensureTachibkFilename(options.sourceFilename),
+      repositoryCount: repositoryUrls.length,
       ...options.metadata,
     },
     files: [
@@ -75,11 +82,13 @@ export async function buildEpigraphMangaBackupContainer(
     platform?: string | null;
     sourceProfileId?: string | null;
     metadata?: Record<string, unknown>;
+    repositoryUrls?: string[];
   } = {},
 ): Promise<BuiltEpigraphBackupContainer> {
   const payload = await buildEpigraphMangaPayload(backupBytes, {
     sourceFilename: options.sourceFilename,
     metadata: options.metadata,
+    repositoryUrls: options.repositoryUrls,
   });
 
   return buildEpigraphBackupContainer({

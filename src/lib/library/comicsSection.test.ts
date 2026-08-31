@@ -5,6 +5,7 @@ import {
   buildComicsReadingStateLabel,
   buildComicsSectionState,
   createComicsLibraryCardVmCache,
+  isComicsBaseLibraryFilter,
 } from "./comicsSection";
 
 function manga(overrides: Partial<Manga> = {}): Manga {
@@ -36,6 +37,11 @@ function category(id: number, name: string, nodes: Manga[] = []): Category {
 }
 
 describe("buildComicsSectionState", () => {
+  it("recognizes every stable comics base collection filter", () => {
+    expect(["library", "downloaded", "finished"].every(isComicsBaseLibraryFilter)).toBe(true);
+    expect(isComicsBaseLibraryFilter("42")).toBe(false);
+  });
+
   it("derives categories, counts, filtered manga, and stable comic card ids", () => {
     const alpha = manga();
     const beta = manga({
@@ -83,8 +89,12 @@ describe("buildComicsSectionState", () => {
     expect(state.filteredManga.map((entry) => entry.id)).toEqual([1, 2]);
     expect(state.vm.cards.map((card) => card.id)).toEqual(["comic:1", "comic:2"]);
     expect(state.vm.cards[0].selected).toBe(true);
-    expect(state.vm.collections[0].label).toBe("Saved");
-    expect(state.vm.collections[2].label).toBe("Lendo");
+    expect(state.vm.collections.slice(0, 3).map(({ label, reorderable }) => ({ label, reorderable }))).toEqual([
+      { label: "Saved", reorderable: false },
+      { label: "Downloaded", reorderable: false },
+      { label: "Finished", reorderable: false },
+    ]);
+    expect(state.vm.collections[3]).toMatchObject({ label: "Lendo", reorderable: true });
   });
 
   it("uses publication-completed status semantics for the completed filter", () => {

@@ -4,7 +4,7 @@
   import { _, translate } from "../../lib/i18n/runtime";
   import "../../lib/i18n/runtime";
   import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
-  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, Tag, CaretDown } from "phosphor-svelte";
+  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -52,6 +52,7 @@
     type RestoreTargetMode,
   } from "../../lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
+  import { getManagedSourceRuntime, resolveExtensionStoreInputUrl } from "../../lib/manga/runtime";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
@@ -1136,6 +1137,7 @@
   let backupRestoreSourceProfileId = $state<LocalProfileId | null>(null);
   let backupRestoreResults = $state<Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> | null>(null);
   let backupLaunchIntentKey = $state<string | null>(null);
+  let backupAuditPlanKey = $state<string | null>(null);
   let backupLastLegacyAnalysisPath: string | null = $state(null);
 
   const backupNeedsReviewComplete = $derived.by<boolean>(() => {
@@ -1197,6 +1199,9 @@
     }
     if (backupImportKind === "epigraph") {
       return !backupUnifiedPlan || !backupHasExecutableSelection || backupRestoring || backupValidating;
+    }
+    if (backupImportKind === "novels-lnreader") {
+      return !backupSelectedFilePath || backupRestoring || backupValidating;
     }
     return backupRestoreBlocked;
   });
@@ -1334,6 +1339,7 @@
       activeProfileId: currentRuntimeProfileId,
       manga: {
         supported: true,
+        repositoryUrls: inventory.repoUrls,
         inventory: inventory.inventory,
         availableExtensions: inventory.availableExtensions,
         trackers: trackersData.trackers.nodes ?? [],
@@ -1491,8 +1497,11 @@
     const payloads: EpigraphBackupPayloadBuildInput[] = [];
     if (backupUnifiedIncludeManga) {
       const manga = await fetchCurrentMangaBackup();
+      const mangaRuntime = await getManagedSourceRuntime();
+      const repositoryUrls = (await mangaRuntime.listStores()).map((entry) => entry.indexUrl);
       payloads.push(await storageRuntime.buildEpigraphMangaPayload(manga.bytes, {
         sourceFilename: manga.sourceFilename,
+        repositoryUrls,
       }));
     }
     if (backupUnifiedIncludeBooks) {
@@ -1558,6 +1567,7 @@
       filters: [
         { name: "Epigraph backups (including supported legacy formats)", extensions: ["epigraphbk", "aethonbk"] },
         { name: "Manga backups", extensions: ["tachibk", "proto", "gz"] },
+        { name: "LNReader backups", extensions: ["zip"] },
       ],
     });
     if (typeof selected !== "string" || !selected.trim()) return;
@@ -1579,6 +1589,21 @@
     const plan = await storageRuntime.buildEpigraphRestorePlan(bytes, runtime);
     backupUnifiedPlan = plan;
     backupUnifiedSelection = defaultExecutionSelection(plan);
+  }
+
+  function backupPayloadIcon(kind: string) {
+    if (kind === "manga") return Image;
+    if (kind === "books" || kind === "novels") return Book;
+    return Gear;
+  }
+
+  function backupPayloadCount(payload: EpigraphPayloadRestorePlan): string | null {
+    const count = payload.metadata.mangaCount
+      ?? payload.metadata.bookCount
+      ?? payload.metadata.entryCount;
+    return typeof count === "number"
+      ? `${count} ${count === 1 ? "title" : "titles"}`
+      : null;
   }
 
   function isZipContainer(bytes: ArrayBuffer): boolean {
@@ -1636,12 +1661,44 @@
       return;
     }
 
+    if (backupImportKind === "novels-lnreader") {
+      backupValidating = true;
+      try {
+        const storageRuntime = await getStorageRuntime();
+        const bytes = await storageRuntime.readFileAsArrayBuffer(path);
+        if (!(await storageRuntime.isLnReaderBackupZip(bytes))) {
+          throw new Error("This ZIP is not a supported LNReader backup.");
+        }
+        backupSelectedFile = await fileFromPath(path);
+      } finally {
+        backupValidating = false;
+      }
+      return;
+    }
+
     if (backupRestoreTargetMode === "current-profile") {
       await loadLegacyBackupPath(path);
     } else {
       backupSelectedFile = await fileFromPath(path);
     }
   }
+
+  $effect(() => {
+    const plan = backupAuditPlan;
+    if (!plan) {
+      backupAuditPlanKey = null;
+      return;
+    }
+    const key = `${plan.summary.summaryLabel}|${plan.payloads.map((payload) => `${payload.kind}:${payload.status}:${payload.summaryLabel}`).join("|")}`;
+    if (key === backupAuditPlanKey) return;
+    backupAuditPlanKey = key;
+    backupUnifiedPlan = plan;
+    backupUnifiedSelection = defaultExecutionSelection(plan);
+    backupImportKind = "epigraph";
+    backupViewMode = "restore";
+    advStorageOpen = true;
+    storageAdvancedSource = "backup";
+  });
 
   $effect(() => {
     const intent = backupRestoreLaunchIntent;
@@ -1948,21 +2005,69 @@
     await invoke("relaunch_with_args", { args });
   }
 
-  async function applyCurrentProfileNovelsRestore(bytes: ArrayBuffer) {
+  async function applyCurrentProfileNovelsRestore(
+    bytes: ArrayBuffer,
+    format: "epigraph" | "lnreader" = "epigraph",
+  ) {
     const storageRuntime = await getStorageRuntime();
-    const runtime = await loadNovelRuntimeState();
-    const restored = await storageRuntime.restoreEpigraphNovelsPayload(bytes, runtime);
     const scopeInput = {
       profileId: currentRuntimeProfileId,
       serverUrl: currentRuntimeServerUrl,
     };
+    const initialRuntime = await loadNovelRuntimeState();
+    const initialRestored = format === "lnreader"
+      ? await storageRuntime.restoreLnReaderNovelsBackup(bytes, initialRuntime)
+      : await storageRuntime.restoreEpigraphNovelsPayload(bytes, initialRuntime);
+    const repositoryState = await storageRuntime.loadNovelRepositoryState(scopeInput);
+    const provisioning = await storageRuntime.provisionEpigraphNovelDependencies({
+      restored: initialRestored,
+      state: repositoryState,
+      scopeInput,
+      operations: {
+        addRepository: storageRuntime.addNovelRepositoryToState,
+        trustRepository: storageRuntime.setNovelRepositoryTrustState,
+        refreshRepository: storageRuntime.refreshNovelRepositoryCatalog,
+        installPlugin: storageRuntime.installNovelCatalogPlugin,
+        saveState: storageRuntime.saveNovelRepositoryState,
+      },
+    });
+    const finalRuntime = await loadNovelRuntimeState();
+    const restored = format === "lnreader"
+      ? await storageRuntime.restoreLnReaderNovelsBackup(bytes, finalRuntime)
+      : await storageRuntime.restoreEpigraphNovelsPayload(bytes, finalRuntime);
     const currentState = await storageRuntime.loadNovelLibraryState(scopeInput);
     const nextState = storageRuntime.applyRestoredNovelsSnapshotToLibraryState({
       currentState,
       restored,
     });
     await storageRuntime.saveNovelLibraryState(nextState, scopeInput);
-    return restored;
+    return { ...restored, provisioning };
+  }
+
+  async function ensureMangaRestoreRepositories(repositoryUrls: readonly string[]) {
+    if (repositoryUrls.length === 0) return 0;
+    const runtime = await getManagedSourceRuntime();
+    const current = new Set((await runtime.listStores()).map((entry) => entry.indexUrl.replace(/\/+$/, "")));
+    let added = 0;
+    for (const rawUrl of repositoryUrls) {
+      const url = resolveExtensionStoreInputUrl(rawUrl).replace(/\/+$/, "");
+      if (!url || current.has(url)) continue;
+      await runtime.addStore({ indexUrl: url });
+      current.add(url);
+      added += 1;
+    }
+    if (added > 0) await runtime.refreshExtensions();
+    return added;
+  }
+
+  async function waitForInstalledRestoreSources(file: File, maxAttempts = 7) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      await analyzeSelectedBackupFile(file);
+      if (!backupReadiness || backupReadiness.requiresInstallCount === 0) return;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+    }
   }
 
   async function refreshHomeRestoreSnapshots() {
@@ -2233,9 +2338,20 @@
       if (!selectedKinds.includes(kind)) continue;
       try {
         if (kind === "manga") {
+          const mangaPayload = await storageRuntime.parseEpigraphMangaPayload(bytes);
+          await ensureMangaRestoreRepositories(mangaPayload.payloadManifest.requiresRepositories ?? []);
           const extracted = await storageRuntime.extractEpigraphMangaPayloadFile(bytes);
           backupSelectedFile = extracted;
           await analyzeSelectedBackupFile(extracted);
+          const readiness = backupAnalysis
+            ? buildRestoreReadiness(backupAnalysis, backupReviewSelections, backupInventory, backupAvailableExtensions)
+            : null;
+          for (const extension of readiness?.installableExtensions ?? []) {
+            await installMissingSourceExtension(extension, false);
+          }
+          if ((readiness?.installableExtensions.length ?? 0) > 0) {
+            await waitForInstalledRestoreSources(extracted);
+          }
           const outcome = await restoreBackup();
           results.push({
             kind,
@@ -2270,13 +2386,15 @@
 
         if (kind === "novels") {
           const restored = await applyCurrentProfileNovelsRestore(bytes);
+          const provisioningWarnings = restored.provisioning.warnings.length;
+          const hasWarnings = restored.summary.restoredMetadataOnlyCount > 0 || provisioningWarnings > 0;
           results.push({
             kind,
-            status: restored.summary.restoredMetadataOnlyCount > 0 ? "warning" : "success",
-            summary: restored.summary.restoredMetadataOnlyCount > 0
-              ? `${restored.summary.totalEntries} novel entries restored with metadata-only warnings.`
+            status: hasWarnings ? "warning" : "success",
+            summary: hasWarnings
+              ? `${restored.summary.totalEntries} novel entries restored with ${provisioningWarnings + restored.summary.restoredMetadataOnlyCount} warning${provisioningWarnings + restored.summary.restoredMetadataOnlyCount === 1 ? "" : "s"}.`
               : `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
-            detail: `${restored.summary.restoredUsableCount} usable / ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
+            detail: `${restored.provisioning.addedRepositories} repositories added / ${restored.provisioning.installedPlugins} extensions installed / ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
           });
           continue;
         }
@@ -2319,9 +2437,9 @@
       }
     }
 
-      if (results.some((entry) => (entry.kind === "manga" || entry.kind === "app") && entry.status !== "failed")) {
-        await refreshHomeRestoreSnapshots();
-      }
+    if (results.some((entry) => (entry.kind === "manga" || entry.kind === "app") && entry.status !== "failed")) {
+      await refreshHomeRestoreSnapshots();
+    }
 
     backupRestoreResults = results;
     const failed = results.filter((entry) => entry.status === "failed").length;
@@ -2354,6 +2472,25 @@
 
     if (backupImportKind === "epigraph") {
       await applyUnifiedRestore();
+      return;
+    }
+
+    if (backupImportKind === "novels-lnreader") {
+      if (!backupSelectedFilePath) {
+        backupError = translate("settings_inline_chooseBackupFileError");
+        return;
+      }
+      const storageRuntime = await getStorageRuntime();
+      const bytes = await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath);
+      const restored = await applyCurrentProfileNovelsRestore(bytes, "lnreader");
+      backupRestoreResults = [{
+        kind: "novels",
+        status: restored.provisioning.warnings.length > 0 ? "warning" : "success",
+        summary: `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
+        detail: restored.provisioning.warnings.length > 0
+          ? `${restored.provisioning.warnings.length} source warning${restored.provisioning.warnings.length === 1 ? "" : "s"}`
+          : null,
+      }];
       return;
     }
 
@@ -3333,6 +3470,9 @@
   function stripV(v: string) { return v.replace(/^v/, ""); }
   function isCurrentVersion(tag: string) { return stripV(tag) === appVersion; }
   let onLatestVersion = $derived(updateCheck !== null && !updateCheck.update_available);
+  let availableUpdateRelease = $derived(
+    releases.find((release) => isAuthorizedEpigraphUpdate(release, updateCheck)) ?? null
+  );
   function fmtDate(iso: string): string {
     if (!iso) return "";
     const d = new Date(iso);
@@ -4788,7 +4928,7 @@
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshPerfMetrics}>{$_("common_refresh")}</button>
                 </div>
               </div>
-              <div class="settings-card__surface" style="margin-top:16px">
+              <div class="settings-card__surface" style="margin-top:16px" data-testid="epigraph-release-history">
                 <div class="settings-card__head">
                   <p class="settings-card__title">{$_("settings_inline_sessionCache")}</p>
                 </div>
@@ -6231,6 +6371,14 @@
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openProjectGithub}>{$_("settings_inline_open")}</button>
                 </div>
               </div>
+              {#if availableUpdateRelease && updatePhase === "idle"}
+                <div class="update-ready-row update-ready-row--available" data-testid="epigraph-update-available">
+                  <span class="update-ready-label">{availableUpdateRelease.tag_name} available</span>
+                  <button class="update-action-btn primary" type="button" onclick={() => installUpdate(availableUpdateRelease)}>
+                    {IS_WINDOWS ? "Install" : $_("settings_inline_openOnGithub")}
+                  </button>
+                </div>
+              {/if}
               {#if onLatestVersion}
                 <div class="settings-state">
                   <NocturneState layout="compact" tone="success" icon="info" eyebrow={$_("settings_brand_updates")} title={$_("settings_inline_latestVersion")} />
@@ -6287,9 +6435,6 @@
                       {#each releases as release}
                         {@const isCurrent = isCurrentVersion(release.tag_name)}
                         {@const isExpanded = expandedTag === release.tag_name}
-                        {@const isTarget = targetTag === release.tag_name}
-                        {@const isInstalling = isTarget && updatePhase === "downloading"}
-                        {@const isAuthorizedUpdate = isAuthorizedEpigraphUpdate(release, updateCheck)}
                         <div class="release-row" class:current={isCurrent}>
                           <div class="release-header">
                             <div class="release-meta">
@@ -6304,15 +6449,6 @@
                             <div class="release-actions">
                               {#if release.body.trim()}
                                 <button class="release-changelog-btn" type="button" onclick={() => expandedTag = isExpanded ? null : release.tag_name}>{isExpanded ? "Hide" : "Changelog"}</button>
-                              {/if}
-                              {#if !isCurrent}
-                                {#if IS_WINDOWS}
-                                  <button class="update-action-btn" class:primary={isAuthorizedUpdate && !isInstalling} disabled={updatePhase === "downloading"} type="button" onclick={() => installUpdate(release)}>
-                                    {isInstalling ? "Downloading..." : isAuthorizedUpdate ? "Install" : "View"}
-                                  </button>
-                                {:else}
-                                  <button class="update-action-btn" type="button" onclick={() => installUpdate(release)}>{$_("settings_inline_openOnGithub")}</button>
-                                {/if}
                               {/if}
                             </div>
                           </div>
@@ -6504,6 +6640,12 @@
                     {backupExporting ? $_("settings_inline_exporting") : $_("settings_inline_exportBackup")}
                   </button>
                 </div>
+                {#if backupValidating || backupRestoring}
+                  <div class="backup-progress" role="status" aria-live="polite">
+                    <div class="backup-progress__line"><span></span></div>
+                    <p>{backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_restoring")}</p>
+                  </div>
+                {/if}
               </div>
           {:else if backupViewMode === "restore"}
             <div class="settings-card__surface" style="margin-top:16px">
@@ -6535,62 +6677,39 @@
                   </button>
                 </div>
                 {#if backupImportKind === "epigraph" && backupUnifiedPlan}
-                  <div class="settings-card__surface" style="margin-top:16px">
-                    <div class="settings-card__head">
-                      <p class="settings-card__title">{$_("settings_inline_restoreSummary")}</p>
-                    </div>
-                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryLabel}</p>
-                    <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
-                    <div class="settings-chip-list" style="margin-top:14px">
-                      <span class="settings-chip">{$_("settings_inline_recommendedOtherProfile")}</span>
-                      <span class="settings-chip">{$_("settings_inline_blockedCount", { count: backupUnifiedBlockedCount })}</span>
-                      <span class="settings-chip">{$_("settings_inline_unsupportedCount", { count: backupUnifiedUnsupportedCount })}</span>
-                      <span class="settings-chip">{$_("settings_inline_warningsCount", { count: backupUnifiedWarningCount })}</span>
+                  <div class="settings-card__surface backup-review" style="margin-top:16px" data-backup-review>
+                    <div class="backup-review__heading">
+                      <div class="backup-review__mark"><ShieldCheck size={20} weight="duotone" /></div>
+                      <div>
+                        <p class="settings-card__title">{$_("settings_inline_restoreSummary")}</p>
+                        <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
+                      </div>
                     </div>
                     {#if backupUnifiedPlan.executionBlockedReason}
                       <div class="settings-state settings-state--spaced">
                         <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreBlocked")} body={backupUnifiedPlan.executionBlockedReason} />
                       </div>
                     {/if}
-                    {#if backupUnifiedPlan.containerIssues.length > 0}
-                      <div class="settings-card__stack" style="margin-top:14px">
-                        {#each backupUnifiedPlan.containerIssues as issue}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{$_("settings_inline_containerIssue")}</p>
-                              <p class="settings-mini-row__hint">{issue.code} - {issue.message}</p>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                    <div class="settings-card__stack" style="margin-top:14px">
+                    <div class="backup-payload-list">
                       {#each backupUnifiedPlan.payloads as payload}
-                        <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                          <div class="settings-mini-row__body">
-                            <p class="settings-mini-row__label">{backupPayloadKindLabel(payload.kind)} - {backupPayloadStatusLabel(payload.status)}</p>
-                            <p class="settings-mini-row__hint">{payload.summaryLabel}</p>
-                            <p class="settings-mini-row__hint">Ready now: {payload.canRestoreNow ? "Yes" : "No"} · Needs action: {payload.needsUserAction ? "Yes" : "No"} · Executable: {payload.canExecuteRestore ? "Yes" : "No"}</p>
-                            {#if payload.availableRestoreModes.length > 0}
-                              <p class="settings-mini-row__hint">Restore modes: {payload.availableRestoreModes.join(", ")}{payload.defaultRestoreMode ? ` · default: ${payload.defaultRestoreMode}` : ""}</p>
-                            {/if}
-                            {#if payload.reasons.length > 0}
-                              {#each payload.reasons as reason}
-                                <p class="settings-mini-row__hint">{$_("settings_inline_reasonLine", { code: reason.code, message: reason.message })}</p>
-                              {/each}
-                            {/if}
-                            {#if payload.warnings.length > 0}
-                              {#each payload.warnings as warning}
-                                <p class="settings-mini-row__hint">{$_("settings_inline_warningLine", { code: warning.code, message: warning.message })}</p>
-                              {/each}
-                            {/if}
+                        {@const PayloadIcon = backupPayloadIcon(payload.kind)}
+                        <div class="backup-payload" class:is-selected={Boolean(backupUnifiedSelection[payload.kind])}>
+                          <div class="backup-payload__icon"><PayloadIcon size={18} weight="duotone" /></div>
+                          <div class="backup-payload__copy">
+                            <div class="backup-payload__title">
+                              <strong>{backupPayloadKindLabel(payload.kind)}</strong>
+                              <span class:has-warning={payload.status === "warning-only" || payload.status === "blocked"}>{backupPayloadStatusLabel(payload.status)}</span>
+                            </div>
+                            <p>{backupPayloadCount(payload) ?? payload.summaryLabel}</p>
+                            {#if backupPayloadCount(payload)}<small>{payload.summaryLabel}</small>{/if}
                           </div>
-                          <div class="settings-section-actions settings-inline-actions">
+                          <div>
                             {#if isPayloadExecutable(payload)}
                               <button
-                                class="settings-chip"
+                                class="backup-payload__toggle"
                                 class:is-active={Boolean(backupUnifiedSelection[payload.kind])}
                                 type="button"
+                                aria-pressed={Boolean(backupUnifiedSelection[payload.kind])}
                                 onclick={() => {
                                   backupUnifiedSelection = {
                                     ...backupUnifiedSelection,
@@ -6599,28 +6718,23 @@
                                 }}
                                 disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
                               >
+                                {#if backupUnifiedSelection[payload.kind]}<CheckCircle size={15} weight="fill" />{/if}
                                 {backupUnifiedSelection[payload.kind] ? $_("settings_inline_selected") : $_("settings_inline_select")}
                               </button>
                             {:else}
-                              <span class="settings-chip">{payload.canExecuteRestore ? $_("settings_inline_info") : $_("settings_inline_preview")}</span>
+                              <span class="backup-payload__unavailable">{$_("settings_inline_preview")}</span>
                             {/if}
                           </div>
                         </div>
                       {/each}
                     </div>
-                    {#if backupUnifiedPlan.topLevelSkipped.length > 0}
-                      <div class="settings-card__stack" style="margin-top:14px">
-                        {#each backupUnifiedPlan.topLevelSkipped as skipped}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{backupPayloadKindLabel(skipped.kind)} - {backupPayloadStatusLabel(skipped.status)}</p>
-                              <p class="settings-mini-row__hint">{skipped.summaryLabel}</p>
-                              <p class="settings-mini-row__hint">{skipped.reason}</p>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
+                    <details class="backup-technical-details">
+                      <summary>{$_("settings_inline_info")}</summary>
+                      {#each backupUnifiedPlan.containerIssues as issue}<p>{issue.message}</p>{/each}
+                      {#each backupUnifiedPlan.payloads as payload}
+                        {#each [...payload.reasons, ...payload.warnings] as note}<p><strong>{backupPayloadKindLabel(payload.kind)}:</strong> {note.message}</p>{/each}
+                      {/each}
+                    </details>
                   </div>
                 {:else if backupImportKind === "manga"}
                   <div class="settings-card__surface" style="margin-top:16px">
@@ -6719,7 +6833,7 @@
                     </div>
                   </div>
                 {/if}
-                <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,*/*" style="display:none" onchange={onBackupFileSelected} />
+                <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
               </div>
               {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
                 <div class="settings-card__surface" style="margin-top:16px">
@@ -6744,6 +6858,19 @@
                       {#if backupReadiness.requiresInstallCount > 0}
                         <p class="settings-card__intro">{$_("settings_inline_restoreBlockedExtensionsHint")}</p>
                         {#if backupReadiness.installableExtensions.length > 0}
+                          <div class="backup-extension-list">
+                            {#each backupReadiness.installableExtensions as extension}
+                              <div class="backup-extension">
+                                {#if extension.iconUrl}
+                                  <img src={extension.iconUrl} alt="" />
+                                {:else}
+                                  <span><PuzzlePiece size={17} weight="duotone" /></span>
+                                {/if}
+                                <div><strong>{extension.name}</strong><small>{extension.lang?.toUpperCase() ?? extension.pkgName}</small></div>
+                                {#if backupInstalling.has(extension.pkgName)}<CircleNotch size={14} weight="bold" class="anim-spin" />{/if}
+                              </div>
+                            {/each}
+                          </div>
                           <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
                             <button
                               class="n-btn n-btn--sm n-btn-ghost"
@@ -7204,6 +7331,7 @@
     background: var(--accent-muted); border-radius: var(--radius-md);
     margin: 0 var(--sp-3) var(--sp-2);
   }
+  .update-ready-row--available { margin-top: var(--sp-3); }
   .update-ready-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--accent-fg); letter-spacing: var(--tracking-wide); flex: 1; }
   .update-error-row { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-2) 0 0; }
   .tracker-identity { display: flex; align-items: center; gap: var(--sp-3); flex-shrink: 0; }
@@ -7279,6 +7407,43 @@
     flex-direction: column;
     gap: 16px;
   }
+  .backup-progress { display: grid; gap: 7px; margin-top: 12px; }
+  .backup-progress p { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
+  .backup-progress__line { height: 3px; overflow: hidden; border-radius: var(--radius-full); background: var(--bg-overlay); }
+  .backup-progress__line span { display: block; width: 38%; height: 100%; border-radius: inherit; background: var(--accent-fg); animation: backupProgress 1.2s ease-in-out infinite; }
+  @keyframes backupProgress { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+  .backup-review { padding: 16px; }
+  .backup-review__heading { display: flex; align-items: flex-start; gap: 12px; }
+  .backup-review__mark,
+  .backup-payload__icon { display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--border-dim); background: var(--bg-overlay); color: var(--accent-fg); }
+  .backup-review__mark { width: 36px; height: 36px; border-radius: var(--radius-md); }
+  .backup-payload-list { display: grid; gap: 8px; margin-top: 16px; }
+  .backup-payload { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 11px; min-height: 62px; padding: 10px 12px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); transition: border-color var(--t-fast), background var(--t-fast); }
+  .backup-payload.is-selected { border-color: var(--accent-dim); background: var(--accent-muted); }
+  .backup-payload__icon { width: 32px; height: 32px; border-radius: var(--radius-sm); }
+  .backup-payload__copy { min-width: 0; }
+  .backup-payload__title { display: flex; align-items: center; gap: 8px; }
+  .backup-payload__title strong { color: var(--text-primary); font-size: var(--text-sm); }
+  .backup-payload__title span { color: var(--color-success); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+  .backup-payload__title span.has-warning { color: var(--color-warning); }
+  .backup-payload__copy p,
+  .backup-payload__copy small { display: block; margin: 2px 0 0; color: var(--text-muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .backup-payload__copy small { color: var(--text-faint); }
+  .backup-payload__toggle { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 9px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font-size: var(--text-xs); }
+  .backup-payload__toggle.is-active { border-color: var(--accent-dim); color: var(--accent-fg); }
+  .backup-payload__unavailable { color: var(--text-faint); font-size: var(--text-xs); }
+  .backup-technical-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-dim); color: var(--text-faint); font-size: var(--text-xs); }
+  .backup-technical-details summary { cursor: pointer; color: var(--text-muted); }
+  .backup-technical-details p { margin: 8px 0 0; line-height: 1.45; }
+  .backup-extension-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 12px; }
+  .backup-extension { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); }
+  .backup-extension img,
+  .backup-extension > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--bg-overlay); object-fit: cover; }
+  .backup-extension div { min-width: 0; }
+  .backup-extension strong,
+  .backup-extension small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .backup-extension strong { color: var(--text-primary); font-size: var(--text-xs); }
+  .backup-extension small { margin-top: 2px; color: var(--text-faint); font-size: var(--text-2xs); }
 </style>
 
 
