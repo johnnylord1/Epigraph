@@ -525,6 +525,25 @@ describe("Settings", () => {
     expect(screen.getByText("Info").closest("details")?.hasAttribute("open")).toBe(false);
   });
 
+  test("recognizes an LNReader ZIP selected through the restore file input", async () => {
+    store.runtimeSettingsTab = "storage";
+    store.runtimeResolvedLocalProfileId = "test";
+    const { container } = renderSettings();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Restore backup" }));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).toBeTruthy();
+
+    const backup = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "lnreader_backup.zip", {
+      type: "application/zip",
+    });
+    await fireEvent.change(input!, { target: { files: [backup] } });
+
+    await waitFor(() => expect(screen.getByText(/Detected format: LNReader ZIP/i)).toBeTruthy());
+    await fireEvent.click(screen.getByRole("switch", { name: "Confirm current profile restore" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false));
+  });
+
   test("rebinds the appearance pane theme editor affordances and help action", async () => {
     const { onOpenThemeEditor } = renderSettings();
 

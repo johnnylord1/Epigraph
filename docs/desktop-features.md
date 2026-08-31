@@ -293,8 +293,20 @@ The desktop owns the complete data-movement workflow:
   refreshes their catalogs, installs available required extensions, and waits
   briefly for Suwayomi to publish the restored sources before writing Library.
 - Novel and LNReader restores use the same dependency-first sequence for
-  repositories and plugins. Dependencies that disappeared from a catalog are
-  reported as warnings while the recoverable library metadata is preserved.
+  repositories and plugins. Native LNReader ZIPs are resolved from the
+  installed-plugin metadata in `Setting.json`: plugin artifact URLs identify
+  the matching `plugins.min.json` manifest, including community forks, and a
+  plugin is installed only from its recorded repository. Dependencies that
+  disappeared from a catalog are reported as warnings while the recoverable
+  library metadata is preserved.
+- Native Tachiyomi/Mihon `.tachibk` files contain source identities but no
+  extension-store URLs or APKs. On a clean profile, recovery therefore remains
+  catalog-assisted rather than inventing a repository; current `index.pb`
+  stores are supported and their JSON companion is used for source matching.
+- J2K library counts follow its Kotlin serialization default: an omitted
+  `favorite` field means `true`, while explicit `false` entries represent read
+  history outside the Library. Those history records remain in the restored
+  payload but are excluded from Library reconciliation and title counts.
 - Separate manga, book, novel, application, and provider bridges so a partial
   restore cannot silently overwrite an unrelated state domain.
 

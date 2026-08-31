@@ -1201,7 +1201,7 @@
       return !backupUnifiedPlan || !backupHasExecutableSelection || backupRestoring || backupValidating;
     }
     if (backupImportKind === "novels-lnreader") {
-      return !backupSelectedFilePath || backupRestoring || backupValidating;
+      return (!backupSelectedFilePath && !backupSelectedFile) || backupRestoring || backupValidating;
     }
     return backupRestoreBlocked;
   });
@@ -1272,9 +1272,10 @@
         : "Continue in other profile";
     }
     if (backupRestoring) {
-      return backupImportKind === "epigraph" ? translate("settings_inline_restoring") : translate("settings_inline_restoringManga");
+      return backupImportKind === "manga" ? translate("settings_inline_restoringManga") : translate("settings_inline_restoring");
     }
-    return backupImportKind === "epigraph" ? translate("settings_inline_restoreSelectedPayloads") : translate("settings_inline_restoreMangaBackup");
+    if (backupImportKind === "novels-lnreader") return translate("ui_lnreaderNovelsRestore");
+    return backupImportKind === "manga" ? translate("settings_inline_restoreMangaBackup") : translate("settings_inline_restoreSelectedPayloads");
   }
 
   function resetLegacyBackupState() {
@@ -1585,6 +1586,11 @@
   async function loadUnifiedBackupPlan(path: string) {
     const storageRuntime = await getStorageRuntime();
     const bytes = await storageRuntime.readFileAsArrayBuffer(path);
+    await loadUnifiedBackupPlanBytes(bytes);
+  }
+
+  async function loadUnifiedBackupPlanBytes(bytes: ArrayBuffer) {
+    const storageRuntime = await getStorageRuntime();
     const runtime = await loadEpigraphRestoreRuntime();
     const plan = await storageRuntime.buildEpigraphRestorePlan(bytes, runtime);
     backupUnifiedPlan = plan;
@@ -1812,9 +1818,37 @@
     const file = input.files?.[0] ?? null;
     if (!file) return;
     resetBackupImportState();
-    backupImportKind = "manga";
+    backupImportKind = detectBackupImportKind(file.name);
     backupSelectedFile = file;
     backupSelectedFilePath = null;
+
+    if (!backupImportKind) {
+      backupError = translate("settings_inline_chooseBackupFileError");
+      return;
+    }
+
+    const bytes = await file.arrayBuffer();
+    if (backupImportKind === "epigraph") {
+      if (isZipContainer(bytes)) {
+        await loadUnifiedBackupPlanBytes(bytes);
+        return;
+      }
+      backupImportKind = "manga";
+    }
+
+    if (backupImportKind === "novels-lnreader") {
+      backupValidating = true;
+      try {
+        const storageRuntime = await getStorageRuntime();
+        if (!(await storageRuntime.isLnReaderBackupZip(bytes))) {
+          throw new Error("This ZIP is not a supported LNReader backup.");
+        }
+      } finally {
+        backupValidating = false;
+      }
+      return;
+    }
+
     if (backupRestoreTargetMode === "current-profile") {
       await analyzeSelectedBackupFile(file);
     }
@@ -2322,7 +2356,7 @@
   }
 
   async function applyUnifiedRestore() {
-    if (!backupUnifiedPlan || !backupSelectedFilePath) {
+    if (!backupUnifiedPlan || (!backupSelectedFilePath && !backupSelectedFile)) {
       throw new Error(translate("settings_inline_chooseEpigraphBackupFirst"));
     }
     const selectedKinds = selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection);
@@ -2331,7 +2365,9 @@
     }
 
     const storageRuntime = await getStorageRuntime();
-    const bytes = await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath);
+    const bytes = backupSelectedFilePath
+      ? await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath)
+      : await backupSelectedFile!.arrayBuffer();
     const results: Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> = [];
 
     for (const kind of ["manga", "books", "novels", "app"] as const) {
@@ -2476,12 +2512,14 @@
     }
 
     if (backupImportKind === "novels-lnreader") {
-      if (!backupSelectedFilePath) {
+      if (!backupSelectedFilePath && !backupSelectedFile) {
         backupError = translate("settings_inline_chooseBackupFileError");
         return;
       }
       const storageRuntime = await getStorageRuntime();
-      const bytes = await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath);
+      const bytes = backupSelectedFilePath
+        ? await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath)
+        : await backupSelectedFile!.arrayBuffer();
       const restored = await applyCurrentProfileNovelsRestore(bytes, "lnreader");
       backupRestoreResults = [{
         kind: "novels",
@@ -6659,7 +6697,13 @@
                     <p class="settings-mini-row__hint">{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</p>
                     {#if backupImportKind}
                       <p class="settings-mini-row__hint">
-                        {$_("settings_inline_detectedFormat", { format: backupImportKind === "epigraph" ? ".epigraphbk" : $_("settings_inline_nativeMangaBackup") })}
+                        {$_("settings_inline_detectedFormat", {
+                          format: backupImportKind === "epigraph"
+                            ? ".epigraphbk"
+                            : backupImportKind === "novels-lnreader"
+                              ? "LNReader ZIP"
+                              : $_("settings_inline_nativeMangaBackup"),
+                        })}
                       </p>
                     {/if}
                     {#if backupRestoreHandoffSession}
@@ -6742,6 +6786,9 @@
                       <p class="settings-card__title">{$_("settings_inline_mangaRestorePath")}</p>
                     </div>
                     <p class="settings-card__intro">{$_("settings_inline_mangaRestorePathHint")}</p>
+                    {#if backupParsed?.backupManga?.length != null}
+                      <p class="settings-card__intro" data-backup-title-count>{backupParsed.backupManga.length} {$_("ui_titles")}</p>
+                    {/if}
                     {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
                       <p class="settings-card__intro">Epigraph will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > {$_("settings_inline_storageWaitConfirmation")}</p>
                     {:else if backupRestoreTargetMode === "current-profile"}
@@ -6812,6 +6859,8 @@
                             {$_("settings_inline_restoreHandoffTargetHint")}
                           {:else if backupImportKind === "epigraph"}
                             {$_("settings_inline_willRestoreKinds", { kinds: backupExecutablePayloadKinds.length > 0 ? backupExecutablePayloadKinds.map((kind) => backupPayloadKindLabel(kind)).join(", ") : $_("settings_inline_nothingYet") })}
+                          {:else if backupImportKind === "novels-lnreader"}
+                            {$_("ui_lnreaderRestoreIntro")}
                           {:else}
                             {$_("settings_inline_mangaRestoreCurrentProfileHint")}
                           {/if}

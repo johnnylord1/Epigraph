@@ -821,7 +821,7 @@ describe("BrowseV3", () => {
 
     await waitFor(() => {
       expect(managedRuntimeAddStoreMock).toHaveBeenCalledWith({
-        indexUrl: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
+        indexUrl: "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb",
       });
     });
     expect(managedRuntimeRemoveStoreMock).not.toHaveBeenCalled();

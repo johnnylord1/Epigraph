@@ -14,6 +14,15 @@ const NOVEL_DIR = "NovelAndChapters";
 const DOWNLOAD_ZIP = "download.zip";
 const DATA_ZIP = "data.zip";
 
+interface LnReaderPluginMetadata {
+  id: string;
+  name: string;
+  lang: string | null;
+  version: string | null;
+  artifactUrl: string | null;
+  repositoryUrl: string | null;
+}
+
 function toUint8Array(input: Uint8Array | ArrayBuffer): Uint8Array {
   return input instanceof Uint8Array ? input : new Uint8Array(input);
 }
@@ -167,6 +176,73 @@ async function openLnReaderDownloadZip(zip: JSZip): Promise<JSZip | null> {
   return JSZip.loadAsync(await downloadZip.async("uint8array"));
 }
 
+function parseLnReaderSettingList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  const parsed = safeJsonParse<unknown>(value, []);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function deriveLnReaderRepositoryUrl(artifactUrl: string | null): string | null {
+  if (!artifactUrl) return null;
+  try {
+    const parsed = new URL(artifactUrl);
+    if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "raw.githubusercontent.com") return null;
+    const segments = parsed.pathname.split("/").filter(Boolean);
+    const [owner, repository] = segments;
+    const buildDirectoryIndex = segments.indexOf(".js", 2);
+    const branch = buildDirectoryIndex > 2 ? segments.slice(2, buildDirectoryIndex).join("/") : null;
+    if (!owner || repository?.toLowerCase() !== "lnreader-plugins" || !branch) return null;
+    return `https://raw.githubusercontent.com/${owner}/${repository}/${branch}/.dist/plugins.min.json`;
+  } catch {
+    return null;
+  }
+}
+
+function toLnReaderPluginMetadata(value: unknown): LnReaderPluginMetadata | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const id = normalizeText(raw.id);
+  if (!id) return null;
+  const artifactUrl = normalizeText(raw.url);
+  return {
+    id,
+    name: normalizeText(raw.name) ?? id,
+    lang: normalizeText(raw.lang),
+    version: normalizeText(raw.version),
+    artifactUrl,
+    repositoryUrl: deriveLnReaderRepositoryUrl(artifactUrl),
+  };
+}
+
+async function readLnReaderPluginMetadata(zip: JSZip, embeddedPluginIds: readonly string[]): Promise<Map<string, LnReaderPluginMetadata>> {
+  const settingsFile = zip.file(SETTING_FILE);
+  if (!settingsFile) return new Map();
+  const settings = safeJsonParse<Record<string, unknown>>(await settingsFile.async("text"), {});
+  const available = parseLnReaderSettingList(settings.AVAILABLE_PLUGINS)
+    .map(toLnReaderPluginMetadata)
+    .filter((entry): entry is LnReaderPluginMetadata => Boolean(entry));
+  const installed = parseLnReaderSettingList(settings.INSTALL_PLUGINS)
+    .map(toLnReaderPluginMetadata)
+    .filter((entry): entry is LnReaderPluginMetadata => Boolean(entry));
+  const availableById = new Map(available.map((entry) => [entry.id, entry] as const));
+  const installedById = new Map(installed.map((entry) => [entry.id, entry] as const));
+  const pluginIds = [...new Set([...embeddedPluginIds, ...installedById.keys()])];
+  return new Map(pluginIds.flatMap((pluginId) => {
+    const metadata = installedById.get(pluginId) ?? availableById.get(pluginId);
+    return metadata ? [[pluginId, metadata] as const] : [];
+  }));
+}
+
+function lnReaderRepositoryName(repositoryUrl: string): string {
+  try {
+    const owner = new URL(repositoryUrl).pathname.split("/").filter(Boolean)[0] ?? "LNReader";
+    return owner.toLowerCase() === "lnreader" ? "LNReader plugins" : `${owner} plugins`;
+  } catch {
+    return "LNReader plugins";
+  }
+}
+
 export async function extractLnReaderBackupPluginIds(bytes: Uint8Array | ArrayBuffer): Promise<string[]> {
   const zip = await openLnReaderDataZip(bytes);
   const downloadZip = await openLnReaderDownloadZip(zip);
@@ -192,7 +268,9 @@ export async function isLnReaderBackupZip(bytes: Uint8Array | ArrayBuffer): Prom
 export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer): Promise<EpigraphNovelsSnapshot> {
   const zip = await openLnReaderDataZip(bytes);
   const downloadZip = await openLnReaderDownloadZip(zip);
-  const pluginIds = await extractLnReaderBackupPluginIds(bytes);
+  const embeddedPluginIds = await extractLnReaderBackupPluginIds(bytes);
+  const pluginMetadata = await readLnReaderPluginMetadata(zip, embeddedPluginIds);
+  const pluginIds = [...new Set([...embeddedPluginIds, ...pluginMetadata.keys()])].sort((left, right) => left.localeCompare(right));
   const entries = Object.keys(zip.files)
     .filter((path) => path.startsWith(`${NOVEL_DIR}/`) && path.endsWith(".json") && !zip.files[path].dir)
     .sort();
@@ -206,6 +284,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     const raw = file ? safeJsonParse<Record<string, any>>(await file.async("text"), {}) : {};
     if (!isLnReaderLibraryNovel(raw)) return null;
     const pluginId = normalizeText(raw.pluginId) ?? "lnreader";
+    const plugin = pluginMetadata.get(pluginId) ?? null;
     const novelPath = normalizeText(raw.path) ?? `/${raw.id ?? index + 1}`;
     const novelId = stableNovelId(pluginId, novelPath, index + 1);
     const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? `Novel ${index + 1}`;
@@ -254,13 +333,13 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
         status: normalizeText(raw.status),
         tags,
         source: {
-          repositoryUrl: null,
+          repositoryUrl: plugin?.repositoryUrl ?? null,
           pluginId,
-          pluginName: pluginId,
-          pluginVersion: null,
+          pluginName: plugin?.name ?? pluginId,
+          pluginVersion: plugin?.version ?? null,
           sourceId: pluginId,
-          sourceName: pluginId,
-          lang: null,
+          sourceName: plugin?.name ?? pluginId,
+          lang: plugin?.lang ?? null,
         },
         addedAt: Date.now(),
         updatedAt,
@@ -313,12 +392,15 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     progress: novels.flatMap((item) => item.progress),
     bookmarks: novels.flatMap((item) => item.bookmarks),
     history: novels.flatMap((item) => item.history),
-    repositories: [],
+    repositories: [...new Set([...pluginMetadata.values()]
+      .map((plugin) => plugin.repositoryUrl)
+      .filter((url): url is string => Boolean(url)))]
+      .map((url) => ({ url, name: lnReaderRepositoryName(url) })),
     plugins: pluginIds.map((pluginId) => ({
       id: pluginId,
-      name: pluginId,
-      version: null,
-      repositoryUrl: null,
+      name: pluginMetadata.get(pluginId)?.name ?? pluginId,
+      version: pluginMetadata.get(pluginId)?.version ?? null,
+      repositoryUrl: pluginMetadata.get(pluginId)?.repositoryUrl ?? null,
     })),
   });
 }

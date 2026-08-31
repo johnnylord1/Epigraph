@@ -50,11 +50,28 @@ function requiredRepositoryUrls(restored: RestoredEpigraphNovelsSnapshot): strin
   ].map(normalizedUrl).filter(Boolean))];
 }
 
-function requiredPluginIds(restored: RestoredEpigraphNovelsSnapshot): string[] {
-  return [...new Set([
-    ...(restored.plugins ?? []).map((entry) => entry.id),
-    ...restored.entries.map((entry) => entry.source?.pluginId ?? entry.source?.sourceId ?? ""),
-  ].map((value) => value.trim()).filter(Boolean))];
+function requiredPlugins(restored: RestoredEpigraphNovelsSnapshot): Array<{ pluginId: string; repositoryUrl: string | null }> {
+  const requirements = new Map<string, { pluginId: string; repositoryUrl: string | null }>();
+  for (const plugin of restored.plugins ?? []) {
+    const pluginId = plugin.id.trim();
+    if (!pluginId) continue;
+    requirements.set(pluginId, {
+      pluginId,
+      repositoryUrl: plugin.repositoryUrl ? normalizedUrl(plugin.repositoryUrl) : null,
+    });
+  }
+  for (const restoredEntry of restored.entries) {
+    const pluginId = (restoredEntry.source?.pluginId ?? restoredEntry.source?.sourceId ?? "").trim();
+    if (!pluginId) continue;
+    const repositoryUrl = restoredEntry.source?.repositoryUrl
+      ? normalizedUrl(restoredEntry.source.repositoryUrl)
+      : null;
+    const current = requirements.get(pluginId);
+    if (!current || (!current.repositoryUrl && repositoryUrl)) {
+      requirements.set(pluginId, { pluginId, repositoryUrl });
+    }
+  }
+  return [...requirements.values()];
 }
 
 export async function provisionEpigraphNovelDependencies(input: {
@@ -114,10 +131,21 @@ export async function provisionEpigraphNovelDependencies(input: {
     }
   }
 
-  const installed = new Set(state.installedPlugins.filter((entry) => entry.enabled).map((entry) => entry.pluginId));
-  for (const pluginId of requiredPluginIds(input.restored)) {
-    if (installed.has(pluginId)) continue;
-    const entry = state.catalogEntries.find((candidate) => candidate.pluginId === pluginId);
+  for (const requirement of requiredPlugins(input.restored)) {
+    const { pluginId, repositoryUrl } = requirement;
+    const requiredRepositoryId = repositoryUrl
+      ? state.repositories.find((repository) => normalizedUrl(repository.normalizedUrl) === repositoryUrl)?.id ?? null
+      : null;
+    const alreadyInstalled = state.installedPlugins.some((entry) => (
+      entry.enabled
+      && entry.pluginId === pluginId
+      && (!repositoryUrl || (requiredRepositoryId !== null && entry.repositoryId === requiredRepositoryId))
+    ));
+    if (alreadyInstalled) continue;
+    const entry = state.catalogEntries.find((candidate) => (
+      candidate.pluginId === pluginId
+      && (!repositoryUrl || candidate.repositoryId === requiredRepositoryId)
+    ));
     if (!entry) {
       warnings.push({
         code: "plugin-not-found",
@@ -133,7 +161,6 @@ export async function provisionEpigraphNovelDependencies(input: {
         scopeInput: input.scopeInput,
       });
       state = await input.operations.saveState(state, input.scopeInput);
-      installed.add(pluginId);
       installedPlugins += 1;
     } catch (error) {
       warnings.push({

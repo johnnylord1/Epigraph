@@ -277,7 +277,12 @@ function parseTopLevelChunks(bytes: Uint8Array): {
 
     if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_MANGA_FIELD) {
       const chunk = extractDelimitedMessage(reader);
-      mangaMessages.push(BackupMangaType.decode(chunk));
+      const decoded = BackupMangaType.decode(chunk) as any;
+      // Tachiyomi/J2K declares favorite with a Kotlin default of true. kotlinx.serialization
+      // omits that field for library entries and writes an explicit false for optional
+      // read-history entries, while protobufjs' proto3 default is false for both cases.
+      if (!Object.prototype.hasOwnProperty.call(decoded, "favorite")) decoded.favorite = true;
+      mangaMessages.push(decoded);
       continue;
     }
 
@@ -358,7 +363,9 @@ export async function parseMihonBackup(
   const decodedBytes = wasGzipped ? pako.ungzip(originalBytes) : originalBytes;
   const { mangaMessages, sourceMessages, preservedTopLevelChunks } = parseTopLevelChunks(decodedBytes);
 
-  const backupManga = mangaMessages.map((message) => toParsedBackupManga(message));
+  const backupManga = mangaMessages
+    .filter((message: any) => message.favorite !== false)
+    .map((message) => toParsedBackupManga(message));
   const backupSources = toParsedBackupSources(sourceMessages as any[], inventory);
   const trackerIds = [
     ...new Set(

@@ -167,7 +167,7 @@ Abra **Browse > Sources** e use **Manage repos**.
 ### Como utilizar
 
 1. Cole o endereço da página principal do repositório no GitHub ou o link
-   direto de `index.json`/`index.min.json`.
+   direto de `index.pb`, `index.json` ou `index.min.json`.
 2. Clique em **Add**. O Epigraph converte páginas válidas do GitHub para o
    índice consumido pelo Suwayomi e atualiza o catálogo.
 3. Instale ou atualize as extensões exibidas e aguarde as sources aparecerem.
@@ -208,6 +208,25 @@ atualiza os catálogos e instala extensões/plugins disponíveis antes de inclui
 as obras na Library. Repositórios que já existem não são duplicados nem
 apagados. Se uma dependência não existir mais, os dados recuperáveis são
 preservados e o resumo final informa o que exige atenção.
+
+Um ZIP nativo do LNReader não grava um campo isolado chamado “repository”. Ele
+inclui a lista de plugins instalados, o URL de cada script e os pacotes em
+`download.zip`. O Epigraph usa esses metadados para derivar o manifesto
+`plugins.min.json` da mesma origem, adiciona somente as origens necessárias e
+instala cada plugin a partir do repositório correspondente.
+
+Backups nativos `.tachibk` preservam IDs e nomes de sources, mas não incluem a
+URL do repositório nem os APKs. Em um perfil limpo, adicione um catálogo atual
+em **Browse > Sources > Manage repos**; o Epigraph então cruza os IDs do backup
+com esse catálogo, oferece as extensões encontradas e mantém como pendentes as
+sources que já não existem nele. Backups unificados do Epigraph não têm essa
+limitação porque registram os repositórios configurados durante a exportação.
+
+O J2K também pode incluir entradas lidas que não estão mais na Library. O
+Epigraph respeita o campo `favorite` do formato: somente favoritos entram na
+Library, enquanto registros não favoritos continuam disponíveis para restaurar
+histórico e progresso. No protobuf do J2K, `favorite` ausente significa `true`;
+esse valor padrão não deve ser confundido com uma entrada fora da Library.
 
 ## About e atualizações
 

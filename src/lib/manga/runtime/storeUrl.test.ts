@@ -28,9 +28,15 @@ describe("extension store URL canonicalization", () => {
 
   test("turns a GitHub extension repository page into its compatible raw index", () => {
     expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions"))
-      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json");
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb");
     expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/tree/repo"))
-      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json");
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb");
+    expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/raw/repo/index.pb"))
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb");
+    expect(resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/blob/repo/index.min.json"))
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb");
+    expect(resolveExtensionStoreInputUrl("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"))
+      .toBe("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb");
   });
 
   test("keeps direct index URLs and rejects unrelated GitHub pages", () => {

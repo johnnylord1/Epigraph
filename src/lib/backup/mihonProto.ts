@@ -37,6 +37,13 @@ message BackupManga {
   int64 version = 109;
   string notes = 110;
   bool initialized = 111;
+  string memo = 112;
+  int32 customStatus = 602;
+  string customTitle = 800;
+  string customArtist = 801;
+  string customAuthor = 802;
+  string customDescription = 804;
+  repeated string customGenre = 805;
 }
 
 message BackupChapter {

@@ -78,6 +78,70 @@ describe("LNReader backup compatibility", () => {
     }]);
   });
 
+  it("restores installed plugin metadata and derives LNReader repository manifests", async () => {
+    const root = new JSZip();
+    const download = new JSZip();
+    const officialArtifact = "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/portuguese/illusia.js";
+    const communityArtifact = "https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/portuguese/mahoureader.js";
+    root.file("Version.json", JSON.stringify({ version: "3.0.0" }));
+    root.file("Setting.json", JSON.stringify({
+      INSTALL_PLUGINS: JSON.stringify([
+        {
+          id: "illusia",
+          name: "Illusia",
+          lang: "Português",
+          version: "1.0.2",
+          url: officialArtifact,
+        },
+        {
+          id: "mahoureader",
+          name: "Mahou Reader",
+          lang: "Português",
+          version: "1.0.1",
+          url: communityArtifact,
+        },
+      ]),
+    }));
+    root.file("NovelAndChapters/1.json", JSON.stringify({
+      id: 1,
+      pluginId: "illusia",
+      path: "story/saved",
+      name: "Saved novel",
+      inLibrary: 1,
+      chapters: [],
+    }));
+    download.file("Plugins/illusia/index.js", "export default {};");
+    download.file("Plugins/mahoureader/index.js", "export default {};");
+    root.file("download.zip", await download.generateAsync({ type: "uint8array" }));
+
+    const parsed = await parseLnReaderNovelsBackup(await root.generateAsync({ type: "uint8array" }));
+
+    expect(parsed.repositories).toEqual([
+      { url: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json", name: "LNReader plugins" },
+      { url: "https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json", name: "johnnylord1 plugins" },
+    ]);
+    expect(parsed.plugins).toEqual([
+      {
+        id: "illusia",
+        name: "Illusia",
+        version: "1.0.2",
+        repositoryUrl: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
+      },
+      {
+        id: "mahoureader",
+        name: "Mahou Reader",
+        version: "1.0.1",
+        repositoryUrl: "https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
+      },
+    ]);
+    expect(parsed.entries[0]?.source).toEqual(expect.objectContaining({
+      repositoryUrl: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
+      pluginName: "Illusia",
+      pluginVersion: "1.0.2",
+      lang: "Português",
+    }));
+  });
+
   it("ignores LNReader cache entries that are not saved in the library", async () => {
     const root = new JSZip();
     root.file("Version.json", JSON.stringify({ version: "test" }));

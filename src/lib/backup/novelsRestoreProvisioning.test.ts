@@ -210,7 +210,7 @@ describe("novel restore dependency provisioning", () => {
           url: input.url,
           normalizedUrl: input.url,
           recommendedSeed: false,
-          trustState: "untrusted",
+          trustState: "unknown",
           enabled: true,
           lastFetchedAtMs: null,
           lastSuccessAtMs: null,
@@ -239,6 +239,158 @@ describe("novel restore dependency provisioning", () => {
     expect(result.warnings).toContainEqual(expect.objectContaining({
       code: "repository-refresh-failed",
       message: "Catalog is temporarily offline",
+    }));
+  });
+
+  it("switches an installed plugin to the repository recorded for that plugin", async () => {
+    const state = emptyState();
+    state.repositories = [
+      {
+        id: "repo-official",
+        profileId: "test",
+        url: "https://official.example/plugins.min.json",
+        normalizedUrl: "https://official.example/plugins.min.json",
+        recommendedSeed: false,
+        trustState: "trusted",
+        enabled: true,
+        lastFetchedAtMs: null,
+        lastSuccessAtMs: null,
+        etag: null,
+        lastModified: null,
+        lastError: null,
+      },
+      {
+        id: "repo-community",
+        profileId: "test",
+        url: "https://community.example/plugins.min.json",
+        normalizedUrl: "https://community.example/plugins.min.json",
+        recommendedSeed: false,
+        trustState: "trusted",
+        enabled: true,
+        lastFetchedAtMs: null,
+        lastSuccessAtMs: null,
+        etag: null,
+        lastModified: null,
+        lastError: null,
+      },
+    ];
+    state.catalogEntries = state.repositories.map((repository) => ({
+      repositoryId: repository.id,
+      pluginId: "shared-source",
+      name: repository.id,
+      site: "example.test",
+      lang: "en",
+      version: "1.0.0",
+      artifactUrl: `${repository.normalizedUrl}/shared.js`,
+      iconUrl: null,
+      customJsUrl: null,
+      customCssUrl: null,
+      manifestHash: null,
+      fetchedAtMs: 1,
+    }));
+    state.installedPlugins = [{
+      profileId: "test",
+      repositoryId: "repo-official",
+      pluginId: "shared-source",
+      version: "1.0.0",
+      enabled: true,
+      disabledReason: null,
+      artifactPath: "official.js",
+      customJsPath: null,
+      customCssPath: null,
+      hasSettings: false,
+      installedAtMs: 1,
+      updatedAtMs: 1,
+    }];
+    const repositoryAwareRestore = {
+      ...restored,
+      entries: [{
+        ...restored.entries[0],
+        source: {
+          ...restored.entries[0].source,
+          repositoryUrl: "https://community.example/plugins.min.json",
+          pluginId: "shared-source",
+          sourceId: "shared-source",
+        },
+      }],
+      repositories: [],
+      plugins: [{ id: "shared-source", repositoryUrl: "https://community.example/plugins.min.json" }],
+    } satisfies RestoredEpigraphNovelsSnapshot;
+
+    const result = await provisionEpigraphNovelDependencies({
+      restored: repositoryAwareRestore,
+      state,
+      scopeInput: { profileId: "test" },
+      operations: {
+        addRepository: (current) => current,
+        trustRepository: (current) => current,
+        refreshRepository: async (current, repositoryId) => ({
+          state: current,
+          status: "not-modified",
+          repository: current.repositories.find((entry) => entry.id === repositoryId)!,
+          httpStatus: 304,
+          catalogCount: current.catalogEntries.length,
+          fetchedAtMs: 1,
+        }),
+        installPlugin: async ({ state: current, entry }) => ({
+          ...current,
+          installedPlugins: [{
+            profileId: "test",
+            repositoryId: entry.repositoryId,
+            pluginId: entry.pluginId,
+            version: entry.version,
+            enabled: true,
+            disabledReason: null,
+            artifactPath: entry.artifactUrl,
+            customJsPath: null,
+            customCssPath: null,
+            hasSettings: false,
+            installedAtMs: 1,
+            updatedAtMs: 1,
+          }],
+        }),
+        saveState: async (current) => current,
+      },
+    });
+
+    expect(result.state.installedPlugins[0]?.repositoryId).toBe("repo-community");
+  });
+
+  it("does not accept a homonymous plugin when the recorded repository could not be added", async () => {
+    const state = emptyState();
+    state.installedPlugins = [{
+      profileId: "test",
+      repositoryId: "repo-other",
+      pluginId: "example-source",
+      version: "1.0.0",
+      enabled: true,
+      disabledReason: null,
+      artifactPath: "other.js",
+      customJsPath: null,
+      customCssPath: null,
+      hasSettings: false,
+      installedAtMs: 1,
+      updatedAtMs: 1,
+    }];
+    const installPlugin = vi.fn(async ({ state: current }) => current);
+
+    const result = await provisionEpigraphNovelDependencies({
+      restored,
+      state,
+      scopeInput: { profileId: "test" },
+      operations: {
+        addRepository: (current) => current,
+        trustRepository: (current) => current,
+        refreshRepository: vi.fn(),
+        installPlugin,
+        saveState: async (current) => current,
+      },
+    });
+
+    expect(installPlugin).not.toHaveBeenCalled();
+    expect(result.warnings).toContainEqual(expect.objectContaining({
+      code: "plugin-not-found",
+      pluginId: "example-source",
     }));
   });
 });

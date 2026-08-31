@@ -83,6 +83,47 @@ function buildDuplicateBackupFixture() {
 }
 
 describe("backup parser", () => {
+  it("counts only library favorites while preserving read entries outside the library", async () => {
+    const payload = BackupType.encode({
+      backupManga: [
+        { source: "123", url: "/library", title: "Library title" },
+        { source: "123", url: "/history-only", title: "History only", favorite: false },
+      ],
+    }).finish();
+
+    const parsed = await parseMihonBackup(pako.gzip(payload), []);
+
+    expect(parsed.backupManga.map((entry) => entry.title)).toEqual(["Library title"]);
+    expect(parsed.mangaMessages).toHaveLength(2);
+  });
+
+  it("preserves J2K custom manga metadata when rebuilding a reconciled backup", async () => {
+    const payload = BackupType.encode({
+      backupManga: [{
+        source: "123",
+        url: "/library",
+        title: "Original title",
+        customTitle: "My title",
+        customAuthor: "My author",
+        customGenre: ["Custom"],
+        customStatus: 2,
+        memo: "{\"note\":\"keep me\"}",
+      }],
+    }).finish();
+    const parsed = await parseMihonBackup(pako.gzip(payload), []);
+
+    const rebuilt = createReconciledBackupPayload(parsed, {});
+    const reparsed = await parseMihonBackup(rebuilt, []);
+
+    expect(reparsed.mangaMessages[0]).toMatchObject({
+      customTitle: "My title",
+      customAuthor: "My author",
+      customGenre: ["Custom"],
+      customStatus: 2,
+      memo: "{\"note\":\"keep me\"}",
+    });
+  });
+
   it("extracts reconciliation fields from a mihon-compatible backup", async () => {
     const inventory: SourceInventoryEntry[] = [
       {

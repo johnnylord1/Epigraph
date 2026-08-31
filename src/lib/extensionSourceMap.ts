@@ -30,6 +30,13 @@ export interface MissingSourceSuggestionResult {
   failedRepos: string[];
 }
 
+interface V2RepoExtensionEntry {
+  name?: unknown;
+  packageName?: unknown;
+  resources?: { apkUrl?: unknown } | null;
+  sources?: Array<{ id?: unknown; name?: unknown; language?: unknown }> | null;
+}
+
 function extensionBaseName(name: string): string {
   return name.replace(/\s*\([A-Z0-9-]{2,10}\)\s*$/, "").trim();
 }
@@ -61,12 +68,39 @@ export async function fetchRepoEntries(urls: string[]): Promise<{ entries: RepoE
 
   for (const url of urls) {
     try {
-      const response = await fetch(url);
+      const catalogUrl = url.replace(/\/index\.pb(?:[?#].*)?$/i, "/index.json");
+      const response = await fetch(catalogUrl);
       const text = await response.text();
       if (!response.ok) throw new Error(text.slice(0, 120));
       const parsed = JSON.parse(text);
-      if (!Array.isArray(parsed)) throw new Error("Repo index is not an array");
-      entries.push(...parsed);
+      if (Array.isArray(parsed)) {
+        entries.push(...parsed);
+        continue;
+      }
+
+      const v2Entries = parsed?.extensionList?.extensions;
+      if (!Array.isArray(v2Entries)) throw new Error("Repo index does not contain an extension catalog");
+      entries.push(...v2Entries.flatMap((raw: V2RepoExtensionEntry) => {
+        if (typeof raw?.name !== "string" || typeof raw?.packageName !== "string") return [];
+        const sources = Array.isArray(raw.sources)
+          ? raw.sources.flatMap((source) => (
+            source?.id != null && typeof source.name === "string"
+              ? [{
+                  id: String(source.id),
+                  name: source.name,
+                  lang: typeof source.language === "string" ? source.language : undefined,
+                }]
+              : []
+          ))
+          : [];
+        return [{
+          name: raw.name,
+          pkg: raw.packageName,
+          apk: typeof raw.resources?.apkUrl === "string" ? raw.resources.apkUrl : "",
+          lang: sources[0]?.lang,
+          sources,
+        } satisfies RepoExtensionEntry];
+      }));
     } catch {
       failedRepos.push(url);
     }
