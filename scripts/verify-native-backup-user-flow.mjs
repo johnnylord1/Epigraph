@@ -6,6 +6,13 @@ import path from "node:path";
 import process from "node:process";
 
 import { Builder, By, Capabilities } from "selenium-webdriver";
+import {
+  allocateLoopbackPort,
+  serverConfig,
+  startRuntime,
+  stopRuntime,
+  waitForHealth,
+} from "./certify-suwayomi-release.mjs";
 
 function schemaField(name) {
   return { name, isDeprecated: false, args: [], type: { kind: "OBJECT", name: "String", ofType: null } };
@@ -61,13 +68,49 @@ async function createFakeCore() {
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(4667, "127.0.0.1", resolve);
+    server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
   assert(address && typeof address === "object");
   return {
     url: `http://127.0.0.1:${address.port}`,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+async function createRealCore(jarPath, java = "java") {
+  const resolvedJar = path.resolve(jarPath);
+  assert(await fs.stat(resolvedJar).then((entry) => entry.isFile()).catch(() => false), "The Suwayomi JAR does not exist.");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-backup-suwayomi-"));
+  const port = await allocateLoopbackPort();
+  await fs.writeFile(path.join(root, "server.conf"), serverConfig(port));
+  const runtime = startRuntime(java, resolvedJar, root);
+  const endpoint = `http://127.0.0.1:${port}/api/graphql`;
+  try {
+    await waitForHealth(endpoint, runtime, 180_000);
+  } catch (error) {
+    await stopRuntime(runtime.child, port).catch(() => {});
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return {
+    url: `http://127.0.0.1:${port}`,
+    endpoint,
+    async libraryCount() {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: "query EpigraphBackupFlowLibrary { mangas(condition: { inLibrary: true }) { nodes { id } } }" }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.errors?.length) throw new Error(`Could not inspect restored Library: ${JSON.stringify(payload.errors ?? response.status)}`);
+      return payload.data.mangas.nodes.length;
+    },
+    async close() {
+      await stopRuntime(runtime.child, port).catch(() => {});
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    },
   };
 }
 
@@ -130,20 +173,30 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const backupPath = path.resolve(args.backup || process.env.EPIGRAPH_NATIVE_BACKUP || "");
   assert(backupPath && await fs.stat(backupPath).then((entry) => entry.isFile()).catch(() => false), "Pass --backup=<path> or EPIGRAPH_NATIVE_BACKUP.");
+  assert(typeof args.app === "string" && args.app.trim(), "Pass --app=<release executable>.");
+  assert(typeof args["driver-url"] === "string" && args["driver-url"].trim(), "Pass --driver-url=<tauri-driver URL>.");
   const appPath = path.resolve(args.app);
-  const profileRoot = process.env.EPIGRAPH_NATIVE_PROFILE_ROOT
-    ? path.resolve(process.env.EPIGRAPH_NATIVE_PROFILE_ROOT)
-    : await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-backup-flow-"));
-  await fs.mkdir(profileRoot, { recursive: true });
+  assert(await fs.stat(appPath).then((entry) => entry.isFile()).catch(() => false), "The release executable does not exist.");
+  const expectedTitles = Number(args["expected-titles"] || (backupPath.toLowerCase().includes("yokai") ? 684 : 686));
+  assert(Number.isSafeInteger(expectedTitles) && expectedTitles > 0, "--expected-titles must be a positive integer.");
+  const profileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "epigraph-backup-flow-"));
   const evidencePath = path.join(os.tmpdir(), `epigraph-backup-flow-${Date.now()}.png`);
   const automationAppData = path.join(profileRoot, "LocalAppData", "Epigraph");
   await fs.mkdir(automationAppData, { recursive: true });
-  const fakeCore = await createFakeCore();
+  const core = args["suwayomi-jar"]
+    ? await createRealCore(args["suwayomi-jar"], args.java || "java")
+    : await createFakeCore();
   const capabilities = new Capabilities();
   capabilities.setBrowserName("wry");
   capabilities.set("tauri:options", {
     application: appPath,
-    args: ["--webdriver-automation", "--test", `--local-app-data-dir=${automationAppData}`],
+    args: [
+      "--webdriver-automation",
+      `--local-app-data-dir=${automationAppData}`,
+      `--server-url=${core.url}`,
+      "--profile-label=TEST",
+      "--attach-only",
+    ],
     webviewOptions: { userDataFolder: path.join(profileRoot, "WebView2Automation") },
   });
 
@@ -164,14 +217,51 @@ async function main() {
     await driver.findElement(By.css("input[type=file]")).sendKeys(backupPath);
     if (!backupPath.toLowerCase().endsWith(".zip")) {
       try {
-        await waitFor(driver, () => driver.executeScript("return document.querySelector('[data-backup-title-count]')?.innerText.trim().startsWith('686 ')"), "The J2K backup did not show its 686 library titles.");
+        await waitFor(driver, () => driver.executeScript(function expectedCount(count) {
+          return document.querySelector("[data-backup-title-count]")?.innerText.trim().startsWith(`${count} `);
+        }, expectedTitles), `The manga backup did not show its ${expectedTitles} library titles.`);
       } catch (error) {
         const body = await driver.executeScript("return document.body.innerText.slice(-5000)");
         throw new Error(`${error instanceof Error ? error.message : String(error)}\n${body}`);
       }
       await driver.executeScript("document.querySelector('input[type=file]').style.display='none'");
+      if (!args["suwayomi-jar"]) {
+        await fs.writeFile(evidencePath, await driver.takeScreenshot(), "base64");
+        process.stdout.write(`${JSON.stringify({ ok: true, backupPath, isolatedProfile: true, inspectedLibraryTitles: expectedTitles, evidencePath }, null, 2)}\n`);
+        return;
+      }
+      const confirmationClicked = await driver.executeScript(function confirmCurrentProfile() {
+        const target = [...document.querySelectorAll("[role=switch]")].find((element) => (
+          element.getClientRects().length > 0
+          && /confirm|confirmar/i.test(element.getAttribute("aria-label") ?? "")
+        ));
+        target?.click();
+        return Boolean(target);
+      });
+      assert.equal(confirmationClicked, true, "The visible current-profile confirmation was not found.");
+      await waitFor(driver, () => driver.executeScript(function restoreEnabled() {
+        return [...document.querySelectorAll("button")].some((button) => (
+          button.getClientRects().length > 0
+          && !button.disabled
+          && /restore manga backup|restaurar backup de mang/i.test(button.textContent ?? "")
+        ));
+      }), "The manga restore action did not become available.");
+      await clickAnyText(driver, "button", ["Restore manga backup", "Restaurar backup de mang"]);
+      await waitFor(driver, () => driver.executeScript(function restoreFinished() {
+        const body = document.body.innerText;
+        return /Manga backup restored into the current profile|Backup de mang.+restaurado/i.test(body);
+      }), "The manga backup restore did not finish.", 600_000);
+      const restoredLibraryTitles = await core.libraryCount();
+      assert.equal(restoredLibraryTitles, expectedTitles, "The restored Suwayomi Library count differs from the backup preview.");
       await fs.writeFile(evidencePath, await driver.takeScreenshot(), "base64");
-      process.stdout.write(`${JSON.stringify({ ok: true, backupPath, isolatedProfile: true, inspectedLibraryTitles: 686, evidencePath }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({
+        ok: true,
+        backupPath,
+        isolatedProfile: true,
+        inspectedLibraryTitles: expectedTitles,
+        restoredLibraryTitles,
+        evidencePath,
+      }, null, 2)}\n`);
       return;
     }
     await waitFor(driver, () => driver.executeScript("return document.body.innerText.includes('LNReader ZIP')"), "LNReader format was not detected.");
@@ -190,6 +280,20 @@ async function main() {
       return { switches, clicked: Boolean(target), body: document.body.innerText.slice(-3000) };
     });
     assert.equal(confirmation.clicked, true, "The visible current-profile confirmation was not found.");
+    await waitFor(driver, () => driver.executeScript(function hasDependencyConsent() {
+      return [...document.querySelectorAll("button[aria-pressed]")].some((button) => (
+        /review\s*&\s*approve|revisar\s+e\s+aprovar/i.test(button.textContent ?? "")
+      ));
+    }), "The dependency consent button did not render after selecting the current profile.");
+    const dependencyConsentClicked = await driver.executeScript(function approveDependencies() {
+      const target = [...document.querySelectorAll("button[aria-pressed]")].find((button) => (
+        button.getClientRects().length > 0
+        && /review\s*&\s*approve|revisar\s+e\s+aprovar/i.test(button.textContent ?? "")
+      ));
+      target?.click();
+      return Boolean(target);
+    });
+    assert.equal(dependencyConsentClicked, true, "The visible dependency consent button was not found.");
     await waitFor(driver, () => driver.executeScript("return [...document.querySelectorAll('button')].some((button) => !button.disabled && /LNReader/i.test(button.innerText))"), "Restore confirmation did not enable the action.");
     await clickAnyText(driver, "button", ["LNReader novels restore", "Restaurar novels do LNReader"]);
     await waitFor(driver, () => driver.executeScript("return document.body.innerText.includes('novel entries restored')"), "LNReader restore did not finish.", 300_000);
@@ -206,18 +310,20 @@ async function main() {
     assert.equal(repositoryState.repositories.length, 2, "Expected both LNReader repositories.");
     assert.equal(repositoryState.installedPlugins.length, 19, "Expected all LNReader plugins to be installed.");
     assert.equal(libraryState.entries.length, 9, "Expected all LNReader library entries.");
+    assert.equal(libraryState.chapters.length, 6936, "Expected all LNReader chapters.");
     process.stdout.write(`${JSON.stringify({
       ok: true,
       backupPath,
       isolatedProfile: true,
       restoredEntries: libraryState.entries.length,
+      restoredChapters: libraryState.chapters.length,
       repositories: repositoryState.repositories.length,
       installedPlugins: repositoryState.installedPlugins.length,
       evidencePath,
     }, null, 2)}\n`);
   } finally {
     await driver?.quit().catch(() => {});
-    await fakeCore.close().catch(() => {});
+    await core.close().catch(() => {});
     await fs.rm(profileRoot, { recursive: true, force: true }).catch(() => {});
   }
 }

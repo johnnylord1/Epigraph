@@ -2707,5 +2707,13 @@
   "feedback_unifiedBackupPlanningFailed": "Unified backup planning failed",
   "feedback_novelsRestoreAuditFailed": "Novels restore audit failed",
   "feedback_mangaRestoreLoaded": "Manga restore loaded",
-  "feedback_mangaRestoreAuditFailed": "Manga restore audit failed"
+  "feedback_mangaRestoreAuditFailed": "Manga restore audit failed",
+  "settings_inline_dependenciesFound": "Content and sources found",
+  "settings_inline_dependenciesFoundHint": "Review the sources that will be prepared before your reading data is restored.",
+  "settings_inline_allowRestoreDependencies": "Allow these sources during restore",
+  "settings_inline_allowRestoreDependenciesHint": "No repository or extension is added before you confirm.",
+  "settings_inline_approved": "Approved",
+  "settings_inline_reviewAndApprove": "Review & approve",
+  "feedback_readingProgressNotSaved": "Reading progress has not been saved",
+  "feedback_readingProgressRetryBody": "Keep the reader open and try again. Your current position is still here."
 }

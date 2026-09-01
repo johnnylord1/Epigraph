@@ -120,6 +120,48 @@ export function validateNovelRepositoryUrl(url: string): NovelRepositoryUrlValid
   };
 }
 
+export function resolveNovelRepositoryInputUrl(value: string): string {
+  const direct = validateNovelRepositoryUrl(value);
+  if (direct.ok && direct.normalizedUrl) return direct.normalizedUrl;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    throw new Error(direct.reason ?? "Repository URL must be a valid absolute URL.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(direct.reason ?? "Repository URL must use https.");
+  }
+
+  const parts = parsed.pathname.split("/").filter(Boolean);
+  const host = parsed.hostname.toLowerCase();
+  if (host === "raw.githubusercontent.com" && parts.length >= 5) {
+    const [owner, repository] = parts;
+    const sourceMarker = parts.indexOf(".js", 2);
+    if (repository.toLowerCase() === "lnreader-plugins" && sourceMarker > 2) {
+      const branch = parts.slice(2, sourceMarker).join("/");
+      return `https://raw.githubusercontent.com/${owner}/${repository}/${branch}/.dist/${LNREADER_REPOSITORY_MANIFEST_BASENAME}`;
+    }
+  }
+
+  if (host === "github.com" && parts.length >= 2) {
+    const [owner, repository, marker, ...rest] = parts;
+    if (repository.toLowerCase() === "lnreader-plugins") {
+      const branch = parts.length === 2
+        ? "plugins/v3.0.0"
+        : marker === "tree" && rest.length > 0
+          ? rest.join("/")
+          : null;
+      if (branch) {
+        return `https://raw.githubusercontent.com/${owner}/${repository}/${branch}/.dist/${LNREADER_REPOSITORY_MANIFEST_BASENAME}`;
+      }
+    }
+  }
+
+  throw new Error(direct.reason ?? `Repository URL must point to ${LNREADER_REPOSITORY_MANIFEST_BASENAME}.`);
+}
+
 export function createNovelRepositoryRecord(input: CreateNovelRepositoryRecordInput): NovelRepositoryRecord {
   const validation = validateNovelRepositoryUrl(input.url);
   if (!validation.ok || !validation.normalizedUrl) {

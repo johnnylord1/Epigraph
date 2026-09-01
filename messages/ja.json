@@ -2707,5 +2707,13 @@
   "feedback_unifiedBackupPlanningFailed": "統合バックアップの計画に失敗しました",
   "feedback_novelsRestoreAuditFailed": "小説の復元確認に失敗しました",
   "feedback_mangaRestoreLoaded": "マンガの復元を読み込みました",
-  "feedback_mangaRestoreAuditFailed": "マンガの復元確認に失敗しました"
+  "feedback_mangaRestoreAuditFailed": "マンガの復元確認に失敗しました",
+  "settings_inline_dependenciesFound": "コンテンツとソースが見つかりました",
+  "settings_inline_dependenciesFoundHint": "読書データを復元する前に準備されるソースを確認してください。",
+  "settings_inline_allowRestoreDependencies": "復元中にこれらのソースを許可する",
+  "settings_inline_allowRestoreDependenciesHint": "確認するまでリポジトリや拡張機能は追加されません。",
+  "settings_inline_approved": "承認済み",
+  "settings_inline_reviewAndApprove": "確認して承認",
+  "feedback_readingProgressNotSaved": "読書の進捗を保存できませんでした",
+  "feedback_readingProgressRetryBody": "リーダーを開いたまま、もう一度お試しください。現在の位置は保持されています。"
 }

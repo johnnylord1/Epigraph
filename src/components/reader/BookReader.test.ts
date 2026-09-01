@@ -24,4 +24,10 @@ describe("BookReader PDF initialization", () => {
     expect(source).toContain("if (loading || Date.now() < suspendReflowProgressUntil) return");
     expect(source).toContain("selectDominantReaderPage(visiblePdfPages.values())");
   });
+
+  it("flushes authoritative book progress when the reader closes or the app exits", () => {
+    expect(source).toContain("flushBookLibraryPersistence");
+    expect(source).toContain('window.addEventListener("pagehide", flushBookProgress)');
+    expect(source).toContain("await flushBookLibraryPersistence()");
+  });
 });

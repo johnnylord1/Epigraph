@@ -19,6 +19,7 @@
   import { gqlUpload } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { INSTALL_EXTERNAL_EXTENSION } from "../../lib/queries";
+  import { inspectExternalExtensionApk } from "../../lib/manga/apkPreflight";
   import {
     toManagedMangaRuntimeExtension,
     toManagedNovelCatalogEntry,
@@ -51,6 +52,7 @@
     type PersistedNovelRepositoryState,
   } from "../../lib/novels/repositoryState";
   import type { NovelRepositoryRecord } from "../../lib/novels/contracts";
+  import { resolveNovelRepositoryInputUrl } from "../../lib/novels/repositories";
   import {
     getNovelCatalogEntryInstallState,
     installNovelCatalogPlugin,
@@ -776,17 +778,14 @@
     if (!novelRepositoryState) return;
     const trimmed = url.trim();
     if (!trimmed) return;
-    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      repoError = translate("sources_runtime_invalidRepositoryUrl");
-      return;
-    }
 
     savingRepos = true;
     repoError = null;
     try {
+      const resolvedUrl = resolveNovelRepositoryInputUrl(trimmed);
       const nextState = addNovelRepositoryToState(novelRepositoryState, {
         profileId: store.runtimeResolvedLocalProfileId,
-        url: trimmed,
+        url: resolvedUrl,
         recommendedSeed,
       });
       await saveNovelState(nextState);
@@ -1056,15 +1055,11 @@
       installError = translate("sources_runtime_chooseApk");
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".apk")) {
-      installError = translate("sources_runtime_invalidApk");
-      return;
-    }
-
     installingExternal = true;
     installError = null;
     installSuccess = false;
     try {
+      await inspectExternalExtensionApk(file, file.name);
       if (!(await ensureMangaServerAwake())) {
         installError = translate("sources_runtime_suwayomiUnavailable");
         return;

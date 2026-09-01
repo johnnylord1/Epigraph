@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createBookBookmark,
   getBookProgressPrecision,
+  isBookFinished,
+  isBookInProgress,
   mergeBookProgress,
   normalizeBookBookmark,
   normalizeBookProgress,
@@ -9,6 +11,14 @@ import {
 } from "./progress";
 
 describe("normalizeBookProgress", () => {
+  it("classifies normalized progress with the shared 98 percent finish threshold", () => {
+    expect(isBookInProgress({ progressPercent: 0.3 })).toBe(true);
+    expect(isBookInProgress({ progressPercent: 0.98 })).toBe(false);
+    expect(isBookFinished({ progressPercent: 0.979 })).toBe(false);
+    expect(isBookFinished({ progressPercent: 0.98 })).toBe(true);
+    expect(isBookFinished({ progressPercent: 98 })).toBe(true);
+  });
+
   it("keeps EPUB progress fields and backfills optional reader fields", () => {
     expect(normalizeBookProgress({
       bookId: "book-1",

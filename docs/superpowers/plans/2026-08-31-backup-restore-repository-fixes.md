@@ -30,10 +30,29 @@ presenting restore readiness in a concise, user-oriented interface.
 - Suwayomi certification/workflow gates run in disposable state where available.
 - `git diff --check` passes before the scoped commit.
 
+## Certification completed on 2026-09-01
+
+- Release executable SHA-256:
+  `9f993f2554ecfc61b451332cf310f5129d1b3e5f2660dc20d991ea5b78bf3748`.
+- J2K restored 686 Library titles into a fresh Suwayomi v2.3 profile; Yokai
+  restored 684. Both counts were checked through the visible restore flow and
+  against the final GraphQL Library.
+- LNReader restored 9 novels, 6,936 chapters, 2 repositories, and 19 plugins in
+  an isolated desktop profile.
+- Browse > Sources converted `https://github.com/keiyoushi/extensions` to
+  `https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb` and
+  retained it after restart.
+- The Akuma extension APK installed 27 sources, remained singular after
+  reinstall/restart, and ordinary, truncated, and renamed-ZIP APKs were rejected
+  without changing inventory.
+- EPUB/PDF export, restart, clean-profile restore, and corrupt-backup rollback
+  completed in isolated WebView2 profiles.
+
 ## Native-format boundary confirmed with real backups
 
 - LNReader ZIPs contain installed plugin metadata and executable plugin bundles,
   so their repository manifests can be derived without guessing.
-- TachiyomiJ2K `.tachibk` protobuf backups contain source IDs/names but no
-  repository URL or APK payload. Automatic repository restoration is possible
-  only for Epigraph unified exports that explicitly record those URLs.
+- Official Mihon protobuf backups may contain optional extension stores in top
+  field 106. The exact J2K and Yokai fixtures used here do not contain that
+  field, and no native format contains APK payloads. Source IDs remain intact;
+  stores are restored only when present and explicitly approved.

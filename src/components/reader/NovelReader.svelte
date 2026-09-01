@@ -2,6 +2,7 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { registerReaderCloseGuard } from "../../lib/reader/runtime";
   import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
   import { addToast, bumpContentSetupVersion, closeNovelReader, setActiveNovelDetail, setSettingsOpen, store, updateSettings } from "../../store/state.svelte";
   import {
@@ -9,12 +10,14 @@
     getNovelBookmarkEntries,
     getNovelLibraryChapters,
     getNovelLibraryEntry,
+    getNovelProgressEntry,
     getNovelReadStats,
     loadNovelLibraryState,
-    markNovelChapterRead,
+    parseNovelScrollLocator,
     peekNovelLibraryState,
     saveNovelLibraryState,
     toggleNovelChapterBookmark,
+    updateNovelReadingProgress,
   } from "../../lib/novels/libraryState";
   import {
     loadCachedNovelChapter,
@@ -55,6 +58,14 @@
     }
   });
   let readerBodyEl: HTMLElement | null = $state(null);
+  let viewerEl: HTMLElement | null = $state(null);
+  let progressSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let progressSaveChain = Promise.resolve();
+  let progressVersion = 0;
+  let persistedProgressVersion = 0;
+  let restoredChapterKey: string | null = null;
+  let restoringScrollPosition = false;
+  let loadedChapterKey: string | null = null;
   const tts = createTtsController();
   let ttsStateVersion = $state(0);
   let lastDiscordTtsPlaying = false;
@@ -104,6 +115,60 @@
   const sliderMax = $derived(Math.max(1, currentNovel?.chapters.length ?? 1));
   const sliderValue = $derived(Math.max(1, currentChapterIndex + 1));
   const sliderPct = $derived(sliderMax > 1 ? ((sliderValue - 1) / (sliderMax - 1)) * 100 : 0);
+
+  function currentChapterScrollProgress(): number {
+    if (!viewerEl) return 0;
+    const scrollable = Math.max(0, viewerEl.scrollHeight - viewerEl.clientHeight);
+    if (scrollable === 0) return chapterHtml.trim() ? 1 : 0;
+    return Math.max(0, Math.min(1, viewerEl.scrollTop / scrollable));
+  }
+
+  async function flushNovelProgress() {
+    if (progressSaveTimer) {
+      clearTimeout(progressSaveTimer);
+      progressSaveTimer = null;
+    }
+    const version = progressVersion;
+    if (version === persistedProgressVersion) return progressSaveChain;
+    const snapshot = libraryState;
+    const requestScope = { ...scopeInput };
+    const operation = progressSaveChain.then(async () => {
+      const saved = await saveNovelLibraryState(snapshot, requestScope);
+      persistedProgressVersion = version;
+      if (version === progressVersion) libraryState = saved;
+    });
+    progressSaveChain = operation.catch(() => {});
+    await operation;
+  }
+
+  function recordNovelProgress(chapterProgress: number, completed = false) {
+    const reader = activeReader;
+    if (!reader || !getNovelLibraryEntry(libraryState, reader.novelId)) return;
+    const normalized = Math.max(0, Math.min(1, chapterProgress));
+    if (normalized <= 0 && !completed) return;
+    libraryState = updateNovelReadingProgress(libraryState, {
+      novelId: reader.novelId,
+      chapterId: reader.chapterId,
+      chapterTitle: reader.chapterTitle,
+      chapterProgress: normalized,
+      completed,
+    });
+    progressVersion += 1;
+    syncActiveDetail(libraryState);
+    bumpContentSetupVersion();
+    if (progressSaveTimer) clearTimeout(progressSaveTimer);
+    progressSaveTimer = setTimeout(() => {
+      progressSaveTimer = null;
+      void flushNovelProgress().catch(console.error);
+    }, 450);
+  }
+
+  function handleNovelScroll() {
+    const key = activeReader ? `${activeReader.novelId}:${activeReader.chapterId}` : null;
+    if (loading || error || restoringScrollPosition || !chapterHtml.trim()
+      || !key || loadedChapterKey !== key || restoredChapterKey !== key) return;
+    recordNovelProgress(currentChapterScrollProgress());
+  }
   $effect(() => {
     const unsubscribe = tts.subscribe(() => {
       ttsStateVersion += 1;
@@ -404,6 +469,14 @@
     if (!activeReader) return;
     const generation = ++chapterLoadGeneration;
     const reader = { ...activeReader };
+    const nextChapterKey = `${reader.novelId}:${reader.chapterId}`;
+    loading = true;
+    restoredChapterKey = null;
+    if (loadedChapterKey && loadedChapterKey !== nextChapterKey) {
+      await flushNovelProgress().catch(console.error);
+    }
+    loadedChapterKey = nextChapterKey;
+    restoredChapterKey = null;
     const requestScope = { ...scopeInput };
     const isCurrent = () => (
       generation === chapterLoadGeneration
@@ -435,16 +508,6 @@
         if (!isCurrent()) return;
       }
 
-      if (getNovelLibraryEntry(libraryState, reader.novelId)) {
-        libraryState = await saveNovelLibraryState(markNovelChapterRead(libraryState, {
-          novelId: reader.novelId,
-          chapterId: reader.chapterId,
-          chapterTitle: reader.chapterTitle,
-        }), requestScope);
-        if (!isCurrent()) return;
-        syncActiveDetail(libraryState);
-        bumpContentSetupVersion();
-      }
     } catch (chapterError) {
       if (!isCurrent()) return;
       error = chapterError instanceof Error ? chapterError.message : String(chapterError);
@@ -461,6 +524,28 @@
       return;
     }
     tts.setProvider(createDomTtsTextProvider(readerBodyEl, "p, li, blockquote, h1, h2, h3, h4, h5, h6"));
+  }
+
+  async function restoreNovelScrollPosition() {
+    const reader = activeReader;
+    if (!reader || loading || error || !chapterHtml.trim()) return;
+    const key = `${reader.novelId}:${reader.chapterId}`;
+    if (restoredChapterKey === key) return;
+    await tick();
+    if (!viewerEl || activeReader?.chapterId !== reader.chapterId) return;
+    const progress = getNovelProgressEntry(libraryState, reader.novelId);
+    const fraction = progress?.chapterId === reader.chapterId
+      ? parseNovelScrollLocator(progress.locator, reader.chapterId)
+      : null;
+    restoringScrollPosition = true;
+    if (fraction && fraction > 0) {
+      const scrollable = Math.max(0, viewerEl.scrollHeight - viewerEl.clientHeight);
+      viewerEl.scrollTop = scrollable * fraction;
+    } else {
+      viewerEl.scrollTop = 0;
+    }
+    restoredChapterKey = key;
+    requestAnimationFrame(() => { restoringScrollPosition = false; });
   }
 
   async function toggleCurrentChapterBookmark() {
@@ -480,9 +565,14 @@
     });
   }
 
-  function openChapter(target: NonNullable<typeof currentNovel>["chapters"][number] | null) {
-    if (!activeReader || !target) return;
+  async function openChapter(target: NonNullable<typeof currentNovel>["chapters"][number] | null) {
+    if (!activeReader || !target || loading) return;
+    const fraction = currentChapterScrollProgress();
+    if (target.id === nextChapter?.id && fraction >= 0.95) recordNovelProgress(1, true);
+    try { await flushNovelProgress(); }
+    catch (saveError) { reportProgressSaveError(saveError); return; }
     tts.stop();
+    restoredChapterKey = null;
     store.setActiveNovelReader({
       ...activeReader,
       chapterId: target.id,
@@ -492,17 +582,28 @@
   }
 
   function openRelativeChapter(direction: "prev" | "next") {
-    openChapter(direction === "prev" ? previousChapter : nextChapter);
+    void openChapter(direction === "prev" ? previousChapter : nextChapter);
   }
 
-  function requestClose() {
+  async function requestClose() {
+    try { await flushNovelProgress(); }
+    catch (saveError) { reportProgressSaveError(saveError); return; }
     tts.stop();
     closeNovelReader();
   }
 
+  function reportProgressSaveError(saveError: unknown) {
+    console.error(saveError);
+    addToast({
+      kind: "error",
+      title: translate("feedback_readingProgressNotSaved"),
+      body: translate("feedback_readingProgressRetryBody"),
+    });
+  }
+
   function openChapterByIndex(index: number) {
     if (!currentNovel) return;
-    openChapter(currentNovel.chapters[index] ?? null);
+    void openChapter(currentNovel.chapters[index] ?? null);
   }
 
   $effect(() => {
@@ -537,11 +638,16 @@
     readerBodyEl;
     untrack(() => {
       void refreshTtsProvider();
+      void restoreNovelScrollPosition();
     });
   });
 
   onMount(() => {
     const unregisterCommands = registerReaderCommandHandler("novel", onKey);
+    const unregisterCloseGuard = registerReaderCloseGuard(flushNovelProgress, reportProgressSaveError);
+    const flushProgress = () => { void flushNovelProgress().catch(console.error); };
+    window.addEventListener("pagehide", flushProgress);
+    window.addEventListener("beforeunload", flushProgress);
     if (!activeReader) {
       addToast({
         kind: "error",
@@ -549,10 +655,16 @@
         body: translate("ui_noActiveChapterWasSelected"),
       });
     }
-    return unregisterCommands;
+    return () => {
+      unregisterCommands();
+      unregisterCloseGuard();
+      window.removeEventListener("pagehide", flushProgress);
+      window.removeEventListener("beforeunload", flushProgress);
+    };
   });
 
   onDestroy(() => {
+    void flushNovelProgress().catch(console.error);
     chapterLoadGeneration += 1;
     scopeLoadGeneration += 1;
     tts.destroy();
@@ -812,7 +924,13 @@
       {/if}
     {/snippet}
 
-    <div class="viewer novel-viewer" class:full-width-panel={store.settings.proseReaderFullWidth} style={`--prose-page-bg:${prosePalette.bg};`}>
+    <div
+      class="viewer novel-viewer"
+      class:full-width-panel={store.settings.proseReaderFullWidth}
+      style={`--prose-page-bg:${prosePalette.bg};`}
+      bind:this={viewerEl}
+      onscroll={handleNovelScroll}
+    >
       {#if loading}
         <div class="center-overlay">
           <CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" />

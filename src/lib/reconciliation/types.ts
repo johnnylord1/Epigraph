@@ -31,11 +31,25 @@ export interface ParsedBackupManga {
   thumbnailUrl: string | null;
 }
 
+export interface ParsedBackupExtensionStore {
+  indexUrl: string;
+  name: string;
+  badgeLabel?: string | null;
+  signingKey?: string | null;
+  contactWebsite?: string | null;
+}
+
+export type NativeSourceRestoreChoice =
+  | { mode: "preserve" }
+  | { mode: "map"; sourceId: string; name: string; lang?: string | null }
+  | { mode: "skip" };
+
 export interface ParsedBackup {
   bytes: Uint8Array;
   wasGzipped: boolean;
   backupSources: ParsedBackupSource[];
   backupManga: ParsedBackupManga[];
+  extensionStores: ParsedBackupExtensionStore[];
   trackerIds: number[];
   mangaMessages: unknown[];
   sourceMessages: unknown[];
@@ -185,7 +199,7 @@ export interface TrackerValidationResult {
 }
 
 export interface RestoreReviewState {
-  clusterSelections: Record<string, string | "skip">;
+  clusterSelections: Record<string, NativeSourceRestoreChoice>;
 }
 
 export interface SearchCacheValue {

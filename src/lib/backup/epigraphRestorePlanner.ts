@@ -442,12 +442,12 @@ export async function planEpigraphMangaRestore(
     return finalizePayloadPlan({
       kind: "manga",
       present: true,
-      status: "blocked",
+      status: "warning-only",
       defaultRestoreMode,
       availableRestoreModes,
-      summaryLabel: "Manga restore needs source review",
-      reasons: [toReason("manga-needs-review", `${analysis.needsReview.length} source cluster${analysis.needsReview.length === 1 ? "" : "s"} still need review.`)],
-      warnings: [],
+      summaryLabel: "Original manga sources will be preserved",
+      reasons: [],
+      warnings: [toReason("manga-needs-review", `${analysis.needsReview.length} source cluster${analysis.needsReview.length === 1 ? "" : "s"} will keep their original source IDs unless you choose a replacement.`)],
       metadata: baseMetadata,
     });
   }
@@ -473,12 +473,12 @@ export async function planEpigraphMangaRestore(
     return finalizePayloadPlan({
       kind: "manga",
       present: true,
-      status: "blocked",
+      status: "warning-only",
       defaultRestoreMode,
       availableRestoreModes,
-      summaryLabel: "Manga restore has unavailable sources",
-      reasons: [toReason("manga-unavailable-source", `${readiness.unavailableCount} reconciled source target${readiness.unavailableCount === 1 ? "" : "s"} are unavailable on this runtime.`)],
-      warnings: [],
+      summaryLabel: "Unavailable manga sources will be preserved",
+      reasons: [],
+      warnings: [toReason("manga-unavailable-source", `${readiness.unavailableCount} unavailable source${readiness.unavailableCount === 1 ? "" : "s"} will be preserved with their titles and reading data.`)],
       metadata: baseMetadata,
     });
   }

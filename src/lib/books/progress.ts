@@ -17,6 +17,17 @@ function clampPercent(value: unknown): number {
   return Math.max(0, Math.min(1, value));
 }
 
+export const BOOK_FINISHED_PROGRESS = 0.98;
+
+export function isBookFinished(progress: Pick<BookProgress, "progressPercent"> | null | undefined): boolean {
+  return clampPercent(progress?.progressPercent) >= BOOK_FINISHED_PROGRESS;
+}
+
+export function isBookInProgress(progress: Pick<BookProgress, "progressPercent"> | null | undefined): boolean {
+  const value = clampPercent(progress?.progressPercent);
+  return value > 0.001 && value < BOOK_FINISHED_PROGRESS;
+}
+
 export type BookProgressPrecision = "empty" | "fallback" | "precise";
 
 export function normalizeBookProgress(progress: unknown): BookProgress {

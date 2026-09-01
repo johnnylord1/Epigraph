@@ -79,6 +79,20 @@ function parseLnReaderDate(value: unknown): number | null {
   return Number.isFinite(normalizedParsed) ? normalizedParsed : null;
 }
 
+function parseLnReaderChapterProgress(value: unknown): number {
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value.trim().replace(/^[^\d.-]+/, ""))
+      : Number.NaN;
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.max(0, Math.min(1, numeric / 100));
+}
+
+function lnReaderScrollLocator(chapterId: string, progress: number): string {
+  return `scroll:${encodeURIComponent(chapterId)}:${Math.max(0, Math.min(1, progress)).toFixed(6)}`;
+}
+
 function mimeTypeFromPath(path: string): string {
   const normalized = path.toLowerCase().split(/[?#]/, 1)[0] ?? "";
   if (normalized.endsWith(".jpg") || normalized.endsWith(".jpeg")) return "image/jpeg";
@@ -270,6 +284,8 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
   const downloadZip = await openLnReaderDownloadZip(zip);
   const embeddedPluginIds = await extractLnReaderBackupPluginIds(bytes);
   const pluginMetadata = await readLnReaderPluginMetadata(zip, embeddedPluginIds);
+  const settingsFile = zip.file(SETTING_FILE);
+  const settings = settingsFile ? safeJsonParse<Record<string, unknown>>(await settingsFile.async("text"), {}) : {};
   const pluginIds = [...new Set([...embeddedPluginIds, ...pluginMetadata.keys()])].sort((left, right) => left.localeCompare(right));
   const entries = Object.keys(zip.files)
     .filter((path) => path.startsWith(`${NOVEL_DIR}/`) && path.endsWith(".json") && !zip.files[path].dir)
@@ -307,8 +323,21 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
         raw: chapter,
       };
     });
-    const readChapters = mappedChapters.filter((chapter) => !chapter.unread);
-    const lastReadChapter = readChapters
+    const savedValue = settings[`LAST_READ_PREFIX_${pluginId}_${novelPath}`];
+    const savedChapter = typeof savedValue === "string"
+      ? safeJsonParse<Record<string, any> | null>(savedValue, null)
+      : savedValue && typeof savedValue === "object" ? savedValue as Record<string, any> : null;
+    const savedPath = normalizeText(savedChapter?.path);
+    const savedMatchesNovel = savedChapter?.novelId == null || String(savedChapter.novelId) === String(raw.id);
+    const savedResume = savedPath && savedMatchesNovel ? {
+      id: `${novelId}:chapter:${savedPath}`,
+      title: normalizeText(savedChapter?.name) ?? "Saved chapter",
+      order: Number(savedChapter?.position ?? 0),
+      unread: !isLnReaderFalsey(savedChapter?.unread),
+      raw: savedChapter!,
+    } : null;
+    const lastReadChapter = savedResume ?? mappedChapters
+      .filter((chapter) => !chapter.unread || parseLnReaderChapterProgress(chapter.raw.progress) > 0)
       .slice()
       .sort((left, right) => {
         const leftReadAt = parseLnReaderDate(left.raw.readTime) ?? 0;
@@ -317,7 +346,24 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
         return right.order - left.order;
       })[0] ?? null;
     const updatedAt = parseLnReaderDate(raw.lastReadAt) ?? parseLnReaderDate(lastReadChapter?.raw?.readTime) ?? Date.now();
-    const progressPercent = mappedChapters.length > 0 ? readChapters.length / mappedChapters.length : 0;
+    const chapterProgress = lastReadChapter
+      ? (lastReadChapter.unread ? parseLnReaderChapterProgress(lastReadChapter.raw.progress) : 1)
+      : 0;
+    const chapterIndex = lastReadChapter
+      ? mappedChapters.findIndex((chapter) => chapter.id === lastReadChapter.id)
+      : -1;
+    const progressPercent = mappedChapters.length > 0 && chapterIndex >= 0
+      ? (chapterIndex + chapterProgress) / mappedChapters.length
+      // A saved chapter can be absent from the exported catalog. Keep its exact
+      // locator without inventing catalog entries or declaring completion.
+      : 0;
+    const lastReadLocator = lastReadChapter
+      ? lastReadChapter.unread && chapterProgress > 0
+        ? lnReaderScrollLocator(lastReadChapter.id, chapterProgress)
+        : normalizeText(lastReadChapter.raw.progress)
+          ?? normalizeText(lastReadChapter.raw.page)
+          ?? lastReadChapter.id
+      : null;
 
     return {
       entry: {
@@ -351,9 +397,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
           chapterId: lastReadChapter.id,
           chapterTitle: lastReadChapter.title,
           progressPercent,
-          locator: normalizeText(lastReadChapter.raw.progress)
-            ?? normalizeText(lastReadChapter.raw.page)
-            ?? lastReadChapter.id,
+          locator: lastReadLocator!,
           updatedAt,
         }]
         : [],
@@ -372,9 +416,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
           novelId,
           chapterId: lastReadChapter.id,
           chapterTitle: lastReadChapter.title,
-          locator: normalizeText(lastReadChapter.raw.progress)
-            ?? normalizeText(lastReadChapter.raw.page)
-            ?? lastReadChapter.id,
+          locator: lastReadLocator!,
           readAt: updatedAt,
         }]
         : [],

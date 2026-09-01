@@ -95,6 +95,7 @@ export default defineWorkspace([
         allow: [BROWSER_TRANSIENT_SCREENSHOT_DIR],
       },
     },
+    optimizeDeps: { include: ["@tauri-apps/api/path"] },
     define: {
       __EPIGRAPH_BROWSER_SCREENSHOT_DIR__: JSON.stringify(BROWSER_SCREENSHOT_BASE_DIR),
       __EPIGRAPH_BROWSER_ACTUAL_SCREENSHOT_DIR__: JSON.stringify(BROWSER_TRANSIENT_SCREENSHOT_DIR),
@@ -102,11 +103,17 @@ export default defineWorkspace([
     },
     test: {
       name: "browser-components",
+      // Browser component files share the same app store and document. Running
+      // them concurrently lets another file's cleanup reset an active reader or
+      // Settings pane halfway through an assertion.
+      fileParallelism: false,
       setupFiles: [
         "src/test/browser/setup.ts",
       ],
       include: [
         "src/components/layout/SplashScreen.browser.test.ts",
+        "src/components/reader/Reader.browser.test.ts",
+        "src/components/reader/NovelReader.browser.test.ts",
         "src/components/settings/Settings.browser.test.ts",
         "src/components/settings/SyncdLocalization.browser.test.ts",
         "src/components/library/LibraryCardGrid.test.ts",

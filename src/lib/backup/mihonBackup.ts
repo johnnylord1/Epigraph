@@ -2,7 +2,7 @@ import pako from "pako";
 import Long from "long";
 import protobuf from "protobufjs";
 import { MIHON_BACKUP_PROTO } from "./mihonProto";
-import type { ParsedBackup, ParsedBackupManga, ParsedBackupSource, SourceInventoryEntry } from "../reconciliation/types";
+import type { ParsedBackup, ParsedBackupExtensionStore, ParsedBackupManga, ParsedBackupSource, SourceInventoryEntry } from "../reconciliation/types";
 
 protobuf.util.Long = Long;
 protobuf.configure();
@@ -10,12 +10,71 @@ protobuf.configure();
 const root = protobuf.parse(MIHON_BACKUP_PROTO).root;
 const BackupMangaType = root.lookupType("BackupManga");
 const BackupSourceType = root.lookupType("BackupSource");
+const BackupExtensionStoreType = root.lookupType("BackupExtensionStore");
+const unknownWireFields = Symbol("unknownBackupWireFields");
+
+// protobufjs discards unrecognized fields. Keep those wire chunks on every nested
+// message so changing a source never strips metadata from a newer app or fork.
+function decodePreservingUnknown(type: protobuf.Type, bytes: Uint8Array): any {
+  const message = type.decode(bytes) as any;
+  const reader = protobuf.Reader.create(bytes);
+  const repeatedIndexes = new Map<number, number>();
+  const unknown: Uint8Array[] = [];
+  while (reader.pos < reader.len) {
+    const start = reader.pos;
+    const tag = reader.uint32();
+    const field = type.fieldsById[tag >>> 3]?.resolve();
+    if (field?.resolvedType instanceof protobuf.Type && (tag & 7) === 2) {
+      const child = decodePreservingUnknown(field.resolvedType, reader.bytes());
+      if (field.repeated) {
+        const index = repeatedIndexes.get(field.id) ?? 0;
+        message[field.name][index] = child;
+        repeatedIndexes.set(field.id, index + 1);
+      } else {
+        message[field.name] = child;
+      }
+    } else {
+      reader.skipType(tag & 7);
+      if (!field) unknown.push(bytes.subarray(start, reader.pos));
+    }
+  }
+  message[unknownWireFields] = unknown;
+  return message;
+}
+
+function encodePreservingUnknown(type: protobuf.Type, message: any): Uint8Array {
+  const bytes = type.encode(message).finish();
+  const reader = protobuf.Reader.create(bytes);
+  const chunks: Uint8Array[] = [];
+  const repeatedIndexes = new Map<number, number>();
+  while (reader.pos < reader.len) {
+    const start = reader.pos;
+    const tag = reader.uint32();
+    const field = type.fieldsById[tag >>> 3]?.resolve();
+    if (field?.resolvedType instanceof protobuf.Type && (tag & 7) === 2) {
+      reader.bytes();
+      const index = repeatedIndexes.get(field.id) ?? 0;
+      repeatedIndexes.set(field.id, index + 1);
+      const child = field.repeated ? message[field.name][index] : message[field.name];
+      chunks.push(encodeFieldChunk(field.id, encodePreservingUnknown(field.resolvedType, child)));
+    } else {
+      reader.skipType(tag & 7);
+      chunks.push(bytes.subarray(start, reader.pos));
+    }
+  }
+  return concatChunks([...chunks, ...(message[unknownWireFields] ?? [])]);
+}
+
+function mergedUnknownFields(left: any, right: any): Uint8Array[] {
+  return [...(left?.[unknownWireFields] ?? []), ...(right?.[unknownWireFields] ?? [])];
+}
 
 const GZIP_MAGIC_1 = 0x1f;
 const GZIP_MAGIC_2 = 0x8b;
 
 export const BACKUP_TOP_LEVEL_MANGA_FIELD = 1;
 export const BACKUP_TOP_LEVEL_SOURCES_FIELD = 101;
+export const BACKUP_TOP_LEVEL_EXTENSION_STORES_FIELD = 106;
 
 function toUint8Array(input: ArrayBuffer | Uint8Array): Uint8Array {
   return input instanceof Uint8Array ? input : new Uint8Array(input);
@@ -112,6 +171,7 @@ function mergeChapter(left: any, right: any): any {
   return {
     ...left,
     ...right,
+    [unknownWireFields]: mergedUnknownFields(left, right),
     url: preferLongerString(left?.url, right?.url),
     name: preferLongerString(left?.name, right?.name),
     scanlator: preferLongerString(left?.scanlator, right?.scanlator),
@@ -131,6 +191,7 @@ function mergeTracking(left: any, right: any): any {
   return {
     ...left,
     ...right,
+    [unknownWireFields]: mergedUnknownFields(left, right),
     syncId: Number(preferTruthy(left?.syncId, right?.syncId) ?? 0),
     libraryId: maxLong(left?.libraryId, right?.libraryId),
     mediaIdInt: Number(preferTruthy(left?.mediaIdInt, right?.mediaIdInt) ?? 0),
@@ -151,6 +212,7 @@ function mergeHistory(left: any, right: any): any {
   return {
     ...left,
     ...right,
+    [unknownWireFields]: mergedUnknownFields(left, right),
     url: preferLongerString(left?.url, right?.url),
     lastRead: maxLong(left?.lastRead, right?.lastRead),
     readDuration: maxLong(left?.readDuration, right?.readDuration),
@@ -194,6 +256,7 @@ function mergeDuplicateMangaMessages(messages: any[]): any[] {
     merged.set(key, {
       ...current,
       ...message,
+      [unknownWireFields]: mergedUnknownFields(current, message),
       source: current.source,
       url: preferLongerString(current.url, message?.url),
       title: preferLongerString(current.title, message?.title),
@@ -262,11 +325,13 @@ function extractDelimitedMessage(reader: protobuf.Reader): Uint8Array {
 function parseTopLevelChunks(bytes: Uint8Array): {
   mangaMessages: unknown[];
   sourceMessages: unknown[];
+  extensionStoreMessages: unknown[];
   preservedTopLevelChunks: Uint8Array[];
 } {
   const reader = protobuf.Reader.create(bytes);
   const mangaMessages: unknown[] = [];
   const sourceMessages: unknown[] = [];
+  const extensionStoreMessages: unknown[] = [];
   const preservedTopLevelChunks: Uint8Array[] = [];
 
   while (reader.pos < reader.len) {
@@ -277,7 +342,7 @@ function parseTopLevelChunks(bytes: Uint8Array): {
 
     if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_MANGA_FIELD) {
       const chunk = extractDelimitedMessage(reader);
-      const decoded = BackupMangaType.decode(chunk) as any;
+      const decoded = decodePreservingUnknown(BackupMangaType, chunk);
       // Tachiyomi/J2K declares favorite with a Kotlin default of true. kotlinx.serialization
       // omits that field for library entries and writes an explicit false for optional
       // read-history entries, while protobufjs' proto3 default is false for both cases.
@@ -288,7 +353,14 @@ function parseTopLevelChunks(bytes: Uint8Array): {
 
     if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_SOURCES_FIELD) {
       const chunk = extractDelimitedMessage(reader);
-      sourceMessages.push(BackupSourceType.decode(chunk));
+      sourceMessages.push(decodePreservingUnknown(BackupSourceType, chunk));
+      continue;
+    }
+
+    if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_EXTENSION_STORES_FIELD) {
+      const chunk = extractDelimitedMessage(reader);
+      extensionStoreMessages.push(BackupExtensionStoreType.decode(chunk));
+      preservedTopLevelChunks.push(bytes.subarray(start, reader.pos));
       continue;
     }
 
@@ -296,7 +368,7 @@ function parseTopLevelChunks(bytes: Uint8Array): {
     preservedTopLevelChunks.push(bytes.subarray(start, reader.pos));
   }
 
-  return { mangaMessages, sourceMessages, preservedTopLevelChunks };
+  return { mangaMessages, sourceMessages, extensionStoreMessages, preservedTopLevelChunks };
 }
 
 function toParsedBackupManga(message: any): ParsedBackupManga {
@@ -323,6 +395,22 @@ function toParsedBackupSources(messages: any[], inventory: SourceInventoryEntry[
   });
 }
 
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function toParsedExtensionStores(messages: any[]): ParsedBackupExtensionStore[] {
+  return messages
+    .map((message) => ({
+      indexUrl: typeof message?.indexUrl === "string" ? message.indexUrl.trim() : "",
+      name: typeof message?.name === "string" ? message.name.trim() : "",
+      badgeLabel: optionalString(message?.badgeLabel),
+      signingKey: optionalString(message?.signingKey),
+      contactWebsite: optionalString(message?.contactWebsite),
+    }))
+    .filter((store) => store.indexUrl.length > 0);
+}
+
 function encodeFieldChunk(fieldNo: number, messageBytes: Uint8Array): Uint8Array {
   return protobuf.Writer.create()
     .uint32((fieldNo << 3) | 2)
@@ -339,6 +427,42 @@ function concatChunks(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length;
   }
   return out;
+}
+
+function normalizedStoreUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+export function embedMihonExtensionStores(
+  fileBytes: ArrayBuffer | Uint8Array,
+  stores: readonly ParsedBackupExtensionStore[],
+): Uint8Array {
+  const originalBytes = toUint8Array(fileBytes);
+  const wasGzipped = originalBytes[0] === GZIP_MAGIC_1 && originalBytes[1] === GZIP_MAGIC_2;
+  const decodedBytes = wasGzipped ? pako.ungzip(originalBytes) : originalBytes;
+  const parsed = parseTopLevelChunks(decodedBytes);
+  const existing = new Set(
+    (parsed.extensionStoreMessages as any[])
+      .map((store) => normalizedStoreUrl(typeof store?.indexUrl === "string" ? store.indexUrl : ""))
+      .filter(Boolean),
+  );
+  const additions: Uint8Array[] = [];
+  for (const store of stores) {
+    const indexUrl = normalizedStoreUrl(store.indexUrl);
+    if (!indexUrl || existing.has(indexUrl)) continue;
+    existing.add(indexUrl);
+    const message = BackupExtensionStoreType.encode({
+      indexUrl,
+      name: store.name.trim() || "Extension repository",
+      badgeLabel: store.badgeLabel ?? "",
+      signingKey: store.signingKey ?? "",
+      contactWebsite: store.contactWebsite ?? "",
+    }).finish();
+    additions.push(encodeFieldChunk(BACKUP_TOP_LEVEL_EXTENSION_STORES_FIELD, message));
+  }
+  if (additions.length === 0) return originalBytes;
+  const enriched = concatChunks([decodedBytes, ...additions]);
+  return wasGzipped ? pako.gzip(enriched) : enriched;
 }
 
 export async function fingerprintBytes(bytes: Uint8Array): Promise<string> {
@@ -361,12 +485,13 @@ export async function parseMihonBackup(
 
   const wasGzipped = originalBytes[0] === GZIP_MAGIC_1 && originalBytes[1] === GZIP_MAGIC_2;
   const decodedBytes = wasGzipped ? pako.ungzip(originalBytes) : originalBytes;
-  const { mangaMessages, sourceMessages, preservedTopLevelChunks } = parseTopLevelChunks(decodedBytes);
+  const { mangaMessages, sourceMessages, extensionStoreMessages, preservedTopLevelChunks } = parseTopLevelChunks(decodedBytes);
 
   const backupManga = mangaMessages
     .filter((message: any) => message.favorite !== false)
     .map((message) => toParsedBackupManga(message));
   const backupSources = toParsedBackupSources(sourceMessages as any[], inventory);
+  const extensionStores = toParsedExtensionStores(extensionStoreMessages as any[]);
   const trackerIds = [
     ...new Set(
       mangaMessages
@@ -381,6 +506,7 @@ export async function parseMihonBackup(
     wasGzipped,
     backupSources,
     backupManga,
+    extensionStores,
     trackerIds,
     mangaMessages,
     sourceMessages,
@@ -422,20 +548,22 @@ export function createReconciledBackupPayload(
     })
     .reduce<any[]>((deduped, message: any) => {
       const key = `${int64ToString(message.sourceId)}:${message.name ?? ""}`;
-      if (deduped.some((existing) => `${int64ToString(existing.sourceId)}:${existing.name ?? ""}` === key)) {
+      const existing = deduped.find((entry) => `${int64ToString(entry.sourceId)}:${entry.name ?? ""}` === key);
+      if (existing) {
+        existing[unknownWireFields] = mergedUnknownFields(existing, message);
         return deduped;
       }
-      deduped.push(message);
+      deduped.push({ ...message });
       return deduped;
     }, []);
 
   const encodedChunks = [
     ...patchedMangaMessages.map((message) =>
-      encodeFieldChunk(BACKUP_TOP_LEVEL_MANGA_FIELD, BackupMangaType.encode(message).finish()),
+      encodeFieldChunk(BACKUP_TOP_LEVEL_MANGA_FIELD, encodePreservingUnknown(BackupMangaType, message)),
     ),
     ...parsedBackup.preservedTopLevelChunks,
     ...patchedSourceMessages.map((message) =>
-      encodeFieldChunk(BACKUP_TOP_LEVEL_SOURCES_FIELD, BackupSourceType.encode(message).finish()),
+      encodeFieldChunk(BACKUP_TOP_LEVEL_SOURCES_FIELD, encodePreservingUnknown(BackupSourceType, message)),
     ),
   ];
 

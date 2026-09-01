@@ -62,28 +62,28 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-014 | Browse | Pesquisa por palavra-chave de manga | Browse > Search | Sim | Não, sem source | Depende de serviço externo | `BrowseV3` e testes de normalização; catálogo externo ausente | — |
 | FUNC-015 | Browse | Discover/popular/latest para manga | Browse > Discover | Sim | Não, sem source | Depende de serviço externo | Adaptadores presentes; resposta real depende de source | — |
 | FUNC-016 | Browse | Catálogo e pesquisa por source de manga | Browse > Sources | Sim | Não | Depende de serviço externo | Requer extensão/source instalada e servidor acessível | — |
-| FUNC-017 | Sources | Repositórios e ciclo de extensões manga | Sources | Sim | Não | Depende de configuração ausente | Nenhum repositório de demonstração foi configurado | — |
-| FUNC-018 | Sources | Repositórios/plugins de novels | Sources > Novels | Sim | Não | Depende de configuração ausente | Nenhum repositório confiável de demonstração foi configurado | — |
+| FUNC-017 | Sources | Repositórios e ciclo de extensões manga | Sources | Sim | Sim, Suwayomi v2.3 descartável | Funcionando | O fluxo visual converteu a página GitHub do Keiyoushi para o `index.pb`, carregou o catálogo e preservou o store após restart; Akuma APK publicou 27 sources sem duplicar | — |
+| FUNC-018 | Sources | Repositórios/plugins de novels | Sources > Novels | Sim | Sim, restore LNReader descartável | Funcionando | O fluxo visual aprovou e provisionou 2 repositórios e 19 plugins com proveniência exata antes de restaurar 9 novels/6.936 capítulos | — |
 | FUNC-019 | Browse | Pesquisa e navegação de novels | Browse > Novels | Sim | Não | Depende de serviço externo | Runtime e adaptadores existem; source real ausente | — |
 | FUNC-020 | Browse | Recomendações e Taste Insights | Browse/Home | Sim | Não | Depende de serviço externo | Adaptadores encontrados; sem dados/catalogadores externos | — |
 | FUNC-021 | Detalhes | Detalhe de série manga | Series Detail | Sim | Não | Depende de serviço externo | Requer série retornada por source | — |
 | FUNC-022 | Detalhes | Detalhe de novel | Novel Detail | Sim | Não | Depende de serviço externo | Requer plugin/source de novel | — |
 | FUNC-023 | Detalhes | Detalhe de EPUB/PDF local | Book Detail | Sim | Sim, WebView2 descartável | Funcionando | Os dois tipos foram abertos no perfil de certificação após import/restore | — |
-| FUNC-024 | Leitor | Leitor de manga e modos single/double/longstrip | Reader | Sim | Sim | Funcionando | Testes `Reader`, HUD e matriz de temas | — |
+| FUNC-024 | Leitor | Leitor de manga e modos single/double/longstrip | Reader | Sim | Sim | Funcionando | Browser confirmou avanço, retomada e persistência monotônica em single, fade e longstrip; contratos cobrem double e fechamento nativo | — |
 | FUNC-025 | Leitor | HUD, teclado, fullscreen, zoom e navegação | Reader | Sim | Parcial | Funcionando parcialmente | HUD/teclado/zoom cobertos; fullscreen nativo e foco em WebView2 não foram certificados manualmente | — |
 | FUNC-026 | Leitor | Fallback offline de manga | Reader | Sim | Sim, contrato determinístico | Funcionando parcialmente | Loader nativo foi validado com CBZ em memória, ordem natural, tipos de imagem e revogação de blobs; falta screenshot WebView2 com capítulo real baixado | — |
-| FUNC-027 | Leitor | Leitor de novel por source | Novel Reader | Sim | Não | Depende de serviço externo | Requer capítulo retornado pelo plugin | — |
+| FUNC-027 | Leitor | Leitor de novel por source | Novel Reader | Sim | Sim, componente browser com source determinístico | Funcionando | Abrir não marca como lido; scroll parcial, troca durante loading e recuperação após falha de persistência passaram | — |
 | FUNC-028 | Leitor | Leitor EPUB local | Book Reader | Sim | Sim, WebView2 descartável | Funcionando | EPUB real foi importado, reaberto após restart e restaurado com estado de leitura | — |
 | FUNC-029 | Leitor | Leitor PDF local | Book Reader | Sim | Sim, WebView2 descartável | Funcionando | PDF real foi importado e restaurado com progresso e bookmark | — |
 | FUNC-030 | Leitor | TTS e controles de voz | Readers | Sim | Sim, componente | Funcionando | 2 testes de controles TTS passaram | — |
-| FUNC-031 | Leitor | Progresso e bookmarks | Readers/Library | Sim | Sim | Funcionando | Testes frontend e Rust de merge, reset e tombstones | — |
+| FUNC-031 | Leitor | Progresso e bookmarks | Readers/Library | Sim | Sim | Funcionando | Manga usa página zero-based no servidor e flush durável; novels usam locator/fração; Books usa escala 0..1 e limiar 0,98. Suites browser, frontend e Rust passaram | — |
 | FUNC-032 | Downloads | Lista, busca e estados da fila | Downloads | Sim | Sim | Funcionando | 9 testes de `Downloads` passaram | — |
 | FUNC-033 | Downloads | Pausar, retomar, cancelar e repetir | Downloads | Sim | Sim | Funcionando | Testes de fila e reducer de downloads | — |
 | FUNC-034 | Downloads | Download offline de novels | Novel Detail/Downloads | Sim | Não | Depende de serviço externo | Requer source e conteúdo remoto | — |
 | FUNC-035 | Migração | Migração individual de manga/novel | Detail > Migrate | Sim | Parcial | Depende de serviço externo | Fluxo funcional requer dois sources compatíveis; semântica modal, isolamento, ciclo e restauração de foco passaram no Marco 67 | — |
 | FUNC-036 | Migração | Migração em massa | Library > Mass Migrate | Sim | Parcial | Depende de serviço externo | Fluxo funcional requer biblioteca/source destino reais; contrato de foco e background `inert` passou no Marco 67 | — |
 | FUNC-037 | Dados | Criar backup unificado | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Marco 66 exportou container completo de Books com checksum em perfil descartável; manga/novels/app continuam cobertos pelos testes próprios | — |
-| FUNC-038 | Dados | Restaurar, sandbox e reconciliar | Settings > Storage | Sim | Sim, payload Books | Funcionando parcialmente | Restore em segundo perfil preservou books, categorias, progresso e bookmarks; corrupção foi rejeitada sem mutação | — |
+| FUNC-038 | Dados | Restaurar, sandbox e reconciliar | Settings > Storage | Sim | Sim, Books/J2K/Yokai/LNReader | Funcionando | Books preservou categorias/progresso/bookmarks e recusou corrupção sem mutação; o fluxo visual restaurou J2K 686, Yokai 684 e LNReader 9/6.936/2/19 em perfis limpos | — |
 | FUNC-039 | Settings | General, perfis e startup | Settings > General | Sim | Sim | Funcionando | 10 testes de Settings, captura real do componente em inglês | — |
 | FUNC-040 | Settings | Appearance, temas e editor | Settings > Appearance | Sim | Sim | Funcionando | Inventário reconciliado em 2.675 tokens ativos; Syncd 98/98; gates de tema e matriz browser passaram | — |
 | FUNC-041 | Settings | Keybinds e reset | Settings > Keybinds | Sim | Sim | Funcionando | Testes de Settings e estado | — |
@@ -95,11 +95,11 @@ O snapshot histórico abaixo foi revalidado no worktree atual. Tema, browser, fo
 | FUNC-047 | Settings | Storage, caminhos, cache e uso | Settings > Storage | Sim | Sim | Funcionando | Harness aguarda estado estável; 6/6 testes browser de Settings passaram | — |
 | FUNC-048 | Settings | Performance | Settings > Performance | Sim | Sim, componente | Funcionando | Testes de Settings e persistência de estado | — |
 | FUNC-049 | Settings | Security, PIN, auth e proxy | Settings > Security | Sim | Parcial | Funcionando parcialmente | Contratos backend e render cobertos; mudanças persistentes e proxy real não foram exercitados | — |
-| FUNC-050 | Settings | About e histórico de releases | Settings > About | Sim | Parcial | Depende de serviço externo | Tela/captura confirmada; releases dependem de GitHub/rede | — |
+| FUNC-050 | Settings | About e histórico de releases | Settings > About | Sim | Sim, componente/browser | Funcionando | A ação de updates permanece visível quando releases são ocultadas; os seis estados visuais de Settings passaram. Consulta real ainda depende de GitHub/rede | — |
 | FUNC-051 | Settings | Dev Tools e abertura de logs | Settings > Dev Tools | Sim | Não | Não foi possível testar | Abertura nativa de pasta/log não foi acionada | — |
 | FUNC-052 | Settings | Idioma da interface | Settings > General | Sim | Parcial | Funcionando parcialmente | Interface e seletor renderizam; troca/persistência nativa não foi submetida | — |
 | FUNC-053 | Integrações | Discord Rich Presence e capas | Settings > General | Sim | Não | Depende de configuração ausente | Discord não configurado; testes Rust de segurança de capas passaram | — |
-| FUNC-054 | Integrações | Lifecycle e updater do Suwayomi | Startup/Settings > About | Sim | Não ao vivo | Depende de serviço externo | Gate de certificação passou 5/5; servidor vivo indisponível | — |
+| FUNC-054 | Integrações | Lifecycle e updater do Suwayomi | Startup/Settings > About | Sim | Sim, runtimes v2.1/v2.3 descartáveis | Funcionando | Workflow real validou conversão v2.1, install/restart v2.3 e candidate/restart; recheck não contorna um bloqueio de update | — |
 | FUNC-055 | Integrações | FlareSolverr local/Docker | Settings > Security | Sim | Não | Depende de configuração ausente | Serviço não configurado e Docker não foi iniciado | — |
 | FUNC-056 | Syncd Desktop | Modal, resumo e detalhes de sessão | Settings > General/Syncd | Sim | Sim | Funcionando | `SyncdConnectionPanel` 2/2 e `SyncdSessionDetails` 2/2 passaram | — |
 | FUNC-057 | Syncd Desktop | QR e pairing entre duas instâncias desktop | Syncd modal | Sim | Sim | Funcionando | Harness nativo com perfis isolados concluiu 7/7 cenários, incluindo QR, aprovação, restart e persistência | — |
@@ -148,12 +148,18 @@ provisionamento aditivo de repositórios e plugins de novels, restore planejáve
 quando dependências podem ser instaladas, normalização de página GitHub para o
 índice raw, preservação dos stores atuais em falha, modal visual de restore,
 categorias/empty states de Library, Activity Center, About e bloqueio do updater
-Suwayomi. A suíte unit/jsdom concluiu 194 arquivos e 1.216 testes, com 1 teste
-live ignorado por ausência do servidor de integração; `svelte-check` terminou
-com 0 erros e o build de produção passou. O workflow Suwayomi em perfil
-temporário passou as cinco fases (conversão v21, install/restart v23 e
-candidate/restart), sem requests a websites. Validações de catálogos externos
-reais continuam condicionais a rede e disponibilidade das sources.
+Suwayomi. Em 01/09/2026, `unit` concluiu 1.004 testes, `shell-jsdom` 271 e
+`browser-components` 57; `svelte-check` terminou com 0 erros (54 avisos de CSS
+não usado em uma alteração paralela de Syncd), Rust passou 471 testes de lib e
+281 do sidecar, e o build release foi gerado com hash registrado. O workflow
+Suwayomi em perfil temporário passou as cinco fases (conversão v21,
+install/restart v23 e candidate/restart), sem requests a websites de conteúdo.
+
+O fluxo nativo visível também restaurou J2K (686 títulos), Yokai (684) e
+LNReader (9 novels, 6.936 capítulos, 2 repositórios e 19 plugins). A página
+GitHub do Keiyoushi foi normalizada e persistida; o APK Akuma publicou 27
+sources e permaneceu único após reinstalação/restart. APK comum, truncado e ZIP
+renomeado foram recusados sem estado parcial.
 | Runner nativo de duas instâncias desktop | Passou | 7/7 cenários nos Marcos 58, 61 e 62 com `LOCALAPPDATA` isolado; ver evidências em `theme-system-audit.md` |
 | Lint | Não configurado | Não existe script dedicado; nenhuma ferramenta foi instalada |
 
@@ -175,7 +181,12 @@ O Marco 67 consolidou `MassMigrateModal`, `MigrateModal` e `NovelMigrateModal` s
 
 ### Browse, Sources e integrações
 
-Browse reúne Search, Discover e Sources para manga e novel. Os adaptadores e componentes existem, mas resultados reais dependem de Suwayomi, extensões, repositórios e serviços externos. Nenhuma credencial, repositório ou source foi criado para simular sucesso. Tracking, Hardcover, updater, Discord e FlareSolverr foram classificados de acordo com essa limitação.
+Browse reúne Search, Discover e Sources para manga e novel. O cenário isolado
+usou Suwayomi v2.3 real: adicionou o store Keiyoushi pela UI, indexou 1.394
+extensões e instalou Akuma com 27 sources. O restore LNReader provisionou suas
+duas origens e 19 plugins pelo fluxo de aprovação. Tracking, Hardcover, updater,
+Discord e FlareSolverr continuam classificados conforme suas dependências
+externas e credenciais próprias.
 
 ### Settings e temas
 

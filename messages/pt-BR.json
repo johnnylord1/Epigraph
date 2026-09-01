@@ -2707,5 +2707,13 @@
   "feedback_unifiedBackupPlanningFailed": "Falha ao planejar o backup unificado",
   "feedback_novelsRestoreAuditFailed": "Falha na verificação da restauração de novels",
   "feedback_mangaRestoreLoaded": "Restauração de mangás carregada",
-  "feedback_mangaRestoreAuditFailed": "Falha na verificação da restauração de mangás"
+  "feedback_mangaRestoreAuditFailed": "Falha na verificação da restauração de mangás",
+  "settings_inline_dependenciesFound": "Conteúdo e fontes encontrados",
+  "settings_inline_dependenciesFoundHint": "Revise as fontes que serão preparadas antes de restaurar seus dados de leitura.",
+  "settings_inline_allowRestoreDependencies": "Permitir estas fontes durante a restauração",
+  "settings_inline_allowRestoreDependenciesHint": "Nenhum repositório ou extensão será adicionado antes da sua confirmação.",
+  "settings_inline_approved": "Aprovado",
+  "settings_inline_reviewAndApprove": "Revisar e aprovar",
+  "feedback_readingProgressNotSaved": "O progresso de leitura não foi salvo",
+  "feedback_readingProgressRetryBody": "Mantenha o leitor aberto e tente novamente. Sua posição atual continua aqui."
 }

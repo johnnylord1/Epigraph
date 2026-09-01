@@ -151,6 +151,7 @@ function mangaDeps(options: {
         wasGzipped: false,
         backupSources: [{ sourceId: "1", name: "Source One", lang: "en" }],
         backupManga: [{ sourceId: "1", url: "/title-1", title: "Title One", author: null, artist: null, chapterCount: 10, thumbnailUrl: null }],
+        extensionStores: [],
         trackerIds: [],
         mangaMessages: [],
         sourceMessages: [],
@@ -244,9 +245,9 @@ describe("epigraph restore planner", () => {
   });
 
   it.each([
-    [{ needsReview: 1 }, "blocked", false, true, "manga-needs-review"],
+    [{ needsReview: 1 }, "warning-only", true, false, "manga-needs-review"],
     [{ requiresInstall: 1 }, "warning-only", true, false, "manga-requires-install"],
-    [{ unavailable: 1 }, "blocked", false, true, "manga-unavailable-source"],
+    [{ unavailable: 1 }, "warning-only", true, false, "manga-unavailable-source"],
     [{ unresolved: 1 }, "warning-only", true, false, "manga-unresolved-source"],
     [{ warnings: 1 }, "warning-only", true, false, "non-blocking-warning"],
   ])("maps manga planner outcomes mechanically: %j", async (options, status, canRestoreNow, needsUserAction, reasonCode) => {

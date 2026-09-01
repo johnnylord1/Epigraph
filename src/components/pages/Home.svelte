@@ -9,6 +9,7 @@
   import { isCompletedCategory, normalizeCategories } from "../../lib/library/categories";
   import { dedupeSources, shouldHideSource } from "../../lib/util";
   import { presentBook } from "../../lib/books/presentation";
+  import { isBookFinished, isBookInProgress } from "../../lib/books/progress";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import {
     loadTrackingProviderInventory,
@@ -539,7 +540,7 @@
     const bookCards = libraryBooks
       .map((book) => {
         const progress = bookProgressById.get(book.id);
-        if (!progress || (progress.progressPercent ?? 0) <= 0) return null;
+        if (!progress || !isBookInProgress(progress)) return null;
         const presented = presentBook(book, progress);
         return {
           kind: "book" as const,
@@ -554,7 +555,7 @@
           entry: null,
           manga: null,
           book,
-          progress,
+          progress: progress!,
         } satisfies HomeContinueDisplayCard;
       })
       .filter((item): item is Extract<HomeContinueDisplayCard, { kind: "book" }> => Boolean(item));
@@ -643,7 +644,7 @@
           coverUrl: presented.coverSrc ?? "",
           manga: null,
           book,
-          progress,
+          progress: progress ?? null,
           entry: null,
         } satisfies HomeRecentUpdateRow;
       })
@@ -667,7 +668,7 @@
   const completedBooks = $derived(
     libraryBooks.filter((book) => {
       const progress = bookProgressById.get(book.id);
-      return !!progress && progress.progressPercent >= 1;
+      return isBookFinished(progress);
     }),
   );
   const stats = $derived(store.readingStats);
@@ -757,7 +758,7 @@
     const bookRows = libraryBooks
       .map((book) => {
         const progress = bookProgressById.get(book.id);
-        if (!progress || progress.progressPercent < 100) return null;
+        if (!progress || !isBookFinished(progress)) return null;
         const presented = presentBook(book, progress);
         return {
           kind: "book" as const,
@@ -854,7 +855,7 @@
   const booksInProgressCount = $derived(
     libraryBooks.filter((book) => {
       const progress = bookProgressById.get(book.id);
-      return !!progress && progress.progressPercent > 0 && progress.progressPercent < 100;
+      return isBookInProgress(progress);
     }).length,
   );
   const booksToReadCount = $derived(

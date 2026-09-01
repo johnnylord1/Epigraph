@@ -18,6 +18,7 @@ import { hasBookLocalAsset } from "../books/availability";
 import { presentBookWithCoverSrc } from "../books/presentation";
 import { getBookSectionCount } from "../books/summary";
 import type { BookEntry, BookProgress } from "../books/types";
+import { isBookFinished, isBookInProgress } from "../books/progress";
 import type {
   BooksCategory,
   BooksLibraryStatusFilter,
@@ -90,9 +91,9 @@ function buildStatusFilteredBooks(
       case "unopened":
         return pct <= 0.001;
       case "in_progress":
-        return pct > 0.001 && pct < 0.98;
+        return isBookInProgress({ progressPercent: pct });
       case "finished":
-        return pct >= 0.98;
+        return isBookFinished({ progressPercent: pct });
       default:
         return true;
     }

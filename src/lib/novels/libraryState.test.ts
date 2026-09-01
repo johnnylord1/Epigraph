@@ -18,10 +18,12 @@ import {
   getNovelResumeChapter,
   loadNovelLibraryState,
   markNovelChapterRead,
+  parseNovelScrollLocator,
   peekNovelLibraryState,
   resetNovelLibraryStateCacheForTests,
   saveNovelLibraryState,
   toggleNovelChapterBookmark,
+  updateNovelReadingProgress,
 } from "./libraryState";
 
 const SCOPE = { profileId: "test" } as const;
@@ -264,5 +266,78 @@ describe("novel library state storage", () => {
     expect(readState.chapters[0]?.unread).toBe(false);
     expect(readState.progress[0]?.progressPercent).toBe(1);
     expect(readState.history[0]?.chapterId).toBe("chapter:1");
+  });
+
+  it("tracks partial chapter position without marking the chapter read", () => {
+    const novelId = createNovelLibraryId("archiveofourown", "/works/1");
+    const state = createState();
+    state.chapters = [
+      state.chapters[0]!,
+      {
+        ...state.chapters[0]!,
+        id: "chapter:2",
+        path: "/works/1/chapters/2",
+        title: "Chapter 2",
+        order: 1,
+      },
+    ];
+
+    const partial = updateNovelReadingProgress(state, {
+      novelId,
+      chapterId: "chapter:1",
+      chapterTitle: "Chapter 1",
+      chapterProgress: 0.4,
+      updatedAt: 10,
+    });
+
+    expect(partial.chapters[0]?.unread).toBe(true);
+    expect(partial.progress[0]).toMatchObject({
+      chapterId: "chapter:1",
+      progressPercent: 0.2,
+      locator: "scroll:chapter%3A1:0.400000",
+      updatedAt: 10,
+    });
+    expect(partial.history[0]).toMatchObject({ chapterId: "chapter:1", locator: "scroll:chapter%3A1:0.400000" });
+  });
+
+  it("marks a novel chapter read at 95 percent and calculates overall position", () => {
+    const novelId = createNovelLibraryId("archiveofourown", "/works/1");
+    const state = createState();
+    state.chapters = [
+      state.chapters[0]!,
+      {
+        ...state.chapters[0]!,
+        id: "chapter:2",
+        path: "/works/1/chapters/2",
+        title: "Chapter 2",
+        order: 1,
+      },
+    ];
+
+    const completed = updateNovelReadingProgress(state, {
+      novelId,
+      chapterId: "chapter:1",
+      chapterTitle: "Chapter 1",
+      chapterProgress: 0.95,
+      updatedAt: 20,
+    });
+
+    expect(completed.chapters[0]?.unread).toBe(false);
+    expect(completed.progress[0]?.progressPercent).toBe(0.5);
+    expect(parseNovelScrollLocator(completed.progress[0]?.locator, "chapter:1")).toBe(1);
+
+    const nextChapter = updateNovelReadingProgress(completed, {
+      novelId,
+      chapterId: "chapter:2",
+      chapterTitle: "Chapter 2",
+      chapterProgress: 0.4,
+      updatedAt: 30,
+    });
+    expect(nextChapter.progress[0]?.progressPercent).toBe(0.7);
+  });
+
+  it("accepts legacy chapter-only locators", () => {
+    expect(parseNovelScrollLocator("chapter:1", "chapter:1")).toBe(0);
+    expect(parseNovelScrollLocator("chapter:2", "chapter:1")).toBeNull();
   });
 });

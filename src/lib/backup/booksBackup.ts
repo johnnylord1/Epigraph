@@ -29,6 +29,7 @@ export interface EpigraphBooksCategoryRecord {
   id: string;
   name: string;
   order: number;
+  includeInUpdate?: "INCLUDE" | "EXCLUDE" | "UNSET";
 }
 
 export interface EpigraphBooksSnapshot {
@@ -46,6 +47,11 @@ interface PortableBookRecord {
   title: string;
   author: string | null;
   description: string | null;
+  genres?: string[];
+  isbns?: string[];
+  metadataBackfillVersion?: number;
+  hardcoverBookId?: number | null;
+  hardcoverCoverUrl?: string | null;
   subtype: BookSubtype;
   pageCount: number | null;
   createdAt: number;
@@ -163,7 +169,7 @@ function normalizeCategories(
 ): EpigraphBooksCategoryRecord[] {
   return Array.isArray(categories)
     ? [...categories]
-        .map((category, index) => ({
+        .map<EpigraphBooksCategoryRecord>((category, index) => ({
           id: typeof category?.id === "string" && category.id.trim()
             ? category.id
             : `books-category-${index + 1}`,
@@ -171,6 +177,9 @@ function normalizeCategories(
             ? category.name.trim()
             : `Category ${index + 1}`,
           order: typeof category?.order === "number" ? category.order : index + 1,
+          includeInUpdate: category?.includeInUpdate === "INCLUDE" || category?.includeInUpdate === "EXCLUDE"
+            ? category.includeInUpdate
+            : "UNSET",
         }))
         .sort((left, right) => left.order - right.order)
     : [];
@@ -275,6 +284,11 @@ function toPortableBookRecord(book: BookEntry, exportMode: EpigraphBooksExportMo
     title: normalized.title,
     author: normalized.author,
     description: normalized.description,
+    genres: Array.isArray(normalized.genres) ? [...normalized.genres] : undefined,
+    isbns: Array.isArray(normalized.isbns) ? [...normalized.isbns] : undefined,
+    metadataBackfillVersion: normalized.metadataBackfillVersion,
+    hardcoverBookId: normalized.hardcoverBookId ?? null,
+    hardcoverCoverUrl: normalized.hardcoverCoverUrl ?? null,
     subtype: normalized.subtype,
     pageCount: normalized.pageCount,
     createdAt: normalized.createdAt,
@@ -458,6 +472,35 @@ export async function parseEpigraphBooksPayload(
   if (!progress) throw new Error("Books payload is missing progress.json.");
   if (!bookmarks) throw new Error("Books payload is missing bookmarks.json.");
 
+  // Validate the whole payload before the first managed asset is written.
+  if (library.version !== 1 || !Array.isArray(library.books)
+    || progress.version !== 1 || !Array.isArray(progress.progress)
+    || bookmarks.version !== 1 || !Array.isArray(bookmarks.bookmarks)) {
+    throw new Error("Books backup contains an invalid library, progress, or bookmarks list.");
+  }
+  const ids = new Set<string>();
+  for (const record of library.books) {
+    if (!record || typeof record.id !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/.test(record.id)
+      || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(record.id)
+      || ids.has(record.id) || typeof record.title !== "string" || !["epub", "pdf"].includes(record.subtype)) {
+      throw new Error("Books backup contains an invalid or duplicate book identity.");
+    }
+    ids.add(record.id);
+    for (const reference of [record.assetArchivePath, record.coverArchivePath]) {
+      if (reference == null) continue;
+      if (typeof reference !== "string") throw new Error("Books backup contains an invalid asset path.");
+      const archivePath = `${registry.rootPath}/${normalizeArchiveRelativePath(reference)}`;
+      if (!zip.file(archivePath)) throw new Error(`Books backup is missing a referenced file: ${archivePath}.`);
+    }
+  }
+  if ([...progress.progress, ...bookmarks.bookmarks].some((entry) => !entry || typeof entry.bookId !== "string")) {
+    throw new Error("Books backup contains invalid reading progress.");
+  }
+  if (categories && (categories.version !== 1 || !Array.isArray(categories.categories)
+    || !categories.assignments || typeof categories.assignments !== "object" || Array.isArray(categories.assignments))) {
+    throw new Error("Books backup contains invalid categories.");
+  }
+
   return {
     exportMode,
     library,
@@ -535,8 +578,15 @@ export async function restoreEpigraphBooksPayload(
       title: record.title,
       author: record.author,
       description: record.description,
+      genres: Array.isArray(record.genres) ? [...record.genres] : undefined,
+      isbns: Array.isArray(record.isbns) ? [...record.isbns] : undefined,
+      metadataBackfillVersion: typeof record.metadataBackfillVersion === "number"
+        ? record.metadataBackfillVersion
+        : undefined,
       coverPath,
       coverUrl: undefined,
+      hardcoverBookId: typeof record.hardcoverBookId === "number" ? record.hardcoverBookId : null,
+      hardcoverCoverUrl: typeof record.hardcoverCoverUrl === "string" ? record.hardcoverCoverUrl : null,
       subtype: record.subtype,
       pageCount: record.pageCount,
       createdAt: record.createdAt,

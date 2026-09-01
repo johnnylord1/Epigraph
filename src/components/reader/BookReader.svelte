@@ -45,7 +45,9 @@
   import { peekPersistedBookEntry, peekPersistedBookProgress } from "../../lib/books/libraryState";
   import {
     addBookBookmark,
+    addToast,
     closeBookReader,
+    flushBookLibraryPersistence,
     removeBookBookmark,
     setBookProgress,
     store,
@@ -57,7 +59,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
-  import { clampReaderPage, selectDominantReaderPage, type VisibleReaderPage } from "../../lib/reader/runtime";
+  import { clampReaderPage, registerReaderCloseGuard, selectDominantReaderPage, type VisibleReaderPage } from "../../lib/reader/runtime";
   import { setGenericReading, setTtsPresence } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -1362,13 +1364,31 @@
     });
   }
 
+  function flushBookProgress() {
+    return flushBookLibraryPersistence();
+  }
+
+  async function flushAndCloseBookReader() {
+    await flushBookLibraryPersistence();
+    closeBookReader();
+  }
+
+  function reportProgressSaveError(error: unknown) {
+    console.error(error);
+    addToast({
+      kind: "error",
+      title: translate("feedback_readingProgressNotSaved"),
+      body: translate("feedback_readingProgressRetryBody"),
+    });
+  }
+
   function requestClose(reason = "user") {
     tts.stop();
     if (!auditCloseSent) {
       auditReader("books.reader.closed", { reason });
       auditCloseSent = true;
     }
-    closeBookReader();
+    void flushAndCloseBookReader().catch(reportProgressSaveError);
   }
 
   function onKey(event: KeyboardEvent) {
@@ -1518,9 +1538,16 @@
   onMount(() => {
     showUi();
     const unregisterCommands = registerReaderCommandHandler("book", onKey);
+    const unregisterCloseGuard = registerReaderCloseGuard(flushBookProgress, reportProgressSaveError);
+    window.addEventListener("pagehide", flushBookProgress);
+    window.addEventListener("beforeunload", flushBookProgress);
     return () => {
       unregisterCommands();
+      unregisterCloseGuard();
+      window.removeEventListener("pagehide", flushBookProgress);
+      window.removeEventListener("beforeunload", flushBookProgress);
       if (hideTimer) clearTimeout(hideTimer);
+      void flushBookProgress();
       disposeReader();
     };
   });
@@ -1809,6 +1836,7 @@
   }
 
   onDestroy(() => {
+    void flushBookProgress();
     tts.destroy();
     if (auditOpenBookId && !auditCloseSent) {
       auditReader("books.reader.closed", { reason: translate("ui_destroy") });

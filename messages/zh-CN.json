@@ -2707,5 +2707,13 @@
   "feedback_unifiedBackupPlanningFailed": "统一备份计划失败",
   "feedback_novelsRestoreAuditFailed": "小说恢复检查失败",
   "feedback_mangaRestoreLoaded": "已加载漫画恢复",
-  "feedback_mangaRestoreAuditFailed": "漫画恢复检查失败"
+  "feedback_mangaRestoreAuditFailed": "漫画恢复检查失败",
+  "settings_inline_dependenciesFound": "已找到内容和来源",
+  "settings_inline_dependenciesFoundHint": "请先检查将要准备的来源，再恢复阅读数据。",
+  "settings_inline_allowRestoreDependencies": "允许在恢复时使用这些来源",
+  "settings_inline_allowRestoreDependenciesHint": "确认前不会添加任何仓库或扩展。",
+  "settings_inline_approved": "已批准",
+  "settings_inline_reviewAndApprove": "检查并批准",
+  "feedback_readingProgressNotSaved": "阅读进度尚未保存",
+  "feedback_readingProgressRetryBody": "请保持阅读器打开并重试。您当前的位置仍然保留。"
 }

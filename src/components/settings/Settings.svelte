@@ -4,14 +4,14 @@
   import { _, translate } from "../../lib/i18n/runtime";
   import "../../lib/i18n/runtime";
   import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
-  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown } from "phosphor-svelte";
+  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, GitBranch } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
   import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
   import { open as openUrl } from "@tauri-apps/plugin-shell";
-  import { gql, gqlUpload, getServerAuthHeader, serverFileUrl } from "../../lib/client";
+  import { gql, gqlUpload, getServerAuthHeader, getServerUrl, serverFileUrl } from "../../lib/client";
   import { withSuwayomiOperationLease } from "../../lib/suwayomiUpdateLock.svelte";
   import { cache, CACHE_KEYS } from "../../lib/cache";
   import { setMigrationPresence } from "../../lib/discord";
@@ -27,7 +27,9 @@
     type LocalProfileId,
   } from "../../lib/localProfiles";
   import { getEffectiveServerUrl } from "../../lib/serverTarget";
+  import { getMangaProgressForScope } from "../../lib/reader/mangaProgressRuntime";
   import type { EpigraphBackupPayloadBuildInput } from "../../lib/backup/epigraphBackup";
+  import { preflightEpigraphRestorePayloads } from "../../lib/backup/epigraphRestorePreflight";
   import type {
     EpigraphPayloadRestorePlan,
     EpigraphRestorePlan,
@@ -37,7 +39,6 @@
     buildRestoreRelaunchArgs,
     currentProfileSupportsOtherLocalTarget,
     defaultExecutionSelection,
-    describeRestoreTarget,
     detectBackupImportKind,
     executionBlockedReasonForProfile,
     hasAnyExecutableSelection,
@@ -52,6 +53,7 @@
     type RestoreTargetMode,
   } from "../../lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
+  import { buildBackupDependencyPreview, type BackupDependencyPreview } from "../../lib/backup/dependencyPreview";
   import { getManagedSourceRuntime, resolveExtensionStoreInputUrl } from "../../lib/manga/runtime";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
@@ -92,12 +94,12 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
   import SuwayomiUpdatePanel from "./SuwayomiUpdatePanel.svelte";
-  import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, engageSearch, disengageSearch, openSearchPalette, setSearchQuery, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, DEFAULT_READING_STATS } from "../../store/state.svelte";
+  import { store, updateSettings, resetSettings, resetKeybinds, clearHistory, wipeAllData, setSettingsOpen, setRuntimeSettingsTab, engageSearch, disengageSearch, openSearchPalette, setSearchQuery, deleteCustomTheme, toggleHiddenCategory, setCategories, setLibraryMangaSnapshot, setLibraryTrackingSummarySnapshot, addToast, openSearchSources, replaceAppReadingState, replaceBooksState, flushBookLibraryPersistence, DEFAULT_READING_STATS } from "../../store/state.svelte";
   import { KEYBIND_LABELS, DEFAULT_KEYBINDS, eventToKeybind } from "../../lib/keybinds";
   import type { HistoryEntry, ReadLogEntry, ReadingStats, Settings, FitMode, BooksCategory, BooksLibraryStatusFilter, BooksLibraryTypeFilter, RuntimeSettingsTab } from "../../store/state.svelte";
   import type { Keybinds } from "../../lib/keybinds";
   import type { Tracker } from "../../lib/types";
-  import type { AvailableExtensionEntry, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
+  import type { AvailableExtensionEntry, NativeSourceRestoreChoice, OverlayEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationClusterResult, RestoreReadinessSummary, SourceInventoryEntry } from "../../lib/reconciliation/types";
   import { SETTINGS_EPIGRAPH_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
   import { APP_LANGUAGE_OPTIONS, appLanguageLabel, resolveAppLocale, type AppLanguageCode } from "../../lib/i18n/languages";
   import {
@@ -1119,7 +1121,7 @@
   let backupExtensionLookupError: string | null = $state(null);
   let backupExtensionLookupLoading = $state(false);
   let backupInstalling = $state(new Set<string>());
-  let backupReviewSelections = $state<Record<string, string | "skip">>({});
+  let backupReviewSelections = $state<Record<string, NativeSourceRestoreChoice>>({});
   let backupMissingTrackers = $state<{ name: string }[]>([]);
   let backupSelectedFilePath: string | null = $state(null);
   let backupImportKind = $state<BackupImportKind | null>(null);
@@ -1139,14 +1141,9 @@
   let backupLaunchIntentKey = $state<string | null>(null);
   let backupAuditPlanKey = $state<string | null>(null);
   let backupLastLegacyAnalysisPath: string | null = $state(null);
+  let backupDependencyPreview = $state<BackupDependencyPreview | null>(null);
+  let backupDependenciesConfirmed = $state(false);
 
-  const backupNeedsReviewComplete = $derived.by<boolean>(() => {
-    const analysis = backupAnalysis;
-    if (!analysis) return true;
-    return analysis.needsReview.every(
-      (cluster: ReconciliationClusterResult) => !!backupReviewSelections[cluster.orphanSourceId],
-    );
-  });
   const backupReadiness = $derived.by<RestoreReadinessSummary | null>(() =>
     backupAnalysis
       ? buildRestoreReadiness(backupAnalysis, backupReviewSelections, backupInventory, backupAvailableExtensions)
@@ -1156,7 +1153,6 @@
     !backupSelectedFile
       || !backupParsed
       || !backupAnalysis
-      || !backupNeedsReviewComplete
       || !!backupReadiness?.blocksRestore
       || backupValidating
       || backupRestoring,
@@ -1171,7 +1167,11 @@
     () => backupUnifiedPlan ? hasAnyExecutableSelection(backupUnifiedPlan, backupUnifiedSelection) : false
   );
   const backupCurrentTargetSummary = $derived.by(
-    () => describeRestoreTarget(currentRuntimeProfileId, backupRestoreTargetMode, backupRestoreHandoffSession)
+    () => backupRestoreTargetMode === "current-profile"
+      ? `${$_("settings_inline_currentProfile")} (${currentProfileMeta?.label ?? currentSessionProfileLabel})`
+      : otherLocalProfileMeta
+        ? `${$_("settings_inline_otherLocalProfile")} (${otherLocalProfileMeta.label})`
+        : $_("settings_inline_otherLocalProfile")
   );
   const backupCurrentProfileGateRequired = $derived.by(
     () => backupRestoreTargetMode === "current-profile" && !backupRestoreHandoffSession
@@ -1191,9 +1191,14 @@
   const backupResolvedExecutionBlockedReason = $derived.by(
     () => backupUnifiedPlan?.executionBlockedReason ?? backupExecutionBlockedReason
   );
+  const backupDependencyConfirmationRequired = $derived.by(() => {
+    const preview = backupDependencyPreview as BackupDependencyPreview | null;
+    return preview?.requiresConfirmation === true && !backupDependenciesConfirmed;
+  });
   const backupExecuteDisabled = $derived.by(() => {
     if (backupResolvedExecutionBlockedReason) return true;
     if (backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
+    if (backupRestoreTargetMode === "current-profile" && backupDependencyConfirmationRequired) return true;
     if (backupRestoreTargetMode === "other-local-profile") {
       return !backupSelectedFilePath || !backupCanUseOtherProfileTarget || backupRestoring || backupValidating;
     }
@@ -1307,6 +1312,8 @@
     backupRestoreHandoffSession = false;
     backupRestoreSourceProfileId = null;
     backupRestoreTargetMode = "current-profile";
+    backupDependencyPreview = null;
+    backupDependenciesConfirmed = false;
     resetLegacyBackupState();
     resetUnifiedBackupState();
   }
@@ -1389,6 +1396,8 @@
   }
 
   async function fetchCurrentMangaBackup(): Promise<{ bytes: Uint8Array; sourceFilename: string }> {
+    await getMangaProgressForScope(store.runtimeResolvedLocalProfileId
+      ? `profile:${store.runtimeResolvedLocalProfileId}` : `server:${getServerUrl()}`).flushAll();
     const res = await gql<{ createBackup: { url: string } }>(CREATE_BACKUP, {
       includeCategories: true,
       includeChapters: true,
@@ -1413,16 +1422,28 @@
     const appVersion = await getVersion().catch(() => null);
     const sourceProfileId = currentRuntimeProfileId ?? null;
 
+    if (backupExportMode === "books" || (backupExportMode === "unified" && backupUnifiedIncludeBooks)) {
+      await flushBookLibraryPersistence();
+    }
+
     if (backupExportMode === "manga") {
       const manga = await fetchCurrentMangaBackup();
+      const mangaRuntime = await getManagedSourceRuntime();
+      const stores = await mangaRuntime.listStores();
       return {
-        bytes: manga.bytes,
+        bytes: storageRuntime.embedMihonExtensionStores(manga.bytes, stores.map((store) => ({
+          indexUrl: store.indexUrl,
+          name: store.name,
+          badgeLabel: store.badgeLabel,
+          signingKey: store.signingFingerprint,
+          contactWebsite: store.contactWebsite,
+        }))),
         defaultPath: defaultExportFilename(),
       };
     }
 
     if (backupExportMode === "books") {
-      const booksLibraryState = await storageRuntime.loadBookLibraryState();
+      const booksLibraryState = await storageRuntime.loadBookLibraryState({ profileId: currentRuntimeProfileId });
       const built = await storageRuntime.buildEpigraphBackupContainer({
         appVersion,
         platform: browserPlatform(),
@@ -1506,7 +1527,7 @@
       }));
     }
     if (backupUnifiedIncludeBooks) {
-      const booksLibraryState = await storageRuntime.loadBookLibraryState();
+      const booksLibraryState = await storageRuntime.loadBookLibraryState({ profileId: currentRuntimeProfileId });
       payloads.push(await storageRuntime.buildEpigraphBooksPayload(
         storageRuntime.buildEpigraphBooksSnapshotFromLibraryState(booksLibraryState),
         {
@@ -1595,6 +1616,35 @@
     const plan = await storageRuntime.buildEpigraphRestorePlan(bytes, runtime);
     backupUnifiedPlan = plan;
     backupUnifiedSelection = defaultExecutionSelection(plan);
+    const repositories: Array<{ url: string; name?: string | null }> = [];
+    const plugins: Array<{ id: string; name?: string | null; repositoryUrl?: string | null }> = [];
+    try {
+      const manga = await storageRuntime.parseEpigraphMangaPayload(bytes);
+      repositories.push(...(manga.payloadManifest.requiresRepositories ?? []).map((url) => ({ url })));
+    } catch {
+      // The container may intentionally omit the manga payload.
+    }
+    try {
+      const novels = await storageRuntime.parseEpigraphNovelsPayload(bytes);
+      repositories.push(...(novels.snapshot.repositories ?? []));
+      plugins.push(...(novels.snapshot.plugins ?? []));
+    } catch {
+      // The container may intentionally omit the novels payload.
+    }
+    const titleCount = plan.payloads.reduce((sum, payload) => {
+      const count = payload.metadata.mangaCount ?? payload.metadata.bookCount ?? payload.metadata.entryCount;
+      return sum + (typeof count === "number" ? count : 0);
+    }, 0);
+    const chapterCount = plan.payloads.reduce((sum, payload) => {
+      const count = payload.metadata.chapterCount;
+      return sum + (typeof count === "number" ? count : 0);
+    }, 0);
+    backupDependencyPreview = buildBackupDependencyPreview({
+      titleCount,
+      chapterCount,
+      repositories,
+      plugins,
+    });
   }
 
   function backupPayloadIcon(kind: string) {
@@ -1675,6 +1725,13 @@
         if (!(await storageRuntime.isLnReaderBackupZip(bytes))) {
           throw new Error("This ZIP is not a supported LNReader backup.");
         }
+        const snapshot = await storageRuntime.parseLnReaderNovelsBackup(bytes);
+        backupDependencyPreview = buildBackupDependencyPreview({
+          titleCount: snapshot.entries.length,
+          chapterCount: snapshot.chapters.length,
+          repositories: snapshot.repositories ?? [],
+          plugins: snapshot.plugins ?? [],
+        });
         backupSelectedFile = await fileFromPath(path);
       } finally {
         backupValidating = false;
@@ -1843,6 +1900,13 @@
         if (!(await storageRuntime.isLnReaderBackupZip(bytes))) {
           throw new Error("This ZIP is not a supported LNReader backup.");
         }
+        const snapshot = await storageRuntime.parseLnReaderNovelsBackup(bytes);
+        backupDependencyPreview = buildBackupDependencyPreview({
+          titleCount: snapshot.entries.length,
+          chapterCount: snapshot.chapters.length,
+          repositories: snapshot.repositories ?? [],
+          plugins: snapshot.plugins ?? [],
+        });
       } finally {
         backupValidating = false;
       }
@@ -1872,6 +1936,11 @@
         overlay,
       );
       backupParsed = parsed;
+      backupDependencyPreview = buildBackupDependencyPreview({
+        titleCount: parsed.backupManga.length,
+        chapterCount: parsed.backupManga.reduce((sum, manga) => sum + (manga.chapterCount ?? 0), 0),
+        mangaStores: parsed.extensionStores,
+      });
       backupInventory = inventory.inventory;
       backupAnalysis = {
         ...analysis,
@@ -1956,7 +2025,6 @@
           : translate("settings_inline_unavailableSourcesResolveFirst");
         return { ok: false, finalState: null };
       }
-      backupRestoring = true;
       backupError = null;
       backupRestoreId = null;
       backupRestoreStatus = null;
@@ -1972,8 +2040,8 @@
         ...backupAnalysis,
         needsReview: backupAnalysis.needsReview.map((cluster) => {
           const selected = backupReviewSelections[cluster.orphanSourceId];
-          if (!selected || selected === "skip") return cluster;
-          const chosen = cluster.candidates.find((candidate) => candidate.sourceId === selected) ?? null;
+          if (!selected || selected.mode !== "map") return cluster;
+          const chosen = cluster.candidates.find((candidate) => candidate.sourceId === selected.sourceId) ?? null;
           return {
             ...cluster,
             status: chosen ? "auto_reconciled" : cluster.status,
@@ -2013,8 +2081,6 @@
       } catch (e: any) {
         backupError = e?.message ?? "Failed to restore backup";
         return { ok: false, finalState: null };
-      } finally {
-        backupRestoring = false;
       }
     });
   }
@@ -2368,6 +2434,13 @@
     const bytes = backupSelectedFilePath
       ? await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath)
       : await backupSelectedFile!.arrayBuffer();
+    await preflightEpigraphRestorePayloads(bytes, selectedKinds, {
+      parseManga: storageRuntime.parseEpigraphMangaPayload,
+      parseNativeManga: storageRuntime.parseMihonBackup,
+      parseBooks: storageRuntime.parseEpigraphBooksPayload,
+      parseNovels: storageRuntime.parseEpigraphNovelsPayload,
+      parseApp: storageRuntime.parseEpigraphAppPayload,
+    });
     const results: Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> = [];
 
     for (const kind of ["manga", "books", "novels", "app"] as const) {
@@ -2408,6 +2481,7 @@
             bookBookmarks: restored.bookBookmarks,
             booksCategories: restored.booksCategories,
             booksCategoryAssignments: restored.booksCategoryAssignments,
+            booksLibraryUi: restored.booksLibraryUi,
           });
           results.push({
             kind,
@@ -2488,14 +2562,18 @@
   }
 
   async function executeSelectedRestore() {
+    if (backupRestoring || backupValidating) return;
     backupError = null;
     backupRestoreResults = null;
+    backupRestoreStatus = null;
 
     if (backupResolvedExecutionBlockedReason) {
       backupError = backupResolvedExecutionBlockedReason;
       return;
     }
 
+    backupRestoring = true;
+    try {
     if (backupRestoreTargetMode === "other-local-profile") {
       await relaunchRestoreIntoOtherProfile();
       return;
@@ -2503,6 +2581,11 @@
 
     if (!backupRestoreHandoffSession && !backupRestoreCurrentProfileConfirmed) {
       backupError = translate("settings_inline_confirmAdvancedRestoreFirst");
+      return;
+    }
+
+    if (backupDependencyConfirmationRequired) {
+      backupError = "Review and confirm the repositories and extensions found in this backup first.";
       return;
     }
 
@@ -2535,6 +2618,9 @@
     if (!backupSelectedFile && backupSelectedFilePath) {
       await loadLegacyBackupPath(backupSelectedFilePath);
     }
+    await ensureMangaRestoreRepositories(
+      backupDependenciesConfirmed ? (backupParsed?.extensionStores ?? []).map((store) => store.indexUrl) : [],
+    );
     const result = await restoreBackup();
     backupRestoreResults = [{
       kind: "manga",
@@ -2544,10 +2630,20 @@
         : backupError ?? "Manga backup did not finish successfully.",
       detail: result.finalState,
     }];
+    } catch (error) {
+      backupError = error instanceof Error ? error.message : "Could not restore this backup. Please retry.";
+    } finally {
+      backupRestoring = false;
+    }
   }
 
-  function setBackupClusterSelection(clusterId: string, value: string | "skip") {
-    backupReviewSelections = { ...backupReviewSelections, [clusterId]: value };
+  function setBackupClusterSelection(clusterId: string, choice: NativeSourceRestoreChoice) {
+    backupReviewSelections = { ...backupReviewSelections, [clusterId]: choice };
+  }
+
+  function isBackupSourceMapped(clusterId: string, sourceId: string): boolean {
+    const choice = backupReviewSelections[clusterId];
+    return choice?.mode === "map" && choice.sourceId === sourceId;
   }
 
   function clusterConfidenceLabel(cluster: ReconciliationClusterResult): string {
@@ -6678,12 +6774,6 @@
                     {backupExporting ? $_("settings_inline_exporting") : $_("settings_inline_exportBackup")}
                   </button>
                 </div>
-                {#if backupValidating || backupRestoring}
-                  <div class="backup-progress" role="status" aria-live="polite">
-                    <div class="backup-progress__line"><span></span></div>
-                    <p>{backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_restoring")}</p>
-                  </div>
-                {/if}
               </div>
           {:else if backupViewMode === "restore"}
             <div class="settings-card__surface" style="margin-top:16px">
@@ -6796,6 +6886,57 @@
                     {/if}
                   </div>
                 {/if}
+                {#if backupDependencyPreview && (backupDependencyPreview.titleCount !== null || backupDependencyPreview.repositories.length > 0 || backupDependencyPreview.plugins.length > 0)}
+                  <div class="settings-card__surface backup-dependencies" style="margin-top:16px" data-backup-dependencies>
+                    <div class="backup-dependencies__head">
+                      <div class="backup-review__mark"><PuzzlePiece size={20} weight="duotone" /></div>
+                      <div>
+                        <p class="settings-card__title">{$_("settings_inline_dependenciesFound")}</p>
+                        <p class="settings-card__intro">{$_("settings_inline_dependenciesFoundHint")}</p>
+                      </div>
+                    </div>
+                    <div class="backup-dependencies__metrics">
+                      {#if backupDependencyPreview.titleCount !== null}<span><strong>{backupDependencyPreview.titleCount}</strong> {$_("ui_titles")}</span>{/if}
+                      {#if backupDependencyPreview.chapterCount !== null}<span><strong>{backupDependencyPreview.chapterCount}</strong> {$_("ui_chapters")}</span>{/if}
+                      <span><strong>{backupDependencyPreview.repositories.length}</strong> {$_("ui_repositories")}</span>
+                      <span><strong>{backupDependencyPreview.plugins.length}</strong> {$_("ui_extensions").toLocaleLowerCase()}</span>
+                    </div>
+                    {#if backupDependencyPreview.repositories.length > 0}
+                      <div class="backup-dependencies__list" aria-label="Repositories found in backup">
+                        {#each backupDependencyPreview.repositories as repository}
+                          <div><GitBranch size={15} weight="duotone" /><span>{repository.name}</span></div>
+                        {/each}
+                      </div>
+                    {/if}
+                    {#if backupDependencyPreview.plugins.length > 0}
+                      <div class="backup-plugin-strip" aria-label="Extensions found in backup">
+                        {#each backupDependencyPreview.plugins.slice(0, 8) as plugin}
+                          <span title={plugin.name}><PuzzlePiece size={15} weight="duotone" />{plugin.name}</span>
+                        {/each}
+                        {#if backupDependencyPreview.plugins.length > 8}
+                          <span>+{backupDependencyPreview.plugins.length - 8}</span>
+                        {/if}
+                      </div>
+                    {/if}
+                    {#if backupDependencyPreview.requiresConfirmation}
+                      <div class="backup-dependencies__consent">
+                        <div>
+                          <strong>{$_("settings_inline_allowRestoreDependencies")}</strong>
+                          <small>{$_("settings_inline_allowRestoreDependenciesHint")}</small>
+                        </div>
+                        <button
+                          class="backup-payload__toggle"
+                          class:is-active={backupDependenciesConfirmed}
+                          type="button"
+                          aria-pressed={backupDependenciesConfirmed}
+                          onclick={() => (backupDependenciesConfirmed = !backupDependenciesConfirmed)}
+                        >
+                          {#if backupDependenciesConfirmed}<CheckCircle size={15} weight="fill" /> {$_("settings_inline_approved")}{:else}{$_("settings_inline_reviewAndApprove")}{/if}
+                        </button>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
                 {#if backupImportKind}
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
@@ -6882,6 +7023,24 @@
                     </div>
                   </div>
                 {/if}
+                {#if backupValidating || backupRestoring}
+                  <div class="backup-progress" role="status" aria-live="polite">
+                    <div class="backup-progress__line">
+                      <span
+                        class:is-determinate={Boolean(backupRestoring && backupRestoreStatus?.totalManga)}
+                        style={backupRestoring && backupRestoreStatus?.totalManga
+                          ? `width:${Math.min(100, Math.round((backupRestoreStatus.mangaProgress / backupRestoreStatus.totalManga) * 100))}%`
+                          : undefined}
+                      ></span>
+                    </div>
+                    <p>
+                      {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_restoring")}
+                      {#if backupRestoring && backupRestoreStatus?.totalManga}
+                        · {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga}
+                      {/if}
+                    </p>
+                  </div>
+                {/if}
                 <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
               </div>
               {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
@@ -6954,7 +7113,21 @@
                                 <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
                               {/if}
                             </div>
-                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                            {#if cluster.selectedCandidate && cluster.selectedCandidate.sourceId !== cluster.orphanSourceId}
+                              <button
+                                class="settings-chip"
+                                class:is-active={isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)}
+                                type="button"
+                                disabled={backupRestoring || backupValidating}
+                                onclick={() => setBackupClusterSelection(cluster.orphanSourceId,
+                                  isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate!.sourceId)
+                                    ? { mode: "preserve" }
+                                    : { mode: "map", sourceId: cluster.selectedCandidate!.sourceId, name: cluster.selectedCandidate!.sourceName, lang: cluster.selectedCandidate!.sourceLang })}
+                              >
+                                {isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
+                              </button>
+                            {/if}
+                            {#if cluster.selectedCandidate?.requiresInstall && (cluster.selectedCandidate.sourceId === cluster.orphanSourceId || isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
                                 class="n-btn n-btn--sm n-btn-ghost"
                                 onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
@@ -6983,7 +7156,22 @@
                                 <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
                               {/if}
                             </div>
-                            {#if cluster.selectedCandidate?.requiresInstall && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
+                            {#if cluster.selectedCandidate}
+                              <button
+                                class="settings-chip"
+                                class:is-active={isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)}
+                                type="button"
+                                onclick={() => setBackupClusterSelection(cluster.orphanSourceId, {
+                                  mode: "map",
+                                  sourceId: cluster.selectedCandidate!.sourceId,
+                                  name: cluster.selectedCandidate!.sourceName,
+                                  lang: cluster.selectedCandidate!.sourceLang,
+                                })}
+                              >
+                                {isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
+                              </button>
+                            {/if}
+                            {#if cluster.selectedCandidate?.requiresInstall && isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
                                 class="n-btn n-btn--sm n-btn-ghost"
                                 onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
@@ -7022,11 +7210,11 @@
                                   </div>
                                   <button
                                     class="settings-chip"
-                                    class:is-active={backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId}
+                                    class:is-active={isBackupSourceMapped(cluster.orphanSourceId, candidate.sourceId)}
                                     type="button"
-                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, candidate.sourceId)}
+                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "map", sourceId: candidate.sourceId, name: candidate.sourceName, lang: candidate.sourceLang })}
                                   >
-                                    {backupReviewSelections[cluster.orphanSourceId] === candidate.sourceId ? $_("settings_inline_selected") : $_("settings_inline_choose")}
+                                    {isBackupSourceMapped(cluster.orphanSourceId, candidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
                                   </button>
                                 </div>
                               {/each}
@@ -7037,11 +7225,20 @@
                                 </div>
                                 <button
                                   class="settings-chip"
-                                  class:is-active={backupReviewSelections[cluster.orphanSourceId] === "skip"}
+                                  class:is-active={!backupReviewSelections[cluster.orphanSourceId] || backupReviewSelections[cluster.orphanSourceId]?.mode === "preserve"}
                                   type="button"
-                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, "skip")}
+                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "preserve" })}
                                 >
-                                  {backupReviewSelections[cluster.orphanSourceId] === "skip" ? $_("settings_inline_selected") : $_("settings_inline_skip")}
+                                  {!backupReviewSelections[cluster.orphanSourceId] || backupReviewSelections[cluster.orphanSourceId]?.mode === "preserve" ? $_("settings_inline_selected") : $_("settings_inline_choose")}
+                                </button>
+                                <button
+                                  class="settings-chip"
+                                  class:is-active={backupReviewSelections[cluster.orphanSourceId]?.mode === "skip"}
+                                  type="button"
+                                  title={$_("ui_exclude")}
+                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "skip" })}
+                                >
+                                  {backupReviewSelections[cluster.orphanSourceId]?.mode === "skip" ? $_("settings_inline_selected") : $_("ui_exclude")}
                                 </button>
                               </div>
                             </div>
@@ -7460,6 +7657,21 @@
   .backup-progress p { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
   .backup-progress__line { height: 3px; overflow: hidden; border-radius: var(--radius-full); background: var(--bg-overlay); }
   .backup-progress__line span { display: block; width: 38%; height: 100%; border-radius: inherit; background: var(--accent-fg); animation: backupProgress 1.2s ease-in-out infinite; }
+  .backup-progress__line span.is-determinate { animation: none; transition: width var(--t-base); }
+  .backup-dependencies { display: grid; gap: 14px; }
+  .backup-dependencies__head { display: flex; align-items: flex-start; gap: 12px; }
+  .backup-dependencies__metrics { display: flex; gap: 7px; flex-wrap: wrap; }
+  .backup-dependencies__metrics span { padding: 6px 9px; border-radius: var(--radius-sm); background: var(--bg-overlay); color: var(--text-muted); font-size: var(--text-xs); }
+  .backup-dependencies__metrics strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
+  .backup-dependencies__list { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 6px; }
+  .backup-dependencies__list div { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-xs); }
+  .backup-dependencies__list span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .backup-plugin-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+  .backup-plugin-strip span { display: inline-flex; align-items: center; gap: 6px; max-width: 190px; padding: 5px 8px; border-radius: var(--radius-full); background: var(--accent-muted); color: var(--accent-fg); font-size: var(--text-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .backup-dependencies__consent { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid var(--border-dim); }
+  .backup-dependencies__consent div { display: grid; gap: 3px; }
+  .backup-dependencies__consent strong { color: var(--text-primary); font-size: var(--text-sm); }
+  .backup-dependencies__consent small { color: var(--text-muted); font-size: var(--text-xs); }
   @keyframes backupProgress { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
   .backup-review { padding: 16px; }
   .backup-review__heading { display: flex; align-items: flex-start; gap: 12px; }

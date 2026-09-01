@@ -1,5 +1,6 @@
 import type {
   AvailableExtensionEntry,
+  NativeSourceRestoreChoice,
   ReconciliationAnalysis,
   ReconciliationCandidate,
   ReconciliationClusterResult,
@@ -10,16 +11,17 @@ import type {
 
 function selectedCandidateForCluster(
   cluster: ReconciliationClusterResult,
-  manualSelections: Record<string, string | "skip">,
+  choices: Record<string, NativeSourceRestoreChoice>,
 ): ReconciliationCandidate | null {
-  if (cluster.status === "exact_resolved" || cluster.status === "auto_reconciled") {
+  const choice = choices[cluster.orphanSourceId];
+  if (choice?.mode === "skip" || choice?.mode === "preserve") return null;
+  if (cluster.status === "exact_resolved" && cluster.selectedCandidate?.sourceId === cluster.orphanSourceId && !choice) {
     return cluster.selectedCandidate;
   }
 
-  if (cluster.status === "needs_review") {
-    const selection = manualSelections[cluster.orphanSourceId];
-    if (!selection || selection === "skip") return null;
-    return cluster.candidates.find((candidate) => candidate.sourceId === selection) ?? null;
+  if (cluster.status === "exact_resolved" || cluster.status === "auto_reconciled" || cluster.status === "needs_review") {
+    if (!choice || choice.mode !== "map") return null;
+    return cluster.candidates.find((candidate) => candidate.sourceId === choice.sourceId) ?? null;
   }
 
   return null;
@@ -40,7 +42,7 @@ function clusterKind(cluster: ReconciliationClusterResult): RestoreReadinessItem
 
 export function buildRestoreReadiness(
   analysis: ReconciliationAnalysis,
-  manualSelections: Record<string, string | "skip">,
+  choices: Record<string, NativeSourceRestoreChoice>,
   inventory: SourceInventoryEntry[],
   availableExtensions: AvailableExtensionEntry[],
 ): RestoreReadinessSummary {
@@ -61,7 +63,7 @@ export function buildRestoreReadiness(
   ];
 
   const items: RestoreReadinessItem[] = allClusters.map((cluster) => {
-    const candidate = selectedCandidateForCluster(cluster, manualSelections);
+    const candidate = selectedCandidateForCluster(cluster, choices);
     const extension = candidate?.extensionPkgName
       ? extensionsByPkg.get(candidate.extensionPkgName) ?? null
       : null;
@@ -75,9 +77,7 @@ export function buildRestoreReadiness(
         clusterKind: clusterKind(cluster),
         selectedCandidate: null,
         extension: null,
-        detail: cluster.status === "needs_review"
-          ? "This cluster still needs an explicit choice or skip before it can be reconciled."
-          : "No confident replacement source is available yet.",
+        detail: choiceForDisplay(cluster.orphanSourceId, choices),
       };
     }
 
@@ -145,6 +145,12 @@ export function buildRestoreReadiness(
     requiresInstallCount: requiresInstall.length,
     unavailableCount: unavailable.length,
     unresolvedCount: unresolved.length,
-    blocksRestore: requiresInstall.length > 0 || unavailable.length > 0,
+    blocksRestore: requiresInstall.length > 0 || unavailable.some((item) => choices[item.orphanSourceId]?.mode === "map"),
   };
+}
+
+function choiceForDisplay(sourceId: string, choices: Record<string, NativeSourceRestoreChoice>): string {
+  return choices[sourceId]?.mode === "skip"
+    ? "Titles from this source will be excluded as requested."
+    : "The original source and its titles will be preserved. Choose a replacement only if you want to reconnect them.";
 }

@@ -13,6 +13,22 @@ import {
 } from "./epigraphBackup";
 
 describe("epigraph unified backup container", () => {
+  it.each([{}, { algorithm: "sha256", entries: {} }, { algorithm: "md5", entries: {} }])("rejects malformed or incomplete checksum documents: %j", async (checksums) => {
+    const built = await buildEpigraphBackupContainer({ payloads: [{ kind: "books", files: [{ path: "library.json", bytes: "{}" }] }] });
+    const zip = await JSZip.loadAsync(built.bytes);
+    zip.file(EPIGRAPH_BACKUP_CHECKSUMS_PATH, JSON.stringify(checksums));
+    const inspected = await inspectEpigraphBackupContainer(await zip.generateAsync({ type: "uint8array" }));
+    expect(inspected.hasErrors).toBe(true);
+  });
+
+  it("rejects malformed manifest payload lists without throwing from inspection", async () => {
+    const built = await buildEpigraphBackupContainer({ payloads: [] });
+    const zip = await JSZip.loadAsync(built.bytes);
+    zip.file(EPIGRAPH_BACKUP_MANIFEST_PATH, JSON.stringify({ ...built.manifest, payloads: {} }));
+    const inspected = await inspectEpigraphBackupContainer(await zip.generateAsync({ type: "uint8array" }));
+    expect(inspected.hasErrors).toBe(true);
+  });
+
   it("builds a canonical .epigraphbk container with manifest, payload registry, and checksums", async () => {
     const built = await buildEpigraphBackupContainer({
       appVersion: "0.0.1",

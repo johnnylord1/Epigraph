@@ -99,20 +99,29 @@ const {
     })),
     loadSettingsStorageRuntimeMock: vi.fn(async () => ({
     parseMihonBackup: vi.fn(async () => ({ trackerIds: [] })),
+    embedMihonExtensionStores: vi.fn((bytes) => bytes),
     buildEpigraphBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
     buildEpigraphRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
     buildEpigraphAppPayload: vi.fn(() => ({})),
     parseEpigraphAppPayload: vi.fn(async () => ({})),
     buildEpigraphBooksSnapshotFromLibraryState: vi.fn((state) => state),
     buildEpigraphBooksPayload: vi.fn(async () => ({})),
-    restoreEpigraphBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
+    parseEpigraphBooksPayload: vi.fn(async () => ({ library: { books: [] } })),
+    restoreEpigraphBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, booksLibraryUi: { activeCategoryId: null, typeFilter: "all", statusFilter: "all", search: "", sortMode: "recentlyAdded", sortDir: "desc" }, issues: [], exportMode: "full" })),
     extractEpigraphMangaPayloadFile: vi.fn(async () => new File([], "backup.tachibk")),
     parseEpigraphMangaPayload: vi.fn(async () => ({ payloadManifest: { requiresRepositories: [] } })),
     buildEpigraphMangaPayload: vi.fn(async () => ({})),
     buildEpigraphNovelsPayload: vi.fn(async () => ({})),
+    parseEpigraphNovelsPayload: vi.fn(async () => ({ snapshot: { entries: [], chapters: [], repositories: [], plugins: [] } })),
     restoreEpigraphNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
     buildLnReaderNovelsBackupZip: vi.fn(async () => new Uint8Array()),
     restoreLnReaderNovelsBackup: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0, restoredNeedsRepositoryCount: 0, restoredNeedsPluginCount: 0 } })),
+    parseLnReaderNovelsBackup: vi.fn(async () => ({
+      entries: [] as Array<{ id: string }>,
+      chapters: [] as Array<{ id: string }>,
+      repositories: [] as Array<{ url: string; name: string }>,
+      plugins: [] as Array<{ id: string; name: string }>,
+    })),
     isLnReaderBackupZip: vi.fn(async () => true),
     extractLnReaderBackupPluginIds: vi.fn(async () => []),
     normalizeNativeMangaBackupBytes: vi.fn((bytes) => bytes),
@@ -411,6 +420,26 @@ describe("Settings", () => {
     expect(screen.getByText("Connected services")).toBeTruthy();
   });
 
+  test("flushes and exports books from the active runtime profile", async () => {
+    const runtime = await loadSettingsStorageRuntimeMock();
+    loadSettingsStorageRuntimeMock.mockClear();
+    loadSettingsStorageRuntimeMock.mockResolvedValue(runtime);
+    const flushSpy = vi.spyOn(store, "flushBookLibraryPersistence").mockResolvedValue();
+    store.runtimeResolvedLocalProfileId = "test";
+
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "System" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Books only" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
+
+    await waitFor(() => {
+      expect(flushSpy).toHaveBeenCalledTimes(1);
+      expect(runtime.loadBookLibraryState).toHaveBeenCalledWith({ profileId: "test" });
+    });
+    flushSpy.mockRestore();
+  });
+
   test("uses bundled branding for the native Hardcover tracker", async () => {
     renderSettings();
     await fireEvent.click(screen.getByRole("button", { name: "Content & Integrations" }));
@@ -526,6 +555,17 @@ describe("Settings", () => {
   });
 
   test("recognizes an LNReader ZIP selected through the restore file input", async () => {
+    const storageRuntime = await loadSettingsStorageRuntimeMock();
+    storageRuntime.parseLnReaderNovelsBackup.mockResolvedValue({
+      entries: Array.from({ length: 9 }, (_, index) => ({ id: `novel-${index}` })),
+      chapters: Array.from({ length: 6936 }, (_, index) => ({ id: `chapter-${index}` })),
+      repositories: [
+        { url: "https://repo-one.example/plugins.min.json", name: "Repository one" },
+        { url: "https://repo-two.example/plugins.min.json", name: "Repository two" },
+      ],
+      plugins: Array.from({ length: 19 }, (_, index) => ({ id: `plugin-${index}`, name: `Plugin ${index}` })),
+    });
+    loadSettingsStorageRuntimeMock.mockResolvedValue(storageRuntime);
     store.runtimeSettingsTab = "storage";
     store.runtimeResolvedLocalProfileId = "test";
     const { container } = renderSettings();
@@ -540,8 +580,31 @@ describe("Settings", () => {
     await fireEvent.change(input!, { target: { files: [backup] } });
 
     await waitFor(() => expect(screen.getByText(/Detected format: LNReader ZIP/i)).toBeTruthy());
+    await waitFor(() => {
+      const preview = container.querySelector("[data-backup-dependencies]");
+      expect(preview?.textContent).toContain("9 titles");
+      expect(preview?.textContent).toContain("6936 chapters");
+      expect(preview?.textContent).toContain("2 repositories");
+      expect(preview?.textContent).toContain("19 extensions");
+    });
     await fireEvent.click(screen.getByRole("switch", { name: "Confirm current profile restore" }));
+    expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Review & approve" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false));
+
+    let rejectRestore!: (error: Error) => void;
+    storageRuntime.provisionEpigraphNovelDependencies.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectRestore = reject;
+    }));
+    const restoreButton = screen.getByRole("button", { name: "LNReader novels restore" });
+    await fireEvent.click(restoreButton);
+    await waitFor(() => expect(container.querySelector(".backup-progress")?.textContent).toMatch(/Restoring/i));
+    expect(restoreButton.hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(rejectRestore).toBeTypeOf("function"));
+    rejectRestore(new Error("Repository is temporarily unavailable. Please retry."));
+    await waitFor(() => expect(screen.getByText("Repository is temporarily unavailable. Please retry.")).toBeTruthy());
+    expect(container.querySelector(".backup-progress")).toBeNull();
+    expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false);
   });
 
   test("rebinds the appearance pane theme editor affordances and help action", async () => {

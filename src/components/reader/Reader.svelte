@@ -13,13 +13,16 @@
   import { open } from "@tauri-apps/plugin-shell";
   import { getServerAuthHeader, getServerUrl, gql, thumbUrl } from "../../lib/client";
   import { acquireResolvedMediaUrl, preloadBlobUrls, resetImageCache, resolvedImage, warmResolvedMediaUrl } from "../../lib/imageCache";
-  import { MARK_CHAPTER_READ, ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
+  import { ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { fetchSourceChapterPages } from "../../lib/manga/runtime";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
   import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
   import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
+  import { registerReaderCloseGuard } from "../../lib/reader/runtime";
+  import type { MangaChapterProgress } from "../../lib/reader/mangaProgress";
+  import { getMangaProgressForScope } from "../../lib/reader/mangaProgressRuntime";
   import { setReading } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -241,6 +244,41 @@
   let scrollTrackingRafId: number | null = null;
   let preloadedChapterIds = new Set<number>();
   let autoAppendedChapterIds = new Set<number>();
+  let loadedProgressChapterId: number | null = null;
+  const seededProgressChapters = new Set<number>();
+  const activeChapterId = $derived(store.activeChapter?.id ?? null);
+
+  const progressPersister = getMangaProgressForScope(
+    store.runtimeResolvedLocalProfileId ? `profile:${store.runtimeResolvedLocalProfileId}` : `server:${getServerUrl()}`,
+  );
+
+  function applyLocalChapterProgress(progress: MangaChapterProgress) {
+    const patch = (chapter: typeof store.activeChapter) => chapter && chapter.id === progress.chapterId
+      && ((chapter.lastPageRead ?? 0) < progress.lastPageRead || (!chapter.isRead && progress.isRead))
+      ? {
+          ...chapter,
+          lastPageRead: Math.max(chapter.lastPageRead ?? 0, progress.lastPageRead),
+          isRead: chapter.isRead || progress.isRead,
+        }
+      : chapter;
+    const nextList = store.activeChapterList.map((chapter) => patch(chapter)!);
+    if (nextList.some((chapter, index) => chapter !== store.activeChapterList[index])) store.activeChapterList = nextList;
+    store.activeChapter = patch(store.activeChapter);
+  }
+
+  function recordChapterProgress(chapterId: number, visiblePage: number, completed = false) {
+    const chapter = store.activeChapterList.find((entry) => entry.id === chapterId)
+      ?? (store.activeChapter?.id === chapterId ? store.activeChapter : null);
+    if (!seededProgressChapters.has(chapterId)) {
+      progressPersister.seed(chapterId, chapter?.lastPageRead ?? 0, chapter?.isRead ?? false);
+      seededProgressChapters.add(chapterId);
+    }
+    // Mihon/Suwayomi persist Page.index (zero-based), while the Epigraph HUD and
+    // bookmarks intentionally display human page numbers (one-based).
+    const progress = progressPersister.record(chapterId, Math.max(0, Math.trunc(visiblePage) - 1), Boolean(chapter?.isRead || completed));
+    applyLocalChapterProgress(progress);
+    return progress;
+  }
 
   function scheduleResumeDismiss() {
     if (resumeTimer)     clearTimeout(resumeTimer);
@@ -497,8 +535,8 @@
   });
 
   $effect(() => {
-    const ch = store.activeChapter;
-    if (ch) untrack(() => loadChapter(ch.id));
+    const id = activeChapterId;
+    if (id != null) untrack(() => loadChapter(id));
   });
 
   $effect(() => {
@@ -529,6 +567,10 @@
   });
 
   async function loadChapter(id: number) {
+    if (loadedProgressChapterId != null && loadedProgressChapterId !== id) {
+      await progressPersister.flush(loadedProgressChapterId).catch(console.error);
+    }
+    loadedProgressChapterId = id;
     readerSessionGeneration += 1;
     abortCtrl?.abort();
     const ctrl = new AbortController();
@@ -548,8 +590,22 @@
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
 
+    const chapterProgress = store.activeChapterList.find((chapter) => chapter.id === id)
+      ?? (store.activeChapter?.id === id ? store.activeChapter : null);
+    if (!seededProgressChapters.has(id)) {
+      progressPersister.seed(id, chapterProgress?.lastPageRead ?? 0, chapterProgress?.isRead ?? false);
+      seededProgressChapters.add(id);
+    }
+    const savedProgress = progressPersister.peek(id);
+    if (savedProgress) applyLocalChapterProgress(savedProgress);
     const bookmark  = store.bookmarks.find(b => b.chapterId === id);
-    const resumeTo  = bookmark ? bookmark.pageNumber : 0;
+    const persistedResumePage = (lastPageRead: number | null | undefined) =>
+      typeof lastPageRead === "number" && lastPageRead > 0 ? Math.trunc(lastPageRead) + 1 : 0;
+    const resumeTo  = Math.max(
+      bookmark?.pageNumber ?? 0,
+      persistedResumePage(chapterProgress?.lastPageRead),
+      persistedResumePage(savedProgress?.lastPageRead),
+    );
     resumePage      = resumeTo > 1 ? resumeTo : 0;
     resumeDismissed  = false;
     resumeVisible    = resumeTo > 1;
@@ -588,8 +644,8 @@
   }
 
   $effect(() => {
-    if (style === "longstrip" && store.pageUrls.length && store.activeChapter) {
-      const ch       = store.activeChapter;
+    if (style === "longstrip" && store.pageUrls.length && activeChapterId !== null) {
+      const ch       = untrack(() => store.activeChapter!);
       const urls     = store.pageUrls;
       const targetPg = untrack(() => resumePage);
       appending        = false;
@@ -804,7 +860,19 @@
 
   async function exitReader() {
     await closeReaderWebView();
+    try { await flushReaderProgress(); }
+    catch (saveError) { reportProgressSaveError(saveError); return; }
     closeReader();
+  }
+
+  async function flushReaderProgress() {
+    try { await progressPersister.flushAll(); }
+    catch { progressPersister.checkpoint(); }
+  }
+
+  function reportProgressSaveError(saveError: unknown) {
+    error = "Reading progress could not be saved. Keep the reader open and try closing again.";
+    console.error(saveError);
   }
 
   function setupScrollTracking(): () => void {
@@ -813,6 +881,7 @@
 
     function processScroll() {
       scrollTrackingRafId = null;
+      if (loading || !hasNavigated) return;
       const imgs = scrollEl.querySelectorAll<HTMLElement>("img[data-local-page]");
       if (!imgs.length) return;
       const containerTop = scrollEl.getBoundingClientRect().top;
@@ -909,19 +978,21 @@
   $effect(() => {
     const ch = displayChapter ?? store.activeChapter;
     const autoBookmark = store.settings.autoBookmark ?? true;
-    if (ch && lastPage && store.activeManga) {
+    if (!loading && ch && lastPage && store.activeManga) {
       const chapterId   = ch.id;
       const chapterName = ch.name;
       const mangaId     = store.activeManga.id;
       const mangaTitle  = store.activeManga.title;
       const thumb       = store.activeManga.thumbnailUrl;
-      const pageNum     = store.pageNumber;
-      const atLast      = store.pageNumber === lastPage;
-      if (pageNum > 1) hasNavigated = true;
+      const pageNum     = style === "double"
+        ? Math.max(...(pageGroups.find((group) => group.includes(store.pageNumber)) ?? [store.pageNumber]))
+        : store.pageNumber;
+      const atLast      = pageNum >= lastPage;
       untrack(() => {
         if (!hasNavigated) return;
         if (style === "longstrip" && visibleChapterId && chapterId !== visibleChapterId) return;
         addHistory({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, readAt: Date.now() });
+        recordChapterProgress(chapterId, pageNum);
         if (autoBookmark) {
           addBookmark({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, pageNumber: pageNum });
         }
@@ -932,8 +1003,9 @@
 
   function markChapterRead(id: number) {
     if (markedRead.has(id)) return;
-    markedRead.add(id);
     const chapter = store.activeChapterList.find(c => c.id === id) ?? store.activeChapter;
+    if (!chapter || chapter.isRead) return;
+    markedRead.add(id);
     const pages   = chapter?.pageCount ?? store.pageUrls.length ?? 15;
     const minutes = Math.max(1, Math.round(pages * AVG_MIN_PER_PAGE));
     if (store.activeManga && chapter) {
@@ -942,11 +1014,16 @@
         true, minutes,
       );
     }
-    gql(MARK_CHAPTER_READ, { id, isRead: true })
+    const lastVisiblePage = Math.max(
+      (chapter.lastPageRead ?? 0) > 0 ? (chapter.lastPageRead ?? 0) + 1 : 0,
+      chapter.pageCount ?? 0,
+      id === (displayChapter ?? store.activeChapter)?.id ? store.pageNumber : 0,
+    );
+    recordChapterProgress(id, lastVisiblePage, true);
+    progressPersister.flush(id)
       .then(async () => {
         if (store.activeManga) {
-          const updated = store.activeChapterList.map(c => c.id === id ? { ...c, isRead: true } : c);
-          await checkAndMarkCompleted(store.activeManga.id, updated);
+          await checkAndMarkCompleted(store.activeManga.id, store.activeChapterList);
         }
       })
       .catch(e => { markedRead.delete(id); console.error(e); });
@@ -954,7 +1031,10 @@
 
   function maybeMarkCurrentRead() {
     const ch = displayChapter ?? store.activeChapter;
-    if (ch && markOnNext) markChapterRead(ch.id);
+    const visiblePage = style === "double"
+      ? Math.max(...(pageGroups.find((group) => group.includes(store.pageNumber)) ?? [store.pageNumber]))
+      : store.pageNumber;
+    if (ch && markOnNext && store.settings.autoMarkRead && !loading && hasNavigated && visiblePage >= lastPage) markChapterRead(ch.id);
   }
 
   function advanceGroup(forward: boolean) {
@@ -981,6 +1061,7 @@
 
   function goForward() {
     if (loading) return;
+    hasNavigated = true;
     if (style === "longstrip") {
       if (adjacent.next) { maybeMarkCurrentRead(); openReader(adjacent.next, store.activeChapterList); }
       return;
@@ -999,6 +1080,7 @@
 
   function goBack() {
     if (loading) return;
+    hasNavigated = true;
     if (style === "longstrip") {
       if (adjacent.prev) openReader(adjacent.prev, store.activeChapterList);
       return;
@@ -1015,6 +1097,8 @@
   const goPrev = $derived(rtl ? goForward : goBack);
 
   function jumpToPage(page: number) {
+    if (loading) return;
+    hasNavigated = true;
     if (style === "longstrip") {
       const chId = visibleChapterId ?? store.activeChapter?.id;
       const target = containerEl?.querySelector<HTMLImageElement>(`img[data-local-page="${page}"][data-chapter="${chId}"]`);
@@ -1104,9 +1188,14 @@
   });
 
   function onWheel(e: WheelEvent) {
+    if (!loading && !e.ctrlKey && containerEl?.contains(e.target as Node)) hasNavigated = true;
     if (!e.ctrlKey) return;
     e.preventDefault();
     adjustZoom(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+  }
+
+  function noteScrollIntent() {
+    if (!loading) hasNavigated = true;
   }
 
   function onSliderInput(e: Event) {
@@ -1129,8 +1218,8 @@
     if      (matchesKeybind(e, kb.exitReader))             { e.preventDefault(); exitReader(); }
     else if (matchesKeybind(e, kb.pageRight))              { e.preventDefault(); goForward(); }
     else if (matchesKeybind(e, kb.pageLeft))               { e.preventDefault(); goBack(); }
-    else if (matchesKeybind(e, kb.firstPage))              { e.preventDefault(); store.pageNumber = 1; }
-    else if (matchesKeybind(e, kb.lastPage))               { e.preventDefault(); store.pageNumber = lastPage; }
+    else if (matchesKeybind(e, kb.firstPage))              { e.preventDefault(); jumpToPage(1); }
+    else if (matchesKeybind(e, kb.lastPage))               { e.preventDefault(); jumpToPage(style === "double" ? pageGroups.length : lastPage); }
     else if (matchesKeybind(e, kb.chapterRight)) {
       e.preventDefault();
       const list = store.activeChapterList;
@@ -1174,12 +1263,15 @@
   onMount(() => {
     showUi();
     const unregisterCommands = registerReaderCommandHandler("manga", onKey);
+    const unregisterCloseGuard = registerReaderCloseGuard(flushReaderProgress, reportProgressSaveError);
     window.addEventListener("wheel", onWheel, { passive: false });
+    const flushProgress = () => { void progressPersister.flushAll().catch(console.error); };
+    flushProgress();
+    window.addEventListener("online", flushProgress);
+    window.addEventListener("pagehide", flushProgress);
+    window.addEventListener("beforeunload", flushProgress);
     containerEl?.focus({ preventScroll: true });
     refreshReaderWebViewState().catch(() => {});
-    if (store.activeChapter) {
-      void loadChapter(store.activeChapter.id);
-    }
 
     let readerWebViewUnlisten: (() => void) | null = null;
     let cleanedUp = false;
@@ -1210,7 +1302,11 @@
       if (resumeTimer) clearTimeout(resumeTimer);
       if (resumeFadeTimer) clearTimeout(resumeFadeTimer);
       unregisterCommands();
+      unregisterCloseGuard();
       window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pagehide", flushProgress);
+      window.removeEventListener("beforeunload", flushProgress);
+      window.removeEventListener("online", flushProgress);
       cleanupScroll();
       ro.disconnect();
       resetReaderSessionCaches();
@@ -1218,6 +1314,7 @@
   });
 
   onDestroy(() => {
+    void progressPersister.flushAll().catch(console.error);
     closeReaderWebView().catch(() => {});
     clearOfflinePages();
     resetReaderSessionCaches();
@@ -1459,8 +1556,12 @@
     role="presentation"
     tabindex="-1"
     onclick={handleTap}
+    onpointerdown={noteScrollIntent}
     onwheel={(e) => { if (e.ctrlKey) e.preventDefault(); }}
-    onkeydown={(e) => { if (e.key === " " && style === "longstrip") { e.preventDefault(); containerEl?.scrollBy({ top: containerEl.clientHeight * 0.85, behavior: "smooth" }); } }}
+    onkeydown={(e) => {
+      if (style === "longstrip" && [" ", "ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"].includes(e.key)) noteScrollIntent();
+      if (e.key === " " && style === "longstrip") { e.preventDefault(); containerEl?.scrollBy({ top: containerEl.clientHeight * 0.85, behavior: "smooth" }); }
+    }}
   >
     {#if loading}
       <div class="center-overlay"><CircleNotch size={20} weight="light" class="anim-spin" style="color:var(--text-faint)" /></div>

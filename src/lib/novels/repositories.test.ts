@@ -9,6 +9,7 @@ import {
   extractNovelRepositoryRefreshMetadata,
   filterNovelCatalogEntriesByLanguage,
   parseNovelCatalogEntries,
+  resolveNovelRepositoryInputUrl,
   validateNovelRepositoryUrl,
 } from "./repositories";
 
@@ -28,6 +29,17 @@ describe("novel repository services", () => {
 
     expect(validateNovelRepositoryUrl("ftp://example.com/plugins.min.json").ok).toBe(false);
     expect(validateNovelRepositoryUrl("https://example.com/plugins.json").ok).toBe(false);
+  });
+
+  it("resolves the LNReader GitHub links users actually copy", () => {
+    expect(resolveNovelRepositoryInputUrl("https://github.com/lnreader/lnreader-plugins"))
+      .toBe("https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json");
+    expect(resolveNovelRepositoryInputUrl("https://github.com/johnnylord1/lnreader-plugins/tree/plugins/v3.0.0"))
+      .toBe("https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json");
+    expect(resolveNovelRepositoryInputUrl("https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/portuguese/mahoureader.js"))
+      .toBe("https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json");
+    expect(resolveNovelRepositoryInputUrl("https://plugins.example.com/plugins.min.json"))
+      .toBe("https://plugins.example.com/plugins.min.json");
   });
 
   it("creates normalized repository records without trusted-by-default behavior", () => {

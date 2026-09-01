@@ -288,10 +288,11 @@ The desktop owns the complete data-movement workflow:
 - Unified backup containers with checksums, format detection, audit-only mode,
   restore planning, sandboxed writes, corruption rejection, and explicit
   reconciliation of library identity/progress/category state.
-- Unified exports record configured manga extension stores. During an approved
-  restore, Epigraph adds missing stores without removing the current ones,
-  refreshes their catalogs, installs available required extensions, and waits
-  briefly for Suwayomi to publish the restored sources before writing Library.
+- Unified exports record configured manga extension stores. The restore review
+  shows every discovered dependency first; only after explicit approval does
+  Epigraph add missing stores without removing current ones, refresh catalogs,
+  install available required extensions, and wait for Suwayomi to publish the
+  restored sources before writing Library.
 - Novel and LNReader restores use the same dependency-first sequence for
   repositories and plugins. Native LNReader ZIPs are resolved from the
   installed-plugin metadata in `Setting.json`: plugin artifact URLs identify
@@ -299,14 +300,19 @@ The desktop owns the complete data-movement workflow:
   plugin is installed only from its recorded repository. Dependencies that
   disappeared from a catalog are reported as warnings while the recoverable
   library metadata is preserved.
-- Native Tachiyomi/Mihon `.tachibk` files contain source identities but no
-  extension-store URLs or APKs. On a clean profile, recovery therefore remains
-  catalog-assisted rather than inventing a repository; current `index.pb`
-  stores are supported and their JSON companion is used for source matching.
+- Modern Mihon `.tachibk` files may contain optional `backupExtensionStores`
+  metadata in protobuf field 106. Epigraph preserves its URL, name, badge,
+  signing key, contact metadata, and unknown fields, but never trusts or writes
+  a store without user approval. Current J2K/Yokai fixtures omit that field and
+  no native backup carries APK payloads, so recovery remains catalog-assisted
+  without inventing a repository. Unavailable source IDs are preserved unless
+  the user explicitly maps or skips them.
 - J2K library counts follow its Kotlin serialization default: an omitted
   `favorite` field means `true`, while explicit `false` entries represent read
   history outside the Library. Those history records remain in the restored
-  payload but are excluded from Library reconciliation and title counts.
+  payload but are excluded from Library title counts. The certified J2K fixture
+  restores 686 Library titles plus 2,198 history entries; Yokai restores 684
+  Library titles plus 2,109 history entries.
 - Separate manga, book, novel, application, and provider bridges so a partial
   restore cannot silently overwrite an unrelated state domain.
 

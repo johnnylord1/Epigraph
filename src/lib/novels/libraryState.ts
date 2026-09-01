@@ -578,30 +578,70 @@ export function markNovelChapterRead(
     chapterTitle: string;
   },
 ): PersistedNovelLibraryState {
-  const totalChapters = state.chapters.filter((entry) => entry.novelId === input.novelId).length;
-  let readChapters = 0;
-  const nextChapters = state.chapters.map((entry) => {
-    if (entry.novelId !== input.novelId) {
-      return entry;
-    }
-
-    const nextEntry = entry.id === input.chapterId
-      ? { ...entry, unread: false }
-      : entry;
-    if (!nextEntry.unread) {
-      readChapters += 1;
-    }
-    return nextEntry;
+  return updateNovelReadingProgress(state, {
+    ...input,
+    chapterProgress: 1,
+    completed: true,
   });
+}
 
-  const progressPercent = totalChapters > 0 ? readChapters / totalChapters : 0;
-  const updatedAt = Date.now();
+export function createNovelScrollLocator(chapterId: string, chapterProgress: number): string {
+  const normalized = Math.max(0, Math.min(1, chapterProgress));
+  return `scroll:${encodeURIComponent(chapterId)}:${normalized.toFixed(6)}`;
+}
+
+export function parseNovelScrollLocator(
+  locator: string | null | undefined,
+  chapterId: string,
+): number | null {
+  if (!locator) return null;
+  if (locator === chapterId) return 0;
+  if (!locator.startsWith("scroll:")) return null;
+  const separator = locator.lastIndexOf(":");
+  if (separator <= "scroll:".length) return null;
+  try {
+    if (decodeURIComponent(locator.slice("scroll:".length, separator)) !== chapterId) return null;
+  } catch {
+    return null;
+  }
+  const value = Number(locator.slice(separator + 1));
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : null;
+}
+
+export function updateNovelReadingProgress(
+  state: PersistedNovelLibraryState,
+  input: {
+    novelId: string;
+    chapterId: string;
+    chapterTitle: string;
+    chapterProgress: number;
+    completed?: boolean;
+    updatedAt?: number;
+  },
+): PersistedNovelLibraryState {
+  const chapters = getNovelLibraryChapters(state, input.novelId);
+  const chapterIndex = chapters.findIndex((entry) => entry.id === input.chapterId);
+  if (chapterIndex < 0 || chapters.length === 0) return state;
+
+  const currentProgress = getNovelProgressEntry(state, input.novelId);
+  const previousFraction = currentProgress?.chapterId === input.chapterId
+    ? parseNovelScrollLocator(currentProgress.locator, input.chapterId) ?? 0
+    : 0;
+  const requestedFraction = Math.max(0, Math.min(1, input.chapterProgress));
+  const reachesEnd = input.completed === true || requestedFraction >= 0.95;
+  const chapterProgress = reachesEnd ? 1 : Math.max(previousFraction, requestedFraction);
+  const progressPercent = (chapterIndex + chapterProgress) / chapters.length;
+  const updatedAt = input.updatedAt ?? Date.now();
+  const locator = createNovelScrollLocator(input.chapterId, chapterProgress);
+  const nextChapters = state.chapters.map((entry) => entry.id === input.chapterId && reachesEnd
+    ? { ...entry, unread: false }
+    : entry);
   const progressEntry: EpigraphNovelProgressEntry = {
     novelId: input.novelId,
     chapterId: input.chapterId,
     chapterTitle: input.chapterTitle,
     progressPercent,
-    locator: input.chapterId,
+    locator,
     updatedAt,
   };
 
@@ -609,7 +649,7 @@ export function markNovelChapterRead(
     novelId: input.novelId,
     chapterId: input.chapterId,
     chapterTitle: input.chapterTitle,
-    locator: input.chapterId,
+    locator,
     readAt: updatedAt,
   };
 

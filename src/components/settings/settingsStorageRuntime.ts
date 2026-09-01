@@ -2,20 +2,24 @@ export const SETTINGS_EPIGRAPH_BACKUP_EXTENSION = ".epigraphbk" as const;
 
 export type SettingsStorageRuntime = {
   parseMihonBackup: typeof import("../../lib/backup/mihonBackup").parseMihonBackup;
+  embedMihonExtensionStores: typeof import("../../lib/backup/mihonBackup").embedMihonExtensionStores;
   buildEpigraphBackupContainer: typeof import("../../lib/backup/epigraphBackup").buildEpigraphBackupContainer;
   buildEpigraphRestorePlan: typeof import("../../lib/backup/epigraphRestorePlanner").buildEpigraphRestorePlan;
   buildEpigraphAppPayload: typeof import("../../lib/backup/appBackup").buildEpigraphAppPayload;
   parseEpigraphAppPayload: typeof import("../../lib/backup/appBackup").parseEpigraphAppPayload;
   buildEpigraphBooksSnapshotFromLibraryState: typeof import("../../lib/backup/booksBackup").buildEpigraphBooksSnapshotFromLibraryState;
   buildEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").buildEpigraphBooksPayload;
+  parseEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").parseEpigraphBooksPayload;
   restoreEpigraphBooksPayload: typeof import("../../lib/backup/booksBackup").restoreEpigraphBooksPayload;
   extractEpigraphMangaPayloadFile: typeof import("../../lib/backup/mangaBackup").extractEpigraphMangaPayloadFile;
   parseEpigraphMangaPayload: typeof import("../../lib/backup/mangaBackup").parseEpigraphMangaPayload;
   buildEpigraphMangaPayload: typeof import("../../lib/backup/mangaBackup").buildEpigraphMangaPayload;
   buildEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").buildEpigraphNovelsPayload;
+  parseEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").parseEpigraphNovelsPayload;
   restoreEpigraphNovelsPayload: typeof import("../../lib/backup/novelsBackup").restoreEpigraphNovelsPayload;
   buildLnReaderNovelsBackupZip: typeof import("../../lib/backup/lnreaderBackup").buildLnReaderNovelsBackupZip;
   restoreLnReaderNovelsBackup: typeof import("../../lib/backup/lnreaderBackup").restoreLnReaderNovelsBackup;
+  parseLnReaderNovelsBackup: typeof import("../../lib/backup/lnreaderBackup").parseLnReaderNovelsBackup;
   isLnReaderBackupZip: typeof import("../../lib/backup/lnreaderBackup").isLnReaderBackupZip;
   extractLnReaderBackupPluginIds: typeof import("../../lib/backup/lnreaderBackup").extractLnReaderBackupPluginIds;
   normalizeNativeMangaBackupBytes: typeof import("../../lib/backup/mangaNativeFormat").normalizeNativeMangaBackupBytes;
@@ -92,20 +96,24 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       novelLibraryState,
     ]) => ({
       parseMihonBackup: mihonBackup.parseMihonBackup,
+      embedMihonExtensionStores: mihonBackup.embedMihonExtensionStores,
       buildEpigraphBackupContainer: epigraphBackup.buildEpigraphBackupContainer,
       buildEpigraphRestorePlan: restorePlanner.buildEpigraphRestorePlan,
       buildEpigraphAppPayload: appBackup.buildEpigraphAppPayload,
       parseEpigraphAppPayload: appBackup.parseEpigraphAppPayload,
       buildEpigraphBooksSnapshotFromLibraryState: booksBackup.buildEpigraphBooksSnapshotFromLibraryState,
       buildEpigraphBooksPayload: booksBackup.buildEpigraphBooksPayload,
+      parseEpigraphBooksPayload: booksBackup.parseEpigraphBooksPayload,
       restoreEpigraphBooksPayload: booksBackup.restoreEpigraphBooksPayload,
       extractEpigraphMangaPayloadFile: mangaBackup.extractEpigraphMangaPayloadFile,
       parseEpigraphMangaPayload: mangaBackup.parseEpigraphMangaPayload,
       buildEpigraphMangaPayload: mangaBackup.buildEpigraphMangaPayload,
       buildEpigraphNovelsPayload: novelsBackup.buildEpigraphNovelsPayload,
+      parseEpigraphNovelsPayload: novelsBackup.parseEpigraphNovelsPayload,
       restoreEpigraphNovelsPayload: novelsBackup.restoreEpigraphNovelsPayload,
       buildLnReaderNovelsBackupZip: lnreaderBackup.buildLnReaderNovelsBackupZip,
       restoreLnReaderNovelsBackup: lnreaderBackup.restoreLnReaderNovelsBackup,
+      parseLnReaderNovelsBackup: lnreaderBackup.parseLnReaderNovelsBackup,
       isLnReaderBackupZip: lnreaderBackup.isLnReaderBackupZip,
       extractLnReaderBackupPluginIds: lnreaderBackup.extractLnReaderBackupPluginIds,
       normalizeNativeMangaBackupBytes: mangaNativeFormat.normalizeNativeMangaBackupBytes,

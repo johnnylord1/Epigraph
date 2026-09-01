@@ -1777,9 +1777,16 @@ class Store {
     }
 
     // ── 2. Append to the read log (only on completion) ────────────────────
-    // This is append-only — every completed chapter read lands here,
-    // including re-reads. We cap at 5 000 to keep storage bounded.
-    if (completed) {
+    // Completed re-reads remain valid events, but the same consecutive completion
+    // can be emitted by the final-page effect and reader teardown. Count it once.
+    const latestCompletion = this.readLog[this.readLog.length - 1];
+    const isRepeatedCompletion = Boolean(
+      completed
+      && latestCompletion?.mangaId === entry.mangaId
+      && latestCompletion?.chapterId === entry.chapterId,
+    );
+    const recordsCompletion = completed && !isRepeatedCompletion;
+    if (recordsCompletion) {
       const logEntry: ReadLogEntry = {
         mangaId:   entry.mangaId,
         chapterId: entry.chapterId,
@@ -1789,12 +1796,14 @@ class Store {
       this.readLog = [...this.readLog, logEntry].slice(-5000);
     }
 
+    // Opening a chapter or moving inside it updates Continue reading only. Reading
+    // totals and streaks change after an actual, non-duplicate completion.
+    if (!recordsCompletion) return;
+
     // ── 3. Recompute stats from the read log ──────────────────────────────
     // Use the log as ground truth so stats are always accurate even after
     // history is cleared or entries are back-filled.
-    const log = completed
-      ? [...this.readLog] // already updated above
-      : this.readLog;
+    const log = [...this.readLog];
 
     const uniqueChapters = new Set(log.map(e => e.chapterId));
     const uniqueManga    = new Set(log.map(e => e.mangaId));
@@ -1975,6 +1984,12 @@ class Store {
 
   getBookProgress(bookId: string): BookProgress | undefined {
     return this.bookProgress.find(progress => progress.bookId === bookId);
+  }
+
+  flushBookLibraryPersistence(): Promise<void> {
+    if (!this.booksStateHydrated || !this.booksLibraryHydrated) return Promise.resolve();
+    this.booksStatePersistQueued = true;
+    return this.flushPersistBooksLibraryState();
   }
 
   addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) {
@@ -2717,6 +2732,7 @@ export function upsertBook(entry: BookEntry)                             { store
 export function removeBook(bookId: string)                              { store.removeBook(bookId); }
 export function setBookProgress(next: BookProgress)                     { store.setBookProgress(next); }
 export function getBookProgress(bookId: string)                         { return store.getBookProgress(bookId); }
+export function flushBookLibraryPersistence()                          { return store.flushBookLibraryPersistence(); }
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }
 export function removeBookBookmark(bookId: string)                      { store.removeBookBookmark(bookId); }
 export function replaceBooksState(snapshot: BooksRestoreHydrationInput) { store.replaceBooksState(snapshot); }

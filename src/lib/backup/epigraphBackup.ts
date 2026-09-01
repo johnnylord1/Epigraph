@@ -404,7 +404,7 @@ async function readJsonFile<T>(zip: JSZip, path: string): Promise<T | null> {
 export async function inspectEpigraphBackupContainer(
   bytes: Uint8Array | ArrayBuffer,
 ): Promise<InspectedEpigraphBackupContainer> {
-  const zip = await JSZip.loadAsync(toUint8Array(bytes));
+  const zip = await JSZip.loadAsync(toUint8Array(bytes), { checkCRC32: true });
   const issues: EpigraphBackupIssue[] = [];
   const payloadManifests: Record<string, EpigraphBackupPayloadManifest> = {};
 
@@ -429,6 +429,11 @@ export async function inspectEpigraphBackupContainer(
 
   try {
     manifest = await readJsonFile<EpigraphBackupManifest>(zip, EPIGRAPH_BACKUP_MANIFEST_PATH);
+    if (!manifest || !Array.isArray(manifest.payloads)
+      || manifest.payloads.some((payload) => !payload || typeof payload.kind !== "string" || typeof payload.manifestPath !== "string" || typeof payload.payloadRoot !== "string")) {
+      manifest = null;
+      throw new Error("Backup manifest has an invalid payload list.");
+    }
   } catch (error) {
     pushIssue(issues, {
       level: "error",
@@ -447,6 +452,10 @@ export async function inspectEpigraphBackupContainer(
         message: "The Epigraph backup container is missing checksums/sha256.json.",
         path: EPIGRAPH_BACKUP_CHECKSUMS_PATH,
       });
+    } else if (checksums.algorithm !== "sha256" || !checksums.entries || typeof checksums.entries !== "object"
+      || Array.isArray(checksums.entries) || Object.values(checksums.entries).some((value) => typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value))) {
+      checksums = null;
+      throw new Error("Backup checksum document is invalid.");
     }
   } catch (error) {
     pushIssue(issues, {
@@ -489,6 +498,11 @@ export async function inspectEpigraphBackupContainer(
         continue;
       }
 
+      if (payload.payloadRoot !== registry.rootPath || payload.manifestPath !== registry.manifestPath) {
+        pushIssue(issues, { level: "error", code: "invalid-payload-manifest", message: `Invalid path for ${payload.kind} payload.`, payloadKind: payload.kind });
+        continue;
+      }
+
       if (payload.payloadVersion > registry.currentVersion) {
         pushIssue(issues, {
           level: "warning",
@@ -524,6 +538,10 @@ export async function inspectEpigraphBackupContainer(
           continue;
         }
 
+        if (payloadManifest.kind !== payload.kind || !Array.isArray(payloadManifest.files)) {
+          throw new Error(`Invalid file list for ${payload.kind} payload.`);
+        }
+
         payloadManifests[payload.kind] = payloadManifest;
 
         for (const file of payloadManifest.files) {
@@ -551,6 +569,11 @@ export async function inspectEpigraphBackupContainer(
   }
 
   if (checksums?.entries) {
+    for (const entry of Object.values(zip.files)) {
+      if (!entry.dir && entry.name !== EPIGRAPH_BACKUP_CHECKSUMS_PATH && !Object.hasOwn(checksums.entries, entry.name)) {
+        pushIssue(issues, { level: "error", code: "checksum-missing", message: `Backup file has no checksum: ${entry.name}.`, path: entry.name });
+      }
+    }
     for (const [path, expectedSha] of Object.entries(checksums.entries)) {
       const entry = zip.file(path);
       if (!entry) {

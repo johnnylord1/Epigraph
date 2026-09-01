@@ -2027,6 +2027,46 @@ mod tests {
     use super::*;
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
+    #[test]
+    fn book_storage_names_reject_paths_devices_and_alternate_streams() {
+        for id in ["../../escape", "..\\escape", "C:\\escape", "CON", "book:stream", "", ".", "book."] {
+            assert!(validated_book_filename(id, "epub").is_err(), "accepted {id}");
+        }
+        for ext in ["../../exe", "pdf:stream", "", "pdf\\escape"] {
+            assert!(validated_book_filename("book-123", ext).is_err(), "accepted {ext}");
+        }
+        assert_eq!(validated_book_filename("book-123", ".EPUB").unwrap(), "book-123.epub");
+    }
+
+    #[test]
+    fn book_cover_bytes_must_match_a_supported_image_format() {
+        assert!(validate_book_cover_bytes(b"not an image", "png").is_err());
+
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+            .unwrap();
+        assert!(validate_book_cover_bytes(&png, "png").is_ok());
+        assert!(validate_book_cover_bytes(&png, "jpg").is_err());
+    }
+
+    #[test]
+    fn removing_book_assets_cannot_escape_the_managed_root() {
+        let root = std::env::temp_dir().join(format!("epigraph-book-remove-{}", uuid::Uuid::new_v4()));
+        let managed = root.join("covers").join("book.png");
+        let outside = std::env::temp_dir().join(format!("epigraph-outside-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        fs::write(&managed, b"managed").unwrap();
+        fs::write(&outside, b"outside").unwrap();
+
+        assert!(remove_managed_book_asset(&root, &managed).is_ok());
+        assert!(!managed.exists());
+        assert!(remove_managed_book_asset(&root, &outside).is_err());
+        assert!(outside.exists());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_file(&outside);
+    }
+
     fn encode_book_asset_uri(path: &Path) -> String {
         format!(
             "http://book.localhost/{}",
@@ -2880,50 +2920,129 @@ fn copy_book_import(source_path: String, book_id: String) -> Result<String, Stri
         .extension()
         .and_then(|value| value.to_str())
         .map(|value| value.trim_matches('.').to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "bin".to_string());
+        .filter(|value| matches!(value.as_str(), "epub" | "pdf"))
+        .ok_or_else(|| "Only EPUB and PDF book files are supported.".to_string())?;
 
     let folder = match ext.as_str() {
         "epub" => "epubs",
         "pdf" => "pdfs",
-        _ => "imports",
+        _ => unreachable!("validated extension"),
     };
 
     let dest_dir = books_data_dir().join(folder);
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-    let dest_path = dest_dir.join(format!("{book_id}.{ext}"));
-    std::fs::copy(&source, &dest_path).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(validated_book_filename(&book_id, &ext)?);
+    let temp_path = dest_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<(), String> {
+        let mut input = std::fs::File::open(&source).map_err(|e| e.to_string())?;
+        let mut output = std::fs::File::create(&temp_path).map_err(|e| e.to_string())?;
+        std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
+        output.sync_all().map_err(|e| e.to_string())?;
+        atomic_replace_file(&temp_path, &dest_path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result?;
     Ok(dest_path.to_string_lossy().to_string())
+}
+
+fn validated_book_filename(book_id: &str, ext: &str) -> Result<String, String> {
+    let id = book_id.trim();
+    if id.is_empty()
+        || id.len() > 160
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("Invalid book identifier.".to_string());
+    }
+
+    let upper = id.to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$")
+        || (upper.len() == 4
+            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.as_bytes()[3].is_ascii_digit()
+            && upper.as_bytes()[3] != b'0');
+    if reserved {
+        return Err("Invalid book identifier.".to_string());
+    }
+
+    let normalized_ext = ext.trim().trim_matches('.').to_ascii_lowercase();
+    if normalized_ext.is_empty()
+        || normalized_ext.len() > 10
+        || !normalized_ext.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return Err("Invalid book file extension.".to_string());
+    }
+
+    Ok(format!("{id}.{normalized_ext}"))
+}
+
+fn write_book_bytes_atomic(dest_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let temp_path = dest_path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::File::create(&temp_path).map_err(|e| e.to_string())?;
+        file.write_all(bytes).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
+        atomic_replace_file(&temp_path, dest_path).map_err(|e| e.to_string())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp_path);
+    }
+    result
 }
 
 #[tauri::command]
 fn write_book_cover(book_id: String, bytes_base64: String, ext: String) -> Result<String, String> {
-    let dest_dir = books_data_dir().join("covers");
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-    let dest_path = dest_dir.join(format!("{book_id}.{}", ext.trim_matches('.')));
+    let ext = ext.trim().trim_matches('.').to_ascii_lowercase();
+    if !matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif") {
+        return Err("Unsupported book cover format.".to_string());
+    }
+    let filename = validated_book_filename(&book_id, &ext)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64)
         .map_err(|e| e.to_string())?;
-    std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
+    validate_book_cover_bytes(&bytes, &ext)?;
+    let dest_dir = books_data_dir().join("covers");
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(filename);
+    write_book_bytes_atomic(&dest_path, &bytes)?;
     Ok(dest_path.to_string_lossy().to_string())
+}
+
+fn validate_book_cover_bytes(bytes: &[u8], ext: &str) -> Result<(), String> {
+    let detected = image::guess_format(bytes).map_err(|_| "Book cover is not a valid image.".to_string())?;
+    let matches_extension = match ext {
+        "jpg" | "jpeg" => detected == image::ImageFormat::Jpeg,
+        "png" => detected == image::ImageFormat::Png,
+        "webp" => detected == image::ImageFormat::WebP,
+        "gif" => detected == image::ImageFormat::Gif,
+        _ => false,
+    };
+    if !matches_extension {
+        return Err("Book cover bytes do not match the selected image format.".to_string());
+    }
+    image::load_from_memory_with_format(bytes, detected)
+        .map(|_| ())
+        .map_err(|_| "Book cover image could not be decoded.".to_string())
 }
 
 #[tauri::command]
 fn write_book_asset(book_id: String, bytes_base64: String, ext: String) -> Result<String, String> {
-    let ext = ext.trim_matches('.').to_ascii_lowercase();
+    let ext = ext.trim().trim_matches('.').to_ascii_lowercase();
     let folder = match ext.as_str() {
         "epub" => "epubs",
         "pdf" => "pdfs",
-        _ => "imports",
+        _ => return Err("Only EPUB and PDF book assets are supported.".to_string()),
     };
 
-    let dest_dir = books_data_dir().join(folder);
-    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-    let dest_path = dest_dir.join(format!("{book_id}.{ext}"));
+    let filename = validated_book_filename(&book_id, &ext)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64)
         .map_err(|e| e.to_string())?;
-    std::fs::write(&dest_path, bytes).map_err(|e| e.to_string())?;
+    let dest_dir = books_data_dir().join(folder);
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(filename);
+    write_book_bytes_atomic(&dest_path, &bytes)?;
     Ok(dest_path.to_string_lossy().to_string())
 }
 
@@ -2932,14 +3051,26 @@ fn remove_book_assets(
     asset_path: Option<String>,
     cover_path: Option<String>,
 ) -> Result<(), String> {
+    let root = books_data_dir();
     for path in [asset_path, cover_path].into_iter().flatten() {
         let candidate = PathBuf::from(path);
         if !candidate.exists() {
             continue;
         }
-        std::fs::remove_file(&candidate).map_err(|e| e.to_string())?;
+        remove_managed_book_asset(&root, &candidate)?;
     }
     Ok(())
+}
+
+fn remove_managed_book_asset(root: &Path, candidate: &Path) -> Result<(), String> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|_| "Managed books directory is unavailable.".to_string())?;
+    let canonical_candidate = fs::canonicalize(candidate)
+        .map_err(|_| "Book asset no longer exists.".to_string())?;
+    if !canonical_candidate.starts_with(&canonical_root) || !canonical_candidate.is_file() {
+        return Err("Refusing to remove a file outside the managed books directory.".to_string());
+    }
+    fs::remove_file(canonical_candidate).map_err(|e| e.to_string())
 }
 
 // ── Update types ──────────────────────────────────────────────────────────────

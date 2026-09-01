@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import JSZip from "jszip";
-import { inspectEpigraphBackupContainer } from "./epigraphBackup";
+import { buildEpigraphBackupContainer, inspectEpigraphBackupContainer } from "./epigraphBackup";
 import {
   buildEpigraphBooksBackupContainer,
   restoreEpigraphBooksPayload,
@@ -18,7 +18,12 @@ const sampleSnapshot: EpigraphBooksSnapshot = {
       title: "Alpha",
       author: "Author A",
       description: "A portable EPUB",
+      genres: ["Fantasy", "Adventure"],
+      isbns: ["9780306406157"],
+      metadataBackfillVersion: 3,
       coverPath: "C:/books/covers/alpha.jpg",
+      hardcoverBookId: 12345,
+      hardcoverCoverUrl: "https://covers.example.test/alpha.jpg",
       subtype: "epub",
       pageCount: null,
       createdAt: 100,
@@ -56,7 +61,7 @@ const sampleSnapshot: EpigraphBooksSnapshot = {
     },
   ],
   booksCategories: [
-    { id: "favorites", name: "Favorites", order: 1 },
+    { id: "favorites", name: "Favorites", order: 1, includeInUpdate: "EXCLUDE" },
   ],
   booksCategoryAssignments: {
     "epub-alpha": ["favorites"],
@@ -283,6 +288,23 @@ async function createRoundTripFixture() {
 }
 
 describe("books backup payload", () => {
+  it.each(["progress", "id", "late-path"])("rejects invalid %s before writing any book asset", async (invalid) => {
+    const record = { ...sampleSnapshot.books[0], assetArchivePath: "files/safe.epub", coverArchivePath: null, importPathHint: null };
+    const records = [record, { ...record, id: invalid === "id" ? "../../escape" : "second", assetArchivePath: invalid === "late-path" ? "../../outside.epub" : "files/safe.epub" }];
+    const built = await buildEpigraphBackupContainer({ payloads: [{ kind: "books", exportMode: "full", files: [
+      { path: "library.json", bytes: JSON.stringify({ version: 1, books: records }) },
+      { path: "progress.json", bytes: JSON.stringify({ version: 1, progress: invalid === "progress" ? {} : [] }) },
+      { path: "bookmarks.json", bytes: JSON.stringify({ version: 1, bookmarks: [] }) },
+      { path: "categories.json", bytes: JSON.stringify({ version: 1, categories: [], assignments: {}, ui: {} }) },
+      { path: "files/safe.epub", bytes: new Uint8Array([1, 2, 3]) },
+    ] }] });
+    const writeManagedBookAsset = vi.fn(async () => "test-path");
+    const writeManagedBookCover = vi.fn(async () => "test-cover");
+    await expect(restoreEpigraphBooksPayload(built.bytes, { writeManagedBookAsset, writeManagedBookCover })).rejects.toThrow();
+    expect(writeManagedBookAsset).not.toHaveBeenCalled();
+    expect(writeManagedBookCover).not.toHaveBeenCalled();
+  });
+
   it("builds a full books .epigraphbk container with portable files and manifests", async () => {
     const readBinaryFile = vi.fn(async (path: string) => {
       if (path.endsWith(".epub")) return new TextEncoder().encode("EPUB-BYTES").buffer;
@@ -354,8 +376,14 @@ describe("books backup payload", () => {
         assetPath: "C:/managed/books/epub-alpha.epub",
         importPath: "C:/managed/books/epub-alpha.epub",
         coverPath: "C:/managed/books/covers/epub-alpha.jpg",
+        genres: ["Fantasy", "Adventure"],
+        isbns: ["9780306406157"],
+        metadataBackfillVersion: 3,
+        hardcoverBookId: 12345,
+        hardcoverCoverUrl: "https://covers.example.test/alpha.jpg",
       }),
     );
+    expect(restored.booksCategories).toEqual(sampleSnapshot.booksCategories);
     expect(restored.bookProgress[0]?.bookId).toBe("epub-alpha");
     expect(restored.bookBookmarks[0]?.bookId).toBe("epub-alpha");
     expect(restored.booksCategoryAssignments["epub-alpha"]).toEqual(["favorites"]);

@@ -8,7 +8,8 @@ import {
 } from "../localProfiles";
 import type { EpigraphPayloadRestorePlan, EpigraphRestorePlan } from "./epigraphRestorePlanner";
 
-export type BackupExportMode = "unified" | "manga" | "manga-proto-gz" | "manga-proto" | "novels" | "novels-lnreader" | "books" | "app";
+export const BACKUP_EXPORT_MODES = ["unified", "manga", "books", "novels", "app"] as const;
+export type BackupExportMode = (typeof BACKUP_EXPORT_MODES)[number];
 export type RestoreTargetMode = "other-local-profile" | "current-profile";
 export type BackupImportKind = "epigraph" | "manga" | "novels-lnreader";
 export type BackupExecutionSelection = Record<string, boolean>;

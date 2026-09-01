@@ -203,11 +203,13 @@ preserva somente metadados e estado de leitura.
    perfil atual.
 4. Inicie o restore e acompanhe o indicador de progresso.
 
-Quando necessário, o Epigraph adiciona os repositórios registrados no backup,
-atualiza os catálogos e instala extensões/plugins disponíveis antes de incluir
-as obras na Library. Repositórios que já existem não são duplicados nem
-apagados. Se uma dependência não existir mais, os dados recuperáveis são
-preservados e o resumo final informa o que exige atenção.
+Quando o backup declara dependências, o Epigraph primeiro mostra os
+repositórios e extensões encontrados. Somente depois da aprovação explícita ele
+adiciona os repositórios ausentes, atualiza os catálogos e instala os
+plugins/extensões disponíveis antes de incluir as obras na Library.
+Repositórios existentes não são duplicados nem apagados. Se uma dependência não
+existir mais, a obra e o ID de source original são preservados para uma
+reconexão futura; a exclusão só ocorre quando o usuário escolhe **Skip**.
 
 Um ZIP nativo do LNReader não grava um campo isolado chamado “repository”. Ele
 inclui a lista de plugins instalados, o URL de cada script e os pacotes em
@@ -215,18 +217,21 @@ inclui a lista de plugins instalados, o URL de cada script e os pacotes em
 `plugins.min.json` da mesma origem, adiciona somente as origens necessárias e
 instala cada plugin a partir do repositório correspondente.
 
-Backups nativos `.tachibk` preservam IDs e nomes de sources, mas não incluem a
-URL do repositório nem os APKs. Em um perfil limpo, adicione um catálogo atual
-em **Browse > Sources > Manage repos**; o Epigraph então cruza os IDs do backup
-com esse catálogo, oferece as extensões encontradas e mantém como pendentes as
-sources que já não existem nele. Backups unificados do Epigraph não têm essa
-limitação porque registram os repositórios configurados durante a exportação.
+Backups modernos do Mihon podem incluir `backupExtensionStores` (campo 106)
+quando essa opção foi marcada na origem; o Epigraph preserva nome, URL,
+assinatura e metadados desconhecidos e ainda exige aprovação antes de gravar um
+store. Backups J2K/Yokai podem não trazer esse campo — os arquivos reais usados
+na certificação não trazem — e nenhum formato inclui APKs. Nesse caso, adicione
+um catálogo atual em **Browse > Sources > Manage repos**. O Epigraph mantém as
+sources indisponíveis com o ID original em vez de remapear ou apagar obras.
 
 O J2K também pode incluir entradas lidas que não estão mais na Library. O
 Epigraph respeita o campo `favorite` do formato: somente favoritos entram na
 Library, enquanto registros não favoritos continuam disponíveis para restaurar
 histórico e progresso. No protobuf do J2K, `favorite` ausente significa `true`;
 esse valor padrão não deve ser confundido com uma entrada fora da Library.
+Nos fixtures certificados, J2K contém 686 obras na Library e 2.198 entradas de
+histórico; Yokai contém 684 obras na Library e 2.109 entradas de histórico.
 
 ## About e atualizações
 

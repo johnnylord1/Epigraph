@@ -1,6 +1,6 @@
 /// <reference types="@vitest/browser/matchers" />
 
-import { cleanup, render } from "@testing-library/svelte";
+import { cleanup, render, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { getLocalProfileMeta } from "../../lib/localProfiles";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
@@ -44,19 +44,24 @@ const { invokeMock, tauriFetchMock, gqlMock, loadSettingsStorageRuntimeMock } = 
   })),
   loadSettingsStorageRuntimeMock: vi.fn(async () => ({
     parseMihonBackup: vi.fn(async () => ({ trackerIds: [] })),
+    embedMihonExtensionStores: vi.fn((bytes) => bytes),
     buildEpigraphBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
     buildEpigraphRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
     buildEpigraphAppPayload: vi.fn(() => ({})),
     parseEpigraphAppPayload: vi.fn(async () => ({})),
     buildEpigraphBooksSnapshotFromLibraryState: vi.fn((state) => state),
     buildEpigraphBooksPayload: vi.fn(async () => ({})),
+    parseEpigraphBooksPayload: vi.fn(async () => ({ library: { books: [] } })),
     restoreEpigraphBooksPayload: vi.fn(async () => ({ books: [], bookProgress: [], bookBookmarks: [], booksCategories: [], booksCategoryAssignments: {}, issues: [], exportMode: "full" })),
     extractEpigraphMangaPayloadFile: vi.fn(async () => new File([], "backup.tachibk")),
+    parseEpigraphMangaPayload: vi.fn(async () => ({ payloadManifest: { requiresRepositories: [] } })),
     buildEpigraphMangaPayload: vi.fn(async () => ({})),
     buildEpigraphNovelsPayload: vi.fn(async () => ({})),
+    parseEpigraphNovelsPayload: vi.fn(async () => ({ snapshot: { entries: [], chapters: [], repositories: [], plugins: [] } })),
     restoreEpigraphNovelsPayload: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0 } })),
     buildLnReaderNovelsBackupZip: vi.fn(async () => new Uint8Array()),
     restoreLnReaderNovelsBackup: vi.fn(async () => ({ summary: { totalEntries: 0, restoredMetadataOnlyCount: 0, restoredUsableCount: 0, restoredNeedsRepositoryCount: 0, restoredNeedsPluginCount: 0 } })),
+    parseLnReaderNovelsBackup: vi.fn(async () => ({ entries: [], chapters: [], repositories: [], plugins: [] })),
     isLnReaderBackupZip: vi.fn(async () => true),
     extractLnReaderBackupPluginIds: vi.fn(async () => []),
     normalizeNativeMangaBackupBytes: vi.fn((bytes) => bytes),
@@ -244,7 +249,11 @@ function renderSettings(initialTab: RuntimeSettingsTab | null = null, width = 12
   });
 }
 
-async function expectSettingsScreenshot(name: string) {
+async function expectSettingsScreenshot(name: string, heading: string) {
+  await waitFor(() => {
+    const title = document.querySelector<HTMLElement>(".settings-pane-header__title");
+    expect(title?.textContent?.trim()).toBe(heading);
+  });
   const root = document.querySelector(".settings-page.epigraph-port--settings");
   if (!root) throw new Error("Settings shell root not found");
   await (
@@ -274,7 +283,7 @@ describe("Settings (browser)", () => {
 
   test("matches the imported shell in default App > General state", async () => {
     renderSettings();
-    await expectSettingsScreenshot("settings-app-general");
+    await expectSettingsScreenshot("settings-app-general", "General");
   });
 
   test("keeps the profile creation row readable in a narrow app window", () => {
@@ -290,21 +299,21 @@ describe("Settings (browser)", () => {
 
   test("matches the imported shell in Reader & Library > Reader state", async () => {
     renderSettings("reader");
-    await expectSettingsScreenshot("settings-reader-library-reader");
+    await expectSettingsScreenshot("settings-reader-library-reader", "Reader");
   });
 
   test("matches the imported shell in Content & Integrations > Content state", async () => {
     renderSettings("content");
-    await expectSettingsScreenshot("settings-content-integrations-content");
+    await expectSettingsScreenshot("settings-content-integrations-content", "Content");
   });
 
   test("matches the imported shell in System > Storage state", async () => {
     renderSettings("storage");
-    await expectSettingsScreenshot("settings-system-storage");
+    await expectSettingsScreenshot("settings-system-storage", "Storage");
   });
 
   test("matches the imported shell in Advanced > About state", async () => {
     renderSettings("about");
-    await expectSettingsScreenshot("settings-advanced-about");
+    await expectSettingsScreenshot("settings-advanced-about", "About");
   });
 });

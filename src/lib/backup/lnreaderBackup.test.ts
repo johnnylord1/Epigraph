@@ -47,6 +47,23 @@ const snapshot: EpigraphNovelsSnapshot = {
 };
 
 describe("LNReader backup compatibility", () => {
+  it.each([true, false])("keeps the saved LAST_READ_PREFIX locator even outside the chapter list: %s", async (listed) => {
+    const root = new JSZip();
+    const saved = { id: 12, novelId: 1, path: "chapter-saved", name: "Saved chapter", unread: true, position: 12, progress: 1, readTime: "2026-08-21 10:00:00" };
+    root.file("Version.json", "{}");
+    root.file("Setting.json", JSON.stringify({ LAST_READ_PREFIX_illusia_story: JSON.stringify(saved) }));
+    root.file("NovelAndChapters/1.json", JSON.stringify({
+      id: 1, pluginId: "illusia", path: "story", name: "Novel", inLibrary: 1,
+      chapters: [{ id: 1, path: "chapter-first", unread: false, position: 0, readTime: "2026-08-20 10:00:00" },
+        ...(listed ? [{ ...saved, progress: null, readTime: null }] : [])],
+    }));
+    const parsed = await parseLnReaderNovelsBackup(await root.generateAsync({ type: "uint8array" }));
+    expect(parsed.chapters).toHaveLength(listed ? 2 : 1);
+    const chapterId = `${parsed.entries[0].id}:chapter:chapter-saved`;
+    expect(parsed.progress[0]).toMatchObject({ chapterId, chapterTitle: "Saved chapter", locator: `scroll:${encodeURIComponent(chapterId)}:0.010000` });
+    if (listed) expect(parsed.progress[0].progressPercent).toBeCloseTo(1.01 / 2);
+  });
+
   it("exports and parses a LNReader-compatible zip", async () => {
     const bytes = await buildLnReaderNovelsBackupZip(snapshot);
     expect(await isLnReaderBackupZip(bytes)).toBe(true);
@@ -249,5 +266,32 @@ describe("LNReader backup compatibility", () => {
       locator: "p:45",
       label: "Chapter 2",
     })]);
+  });
+
+  it("converts LNReader partial chapter progress into a resumable scroll locator", async () => {
+    const root = new JSZip();
+    root.file("Version.json", JSON.stringify({ version: "test" }));
+    root.file("NovelAndChapters/1.json", JSON.stringify({
+      id: 1,
+      pluginId: "illusia",
+      path: "story/partial",
+      name: "Partial novel",
+      inLibrary: 1,
+      chapters: [
+        { id: 10, path: "chapter-1", name: "Chapter 1", unread: 0, position: 0, readTime: "2026-01-01 10:00:00" },
+        { id: 11, path: "chapter-2", name: "Chapter 2", unread: 1, position: 1, progress: 40, readTime: "2026-01-02 10:00:00" },
+        { id: 12, path: "chapter-3", name: "Chapter 3", unread: 1, position: 2 },
+      ],
+    }));
+
+    const parsed = await parseLnReaderNovelsBackup(await root.generateAsync({ type: "uint8array" }));
+    const chapterId = parsed.chapters[1]!.id;
+
+    expect(parsed.progress).toEqual([expect.objectContaining({
+      chapterId,
+      progressPercent: (1 + 0.4) / 3,
+      locator: `scroll:${encodeURIComponent(chapterId)}:0.400000`,
+    })]);
+    expect(parsed.chapters[1]?.unread).toBe(true);
   });
 });

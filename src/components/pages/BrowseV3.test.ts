@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { tick } from "svelte";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import JSZip from "jszip";
+import { compiledExtensionManifest, dexHeaderFixture } from "../../test/fixtures/extensionApk";
 
 function rect(left: number, top: number, right: number, bottom: number): DOMRect {
   return {
@@ -1234,12 +1236,16 @@ describe("BrowseV3", () => {
     });
     await fireEvent.click(installButton);
     await waitFor(() => {
-      expect(screen.getByText("File must be an .apk extension package.")).toBeTruthy();
+      expect(screen.getByText("Choose a file with the .apk extension.")).toBeTruthy();
     });
     expect(gqlUploadMock).not.toHaveBeenCalled();
 
+    const extensionApk = new JSZip();
+    extensionApk.file("AndroidManifest.xml", compiledExtensionManifest());
+    extensionApk.file("classes.dex", dexHeaderFixture());
+    const extensionBytes = await extensionApk.generateAsync({ type: "uint8array" });
     await fireEvent.change(fileInput!, {
-      target: { files: [new File(["apk"], "source.apk", { type: "application/vnd.android.package-archive" })] },
+      target: { files: [new File([new Uint8Array(extensionBytes).buffer], "source.apk", { type: "application/vnd.android.package-archive" })] },
     });
     expect(within(dialog).getByText("source.apk")).toBeTruthy();
     await fireEvent.click(installButton);

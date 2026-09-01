@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectBackupImportKind } from "./backupRollout";
+import { BACKUP_EXPORT_MODES, detectBackupImportKind } from "./backupRollout";
+
+describe("backup export contract", () => {
+  it("contains exactly the five formats exposed by the product", () => {
+    expect(BACKUP_EXPORT_MODES).toEqual(["unified", "manga", "books", "novels", "app"]);
+  });
+});
 
 describe("backup import compatibility", () => {
   it("recognizes canonical and legacy unified backup suffixes", () => {

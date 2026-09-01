@@ -4,11 +4,23 @@ syntax = "proto3";
 message Backup {
   repeated BackupManga backupManga = 1;
   repeated BackupSource backupSources = 101;
+  repeated BackupExtensionStore backupExtensionStores = 106;
 }
 
 message BackupSource {
   string name = 1;
   int64 sourceId = 2;
+}
+
+message BackupExtensionStore {
+  string indexUrl = 1;
+  string name = 2;
+  string badgeLabel = 3;
+  string contactWebsite = 4;
+  string signingKey = 5;
+  string contactDiscord = 6;
+  bool isLegacy = 7;
+  string extensionListUrl = 8;
 }
 
 message BackupManga {
@@ -37,7 +49,8 @@ message BackupManga {
   int64 version = 109;
   string notes = 110;
   bool initialized = 111;
-  string memo = 112;
+  // Fork-dependent: bytes in Mihon/Yokai, string in J2K. It is intentionally
+  // left unknown so the reconciliation layer preserves the original wire data.
   int32 customStatus = 602;
   string customTitle = 800;
   string customArtist = 801;

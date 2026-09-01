@@ -1,7 +1,7 @@
 import pako from "pako";
 import protobuf from "protobufjs";
 import { describe, expect, it } from "vitest";
-import { BACKUP_TOP_LEVEL_MANGA_FIELD, BACKUP_TOP_LEVEL_SOURCES_FIELD, createReconciledBackupPayload, parseMihonBackup } from "../backup/mihonBackup";
+import { BACKUP_TOP_LEVEL_MANGA_FIELD, BACKUP_TOP_LEVEL_SOURCES_FIELD, createReconciledBackupPayload, embedMihonExtensionStores, parseMihonBackup } from "../backup/mihonBackup";
 import { MIHON_BACKUP_PROTO } from "../backup/mihonProto";
 import { overlayEntryFromAnalysis } from "./analyze";
 import { DEFAULT_CLUSTER_INFERENCE_CONFIG } from "./constants";
@@ -9,7 +9,7 @@ import { resolveExactCluster } from "./exact";
 import { rankRepresentativeManga, scoreClusterCandidates, shouldAutoSelectCandidate } from "./inference";
 import { buildRestoreReadiness } from "./readiness";
 import { buildExcludedSourceIds, buildSourceMapping } from "./restore";
-import type { AvailableExtensionEntry, ParsedBackup, ReconciliationAnalysis, ReconciliationCandidate, SourceInventoryEntry } from "./types";
+import type { AvailableExtensionEntry, NativeSourceRestoreChoice, ParsedBackup, ReconciliationAnalysis, ReconciliationCandidate, SourceInventoryEntry } from "./types";
 
 const root = protobuf.parse(MIHON_BACKUP_PROTO).root;
 const BackupType = root.lookupType("Backup");
@@ -83,6 +83,102 @@ function buildDuplicateBackupFixture() {
 }
 
 describe("backup parser", () => {
+  it("does not mutate unknown source fields when reconciling the same parsed backup twice", async () => {
+    const extended = protobuf.parse(MIHON_BACKUP_PROTO.replace("message BackupSource {", "message BackupSource { repeated string futureSource = 2001;")).root.lookupType("Backup");
+    const parsed = await parseMihonBackup(extended.encode({ backupSources: [
+      { sourceId: "123", name: "Original", futureSource: ["A"] },
+      { sourceId: "123", name: "Original", futureSource: ["B"] },
+    ] }).finish(), []);
+    const first = createReconciledBackupPayload(parsed, {});
+    const second = createReconciledBackupPayload(parsed, {});
+    expect(extended.toObject(extended.decode(first)).backupSources[0].futureSource).toEqual(["A", "B"]);
+    expect(second).toEqual(first);
+  });
+
+  it.each([false, true])("preserves unknown nested fork metadata, including explicit remapping: %s", async (remap) => {
+    const extended = protobuf.parse(MIHON_BACKUP_PROTO
+      .replace("message BackupManga {", "message BackupManga { string futureManga = 2001;")
+      .replace("message BackupChapter {", "message BackupChapter { string futureChapter = 2001;")
+      .replace("message BackupTracking {", "message BackupTracking { string futureTracking = 2001;")
+      .replace("message BackupHistory {", "message BackupHistory { string futureHistory = 2001;")
+      .replace("message BackupSource {", "message BackupSource { string futureSource = 2001;")
+    ).root.lookupType("Backup");
+    const bytes = extended.encode({
+      backupManga: [{ source: "123", url: "/title", title: "Title", futureManga: "manga",
+        chapters: [{ url: "/1", lastPageRead: "4", futureChapter: "chapter" }],
+        tracking: [{ syncId: 1, futureTracking: "tracker" }],
+        history: [{ url: "/1", futureHistory: "history" }],
+      }],
+      backupSources: [{ sourceId: "123", name: "Original", futureSource: "source" }],
+    }).finish();
+    const parsed = await parseMihonBackup(bytes, []);
+    const restored = extended.toObject(extended.decode(createReconciledBackupPayload(parsed,
+      remap ? { "123": { sourceId: "456", name: "Destination" } } : {},
+    )), { longs: String });
+    expect(restored.backupManga[0]).toMatchObject({ source: remap ? "456" : "123", futureManga: "manga",
+      chapters: [{ lastPageRead: "4", futureChapter: "chapter" }],
+      tracking: [{ futureTracking: "tracker" }], history: [{ futureHistory: "history" }],
+    });
+    expect(restored.backupSources[0]).toMatchObject({ futureSource: "source" });
+  });
+
+  it("exposes official extension stores and preserves their metadata during reconciliation", async () => {
+    const storeRoot = protobuf.parse(`
+      syntax = "proto3";
+      message BackupExtensionStore {
+        string indexUrl = 1;
+        string name = 2;
+        string badgeLabel = 3;
+        string contactWebsite = 4;
+        string signingKey = 5;
+      }
+    `).root;
+    const StoreType = storeRoot.lookupType("BackupExtensionStore");
+    const storeChunk = protobuf.Writer.create()
+      .uint32((106 << 3) | 2)
+      .bytes(StoreType.encode({
+        indexUrl: "https://example.test/index.min.json",
+        name: "Example extensions",
+        badgeLabel: "Trusted",
+        signingKey: "sha256:abc",
+        contactWebsite: "https://example.test",
+      }).finish())
+      .finish();
+    const mangaChunk = BackupType.encode({
+      backupManga: [{ source: "123", url: "/library", title: "Library title" }],
+    }).finish();
+    const payload = new Uint8Array(mangaChunk.length + storeChunk.length);
+    payload.set(mangaChunk);
+    payload.set(storeChunk, mangaChunk.length);
+
+    const parsed = await parseMihonBackup(pako.gzip(payload), []);
+
+    expect(parsed.extensionStores).toEqual([{
+      indexUrl: "https://example.test/index.min.json",
+      name: "Example extensions",
+      badgeLabel: "Trusted",
+      signingKey: "sha256:abc",
+      contactWebsite: "https://example.test",
+    }]);
+
+    const reparsed = await parseMihonBackup(createReconciledBackupPayload(parsed, {}), []);
+    expect(reparsed.extensionStores).toEqual(parsed.extensionStores);
+  });
+
+  it("embeds configured repositories in a native manga export without duplicating existing stores", async () => {
+    const payload = pako.gzip(BackupType.encode({
+      backupManga: [{ source: "123", url: "/library", title: "Library title" }],
+    }).finish());
+    const enriched = embedMihonExtensionStores(payload, [
+      { indexUrl: "https://example.test/index.min.json", name: "Example" },
+      { indexUrl: "https://example.test/index.min.json/", name: "Duplicate" },
+    ]);
+
+    const parsed = await parseMihonBackup(enriched, []);
+    expect(parsed.extensionStores).toEqual([expect.objectContaining({ indexUrl: "https://example.test/index.min.json", name: "Example" })]);
+    expect(parsed.backupManga).toHaveLength(1);
+  });
+
   it("counts only library favorites while preserving read entries outside the library", async () => {
     const payload = BackupType.encode({
       backupManga: [
@@ -98,7 +194,11 @@ describe("backup parser", () => {
   });
 
   it("preserves J2K custom manga metadata when rebuilding a reconciled backup", async () => {
-    const payload = BackupType.encode({
+    const j2kType = protobuf.parse(MIHON_BACKUP_PROTO
+      .replace("  string memo = 112;\n", "")
+      .replace("message BackupManga {", "message BackupManga { string memo = 112;"),
+    ).root.lookupType("Backup");
+    const payload = j2kType.encode({
       backupManga: [{
         source: "123",
         url: "/library",
@@ -113,14 +213,43 @@ describe("backup parser", () => {
     const parsed = await parseMihonBackup(pako.gzip(payload), []);
 
     const rebuilt = createReconciledBackupPayload(parsed, {});
-    const reparsed = await parseMihonBackup(rebuilt, []);
+    const rebuiltMessage = j2kType.toObject(j2kType.decode(pako.ungzip(rebuilt)));
 
-    expect(reparsed.mangaMessages[0]).toMatchObject({
+    expect(rebuiltMessage.backupManga[0]).toMatchObject({
       customTitle: "My title",
       customAuthor: "My author",
       customGenre: ["Custom"],
       customStatus: 2,
       memo: "{\"note\":\"keep me\"}",
+    });
+  });
+
+  it("preserves Mihon and Yokai byte memos plus fork chapter fields byte-for-byte", async () => {
+    const forkType = protobuf.parse(MIHON_BACKUP_PROTO
+      .replace("  string memo = 112;\n", "")
+      .replace("message BackupManga {", "message BackupManga { bytes memo = 112;")
+      .replace("message BackupChapter {", "message BackupChapter { bytes memo = 13; int32 pagesLeft = 800;"),
+    ).root.lookupType("Backup");
+    const mangaMemo = Uint8Array.from([0xff, 0x00, 0x80, 0x7b, 0x7d]);
+    const chapterMemo = Uint8Array.from([0xfe, 0x81, 0x00, 0x41]);
+    const payload = forkType.encode({
+      backupManga: [{
+        source: "123",
+        url: "/library",
+        title: "Library title",
+        memo: mangaMemo,
+        chapters: [{ url: "/chapter-1", name: "Chapter 1", memo: chapterMemo, pagesLeft: 17 }],
+      }],
+    }).finish();
+
+    const parsed = await parseMihonBackup(payload, []);
+    const rebuilt = createReconciledBackupPayload(parsed, {});
+    const decoded = forkType.toObject(forkType.decode(rebuilt), { bytes: Array });
+
+    expect(decoded.backupManga[0].memo).toEqual([...mangaMemo]);
+    expect(decoded.backupManga[0].chapters[0]).toMatchObject({
+      memo: [...chapterMemo],
+      pagesLeft: 17,
     });
   });
 
@@ -468,11 +597,13 @@ describe("overlay and reconciled payload", () => {
       unresolved: [],
       warnings: [],
     };
-    const mapping = buildSourceMapping(analysis, { "999": "321" });
+    const mapping = buildSourceMapping(analysis, {
+      "999": { mode: "map", sourceId: "321", name: "Comick", lang: "en" },
+    });
     expect(mapping["999"].sourceId).toBe("321");
   });
 
-  it("excludes unresolved and skipped source clusters from the restore payload path", () => {
+  it("preserves unresolved sources unless the user explicitly skips them", () => {
     const analysis: ReconciliationAnalysis = {
       backupFingerprint: "backup",
       sourceInventoryFingerprint: "inventory",
@@ -503,9 +634,55 @@ describe("overlay and reconciled payload", () => {
       warnings: [],
     };
 
-    expect(buildExcludedSourceIds(analysis, {})).toEqual(["222", "111"]);
-    expect(buildExcludedSourceIds(analysis, { "111": "skip" })).toEqual(["222", "111"]);
-    expect(buildExcludedSourceIds(analysis, { "111": "333" })).toEqual(["222"]);
+    expect(buildExcludedSourceIds(analysis, {})).toEqual([]);
+    expect(buildExcludedSourceIds(analysis, {
+      "111": { mode: "skip" },
+      "222": { mode: "preserve" },
+    })).toEqual(["111"]);
+    expect(buildExcludedSourceIds(analysis, {
+      "111": { mode: "map", sourceId: "333", name: "Mapped source", lang: "en" },
+      "222": { mode: "skip" },
+    })).toEqual(["222"]);
+  });
+
+  it("only remaps a source after an explicit map choice", () => {
+    const candidate: ReconciliationCandidate = {
+      sourceId: "333",
+      sourceName: "Mapped source",
+      sourceLang: "en",
+      displayName: "Mapped source",
+      confidence: 0.99,
+      reasonCode: "cluster-inference",
+      evidenceSummary: "high confidence",
+      requiresInstall: false,
+      extensionPkgName: null,
+      extensionName: null,
+    };
+    const analysis: ReconciliationAnalysis = {
+      backupFingerprint: "backup",
+      sourceInventoryFingerprint: "inventory",
+      exactMatches: [],
+      autoReconciled: [{
+        orphanSourceId: "111",
+        sourceName: "Old source",
+        sourceLang: "en",
+        status: "auto_reconciled",
+        sampleManga: [],
+        selectedCandidate: candidate,
+        candidates: [candidate],
+      }],
+      needsReview: [],
+      unresolved: [],
+      warnings: [],
+    };
+    const choices: Record<string, NativeSourceRestoreChoice> = {
+      "111": { mode: "map", sourceId: "333", name: "Mapped source", lang: "en" },
+    };
+
+    expect(buildSourceMapping(analysis, {})).toEqual({});
+    expect(buildSourceMapping(analysis, choices)).toEqual({
+      "111": { sourceId: "333", name: "Mapped source", lang: "en" },
+    });
   });
 
   it("creates a reconciled payload in memory without mutating the original backup bytes", async () => {
@@ -637,7 +814,7 @@ describe("restore readiness", () => {
       sourceInventoryFingerprint: "inventory",
       exactMatches: [
         {
-          orphanSourceId: "1",
+          orphanSourceId: "123",
           sourceName: "MangaDex",
           sourceLang: "en",
           status: "exact_resolved",
@@ -686,7 +863,7 @@ describe("restore readiness", () => {
       sourceInventoryFingerprint: "inventory",
       exactMatches: [
         {
-          orphanSourceId: "2",
+          orphanSourceId: "321",
           sourceName: "Comick",
           sourceLang: "en",
           status: "exact_resolved",
@@ -756,7 +933,46 @@ describe("restore readiness", () => {
     expect(readiness.unresolvedCount).toBe(1);
     expect(readiness.requiresInstallCount).toBe(0);
 
-    const selected = buildRestoreReadiness(analysis, { "3": "321" }, [], availableExtensions);
+    const selected = buildRestoreReadiness(analysis, {
+      "3": { mode: "map", sourceId: "321", name: "Comick", lang: "en" },
+    }, [], availableExtensions);
     expect(selected.requiresInstallCount).toBe(1);
+  });
+
+  it.each(["auto_reconciled", "exact_resolved"] as const)("requires consent even for a same-name match with a different source ID: %s", (status) => {
+    const candidate: ReconciliationCandidate = {
+      sourceId: "321",
+      sourceName: "Comick",
+      sourceLang: "en",
+      displayName: "Comick",
+      confidence: 0.98,
+      reasonCode: "cluster-inference",
+      evidenceSummary: "high confidence",
+      requiresInstall: true,
+      extensionPkgName: "pkg1",
+      extensionName: "Tachiyomi: Comick",
+    };
+    const analysis: ReconciliationAnalysis = {
+      backupFingerprint: "backup",
+      sourceInventoryFingerprint: "inventory",
+      exactMatches: [],
+      autoReconciled: [{
+        orphanSourceId: "4",
+        sourceName: "Comick",
+        sourceLang: "en",
+        status,
+        sampleManga: [],
+        selectedCandidate: candidate,
+        candidates: [candidate],
+      }],
+      needsReview: [],
+      unresolved: [],
+      warnings: [],
+    };
+
+    expect(buildRestoreReadiness(analysis, {}, [], availableExtensions).requiresInstallCount).toBe(0);
+    expect(buildRestoreReadiness(analysis, {
+      "4": { mode: "map", sourceId: "321", name: "Comick", lang: "en" },
+    }, [], availableExtensions).requiresInstallCount).toBe(1);
   });
 });

@@ -25,11 +25,12 @@ classificava como bloqueio e a execução nunca os provisionava. O export de
 manga também omitia os stores, o ZIP do LNReader seguia pelo caminho de manga e
 o resultado podia terminar sem as obras esperadas na Library.
 
-A execução agora restaura dependências de forma aditiva, atualiza catálogos,
-instala o que está disponível, reclassifica os dados e só então aplica o estado
-da Library. O backup unificado grava stores de manga e o fluxo LNReader possui
-detecção e execução próprias. Falhas não recuperáveis aparecem no resumo sem
-apagar repositórios ou dados existentes.
+A execução agora mostra as dependências encontradas e, após aprovação
+explícita, restaura-as de forma aditiva, atualiza catálogos e provisiona o que
+está disponível antes da Library. Sources sem extensão continuam com o ID
+original; apenas **Skip** as remove. O backup unificado grava stores de manga,
+Mihon campo 106 é interpretado quando existe, e o fluxo LNReader possui detecção
+e execução próprias. Falhas não recuperáveis não apagam repositórios ou dados.
 
 ## BUG-008 — Link comum de repositório falha em Browse > Sources
 
@@ -45,6 +46,9 @@ rotina de salvamento podia remover stores atuais antes de confirmar o novo.
 Links raiz, tree e blob válidos do GitHub agora são convertidos para o índice
 raw canônico; URLs diretas continuam aceitas. A atualização adiciona primeiro
 e remove por último, preservando a configuração anterior caso a inclusão falhe.
+Em 01/09/2026, o fluxo visual converteu a página raiz do Keiyoushi para
+`https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb`, carregou
+1.394 extensões e preservou o store após reiniciar o Suwayomi.
 
 ### Limitação de fronteira Core/Mobile
 
