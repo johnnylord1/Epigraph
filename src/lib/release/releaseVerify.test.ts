@@ -28,9 +28,12 @@ describe("release verification orchestration", () => {
     const releaseScript = read("scripts/verify-release.ps1");
     const sourceScript = read("scripts/verify-source-runtime.ps1");
     const sourceGate = releaseScript.indexOf('Invoke-ReleaseStep "Source runtime compatibility"');
+    const sidecarBuild = releaseScript.indexOf('Invoke-ReleaseStep "Syncd sidecar build"');
     const integrationsGate = releaseScript.indexOf('Invoke-ReleaseStep "External integration contracts"');
 
     expect(sourceGate).toBeGreaterThan(0);
+    expect(sidecarBuild).toBeGreaterThan(sourceGate);
+    expect(integrationsGate).toBeGreaterThan(sidecarBuild);
     expect(integrationsGate).toBeGreaterThan(sourceGate);
     expect(sourceScript).toContain('Invoke-SourceRuntimeStep "Deterministic extension and Local Source workflow"');
     expect(sourceScript).toContain("certify-suwayomi-extension-workflows.mjs");

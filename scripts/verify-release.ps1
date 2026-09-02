@@ -99,15 +99,15 @@ try {
   Invoke-ReleaseStep "Source runtime compatibility" {
     & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-source-runtime.ps1 -SkipProjectGates
   }
+  Invoke-ReleaseStep "Release prerequisite contracts" { & node --test scripts/prepare-suwayomi-bundle.test.mjs }
+  Invoke-ReleaseStep "Suwayomi bundle prerequisites" { & pnpm suwayomi:prepare-bundle:windows }
+  Invoke-ReleaseStep "Syncd sidecar build" { & pnpm syncd:prepare-sidecar:release }
   Invoke-ReleaseStep "External integration contracts" {
     $env:EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION = "1"
     try { & pnpm release:certify-integrations }
     finally { Remove-Item Env:EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION -ErrorAction SilentlyContinue }
   }
   Invoke-ReleaseStep "Bundle budgets" { & pnpm release:check-bundles }
-  Invoke-ReleaseStep "Release prerequisite contracts" { & node --test scripts/prepare-suwayomi-bundle.test.mjs }
-  Invoke-ReleaseStep "Suwayomi bundle prerequisites" { & pnpm suwayomi:prepare-bundle:windows }
-  Invoke-ReleaseStep "Syncd sidecar build" { & pnpm syncd:prepare-sidecar:release }
   Invoke-ReleaseStep "Rust test suite" { & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1 }
   Invoke-ReleaseStep "Tauri automation build" { & pnpm tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json }
   Invoke-ReleaseStep "Local data round trips" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-data-release-certification.ps1 -App $appPath }
