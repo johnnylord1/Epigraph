@@ -931,6 +931,8 @@ const saved = (() => {
   return data;
 })();
 
+export const hadPersistedStoreAtStartup = saved !== null;
+
 function mergeSettings(saved: any): Settings {
   const savedBooksLibraryState = peekBookLibraryState();
   const savedMangaReaderPrefs = saved?.settings?.mangaReaderPrefs ?? {};

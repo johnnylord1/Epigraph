@@ -80,6 +80,7 @@ export default defineWorkspace([
         "src/components/settings/SuwayomiUpdatePanel.test.ts",
         "src/components/settings/SuwayomiUpdateThemeTokens.test.ts",
         "src/components/settings/Settings.test.ts",
+        "src/components/firstRun/FirstRun.test.ts",
         "src/components/reader/ReaderHud.test.ts",
         "src/components/reader/BookReader.test.ts",
         "src/components/reader/ReaderCoreThemeTokens.test.ts",

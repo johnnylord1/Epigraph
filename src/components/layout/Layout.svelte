@@ -1,13 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
-  import { store } from "../../store/state.svelte";
+  import { hadPersistedStoreAtStartup, store } from "../../store/state.svelte";
   import type { EpigraphRestorePlan } from "../../lib/backup/epigraphRestorePlanner";
   import type { BackupLaunchIntent } from "../../lib/backup/backupRollout";
   import Sidebar from "./Sidebar.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
+  import { shouldStartFirstRun } from "../../lib/firstRun";
+  import FirstRun from "../firstRun/FirstRun.svelte";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -20,6 +22,19 @@
     backupAuditPlan = null,
     backupRestoreLaunchIntent = null,
   }: Props = $props();
+
+  let firstRunPending = $state(readFirstRunPending());
+
+  function readFirstRunPending() {
+    try {
+      return shouldStartFirstRun(
+        localStorage.getItem("epigraph-first-run"),
+        hadPersistedStoreAtStartup,
+      );
+    } catch {
+      return false;
+    }
+  }
 
   const hasActiveBook = $derived(
     !!store.activeBookId && (
@@ -215,6 +230,9 @@
   });
 </script>
 
+{#if firstRunPending}
+  <FirstRun onComplete={() => (firstRunPending = false)} />
+{:else}
 <div class="root epigraph-app-shell">
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"}>
@@ -380,6 +398,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <style>
   .root {

@@ -117,8 +117,10 @@
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: EpigraphRestorePlan | null;
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
+    firstRunPane?: "backup" | "tracking" | null;
+    onOpenFirstRunSources?: () => void;
   }
-  let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null }: Props = $props();
+  let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null, firstRunPane = null, onOpenFirstRunSources = () => {} }: Props = $props();
   const DEFAULT_EPIGRAPH_GITHUB_REPO = "johnnylord1/Epigraph";
   const EPIGRAPH_GITHUB_REPO = (import.meta.env.VITE_EPIGRAPH_GITHUB_REPO ?? "").trim() || DEFAULT_EPIGRAPH_GITHUB_REPO;
   const EPIGRAPH_GITHUB_URL = `https://github.com/${EPIGRAPH_GITHUB_REPO}`;
@@ -412,8 +414,17 @@
     previousNonAmoledTheme = currentTheme;
     updateSettings({ theme: "amoled" });
   }
-  let tab: Tab          = $state("general");
+  let tab: Tab = $state("general");
   let activeGroup: SettingsGroupId = $state("app");
+  $effect(() => {
+    if (firstRunPane === "backup") {
+      tab = "storage";
+      activeGroup = "system";
+    } else if (firstRunPane === "tracking") {
+      tab = "tracking";
+      activeGroup = "content";
+    }
+  });
   let contentBodyEl: HTMLDivElement;
   let settingsSearchInputEl: HTMLInputElement | null = $state(null);
   let backupSectionEl: HTMLDivElement | undefined = $state();
@@ -874,6 +885,13 @@
     backupViewMode = "restore";
     advStorageOpen = true;
     storageAdvancedSource = "backup";
+  }
+  function openRestoreRepositories() {
+    if (firstRunPane === "backup") {
+      onOpenFirstRunSources();
+      return;
+    }
+    openSearchSources("extensions", "repos");
   }
   function closeStorageBackupPanel() {
     backupViewMode = null;
@@ -3530,6 +3548,7 @@
   let releasesLoaded = false; // plain var, not $state, so effect does not re-run on change
   onMount(() => {
     getVersion().then(v => appVersion = v).catch(() => appVersion = "unknown");
+    if (firstRunPane === "backup") openStorageRestore();
   });
   $effect(() => {
     if (tab !== "about") return;
@@ -3743,8 +3762,8 @@
     return Array.from(map.values());
   });
 </script>
-<main class="settings-page n-shell epigraph-port--settings">
-  <AppTopbar className="n-topbar--settings">
+<main class="settings-page n-shell epigraph-port--settings" class:settings-page--first-run={firstRunPane !== null}>
+  {#if firstRunPane === null}<AppTopbar className="n-topbar--settings">
     {#snippet center()}
       <form
         class="n-search n-search--settings"
@@ -3787,8 +3806,8 @@
       </button>
       <WindowControlsInline />
     {/snippet}
-  </AppTopbar>
-  <aside class="settings-group-rail" id="settingsGroupRail">
+  </AppTopbar>{/if}
+  {#if firstRunPane === null}<aside class="settings-group-rail" id="settingsGroupRail">
     <nav class="settings-group-rail__nav" aria-label={$_("settings.nav.groupsAria")}>
       {#each SETTINGS_GROUPS as group}
         <button
@@ -3820,10 +3839,10 @@
         </div>
       </div>
     </div>
-  </aside>
+  </aside>{/if}
 
-  <div class="settings-workbench">
-    <aside class="settings-subnav" aria-label={$_("settings.nav.sectionsAria", { group: currentGroupLabel })}>
+  <div class="settings-workbench" class:settings-workbench--first-run={firstRunPane !== null}>
+    {#if firstRunPane === null}<aside class="settings-subnav" aria-label={$_("settings.nav.sectionsAria", { group: currentGroupLabel })}>
       <p class="settings-subnav__eyebrow">{currentGroupLabel}</p>
       <div class="settings-subnav__list">
         {#each currentGroup.items as t}
@@ -3839,16 +3858,16 @@
           </button>
         {/each}
       </div>
-    </aside>
+    </aside>{/if}
 
     <section class="settings-pane-shell">
-      <header class="settings-pane-header">
+      {#if firstRunPane === null}<header class="settings-pane-header">
         <div>
           <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{currentGroupLabel}</p>
           <h2 class="settings-pane-header__title" id="settingsPaneTitle">{currentTabMeta.label}</h2>
           <p class="settings-pane-header__desc" id="settingsPaneDesc">{currentTabMeta.desc}</p>
         </div>
-      </header>
+      </header>{/if}
 
       <div class="settings-pane-body content-body" bind:this={contentBodyEl} onscroll={rememberPaneScroll}>
         <section
@@ -7085,9 +7104,9 @@
                               onclick={installRequiredRestoreExtensions}
                               disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
                             >
-                              {$_("settings_inline_installRequiredExtensions")}
+                              {$_("ui_installAll")}
                             </button>
-                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
+                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={openRestoreRepositories}>
                               {$_("settings_inline_openExtensionsRepos")}
                             </button>
                           </div>
@@ -7293,7 +7312,7 @@
                       {:else}
                         <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
                           <p class="settings-card__intro" style="margin:0">{$_("settings_inline_noConfidentMatches")}</p>
-                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={() => openSearchSources("extensions", "repos")}>
+                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={openRestoreRepositories}>
                             {$_("settings_inline_openExtensionsRepos")}
                           </button>
                         </div>
