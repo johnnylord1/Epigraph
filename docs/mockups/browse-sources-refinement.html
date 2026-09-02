@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="nocturne">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fontes - refinamento Nocturne</title>
+  <link rel="stylesheet" href="../../src/styles/global.css">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <style>
+    :root {
+      --mock-bg: var(--component-app-bg, var(--color-bg));
+      --mock-chrome: var(--component-topbar-bg, var(--color-deep));
+      --mock-surface: var(--component-sources-card-bg, var(--component-card-bg));
+      --mock-surface-hover: var(--component-menu-item-hover-bg, color-mix(in srgb, var(--accent-bright) 8%, transparent));
+      --mock-border: var(--component-sources-card-border, var(--color-border));
+      --mock-border-strong: var(--component-input-border, var(--color-outline));
+      --mock-text: var(--component-sources-title-fg, var(--text-primary));
+      --mock-body: var(--component-sources-body-fg, var(--text-secondary));
+      --mock-muted: var(--component-sources-muted-fg, var(--text-muted));
+      --mock-accent: var(--accent-bright);
+      --mock-accent-soft: color-mix(in srgb, var(--mock-accent) 8%, transparent);
+      --mock-warning: var(--color-status-warning-emphasis, var(--color-warning));
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body {
+      min-width: 1024px;
+      color: var(--mock-body);
+      background: var(--mock-bg);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      font-synthesis: none;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+
+    .app { width: 100vw; height: 100vh; display: grid; grid-template: 52px 1fr / 62px 1fr; }
+    .topbar {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 230px 1fr 230px;
+      align-items: center;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--mock-border);
+      background: var(--mock-chrome);
+    }
+    .mode-switch { display: flex; align-items: center; gap: 22px; height: 100%; }
+    .mode-switch button, .section-nav button {
+      position: relative;
+      height: 100%;
+      padding: 0;
+      border: 0;
+      color: var(--mock-muted);
+      background: transparent;
+      font-size: 10px;
+      font-weight: 720;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .mode-switch button.active, .section-nav button.active { color: var(--mock-text); }
+    .mode-switch button.active::after, .section-nav button.active::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 2px;
+      background: var(--mock-accent);
+    }
+    .global-search { justify-self: center; display: flex; align-items: center; gap: 8px; color: var(--mock-muted); font-size: 11px; }
+    .window-actions { justify-self: end; display: flex; gap: 13px; }
+    .window-actions button { width: 19px; height: 27px; padding: 0; border: 0; color: var(--mock-muted); background: transparent; }
+
+    .rail {
+      grid-row: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 0;
+      border-right: 1px solid var(--mock-border);
+      background: var(--mock-chrome);
+    }
+    .brand { width: 34px; height: 38px; display: grid; place-items: center; margin-bottom: 9px; color: var(--mock-accent); font-size: 22px; }
+    .rail button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; color: var(--mock-muted); background: transparent; font-size: 17px; }
+    .rail button.active { color: var(--mock-accent); background: var(--mock-accent-soft); }
+    .rail .settings { margin-top: auto; }
+
+    .workspace { grid-column: 2; min-width: 0; display: grid; grid-template-rows: 42px minmax(0, 1fr); }
+    .section-nav { display: flex; align-items: stretch; gap: 29px; padding: 0 25px; border-bottom: 1px solid var(--mock-border); }
+    .page { min-height: 0; display: grid; grid-template-rows: 82px minmax(0, 1fr); padding: 0 30px 25px; }
+    .page-head { display: flex; align-items: center; justify-content: space-between; }
+    .page-head h1 { margin: 0; color: var(--mock-text); font-size: 22px; line-height: 1.1; letter-spacing: -.02em; }
+    .head-actions { display: flex; align-items: center; gap: 18px; }
+    .text-action, .install-action {
+      height: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: var(--mock-body);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 650;
+    }
+    .text-action:hover { color: var(--mock-text); background: var(--mock-surface-hover); }
+    .install-action { border-color: var(--mock-border); color: var(--mock-text); background: var(--mock-surface); }
+
+    .source-layout { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 242px; gap: 22px; }
+    .catalog { min-width: 0; min-height: 0; display: grid; grid-template-rows: 48px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--mock-border); border-radius: 8px; background: var(--mock-surface); }
+    .catalog-toolbar { display: grid; grid-template-columns: auto minmax(180px, 320px) 34px; align-items: center; gap: 14px; padding: 0 13px; border-bottom: 1px solid var(--mock-border); }
+    .filters { display: flex; align-items: stretch; gap: 20px; height: 100%; }
+    .filter { position: relative; padding: 0; border: 0; color: var(--mock-muted); background: transparent; font-size: 11px; font-weight: 650; }
+    .filter.active { color: var(--mock-text); }
+    .filter.active::after { content: ""; position: absolute; inset: auto 0 -1px; height: 2px; background: var(--mock-accent); }
+    .search { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--mock-border); border-radius: 7px; color: var(--mock-muted); background: var(--mock-bg); }
+    .search input { min-width: 0; width: 100%; border: 0; outline: 0; color: var(--mock-text); background: transparent; font-size: 11px; }
+    .search input::placeholder { color: var(--mock-muted); }
+    .refresh { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 7px; color: var(--mock-muted); background: transparent; font-size: 15px; }
+    .refresh:hover { color: var(--mock-text); border-color: var(--mock-border); background: var(--mock-surface-hover); }
+    .refresh.busy i { animation: spin .8s linear infinite; }
+
+    .extension-list { min-height: 0; overflow: auto; padding: 7px; }
+    .extension-row { min-height: 55px; display: grid; grid-template-columns: 34px minmax(180px, 1fr) 60px 74px; align-items: center; gap: 11px; padding: 0 10px; border-bottom: 1px solid var(--mock-border); }
+    .extension-row:last-child { border-bottom: 0; }
+    .extension-icon { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--mock-border); border-radius: 6px; color: var(--mock-warning); background: var(--mock-bg); font-size: 14px; }
+    .extension-copy strong { display: block; color: var(--mock-text); font-size: 12px; font-weight: 680; }
+    .extension-copy small { display: block; margin-top: 3px; color: var(--mock-muted); font-size: 9px; }
+    .extension-lang { color: var(--mock-muted); font-size: 9px; text-transform: uppercase; }
+    .install-button { height: 28px; padding: 0 10px; border: 1px solid var(--mock-border-strong); border-radius: 7px; color: var(--mock-text); background: var(--mock-accent-soft); font-size: 10px; font-weight: 680; }
+
+    .overview { min-height: 0; padding-left: 18px; border-left: 1px solid var(--mock-border); }
+    .overview h2 { margin: 2px 0 12px; color: var(--mock-text); font-size: 13px; }
+    .overview-row { width: 100%; min-height: 52px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 12px; align-items: center; gap: 8px; padding: 0 7px; border: 0; border-bottom: 1px solid var(--mock-border); color: var(--mock-muted); background: transparent; text-align: left; }
+    .overview-row:hover, .overview-row.active { color: var(--mock-text); background: var(--mock-surface-hover); }
+    .overview-row.active { box-shadow: inset 2px 0 var(--mock-accent); }
+    .overview-row > i { font-size: 14px; }
+    .overview-row strong { color: inherit; font-size: 10px; font-weight: 650; }
+    .overview-row .count { color: inherit; font-family: var(--font-mono, monospace); font-size: 9px; }
+    .overview-row .ph-caret-right { font-size: 11px; }
+
+    .empty-note { display: none; align-items: center; justify-content: center; min-height: 100%; color: var(--mock-muted); font-size: 11px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .refresh.busy i { animation: none; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <nav class="mode-switch"><button class="active">Comics</button><button>Livros</button></nav>
+      <div class="global-search"><i class="ph ph-magnifying-glass"></i><span>Buscar extensões...</span></div>
+      <div class="window-actions"><button><i class="ph ph-bell"></i></button><button><i class="ph ph-minus"></i></button><button><i class="ph ph-square"></i></button><button><i class="ph ph-x"></i></button></div>
+    </header>
+
+    <aside class="rail">
+      <div class="brand"><i class="ph ph-drop"></i></div>
+      <button><i class="ph ph-house"></i></button>
+      <button><i class="ph ph-books"></i></button>
+      <button class="active"><i class="ph ph-compass"></i></button>
+      <button><i class="ph ph-download-simple"></i></button>
+      <button class="settings"><i class="ph ph-gear"></i></button>
+    </aside>
+
+    <main class="workspace">
+      <nav class="section-nav"><button>Buscar</button><button>Descobrir</button><button class="active">Fontes</button></nav>
+      <section class="page">
+        <header class="page-head">
+          <h1>Fontes</h1>
+          <div class="head-actions">
+            <button class="text-action"><i class="ph ph-git-branch"></i> Repositórios de mangá</button>
+            <button class="install-action"><i class="ph ph-plus"></i> Instalar APK</button>
+          </div>
+        </header>
+
+        <div class="source-layout">
+          <section class="catalog">
+            <header class="catalog-toolbar">
+              <nav class="filters">
+                <button class="filter">Instaladas</button>
+                <button class="filter active">Disponíveis</button>
+                <button class="filter">Atualizações</button>
+              </nav>
+              <label class="search"><i class="ph ph-magnifying-glass"></i><input placeholder="Buscar extensões..."></label>
+              <button class="refresh" aria-label="Atualizar catálogo" title="Atualizar catálogo"><i class="ph ph-arrows-clockwise"></i></button>
+            </header>
+
+            <div class="extension-list">
+              <article class="extension-row">
+                <span class="extension-icon"><i class="ph ph-warning-circle"></i></span>
+                <div class="extension-copy"><strong>Outdated App</strong><small>tachiyomi-all.keiyoushi-v1.4.1.apk</small></div>
+                <span class="extension-lang">Todos</span>
+                <button class="install-button">Instalar</button>
+              </article>
+              <article class="extension-row">
+                <span class="extension-icon"><i class="ph ph-arrow-circle-up"></i></span>
+                <div class="extension-copy"><strong>Update to Mihon 0.20.1+</strong><small>tachiyomi-all.mihon-v1.4.1.apk</small></div>
+                <span class="extension-lang">Todos</span>
+                <button class="install-button">Instalar</button>
+              </article>
+            </div>
+          </section>
+
+          <aside class="overview">
+            <h2>Fontes</h2>
+            <button class="overview-row"><i class="ph ph-check-circle"></i><strong>Instaladas</strong><span class="count">0</span><i class="ph ph-caret-right"></i></button>
+            <button class="overview-row active"><i class="ph ph-package"></i><strong>Disponíveis</strong><span class="count">2</span><i class="ph ph-caret-right"></i></button>
+            <button class="overview-row"><i class="ph ph-arrow-circle-up"></i><strong>Atualizações</strong><span class="count">0</span><i class="ph ph-caret-right"></i></button>
+            <button class="overview-row"><i class="ph ph-git-branch"></i><strong>Repositórios de mangá</strong><span class="count">1</span><i class="ph ph-caret-right"></i></button>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const refresh = document.querySelector('.refresh');
+    refresh.addEventListener('click', () => {
+      if (refresh.classList.contains('busy')) return;
+      refresh.classList.add('busy');
+      refresh.disabled = true;
+      window.setTimeout(() => {
+        refresh.classList.remove('busy');
+        refresh.disabled = false;
+      }, 900);
+    });
+  </script>
+</body>
+</html>
