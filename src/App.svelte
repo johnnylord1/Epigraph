@@ -73,6 +73,7 @@
     isLoopbackServerUrl,
     maybeStandbyLocalServer,
     notifyServerReady,
+    prepareManagedServerStartup,
   } from "./lib/serverLifecycle";
   import type { SyncdReplicationSnapshot } from "./lib/syncdDesktop";
   import type { TrackerCompletionTracker } from "./lib/library/completion";
@@ -82,7 +83,7 @@
   import { traceMediaAudit } from "./lib/mediaAudit";
   import { getImageCacheStats, trimImageCacheIfLoaded } from "./lib/imageCacheMetrics";
   import type { EpigraphUpdateStatus } from "./lib/epigraphUpdater";
-  import { _, applyAppLanguage } from "./lib/i18n/runtime";
+  import { _, applyAppLanguage, translate } from "./lib/i18n/runtime";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
@@ -227,8 +228,7 @@
     themeEditorEditId = null;
   }
 
-  const MAX_ATTEMPTS = 10;
-  const STARTUP_FAILSAFE_MS = 18_000;
+  const STARTUP_FAILSAFE_MS = 300_000;
   let win: TauriWindow | null = null;
   let isNovelRuntimeHostWindow = $state(false);
   let runtimeWindowClassified = $state(false);
@@ -240,9 +240,12 @@
   let startupLandingApplied = $state(false);
   let failed        = $state(false);
   let notConfigured = $state(false);
-  let startupFailureTitle = $state("Could not reach server");
-  let startupFailureDetail = $state("Epigraph couldn't reach the selected local profile.");
-  let startupStatusText = $state("Initializing profile");
+  let startupFailureTitle = $state(translate("startup.couldNotStartProfile", { profile: "MAIN" }));
+  let startupFailureDetail = $state(translate("startup.profileUnavailable", {
+    profile: "MAIN",
+    serverUrl: "http://127.0.0.1:4567",
+  }));
+  let startupStatusText = $state(translate("startup.initializingProfile", { profile: "MAIN" }));
   let startupHealthWatchInFlight = false;
   let startupFailsafeTimer: number | null = null;
   let idle          = $state(false);
@@ -1605,6 +1608,7 @@
   }
 
   let cancelProbe = false;
+  let startupProbeRun = 0;
   let pendingAuditOpen: LaunchTargetProfileOverrides["auditOpenOverride"] = null;
   let pendingAuditMangaId: number | null = null;
   let pendingAuditChapterId: number | null = null;
@@ -1644,10 +1648,13 @@
   function setStartupStatusCopy() {
     const prefix = activeProfileLabel();
     startupStatusText = runtimeAttachOnly
-      ? `Attaching to ${prefix} profile`
-      : `Initializing ${prefix} profile`;
-    startupFailureTitle = `Could not start ${prefix} profile`;
-    startupFailureDetail = `Epigraph couldn't reach the ${prefix} profile for this session.`;
+      ? translate("startup.attachingProfile", { profile: prefix })
+      : translate("startup.initializingProfile", { profile: prefix });
+    startupFailureTitle = translate("startup.couldNotStartProfile", { profile: prefix });
+    startupFailureDetail = translate("startup.profileUnavailable", {
+      profile: prefix,
+      serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
+    });
   }
 
   function applyLaunchTarget(launchTarget: LaunchTargetInfo | null) {
@@ -2288,11 +2295,17 @@
       if (shellReady || failed || notConfigured || !startupSplashVisible || isNovelRuntimeHostWindow) return;
       failed = true;
       startupFailureTitle = runtimeAttachOnly
-        ? `Could not attach to ${activeProfileLabel()} profile`
-        : `Could not start ${activeProfileLabel()} profile`;
+        ? translate("startup.couldNotAttachProfile", { profile: activeProfileLabel() })
+        : translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
       startupFailureDetail = runtimeAttachOnly
-        ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
-        : `Epigraph is still waiting for the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}. You can retry, or enter the app while the profile reconnects.`;
+        ? translate("startup.attachOnlyUnavailable", {
+            profile: activeProfileLabel(),
+            serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
+          })
+        : translate("startup.profileStillPreparing", {
+            profile: activeProfileLabel(),
+            serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
+          });
     }, STARTUP_FAILSAFE_MS);
   }
 
@@ -2355,46 +2368,31 @@
   }
 
   function startProbe() {
+    const run = ++startupProbeRun;
     cancelProbe = false;
     failed      = false;
     shellReadyAt = null;
     bootStartedAt = Date.now();
     setStartupStatusCopy();
     armStartupFailsafe();
-    let tries   = 0;
 
     async function probe() {
-      if (cancelProbe) return;
+      if (cancelProbe || run !== startupProbeRun) return;
       if (canBootFromLibrarySnapshot()) {
         cancelProbe = true;
         await finishStartupAfterProbe();
         void preloadLibrarySnapshot();
         return;
       }
-      tries++;
-
       for (const base of getProbeBases()) {
         const healthy = await probeServerReady(base);
-        if (healthy && !cancelProbe) {
+        if (healthy && !cancelProbe && run === startupProbeRun) {
           await finishStartupAfterProbe();
           return;
         }
       }
 
-      if (tries >= MAX_ATTEMPTS && !cancelProbe) {
-        failed = true;
-        if (!notConfigured) {
-          startupFailureTitle = runtimeAttachOnly
-            ? `Could not attach to ${activeProfileLabel()} profile`
-            : `Could not start ${activeProfileLabel()} profile`;
-          startupFailureDetail = runtimeAttachOnly
-            ? `This session is attach-only, and the ${activeProfileLabel()} profile was not reachable on ${store.runtimeServerUrl ?? "its expected local server"}.`
-            : `Epigraph couldn't reach the ${activeProfileLabel()} profile on ${store.runtimeServerUrl ?? "its expected local server"}.`;
-        }
-        setTimeout(probe, 4000);
-        return;
-      }
-      if (!cancelProbe) setTimeout(probe, 1000);
+      if (!cancelProbe && run === startupProbeRun) setTimeout(probe, 1000);
     }
 
     setTimeout(probe, 1250);
@@ -2489,8 +2487,6 @@
       const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
       if (cancelled) return;
       applyLaunchTarget(launchTarget);
-      ensureProbeStarted();
-
       const initialTarget = getServerTargetInfo();
       document.title = `Epigraph [${initialTarget.title}]`;
       if (win) {
@@ -2585,25 +2581,28 @@
       }
 
       if (shouldAutoStartServer) {
-        invoke<void>("spawn_server", {
-          binary: store.settings.serverBinary,
-          serverUrl: effectiveServerUrl,
-          profileId: store.runtimeResolvedLocalProfileId,
-          profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
-          updateIntensity: store.settings.libraryUpdateIntensity,
-        }).catch((err: any) => {
+        try {
+          await prepareManagedServerStartup({
+            binary: store.settings.serverBinary,
+            serverUrl: effectiveServerUrl,
+            profileId: store.runtimeResolvedLocalProfileId,
+            profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+            updateIntensity: store.settings.libraryUpdateIntensity,
+          });
+        } catch (err: any) {
           if (err?.kind === "NotConfigured") {
             notConfigured = true;
-            startupFailureTitle = `Server not configured for ${activeProfileLabel()} profile`;
-            startupFailureDetail = "Set up a local Suwayomi server before booting this profile.";
+            startupFailureTitle = translate("startup.profileNotConfigured", { profile: activeProfileLabel() });
+            startupFailureDetail = translate("startup.profileNotConfiguredBody");
           } else if (err?.kind === "AttachOnlyTarget") {
             console.info("Attach-only target skipped local server spawn.");
           } else {
-            startupFailureTitle = `Could not start ${activeProfileLabel()} profile`;
-            startupFailureDetail = err?.message ?? "The selected profile did not complete a healthy local boot.";
+            failed = true;
+            startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
+            startupFailureDetail = err?.message ?? translate("startup.unhealthyBoot");
             console.warn("Could not start server:", err);
           }
-        });
+        }
       }
       void runAutomaticLibraryUpdate("startup");
 
@@ -2961,8 +2960,10 @@
     return () => window.removeEventListener("keydown", handleGlobalFullscreenKey, true);
   });
 
-  function handleRetry() {
+  async function handleRetry() {
     clearStartupFailsafe();
+    startupProbeRun += 1;
+    cancelProbe = true;
     failed        = false;
     notConfigured = false;
     serverProbeOk = false;
@@ -2970,11 +2971,30 @@
     startupLandingApplied = false;
     startupSplashVisible = true;
     setStartupStatusCopy();
+    if (!runtimeAttachOnly) {
+      try {
+        await prepareManagedServerStartup({
+          binary: store.settings.serverBinary,
+          serverUrl: store.runtimeServerUrl ?? store.settings.serverUrl,
+          profileId: store.runtimeResolvedLocalProfileId,
+          profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+          updateIntensity: store.settings.libraryUpdateIntensity,
+        });
+      } catch (error) {
+        failed = true;
+        startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
+        startupFailureDetail = error instanceof Error
+          ? error.message
+          : translate("startup.unhealthyBoot");
+        return;
+      }
+    }
     startProbe();
   }
 
   function handleBypass() {
     clearStartupFailsafe();
+    startupProbeRun += 1;
     cancelProbe   = true;
     serverProbeOk = true;
     shellReady    = true;

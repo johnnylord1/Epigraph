@@ -115,6 +115,22 @@ export async function configureLocalServerRuntime(input: ServerLifecycleInput) {
   return true;
 }
 
+export async function prepareManagedServerStartup(input: ServerLifecycleInput) {
+  const serverUrl = input.serverUrl ?? null;
+  if (!isLoopbackServerUrl(serverUrl)) return false;
+
+  const commandInput = {
+    binary: input.binary ?? "",
+    serverUrl,
+    profileId: input.profileId ?? null,
+    profileLabel: input.profileLabel ?? null,
+    updateIntensity: input.updateIntensity ?? "balanced",
+  };
+  await invoke<void>("prepare_managed_server_startup", commandInput);
+  await resetManagedSourceRuntimeCache();
+  return true;
+}
+
 export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
   const serverUrl = input.serverUrl ?? null;
   if (!isLoopbackServerUrl(serverUrl)) return false;

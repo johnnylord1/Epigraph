@@ -383,6 +383,20 @@ struct LocalServerTarget {
     attach_only: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagedStartupOwner {
+    PersistentCore,
+    Desktop,
+}
+
+fn managed_startup_owner(profile_key: &str, port: u16) -> ManagedStartupOwner {
+    if profile_key.eq_ignore_ascii_case("main") && port == 4567 {
+        ManagedStartupOwner::PersistentCore
+    } else {
+        ManagedStartupOwner::Desktop
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServerOwner {
@@ -2504,6 +2518,22 @@ server.maxSourcesInParallel = 6
         assert_eq!(target.profile_key, "sandbox");
         assert_eq!(target.port, 4777);
         assert_eq!(target.root_dir, local_server_custom_profile_root("sandbox"));
+    }
+
+    #[test]
+    fn managed_startup_assigns_only_main_to_the_persistent_core() {
+        assert_eq!(
+            managed_startup_owner("main", 4567),
+            ManagedStartupOwner::PersistentCore
+        );
+        assert_eq!(
+            managed_startup_owner("test", 4667),
+            ManagedStartupOwner::Desktop
+        );
+        assert_eq!(
+            managed_startup_owner("sandbox", 4781),
+            ManagedStartupOwner::Desktop
+        );
     }
 
     #[test]
@@ -5196,29 +5226,14 @@ async fn spawn_server(
         profile_id.as_deref(),
         profile_label.as_deref(),
     )?;
-    if target.profile_key == "main" && target.port == 4567 && !target.attach_only {
-        let instance = syncd::suwayomi_process::ensure_main_owned_instance()
+    if managed_startup_owner(&target.profile_key, target.port)
+        == ManagedStartupOwner::PersistentCore
+        && !target.attach_only
+    {
+        syncd_sidecar::ensure_host_mode(&app)
             .await
             .map_err(SpawnError::SpawnFailed)?;
-        match instance {
-            syncd::suwayomi_process::HeadlessSuwayomiOutcome::Attached(instance)
-            | syncd::suwayomi_process::HeadlessSuwayomiOutcome::Started(instance) => {
-                set_runtime_status(
-                    &app,
-                    suwayomi_runtime::RuntimeLifecycleState::Ready,
-                    Some(instance.profile_key),
-                    Some(instance.server_url),
-                    Some(instance.java_pid),
-                    None,
-                );
-                return Ok(());
-            }
-            syncd::suwayomi_process::HeadlessSuwayomiOutcome::NotConfigured => {
-                return Err(SpawnError::NotConfigured(
-                    "Managed Suwayomi is not configured for the main profile.".to_string(),
-                ));
-            }
-        }
+        return Ok(());
     }
     spawn_server_unlocked(
         binary,
@@ -5914,6 +5929,53 @@ fn configure_local_server_runtime(
         LocalServerUpdateIntensity::from_option(update_intensity.as_deref()),
     );
     Ok(())
+}
+
+#[tauri::command]
+async fn prepare_managed_server_startup(
+    binary: String,
+    server_url: String,
+    profile_id: Option<String>,
+    profile_label: Option<String>,
+    update_intensity: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<(), SpawnError> {
+    configure_local_server_runtime(
+        server_url.clone(),
+        profile_id.clone(),
+        profile_label.clone(),
+        update_intensity.clone(),
+        app.clone(),
+    )?;
+
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let target = resolve_local_server_target(
+        &launch_target,
+        Some(server_url.as_str()),
+        profile_id.as_deref(),
+        profile_label.as_deref(),
+    )?;
+    if target.attach_only {
+        return Ok(());
+    }
+
+    match managed_startup_owner(&target.profile_key, target.port) {
+        ManagedStartupOwner::PersistentCore => {
+            syncd_sidecar::ensure_host_mode(&app)
+                .await
+                .map_err(SpawnError::SpawnFailed)?;
+            Ok(())
+        }
+        ManagedStartupOwner::Desktop => spawn_server_unlocked(
+            binary,
+            server_url,
+            profile_id,
+            profile_label,
+            update_intensity,
+            app,
+            true,
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -6664,6 +6726,7 @@ pub fn run() {
             remove_book_assets,
             spawn_server,
             configure_local_server_runtime,
+            prepare_managed_server_startup,
             reset_local_profile_data,
             kill_server,
             get_platform_ui_scale,

@@ -9,7 +9,33 @@ describe("server lifecycle notifications", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.doUnmock("@tauri-apps/api/core");
     vi.resetModules();
+  });
+
+  it("delegates clean local startup to one backend orchestration command", async () => {
+    const invoke = vi.fn(async () => undefined);
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    const { prepareManagedServerStartup } = await import("./serverLifecycle");
+
+    const started = await prepareManagedServerStartup({
+      serverUrl: "http://127.0.0.1:4567",
+      binary: "",
+      updateIntensity: "balanced",
+      profileId: "main",
+      profileLabel: "MAIN",
+    });
+
+    expect(started).toBe(true);
+    expect(invoke.mock.calls).toEqual([
+      ["prepare_managed_server_startup", {
+        binary: "",
+        serverUrl: "http://127.0.0.1:4567",
+        profileId: "main",
+        profileLabel: "MAIN",
+        updateIntensity: "balanced",
+      }],
+    ]);
   });
 
   it("dedupes repeated ready notifications for the same server", async () => {

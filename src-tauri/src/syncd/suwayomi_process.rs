@@ -26,6 +26,7 @@ const STARTUP_PROBE_TIMEOUT_EXISTING: Duration = Duration::from_secs(360);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2_500);
 const STALE_LOCK_AGE: Duration = Duration::from_secs(120);
 const SUPERVISOR_HEALTH_INTERVAL: Duration = Duration::from_secs(15);
+const SUPERVISOR_CONFIGURATION_INTERVAL: Duration = Duration::from_secs(1);
 const SUPERVISOR_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const JAVA_TOOL_OPTIONS: &str = "-Djava.awt.headless=true -Xms256m -Xmx1536m -XX:+UseG1GC";
 const DEFAULT_SERVER_CONF: &str = r#"server.ip = "127.0.0.1"
@@ -126,7 +127,7 @@ pub fn start_headless_supervisor(
                     );
                     SUPERVISOR_HEALTH_INTERVAL
                 }
-                Ok(HeadlessSuwayomiOutcome::NotConfigured) => SUPERVISOR_HEALTH_INTERVAL,
+                Ok(HeadlessSuwayomiOutcome::NotConfigured) => SUPERVISOR_CONFIGURATION_INTERVAL,
                 Err(error) => {
                     tracing::warn!(
                         error = %crate::suwayomi_runtime::sanitize_log_line(&error, &[]),

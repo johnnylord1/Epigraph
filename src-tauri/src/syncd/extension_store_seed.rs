@@ -1,15 +1,11 @@
-//! Ensures the active Suwayomi profile has the Core's known extension stores.
+//! Applies extension stores supplied explicitly by the Core operator.
 //!
 //! The desktop UI and the headless Core keep separate Suwayomi profiles, and extension
-//! store configuration only changed through the UI. Mobile pairing then inherited a
-//! profile without repositories, leaving works stranded without installable sources.
-//! This seed runs once per persistent Core startup and is idempotent: existing entries
-//! are preserved and only missing desired URLs are appended to `server.conf`.
+//! store configuration only changed through the UI. An operator may mirror that
+//! configuration into a persistent headless Core through the environment. No public
+//! repository is selected or recommended by Epigraph itself.
 
 use std::path::{Path, PathBuf};
-
-pub const DEFAULT_SEED_STORES: &[&str] =
-    &["https://github.com/keiyoushi/extensions/raw/repo/index.pb"];
 
 const CONF_KEY: &str = "server.extensionStores";
 
@@ -150,12 +146,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let conf = temp.path().join("server.conf");
         std::fs::write(&conf, "server.ip = \"127.0.0.1\"\n").unwrap();
-        let effective =
-            ensure_extension_stores(temp.path(), &[DEFAULT_SEED_STORES[0].to_string()]).unwrap();
-        assert_eq!(effective.len(), 1);
+        let store = "https://store.example/index.pb";
+        let effective = ensure_extension_stores(temp.path(), &[store.to_string()]).unwrap();
+        assert_eq!(effective, vec![store]);
         let patched = std::fs::read_to_string(&conf).unwrap();
         assert!(patched.contains(CONF_KEY));
-        assert!(patched.contains(DEFAULT_SEED_STORES[0]));
+        assert!(patched.contains(store));
         assert!(patched.contains("server.ip = \"127.0.0.1\""));
     }
 }

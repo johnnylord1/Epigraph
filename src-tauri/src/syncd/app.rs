@@ -88,15 +88,18 @@ pub async fn run() -> anyhow::Result<()> {
         );
     }
     if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
-        match super::extension_store_seed::ensure_extension_stores(
-            &super::extension_store_seed::active_profile_root(),
-            &desired_extension_stores(),
-        ) {
-            Ok(stores) => {
-                tracing::info!(count = stores.len(), "extension store seed reconciled");
-            }
-            Err(error) => {
-                tracing::warn!(error = %error, "failed to seed extension stores");
+        let desired_stores = desired_extension_stores();
+        if !desired_stores.is_empty() {
+            match super::extension_store_seed::ensure_extension_stores(
+                &super::extension_store_seed::active_profile_root(),
+                &desired_stores,
+            ) {
+                Ok(stores) => {
+                    tracing::info!(count = stores.len(), "operator extension stores reconciled");
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to apply operator extension stores");
+                }
             }
         }
     }
@@ -264,22 +267,20 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
 }
 
 fn desired_extension_stores() -> Vec<String> {
-    let from_env = std::env::var("EPIGRAPH_SYNCD_EXTENSION_STORES")
-        .map(|raw| {
-            raw.split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if from_env.is_empty() {
-        return super::extension_store_seed::DEFAULT_SEED_STORES
-            .iter()
-            .map(|url| url.to_string())
-            .collect();
-    }
-    from_env
+    desired_extension_stores_from_env(
+        std::env::var("EPIGRAPH_SYNCD_EXTENSION_STORES")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn desired_extension_stores_from_env(raw: Option<&str>) -> Vec<String> {
+    raw.unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn spawn_gc_task(
@@ -428,6 +429,11 @@ pub fn build_test_router_with_shutdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn does_not_seed_an_extension_store_without_explicit_operator_configuration() {
+        assert!(desired_extension_stores_from_env(None).is_empty());
+    }
     use crate::syncd::db::{
         append_change_log_entry, connect, ensure_test_token, upsert_server_identity,
     };
