@@ -66,7 +66,9 @@ pnpm test:browser
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-The complete release gate is available as `pnpm release:verify`.
+The complete release gate is available as `pnpm release:verify`. On Windows it
+builds the frontend first and stages the pinned Suwayomi runtime after verifying
+its SHA-256, so a fresh checkout does not depend on an ignored local bundle.
 
 ## Project map
 

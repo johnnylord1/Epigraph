@@ -211,19 +211,9 @@ async fn authenticate_token(
     }
 
     let new_expiry = now_ms + state.config.token_inactivity_window.as_millis() as i64;
-    sqlx::query(
-        r#"
-        UPDATE paired_device_tokens
-        SET last_seen_at_ms = ?, inactivity_expires_at_ms = ?
-        WHERE token_id = ?
-        "#,
-    )
-    .bind(now_ms)
-    .bind(new_expiry)
-    .bind(&token_id)
-    .execute(&state.pool)
-    .await
-    .map_err(|_| AppError::Internal("Failed to refresh token activity window.".to_string()))?;
+    refresh_token_activity(&state.pool, &token_id, now_ms, new_expiry)
+        .await
+        .map_err(|_| AppError::Internal("Failed to refresh token activity window.".to_string()))?;
 
     let scope_rows = sqlx::query("SELECT scope_id FROM paired_device_scopes WHERE token_id = ?")
         .bind(&token_id)
@@ -243,6 +233,48 @@ async fn authenticate_token(
         scopes,
         mutation_receipt: None,
     })
+}
+
+fn is_sqlite_write_contention(error: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(database_error) = error else {
+        return false;
+    };
+    database_error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, 5 | 6))
+}
+
+async fn refresh_token_activity(
+    pool: &sqlx::SqlitePool,
+    token_id: &str,
+    now_ms: i64,
+    new_expiry: i64,
+) -> Result<(), sqlx::Error> {
+    const RETRY_DELAYS_MS: [u64; 4] = [10, 25, 50, 100];
+    for attempt in 0..=RETRY_DELAYS_MS.len() {
+        let result = sqlx::query(
+            r#"
+            UPDATE paired_device_tokens
+            SET last_seen_at_ms = ?, inactivity_expires_at_ms = ?
+            WHERE token_id = ?
+            "#,
+        )
+        .bind(now_ms)
+        .bind(new_expiry)
+        .bind(token_id)
+        .execute(pool)
+        .await;
+        match result {
+            Ok(_) => return Ok(()),
+            Err(error) if attempt < RETRY_DELAYS_MS.len() && is_sqlite_write_contention(&error) => {
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAYS_MS[attempt]))
+                    .await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded token activity retry loop always returns")
 }
 
 fn hash_token(raw_token: &str) -> String {

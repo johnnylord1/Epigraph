@@ -39,13 +39,28 @@ describe("release verification orchestration", () => {
   });
 
   test("builds once before every native certification and leaves no repo artifacts", () => {
+    const packageJson = JSON.parse(read("package.json"));
     const script = read("scripts/verify-release.ps1");
+    const frontendBuild = script.indexOf('Invoke-ReleaseStep "Frontend production build"');
+    const themeGeneration = script.indexOf('Invoke-ReleaseStep "Builtin theme generation"');
+    const svelteDiagnostics = script.indexOf('Invoke-ReleaseStep "Svelte diagnostics"');
+    const unitTests = script.indexOf('Invoke-ReleaseStep "Unit and jsdom tests"');
+    const bundlePrep = script.indexOf('Invoke-ReleaseStep "Suwayomi bundle prerequisites"');
+    const sidecarBuild = script.indexOf('Invoke-ReleaseStep "Syncd sidecar build"');
+    const rustTests = script.indexOf('Invoke-ReleaseStep "Rust test suite"');
     const tauriBuild = script.indexOf('Invoke-ReleaseStep "Tauri automation build"');
     const dataGate = script.indexOf('Invoke-ReleaseStep "Local data round trips"');
     const viewportGate = script.indexOf('Invoke-ReleaseStep "Native viewport smoke"');
     const navigationGate = script.indexOf('Invoke-ReleaseStep "Native navigation budgets"');
 
-    expect(tauriBuild).toBeGreaterThan(0);
+    expect(frontendBuild).toBeGreaterThan(0);
+    expect(themeGeneration).toBeGreaterThan(frontendBuild);
+    expect(svelteDiagnostics).toBeGreaterThan(themeGeneration);
+    expect(unitTests).toBeGreaterThan(svelteDiagnostics);
+    expect(bundlePrep).toBeGreaterThan(unitTests);
+    expect(sidecarBuild).toBeGreaterThan(bundlePrep);
+    expect(rustTests).toBeGreaterThan(sidecarBuild);
+    expect(tauriBuild).toBeGreaterThan(rustTests);
     expect(dataGate).toBeGreaterThan(tauriBuild);
     expect(viewportGate).toBeGreaterThan(dataGate);
     expect(navigationGate).toBeGreaterThan(viewportGate);
@@ -66,6 +81,8 @@ describe("release verification orchestration", () => {
     expect(script).toContain("Get-WorktreeFingerprint");
     expect(script).toContain("git diff --cached --check");
     expect(script).toContain("Release verification changed the worktree");
+    expect(packageJson.scripts["suwayomi:prepare-bundle:windows"]).toContain("prepare-suwayomi-bundle.mjs");
+    expect(script).toContain("node --test scripts/prepare-suwayomi-bundle.test.mjs");
   });
 
   test("requires reviewed visual baselines and keeps diagnostics outside the repository", () => {

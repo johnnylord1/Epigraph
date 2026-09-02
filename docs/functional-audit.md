@@ -532,3 +532,24 @@ A checagem final de integridade concluiu sem alterações durante a execução:
 de whitespace e o fingerprint final do worktree. Não houve alteração automática
 de código ou perda de dados; o commit contém somente os ajustes documentais e
 de orçamento de bundle registrados nesta página.
+
+## Reprodutibilidade do gate de release — 02/09/2026
+
+O gate passou a construir o frontend antes de gerar temas e preparar sidecars.
+Em checkout Windows limpo, ele também baixa o bundle Suwayomi `v2.1.1867`
+fixado, valida o SHA-256 antes da extração e preserva arquivos já presentes no
+runtime versionado. Contratos Node cobrem staging, checksum incorreto e layout
+incompleto; o orçamento do entry bundle voltou a passar sem elevar o limite.
+
+O refresh de atividade dos tokens Syncd agora repete somente erros SQLite
+transitórios `BUSY`/`LOCKED`, com espera curta e limitada. Um teste de integração
+mantém uma transação concorrente aberta e comprova que uma requisição
+autenticada se recupera, enquanto as mutations concorrentes foram repetidas
+20 vezes sem a falha intermitente anterior.
+
+A execução final passou 20/20 gates bloqueantes: 1.274 testes unit/jsdom, 57
+browser, 470 testes Rust da biblioteca e 281 do Syncd, além de build release do
+sidecar e do app. Os smokes descartáveis confirmaram EPUB/PDF, dois progressos,
+dois bookmarks, rejeição transacional de backup corrompido, 6/6 checks de
+viewport e navegação dentro de todos os budgets. O fingerprint final confirmou
+que o gate não alterou o worktree.

@@ -3819,6 +3819,8 @@ mod tests {
     use http_body_util::BodyExt;
     use serde_json::Value;
     use sha2::{Digest, Sha256};
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+    use sqlx::{Connection, SqliteConnection};
     use std::sync::Arc;
     use tempfile::tempdir;
     use tokio::sync::{broadcast, Mutex, RwLock};
@@ -7378,6 +7380,47 @@ mod tests {
                 .current_server_version,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn authenticated_request_recovers_from_transient_sqlite_write_contention() {
+        let (_temp, state) = build_state().await;
+        let mut pooled_connections = Vec::new();
+        for _ in 0..5 {
+            let mut connection = state.pool.acquire().await.unwrap();
+            sqlx::query("PRAGMA busy_timeout = 25;")
+                .execute(&mut *connection)
+                .await
+                .unwrap();
+            pooled_connections.push(connection);
+        }
+        drop(pooled_connections);
+
+        let options = SqliteConnectOptions::new()
+            .filename(&state.config.db_path)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_millis(25));
+        let mut blocker = SqliteConnection::connect_with(&options).await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE;")
+            .execute(&mut blocker)
+            .await
+            .unwrap();
+
+        let app = build_test_router(state);
+        let pending = tokio::spawn(async move {
+            app.oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels%3Aprofile%3Amain",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap()
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        sqlx::query("COMMIT;").execute(&mut blocker).await.unwrap();
+
+        let response = pending.await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

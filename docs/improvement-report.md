@@ -111,6 +111,20 @@ Este documento não redefine os bugs confirmados de `bug-report.md`. Os itens ab
   Os demais itens abertos continuam melhorias ou evidências condicionais, não
   regressões confirmadas.
 
+## Atualização de reprodutibilidade — 02/09/2026
+
+- `release:verify` agora ordena build frontend, geração de temas, bundle
+  Suwayomi fixado, sidecar Syncd, Rust e build Tauri sem depender de `dist/` ou
+  binários ignorados deixados por uma execução anterior.
+- O artefato Suwayomi é aceito somente após SHA-256 exato e layout mínimo
+  (`bin/Suwayomi-Server.jar` e `jre/bin/java.exe`).
+- A contenção transitória no refresh de tokens Syncd ganhou retry limitado e
+  teste determinístico, encerrando a intermitência observada sob carga sem
+  repetir erros permanentes.
+- A revalidação final passou 20/20 gates, com 1.274 testes unit/jsdom, 57
+  browser, 470 testes Rust da biblioteca, 281 do Syncd e os três smokes nativos
+  em perfis descartáveis.
+
 ## Atualização do Marco 72H
 
 - O provider Vitest browser usa host IPv4 explícito e porta isolada por
