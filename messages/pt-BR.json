@@ -262,8 +262,6 @@
   "startup_attachOnlyUnavailable": "Esta sessão permite apenas conexão, e o perfil {profile} não respondeu em {serverUrl}.",
   "startup_profileNotConfigured": "Servidor não configurado para o perfil {profile}",
   "startup_profileNotConfiguredBody": "Configure um servidor Suwayomi local antes de iniciar este perfil.",
-  "startup_unhealthyBoot": "O perfil selecionado não concluiu uma inicialização local saudável.",
-  "startup_expectedLocalServer": "seu servidor local esperado",
   "setup_noReposExtensionsTitle": "Adicione primeiro um repositório de extensões",
   "setup_noReposTitle": "As extensões precisam de um repositório configurado",
   "setup_noReposBody": "O Suwayomi está conectado, mas a lista de repositórios está vazia. Adicione um repositório antes de procurar extensões ou fontes.",

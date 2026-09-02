@@ -1645,16 +1645,20 @@
       ?? "CUSTOM";
   }
 
+  function startupUnavailableDetail() {
+    return translate("startup.profileUnavailable", {
+      profile: activeProfileLabel(),
+      serverUrl: store.runtimeServerUrl ?? getServerTargetInfo().url,
+    });
+  }
+
   function setStartupStatusCopy() {
     const prefix = activeProfileLabel();
     startupStatusText = runtimeAttachOnly
       ? translate("startup.attachingProfile", { profile: prefix })
       : translate("startup.initializingProfile", { profile: prefix });
     startupFailureTitle = translate("startup.couldNotStartProfile", { profile: prefix });
-    startupFailureDetail = translate("startup.profileUnavailable", {
-      profile: prefix,
-      serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
-    });
+    startupFailureDetail = startupUnavailableDetail();
   }
 
   function applyLaunchTarget(launchTarget: LaunchTargetInfo | null) {
@@ -2300,11 +2304,11 @@
       startupFailureDetail = runtimeAttachOnly
         ? translate("startup.attachOnlyUnavailable", {
             profile: activeProfileLabel(),
-            serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
+            serverUrl: store.runtimeServerUrl ?? getServerTargetInfo().url,
           })
         : translate("startup.profileStillPreparing", {
             profile: activeProfileLabel(),
-            serverUrl: store.runtimeServerUrl ?? translate("startup.expectedLocalServer"),
+            serverUrl: store.runtimeServerUrl ?? getServerTargetInfo().url,
           });
     }, STARTUP_FAILSAFE_MS);
   }
@@ -2599,7 +2603,7 @@
           } else {
             failed = true;
             startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
-            startupFailureDetail = err?.message ?? translate("startup.unhealthyBoot");
+            startupFailureDetail = err?.message ?? startupUnavailableDetail();
             console.warn("Could not start server:", err);
           }
         }
@@ -2985,7 +2989,7 @@
         startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
         startupFailureDetail = error instanceof Error
           ? error.message
-          : translate("startup.unhealthyBoot");
+          : startupUnavailableDetail();
         return;
       }
     }

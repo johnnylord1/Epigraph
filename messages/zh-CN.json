@@ -262,8 +262,6 @@
   "startup_attachOnlyUnavailable": "此会话仅允许连接，但无法访问 {serverUrl} 上的 {profile} 配置文件。",
   "startup_profileNotConfigured": "尚未为 {profile} 配置文件配置服务器",
   "startup_profileNotConfiguredBody": "请先配置本地 Suwayomi 服务器，再启动此配置文件。",
-  "startup_unhealthyBoot": "所选配置文件未能正常完成本地启动。",
-  "startup_expectedLocalServer": "预期的本地服务器",
   "setup_noReposExtensionsTitle": "请先添加扩展仓库",
   "setup_noReposTitle": "扩展需要已配置的仓库",
   "setup_noReposBody": "Suwayomi 已连接，但扩展仓库列表为空。请先添加仓库，再查找扩展或内容源。",

@@ -262,8 +262,6 @@
   "startup_attachOnlyUnavailable": "This session is attach-only, and the {profile} profile was not reachable at {serverUrl}.",
   "startup_profileNotConfigured": "Server not configured for {profile} profile",
   "startup_profileNotConfiguredBody": "Configure a local Suwayomi server before starting this profile.",
-  "startup_unhealthyBoot": "The selected profile did not complete a healthy local startup.",
-  "startup_expectedLocalServer": "its expected local server",
   "setup_noReposExtensionsTitle": "Add an extension repository first",
   "setup_noReposTitle": "Extensions need a configured repository",
   "setup_noReposBody": "Suwayomi is connected, but the extension repository list is empty. Add a repository before looking for extensions or sources.",

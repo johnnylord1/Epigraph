@@ -262,8 +262,6 @@
   "startup_attachOnlyUnavailable": "このセッションは接続専用ですが、{serverUrl} の {profile} プロファイルに接続できませんでした。",
   "startup_profileNotConfigured": "{profile} プロファイルのサーバーが構成されていません",
   "startup_profileNotConfiguredBody": "このプロファイルを起動する前にローカル Suwayomi サーバーを構成してください。",
-  "startup_unhealthyBoot": "選択したプロファイルは正常に起動できませんでした。",
-  "startup_expectedLocalServer": "想定されるローカルサーバー",
   "setup_noReposExtensionsTitle": "最初に拡張機能リポジトリを追加してください",
   "setup_noReposTitle": "拡張機能にはリポジトリの設定が必要です",
   "setup_noReposBody": "Suwayomi には接続されていますが、リポジトリ一覧が空です。拡張機能やソースを探す前に追加してください。",
