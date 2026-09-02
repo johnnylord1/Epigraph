@@ -87,6 +87,8 @@ try {
   Remove-Item Env:EPIGRAPH_LIVE_FLARESOLVERR_URL -ErrorAction SilentlyContinue
 
   Invoke-ReleaseStep "Initial whitespace check" { Test-GitWhitespace }
+  Invoke-ReleaseStep "Frontend production build" { & pnpm build }
+  Invoke-ReleaseStep "Builtin theme generation" { & pnpm theme:generate-builtins }
   Invoke-ReleaseStep "Svelte diagnostics" { & pnpm exec svelte-check --tsconfig ./tsconfig.json }
   Invoke-ReleaseStep "Unit and jsdom tests" { & pnpm exec vitest run --project unit --project shell-jsdom --maxWorkers=1 --minWorkers=1 }
   Invoke-ReleaseStep "Browser component tests" {
@@ -103,8 +105,10 @@ try {
     finally { Remove-Item Env:EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION -ErrorAction SilentlyContinue }
   }
   Invoke-ReleaseStep "Bundle budgets" { & pnpm release:check-bundles }
+  Invoke-ReleaseStep "Release prerequisite contracts" { & node --test scripts/prepare-suwayomi-bundle.test.mjs }
+  Invoke-ReleaseStep "Suwayomi bundle prerequisites" { & pnpm suwayomi:prepare-bundle:windows }
+  Invoke-ReleaseStep "Syncd sidecar build" { & pnpm syncd:prepare-sidecar:release }
   Invoke-ReleaseStep "Rust test suite" { & cargo test --locked --manifest-path src-tauri/Cargo.toml --jobs 1 -- --test-threads=1 }
-  Invoke-ReleaseStep "Frontend production build" { & pnpm build }
   Invoke-ReleaseStep "Tauri automation build" { & pnpm tauri -- build --no-bundle --config src-tauri/tauri.automation.conf.json }
   Invoke-ReleaseStep "Local data round trips" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-local-data-release-certification.ps1 -App $appPath }
   Invoke-ReleaseStep "Native viewport smoke" { & powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-native-viewport-smoke.ps1 -App $appPath }
