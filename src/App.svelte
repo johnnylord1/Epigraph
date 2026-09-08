@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -171,6 +172,12 @@
   let BookReaderComponent = $state<any>(null);
   let NovelDetailComponent = $state<any>(null);
   let NovelReaderComponent = $state<any>(null);
+  let novelReaderInstance = $state<NovelReaderPreparation | null>(null);
+  const prepareNovelReader = createNovelReaderPreparation(
+    () => novelReaderInstance,
+    () => store.activeNovelReader !== null,
+  );
+  onMount(() => registerNovelReaderPreparation(prepareNovelReader));
   let ThemeEditorComponent = $state<any>(null);
   let MangaPreviewComponent = $state<any>(null);
   let SearchPaletteComponent = $state<any>(null);
@@ -3062,7 +3069,7 @@
         {:else if store.activeNovelReader}
           {#if NovelReaderComponent}
             {@const NovelReaderView = NovelReaderComponent}
-            <NovelReaderView />
+            <NovelReaderView bind:this={novelReaderInstance} />
           {:else}
             <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingNovel")}</div>
           {/if}

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import { resetNovelLibraryStateCacheForTests } from "../../lib/novels/libraryState";
 import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
+import { createNovelReaderPreparation, prepareNovelReaderForRestore, registerNovelReaderPreparation } from "../../lib/reader/restorePreparation";
 
 const { disk, readChapter } = vi.hoisted(() => ({
   disk: { state: null as any, failNextSave: false, failures: 0, writes: 0, pending: null as Promise<void> | null, reads: 0, pendingFirstRead: null as Promise<void> | null, firstReadMissing: false, pendingFirstWrite: null as Promise<void> | null },
@@ -258,5 +259,23 @@ describe("novel reader progress lifecycle", () => {
     release();
     expect(await preparation).toEqual({ ok: true });
     expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1);
+  });
+
+  test("the registered application capability waits for the actual reader persistence barrier", async () => {
+    const { component, viewer } = await mountedReader();
+    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component, () => store.activeNovelReader !== null));
+    let release!: () => void;
+    disk.pending = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await scrollTo(viewer, 0.6);
+      let restoreStarted = false;
+      const preparation = prepareNovelReaderForRestore().then(result => { restoreStarted = result.ok; return result; });
+      await waitFor(() => expect(disk.writes).toBe(1));
+      expect(restoreStarted).toBe(false);
+      release();
+      expect(await preparation).toEqual({ ok: true });
+      expect(store.activeNovelReader).toBeNull();
+      expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1);
+    } finally { release(); unregister(); }
   });
 });
