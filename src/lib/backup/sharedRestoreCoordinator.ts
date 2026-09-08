@@ -70,7 +70,11 @@ export function createSharedRestoreCoordinator(options: {
             }
             continue;
           }
-          const uncertain = state.units[unit.id] === "unknown" || (unit.domain === "manga" && unresolvedMangaTargets.has(target));
+          const unresolved = unit.domain === "manga" ? unresolvedMangaTargets.get(target) : undefined;
+          if (unresolved?.size && !unresolved.has(unit.id) && state.units[unit.id] !== "unknown") {
+            failure = Error("RESTORE_EXTERNAL_UNRESOLVED"); continue;
+          }
+          const uncertain = state.units[unit.id] === "unknown" || unresolved?.has(unit.id);
           if (uncertain && !unit.reconcile) {
             failure = Error("RESTORE_EXTERNAL_UNRESOLVED"); continue;
           }

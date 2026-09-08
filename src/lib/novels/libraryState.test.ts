@@ -17,6 +17,7 @@ import {
   getNovelReadStats,
   getNovelResumeChapter,
   loadNovelLibraryState,
+  loadNovelLibraryStateForRestore,
   markNovelChapterRead,
   parseNovelScrollLocator,
   peekNovelLibraryState,
@@ -28,6 +29,26 @@ import {
 
 const SCOPE = { profileId: "test" } as const;
 const SCOPE_KEY = "profile:test";
+
+describe("restore destination validation", () => {
+  it("distinguishes an absent destination from an existing empty file", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockResolvedValueOnce(null);
+    expect((await loadNovelLibraryStateForRestore(SCOPE)).entries).toEqual([]);
+    invokeMock.mockResolvedValueOnce("");
+    await expect(loadNovelLibraryStateForRestore(SCOPE)).rejects.toThrow("RESTORE_DESTINATION_CORRUPT");
+  });
+  it("preserves malformed destination evidence by refusing instead of returning an empty library", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockResolvedValueOnce("{broken");
+    await expect(loadNovelLibraryStateForRestore(SCOPE)).rejects.toThrow("RESTORE_DESTINATION_CORRUPT");
+  });
+  it("rejects incomplete destination snapshots", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockResolvedValueOnce(JSON.stringify({ version: 1, entries: [] }));
+    await expect(loadNovelLibraryStateForRestore(SCOPE)).rejects.toThrow("RESTORE_DESTINATION_CORRUPT");
+  });
+});
 
 function createState(): PersistedNovelLibraryState {
   return {

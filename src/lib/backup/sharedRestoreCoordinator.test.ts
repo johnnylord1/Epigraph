@@ -35,7 +35,8 @@ describe("shared flat restore coordinator", () => {
     await expect(a.run([{ id: "unknown-a", domain: "manga", execute: async () => { throw Error("lost"); } }])).rejects.toThrow();
     const b = createSharedRestoreCoordinator({ target: () => "foreign-reconcile", ready: async () => true });
     const send = vi.fn(async () => {});
-    await b.run([{ id: "known-b", domain: "manga", execute: send, reconcile: async () => {} }]);
+    await expect(b.run([{ id: "known-b", domain: "manga", execute: send, reconcile: async () => {} }])).rejects.toThrow("RESTORE_EXTERNAL_UNRESOLVED");
+    expect(b.snapshot().units["known-b"]).not.toBe("unknown");
     const c = createSharedRestoreCoordinator({ target: () => "foreign-reconcile", ready: async () => true });
     await expect(c.run([{ id: "new-c", domain: "manga", execute: send }])).rejects.toThrow("RESTORE_EXTERNAL_UNRESOLVED");
     expect(send).not.toHaveBeenCalled();

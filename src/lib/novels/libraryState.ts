@@ -332,6 +332,26 @@ export async function reloadNovelLibraryState(
   return loadNovelLibraryState(scopeInput);
 }
 
+/** Restore must not interpret corrupt destination storage as an empty library. */
+export async function loadNovelLibraryStateForRestore(scopeInput: NovelRepositoryScopeInput = {}): Promise<PersistedNovelLibraryState> {
+  const scope = normalizeScopeInput(scopeInput);
+  const key = resolveNovelsProfileScope(scope);
+  const raw = canUseDesktopNovelStorage()
+    ? await invoke<string | null>("read_novel_library_state", { profileId: scope.profileId, serverUrl: scope.serverUrl })
+    : storageOrNull()?.getItem(NOVEL_LIBRARY_STATE_KEY) ?? null;
+  if (raw === null) return createEmptyState(scope);
+  try {
+    const parsed = JSON.parse(raw);
+    const value = canUseDesktopNovelStorage() ? parsed : parsed[key];
+    if (!value && !canUseDesktopNovelStorage()) return createEmptyState(scope);
+    const arrays = ["entries", "chapters", "progress", "bookmarks", "history"] as const;
+    if (!value || value.version !== 1 || value.scopeKey !== key || arrays.some(k => !Array.isArray(value[k]))) throw Error();
+    const normalized = normalizeNovelLibraryState(value, scope, key);
+    if (arrays.some(k => normalized[k].length !== value[k].length)) throw Error();
+    return normalized;
+  } catch { throw Error("RESTORE_DESTINATION_CORRUPT"); }
+}
+
 export async function saveNovelLibraryState(
   state: PersistedNovelLibraryState,
   scopeInput: NovelRepositoryScopeInput = {},
