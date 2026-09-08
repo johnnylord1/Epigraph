@@ -63,6 +63,19 @@
   let progressSaveChain = Promise.resolve();
   let progressVersion = 0;
   let persistedProgressVersion = 0;
+  let queuedProgressVersion = -1;
+  let queuedProgressSave: Promise<void> | null = null;
+  let readerQuiescing = false;
+  let restoreQuiescing = false;
+  let restoreCloseExpired = false;
+  let restoreNeedsFinalSave = false;
+  type RestorePreparationResult = { ok: true } | {
+    ok: false; code: "RESTORE_REFUSED_READER_NOT_FLUSHED"; reason: "save_failed" | "timeout";
+  };
+  let closeOperation: Promise<RestorePreparationResult> | null = null;
+  let restorePreparation: Promise<RestorePreparationResult> | null = null;
+  const chapterLoads = new Set<Promise<void>>();
+  const scopeLoads = new Set<Promise<void>>();
   let restoredChapterKey: string | null = null;
   let restoringScrollPosition = false;
   let loadedChapterKey: string | null = null;
@@ -129,6 +142,7 @@
       progressSaveTimer = null;
     }
     const version = progressVersion;
+    if (queuedProgressSave && queuedProgressVersion === version) return queuedProgressSave;
     if (version === persistedProgressVersion) return progressSaveChain;
     const snapshot = libraryState;
     const requestScope = { ...scopeInput };
@@ -138,10 +152,16 @@
       if (version === progressVersion) libraryState = saved;
     });
     progressSaveChain = operation.catch(() => {});
+    queuedProgressVersion = version;
+    queuedProgressSave = operation;
+    void operation.finally(() => {
+      if (queuedProgressSave === operation) queuedProgressSave = null;
+    }).catch(() => {});
     await operation;
   }
 
   function recordNovelProgress(chapterProgress: number, completed = false) {
+    if (readerQuiescing) return;
     const reader = activeReader;
     if (!reader || !getNovelLibraryEntry(libraryState, reader.novelId)) return;
     const normalized = Math.max(0, Math.min(1, chapterProgress));
@@ -465,8 +485,16 @@
     });
   }
 
-  async function loadChapter() {
-    if (!activeReader) return;
+  function loadChapter() {
+    if (readerQuiescing) return Promise.resolve();
+    const operation = loadChapterContent();
+    chapterLoads.add(operation);
+    void operation.finally(() => chapterLoads.delete(operation)).catch(() => {});
+    return operation;
+  }
+
+  async function loadChapterContent() {
+    if (!activeReader || readerQuiescing) return;
     const generation = ++chapterLoadGeneration;
     const reader = { ...activeReader };
     const nextChapterKey = `${reader.novelId}:${reader.chapterId}`;
@@ -475,11 +503,12 @@
     if (loadedChapterKey && loadedChapterKey !== nextChapterKey) {
       await flushNovelProgress().catch(console.error);
     }
+    if (readerQuiescing) return;
     loadedChapterKey = nextChapterKey;
     restoredChapterKey = null;
     const requestScope = { ...scopeInput };
     const isCurrent = () => (
-      generation === chapterLoadGeneration
+      !readerQuiescing && generation === chapterLoadGeneration
       && activeReader?.novelId === reader.novelId
       && activeReader?.chapterId === reader.chapterId
     );
@@ -549,28 +578,34 @@
   }
 
   async function toggleCurrentChapterBookmark() {
-    if (!activeReader || !getNovelLibraryEntry(libraryState, activeReader.novelId)) return;
-    libraryState = await saveNovelLibraryState(toggleNovelChapterBookmark(libraryState, {
+    if (readerQuiescing || !activeReader || !getNovelLibraryEntry(libraryState, activeReader.novelId)) return;
+    const chapterTitle = activeReader.chapterTitle;
+    libraryState = toggleNovelChapterBookmark(libraryState, {
       novelId: activeReader.novelId,
       chapterId: activeReader.chapterId,
       chapterTitle: activeReader.chapterTitle,
       locator: activeReader.chapterId,
-    }), scopeInput);
+    });
+    progressVersion += 1;
+    try { await flushNovelProgress(); }
+    catch (saveError) { reportProgressSaveError(saveError); return; }
+    if (readerQuiescing) return;
     syncActiveDetail(libraryState);
     bumpContentSetupVersion();
     addToast({
       kind: "info",
       title: currentChapterBookmarked ? translate("ui_bookmarkRemoved") : translate("ui_bookmarkSaved"),
-      body: activeReader.chapterTitle,
+      body: chapterTitle,
     });
   }
 
   async function openChapter(target: NonNullable<typeof currentNovel>["chapters"][number] | null) {
-    if (!activeReader || !target || loading) return;
+    if (readerQuiescing || !activeReader || !target || loading) return;
     const fraction = currentChapterScrollProgress();
     if (target.id === nextChapter?.id && fraction >= 0.95) recordNovelProgress(1, true);
     try { await flushNovelProgress(); }
     catch (saveError) { reportProgressSaveError(saveError); return; }
+    if (readerQuiescing || !activeReader) return;
     tts.stop();
     restoredChapterKey = null;
     store.setActiveNovelReader({
@@ -585,11 +620,59 @@
     void openChapter(direction === "prev" ? previousChapter : nextChapter);
   }
 
-  async function requestClose() {
-    try { await flushNovelProgress(); }
-    catch (saveError) { reportProgressSaveError(saveError); return; }
-    tts.stop();
-    closeNovelReader();
+  function requestClose(): Promise<RestorePreparationResult> {
+    return closeReader().then((result) => {
+      if (!result.ok && !restoreQuiescing) readerQuiescing = false;
+      return result;
+    });
+  }
+
+  function closeReader(): Promise<RestorePreparationResult> {
+    if (closeOperation) return closeOperation;
+    restoreCloseExpired = false;
+    closeOperation = (async (): Promise<RestorePreparationResult> => {
+      try {
+        await flushNovelProgress();
+        if (restoreQuiescing) {
+          await Promise.all([...chapterLoads, ...scopeLoads]);
+          // A load can migrate legacy storage after an earlier progress write.
+          // Re-publish through the same save chain only when that race existed.
+          if (restoreNeedsFinalSave && progressVersion > 0) progressVersion += 1;
+          restoreNeedsFinalSave = false;
+          await flushNovelProgress();
+        }
+        if (restoreCloseExpired) return { ok: false, code: "RESTORE_REFUSED_READER_NOT_FLUSHED", reason: "timeout" };
+        tts.stop();
+        if (activeReader) closeNovelReader();
+        return { ok: true };
+      } catch (saveError) {
+        reportProgressSaveError(saveError);
+        return { ok: false, code: "RESTORE_REFUSED_READER_NOT_FLUSHED", reason: "save_failed" };
+      }
+    })();
+    void closeOperation.finally(() => { closeOperation = null; });
+    return closeOperation;
+  }
+
+  export function prepareNovelReaderForRestore(): Promise<RestorePreparationResult> {
+    if (restorePreparation) return restorePreparation;
+    restoreQuiescing = true;
+    readerQuiescing = true;
+    scopeLoadGeneration += 1;
+    restoreNeedsFinalSave ||= chapterLoads.size > 0 || scopeLoads.size > 0;
+    let timer: ReturnType<typeof setTimeout>;
+    const operation = closeReader();
+    const timeout = new Promise<RestorePreparationResult>((resolve) => {
+      timer = setTimeout(() => {
+        restoreCloseExpired = true;
+        resolve({ ok: false, code: "RESTORE_REFUSED_READER_NOT_FLUSHED", reason: "timeout" });
+      }, 10_000);
+    });
+    restorePreparation = Promise.race([operation, timeout]).finally(() => {
+      clearTimeout(timer);
+      restorePreparation = null;
+    });
+    return restorePreparation;
   }
 
   function reportProgressSaveError(saveError: unknown) {
@@ -609,10 +692,11 @@
   $effect(() => {
     store.runtimeResolvedLocalProfileId;
     store.runtimeServerUrl;
+    if (readerQuiescing) return;
     const generation = ++scopeLoadGeneration;
     const requestScope = { ...scopeInput };
     untrack(() => {
-      void loadNovelLibraryState(requestScope).then((state) => {
+      const operation = loadNovelLibraryState(requestScope).then((state) => {
         if (
           generation !== scopeLoadGeneration
           || requestScope.profileId !== store.runtimeResolvedLocalProfileId
@@ -620,6 +704,8 @@
         ) return;
         libraryState = state;
       });
+      scopeLoads.add(operation);
+      void operation.finally(() => scopeLoads.delete(operation)).catch(console.error);
     });
   });
 
