@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { createSharedRestoreCoordinator } from "./sharedRestoreCoordinator";
 
 describe("shared flat restore coordinator", () => {
+  it("holds the native restore admission through readiness and the domain commit", async () => {
+    const events: string[] = [];
+    const target = crypto.randomUUID();
+    const admitted = createSharedRestoreCoordinator({ target: () => target,
+      admit: async () => { events.push("admitted"); return async () => { events.push("released"); }; },
+      ready: async () => { events.push("ready"); return true; },
+    });
+    await admitted.run([{ id: "local", domain: "app", execute: async () => { events.push("committed"); } }]);
+    expect(events).toEqual(["admitted", "ready", "committed", "released"]);
+  });
   it.each([null, undefined, 0, ""])("reports a local failed mutation even when the rejection is falsy: %s", async failure => {
     const target = crypto.randomUUID();
     const stable = createSharedRestoreCoordinator({ target: () => target, ready: async () => true });
@@ -91,8 +101,26 @@ describe("shared flat restore coordinator", () => {
   it("cancel stops future domains while preserving completed results", async () => {
     const coordinator = createSharedRestoreCoordinator({ target: () => "cancel", ready: async () => true });
     const second = vi.fn();
-    await coordinator.run([{ id: "a", domain: "novels", execute: async () => { coordinator.cancel(); } }, { id: "b", domain: "app", execute: second }]);
+    await expect(coordinator.run([{ id: "a", domain: "novels", execute: async () => { coordinator.cancel(); } }, { id: "b", domain: "app", execute: second }])).rejects.toThrow("RESTORE_CANCELLED");
     expect(coordinator.snapshot().units).toEqual({ a: "succeeded", b: "cancelled" });
     expect(second).not.toHaveBeenCalled();
+  });
+  it("does not report success when cancellation preserves an earlier failed unit", async () => {
+    const coordinator = createSharedRestoreCoordinator({ target: () => "cancel-failed", ready: async () => true });
+    const execute = vi.fn(async () => { throw Error("disk"); });
+    const units = [{ id: "a", domain: "books" as const, execute }];
+    await expect(coordinator.run(units)).rejects.toThrow("disk");
+    coordinator.cancel();
+    await expect(coordinator.run(units)).rejects.toThrow("RESTORE_CANCELLED");
+    expect(coordinator.snapshot().units.a).toBe("failed");
+    expect(execute).toHaveBeenCalledOnce();
+  });
+  it("returns a completed snapshot only after releasing admission", async () => {
+    let released = false;
+    const coordinator = createSharedRestoreCoordinator({ target: () => "terminal-snapshot", ready: async () => true,
+      admit: async () => async () => { released = true; } });
+    const result = await coordinator.run([{ id: "a", domain: "app", execute: async () => {} }]);
+    expect(released).toBe(true);
+    expect(result).toMatchObject({ running: false, units: { a: "succeeded" } });
   });
 });

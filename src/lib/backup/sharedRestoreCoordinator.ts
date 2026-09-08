@@ -20,6 +20,7 @@ const unresolvedMangaTargets = new Map<string, Set<string>>();
 export function createSharedRestoreCoordinator(options: {
   target(): string;
   ready(units: readonly DomainInvocation[]): Promise<boolean>;
+  admit?(): Promise<() => Promise<void>>;
 }) {
   const target = options.target();
   const state: SharedRestoreSnapshot = { operationId: crypto.randomUUID(), target, running: false, cancelled: false, units: {} };
@@ -53,7 +54,9 @@ export function createSharedRestoreCoordinator(options: {
       activeTargets.add(target);
       state.running = true;
       let failure: unknown = null;
+      let release: (() => Promise<void>) | undefined;
       try {
+        release = await options.admit?.();
         if (!await options.ready(units)) throw Error("RESTORE_WAITING_FOR_DEPENDENCIES");
         assertTarget();
         for (const unit of units) {
@@ -61,7 +64,10 @@ export function createSharedRestoreCoordinator(options: {
           if (state.units[unit.id] === "succeeded") continue;
           if (state.cancelled) {
             if (state.units[unit.id] === "unknown") failure = Error("RESTORE_EXTERNAL_UNRESOLVED");
-            else if (!state.units[unit.id] || state.units[unit.id] === "pending") state.units[unit.id] = "cancelled";
+            else {
+              if (!state.units[unit.id] || state.units[unit.id] === "pending") state.units[unit.id] = "cancelled";
+              failure ??= Error("RESTORE_CANCELLED");
+            }
             continue;
           }
           const uncertain = state.units[unit.id] === "unknown" || (unit.domain === "manga" && unresolvedMangaTargets.has(target));
@@ -85,12 +91,16 @@ export function createSharedRestoreCoordinator(options: {
           publish();
         }
         if (failure) throw failure;
-        return snapshot();
+        if (Object.values(state.units).includes("cancelled")) throw Error("RESTORE_CANCELLED");
       } finally {
-        state.running = false;
-        activeTargets.delete(target);
-        publish();
+        try { await release?.(); }
+        finally {
+          state.running = false;
+          activeTargets.delete(target);
+          publish();
+        }
       }
+      return snapshot();
     },
   };
 }
