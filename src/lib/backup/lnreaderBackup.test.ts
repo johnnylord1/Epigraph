@@ -47,6 +47,20 @@ const snapshot: EpigraphNovelsSnapshot = {
 };
 
 describe("LNReader backup compatibility", () => {
+  it("does not collapse distinct provider paths through lossy import IDs", async () => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    for (const [id, path] of [[1, "/a.b"], [2, "/a-b"]]) zip.file(`NovelAndChapters/${id}.json`, JSON.stringify({ id, pluginId: "provider", path, name: "Novel", chapters: [] }));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(new Set(parsed.entries.map(entry => entry.id)).size).toBe(2);
+  });
+  it("does not invent fresh progress evidence from absent dates or source updates", async () => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    zip.file("NovelAndChapters/1.json", JSON.stringify({ id: 1, pluginId: "provider", path: "/novel", name: "Novel", chapters: [{ id: 2, path: "/chapter", name: "Chapter", unread: false, progress: 50, updatedTime: "2026-09-01T00:00:00Z" }] }));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(parsed.progress[0].updatedAt).toBe(0);
+  });
   it.each([true, false])("keeps the saved LAST_READ_PREFIX locator even outside the chapter list: %s", async (listed) => {
     const root = new JSZip();
     const saved = { id: 12, novelId: 1, path: "chapter-saved", name: "Saved chapter", unread: true, position: 12, progress: 1, readTime: "2026-08-21 10:00:00" };

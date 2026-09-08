@@ -1,4 +1,5 @@
 import JSZip from "jszip";
+import { createNovelLibraryId } from "../novels/domain";
 import {
   classifyEpigraphNovelsSnapshot,
   normalizeEpigraphNovelsSnapshot,
@@ -42,8 +43,7 @@ function safeJsonParse<T>(text: string, fallback: T): T {
 }
 
 function stableNovelId(pluginId: string, path: string, fallback: number): string {
-  const key = `${pluginId}:${path}`.replace(/[^a-zA-Z0-9:_/-]+/g, "-").replace(/-+/g, "-");
-  return key.length > 1 ? `lnreader:${key}` : `lnreader:${fallback}`;
+  return createNovelLibraryId(pluginId, path);
 }
 
 function numberFromEpigraphId(id: string, fallback: number): number {
@@ -345,7 +345,9 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
         if (leftReadAt !== rightReadAt) return rightReadAt - leftReadAt;
         return right.order - left.order;
       })[0] ?? null;
-    const updatedAt = parseLnReaderDate(raw.lastReadAt) ?? parseLnReaderDate(lastReadChapter?.raw?.readTime) ?? Date.now();
+    // Import time and source-update time are not reading-event evidence.
+    // Zero retains the existing numeric wire shape while meaning "not known".
+    const updatedAt = parseLnReaderDate(lastReadChapter?.raw?.readTime) ?? 0;
     const chapterProgress = lastReadChapter
       ? (lastReadChapter.unread ? parseLnReaderChapterProgress(lastReadChapter.raw.progress) : 1)
       : 0;
