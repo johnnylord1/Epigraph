@@ -47,6 +47,31 @@ const snapshot: EpigraphNovelsSnapshot = {
 };
 
 describe("LNReader backup compatibility", () => {
+  it.each([null, 3, "invalid", []])("isolates a malformed novel from a valid neighbor: %j", async malformed => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    zip.file("NovelAndChapters/1.json", JSON.stringify(malformed));
+    zip.file("NovelAndChapters/2.json", JSON.stringify({ id: 2, pluginId: "provider", path: "/valid", chapters: [] }));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(parsed.entries.map(entry => entry.path)).toEqual(["/valid"]);
+    expect(parsed.importIssues).toHaveLength(1);
+  });
+  it("skips missing stable identities with warnings instead of importing database IDs as paths", async () => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    const novels = [
+      { id: 1, pluginId: "provider", path: "/valid", chapters: [{ id: 9 }, { id: 10, path: "/valid/chapter" }] },
+      { id: 2, path: "/missing-provider", chapters: [] },
+      { id: 3, pluginId: "provider", chapters: [] },
+    ];
+    novels.forEach(novel => zip.file(`NovelAndChapters/${novel.id}.json`, JSON.stringify(novel)));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(parsed.entries.map(entry => entry.path)).toEqual(["/valid"]);
+    expect(parsed.chapters.map(chapter => chapter.path)).toEqual(["/valid/chapter"]);
+    expect(parsed.importIssues?.map(issue => issue.code).sort()).toEqual([
+      "invalid-chapter-identity", "invalid-novel-identity", "invalid-novel-identity",
+    ]);
+  });
   it("does not collapse distinct provider paths through lossy import IDs", async () => {
     const zip = new JSZip();
     zip.file("Version.json", "{}");

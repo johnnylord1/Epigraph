@@ -295,13 +295,22 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     throw new Error("LNReader backup does not contain NovelAndChapters entries.");
   }
 
+  const importIssues: NonNullable<EpigraphNovelsSnapshot["importIssues"]> = [];
   const rawNovels = await Promise.all(entries.map(async (path, index) => {
     const file = zip.file(path);
     const raw = file ? safeJsonParse<Record<string, any>>(await file.async("text"), {}) : {};
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      importIssues.push({ code: "invalid-novel-identity", message: "Skipped a malformed novel record." });
+      return null;
+    }
     if (!isLnReaderLibraryNovel(raw)) return null;
-    const pluginId = normalizeText(raw.pluginId) ?? "lnreader";
+    const pluginId = normalizeText(raw.pluginId);
+    const novelPath = normalizeText(raw.path);
+    if (!pluginId || !novelPath) {
+      importIssues.push({ code: "invalid-novel-identity", message: "Skipped a novel without pluginId and path." });
+      return null;
+    }
     const plugin = pluginMetadata.get(pluginId) ?? null;
-    const novelPath = normalizeText(raw.path) ?? `/${raw.id ?? index + 1}`;
     const novelId = stableNovelId(pluginId, novelPath, index + 1);
     const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? `Novel ${index + 1}`;
     const coverUrl = await coverDataUrlFromBackup(downloadZip, normalizeText(raw.cover));
@@ -309,8 +318,12 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
       ? raw.genres.split(",").map((tag: string) => tag.trim()).filter(Boolean)
       : [];
     const rawChapters = Array.isArray(raw.chapters) ? raw.chapters : [];
-    const mappedChapters = rawChapters.map((chapter: any, chapterIndex: number) => {
-      const chapterPath = normalizeText(chapter.path) ?? `/${chapter.id ?? chapterIndex + 1}`;
+    const mappedChapters = rawChapters.flatMap((chapter: any, chapterIndex: number) => {
+      const chapterPath = normalizeText(chapter?.path);
+      if (!chapterPath) {
+        importIssues.push({ code: "invalid-chapter-identity", novelId, message: "Skipped a chapter without a stable path." });
+        return [];
+      }
       return {
         id: `${novelId}:chapter:${chapterPath}`,
         novelId,
@@ -431,6 +444,7 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
   }
 
   return normalizeEpigraphNovelsSnapshot({
+    importIssues,
     entries: novels.map((item) => item.entry),
     chapters: novels.flatMap((item) => item.chapters),
     progress: novels.flatMap((item) => item.progress),

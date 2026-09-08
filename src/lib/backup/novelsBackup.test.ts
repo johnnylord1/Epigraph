@@ -7,9 +7,24 @@ import {
   buildEpigraphNovelsBackupContainer,
   buildEpigraphNovelsPayload,
   parseEpigraphNovelsPayload,
+  normalizeEpigraphNovelsSnapshot,
   restoreEpigraphNovelsPayload,
   type EpigraphNovelsSnapshot,
 } from "./novelsBackup";
+
+it("does not manufacture path identity or fresh reading clocks from incomplete backup state", () => {
+  const parsed = normalizeEpigraphNovelsSnapshot({
+    entries: [{ id: "backup-local-7", title: "Novel", source: { pluginId: "provider" } }],
+    chapters: [],
+    progress: [{ novelId: "backup-local-7", progressPercent: 0.8 }],
+    bookmarks: [{ novelId: "backup-local-7" }],
+    history: [{ novelId: "backup-local-7" }],
+  } as EpigraphNovelsSnapshot);
+  expect(parsed.entries[0].path).toBe("");
+  expect(parsed.progress[0].updatedAt).toBe(0);
+  expect(parsed.bookmarks[0].savedAt).toBe(0);
+  expect(parsed.history[0].readAt).toBe(0);
+});
 
 const SAMPLE_NOVELS_SNAPSHOT: EpigraphNovelsSnapshot = {
   entries: [

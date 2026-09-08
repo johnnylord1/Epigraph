@@ -96,6 +96,8 @@ export interface EpigraphNovelChapterEntry {
 }
 
 export interface EpigraphNovelsSnapshot {
+  /** Parse diagnostics carried to presentation; never executed as restore state. */
+  importIssues?: EpigraphNovelsRestoreIssue[];
   entries: EpigraphNovelEntry[];
   chapters: EpigraphNovelChapterEntry[];
   progress: EpigraphNovelProgressEntry[];
@@ -142,6 +144,8 @@ export interface EpigraphNovelRestoreClassification {
 export type EpigraphNovelsRestoreIssueCode =
   | "missing-novels-payload"
   | "invalid-novels-payload"
+  | "invalid-novel-identity"
+  | "invalid-chapter-identity"
   | "missing-required-repository"
   | "missing-required-plugin"
   | "missing-required-source"
@@ -246,7 +250,7 @@ function normalizeSourceIdentity(source: EpigraphNovelSourceIdentity | null | un
 function normalizeEntry(entry: EpigraphNovelEntry, index: number): EpigraphNovelEntry {
   const id = normalizeText(entry?.id) ?? `novel-${index + 1}`;
   const title = normalizeText(entry?.title) ?? `Novel ${index + 1}`;
-  const path = normalizeText(entry?.path) ?? normalizeText(entry?.externalUrl) ?? `/${id}`;
+  const path = normalizeText(entry?.path) ?? "";
 
   return {
     id,
@@ -261,8 +265,8 @@ function normalizeEntry(entry: EpigraphNovelEntry, index: number): EpigraphNovel
     status: normalizeText(entry?.status),
     tags: normalizeTags(entry?.tags),
     source: normalizeSourceIdentity(entry?.source),
-    addedAt: typeof entry?.addedAt === "number" ? entry.addedAt : Date.now(),
-    updatedAt: typeof entry?.updatedAt === "number" ? entry.updatedAt : Date.now(),
+    addedAt: Number.isSafeInteger(entry?.addedAt) && entry.addedAt > 0 ? entry.addedAt : 0,
+    updatedAt: Number.isSafeInteger(entry?.updatedAt) && entry.updatedAt > 0 ? entry.updatedAt : 0,
   };
 }
 
@@ -275,7 +279,7 @@ function normalizeProgress(entry: EpigraphNovelProgressEntry): EpigraphNovelProg
       ? Math.max(0, Math.min(1, entry.progressPercent))
       : 0,
     locator: normalizeText(entry?.locator),
-    updatedAt: typeof entry?.updatedAt === "number" ? entry.updatedAt : Date.now(),
+    updatedAt: Number.isSafeInteger(entry?.updatedAt) && entry.updatedAt > 0 ? entry.updatedAt : 0,
   };
 }
 
@@ -286,7 +290,7 @@ function normalizeBookmark(entry: EpigraphNovelBookmarkEntry): EpigraphNovelBook
     chapterTitle: normalizeText(entry?.chapterTitle),
     locator: normalizeText(entry?.locator),
     label: normalizeText(entry?.label),
-    savedAt: typeof entry?.savedAt === "number" ? entry.savedAt : Date.now(),
+    savedAt: Number.isSafeInteger(entry?.savedAt) && entry.savedAt > 0 ? entry.savedAt : 0,
   };
 }
 
@@ -296,7 +300,7 @@ function normalizeHistoryEntry(entry: EpigraphNovelHistoryEntry): EpigraphNovelH
     chapterId: normalizeText(entry?.chapterId),
     chapterTitle: normalizeText(entry?.chapterTitle),
     locator: normalizeText(entry?.locator),
-    readAt: typeof entry?.readAt === "number" ? entry.readAt : Date.now(),
+    readAt: Number.isSafeInteger(entry?.readAt) && entry.readAt > 0 ? entry.readAt : 0,
   };
 }
 
@@ -315,6 +319,7 @@ function normalizeChapterEntry(entry: EpigraphNovelChapterEntry): EpigraphNovelC
 
 export function normalizeEpigraphNovelsSnapshot(snapshot: EpigraphNovelsSnapshot): EpigraphNovelsSnapshot {
   return {
+    ...(snapshot.importIssues?.length ? { importIssues: snapshot.importIssues.map(issue => ({ ...issue })) } : {}),
     entries: Array.isArray(snapshot.entries) ? snapshot.entries.map((entry, index) => normalizeEntry(entry, index)) : [],
     chapters: Array.isArray(snapshot.chapters)
       ? snapshot.chapters
@@ -512,7 +517,7 @@ export function classifyEpigraphNovelsSnapshot(
 ): RestoredEpigraphNovelsSnapshot {
   const normalizedSnapshot = normalizeEpigraphNovelsSnapshot(snapshot);
   const classifications = normalizedSnapshot.entries.map((entry) => classifyNovelEntry(entry, runtime));
-  const issues: EpigraphNovelsRestoreIssue[] = [];
+  const issues: EpigraphNovelsRestoreIssue[] = [...(normalizedSnapshot.importIssues ?? [])];
 
   for (const item of classifications) {
     if (item.outcome === "restored-needs-repository") {
