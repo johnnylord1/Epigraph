@@ -74,6 +74,8 @@ function normalizeInstalledSource(
   installedPlugin: {
     enabled: boolean;
     artifactPath: string;
+    version: string;
+    disabledReason?: string | null;
   },
 ): InstalledNovelSourceDescriptor {
   return {
@@ -84,11 +86,11 @@ function normalizeInstalledSource(
     name: catalogEntry.name,
     lang: catalogEntry.lang,
     site: catalogEntry.site,
-    version: catalogEntry.version,
+    version: installedPlugin.version,
     iconUrl: catalogEntry.iconUrl,
     artifactUrl: catalogEntry.artifactUrl,
     artifactPath: installedPlugin.artifactPath,
-    enabled: installedPlugin.enabled,
+    enabled: repository.enabled && installedPlugin.enabled && !installedPlugin.disabledReason,
   };
 }
 
@@ -165,7 +167,8 @@ export async function loadInstalledNovelSources(
         entry.repositoryId === installedPlugin.repositoryId
         && entry.pluginId === installedPlugin.pluginId
         && entry.version === installedPlugin.version
-      )) ?? state.catalogEntries.find((entry) => entry.pluginId === installedPlugin.pluginId);
+      )) ?? state.catalogEntries.find((entry) => entry.pluginId === installedPlugin.pluginId
+        && entry.repositoryId === installedPlugin.repositoryId);
 
       if (!repository || !catalogEntry) {
         return null;

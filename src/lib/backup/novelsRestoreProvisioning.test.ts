@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { RestoredEpigraphNovelsSnapshot } from "./novelsBackup";
 import {
   provisionEpigraphNovelDependencies,
+  planNovelRestoreDependencies,
+  novelRestoreRuntimeState,
   type NovelRestoreProvisioningOperations,
 } from "./novelsRestoreProvisioning";
 import type { PersistedNovelRepositoryState } from "../novels/repositoryState";
@@ -50,6 +52,88 @@ const restored = {
 } satisfies RestoredEpigraphNovelsSnapshot;
 
 describe("novel restore dependency provisioning", () => {
+  it.each(["refresh-failed", "disabled-installed"])("does not install over %s state", async scenario => {
+    const state = emptyState();
+    const url = "https://plugins.example/index.json";
+    state.repositories = [{ id: "repo", profileId: "test", url, normalizedUrl: url, enabled: true,
+      trustState: "trusted", recommendedSeed: false, lastFetchedAtMs: null, lastSuccessAtMs: 1, etag: null, lastModified: null, lastError: null }];
+    state.catalogEntries = [{ repositoryId: "repo", pluginId: "example-source", name: "Example", site: "test", lang: "en", version: "1",
+      artifactUrl: "https://plugins.example/plugin.js", iconUrl: null, customJsUrl: null, customCssUrl: null, manifestHash: null, fetchedAtMs: 1 }];
+    if (scenario === "disabled-installed") state.installedPlugins = [{ profileId: "test", repositoryId: "repo", pluginId: "example-source", version: "1",
+      enabled: false, disabledReason: "user-disabled", artifactPath: "example.js", customJsPath: null, customCssPath: null, hasSettings: true, installedAtMs: 1, updatedAtMs: 1 }];
+    const installPlugin = vi.fn(async ({ state }) => state);
+    const result = await provisionEpigraphNovelDependencies({ restored, state, scopeInput: { profileId: "test" },
+      approvals: { repositoryUrls: [url], plugins: { "example-source": url } },
+      operations: { addRepository: vi.fn(), trustRepository: vi.fn(), saveState: async current => current, installPlugin,
+        refreshRepository: async current => ({ state: current, repository: current.repositories[0], status: scenario === "refresh-failed" ? "error" : "not-modified", httpStatus: 500, catalogCount: 1, fetchedAtMs: 2 }) },
+    });
+    expect(installPlugin).not.toHaveBeenCalled();
+    expect(result.installedPlugins).toBe(0);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.state.installedPlugins).toEqual(state.installedPlugins);
+  });
+  it("counts only enabled plugins with a trusted enabled owning repository", () => {
+    const state = emptyState();
+    state.repositories = [{ id: "repo", profileId: "test", url: "https://repo.test", normalizedUrl: "https://repo.test", enabled: true,
+      trustState: "trusted", recommendedSeed: false, lastFetchedAtMs: null, lastSuccessAtMs: null, etag: null, lastModified: null, lastError: null }];
+    state.installedPlugins = [{ profileId: "test", repositoryId: "repo", pluginId: "one", version: "1", enabled: true, disabledReason: null,
+      artifactPath: "one.js", customJsPath: null, customCssPath: null, hasSettings: false, installedAtMs: 1, updatedAtMs: 1 }];
+    expect(novelRestoreRuntimeState(state).availableSourceIds).toEqual(["one"]);
+    state.repositories[0].trustState = "unknown";
+    expect(novelRestoreRuntimeState(state).availableSourceIds).toEqual([]);
+    state.repositories[0].trustState = "trusted"; state.repositories[0].enabled = false;
+    expect(novelRestoreRuntimeState(state).availableSourceIds).toEqual([]);
+    state.repositories[0].enabled = true; state.installedPlugins[0].disabledReason = "user-disabled";
+    expect(novelRestoreRuntimeState(state).availableSourceIds).toEqual([]);
+    state.installedPlugins[0].disabledReason = null; state.installedPlugins[0].repositoryId = "foreign";
+    expect(novelRestoreRuntimeState(state).availableSourceIds).toEqual([]);
+  });
+  it("uses an explicitly selected repository when the backup knows only the plugin ID", async () => {
+    const repositoryUrl = "https://chosen.test/index.json";
+    const state = emptyState();
+    state.repositories = [{ id: "chosen", profileId: "test", url: repositoryUrl, normalizedUrl: repositoryUrl, enabled: true,
+      trustState: "unknown", recommendedSeed: false, lastFetchedAtMs: null, lastSuccessAtMs: null, etag: null, lastModified: null, lastError: null }];
+    state.catalogEntries = [{ repositoryId: "chosen", pluginId: "example-source", name: "Example", site: "test", lang: "en", version: "1",
+      artifactUrl: "https://chosen.test/plugin.js", iconUrl: null, customJsUrl: null, customCssUrl: null, manifestHash: null, fetchedAtMs: 1 }];
+    const trustRepository = vi.fn(current => ({ ...current, repositories: current.repositories.map(repository => ({ ...repository, trustState: "trusted" })) }));
+    const installPlugin = vi.fn(async ({ state: current }) => current);
+    const result = await provisionEpigraphNovelDependencies({ state, scopeInput: { profileId: "test" },
+      restored: { ...restored, entries: [{ ...restored.entries[0], source: { ...restored.entries[0].source, repositoryUrl: null } }], plugins: [{ id: "example-source" }], repositories: [] },
+      approvals: { repositoryUrls: [repositoryUrl], plugins: { "example-source": repositoryUrl } },
+      operations: { addRepository: vi.fn(), trustRepository, refreshRepository: async current => ({ state: current, repository: current.repositories[0], status: "not-modified", httpStatus: 304, catalogCount: 1, fetchedAtMs: 1 }), installPlugin, saveState: async current => current },
+    });
+    expect(trustRepository).toHaveBeenCalledOnce(); expect(installPlugin).toHaveBeenCalledOnce(); expect(result.warnings).toEqual([]);
+  });
+  it("lists candidate origins without selecting or trusting one when backup provenance is absent", () => {
+    const state = emptyState();
+    state.catalogEntries = ["a", "b"].map(repositoryId => ({ repositoryId, pluginId: "example-source", name: "Example", site: "test",
+      lang: "en", version: "1", artifactUrl: `https://${repositoryId}.test/plugin.js`, iconUrl: null, customJsUrl: null, customCssUrl: null, manifestHash: null, fetchedAtMs: 1 }));
+    state.repositories = ["a", "b"].map(id => ({ id, profileId: "test", url: `https://${id}.test/index.json`, normalizedUrl: `https://${id}.test/index.json`,
+      enabled: true, trustState: "unknown", recommendedSeed: false, lastFetchedAtMs: null, lastSuccessAtMs: null, etag: null, lastModified: null, lastError: null }));
+    const before = structuredClone(state);
+    const plan = planNovelRestoreDependencies({ ...restored, entries: [{ ...restored.entries[0], source: { ...restored.entries[0].source, repositoryUrl: null } }], plugins: [{ id: "example-source" }], repositories: [] }, state);
+    expect(plan.plugins[0]).toMatchObject({ pluginId: "example-source", status: "needs-selection", repositoryUrls: [], selectedRepositoryUrl: null });
+    expect(plan.plugins[0].candidates.map(candidate => candidate.repositoryUrl)).toEqual(["https://a.test/index.json", "https://b.test/index.json"]);
+    expect(state).toEqual(before);
+  });
+  it("preserves conflicting backup origins instead of letting registry order select one", async () => {
+    const operations = { addRepository: vi.fn(current => current), trustRepository: vi.fn(current => current), refreshRepository: vi.fn(), installPlugin: vi.fn(), saveState: vi.fn() };
+    const result = await provisionEpigraphNovelDependencies({
+      restored: { ...restored, plugins: [{ id: "example-source", repositoryUrl: "https://other.example/index.json" }, ...restored.plugins] },
+      state: emptyState(), scopeInput: { profileId: "test" }, operations,
+      approvals: { repositoryUrls: [], plugins: { "example-source": "https://plugins.example/index.json" } },
+    });
+    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "plugin-origin-conflict", pluginId: "example-source" }));
+    expect(operations.installPlugin).not.toHaveBeenCalled();
+  });
+  it("does not treat backup provenance as permission to add, trust or install", async () => {
+    const state = emptyState();
+    const operations = { addRepository: vi.fn(current => current), trustRepository: vi.fn(current => current), refreshRepository: vi.fn(), installPlugin: vi.fn(), saveState: vi.fn() };
+    const result = await provisionEpigraphNovelDependencies({ restored, state, scopeInput: { profileId: "test" }, operations });
+    for (const operation of Object.values(operations)) expect(operation).not.toHaveBeenCalled();
+    expect(result.state).toBe(state);
+    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "approval-required" }));
+  });
   it("adds, trusts and refreshes referenced repositories before installing plugins", async () => {
     const calls: string[] = [];
     const operations: NovelRestoreProvisioningOperations = {
@@ -136,6 +220,7 @@ describe("novel restore dependency provisioning", () => {
     const result = await provisionEpigraphNovelDependencies({
       restored,
       state: emptyState(),
+      approvals: { repositoryUrls: ["https://plugins.example/index.json", "https://community.example/plugins.min.json"], plugins: { "example-source": "https://plugins.example/index.json", "shared-source": "https://community.example/plugins.min.json" } },
       scopeInput: { profileId: "test" },
       operations,
     });
@@ -189,6 +274,7 @@ describe("novel restore dependency provisioning", () => {
     const result = await provisionEpigraphNovelDependencies({
       restored,
       state,
+      approvals: { repositoryUrls: ["https://plugins.example/index.json", "https://community.example/plugins.min.json"], plugins: { "example-source": "https://plugins.example/index.json", "shared-source": "https://community.example/plugins.min.json" } },
       scopeInput: { profileId: "test" },
       operations,
     });
@@ -231,6 +317,7 @@ describe("novel restore dependency provisioning", () => {
     const result = await provisionEpigraphNovelDependencies({
       restored,
       state: emptyState(),
+      approvals: { repositoryUrls: ["https://plugins.example/index.json", "https://community.example/plugins.min.json"], plugins: { "example-source": "https://plugins.example/index.json", "shared-source": "https://community.example/plugins.min.json" } },
       scopeInput: { profileId: "test" },
       operations,
     });
@@ -242,7 +329,7 @@ describe("novel restore dependency provisioning", () => {
     }));
   });
 
-  it("switches an installed plugin to the repository recorded for that plugin", async () => {
+  it("preserves an installed plugin when the backup records another repository", async () => {
     const state = emptyState();
     state.repositories = [
       {
@@ -320,6 +407,7 @@ describe("novel restore dependency provisioning", () => {
     const result = await provisionEpigraphNovelDependencies({
       restored: repositoryAwareRestore,
       state,
+      approvals: { repositoryUrls: ["https://plugins.example/index.json", "https://community.example/plugins.min.json"], plugins: { "example-source": "https://plugins.example/index.json", "shared-source": "https://community.example/plugins.min.json" } },
       scopeInput: { profileId: "test" },
       operations: {
         addRepository: (current) => current,
@@ -353,7 +441,7 @@ describe("novel restore dependency provisioning", () => {
       },
     });
 
-    expect(result.state.installedPlugins[0]?.repositoryId).toBe("repo-community");
+    expect(result.state.installedPlugins[0]?.repositoryId).toBe("repo-official");
   });
 
   it("does not accept a homonymous plugin when the recorded repository could not be added", async () => {
@@ -377,6 +465,7 @@ describe("novel restore dependency provisioning", () => {
     const result = await provisionEpigraphNovelDependencies({
       restored,
       state,
+      approvals: { repositoryUrls: ["https://plugins.example/index.json", "https://community.example/plugins.min.json"], plugins: { "example-source": "https://plugins.example/index.json", "shared-source": "https://community.example/plugins.min.json" } },
       scopeInput: { profileId: "test" },
       operations: {
         addRepository: (current) => current,
