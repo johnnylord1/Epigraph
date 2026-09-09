@@ -108,6 +108,12 @@ export async function installNovelCatalogPlugin(input: InstallNovelPluginInput):
     throw new Error("Only trusted repositories can install plugins.");
   }
 
+  if (input.state.installedPlugins.some((plugin) => (
+    plugin.pluginId === input.entry.pluginId && plugin.repositoryId !== repository.id
+  ))) {
+    throw new Error("This plugin is already installed from another repository. Review the existing installation in Sources before replacing it.");
+  }
+
   const storageRoot = await resolveNovelStorageRoot(input.scopeInput);
   const versionRoot = pluginVersionRoot(storageRoot, input.entry);
   const settingsRoot = pluginSettingsRoot(storageRoot, input.entry);

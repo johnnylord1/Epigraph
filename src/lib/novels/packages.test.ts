@@ -92,6 +92,28 @@ describe("novel plugin packages", () => {
     );
     expect(getInstalledNovelSources(nextState)).toEqual(["plugin.alpha"]);
     expect(getNovelCatalogEntryInstallState(nextState, entry).status).toBe("installed");
+    await expect(installNovelCatalogPlugin({ state: nextState, entry, scopeInput: { profileId: "test" } }))
+      .resolves.toMatchObject({ installedPlugins: [expect.objectContaining({ repositoryId: entry.repositoryId, pluginId: entry.pluginId })] });
+  });
+
+  it.each([true, false])("preserves a plugin from another repository even when enabled=%s", async (enabled) => {
+    let state = addNovelRepositoryToState(createEmptyNovelRepositoryState({ profileId: "test" }), {
+      profileId: "test", url: "https://plugins.example.com/plugins.min.json",
+    });
+    state.repositories[0].trustState = "trusted";
+    const entry = { repositoryId: state.repositories[0].id, pluginId: "plugin.alpha", name: "Alpha", site: "Example",
+      lang: "en", version: "2", artifactUrl: "https://plugins.example.com/alpha.js", iconUrl: null,
+      customJsUrl: null, customCssUrl: null, manifestHash: null, fetchedAtMs: 1 };
+    state.installedPlugins = [{ profileId: "test", repositoryId: "other-repository", pluginId: entry.pluginId,
+      version: "1", enabled, disabledReason: enabled ? null : "user-disabled", artifactPath: "existing.js",
+      customJsPath: null, customCssPath: null, hasSettings: true, installedAtMs: 1, updatedAtMs: 1 }];
+    const before = structuredClone(state);
+    invokeMock.mockResolvedValue("C:\\Profiles\\test\\novels");
+    tauriFetchMock.mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) });
+    await expect(installNovelCatalogPlugin({ state, entry, scopeInput: { profileId: "test" } })).rejects.toThrow(/another repository/i);
+    expect(tauriFetchMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(state).toEqual(before);
   });
 
   it("refuses to install plugins from untrusted repositories", async () => {
