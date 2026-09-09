@@ -297,7 +297,7 @@ describe("epigraph restore planner", () => {
     expect(books.needsUserAction).toBe(true);
   });
 
-  it("keeps novel dependencies from the backup executable so restore can provision them", async () => {
+  it("refuses missing novel dependencies while preserving metadata-only restore", async () => {
     const missingRepoBuilt = await buildEpigraphBackupContainer({
       payloads: [await buildEpigraphNovelsPayload({
         ...SAMPLE_NOVELS_SNAPSHOT,
@@ -315,12 +315,12 @@ describe("epigraph restore planner", () => {
     const missingRepoPlan = await buildEpigraphRestorePlan(missingRepoBuilt.bytes, PLANNER_RUNTIME);
     expect(missingRepoPlan.payloads[0]).toEqual(
       expect.objectContaining({
-        status: "warning-only",
-        canRestoreNow: true,
-        needsUserAction: false,
+        status: "blocked",
+        canRestoreNow: false,
+        needsUserAction: true,
       }),
     );
-    expect(missingRepoPlan.payloads[0].warnings).toContainEqual(expect.objectContaining({
+    expect(missingRepoPlan.payloads[0].reasons).toContainEqual(expect.objectContaining({
       code: "missing-required-repository",
     }));
 
@@ -343,6 +343,24 @@ describe("epigraph restore planner", () => {
         needsUserAction: false,
       }),
     );
+  });
+
+  it.each(["registry", "availability"])("rechecks Novel plugin %s before marking the payload ready", async (missing) => {
+    const pluginId = "app.lnreader.sources.example";
+    const built = await buildEpigraphBackupContainer({ payloads: [await buildEpigraphNovelsPayload({
+      ...SAMPLE_NOVELS_SNAPSHOT,
+      entries: [{ ...SAMPLE_NOVELS_SNAPSHOT.entries[0], source: {
+        ...SAMPLE_NOVELS_SNAPSHOT.entries[0].source!, pluginId, sourceId: pluginId,
+      } }],
+    })] });
+    const available = { ...PLANNER_RUNTIME.novels!, installedPluginIds: [pluginId], availableSourceIds: [pluginId] };
+    const refused = await buildEpigraphRestorePlan(built.bytes, { ...PLANNER_RUNTIME, novels: {
+      ...available, ...(missing === "registry" ? { installedPluginIds: [] } : { availableSourceIds: [] }),
+    } });
+    expect(refused.payloads[0]).toMatchObject({ status: "blocked", canRestoreNow: false, needsUserAction: true, selectedByDefault: false });
+    expect(refused.payloads[0].reasons.length).toBeGreaterThan(0);
+    const ready = await buildEpigraphRestorePlan(built.bytes, { ...PLANNER_RUNTIME, novels: available });
+    expect(ready.payloads[0]).toMatchObject({ status: "restorable", canRestoreNow: true, needsUserAction: false, selectedByDefault: true, reasons: [] });
   });
 
   it("keeps a valid minimal app payload executable as warning-only portable metadata", async () => {
