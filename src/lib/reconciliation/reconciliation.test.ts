@@ -857,6 +857,14 @@ describe("restore readiness", () => {
     expect(readiness.blocksRestore).toBe(false);
   });
 
+  it("refuses an explicit mapping after its candidate disappears", () => {
+    const analysis: ReconciliationAnalysis = { backupFingerprint: "backup", sourceInventoryFingerprint: "inventory",
+      exactMatches: [], autoReconciled: [], needsReview: [], warnings: [], unresolved: [{ orphanSourceId: "old", sourceName: "Old",
+        sourceLang: "en", status: "unresolved", sampleManga: [], candidates: [], selectedCandidate: null }] };
+    expect(buildRestoreReadiness(analysis, { old: { mode: "map", sourceId: "gone", name: "Gone", lang: "en" } }, [], []).blocksRestore).toBe(true);
+    expect(buildRestoreReadiness(analysis, { old: { mode: "preserve" } }, [], []).blocksRestore).toBe(false);
+  });
+
   it("gates restore when a reconciled target still requires extension install", () => {
     const analysis: ReconciliationAnalysis = {
       backupFingerprint: "backup",

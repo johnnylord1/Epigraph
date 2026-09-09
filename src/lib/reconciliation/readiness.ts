@@ -145,7 +145,7 @@ export function buildRestoreReadiness(
     requiresInstallCount: requiresInstall.length,
     unavailableCount: unavailable.length,
     unresolvedCount: unresolved.length,
-    blocksRestore: requiresInstall.length > 0 || unavailable.some((item) => choices[item.orphanSourceId]?.mode === "map"),
+    blocksRestore: requiresInstall.length > 0 || [...unavailable, ...unresolved].some((item) => choices[item.orphanSourceId]?.mode === "map"),
   };
 }
 

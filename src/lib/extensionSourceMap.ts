@@ -113,7 +113,7 @@ function resolveExtensionCandidate(
   repoCandidates: RepoExtensionEntry[],
   availableExtensions: Extension[],
   preferredLang: string,
-): Extension | null {
+): Extension[] {
   const availableByPkg = new Map(
     availableExtensions
       .filter((extension) => !extension.isInstalled)
@@ -127,7 +127,7 @@ function resolveExtensionCandidate(
     if (!uniqueExtensions.has(extension.pkgName)) uniqueExtensions.set(extension.pkgName, extension);
   }
 
-  return sortByPreferredLang([...uniqueExtensions.values()], preferredLang)[0] ?? null;
+  return sortByPreferredLang([...uniqueExtensions.values()], preferredLang);
 }
 
 export async function findMissingSourceExtensionSuggestions(
@@ -148,12 +148,13 @@ export async function findMissingSourceExtensionSuggestions(
     const byId = entries.filter((entry) =>
       entry.sources?.some((source) => String(source.id) === String(missingSource.id)),
     );
-    const idMatch = resolveExtensionCandidate(byId, availableExtensions, preferredLang);
-    if (idMatch && !usedPkgNames.has(idMatch.pkgName)) {
-      usedPkgNames.add(idMatch.pkgName);
-      suggestions.push({ missingSource, extension: idMatch, matchedBy: "source-id" });
-      continue;
+    const idMatches = resolveExtensionCandidate(byId, availableExtensions, preferredLang);
+    for (const extension of idMatches) {
+      if (usedPkgNames.has(extension.pkgName)) continue;
+      usedPkgNames.add(extension.pkgName);
+      suggestions.push({ missingSource, extension, matchedBy: "source-id" });
     }
+    if (idMatches.length > 0) continue;
 
     const normalizedMissingName = normalizeName(missingSource.name);
     if (!normalizedMissingName || /^\d+$/.test(normalizedMissingName)) continue;
@@ -161,10 +162,11 @@ export async function findMissingSourceExtensionSuggestions(
     const byName = entries.filter((entry) =>
       entry.sources?.some((source) => normalizeName(source.name) === normalizedMissingName),
     );
-    const nameMatch = resolveExtensionCandidate(byName, availableExtensions, preferredLang);
-    if (nameMatch && !usedPkgNames.has(nameMatch.pkgName)) {
-      usedPkgNames.add(nameMatch.pkgName);
-      suggestions.push({ missingSource, extension: nameMatch, matchedBy: "source-name" });
+    const nameMatches = resolveExtensionCandidate(byName, availableExtensions, preferredLang);
+    for (const extension of nameMatches) {
+      if (usedPkgNames.has(extension.pkgName)) continue;
+      usedPkgNames.add(extension.pkgName);
+      suggestions.push({ missingSource, extension, matchedBy: "source-name" });
     }
   }
 
