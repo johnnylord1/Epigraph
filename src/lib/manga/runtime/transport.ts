@@ -23,6 +23,8 @@ export interface GraphQLOperation<TVariables, TResult> {
 export interface GraphQLExecuteOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Synchronous check after admission/credentials resolve, immediately before send. */
+  assertTarget?: () => void;
 }
 
 export interface GraphQLTransport {
@@ -212,6 +214,7 @@ export class SuwayomiTransport implements GraphQLTransport {
             requestId,
             attempt + 1,
             startedAt,
+            options.assertTarget,
           );
         } catch (error) {
           if (isAbort(error, controller.signal)) {
@@ -261,12 +264,14 @@ export class SuwayomiTransport implements GraphQLTransport {
     requestId: string,
     attempt: number,
     startedAt: number,
+    assertTarget?: () => void,
   ): Promise<TResult> {
     const endpoint = typeof this.options.endpoint === "function"
       ? this.options.endpoint()
       : this.options.endpoint;
     const headers = new Headers(await this.options.headers?.());
     if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    assertTarget?.();
     const response = await this.fetchImpl(endpoint, {
       method: "POST",
       headers,

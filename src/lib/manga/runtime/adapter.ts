@@ -104,14 +104,14 @@ export class SuwayomiAdapter implements SourceRuntime {
       return this.transport.execute(
         this.profile.operations.addStore,
         { indexUrl },
-        { signal: input.signal, timeoutMs: 60_000 },
+        { signal: input.signal, timeoutMs: 60_000, assertTarget: input.assertTarget },
       );
     }
 
     return this.transport.execute(
       this.profile.operations.addStore,
       { repos: [...current.map((store) => store.indexUrl), indexUrl] },
-      { signal: input.signal, timeoutMs: 60_000 },
+      { signal: input.signal, timeoutMs: 60_000, assertTarget: input.assertTarget },
     );
   }
 
@@ -146,12 +146,12 @@ export class SuwayomiAdapter implements SourceRuntime {
     return this.transport.execute(this.profile.operations.listExtensions, {}, { signal });
   }
 
-  async refreshExtensions(signal?: AbortSignal) {
+  async refreshExtensions(signal?: AbortSignal, assertTarget?: () => void) {
     await this.requireCompatible();
     return this.transport.execute(
       this.profile.operations.refreshExtensions,
       {},
-      { signal, timeoutMs: 60_000 },
+      { signal, timeoutMs: 60_000, assertTarget },
     );
   }
 
@@ -287,7 +287,7 @@ export class SuwayomiAdapter implements SourceRuntime {
     await this.transport.execute(
       this.profile.operations.installExtension,
       { id: input.packageName },
-      { signal: input.signal, timeoutMs: 60_000 },
+      { signal: input.signal, timeoutMs: 60_000, assertTarget: input.assertTarget },
     );
   }
 

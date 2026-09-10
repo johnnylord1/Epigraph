@@ -69,6 +69,7 @@ export interface ExtensionStore {
 export interface ExtensionStoreInput {
   indexUrl: string;
   signal?: AbortSignal;
+  assertTarget?: () => void;
 }
 
 export type ExtensionArtifactType = "apk" | "jar";
@@ -260,6 +261,7 @@ export interface SourcePage {
 export interface ExtensionInstallInput {
   packageName: string;
   signal?: AbortSignal;
+  assertTarget?: () => void;
 }
 
 export interface ExtensionUpdateInput {
@@ -275,7 +277,7 @@ export interface SourceRuntime {
   addStore(input: ExtensionStoreInput): Promise<ExtensionStore>;
   removeStore(indexUrl: string, signal?: AbortSignal): Promise<ExtensionStore | null>;
   listExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
-  refreshExtensions(signal?: AbortSignal): Promise<readonly ExtensionRef[]>;
+  refreshExtensions(signal?: AbortSignal, assertTarget?: () => void): Promise<readonly ExtensionRef[]>;
   listSources(signal?: AbortSignal): Promise<readonly SourceRef[]>;
   getSourcePreferences(sourceId: string, signal?: AbortSignal): Promise<readonly SourcePreference[]>;
   updateSourcePreference(input: SourcePreferenceUpdateInput): Promise<readonly SourcePreference[]>;

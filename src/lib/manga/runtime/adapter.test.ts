@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { SuwayomiAdapter } from "./adapter";
 import { CompatibilityProfileV21 } from "./compatibility";
 import type { GraphQLExecuteOptions, GraphQLOperation, GraphQLTransport } from "./transport";
+import { SuwayomiTransport } from "./transport";
 
 function namedType(name: string) {
   return { kind: "OBJECT", name, ofType: null };
@@ -226,6 +227,27 @@ class FixtureTransport implements GraphQLTransport {
 }
 
 describe("SuwayomiAdapter", () => {
+  test.each(["install", "add", "refresh"])("carries the restore target through %s to the final transport boundary", async action => {
+    let target = "original";
+    const sendMutation = vi.fn();
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql",
+      beginMutationLease: async () => { target = "different"; return () => {}; },
+      fetch: async (_url, init) => {
+        const { operationName } = JSON.parse(String(init?.body));
+        if (operationName === "EpigraphRuntimeContract") return new Response(JSON.stringify({ data: compatibleSchema() }));
+        if (operationName === "EpigraphLegacyExtensionStores") return new Response(JSON.stringify({ data: { settings: { extensionRepos: [] } } }));
+        sendMutation(); throw Error("UNEXPECTED_DEPENDENCY_MUTATION");
+      },
+    });
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+    const assertTarget = () => { if (target !== "original") throw Error("RESTORE_TARGET_CHANGED"); };
+    const result = action === "install" ? adapter.installExtension({ packageName: "pkg", assertTarget })
+      : action === "add" ? adapter.addStore({ indexUrl: "https://example.test/repo.json", assertTarget })
+      : adapter.refreshExtensions(undefined, assertTarget);
+    await expect(result).rejects.toMatchObject({ cause: new Error("RESTORE_TARGET_CHANGED"), retryable: false });
+    expect(sendMutation).not.toHaveBeenCalled();
+  });
   test("shares contract inspection across runtime info and capabilities", async () => {
     const transport = new FixtureTransport({
       EpigraphRuntimeContract: compatibleSchema(),

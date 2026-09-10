@@ -25,6 +25,27 @@ const EXAMPLE_QUERY: GraphQLOperation<{ id: string }, ExampleResult> = {
 };
 
 describe("SuwayomiTransport", () => {
+  test.each(["admission", "headers"])("refuses a target change during %s before sending a mutation", async boundary => {
+    let resume!: () => void, entered!: () => void;
+    const blocked = new Promise<void>(resolve => { resume = resolve; });
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const release = vi.fn();
+    let target = "original";
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ data: { example: { ok: true } } })));
+    const transport = new SuwayomiTransport({
+      endpoint: "http://127.0.0.1:4567/api/graphql", fetch: fetchMock,
+      beginMutationLease: async () => { if (boundary === "admission") { entered(); await blocked; } return release; },
+      headers: async () => { if (boundary === "headers") { entered(); await blocked; } return {}; },
+    });
+    const result = transport.execute({ ...EXAMPLE_QUERY, kind: "mutation" }, { id: "source-1" }, {
+      assertTarget: () => { if (target !== "original") throw Error("RESTORE_TARGET_CHANGED"); },
+    });
+    const rejected = expect(result).rejects.toMatchObject({ cause: new Error("RESTORE_TARGET_CHANGED"), retryable: false });
+    await waiting; target = "different"; resume();
+    await rejected;
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });
