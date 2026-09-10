@@ -431,9 +431,9 @@ export async function planEpigraphMangaRestore(
       status: "warning-only",
       defaultRestoreMode,
       availableRestoreModes,
-      summaryLabel: "Extension repositories will be restored first",
+      summaryLabel: "Review missing extension repositories",
       reasons: [],
-      warnings: [toReason("missing-required-repository", `${missingRepositories.length} extension repositor${missingRepositories.length === 1 ? "y" : "ies"} will be added before restore.`)],
+      warnings: [toReason("missing-required-repository", `${missingRepositories.length} extension repositor${missingRepositories.length === 1 ? "y is" : "ies are"} missing. Review and approve repositories in dependency setup.`)],
       metadata: { ...baseMetadata, missingRepositories },
     });
   }
@@ -459,9 +459,9 @@ export async function planEpigraphMangaRestore(
       status: "warning-only",
       defaultRestoreMode,
       availableRestoreModes,
-      summaryLabel: "Required manga extensions will be installed first",
+      summaryLabel: "Review required manga extensions",
       reasons: [],
-      warnings: [toReason("manga-requires-install", `${readiness.requiresInstallCount} source extension${readiness.requiresInstallCount === 1 ? "" : "s"} will be installed before the library is restored.`)],
+      warnings: [toReason("manga-requires-install", `${readiness.requiresInstallCount} source extension${readiness.requiresInstallCount === 1 ? " needs" : "s need"} installation before the source can be used. Review and approve installation in dependency setup.`)],
       metadata: {
         ...baseMetadata,
         installableExtensions: readiness.installableExtensions.map((extension) => extension.pkgName),

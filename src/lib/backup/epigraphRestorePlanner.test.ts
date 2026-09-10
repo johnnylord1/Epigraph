@@ -262,6 +262,7 @@ describe("epigraph restore planner", () => {
     expect(manga.status).toBe(status);
     expect(manga.canRestoreNow).toBe(canRestoreNow);
     expect(manga.needsUserAction).toBe(needsUserAction);
+    expect([manga.summaryLabel, ...manga.warnings.map(warning => warning.message)].join(" ")).not.toMatch(/will be installed|will be added|will be restored first/i);
     expect([...(manga.reasons ?? []), ...(manga.warnings ?? [])].some((entry) => entry.code === reasonCode)).toBe(true);
   });
 
@@ -380,7 +381,7 @@ describe("epigraph restore planner", () => {
     expect(app.warnings).toContainEqual(expect.objectContaining({ code: "portable-metadata-only" }));
   });
 
-  it("keeps a manga payload executable when its recorded repository must be restored first", async () => {
+  it("preserves a manga payload while requiring explicit repository review instead of promising installation", async () => {
     const built = await buildEpigraphBackupContainer({
       payloads: [await buildEpigraphMangaPayload(SAMPLE_MANGA_BYTES, {
         repositoryUrls: ["https://example.com/index.min.json"],
@@ -402,6 +403,7 @@ describe("epigraph restore planner", () => {
     expect(plan.payloads[0].warnings).toContainEqual(expect.objectContaining({
       code: "missing-required-repository",
     }));
+    expect([plan.payloads[0].summaryLabel, ...plan.payloads[0].warnings.map(warning => warning.message)].join(" ")).not.toMatch(/will be installed|will be added|will be restored first/i);
   });
 
   it("surfaces unsupported payload versions and unknown payload kinds safely", async () => {
