@@ -27,9 +27,9 @@
     ringFull = false,
     failed = false,
     notConfigured = false,
-    failureTitle = "Could not reach server",
+    failureTitle,
     failureDetail = "",
-    statusText = "Initializing profile",
+    statusText,
     showCards = true,
     showFps = false,
     onReady,
@@ -119,7 +119,7 @@
   let pinUnlocked = $state(false);
   let pinVisible = $state(false);
   let exiting = $state(false);
-  let retryAnnouncement = $state("");
+  let retryAnnouncement = $state(false);
   let fpsText = $state("");
   let exitLock = false;
 
@@ -292,17 +292,17 @@
     return "loading";
   });
 
-  const loadingLabel = $derived(ringFull ? "Ready" : statusText);
+  const loadingLabel = $derived(ringFull ? $_("ui_ready") : (statusText || $_("startup_initializing")));
   const failureLabel = $derived(
     notConfigured
-      ? (failureTitle || "Server not configured")
-      : (failureTitle || "Connection interrupted"),
+      ? (failureTitle || $_("startup_notConfigured"))
+      : (failureTitle || $_("startup_connectionInterrupted")),
   );
   const politeAnnouncement = $derived.by(() => {
-    if (retryAnnouncement) return retryAnnouncement;
+    if (retryAnnouncement) return $_("startup_retrying");
     if (failed || notConfigured) return "";
-    if (visualState === "pin") return "PIN required";
-    if (visualState === "idle") return "Ready";
+    if (visualState === "pin") return $_("ui_pinRequired");
+    if (visualState === "idle") return $_("ui_ready");
     return loadingLabel;
   });
   const assertiveAnnouncement = $derived(
@@ -359,7 +359,7 @@
   }
 
   function handleRetry() {
-    retryAnnouncement = "Retrying connection";
+    retryAnnouncement = true;
     onRetry?.();
   }
 
@@ -381,7 +381,7 @@
   $effect(() => {
     if (!retryAnnouncement) return;
     const timeout = window.setTimeout(() => {
-      retryAnnouncement = "";
+      retryAnnouncement = false;
     }, 1400);
     return () => window.clearTimeout(timeout);
   });

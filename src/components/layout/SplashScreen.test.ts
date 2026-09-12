@@ -1,9 +1,21 @@
 import { cleanup, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { tick } from "svelte";
+import { applyAppLanguage, translate } from "../../lib/i18n/runtime";
 import SplashScreen from "./SplashScreen.svelte";
 import { store } from "../../store/state.svelte";
 
 describe("SplashScreen", () => {
+  test("localizes default loading and failure announcements when the locale changes", async () => {
+    applyAppLanguage("pt-BR");
+    const { container, rerender } = render(SplashScreen, { props: { showCards: false } });
+    expect(container.textContent).toContain(translate("startup_initializing"));
+    expect(container.textContent).not.toContain("Initializing profile");
+    applyAppLanguage("ja"); await tick();
+    expect(container.textContent).toContain(translate("startup_initializing"));
+    await rerender({ failed: true, notConfigured: true, showCards: false });
+    expect(screen.getByRole("alert").textContent).toContain(translate("startup_notConfigured"));
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     store.settings = {
@@ -15,6 +27,7 @@ describe("SplashScreen", () => {
 
   afterEach(() => {
     cleanup();
+    applyAppLanguage("en");
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
     store.settings = {
