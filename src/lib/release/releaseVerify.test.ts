@@ -15,7 +15,6 @@ describe("release verification orchestration", () => {
     expect(script).toContain("--maxWorkers=1 --minWorkers=1");
     expect(script).toContain("--test-threads=1");
     expect(script).toContain("cargo test --locked");
-    expect(script).toContain('EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION = "1"');
     expect(script).toContain("verify-source-runtime.ps1 -SkipProjectGates");
     expect(script).not.toContain("verify-source-runtime.ps1 -ContractOnly");
     expect(script).toContain("Remove-Item Env:EPIGRAPH_SUWAYOMI_LIVE_ENDPOINT");
@@ -51,7 +50,7 @@ describe("release verification orchestration", () => {
     const bundlePrep = script.indexOf('Invoke-ReleaseStep "Suwayomi bundle prerequisites"');
     const sidecarBuild = script.indexOf('Invoke-ReleaseStep "Syncd sidecar build"');
     const rustTests = script.indexOf('Invoke-ReleaseStep "Rust test suite"');
-    const tauriBuild = script.indexOf('Invoke-ReleaseStep "Tauri automation build"');
+    const tauriBuild = script.indexOf('Invoke-ReleaseStep "Attested candidate preparation or validation"');
     const dataGate = script.indexOf('Invoke-ReleaseStep "Local data round trips"');
     const viewportGate = script.indexOf('Invoke-ReleaseStep "Native viewport smoke"');
     const navigationGate = script.indexOf('Invoke-ReleaseStep "Native navigation budgets"');
@@ -81,9 +80,9 @@ describe("release verification orchestration", () => {
     expect(script).toContain('Invoke-ReleaseStep "Browser component tests"');
     expect(script).not.toContain("MaxAttempts");
     expect(script).not.toContain("retrying once");
-    expect(script).toContain("Get-WorktreeFingerprint");
+    expect(script).toContain("Test-GitWhitespace");
     expect(script).toContain("git diff --cached --check");
-    expect(script).toContain("Release verification changed the worktree");
+    expect(script).toContain("git diff --check");
     expect(packageJson.scripts["suwayomi:prepare-bundle:windows"]).toContain("prepare-suwayomi-bundle.mjs");
     expect(script).toContain("node --test scripts/prepare-suwayomi-bundle.test.mjs");
   });

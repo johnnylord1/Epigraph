@@ -4,7 +4,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { applyAppLanguage } from "../../lib/i18n/runtime";
 
-vi.mock("../../store/state.svelte", () => ({ addToast: vi.fn() }));
+vi.mock("../../store/state.svelte", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../store/state.svelte")>(),
+  addToast: vi.fn(),
+}));
 
 vi.mock("../../lib/syncdQr", () => ({
   buildSyncdQrDataUrl: vi.fn(async () => "data:image/png;base64,qr"),

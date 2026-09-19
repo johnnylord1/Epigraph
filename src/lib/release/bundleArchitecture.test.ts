@@ -46,7 +46,7 @@ describe("release bundle architecture", () => {
     expect(navigationGate).toContain("firstStableFrameAt = performance.now()");
     expect(navigationGate).toContain("requestAnimationFrame(finish)");
     expect(navigationGate).toContain("sha256: await sha256File(appPath)");
-    expect(nativeRunner).toContain("Automation build is older than");
+    expect(nativeRunner).toContain("Assert-VerificationArtifact");
     expect(nativeRunner).toContain("CreateNoWindow = $true");
     expect(nativeRunner).toContain("UseShellExecute = $false");
     expect(nativeRunner).toContain("WaitForExit(5000)");

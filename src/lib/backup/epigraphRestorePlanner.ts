@@ -128,7 +128,9 @@ export interface EpigraphRestorePlannerRuntime {
   };
   novels?: (EpigraphNovelRuntimeState & {
     supported?: boolean;
-  });
+  }) | {
+    supported: false;
+  };
   app?: {
     supported?: boolean;
   };
