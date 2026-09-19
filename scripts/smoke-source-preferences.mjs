@@ -61,6 +61,7 @@ async function main() {
       120_000,
     );
     step("automation audit bridge ready");
+    await driver.executeScript("return window.__epigraphAudit.bypassFirstRun()");
     await driver.executeScript("window.__epigraphAudit.bypassStartupSplash()");
     await settle(driver, 1_000);
     const startupState = await driver.executeScript(

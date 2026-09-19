@@ -51,6 +51,7 @@ async function main() {
     await driver.wait(async () => driver.executeScript(
       "return Boolean(window.__epigraphAudit)",
     ).catch(() => false), 120_000);
+    await driver.executeScript("return window.__epigraphAudit.bypassFirstRun()");
     await driver.executeScript("window.__epigraphAudit.bypassStartupSplash()");
     await driver.wait(async () => driver.executeScript(() => {
       if (document.querySelector(".browseSubtabs")) return true;

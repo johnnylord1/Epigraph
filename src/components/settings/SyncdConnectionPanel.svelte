@@ -46,9 +46,17 @@
     profileId?: string | null;
     scopeLabel: string;
     onClose?: () => void;
+    presentation?: "modal" | "embedded";
+    onReadyChange?: (ready: boolean) => void;
   }
 
-  let { profileId = null, scopeLabel, onClose = () => {} }: Props = $props();
+  let {
+    profileId = null,
+    scopeLabel,
+    onClose = () => {},
+    presentation = "modal",
+    onReadyChange = () => {},
+  }: Props = $props();
 
   type SyncdModalView = "pairing" | "details" | "options";
   type SyncdPairingMode = "create" | "use";
@@ -195,6 +203,7 @@
   });
 
   function portal(node: HTMLElement) {
+    if (presentation === "embedded") return { destroy() {} };
     document.body.appendChild(node);
     return {
       destroy() {
@@ -209,6 +218,7 @@
   }
 
   function closeModal() {
+    if (presentation === "embedded") return;
     panelMounted = false;
     hostDecisionBusy = null;
     stopPanelSubscriptions();
@@ -216,6 +226,7 @@
   }
 
   function handleModalKeydown(event: KeyboardEvent) {
+    if (presentation === "embedded") return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeModal();
@@ -1000,17 +1011,21 @@
       void refreshReplicationSnapshot();
     }
   });
+
+  $effect(() => {
+    onReadyChange(pairingStage === "connected");
+  });
 </script>
 
-<div class="syncd-modal-backdrop" role="presentation" use:portal>
-  <div bind:this={modalElement} class="syncd-modal" role="dialog" aria-modal="true" aria-labelledby="syncd-modal-title" tabindex="-1" onkeydown={handleModalKeydown}>
+<div class:syncd-modal-backdrop--embedded={presentation === "embedded"} class="syncd-modal-backdrop" role="presentation" use:portal>
+  <div bind:this={modalElement} class:syncd-modal--embedded={presentation === "embedded"} class="syncd-modal" role="dialog" aria-modal={presentation === "modal" ? "true" : undefined} aria-labelledby="syncd-modal-title" tabindex="-1" onkeydown={handleModalKeydown}>
     <div class="syncd-panel-grid" data-testid="syncd-panel-grid" data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}>
       <header class="syncd-modal__header">
         <div class="syncd-modal__heading">
           <h2 id="syncd-modal-title">{$_("settings_inline_desktopSyncPairing")}</h2>
           <p>{scopeLabel}</p>
         </div>
-        <button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}><X size={16} weight="bold" /></button>
+        {#if presentation === "modal"}<button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}><X size={16} weight="bold" /></button>{/if}
       </header>
 
       <div bind:this={modalBodyElement} class="syncd-modal__body">
@@ -1102,13 +1117,13 @@
           <div><button class="n-btn n-btn--sm n-btn-danger" type="button" disabled={!activeSession || forgetBusyKey !== null} onclick={() => activeSession && forgetSession(activeSession.sessionKey)}>{forgetBusyKey ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}</button></div>
           <div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" disabled={!activeSession || disconnectBusyKey !== null} onclick={() => activeSession && disconnectSession(activeSession.sessionKey)}>{$_("syncd_action_disconnect")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("syncd_action_revalidate")}</button><button class="syncd-link" type="button" onclick={() => showView("pairing")}>{$_("sources_actions_done")}</button></div>
         {:else if pairingStage === "start"}
-          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("ui_cancel")}</button>{#if pairingMode === "create"}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>{loadingHost ? $_("syncd_action_preparing") : $_("syncd_action_createPairingQr")}</button>{:else}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>{/if}</div>
+          <span></span><div class="syncd-actions">{#if presentation === "modal"}<button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("ui_cancel")}</button>{/if}{#if pairingMode === "create"}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>{loadingHost ? $_("syncd_action_preparing") : $_("syncd_action_createPairingQr")}</button>{:else}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>{/if}</div>
         {:else if pairingStage === "approval"}
           <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "reject" ? $_("syncd_action_rejecting") : $_("syncd_action_reject")}</button><button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "approve" ? $_("syncd_action_approving") : $_("syncd_action_approve")}</button></div>
         {:else if pairingStage === "connected"}
-          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-toggle" onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}</button><button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button></div>
+          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-toggle" onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}</button>{#if presentation === "modal"}<button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}</div>
         {:else}
-          <button class="n-btn n-btn--sm" type="button" onclick={startHostPairing}>{$_("ui_refreshBundle")}</button><button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>
+          <button class="n-btn n-btn--sm" type="button" onclick={startHostPairing}>{$_("ui_refreshBundle")}</button>{#if presentation === "modal"}<button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}
         {/if}
       </footer>
     </div>
@@ -1128,6 +1143,19 @@
     backdrop-filter: var(--component-syncd-modal-backdrop-blur);
   }
 
+  .syncd-modal-backdrop--embedded {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    align-items: stretch;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
   .syncd-modal {
     width: var(--component-syncd-modal-width);
     max-width: var(--component-syncd-modal-width);
@@ -1141,6 +1169,17 @@
     color: var(--text-primary);
     box-shadow: var(--component-syncd-modal-shadow);
     animation: syncdModalIn var(--component-syncd-modal-animation) both;
+  }
+
+  .syncd-modal--embedded {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
   }
 
   .syncd-panel-grid {

@@ -248,6 +248,41 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getAllByText("Studio PC").length).toBeGreaterThan(0);
   });
 
+  test("embeds in its host and reports real connection readiness", async () => {
+    const onReadyChange = vi.fn();
+    const onClose = vi.fn();
+    const host = document.createElement("section");
+    document.body.appendChild(host);
+    render(SyncdConnectionPanel, {
+      target: host,
+      props: {
+        profileId: "main",
+        scopeLabel: "First run",
+        presentation: "embedded",
+        onReadyChange,
+        onClose,
+      },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    expect(host.contains(dialog)).toBe(true);
+    expect(dialog.closest(".syncd-modal-backdrop")?.classList.contains("syncd-modal-backdrop--embedded")).toBe(true);
+    expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(false));
+
+    await waitFor(() => expect(desktopStateListener).not.toBeNull());
+    await act(async () => {
+      desktopStateListener?.({
+        host: null,
+        connect: { status: "connected", remoteOrigin: "https://192.168.1.20:4777" },
+        runtimeIdentity: { pid: 101, serverId: "server-b", deviceName: "Studio PC" },
+      });
+    });
+    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+  });
+
   test("allows the modal to close while a host decision is pending", async () => {
     const onClose = vi.fn();
     vi.mocked(syncdHostDecidePairing).mockImplementation(() => new Promise(() => {}));

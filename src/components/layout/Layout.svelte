@@ -8,7 +8,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
-  import { shouldStartFirstRun } from "../../lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
 
   interface Props {
@@ -28,7 +28,7 @@
   function readFirstRunPending() {
     try {
       return shouldStartFirstRun(
-        localStorage.getItem("epigraph-first-run"),
+        localStorage.getItem(FIRST_RUN_STORAGE_KEY),
         hadPersistedStoreAtStartup,
       );
     } catch {
@@ -213,6 +213,8 @@
   });
 
   onMount(() => {
+    const handleFirstRunCompleted = () => { firstRunPending = readFirstRunPending(); };
+    window.addEventListener(FIRST_RUN_COMPLETED_EVENT, handleFirstRunCompleted);
     queueMicrotask(() => {
       void getCachedComponent(pageComponentPromises, "library", pageLoaders.library)
         .then((component) => {
@@ -227,11 +229,54 @@
           console.warn("Home preload did not complete; navigation will retry it.", error);
         });
     });
+    return () => window.removeEventListener(FIRST_RUN_COMPLETED_EVENT, handleFirstRunCompleted);
   });
 </script>
 
+{#snippet detailSurface()}
+  {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
+    {#if detailComponent && ((detailLoadedKey === "series" && store.activeManga) || (detailLoadedKey === "book" && hasActiveBook))}
+      {@const DetailPage = detailComponent}
+      <div class="detail-layer">
+        <DetailPage />
+      </div>
+    {:else if detailKey && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
+      <div class="detail-layer detail-layer--state">
+        <NocturneState
+          layout="center"
+          tone="info"
+          icon="info"
+          eyebrow={$_("shell.detailState.status")}
+          title={$_("shell.detailState.openingTitle")}
+          body={$_("shell.detailState.openingBody")}
+        />
+      </div>
+    {:else if detailError}
+      <div class="detail-layer detail-layer--state">
+        <NocturneState
+          layout="center"
+          tone="danger"
+          icon="warning"
+          eyebrow={$_("shell.detailState.status")}
+          title={$_("shell.detailState.failedTitle")}
+          body={$_("shell.detailState.failedBody")}
+          actions={[{
+            label: $_("shell.detailState.retry"),
+            kind: "primary",
+            icon: "retry",
+            onClick: () => detailKey && void loadDetail(detailKey),
+          }]}
+        />
+      </div>
+    {/if}
+  {/if}
+{/snippet}
+
 {#if firstRunPending}
-  <FirstRun onComplete={() => (firstRunPending = false)} />
+  <div class="first-run-layout">
+    <FirstRun onComplete={() => (firstRunPending = false)} />
+    {@render detailSurface()}
+  </div>
 {:else}
 <div class="root epigraph-app-shell">
   <Sidebar />
@@ -330,42 +375,7 @@
       {/key}
     {/if}
 
-    {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
-      {#if detailComponent && ((detailLoadedKey === "series" && store.activeManga) || (detailLoadedKey === "book" && hasActiveBook))}
-        {@const DetailPage = detailComponent}
-        <div class="detail-layer">
-          <DetailPage />
-        </div>
-      {:else if detailKey && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
-        <div class="detail-layer detail-layer--state">
-          <NocturneState
-            layout="center"
-            tone="info"
-            icon="info"
-            eyebrow={$_("shell.detailState.status")}
-            title={$_("shell.detailState.openingTitle")}
-            body={$_("shell.detailState.openingBody")}
-          />
-        </div>
-      {:else if detailError}
-        <div class="detail-layer detail-layer--state">
-          <NocturneState
-            layout="center"
-            tone="danger"
-            icon="warning"
-            eyebrow={$_("shell.detailState.status")}
-            title={$_("shell.detailState.failedTitle")}
-            body={$_("shell.detailState.failedBody")}
-            actions={[{
-              label: $_("shell.detailState.retry"),
-              kind: "primary",
-              icon: "retry",
-              onClick: () => detailKey && void loadDetail(detailKey),
-            }]}
-          />
-        </div>
-      {/if}
-    {/if}
+    {@render detailSurface()}
 
     {#if store.activityPanelOpen && !readerActive}
       {#if ActivityOverlayComponent}
@@ -401,6 +411,11 @@
 {/if}
 
 <style>
+  .first-run-layout {
+    position: relative;
+    height: 100%;
+  }
+
   .root {
     position: relative;
     height: 100%;

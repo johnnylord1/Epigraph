@@ -69,6 +69,7 @@
   import SetupStatusCard from "../shared/SetupStatusCard.svelte";
   import ExtensionSettingsPanel from "./ExtensionSettingsPanel.svelte";
   import MassMigrateModal from "./MassMigrateModal.svelte";
+  import { isFirstRunSourceSetupReady } from "../../lib/firstRun";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type UtilityPanel = null | "apk" | "repos" | "novelRepos";
@@ -77,9 +78,16 @@
   let {
     contentType = "manga",
     topbarSearch = null,
+    onSetupReadinessChange = () => {},
   }: {
     contentType?: "manga" | "novels";
     topbarSearch?: string | null;
+    onSetupReadinessChange?: (readiness: {
+      contentType: "manga" | "novels";
+      repositoryCount: number;
+      installedCount: number;
+      ready: boolean;
+    }) => void;
   } = $props();
 
   const FILTERS: { id: Filter; labelKey: string }[] = [
@@ -170,6 +178,23 @@
   const updateCount = $derived(extensions.filter((extension) => extension.hasUpdate).length);
   const installedCount = $derived(extensions.filter((extension) => extension.isInstalled).length);
   const availableCount = $derived(extensions.filter((extension) => !extension.isInstalled).length);
+
+  $effect(() => {
+    const repositoryCount = isNovelMode
+      ? (novelRepositoryState?.repositories.filter((repository) => repository.enabled).length ?? 0)
+      : repos.length;
+    onSetupReadinessChange({
+      contentType: isNovelMode ? "novels" : "manga",
+      repositoryCount,
+      installedCount,
+      ready: isFirstRunSourceSetupReady({
+        repositoryCount,
+        installedCount,
+        loading,
+        hasError: Boolean(extensionLoadError || repoError),
+      }),
+    });
+  });
   const updateAllLabel = $derived(updateCount > 0
     ? $_("sources.actions.updateAllCount", { count: updateCount })
     : $_("sources.actions.updateAll"));

@@ -799,6 +799,7 @@ async function main() {
           return Boolean(state?.profileId && state?.serverUrl);
         }, "Epigraph launch target did not become ready.", 120_000);
         const runtimeStateReadyAt = Date.now();
+        await callAudit(driver, "bypassFirstRun");
         await callAudit(driver, "bypassStartupSplash");
         const splashBypassedAt = Date.now();
         await waitUntil(async () => {

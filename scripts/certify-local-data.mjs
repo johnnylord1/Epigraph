@@ -181,6 +181,7 @@ async function launchDesktop({ appPath, driverUrl, profileRoot, serverUrl, name 
     () => driver.executeScript("return Boolean(window.__epigraphAudit)"),
     `Audit bridge did not become ready for ${name}`,
   );
+  await callAudit(driver, "bypassFirstRun");
   await callAudit(driver, "bypassStartupSplash");
   await callAudit(driver, "openBooksLibrary");
   return driver;

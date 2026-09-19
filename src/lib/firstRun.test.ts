@@ -1,12 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
   FIRST_RUN_VERSION,
+  FIRST_RUN_STORAGE_KEY,
+  canAdvanceFirstRun,
   completeFirstRunState,
   createFirstRunState,
+  isFirstRunSourceSetupReady,
+  isFirstRunBackupRestoreComplete,
   normalizeFirstRunState,
+  writeCompletedFirstRunMarker,
   shouldStartFirstRun,
   updateFirstRunState,
 } from "./firstRun";
+
+const EMPTY_READINESS = {
+  syncConnected: false,
+  backupRestored: false,
+  sourcesConfigured: false,
+  hasLibraryContent: false,
+};
 
 describe("first-run launch gate", () => {
   it("starts on a clean install", () => {
@@ -23,6 +35,18 @@ describe("first-run launch gate", () => {
 
   it("recovers a corrupt marker through setup", () => {
     expect(shouldStartFirstRun("not-json", false)).toBe(true);
+  });
+
+  it("provides an automation-safe completion marker for existing release journeys", () => {
+    const values = new Map<string, string>();
+    writeCompletedFirstRunMarker({
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, value),
+    });
+    expect(JSON.parse(values.get(FIRST_RUN_STORAGE_KEY) ?? "{}")).toMatchObject({
+      status: "complete",
+      step: "complete",
+    });
   });
 });
 
@@ -57,6 +81,12 @@ describe("first-run persistence", () => {
     })).toEqual(createFirstRunState());
   });
 
+  it("cannot resume a task whose selected path does not own it", () => {
+    expect(normalizeFirstRunState({
+      firstRun: { version: FIRST_RUN_VERSION, status: "pending", step: "backup", path: "sync" },
+    })).toEqual({ ...createFirstRunState(), step: "entry" });
+  });
+
   it("keeps path and step updates immutable", () => {
     const initial = createFirstRunState();
     const next = updateFirstRunState(initial, { step: "sources", path: "fresh" });
@@ -75,5 +105,68 @@ describe("first-run persistence", () => {
       step: "complete",
       path: "fresh",
     });
+  });
+});
+
+describe("first-run completion gates", () => {
+  it("never treats visiting a production surface as completing it", () => {
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "sync", path: "sync" }, EMPTY_READINESS)).toBe(false);
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "backup", path: "backup" }, EMPTY_READINESS)).toBe(false);
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "sources", path: "fresh" }, EMPTY_READINESS)).toBe(false);
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "discover", path: "fresh" }, EMPTY_READINESS)).toBe(false);
+    expect(canAdvanceFirstRun({ ...createFirstRunState(), step: "complete", path: "fresh" }, EMPTY_READINESS)).toBe(false);
+  });
+
+  it("unlocks each guarded task only from its production readiness fact", () => {
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "sync", path: "sync" },
+      { ...EMPTY_READINESS, syncConnected: true },
+    )).toBe(true);
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "backup", path: "backup" },
+      { ...EMPTY_READINESS, backupRestored: true },
+    )).toBe(true);
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "sources", path: "fresh" },
+      { ...EMPTY_READINESS, sourcesConfigured: true },
+    )).toBe(true);
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "discover", path: "fresh" },
+      { ...EMPTY_READINESS, hasLibraryContent: true },
+    )).toBe(true);
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "complete", path: "fresh" },
+      { ...EMPTY_READINESS, hasLibraryContent: true },
+    )).toBe(true);
+  });
+
+  it("allows backup users to return from dependency setup without claiming restore success", () => {
+    expect(canAdvanceFirstRun(
+      { ...createFirstRunState(), step: "sources", path: "backup" },
+      EMPTY_READINESS,
+    )).toBe(true);
+  });
+
+  it("persists a completed restore but still requires sources before leaving its setup", () => {
+    const state = { ...createFirstRunState(), step: "sources" as const, path: "backup" as const, backupRestored: true as const, sourceContentType: "novels" as const };
+    expect(normalizeFirstRunState({ firstRun: state })).toEqual(state);
+    expect(canAdvanceFirstRun(state, EMPTY_READINESS)).toBe(false);
+    expect(canAdvanceFirstRun(state, { ...EMPTY_READINESS, sourcesConfigured: true })).toBe(true);
+  });
+
+  it("requires a loaded repository and an installed extension for source setup", () => {
+    expect(isFirstRunSourceSetupReady({ repositoryCount: 1, installedCount: 0, loading: false, hasError: false })).toBe(false);
+    expect(isFirstRunSourceSetupReady({ repositoryCount: 0, installedCount: 1, loading: false, hasError: false })).toBe(false);
+    expect(isFirstRunSourceSetupReady({ repositoryCount: 1, installedCount: 1, loading: true, hasError: false })).toBe(false);
+    expect(isFirstRunSourceSetupReady({ repositoryCount: 1, installedCount: 1, loading: false, hasError: true })).toBe(false);
+    expect(isFirstRunSourceSetupReady({ repositoryCount: 1, installedCount: 1, loading: false, hasError: false })).toBe(true);
+  });
+
+  it("accepts a restore only when at least one payload applied and none failed", () => {
+    expect(isFirstRunBackupRestoreComplete(null)).toBe(false);
+    expect(isFirstRunBackupRestoreComplete([])).toBe(false);
+    expect(isFirstRunBackupRestoreComplete([{ status: "skipped" }])).toBe(false);
+    expect(isFirstRunBackupRestoreComplete([{ status: "success" }, { status: "warning" }])).toBe(true);
+    expect(isFirstRunBackupRestoreComplete([{ status: "success" }, { status: "failed" }])).toBe(false);
   });
 });

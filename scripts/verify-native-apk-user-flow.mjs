@@ -58,6 +58,7 @@ async function launchApp({ appPath, driverUrl, appData, webviewData, serverUrl }
   const driver = await new Builder().usingServer(driverUrl).withCapabilities(capabilities).build();
   await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
   await waitFor(driver, () => driver.executeScript("return Boolean(window.__epigraphAudit)"), "Audit bridge did not become ready.");
+  await callAudit(driver, "bypassFirstRun");
   await callAudit(driver, "bypassStartupSplash");
   return driver;
 }

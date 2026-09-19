@@ -88,6 +88,7 @@
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
+  import { FIRST_RUN_COMPLETED_EVENT, writeCompletedFirstRunMarker } from "./lib/firstRun";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -993,6 +994,7 @@
     hideSplash: () => void;
     toggleSplash: () => void;
     bypassStartupSplash: () => void;
+    bypassFirstRun: () => Promise<void>;
     openSettings: () => void;
     closeSettings: () => void;
     openLibrary: () => void;
@@ -1111,6 +1113,13 @@
 
   function bypassAuditStartupSplash() {
     handleBypass();
+  }
+
+  async function bypassAuditFirstRun() {
+    const enabled = await invoke<boolean>("is_webdriver_automation").catch(() => false);
+    if (!enabled) throw new Error("WebDriver automation required.");
+    writeCompletedFirstRunMarker(localStorage);
+    window.dispatchEvent(new Event(FIRST_RUN_COMPLETED_EVENT));
   }
 
   function openAuditSettings(tab: "security" | "storage" | null | undefined = undefined) {
@@ -1329,6 +1338,7 @@
       hideSplash: hideAuditSplash,
       toggleSplash: toggleAuditSplash,
       bypassStartupSplash: bypassAuditStartupSplash,
+      bypassFirstRun: bypassAuditFirstRun,
       openSettings: openAuditSettings,
       closeSettings: closeAuditSettings,
       openLibrary: openAuditLibrary,

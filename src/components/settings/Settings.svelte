@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
   import "../../lib/i18n/runtime";
@@ -113,14 +113,23 @@
     startDockerFlareSolverrAndEnable,
     startLocalFlareSolverrAndEnable,
   } from "../../lib/flaresolverr";
+  import { isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: EpigraphRestorePlan | null;
     backupRestoreLaunchIntent?: BackupLaunchIntent | null;
     firstRunPane?: "backup" | "tracking" | null;
     onOpenFirstRunSources?: () => void;
+    onFirstRunBackupReadyChange?: (readiness: FirstRunBackupReadiness) => void;
   }
-  let { onOpenThemeEditor, backupAuditPlan = null, backupRestoreLaunchIntent = null, firstRunPane = null, onOpenFirstRunSources = () => {} }: Props = $props();
+  let {
+    onOpenThemeEditor,
+    backupAuditPlan = null,
+    backupRestoreLaunchIntent = null,
+    firstRunPane = null,
+    onOpenFirstRunSources = () => {},
+    onFirstRunBackupReadyChange = () => {},
+  }: Props = $props();
   const DEFAULT_EPIGRAPH_GITHUB_REPO = "johnnylord1/Epigraph";
   const EPIGRAPH_GITHUB_REPO = (import.meta.env.VITE_EPIGRAPH_GITHUB_REPO ?? "").trim() || DEFAULT_EPIGRAPH_GITHUB_REPO;
   const EPIGRAPH_GITHUB_URL = `https://github.com/${EPIGRAPH_GITHUB_REPO}`;
@@ -1175,6 +1184,22 @@
       || backupValidating
       || backupRestoring,
   );
+  $effect(() => {
+    if (firstRunPane === "backup") {
+      const snapshot: FirstRunBackupReadiness = {
+        ready: isFirstRunBackupRestoreComplete(backupRestoreResults),
+        hasSelection: Boolean(backupSelectedFile || backupUnifiedPlan),
+        requiresSources: backupRestoreResults?.some((result) =>
+          (result.kind === "manga" || result.kind === "novels") && result.status !== "skipped") ?? true,
+        contentType: backupImportKind === "novels-lnreader"
+          || (backupRestoreResults?.some((result) => result.kind === "novels")
+            && !backupRestoreResults.some((result) => result.kind === "manga"))
+          ? "novels" : "manga",
+      };
+      const onReadinessChange = onFirstRunBackupReadyChange;
+      untrack(() => onReadinessChange(snapshot));
+    }
+  });
   const backupCanUseOtherProfileTarget = $derived.by(
     () => currentProfileSupportsOtherLocalTarget(currentRuntimeProfileId) && !backupRestoreHandoffSession
   );
@@ -6687,7 +6712,11 @@
   {#if advStorageOpen && storageAdvancedSource === "backup"}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="storage-backup-panel-overlay" onclick={closeStorageBackupPanel}>
+    <div
+      class:storage-backup-panel-overlay--first-run={firstRunPane === "backup"}
+      class="storage-backup-panel-overlay"
+      onclick={firstRunPane === "backup" ? undefined : closeStorageBackupPanel}
+    >
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="storage-backup-panel" onclick={(e) => e.stopPropagation()} bind:this={backupSectionEl}>
@@ -6695,9 +6724,11 @@
           <p class="settings-card__title">
             {backupViewMode === "create" ? "Create Backup" : "Restore Backup"}
           </p>
-          <button class="n-btn n-btn--sm n-btn-ghost close-btn" type="button" onclick={closeStorageBackupPanel}>
-            Close
-          </button>
+          {#if firstRunPane !== "backup"}
+            <button class="n-btn n-btn--sm n-btn-ghost close-btn" type="button" onclick={closeStorageBackupPanel}>
+              Close
+            </button>
+          {/if}
         </div>
         <div class="storage-backup-panel-content">
           {#if backupViewMode === "create"}
@@ -7643,6 +7674,18 @@
     z-index: var(--component-settings-storage-overlay-z-index);
     animation: fadeIn 0.15s ease both;
   }
+  .storage-backup-panel-overlay--first-run {
+    position: absolute;
+    inset: 0;
+    z-index: auto;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    align-items: stretch;
+    background: transparent;
+    backdrop-filter: none;
+    animation: none;
+  }
   .storage-backup-panel {
     background: var(--component-settings-select-menu-bg);
     border: 1px solid var(--component-settings-select-menu-border);
@@ -7655,6 +7698,17 @@
     box-shadow: var(--component-settings-select-menu-shadow);
     position: relative;
     animation: scaleIn 0.15s ease both;
+  }
+  .storage-backup-panel-overlay--first-run .storage-backup-panel {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    padding: 20px 4px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
   }
   .storage-backup-panel-header {
     display: flex;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack, type Component } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import {
     ArrowLeft,
     ArrowRight,
@@ -13,27 +14,54 @@
     Stack,
   } from "phosphor-svelte";
   import { resolveAppLocale } from "../../lib/i18n/languages";
+  import { _ } from "../../lib/i18n/runtime";
   import { BUILTIN_THEMES } from "../../lib/theme/contract";
   import {
     completeFirstRunState,
+    canAdvanceFirstRun,
     createFirstRunState,
+    FIRST_RUN_STORAGE_KEY,
     normalizeFirstRunState,
     updateFirstRunState,
     type FirstRunPath,
+    type FirstRunBackupReadiness,
+    type FirstRunReadiness,
     type FirstRunState,
     type FirstRunStep,
   } from "../../lib/firstRun";
   import {
     setExtensionsPanelHint,
+    setNavPage,
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import WindowControlsInline from "../layout/WindowControlsInline.svelte";
 
   interface Props { onComplete?: () => void; initialState?: FirstRunState }
   let { onComplete = () => {}, initialState }: Props = $props();
 
   type ContentType = "manga" | "novels";
-  type LazyComponent = Component<Record<string, unknown>>;
+  type SyncPanelComponent = Component<{
+    profileId?: string | null;
+    scopeLabel: string;
+    presentation?: "modal" | "embedded";
+    onReadyChange?: (ready: boolean) => void;
+  }>;
+  type SettingsPanelComponent = Component<{
+    firstRunPane?: "backup" | "tracking" | null;
+    onOpenFirstRunSources?: () => void;
+    onFirstRunBackupReadyChange?: (readiness: FirstRunBackupReadiness) => void;
+  }>;
+  type SourcesPanelComponent = Component<{
+    contentType?: ContentType;
+    onSetupReadinessChange?: (readiness: {
+      contentType: ContentType;
+      repositoryCount: number;
+      installedCount: number;
+      ready: boolean;
+    }) => void;
+  }>;
+  type SearchPanelComponent = Component<Record<string, never>>;
   type Copy = {
     appearance: string; data: string; setup: string; trackers: string; library: string;
     themeTitle: string; entryTitle: string; sync: string; backup: string; fresh: string;
@@ -49,20 +77,33 @@
     "zh-CN": { appearance: "外观", data: "你的数据", setup: "设置", trackers: "追踪器", library: "书库", themeTitle: "选择主题", entryTitle: "你想如何开始？", sync: "同步设备", backup: "恢复备份", fresh: "从头设置", syncTitle: "同步设备", backupTitle: "恢复备份", sourcesTitle: "添加仓库和扩展", trackersTitle: "连接追踪器", discoverTitle: "将作品添加到书库", completeTitle: "一切就绪", continue: "继续", back: "返回", returnRestore: "返回恢复", finish: "完成设置", openLibrary: "打开书库", comics: "漫画", novels: "小说" },
   };
 
-  let contentType = $state<ContentType>("manga");
   let stepTitle = $state<HTMLHeadingElement>();
-  let SyncPanel = $state<LazyComponent | null>(null);
-  let SettingsPanel = $state<LazyComponent | null>(null);
-  let SourcesPanel = $state<LazyComponent | null>(null);
-  let SearchPanel = $state<LazyComponent | null>(null);
+  let SyncPanel = $state<SyncPanelComponent | null>(null);
+  let SettingsPanel = $state<SettingsPanelComponent | null>(null);
+  let SourcesPanel = $state<SourcesPanelComponent | null>(null);
+  let SearchPanel = $state<SearchPanelComponent | null>(null);
   let loadingStep = $state<FirstRunStep | null>(null);
-  let backupSourcesVisited = $state(false);
+  let loadError = $state<string | null>(null);
+  let syncReady = $state(false);
+  let backupReady = $state(false);
+  let mangaSourcesReady = $state(false);
+  let novelSourcesReady = $state(false);
   let firstRun = $state(untrack(() => initialState ?? loadFirstRun()));
+  let contentType = $state<ContentType>(untrack(() => firstRun.sourceContentType ?? "manga"));
   let copy = $derived(COPY[resolveAppLocale(store.settings.appLanguage)] ?? COPY.en);
+
+  const shouldUseInitialLightTheme = untrack(() => {
+    if (initialState || typeof localStorage === "undefined") return false;
+    try { return localStorage.getItem(FIRST_RUN_STORAGE_KEY) === null; } catch { return false; }
+  });
+  if (shouldUseInitialLightTheme) {
+    updateSettings({ theme: "light" });
+    persistFirstRun();
+  }
 
   function loadFirstRun(): FirstRunState {
     try {
-      const value = JSON.parse(localStorage.getItem("epigraph-first-run") ?? "null");
+      const value = JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null");
       return value ? normalizeFirstRunState({ firstRun: value }) : createFirstRunState();
     } catch {
       return createFirstRunState();
@@ -70,16 +111,20 @@
   }
 
   function persistFirstRun() {
-    try { localStorage.setItem("epigraph-first-run", JSON.stringify(firstRun)); } catch {}
+    try { localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(firstRun)); } catch {}
   }
 
   function setFirstRunStep(step: FirstRunStep) {
+    loadError = null;
     firstRun = updateFirstRunState(firstRun, { step });
     persistFirstRun();
   }
 
   function setFirstRunPath(path: FirstRunPath, step: FirstRunStep) {
-    firstRun = updateFirstRunState(firstRun, { path, step });
+    loadError = null;
+    syncReady = false;
+    backupReady = false;
+    firstRun = updateFirstRunState(firstRun, { path, step, backupRestored: undefined, backupNeedsSources: undefined });
     persistFirstRun();
   }
 
@@ -95,40 +140,58 @@
   let hasLibraryContent = $derived(
     store.libraryMangaSnapshot.length > 0 || store.books.length > 0 || store.searchNovelLibraryEntries.length > 0,
   );
+  let readiness = $derived<FirstRunReadiness>({
+    syncConnected: syncReady,
+    backupRestored: backupReady,
+    sourcesConfigured: mangaSourcesReady || novelSourcesReady,
+    hasLibraryContent,
+  });
+  let canAdvance = $derived(canAdvanceFirstRun(firstRun, readiness));
+
+  function setLoading(step: FirstRunStep) {
+    loadingStep = step;
+    loadError = null;
+  }
+
+  function failLoading(step: FirstRunStep, error: unknown) {
+    if (loadingStep === step) loadingStep = null;
+    if (firstRun.step !== step) return;
+    loadError = error instanceof Error ? error.message : String(error);
+  }
 
   $effect(() => {
     const step = firstRun.step;
     void tick().then(() => stepTitle?.focus());
-    if (import.meta.env.MODE === "test") return;
+    if (loadError) return;
 
     if (step === "sync" && !SyncPanel && loadingStep !== step) {
-      loadingStep = step;
+      setLoading(step);
       void import("../settings/SyncdConnectionPanel.svelte").then((module) => {
-        SyncPanel = module.default as LazyComponent;
+        SyncPanel = module.default;
         loadingStep = null;
-      });
+      }).catch((error) => failLoading(step, error));
     }
-    if ((step === "backup" || step === "trackers") && !SettingsPanel && loadingStep !== step) {
-      loadingStep = step;
+    if ((step === "backup" || step === "trackers" || (firstRun.path === "backup" && step === "sources")) && !SettingsPanel && loadingStep !== step) {
+      setLoading(step);
       void import("../settings/Settings.svelte").then((module) => {
-        SettingsPanel = module.default as LazyComponent;
+        SettingsPanel = module.default;
         loadingStep = null;
-      });
+      }).catch((error) => failLoading(step, error));
     }
     if (step === "sources" && !SourcesPanel && loadingStep !== step) {
-      loadingStep = step;
+      setLoading(step);
       setExtensionsPanelHint("repos");
       void import("../pages/SourcesView.svelte").then((module) => {
-        SourcesPanel = module.default as LazyComponent;
+        SourcesPanel = module.default;
         loadingStep = null;
-      });
+      }).catch((error) => failLoading(step, error));
     }
     if (step === "discover" && !SearchPanel && loadingStep !== step) {
-      loadingStep = step;
+      setLoading(step);
       void import("../pages/Search.svelte").then((module) => {
-        SearchPanel = module.default as LazyComponent;
+        SearchPanel = module.default;
         loadingStep = null;
-      });
+      }).catch((error) => failLoading(step, error));
     }
   });
 
@@ -139,6 +202,7 @@
     if (step === "sources") return setFirstRunStep(firstRun.path === "backup" ? "backup" : "entry");
     if (step === "trackers") {
       if (firstRun.path === "sync") return setFirstRunStep("sync");
+      if (firstRun.path === "backup") return setFirstRunStep(firstRun.backupNeedsSources === false ? "backup" : "sources");
       return setFirstRunStep("sources");
     }
     if (step === "discover") return setFirstRunStep("trackers");
@@ -150,21 +214,67 @@
   }
 
   function openBackupSources() {
-    backupSourcesVisited = true;
     setFirstRunStep("sources");
   }
 
+  function updateSourceReadiness(next: { contentType: ContentType; ready: boolean }) {
+    if (next.contentType === "manga") mangaSourcesReady = next.ready;
+    else novelSourcesReady = next.ready;
+  }
+
+  function updateSyncReadiness(ready: boolean) {
+    syncReady = ready;
+  }
+
+  function updateBackupReadiness(next: FirstRunBackupReadiness) {
+    backupReady = next.ready;
+    if (next.ready) {
+      contentType = next.contentType;
+      firstRun = updateFirstRunState(firstRun, { backupRestored: true, backupNeedsSources: next.requiresSources !== false, sourceContentType: next.contentType });
+      persistFirstRun();
+    } else if (next.hasSelection && firstRun.backupRestored) {
+      firstRun = updateFirstRunState(firstRun, { backupRestored: undefined, backupNeedsSources: undefined });
+      persistFirstRun();
+    }
+  }
+
+  function retrySurfaceLoad() {
+    loadError = null;
+    loadingStep = null;
+  }
+
+  function advance(step: FirstRunStep) {
+    if (!canAdvance) return;
+    setFirstRunStep(step);
+  }
+
   function finish() {
+    if (!canAdvance) {
+      setFirstRunStep("discover");
+      return;
+    }
     firstRun = completeFirstRunState(firstRun);
     persistFirstRun();
+    setNavPage("library");
     onComplete();
+  }
+
+  function handleBrandPointerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest("button, [data-no-window-drag]")) return;
+    getCurrentWindow().startDragging().catch(() => {});
   }
 </script>
 
 <main class="first-run-shell">
-  <header class="first-run-brand" aria-label="Epigraph">
-    <span class="brand-mark" aria-hidden="true">◇</span>
-    <strong>Epigraph</strong>
+  <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag starts from empty header regions. -->
+  <header class="first-run-brand" aria-label="Epigraph" data-tauri-drag-region onpointerdown={handleBrandPointerDown}>
+    <div class="brand-identity">
+      <span class="brand-mark" aria-hidden="true">◇</span>
+      <strong>Epigraph</strong>
+    </div>
+    <WindowControlsInline />
   </header>
 
   <nav class="first-run-progress" aria-label="Setup progress">
@@ -214,13 +324,29 @@
 
       {:else if firstRun.step === "sync"}
         <h1 tabindex="-1" bind:this={stepTitle}>{copy.syncTitle}</h1>
-        <div class="embedded-area">{#if SyncPanel}<SyncPanel scopeLabel="First run" />{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
-        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" onclick={() => setFirstRunStep("trackers")}>{copy.continue}<ArrowRight size={16} /></button></div>
+        <div class="embedded-area">{#if SyncPanel}<SyncPanel profileId={store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId} scopeLabel="First run" presentation="embedded" onReadyChange={updateSyncReadiness} />{:else if loadError}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" disabled={!canAdvance} onclick={() => advance("trackers")}>{copy.continue}<ArrowRight size={16} /></button></div>
 
-      {:else if firstRun.step === "backup"}
-        <h1 tabindex="-1" bind:this={stepTitle}>{copy.backupTitle}</h1>
-        <div class="embedded-area settings-embed">{#if SettingsPanel}<SettingsPanel firstRunPane="backup" onOpenFirstRunSources={openBackupSources} />{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
-        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" onclick={() => backupSourcesVisited ? setFirstRunStep("trackers") : openBackupSources()}>{copy.continue}<ArrowRight size={16} /></button></div>
+      {:else if firstRun.path === "backup" && (firstRun.step === "backup" || firstRun.step === "sources")}
+        {#if firstRun.step === "backup"}
+          <h1 tabindex="-1" bind:this={stepTitle}>{copy.backupTitle}</h1>
+          {#if firstRun.backupRestored}<p class="setup-status"><Check size={16} />{$_("ui_backupRestored")}</p>{/if}
+        {:else}
+          <div class="stage-heading-row">
+            <h1 tabindex="-1" bind:this={stepTitle}>{copy.sourcesTitle}</h1>
+            <div class="content-toggle" role="group" aria-label="Content type">
+              <button type="button" class:is-active={contentType === "manga"} onclick={() => contentType = "manga"}>{copy.comics}</button>
+              <button type="button" class:is-active={contentType === "novels"} onclick={() => contentType = "novels"}>{copy.novels}</button>
+            </div>
+          </div>
+        {/if}
+        <div class:surface-hidden={firstRun.step !== "backup"} class="embedded-area settings-embed">{#if SettingsPanel}<SettingsPanel firstRunPane="backup" onOpenFirstRunSources={openBackupSources} onFirstRunBackupReadyChange={updateBackupReadiness} />{:else if loadError && firstRun.step === "backup"}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        <div class:surface-hidden={firstRun.step !== "sources"} class="embedded-area sources-embed">{#if SourcesPanel}<SourcesPanel {contentType} onSetupReadinessChange={updateSourceReadiness} />{:else if loadError && firstRun.step === "sources"}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        {#if firstRun.step === "backup"}
+          <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" disabled={!canAdvance} onclick={() => advance(firstRun.backupNeedsSources === false ? "trackers" : "sources")}>{copy.continue}<ArrowRight size={16} /></button></div>
+        {:else}
+          <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" disabled={!canAdvance} onclick={() => advance(firstRun.backupRestored ? "trackers" : "backup")}>{firstRun.backupRestored ? copy.continue : copy.returnRestore}<ArrowRight size={16} /></button></div>
+        {/if}
 
       {:else if firstRun.step === "sources"}
         <div class="stage-heading-row">
@@ -230,23 +356,23 @@
             <button type="button" class:is-active={contentType === "novels"} onclick={() => contentType = "novels"}>{copy.novels}</button>
           </div>
         </div>
-        <div class="embedded-area sources-embed">{#if SourcesPanel}<SourcesPanel {contentType} />{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
-        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" onclick={() => setFirstRunStep(firstRun.path === "backup" ? "backup" : "trackers")}>{firstRun.path === "backup" ? copy.returnRestore : copy.continue}<ArrowRight size={16} /></button></div>
+        <div class="embedded-area sources-embed">{#if SourcesPanel}<SourcesPanel {contentType} onSetupReadinessChange={updateSourceReadiness} />{:else if loadError}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" disabled={!canAdvance} onclick={() => advance("trackers")}>{copy.continue}<ArrowRight size={16} /></button></div>
 
       {:else if firstRun.step === "trackers"}
         <h1 tabindex="-1" bind:this={stepTitle}>{copy.trackersTitle}</h1>
-        <div class="embedded-area settings-embed">{#if SettingsPanel}<SettingsPanel firstRunPane="tracking" />{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        <div class="embedded-area settings-embed">{#if SettingsPanel}<SettingsPanel firstRunPane="tracking" />{:else if loadError}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
         <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" onclick={finishTrackers}>{copy.continue}<ArrowRight size={16} /></button></div>
 
       {:else if firstRun.step === "discover"}
         <h1 tabindex="-1" bind:this={stepTitle}>{copy.discoverTitle}</h1>
-        <div class="embedded-area discover-embed">{#if SearchPanel}<SearchPanel />{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
-        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" onclick={() => setFirstRunStep("complete")}>{copy.finish}<ArrowRight size={16} /></button></div>
+        <div class="embedded-area discover-embed">{#if SearchPanel}<SearchPanel />{:else if loadError}<div class="load-error" role="alert"><span>{$_("shell.pageState.failedTitle")}</span><button class="secondary" type="button" onclick={retrySurfaceLoad}>{$_("shell.pageState.retry")}</button></div>{:else}<span class="loading-dot" aria-label="Loading"></span>{/if}</div>
+        <div class="stage-actions"><button class="secondary" type="button" onclick={goBack}><ArrowLeft size={16} />{copy.back}</button><button class="primary" type="button" disabled={!canAdvance} onclick={() => advance("complete")}>{copy.finish}<ArrowRight size={16} /></button></div>
 
       {:else}
         <span class="complete-mark" aria-hidden="true"><Check size={26} weight="bold" /></span>
         <h1 tabindex="-1" bind:this={stepTitle}>{copy.completeTitle}</h1>
-        <button class="primary complete-action" type="button" onclick={finish}>{copy.openLibrary}<ArrowRight size={16} /></button>
+        <button class="primary complete-action" type="button" disabled={!canAdvance} onclick={finish}>{copy.openLibrary}<ArrowRight size={16} /></button>
       {/if}
     </div>
   </section>
@@ -254,7 +380,8 @@
 
 <style>
   .first-run-shell { min-height: 100vh; display: grid; grid-template-rows: 56px 74px minmax(0, 1fr); color: var(--text-primary); background: var(--color-background); font-family: var(--font-ui, inherit); overflow: hidden; }
-  .first-run-brand { display: flex; align-items: center; gap: 10px; padding: 0 32px; }
+  .first-run-brand { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 10px 0 32px; -webkit-app-region: drag; }
+  .brand-identity { display: flex; align-items: center; gap: 10px; pointer-events: none; }
   .brand-mark { color: var(--accent); }
   .first-run-progress { display: flex; justify-content: center; }
   .first-run-progress ol { width: min(900px, calc(100% - 48px)); display: grid; grid-template-columns: repeat(5, 1fr); list-style: none; padding: 0; margin: 0; }
@@ -282,14 +409,18 @@
   .primary, .secondary { min-height: 38px; border-radius: var(--hud-control-radius, 8px); padding: 0 15px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; font: inherit; font-size: 13px; font-weight: 700; transition: transform var(--motion-duration-fast, 80ms), filter var(--motion-duration-fast, 80ms), background var(--motion-duration-fast, 80ms); }
   .primary { border: 1px solid transparent; color: var(--text-inverse); background: var(--accent); }
   .primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  button:disabled { opacity: .46; cursor: not-allowed; filter: none; transform: none; }
   .secondary { border: 1px solid var(--border-base); color: var(--text-secondary); background: transparent; }
   .embedded-area { min-height: 0; flex: 1; border-top: 1px solid var(--border-dim); border-bottom: 1px solid var(--border-dim); overflow: auto; position: relative; }
+  .embedded-area.surface-hidden { display: none; }
   .settings-embed { min-height: 420px; }
   .sources-embed, .discover-embed { min-height: 430px; }
   .content-toggle { display: inline-flex; padding: 3px; border: 1px solid var(--border-base); border-radius: 9px; background: var(--bg-surface); }
   .content-toggle button { min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; font: inherit; font-size: 12px; font-weight: 700; }
   .content-toggle button.is-active { color: var(--text-primary); background: var(--bg-subtle); }
   .loading-dot { position: absolute; inset: 50% auto auto 50%; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 900ms ease-in-out infinite alternate; }
+  .load-error { min-height: 220px; display: grid; place-content: center; justify-items: center; gap: 14px; color: var(--text-muted); }
+  .setup-status { display: flex; align-items: center; gap: 8px; margin: -12px 0 20px; color: var(--color-success); font-size: 13px; }
   .settings-embed :global(.settings-page--first-run) { min-height: 100%; height: auto; display: block; overflow: visible; background: transparent; }
   .settings-embed :global(.settings-workbench--first-run) { display: block; min-height: 100%; }
   .settings-embed :global(.settings-page--first-run .settings-pane-body.content-body) { overflow: visible; padding: 20px 4px; }

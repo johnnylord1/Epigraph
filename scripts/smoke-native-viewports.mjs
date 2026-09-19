@@ -136,6 +136,7 @@ async function main() {
     const windowY = Number(process.env.EPIGRAPH_WEBDRIVER_WINDOW_Y);
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await waitForAuditBridge(driver);
+    await callAudit(driver, "bypassFirstRun");
     await callAudit(driver, "bypassStartupSplash");
 
     const surfaces = [

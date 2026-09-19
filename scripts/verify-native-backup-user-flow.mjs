@@ -205,6 +205,7 @@ async function main() {
     driver = await new Builder().usingServer(args["driver-url"]).withCapabilities(capabilities).build();
     await driver.manage().setTimeouts({ implicit: 0, pageLoad: 120_000, script: 120_000 });
     await waitFor(driver, () => driver.executeScript("return Boolean(window.__epigraphAudit)"), "Audit bridge did not become ready.");
+    await callAudit(driver, "bypassFirstRun");
     await callAudit(driver, "bypassStartupSplash");
     await callAudit(driver, "openSettings");
     await waitFor(driver, () => driver.executeScript("return Boolean(document.querySelector('.settings-page'))"), "Settings did not render.");

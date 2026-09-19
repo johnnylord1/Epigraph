@@ -1,4 +1,6 @@
 export const FIRST_RUN_VERSION = 1;
+export const FIRST_RUN_STORAGE_KEY = "epigraph-first-run";
+export const FIRST_RUN_COMPLETED_EVENT = "epigraph:first-run-completed";
 export type FirstRunStep = "theme" | "entry" | "sync" | "backup" | "sources" | "trackers" | "discover" | "complete";
 export type FirstRunPath = "sync" | "backup" | "fresh";
 
@@ -7,6 +9,30 @@ export interface FirstRunState {
   status: "pending" | "complete";
   step: FirstRunStep;
   path: FirstRunPath | null;
+  backupRestored?: true;
+  backupNeedsSources?: boolean;
+  sourceContentType?: "manga" | "novels";
+}
+
+export interface FirstRunReadiness {
+  syncConnected: boolean;
+  backupRestored: boolean;
+  sourcesConfigured: boolean;
+  hasLibraryContent: boolean;
+}
+
+export interface FirstRunSourceSetupSnapshot {
+  repositoryCount: number;
+  installedCount: number;
+  loading: boolean;
+  hasError: boolean;
+}
+
+export interface FirstRunBackupReadiness {
+  ready: boolean;
+  hasSelection: boolean;
+  contentType: "manga" | "novels";
+  requiresSources?: boolean;
 }
 
 const STEPS: FirstRunStep[] = ["theme", "entry", "sync", "backup", "sources", "trackers", "discover", "complete"];
@@ -57,17 +83,28 @@ export function normalizeFirstRunState(savedStore: unknown): FirstRunState {
     return createFirstRunState();
   }
 
+  const step = candidate.step as FirstRunStep;
+  const invalidPath = (step === "sync" && path !== "sync")
+    || (step === "backup" && path !== "backup")
+    || (step === "sources" && path !== "fresh" && path !== "backup")
+    || (["trackers", "discover", "complete"].includes(step) && path === null);
+  if (invalidPath) return { ...createFirstRunState(), step: "entry" };
+
   return {
     version: FIRST_RUN_VERSION,
     status: "pending",
-    step: candidate.step as FirstRunStep,
+    step,
     path,
+    ...(candidate.backupRestored === true ? { backupRestored: true as const } : {}),
+    ...(typeof candidate.backupNeedsSources === "boolean" ? { backupNeedsSources: candidate.backupNeedsSources } : {}),
+    ...(candidate.sourceContentType === "manga" || candidate.sourceContentType === "novels"
+      ? { sourceContentType: candidate.sourceContentType } : {}),
   };
 }
 
 export function updateFirstRunState(
   current: FirstRunState,
-  patch: Partial<Pick<FirstRunState, "step" | "path">>,
+  patch: Partial<Pick<FirstRunState, "step" | "path" | "backupRestored" | "backupNeedsSources" | "sourceContentType">>,
 ): FirstRunState {
   if (current.status === "complete") return current;
   return { ...current, ...patch };
@@ -80,4 +117,50 @@ export function completeFirstRunState(current: FirstRunState): FirstRunState {
     status: "complete",
     step: "complete",
   };
+}
+
+export function canAdvanceFirstRun(
+  state: FirstRunState,
+  readiness: FirstRunReadiness,
+): boolean {
+  switch (state.step) {
+    case "sync":
+      return readiness.syncConnected;
+    case "backup":
+      return readiness.backupRestored || state.backupRestored === true;
+    case "sources":
+      return (state.path === "backup" && !state.backupRestored) || readiness.sourcesConfigured;
+    case "discover":
+    case "complete":
+      return readiness.hasLibraryContent;
+    default:
+      return true;
+  }
+}
+
+export function isFirstRunSourceSetupReady(snapshot: FirstRunSourceSetupSnapshot): boolean {
+  return !snapshot.loading
+    && !snapshot.hasError
+    && snapshot.repositoryCount > 0
+    && snapshot.installedCount > 0;
+}
+
+export function isFirstRunBackupRestoreComplete(
+  results: ReadonlyArray<{ status: "success" | "warning" | "failed" | "skipped" }> | null,
+): boolean {
+  if (!results?.some((result) => result.status === "success" || result.status === "warning")) return false;
+  return results.every((result) => result.status !== "failed");
+}
+
+export function writeCompletedFirstRunMarker(
+  storage: Pick<Storage, "getItem" | "setItem">,
+): FirstRunState {
+  let current = createFirstRunState();
+  const marker = storage.getItem(FIRST_RUN_STORAGE_KEY);
+  if (marker) {
+    try { current = normalizeFirstRunState({ firstRun: JSON.parse(marker) }); } catch {}
+  }
+  const completed = completeFirstRunState(current);
+  storage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(completed));
+  return completed;
 }
