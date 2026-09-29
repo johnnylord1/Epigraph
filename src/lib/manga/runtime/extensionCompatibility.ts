@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../tauri/invoke";
 import { redactDiagnosticText } from "./diagnostics";
 
 export const EXTENSION_COMPATIBILITY_SCHEMA_VERSION = 2 as const;

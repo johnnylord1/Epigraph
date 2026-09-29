@@ -356,7 +356,7 @@
                     <button
                       class="record-icon-btn"
                       class:icon-active={record.private}
-                      title={record.private ? "Private — click to make public" : "Public — click to make private"}
+                      title={record.private ? $_("tracking_privateToggle") : $_("tracking_publicToggle")}
                       disabled={isBusy}
                       onclick={() => togglePrivate(record)}
                     >
@@ -545,7 +545,7 @@
     border: var(--component-tracking-modal-border);
     border-radius: var(--component-tracking-modal-border-radius); overflow: hidden;
     box-shadow: var(--component-tracking-modal-box-shadow);
-    animation: scaleIn 0.16s ease both;
+    animation: scaleIn 460ms var(--ui-spring) both;
   }
 
   /* Header */
@@ -555,7 +555,7 @@
   }
   .header-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .modal-title { font-size: 13px; font-weight: 800; color: var(--component-tracking-modal-title-color); letter-spacing: 0.02em; }
-  .modal-subtitle { font-family: var(--component-tracking-modal-subtitle-font-family); font-size: 11px; color: var(--component-tracking-modal-subtitle-color); letter-spacing: 0.08em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
+  .modal-subtitle { font-family: var(--component-tracking-modal-subtitle-font-family); font-size: 11px; color: var(--component-tracking-modal-subtitle-color); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
   .close-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--component-tracking-close-btn-border-radius); color: var(--component-tracking-close-btn-color); background: var(--component-tracking-close-btn-background); border: var(--component-tracking-close-btn-border); cursor: pointer; transition: color 140ms ease, background 140ms ease, transform 140ms ease; flex-shrink: 0; }
   .close-btn:hover { color: var(--component-tracking-close-btn-color-2); background: var(--component-tracking-close-btn-background-2); }
   .close-btn:active { transform: scale(0.96); }

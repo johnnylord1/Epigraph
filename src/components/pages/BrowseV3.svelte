@@ -1,8 +1,10 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { enterView } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
+  import { formatWorkStatus } from "../../lib/i18n/format";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
@@ -58,6 +60,38 @@
     type TasteProfileSeedItem,
   } from "../../lib/recommendations";
   import hardcoverLogo from "../../assets/service-icons/hardcover.png";
+
+  // Switching between search, discover and sources (or comics and novels) plays the view arrival;
+  // the first render is left to the page transition.
+  let browseRoot = $state<HTMLDivElement>();
+  let enteredBrowseView = "";
+  $effect(() => {
+    const view = `${activeBrowseTab}:${activeContentType}`;
+    if (view === enteredBrowseView) return;
+    const first = enteredBrowseView === "";
+    enteredBrowseView = view;
+    if (first) return;
+    void tick().then(() => enterView(browseRoot, { y: 8 }));
+  });
+
+  // Section copy lives in the catalogs; the ranking only decides which sections exist.
+  const RECOMMENDATION_SECTION_COPY: Record<string, { title: string; reason: string }> = {
+    becauseYouRatedHighly: { title: "recommendations.sections.profile.title", reason: "recommendations.sections.profile.reason" },
+    highConfidence: { title: "recommendations.sections.confidence.title", reason: "recommendations.sections.confidence.reason" },
+    trendingNearYourTaste: { title: "recommendations.sections.trending.title", reason: "recommendations.sections.trending.reason" },
+    freshInYourSources: { title: "recommendations.sections.fresh.title", reason: "recommendations.sections.fresh.reason" },
+    outsideYourUsualReads: { title: "recommendations.sections.outside.title", reason: "recommendations.sections.outside.reason" },
+  };
+  function recommendationSectionTitle(section: { key: string; title: string }) {
+    const copy = RECOMMENDATION_SECTION_COPY[section.key];
+    return copy ? $_(copy.title) : section.title;
+  }
+  function recommendationSectionReason(section: { key: string; reason: string }) {
+    const copy = RECOMMENDATION_SECTION_COPY[section.key];
+    return copy ? $_(copy.reason) : section.reason;
+  }
+
+  let { presentation = "page" }: { presentation?: "page" | "embedded" } = $props();
 
   type SearchTab  = "keyword" | "browse" | "source";
   type BrowseTab  = "featured" | "tag";
@@ -1388,7 +1422,7 @@
       } catch (e: any) {
         if (ctrl.signal.aborted || e?.name === "AbortError") return;
         kw_results = kw_results.map((r) =>
-          r.source.id === src.id ? { ...r, loading: false, error: e.message ?? "Error" } : r,
+          r.source.id === src.id ? { ...r, loading: false, error: e.message ?? translate("outcomes_failed") } : r,
         );
       }
     }, ctrl.signal);
@@ -2260,7 +2294,7 @@
         },
         ...(manga.source ? [{
           providerId: String(manga.source.id),
-          providerName: manga.source.displayName ?? "Source",
+          providerName: manga.source.displayName ?? translate("ui_source"),
           kind: "source" as const,
           availability: { value: 0.72, confidence: 0.52, method: "linked-source" },
         }] : []),
@@ -2513,7 +2547,8 @@
         return `HC ${formatHardcoverBadgeScore(hardcoverScore.value)}`;
       }
     }
-    return item.candidate.status?.replace(/_/g, " ") ?? (item.candidate.inLibrary ? "In library" : "Ongoing");
+    if (item.candidate.status) return formatWorkStatus(item.candidate.status);
+    return item.candidate.inLibrary ? $_("firstRun_discover_inLibrary") : $_("library_status_ongoing");
   }
 
   function scrollSearchSection(sectionKey: string, direction: -1 | 1) {
@@ -3222,9 +3257,9 @@
   }
 
   const catalogActiveSummary = $derived.by(() => {
-    if (!tag_activeTags.length) return "All";
+    if (!tag_activeTags.length) return $_("library_collections_all");
     if (tag_activeTags.length === 1) return tag_activeTags[0];
-    return `${tag_activeTags.length} tags (${tag_tagMode})`;
+    return $_("browse_tagsSummary", { count: tag_activeTags.length, mode: tag_tagMode });
   });
 
   let src_selectedLang  = $state("all");
@@ -3261,8 +3296,8 @@
       : isSourceChallengeMessage(message);
     if (!challenge) return message;
     return store.settings.flareSolverrEnabled
-      ? "This source is still blocked by site protection. Check FlareSolverr and retry."
-      : "This source needs FlareSolverr for Cloudflare or anti-bot protection.";
+      ? translate("browse_challengeStillBlocked")
+      : translate("browse_challengeNeedsFlaresolverr");
   }
 
   const src_novelSources = $derived.by<BrowseSourceEntry[]>(() =>
@@ -3927,12 +3962,12 @@
   );
   const discoverSourceLabel = $derived(
     discoverFocusedTracker
-      ? `${discoverFocusedTracker.name} catalog`
+      ? $_("browse_trackerCatalog", { name: discoverFocusedTracker.name })
       : discoverFocusedSource
       ? discoverFocusedSource.name
       : discoverFeedSources.length > 1
-        ? `${discoverFeedSources.length} sources`
-        : discoverFeedSources[0]?.name ?? "All sources",
+        ? $_("browse_sourceCount", { count: discoverFeedSources.length })
+        : discoverFeedSources[0]?.name ?? $_("ui_allSources"),
   );
 
   function sourceNameWithoutLanguage(entry: BrowseSourceEntry) {
@@ -4793,7 +4828,7 @@
       trackerCatalogResults = capProviderResults(dedupeTrackSearches(incoming));
     } catch (error) {
       if (trackerCatalogLoadedKey !== key) return;
-      trackerCatalogError = error instanceof Error ? error.message : "Could not load tracker catalog.";
+      trackerCatalogError = error instanceof Error ? error.message : translate("browse_trackerCatalogError");
     } finally {
       if (trackerCatalogLoadedKey === key) trackerCatalogLoading = false;
     }
@@ -4849,7 +4884,7 @@
           const firstFailure = failures[0] as PromiseRejectedResult;
           discoverError = firstFailure.reason instanceof Error
             ? firstFailure.reason.message
-            : "Could not load novel source discovery results.";
+            : translate("browse_novelDiscoveryError");
         }
         return;
       }
@@ -4907,11 +4942,11 @@
         const firstFailure = failures[0] as PromiseRejectedResult;
         discoverError = firstFailure.reason instanceof Error
           ? firstFailure.reason.message
-          : "Could not load discovery results.";
+          : translate("browse_discoveryError");
       }
     } catch (error) {
       if (discoverLoadedKey !== key) return;
-      discoverError = error instanceof Error ? error.message : "Could not load discovery results.";
+      discoverError = error instanceof Error ? error.message : translate("browse_discoveryError");
     } finally {
       if (discoverLoadedKey === key && discoverAbortCtrl === ctrl) discoverLoading = false;
       if (activeContentType === "novels") {
@@ -5195,7 +5230,7 @@
   });
 </script>
 
-<div class="root">
+<div class="root" class:root--embedded={presentation === "embedded"} bind:this={browseRoot}>
   <AppTopbar className="browse-topbar">
     {#snippet left()}
       <nav class="n-segmented" data-active={activeContentType === "novels" ? "novels" : "manga"} aria-label={$_("browse.contentType")}>
@@ -5248,10 +5283,12 @@
     {/snippet}
 
     {#snippet right()}
+      {#if presentation === "page"}
       <div class="browse-topbar__right">
         <ActivityButton />
         <WindowControlsInline />
       </div>
+      {/if}
     {/snippet}
   </AppTopbar>
 
@@ -5316,15 +5353,15 @@
                     <span class="searchSectionIcon material-symbols-outlined" aria-hidden="true">
                       {section.key === "outsideYourUsualReads" ? "explore" : section.key === "freshInYourSources" ? "local_fire_department" : "star"}
                     </span>
-                    <h3>{section.title}</h3>
-                    <p>{section.reason}</p>
+                    <h3>{recommendationSectionTitle(section)}</h3>
+                    <p>{recommendationSectionReason(section)}</p>
                   </div>
                   {#if section.items.length > 0 || canLoadSearchSectionMore(section.key)}
-                    <div class="searchRailControls" aria-label={`${section.title} carousel controls`}>
-                      <button type="button" aria-label={`Scroll ${section.title} left`} onclick={() => scrollSearchSection(section.key, -1)}>
+                    <div class="searchRailControls" aria-label={$_("recommendations.rail.controls", { values: { title: recommendationSectionTitle(section) } })}>
+                      <button type="button" aria-label={$_("recommendations.rail.previous", { values: { title: recommendationSectionTitle(section) } })} onclick={() => scrollSearchSection(section.key, -1)}>
                         <span class="material-symbols-outlined" aria-hidden="true">chevron_left</span>
                       </button>
-                      <button type="button" aria-label={`Scroll ${section.title} right`} onclick={() => section.items.length > 0 ? advanceSearchSection(section.key) : loadMoreSearchRecommendations(section.key)}>
+                      <button type="button" aria-label={$_("recommendations.rail.next", { values: { title: recommendationSectionTitle(section) } })} onclick={() => section.items.length > 0 ? advanceSearchSection(section.key) : loadMoreSearchRecommendations(section.key)}>
                         <span class="material-symbols-outlined" aria-hidden="true">chevron_right</span>
                       </button>
                     </div>
@@ -5426,9 +5463,9 @@
                     layout="compact"
                     tone="info"
                     icon="search"
-                    eyebrow={section.title}
+                    eyebrow={recommendationSectionTitle(section)}
                     title={$_("ui_noMatchingPicksYet")}
-                    body={`No new matches in this category after filtering your ${activeContentType === "novels" ? "saved novels and local books" : "library and tracker titles"}.`}
+                    body={activeContentType === "novels" ? $_("browse_noNewMatchesNovels") : $_("browse_noNewMatchesManga")}
                   />
                 {/if}
               </section>
@@ -5689,8 +5726,8 @@
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
                       <div class="n-library-card__meta">
-                        <span class="n-library-card__author">{m.source?.displayName ?? "Browse"}</span>
-                        <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
+                        <span class="n-library-card__author">{m.source?.displayName ?? $_("common_browse")}</span>
+                        <span class="n-library-card__vol">{m.chapterCount ? $_("browse_chapterShort", { count: m.chapterCount }) : m.status ? formatWorkStatus(m.status) : ""}</span>
                       </div>
                     </div>
                   </button>
@@ -5790,7 +5827,7 @@
           <div class="browseField browsePickerField browseTrackingField">
             <p class="browseFieldLabel">{$_("home_sections_tracking")}</p>
             <button class="browseSelectRow" class:is-open={catalogTrackingPickerOpen} type="button" onclick={() => { catalogTrackingPickerOpen = !catalogTrackingPickerOpen; catalogLanguagePickerOpen = false; catalogSourcePickerOpen = false; }}>
-              <span>{discoverFocusedTracker?.name ?? "Off"}</span>
+              <span>{discoverFocusedTracker?.name ?? $_("common_off")}</span>
               <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
             </button>
             <p class="browseFieldHint">{discoverFocusedTracker ? $_("ui_browsingThisTrackerCatalogInsteadOfExtensionSources") : $_("ui_turnOnATrackerCatalogWhenYouWant")}</p>
@@ -5977,7 +6014,7 @@
                     <p class="n-library-card__title">{m.title}</p>
                     <div class="n-library-card__meta">
                       <span class="n-library-card__author">{m.source?.displayName ?? src_activeSource?.displayName ?? $_("ui_source")}</span>
-                      <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
+                      <span class="n-library-card__vol">{m.chapterCount ? $_("browse_chapterShort", { count: m.chapterCount }) : m.status ? formatWorkStatus(m.status) : ""}</span>
                     </div>
                   </div>
                 </button>
@@ -6114,8 +6151,8 @@
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
                       <div class="n-library-card__meta">
-                        <span class="n-library-card__author">{m.source?.displayName ?? "Browse"}</span>
-                        <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
+                        <span class="n-library-card__author">{m.source?.displayName ?? $_("common_browse")}</span>
+                        <span class="n-library-card__vol">{m.chapterCount ? $_("browse_chapterShort", { count: m.chapterCount }) : m.status ? formatWorkStatus(m.status) : ""}</span>
                       </div>
                     </div>
                   </button>
@@ -6259,8 +6296,8 @@
                     <div class="n-library-card__info">
                       <p class="n-library-card__title">{m.title}</p>
                       <div class="n-library-card__meta">
-                        <span class="n-library-card__author">{m.source?.displayName ?? "Discover"}</span>
-                        <span class="n-library-card__vol">{m.chapterCount ? `CH ${m.chapterCount}` : m.status ?? ""}</span>
+                        <span class="n-library-card__author">{m.source?.displayName ?? $_("browse_tabs_discover")}</span>
+                        <span class="n-library-card__vol">{m.chapterCount ? $_("browse_chapterShort", { count: m.chapterCount }) : m.status ? formatWorkStatus(m.status) : ""}</span>
                       </div>
                     </div>
                   </button>
@@ -6326,6 +6363,16 @@
     min-width: 0;
     width: 100%;
   }
+  .root.root--embedded { padding-top: 0; }
+  .root.root--embedded :global(.browse-topbar) {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    flex-shrink: 0;
+    padding-inline: var(--sp-5);
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .root.root--embedded :global(.n-topbar__right) { display: none; }
   .browse-topbar__right {
     display: flex;
     align-items: center;
@@ -6359,7 +6406,7 @@
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     letter-spacing: var(--component-browse-browsesubtab-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     color: var(--component-browse-browsesubtab-color);
     cursor: pointer;
     transition: var(--component-browse-browsesubtab-transition);
@@ -6450,7 +6497,7 @@
     font-size: var(--component-browse-searchbtn-font-size);
     font-weight: 820;
     letter-spacing: var(--component-browse-searchbtn-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     min-height: var(--component-browse-searchbtn-min-height);
     padding: var(--component-browse-searchbtn-padding);
     border-radius: var(--component-browse-searchbtn-border-radius);
@@ -6611,7 +6658,7 @@
     font-size: var(--component-browse-searchtastepills-font-size);
     font-weight: 780;
     letter-spacing: var(--component-browse-searchtastepills-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
   }
   .searchRecommendationRow {
     display: flex;
@@ -6750,7 +6797,7 @@
     font-size: var(--component-browse-searchpaneltitle-font-size);
     font-weight: 700;
     letter-spacing: var(--component-browse-searchpaneltitle-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
   }
   .searchPanelTitle .material-symbols-outlined {
     font-size: var(--component-browse-searchpaneltitle-material-symbols-outlined-font-size);
@@ -6907,7 +6954,7 @@
     font-size: var(--component-browse-searchinsightsbutton-font-size);
     font-weight: 720;
     letter-spacing: var(--component-browse-searchinsightsbutton-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     cursor: pointer;
     transition: background var(--t-base), border-color var(--t-base), color var(--t-base);
   }
@@ -7154,7 +7201,7 @@
     font-size: var(--component-browse-showmorebtn-font-size);
     font-weight: 780;
     letter-spacing: var(--component-browse-showmorebtn-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     color: var(--component-browse-showmorebtn-color);
     cursor: pointer;
     transition: background var(--t-base), color var(--t-base), border-color var(--t-base);

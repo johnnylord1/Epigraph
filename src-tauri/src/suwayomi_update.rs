@@ -19,7 +19,7 @@ use crate::suwayomi_maintenance::{
     self, ExclusiveMaintenanceGuard, MaintenancePhase, UpdateJournalState,
 };
 use crate::{
-    find_java_pid_for_rootdir, is_loopback_http_url, kill_tachidesk_target, patch_conf_key,
+    find_java_pid_for_rootdir, is_loopback_http_url, stop_runtime_for_maintenance, patch_conf_key,
     process_is_alive, read_conf_value, read_server_owner, resolve_local_server_target,
     server_owner_path, server_spawn_lock_path, spawn_managed_server_for_update, strip_unc,
     suwayomi_data_dir, validate_server_owner, LaunchTarget, LocalServerTarget, OwnerReuseDecision,
@@ -1552,7 +1552,7 @@ fn stop_managed_runtime_for_snapshot(
     target: &LocalServerTarget,
 ) -> Result<bool, String> {
     let java_pid = prove_epigraph_runtime_ownership(target)?;
-    kill_tachidesk_target(app, target);
+    stop_runtime_for_maintenance(app, target)?;
     wait_for_managed_runtime_stop(&target.root_dir, java_pid)?;
     assert_local_port_released(target.port)?;
     Ok(true)
@@ -2779,7 +2779,7 @@ async fn rollback_promoted_runtime(
     snapshot_dir: &Path,
     auth_header: Option<&str>,
 ) -> Result<(), String> {
-    kill_tachidesk_target(app, target);
+    stop_runtime_for_maintenance(app, target)?;
     wait_for_managed_runtime_stop(&target.root_dir, 0)?;
     assert_local_port_released(target.port)?;
     assert_profile_database_unlocked(&target.root_dir)?;
@@ -3210,7 +3210,7 @@ fn extension_evidence(
 
 fn stop_target_if_running(app: &AppHandle, target: &LocalServerTarget) -> Result<(), String> {
     if let Some(pid) = find_java_pid_for_rootdir(&target.root_dir) {
-        kill_tachidesk_target(app, target);
+        stop_runtime_for_maintenance(app, target)?;
         wait_for_managed_runtime_stop(&target.root_dir, pid)?;
     }
     assert_local_port_released(target.port)?;

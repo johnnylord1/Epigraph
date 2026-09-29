@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, SortAscending } from "phosphor-svelte";
+  import { ArrowsClockwise, CaretDown, CaretUp, Funnel, GridFour, SortAscending, UploadSimple } from "phosphor-svelte";
   import type { BooksTypeOptionVM, LibraryDisplaySettings, LibraryToolbarVM } from "../../lib/library/contracts";
   import { _ } from "../../lib/i18n/runtime";
   import BooksTypeSelector from "./BooksTypeSelector.svelte";
@@ -36,6 +36,8 @@
     onRefresh?: () => void;
     refreshPending?: boolean;
     refreshLabel?: string;
+    onImport?: () => void;
+    importLabel?: string;
   };
 
   let {
@@ -66,6 +68,8 @@
     onRefresh,
     refreshPending = false,
     refreshLabel = "",
+    onImport,
+    importLabel = "",
   }: Props = $props();
 
   let sortPanelOpen = $state(false);
@@ -158,6 +162,18 @@
 
   {#if showActions}
     <div class="toolbar-cluster">
+      {#if onImport}
+        <button
+          type="button"
+          class="n-icon-btn library-toolbar-btn"
+          title={importLabel}
+          aria-label={importLabel}
+          onclick={onImport}
+        >
+          <UploadSimple size={15} weight="bold" />
+        </button>
+      {/if}
+
       {#if onRefresh}
         <button
           type="button"

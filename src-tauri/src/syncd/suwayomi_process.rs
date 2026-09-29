@@ -12,13 +12,31 @@ use url::Url;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
-use windows_sys::Win32::Storage::FileSystem::{
-    MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-};
-#[cfg(windows)]
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
+// A disk record (including app_pid) cannot grant a new Core termination rights.
+struct CoreSpawnLease {
+    root: PathBuf,
+    identity: crate::suwayomi_runtime::RuntimeProcessIdentity,
+    #[cfg(windows)]
+    process: crate::suwayomi_runtime::ownership::windows::Process,
+}
+static SPAWNED_RUNS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, CoreSpawnLease>>> = std::sync::OnceLock::new();
+fn spawned_runs() -> &'static std::sync::Mutex<std::collections::HashMap<String, CoreSpawnLease>> {
+    SPAWNED_RUNS.get_or_init(Default::default)
+}
+
 const MAIN_PROFILE_KEY: &str = "main";
+static CORE_CLOSING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static CORE_SPAWN_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub async fn prepare_shutdown() -> Result<(), String> {
+    CORE_CLOSING.store(true, std::sync::atomic::Ordering::Release);
+    let _guard = tokio::time::timeout(Duration::from_secs(15), CORE_SPAWN_GATE.lock()).await
+        .map_err(|_| "Core startup did not quiesce; ownership retained")?;
+    stop_owned_instances(Duration::from_secs(5)).await?;
+    Ok(())
+}
 const MAIN_SERVER_PORT: u16 = 4567;
 const STARTUP_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const STARTUP_PROBE_TIMEOUT_EMPTY: Duration = Duration::from_secs(240);
@@ -61,6 +79,8 @@ struct ServerOwner {
     run_id: Option<String>,
     #[serde(default)]
     process_identity: Option<crate::suwayomi_runtime::RuntimeProcessIdentity>,
+    #[serde(default)]
+    spawned_by_core: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +89,7 @@ pub struct AttachedSuwayomi {
     pub root_dir: PathBuf,
     pub java_pid: u32,
     pub server_url: String,
+    pub run_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,6 +171,13 @@ pub fn start_headless_supervisor(
 }
 
 pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, String> {
+    // Hold the existing cross-process runtime lease through spawn/publication
+    // and readiness. Exclusive update/reset excludes a new JVM while mutating.
+    let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(
+        &crate::suwayomi_maintenance::default_runtime_root(),
+    )?;
+    let _spawn = CORE_SPAWN_GATE.lock().await;
+    if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) { return Err("Core is shutting down".into()); }
     let root = main_profile_root();
     if !managed_profile_is_configured(&root) {
         return Ok(HeadlessSuwayomiOutcome::NotConfigured);
@@ -177,10 +205,23 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
         return Ok(HeadlessSuwayomiOutcome::Attached(instance));
     }
 
+    // A retained process handle can confirm a naturally exited child without
+    // guessing from PID absence. Reconcile only runs this Core actually spawned.
+    if let Ok(raw) = std::fs::read(root.join("server.owner.json")) {
+        if let Ok(owner) = serde_json::from_slice::<ServerOwner>(&raw) {
+            let known_run = owner.run_id.as_ref().is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
+            if known_run && !crate::suwayomi_runtime::has_confirmed_stop(&root.join("server.owner.json")) {
+                stop_owned_instance(&AttachedSuwayomi {
+                    profile_key: MAIN_PROFILE_KEY.into(), root_dir: root.clone(), java_pid: owner.java_pid,
+                    server_url: format!("http://127.0.0.1:{MAIN_SERVER_PORT}"), run_id: owner.run_id,
+                }, Duration::from_secs(5)).await?;
+            }
+        }
+    }
     remove_stale_owner(&root)?;
     if let Some(java_pid) = find_java_pid_for_root(&root) {
         if probe_server(MAIN_SERVER_PORT).await {
-            let instance = publish_reconstructed_owner(&root, java_pid)?;
+            let instance = publish_reconstructed_owner(&root, java_pid, false)?;
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
         return Err(format!(
@@ -200,12 +241,11 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     // Publish identity immediately. If Core is interrupted while readiness is
     // pending, the next startup can safely reattach instead of creating a
     // second JVM for the same profile.
-    let instance = match publish_reconstructed_owner(&root, java_pid) {
+    let instance = match publish_reconstructed_owner(&root, java_pid, true) {
         Ok(instance) => instance,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            remove_owner_files(&root);
+            crate::suwayomi_runtime::stop_std_child(&child)?;
+            // Partial publication is retained for diagnosis.
             return Err(error);
         }
     };
@@ -216,9 +256,7 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     };
     if let Err(error) = wait_for_spawned_runtime(&root, &mut child, &mut spawn_lock, timeout).await
     {
-        let _ = child.kill();
-        let _ = child.wait();
-        remove_owner_files(&root);
+        stop_owned_instance(&instance, Duration::from_secs(5)).await?;
         return Err(error);
     }
 
@@ -233,7 +271,18 @@ pub fn attach_owned_instances() -> Vec<AttachedSuwayomi> {
 }
 
 pub async fn stop_owned_instances(timeout: Duration) -> Result<Vec<AttachedSuwayomi>, String> {
-    let instances = attach_owned_instances();
+    let instances: Vec<_> = spawned_runs().lock().map_err(|_| "Core leases unavailable")?.iter().map(|(run, lease)| AttachedSuwayomi {
+        profile_key: MAIN_PROFILE_KEY.into(), root_dir: lease.root.clone(), java_pid: lease.identity.pid,
+        server_url: format!("http://127.0.0.1:{MAIN_SERVER_PORT}"), run_id: Some(run.clone()),
+    }).collect();
+    // Malformed or foreign evidence is never filtered into empty success.
+    // Only the configured main root is relevant to this Core's authority.
+    let root = main_profile_root();
+    let owner = root.join("server.owner.json");
+    if owner.exists() && !crate::suwayomi_runtime::has_confirmed_stop(&owner)
+        && !instances.iter().any(|instance| instance.root_dir == root) {
+        return Err("Managed runtime ownership is legacy, foreign or unretained; reconcile gracefully/manual first".into());
+    }
     for instance in &instances {
         stop_owned_instance(instance, timeout).await?;
     }
@@ -264,49 +313,47 @@ fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
         root_dir: root.to_path_buf(),
         java_pid: owner.java_pid,
         server_url: owner.server_url.trim_end_matches('/').to_string(),
+        run_id: owner.run_id,
     })
 }
 
-async fn stop_owned_instance(instance: &AttachedSuwayomi, timeout: Duration) -> Result<(), String> {
-    let pid = Pid::from_u32(instance.java_pid);
-    // Keep the same command-line-aware snapshot used while attaching. Without
-    // it Windows reports an empty `Process::cmd()` and a valid owned process
-    // can neither be verified nor stopped safely.
-    let mut system = System::new_all();
-    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-    let Some(process) = system.process(pid) else {
-        remove_owner_files(&instance.root_dir);
-        return Ok(());
-    };
-    if !java_process_matches_root(process, &instance.root_dir) {
-        return Err(format!(
-            "refusing to stop PID {} because it no longer matches Suwayomi root {}",
-            instance.java_pid,
-            instance.root_dir.display()
-        ));
+async fn stop_owned_instance(instance: &AttachedSuwayomi, _timeout: Duration) -> Result<(), String> {
+    use crate::suwayomi_runtime::ownership::Ownership;
+    let path = instance.root_dir.join("server.owner.json");
+    let raw = std::fs::read(&path).map_err(|_| "Missing Core ownership; process preserved")?;
+    let owner: ServerOwner = serde_json::from_slice(&raw).map_err(|_| "Malformed Core ownership; process preserved")?;
+    if !owner.run_id.as_ref().is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run))
+        || owner.app_pid != std::process::id() || owner.run_id != instance.run_id
+        || owner.java_pid != instance.java_pid || owner.server_url != instance.server_url
+        || owner.process_identity.as_ref().map(|identity| identity.pid) != Some(instance.java_pid) {
+        return Err("Foreign or inconsistent Core run; process preserved".into());
     }
-    if !process.kill() {
-        return Err(format!(
-            "failed to stop owned Suwayomi PID {}",
-            instance.java_pid
-        ));
-    }
-
-    let started = Instant::now();
-    loop {
-        system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-        if system.process(pid).is_none() {
-            remove_owner_files(&instance.root_dir);
-            return Ok(());
+    let root = instance.root_dir.to_string_lossy();
+    let ownership = Ownership { run_id: owner.run_id.as_deref(), requested_run_id: instance.run_id.as_deref().unwrap_or(""), profile: &owner.profile_key,
+        root: &owner.root_dir, requested_profile: &instance.profile_key, requested_root: &root,
+        spawned: owner.spawned_by_core, attach_only: false,
+        identity: owner.process_identity.as_ref().and_then(|identity| identity.for_termination()) };
+    #[cfg(windows)]
+    {
+        use crate::suwayomi_runtime::ownership::ProcessObject;
+        let expected = crate::suwayomi_runtime::ownership::validate_record(&ownership)?;
+        let mut leases = spawned_runs().lock().unwrap();
+        let lease = leases.get_mut(owner.run_id.as_ref().ok_or("Missing Core run")?).ok_or("Missing retained Core handle")?;
+        if owner.process_identity.as_ref() != Some(&lease.identity) || lease.process.creation_time()? != expected.created {
+            return Err("Retained Core identity changed; process preserved".into());
         }
-        if started.elapsed() >= timeout {
-            return Err(format!(
-                "timed out waiting for owned Suwayomi PID {} to stop",
-                instance.java_pid
-            ));
+        if lease.process.wait(0).is_err() {
+            crate::suwayomi_runtime::ownership::stop_verified(&ownership, &mut lease.process,
+                || std::fs::read(&path).ok().as_deref() == Some(raw.as_slice()))?;
+        } else if std::fs::read(&path).ok().as_deref() != Some(raw.as_slice()) {
+            return Err("Core evidence changed during completion validation".into());
         }
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        crate::suwayomi_runtime::record_confirmed_stop(&path, &raw)?;
+        leases.remove(owner.run_id.as_ref().ok_or("Missing completed Core run")?);
+        Ok(())
     }
+    #[cfg(not(windows))]
+    { let _ = ownership; Err("Handle-bound Core cleanup unavailable; process preserved".into()) }
 }
 
 fn main_profile_root() -> PathBuf {
@@ -342,9 +389,7 @@ fn acquire_spawn_lock(root: &Path) -> Result<SpawnLock, String> {
                 if !spawn_lock_is_stale(&path) {
                     return Err("another Epigraph process is starting managed Suwayomi".to_string());
                 }
-                std::fs::remove_file(&path).map_err(|error| {
-                    format!("failed to remove stale Suwayomi spawn lock: {error}")
-                })?;
+                return Err("Stale startup lease retained; age and PID cannot authorize takeover".into());
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err("another Epigraph process is starting managed Suwayomi".to_string());
@@ -376,24 +421,23 @@ fn spawn_lock_is_stale(path: &Path) -> bool {
 }
 
 fn remove_stale_owner(root: &Path) -> Result<(), String> {
-    let owner_path = root.join("server.owner.json");
-    if !owner_path.exists() {
-        let _ = std::fs::remove_file(root.join("server.owner.json.tmp"));
-        return Ok(());
+    let path = root.join("server.owner.json");
+    if root.join("server.owner.json.tmp").exists() { return Err("Partial ownership retained".into()); }
+    if !path.exists() || crate::suwayomi_runtime::has_confirmed_stop(&path) { return Ok(()); }
+    // A JVM ended by a reboot or crash never gets a receipt; accept only a proven exit.
+    if let Ok(raw) = std::fs::read(&path) {
+        if let Ok(owner) = serde_json::from_slice::<ServerOwner>(&raw) {
+            if crate::suwayomi_runtime::confirm_exited_owner(
+                &path,
+                &raw,
+                owner.java_pid,
+                owner.process_identity.as_ref(),
+            ) {
+                return Ok(());
+            }
+        }
     }
-    let owner = std::fs::read(&owner_path)
-        .ok()
-        .and_then(|payload| serde_json::from_slice::<ServerOwner>(&payload).ok());
-    if owner
-        .as_ref()
-        .is_some_and(|owner| process_is_alive(owner.java_pid))
-    {
-        return Err(
-            "managed Suwayomi owner references a live but unverifiable process".to_string(),
-        );
-    }
-    remove_owner_files(root);
-    Ok(())
+    Err("Unconfirmed stale or malformed ownership retained; refusing takeover".into())
 }
 
 fn resolve_headless_runtime(core_executable: &Path) -> Result<RuntimeInvocation, String> {
@@ -601,6 +645,7 @@ async fn wait_for_spawned_runtime(
 ) -> Result<(), String> {
     let started = Instant::now();
     loop {
+        if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) { return Err("Core shutdown interrupted startup readiness".into()); }
         spawn_lock.refresh()?;
         if child
             .try_wait()
@@ -657,7 +702,7 @@ fn ensure_port_available(port: u16) -> Result<(), String> {
         .map_err(|_| format!("local Suwayomi port {port} is occupied by an unowned process"))
 }
 
-fn publish_reconstructed_owner(root: &Path, java_pid: u32) -> Result<AttachedSuwayomi, String> {
+fn publish_reconstructed_owner(root: &Path, java_pid: u32, spawned_by_core: bool) -> Result<AttachedSuwayomi, String> {
     let server_url = format!("http://127.0.0.1:{MAIN_SERVER_PORT}");
     let process_identity = runtime_process_identity_with_retry(java_pid).ok_or_else(|| {
         format!("could not establish process identity for managed Suwayomi PID {java_pid}")
@@ -672,6 +717,7 @@ fn publish_reconstructed_owner(root: &Path, java_pid: u32) -> Result<AttachedSuw
         started_at: unix_now_secs(),
         run_id: Some(uuid::Uuid::new_v4().to_string()),
         process_identity: Some(process_identity),
+        spawned_by_core,
     };
     write_file_atomic(
         &root.join("server.owner.json"),
@@ -679,30 +725,30 @@ fn publish_reconstructed_owner(root: &Path, java_pid: u32) -> Result<AttachedSuw
             .map_err(|error| format!("failed to serialize managed Suwayomi owner: {error}"))?,
     )
     .map_err(|error| format!("failed to publish managed Suwayomi owner: {error}"))?;
+    if spawned_by_core {
+        let identity = owner.process_identity.clone().ok_or("Missing birth identity")?;
+        #[cfg(windows)]
+        let process = {
+            use crate::suwayomi_runtime::ownership::ProcessObject;
+            let process = crate::suwayomi_runtime::ownership::windows::Process::open(java_pid, crate::suwayomi_runtime::command_line_hash)?;
+            if Some(process.identity()?) != identity.for_termination() { return Err("Core spawn changed during lease capture".into()); }
+            process
+        };
+        spawned_runs().lock().unwrap().insert(owner.run_id.clone().expect("generated run"), CoreSpawnLease {
+            root: root.to_path_buf(), identity, #[cfg(windows)] process,
+        });
+    }
     Ok(AttachedSuwayomi {
         profile_key: owner.profile_key,
         root_dir: root.to_path_buf(),
         java_pid,
         server_url,
+        run_id: owner.run_id,
     })
 }
 
 fn runtime_process_identity(pid: u32) -> Option<crate::suwayomi_runtime::RuntimeProcessIdentity> {
-    let system = System::new_all();
-    let process = system.process(Pid::from_u32(pid))?;
-    let args = process
-        .cmd()
-        .iter()
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    Some(crate::suwayomi_runtime::RuntimeProcessIdentity {
-        pid,
-        process_creation_time: Some(process.start_time()),
-        executable_path: process
-            .exe()
-            .map(|path| path.to_string_lossy().into_owned()),
-        command_line_hash: Some(crate::suwayomi_runtime::command_line_hash(&args)),
-    })
+    crate::suwayomi_runtime::capture_process_identity(pid)
 }
 
 fn runtime_process_identity_with_retry(
@@ -718,21 +764,10 @@ fn runtime_process_identity_with_retry(
 }
 
 fn process_identity_matches(owner: &ServerOwner, process: &sysinfo::Process) -> bool {
-    let Some(expected) = owner.process_identity.as_ref() else {
-        return true;
-    };
-    let args = process
-        .cmd()
-        .iter()
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
+    if !owner.run_id.as_ref().is_some_and(|run| uuid::Uuid::parse_str(run).is_ok_and(|id| !id.is_nil())) { return false; }
+    let Some(expected) = owner.process_identity.as_ref() else { return false; };
     expected.pid == process.pid().as_u32()
-        && expected.process_creation_time == Some(process.start_time())
-        && expected.executable_path
-            == process
-                .exe()
-                .map(|path| path.to_string_lossy().into_owned())
-        && expected.command_line_hash == Some(crate::suwayomi_runtime::command_line_hash(&args))
+        && runtime_process_identity(expected.pid).as_ref() == Some(expected)
 }
 
 fn process_is_alive(pid: u32) -> bool {
@@ -831,36 +866,9 @@ fn write_file_atomic(path: &Path, payload: &[u8]) -> std::io::Result<()> {
     atomic_replace_file(&temporary, path)
 }
 
-#[cfg(windows)]
+/// Shares the long-path-safe replace used by the runtime maintenance state.
 fn atomic_replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
-    let from = from
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let to = to
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        MoveFileExW(
-            from.as_ptr(),
-            to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn atomic_replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::rename(from, to)
+    crate::suwayomi_maintenance::atomic_replace_file(from, to)
 }
 
 fn owner_matches_root_and_endpoint(owner: &ServerOwner, root: &Path) -> bool {
@@ -941,15 +949,6 @@ fn owned_profile_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn remove_owner_files(root: &Path) {
-    for name in [
-        "server.owner.json",
-        "server.owner.json.tmp",
-        "server.spawn.lock",
-    ] {
-        let _ = std::fs::remove_file(root.join(name));
-    }
-}
 
 fn paths_identical(left: &Path, right: &Path) -> bool {
     normalize_path(left) == normalize_path(right)
@@ -975,6 +974,48 @@ fn normalize_path(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn b1_retained_core_handle_confirms_natural_exit_and_rejects_changed_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Milliseconds 750"])
+            .creation_flags(CREATE_NO_WINDOW).spawn().unwrap();
+        let instance = publish_reconstructed_owner(temp.path(), child.id(), true).unwrap();
+        let path = temp.path().join("server.owner.json");
+        let raw = std::fs::read(&path).unwrap();
+        child.wait().unwrap(); // Only this short-lived disposable child.
+        let mut changed: ServerOwner = serde_json::from_slice(&raw).unwrap();
+        changed.process_identity.as_mut().unwrap().creation_filetime = Some(1);
+        let malformed = serde_json::to_vec(&changed).unwrap();
+        std::fs::write(&path, &malformed).unwrap();
+        assert!(stop_owned_instance(&instance, Duration::from_secs(5)).await.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), malformed);
+        assert!(!crate::suwayomi_runtime::has_confirmed_stop(&path));
+        std::fs::write(&path, &raw).unwrap();
+        stop_owned_instance(&instance, Duration::from_secs(5)).await.unwrap();
+        assert!(crate::suwayomi_runtime::has_confirmed_stop(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn owner_left_by_a_jvm_ended_without_graceful_stop_is_reconciled_only_after_exit() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut child = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+            .creation_flags(CREATE_NO_WINDOW).spawn().unwrap();
+        publish_reconstructed_owner(temp.path(), child.id(), false).unwrap();
+        let path = temp.path().join("server.owner.json");
+        let raw = std::fs::read(&path).unwrap();
+        assert!(remove_stale_owner(temp.path()).is_err(), "a live JVM keeps its ownership");
+        child.kill().unwrap(); // Only this disposable child; simulates a reboot or crash.
+        child.wait().unwrap();
+        remove_stale_owner(temp.path()).unwrap();
+        assert!(crate::suwayomi_runtime::has_confirmed_stop(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), raw, "evidence is retained");
+    }
+
     fn owner(root: &Path) -> ServerOwner {
         ServerOwner {
             profile_key: "main".to_string(),
@@ -985,6 +1026,7 @@ mod tests {
             server_url: "http://127.0.0.1:4567".to_string(),
             started_at: 1,
             run_id: None,
+            spawned_by_core: false,
             process_identity: None,
         }
     }

@@ -150,6 +150,8 @@ host through the native sidecar and Settings panel.
   profile, access token, and requested scopes before accepting a device.
 - Pairing approval, rejection, device listing, scope changes, disconnect,
   session revalidation, and forget operations are exposed in the desktop UI.
+- Revoking a device, token expiry, or removing a scope also closes that
+  device's open live event stream; access is not extended until reconnect.
 - Persisted sessions have explicit status, last discovery source, and active
   session selection instead of being silently reused.
 
@@ -158,8 +160,13 @@ host through the native sidecar and Settings panel.
 Syncd provides durable, profile-scoped replication with:
 
 - an authenticated mutation route and idempotent mutation receipts;
-- durable outbox processing with pause, resume, retry, and reconnect;
-- ordered event streams and replayable change history;
+- a durable Core outbox for Suwayomi projections, plus pause, resume, retry,
+  and reconnect for desktop replication (desktop edits are submitted when the
+  local file changes; a desktop paired with a remote Core does not yet queue
+  edits made while that Core is unreachable, see the
+  [2026-09-26 audit](audit-2026-09-26.md#remaining-issues));
+- ordered event streams and replayable change history; a client switching from
+  `/v1/changes` to `/v1/events` resumes with `Last-Event-ID`;
 - authoritative snapshots for recovery and cold-start hydration;
 - tombstones and identity aliases for safe deletes and migrations;
 - profile-scoped comic and novel state plus a separate global book scope; and
@@ -172,7 +179,7 @@ The supported state boundary is deliberately explicit:
 | --- | --- | --- |
 | Comics | Library metadata, categories, reader/progress state, bookmarks, and the profile catalog projection | Arbitrary upstream GraphQL and direct loopback access |
 | Novels | Library entries, progress, bookmarks, history, repository metadata, installed-plugin metadata, source snapshots, and allowlisted settings metadata | Chapter content, plugin binaries, cookies, tokens, credentials, and arbitrary web storage |
-| Books | Global library metadata, progress, bookmarks, and history where supported | Book file assets remain local to the device |
+| Books | Global library metadata, progress, bookmarks, and history where supported, from the main local profile's book library | Book file assets remain local to the device; other local profiles keep a local-only book library |
 
 The mobile client consumes typed Core routes after pairing; it does not reach
 the Suwayomi loopback port directly. The PC session and Core/Suwayomi processes
@@ -189,6 +196,10 @@ and cached content remains usable offline.
   manifests, PID, endpoint, and root directory match the desktop runtime.
 - Foreign processes and foreign Suwayomi profiles are never terminated by the
   desktop supervisor.
+- Application commands (files, processes, profiles, pairing) are accepted only
+  from the main window. The hidden novel runtime host and the reader/tracker
+  web views run untrusted content and communicate through events or their
+  capability-scoped plugins only.
 
 Implementation: [Syncd connection panel](../src/components/settings/SyncdConnectionPanel.svelte),
 [desktop Syncd bridge](../src/lib/syncdDesktop.ts),
@@ -263,6 +274,13 @@ the user one operational workspace:
   access.
 - Text-to-speech controls are shared by the reader surfaces where the content
   adapter supports speech.
+- The comic, novel, EPUB and PDF readers can move to their own window from the HUD
+  (**Open in a new window**). Several reader windows can be open at once, on
+  different works or the same chapter, while the main window stays usable.
+  Each window has its own fullscreen and keyboard focus; the main window keeps
+  application commands and persistence, and closing it closes every reader
+  window. Design and limits:
+  [detached reader windows](audit-2026-09-26.md#detached-reader-windows-2026-09-27).
 - Downloads expose queued, active, finished, failed, pause, resume, cancel,
   retry, and local/offline states.
 

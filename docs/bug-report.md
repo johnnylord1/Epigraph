@@ -2,6 +2,52 @@
 
 [Matriz funcional](functional-audit.md) · [Guia do usuário](user-guide.md) · [Melhorias e dívidas](improvement-report.md)
 
+[Evidências de verificação por execução e artefato](verification-evidence.md).
+
+## Revalidação do primeiro acesso — 02/09/2026 (em andamento)
+
+Os totais históricos abaixo não certificam o novo first-run. Na build limpa
+baseada em `583af8d`, o cadastro de Keiyoushi falhou porque o pacote Windows
+ainda incluía Suwayomi 2.1.1867, incompatível com o índice atual `.pb`.
+A correção candidata empacota o JAR 2.3.2243 permitido no manifesto, mantendo
+Java 21 e os bloqueios do updater. Não foi criado um catálogo ou instalador
+de extensões paralelo.
+
+Repetido pelos controles visíveis em outro perfil MAIN descartável: seleção
+de tema, bloqueio de avanço sem dependências, cadastro do endereço GitHub,
+catálogo com 1.394 extensões, rejeição de cadastro duplicado e persistência
+do tema, etapa e repositório após reabrir o app e reiniciar o Suwayomi. Cadastrar
+só o repositório continua sem liberar o avanço. Após confirmação explícita,
+Akuma 1.4.10 foi instalada pelo catálogo: uma extensão instalada, 27 fontes
+confirmadas por consulta somente de leitura e avanço liberado pela interface.
+Isso não substitui o cenário separado de instalação por APK local.
+
+Passaram 9 testes do preparador, 20 do updater, 27 contratos de certificação
+Suwayomi e 17 testes de transporte/compatibilidade/fontes. A criação real em
+diretório vazio e sua repetição também passaram. A revisão do empacotamento
+foi aprovada após corrigir o comando local e a detecção de Java incompleto.
+
+Na etapa seguinte, foi reproduzido um painel de trackers vazio: o primeiro
+acesso selecionava a aba sem inicializar seu conteúdo lazy. A correção reutiliza
+`ensurePaneHydrated`, com teste real de Settings que falhou antes e passou
+depois. Passaram 48 testes relacionados e 6 testes browser de Settings;
+revisão independente sem bloqueadores neste incremento. A nova build nativa
+confirmou os serviços visíveis e a navegação de ida/volta. Akuma persistiu após
+reinício completo. Na sequência passaram 1.310 testes unitários (4 ignorados)
+e 57 testes browser; Svelte sem erros e com 54 avisos de CSS preexistentes.
+
+A descoberta embutida ainda apresentou um problema visual: seu cabeçalho
+fixo ocupa o topo da janela, cobrindo o header do wizard e duplicando controles.
+A correção e o reteste desse limite de composição estão em andamento; os
+totais anteriores não certificam esse cenário, que ainda não tinha cobertura.
+
+Pendente: conclusão do setup, readers, backups/exports, integração autenticada
+dos trackers e regressão de atualização de perfis existentes. A revisão estática
+apontou uma hipótese de bloqueio ao adicionar o primeiro quadrinho sem
+atualizar o snapshot da Library, além de perda da aba Novels na retomada;
+ambas ainda precisam de reprodução e correção nesta jornada. Não há commit
+final nem aprovação do release.
+
 ## Resumo executivo
 
 - Funcionalidades analisadas: 63.

@@ -69,4 +69,35 @@ describe("LibraryToolbar", () => {
     await fireEvent.click(screen.getByRole("menuitem", { name: /Descending/i }));
     expect(onSortDirToggle).toHaveBeenCalled();
   });
+
+  test("shows the import button only when an import action is given", async () => {
+    const props = {
+      displaySettings: {
+        viewMode: "grid" as const,
+        preferredColumns: "auto" as const,
+        showProgress: true,
+        showOutline: true,
+      },
+      toolbar: {
+        searchValue: "",
+        searchPlaceholder: "Search books",
+        sortMode: "recentlyAdded",
+        sortDir: "desc" as const,
+        sortOptions: [],
+        filterValue: "ALL",
+        filterOptions: [],
+      },
+      sortDefaultMode: "recentlyAdded",
+      sortDefaultDir: "desc" as const,
+      filterDefaultValue: "ALL",
+    };
+    const first = render(LibraryToolbar, { props });
+    expect(screen.queryByRole("button", { name: "Import books" })).toBeNull();
+    first.unmount();
+
+    const onImport = vi.fn();
+    render(LibraryToolbar, { props: { ...props, onImport, importLabel: "Import books" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Import books" }));
+    expect(onImport).toHaveBeenCalledTimes(1);
+  });
 });

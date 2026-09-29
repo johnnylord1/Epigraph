@@ -8,6 +8,10 @@ import {
 
 export const LNREADER_REPOSITORY_MANIFEST_BASENAME = "plugins.min.json";
 
+/** LNReader has a single official plugin feed; Epigraph ships it as a built-in repository. */
+export const BUILTIN_LNREADER_REPOSITORY_URL =
+  "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
+
 export type NovelCatalogPluginStatus =
   | "available"
   | "installed"

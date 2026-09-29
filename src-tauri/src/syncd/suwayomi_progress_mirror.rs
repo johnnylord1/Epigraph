@@ -176,7 +176,7 @@ async fn mirror_profile(state: &SharedAppState, profile_id: &str) -> anyhow::Res
                 retention_window,
             )
             .await?;
-            if matches!(outcome, db::CausalMutationWriteOutcome::Applied(_)) {
+            if publish_applied_change(state, &outcome) {
                 mirrored += 1;
             }
         }
@@ -260,7 +260,7 @@ async fn mirror_profile(state: &SharedAppState, profile_id: &str) -> anyhow::Res
             )
             .await?;
             tracing::debug!(?outcome, "Suwayomi bookmark mirror write completed");
-            if matches!(outcome, db::CausalMutationWriteOutcome::Applied(_)) {
+            if publish_applied_change(state, &outcome) {
                 mirrored += 1;
             }
         }
@@ -278,6 +278,25 @@ async fn mirror_profile(state: &SharedAppState, profile_id: &str) -> anyhow::Res
     )
     .await?;
     Ok(mirrored)
+}
+
+/// Publishes an applied mirror write to live `/v1/events` subscribers.
+///
+/// Mirror writes append to `change_log` exactly like `/v1/mutations`. SSE subscribers
+/// deduplicate by `server_version` and resume with `Last-Event-ID`, so a change that is
+/// persisted but never broadcast is skipped permanently once any later change is delivered.
+/// Callers hold `mutation_gate`, which keeps broadcast order equal to commit order.
+fn publish_applied_change(
+    state: &SharedAppState,
+    outcome: &db::CausalMutationWriteOutcome,
+) -> bool {
+    match outcome {
+        db::CausalMutationWriteOutcome::Applied(applied) => {
+            let _ = state.change_sender.send(applied.envelope.clone());
+            true
+        }
+        db::CausalMutationWriteOutcome::Superseded { .. } => false,
+    }
 }
 
 #[derive(FromRow)]
@@ -358,7 +377,7 @@ async fn clear_removed_bookmarks(
             retention_window,
         )
         .await?;
-        if matches!(outcome, db::CausalMutationWriteOutcome::Applied(_)) {
+        if publish_applied_change(state, &outcome) {
             cleared += 1;
         }
     }

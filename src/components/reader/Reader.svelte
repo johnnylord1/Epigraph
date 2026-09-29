@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { _ } from "../../lib/i18n/runtime";
+  import { _, translate } from "../../lib/i18n/runtime";
   import { onMount, onDestroy, untrack, tick } from "svelte";
   import {
     X, CaretLeft, CaretRight, ArrowLeft, ArrowRight,
@@ -16,13 +16,14 @@
   import { ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { fetchSourceChapterPages } from "../../lib/manga/runtime";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
-  import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark } from "../../store/state.svelte";
+  import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark, addToast } from "../../store/state.svelte";
   import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
   import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
   import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
   import { registerReaderCloseGuard } from "../../lib/reader/runtime";
   import type { MangaChapterProgress } from "../../lib/reader/mangaProgress";
   import { getMangaProgressForScope } from "../../lib/reader/mangaProgressRuntime";
+  import { isDetachedReaderWindow } from "../../lib/reader/detachedChannel";
   import { setReading } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
   import { isDiscordPublicImageUrl } from "../../lib/discord/coverResolver";
@@ -33,6 +34,9 @@
   import type { Manga } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
+
+  /** Page URLs the main window already fetched for the chapter it handed to this detached window. */
+  let { initialPages = null }: { initialPages?: { chapterId: number; urls: string[] } | null } = $props();
 
   const AVG_MIN_PER_PAGE = 0.33;
   const READ_LINE_PCT    = 0.20;
@@ -50,6 +54,8 @@
 
   const pageCache = new Map<number, string[]>();
   const inflight  = new Map<number, Promise<string[]>>();
+  // Used by the first load only; every later load fetches its own page list.
+  let handedOverPages = untrack(() => initialPages);
   let offlinePageUrls: string[] = [];
 
   function clearOfflinePages() {
@@ -343,7 +349,7 @@
     store.settings.optimizeContrast && "optimize-contrast",
   ].filter(Boolean).join(" "));
 
-  const fitLabel = $derived({ width: "Fit W", height: "Fit H", screen: "Fit Screen", original: "1:1" }[fit]);
+  const fitLabel = $derived({ width: $_("reader_fitWidthShort"), height: $_("reader_fitHeightShort"), screen: $_("reader_fitScreenShort"), original: "1:1" }[fit]);
   const webViewUrl = $derived(displayChapter?.realUrl ?? store.activeChapter?.realUrl ?? null);
   const suwayomiWebViewUrl = $derived.by(() => {
     if (!webViewUrl) return null;
@@ -353,7 +359,9 @@
       return webViewUrl;
     }
   });
-  const canOpenWebView = $derived(!!webViewUrl);
+  // Only the main window may open the app's own web view window or the system browser.
+  const inDetachedWindow = isDetachedReaderWindow();
+  const canOpenWebView = $derived(!!webViewUrl && !inDetachedWindow);
 
   const stripToRender = $derived(
     style === "longstrip"
@@ -585,6 +593,8 @@
     pageGroups       = [];
     pageReady        = false;
     resetReaderSessionCaches();
+    if (handedOverPages?.chapterId === id && handedOverPages.urls.length) pageCache.set(id, handedOverPages.urls);
+    handedOverPages = null;
     clearOfflinePages();
     store.pageUrls   = [];
     fadingOut        = false;
@@ -839,7 +849,7 @@
 
   async function openReaderWebView() {
     if (!webViewUrl || !suwayomiWebViewUrl) return;
-    const windowTitle = [store.activeManga?.title, displayChapter?.name].filter(Boolean).join(" - ") || "Chapter Web View";
+    const windowTitle = [store.activeManga?.title, displayChapter?.name].filter(Boolean).join(" - ") || translate("reader_webViewTitle");
     try {
       await invoke("open_reader_webview", { url: suwayomiWebViewUrl, title: windowTitle });
       webViewWindowOpen = true;
@@ -870,8 +880,42 @@
     catch { progressPersister.checkpoint(); }
   }
 
+  let detaching = false;
+
+  async function detachReader() {
+    if (detaching || !store.activeChapter) return;
+    detaching = true;
+    try {
+      try { await flushReaderProgress(); }
+      catch (saveError) { reportProgressSaveError(saveError); return; }
+      // Taken after the flush so the new window resumes from the page just saved.
+      const chapter = $state.snapshot(store.activeChapter);
+      if (!chapter) return;
+      const title = [store.activeManga?.title, displayChapter?.name].filter(Boolean).join(" - ") || "Epigraph";
+      try {
+        const { openDetachedReader } = await import("../../lib/reader/detachedReaderHost");
+        await openDetachedReader({
+          kind: "manga",
+          chapter,
+          chapterList: $state.snapshot(store.activeChapterList),
+          manga: $state.snapshot(store.activeManga) ?? null,
+          // Only network URLs live in this cache; offline pages are blob URLs of this window.
+          pageUrls: pageCache.get(chapter.id),
+        }, title);
+      } catch (detachError) {
+        console.error("Could not open the reader in a new window:", detachError);
+        addToast({ kind: "error", title: translate("reader_detachFailed") });
+        return;
+      }
+      await closeReaderWebView();
+      closeReader();
+    } finally {
+      detaching = false;
+    }
+  }
+
   function reportProgressSaveError(saveError: unknown) {
-    error = "Reading progress could not be saved. Keep the reader open and try closing again.";
+    error = translate("reader_progressSaveFailed");
     console.error(saveError);
   }
 
@@ -977,7 +1021,6 @@
 
   $effect(() => {
     const ch = displayChapter ?? store.activeChapter;
-    const autoBookmark = store.settings.autoBookmark ?? true;
     if (!loading && ch && lastPage && store.activeManga) {
       const chapterId   = ch.id;
       const chapterName = ch.name;
@@ -993,7 +1036,9 @@
         if (style === "longstrip" && visibleChapterId && chapterId !== visibleChapterId) return;
         addHistory({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, readAt: Date.now() });
         recordChapterProgress(chapterId, pageNum);
-        if (autoBookmark) {
+        // Read untracked: a detached window replaces its settings each time another window persists state,
+        // and re-running here would relay history and bookmarks back to it in an endless loop.
+        if (store.settings.autoBookmark ?? true) {
           addBookmark({ mangaId, mangaTitle, thumbnailUrl: thumb, chapterId, chapterName, pageNumber: pageNum });
         }
         if (style !== "longstrip" && store.settings.autoMarkRead && atLast) markChapterRead(chapterId);
@@ -1323,6 +1368,7 @@
 
 <ReaderHud
   bind:toolsOpen={toolsOpen}
+  readerKind="manga"
   title={store.activeManga?.title}
   chapterTitle={displayChapter?.name}
   progressLabel={loading ? "..." : `${sliderPage} / ${sliderMax}`}
@@ -1337,6 +1383,7 @@
   rtl={rtl}
   onMouseMove={(e) => { if (e.clientY < 60 || window.innerHeight - e.clientY < 60) showUi(); }}
   onclose={exitReader}
+  ondetach={inDetachedWindow ? undefined : detachReader}
   onprev={goPrev}
   onnext={goNext}
   onjump={jumpToPage}
@@ -1349,7 +1396,7 @@
       {#if activeSubPanel === "main"}
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "reading"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "reading"; }}>
           <dt>{$_("ui_reading")}</dt>
-          <dd>{style === "longstrip" ? "Strip" : style === "double" ? "Double" : style === "fade" ? "Fade" : "Single"} · {rtl ? "RTL" : "LTR"} <span class="popover-chevron">&gt;</span></dd>
+          <dd>{style === "longstrip" ? $_("ui_strip") : style === "double" ? $_("ui_double") : style === "fade" ? $_("ui_fade") : $_("ui_single")} · {rtl ? $_("settings_reader_rtlShort") : $_("settings_reader_ltrShort")} <span class="popover-chevron">&gt;</span></dd>
         </div>
         <div class="popover-tts-row" role="button" tabindex="0" onclick={() => activeSubPanel = "display"} onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "display"; }}>
           <dt>{$_("library_display_title")}</dt>
@@ -1383,8 +1430,8 @@
           <dt>{$_("ui_direction")}</dt>
           <dd>
             <div class="popover-segmented">
-              <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
-              <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+              <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })} title={$_("settings_reader_leftToRight")}>{$_("settings_reader_ltrShort")}</button>
+              <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })} title={$_("settings_reader_rightToLeft")}>{$_("settings_reader_rtlShort")}</button>
             </div>
           </dd>
         </div>
@@ -1489,8 +1536,8 @@
         <dt>{$_("ui_direction")}</dt>
         <dd>
           <div class="popover-segmented">
-            <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
-            <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+            <button class="popover-segment" class:active={!rtl} onclick={() => updateSettings({ readingDirection: "ltr" })} title={$_("settings_reader_leftToRight")}>{$_("settings_reader_ltrShort")}</button>
+            <button class="popover-segment" class:active={rtl} onclick={() => updateSettings({ readingDirection: "rtl" })} title={$_("settings_reader_rightToLeft")}>{$_("settings_reader_rtlShort")}</button>
           </div>
         </dd>
       </div>
@@ -1541,7 +1588,7 @@
       type="button"
       class="resume-banner"
       class:fading={resumeFading}
-      aria-label={`Dismiss bookmark resume notice for page ${resumePage}`}
+      aria-label={$_("reader_dismissResume", { page: resumePage })}
       onclick={() => { resumeVisible = false; resumeFading = false; }}
     >
       <span>{$_("ui_bookmarkAtPage")} {resumePage}</span>
@@ -1754,7 +1801,7 @@
     font-weight: var(--component-reader-core-action-font-weight);
     color: var(--component-reader-core-download-title-fg);
     letter-spacing: var(--component-reader-core-download-title-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     padding: var(--component-reader-core-download-title-padding);
     border-bottom: var(--component-reader-core-download-title-border);
     margin-bottom: var(--component-reader-core-download-title-margin-bottom);

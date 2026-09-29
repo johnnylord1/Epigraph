@@ -13,7 +13,9 @@ export function isReaderControlKeyboardTarget(target: EventTarget | null): boole
   const tagName = typeof element.tagName === "string" ? element.tagName.toLowerCase() : "";
   if (["input", "textarea", "select", "button", "a", "summary"].includes(tagName)) return true;
   if (typeof element.closest !== "function") return false;
-  return Boolean(element.closest("[contenteditable='true'], [role='button'], [role='option'], [role='slider']"));
+  const control = element.closest("[contenteditable='true'], [role='button'], [role='option'], [role='slider']");
+  // The HUD wraps the page viewer in a tap target with role="button"; keys pressed inside it are reader commands.
+  return Boolean(control) && control?.getAttribute?.("data-reader-surface") == null;
 }
 
 interface KeyboardEventHost {

@@ -1,4 +1,5 @@
 import { createBookLibraryCardId } from "./cardIdentity";
+import { translate } from "../i18n/runtime";
 import type {
   BooksLibraryActions,
   BooksSectionVM,
@@ -209,16 +210,13 @@ function buildBooksEmptyMessage(
   filteredBooks: BookEntry[],
 ): string {
   if (input.typeFilter === "sources" && input.books.length >= 0) {
-    return "No source novels in this profile library yet.";
+    return translate("library.empty.booksSources");
   }
   if (input.books.length === 0 && (input.sourceCount ?? 0) === 0) {
-    if (input.profileLabel) {
-      return `This ${input.profileLabel} profile has no imported books yet. Drag EPUB or PDF files here to import them.`;
-    }
-    return "Drag EPUB or PDF files into the Books shelf to import them.";
+    return translate("library.empty.booksImport");
   }
   if (filteredBooks.length === 0) {
-    return "No books match the current search or filters.";
+    return translate("library.empty.booksFiltered");
   }
   return "";
 }
@@ -299,7 +297,7 @@ export function buildBooksSectionState(input: BuildBooksSectionInput): BooksSect
             progress: presented.showProgress
               ? {
                   primaryLabel: String(readCount),
-                  secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+                  secondaryLabel: chapterCount > 0 ? translate("library.card.ofChapters", { count: chapterCount }) : undefined,
                   percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
                 }
               : null,

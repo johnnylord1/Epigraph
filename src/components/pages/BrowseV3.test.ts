@@ -644,6 +644,7 @@ vi.mock("../../lib/novels/sources", () => ({
 vi.mock("../../lib/novels/repositoryState", () => ({
   addNovelRepositoryToState: vi.fn((state) => state),
   deriveNovelRepositoryUiState: vi.fn(() => "ready"),
+  isBuiltinNovelRepository: vi.fn(() => false),
   loadNovelRepositoryState: vi.fn(async () => ({
     repositories: [],
     catalogEntries: [],

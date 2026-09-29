@@ -28,6 +28,7 @@
   } from "../../lib/search/providers";
   import { SearchController } from "../../lib/search/controller";
   import { SETTINGS_SEARCH_CATALOG } from "../../lib/search/settingsCatalog";
+  import { prefersReducedMotion } from "../../lib/motion/motion";
   import type { SearchBrowseContentType, SearchCatalog, SearchContext, SearchResult } from "../../lib/search/types";
   import type { Manga, Source } from "../../lib/types";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -703,7 +704,12 @@
     renderedContext = currentContext();
     setSearchQuery(value);
     if (!value.trim()) {
-      dismissSearchPalette();
+      // Erasing the query while still typing keeps the search engaged, like Escape does, so the dim
+      // stays put instead of fading out and back in on the next keystroke.
+      const typing = document.activeElement instanceof HTMLInputElement
+        && document.activeElement.matches(".n-search__input");
+      if (typing) store.clearSearchPaletteQuery();
+      else dismissSearchPalette();
       return;
     }
     if (paletteView === "browse") {
@@ -921,6 +927,53 @@
       focusOriginNavPage = null;
       focusOriginLibrarySection = null;
     }
+  });
+
+  // The palette follows its results: when they land or change it glides to the new height instead
+  // of jumping. The browse view animates its own height, so it is left alone.
+  let paletteSettledHeight = 0;
+  let paletteResize: Animation | null = null;
+  let paletteWasOpen = false;
+
+  $effect(() => {
+    const root = paletteRoot;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (paletteResize) return;
+      const next = root.offsetHeight;
+      const from = paletteSettledHeight;
+      paletteSettledHeight = next;
+      if (!from || Math.abs(next - from) < 2) return;
+      if (!root.classList.contains("is-open") || root.classList.contains("is-browse-view") || prefersReducedMotion()) return;
+      paletteResize = root.animate([{ height: `${from}px` }, { height: `${next}px` }], {
+        duration: 420,
+        easing: "cubic-bezier(.16, 1, .3, 1)",
+      });
+      paletteResize.finished.catch(() => {}).finally(() => { paletteResize = null; });
+    });
+    observer.observe(root);
+    return () => {
+      observer.disconnect();
+      paletteResize?.cancel();
+    };
+  });
+
+  // Closing clears the query before the palette has faded out; hold its height through the fade so
+  // it lifts away whole instead of collapsing first.
+  $effect.pre(() => {
+    const open = store.searchOpen;
+    const root = paletteRoot;
+    if (root && paletteWasOpen && !open && !prefersReducedMotion()) {
+      const height = `${root.offsetHeight}px`;
+      paletteResize?.cancel();
+      root.animate([{ height }, { height }], { duration: 260 });
+    }
+    paletteWasOpen = open;
+  });
+
+  // A fresh open starts from whatever it first shows; only later changes glide.
+  $effect(() => {
+    if (store.searchOpen && paletteRoot) paletteSettledHeight = paletteRoot.offsetHeight;
   });
 
   onMount(() => {
@@ -1208,32 +1261,52 @@
     left: 50%;
     width: min(900px, calc(100vw - var(--sp-8)));
     max-height: var(--search-palette-max-height);
-    transform: translateX(-50%);
     z-index: calc(var(--z-popover) + 1);
     overflow: hidden;
-    border: 1px solid var(--component-search-border);
+    border: 0;
     border-radius: var(--component-popover-radius);
     background: var(--component-popover-bg);
     color: var(--text-primary);
-    box-shadow: var(--component-popover-shadow);
+    box-shadow: 0 0 0 1px var(--component-search-border), var(--component-popover-shadow);
+    transform-origin: top center;
     opacity: 0;
     pointer-events: none;
     contain: layout paint style;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-  }
-  .search-palette.is-browse-view {
-    height: var(--search-palette-start-height);
-    transition: height var(--duration-normal) var(--easing-emphasized);
-  }
-  .search-palette.is-browse-view.is-browse-expanded {
-    height: var(--search-palette-max-height);
+    /* Closed, the palette sits a little above its place; it drops in when it opens and lifts back
+       out when it closes, so it never appears or vanishes in a single frame. */
+    --search-palette-rest: translate(-50%, 0);
+    transform: var(--search-palette-rest) translateY(-10px) scale(0.98);
+    transition:
+      opacity 200ms ease,
+      transform 260ms var(--ui-out),
+      var(--search-palette-height-transition, height 0s);
   }
   .search-palette.is-open {
     opacity: 1;
     pointer-events: auto;
-    animation: search-palette-in var(--duration-normal) var(--easing-emphasized) both;
+    transform: var(--search-palette-rest);
+    transition:
+      opacity 300ms var(--ui-out) 40ms,
+      transform 560ms var(--ui-out) 40ms,
+      var(--search-palette-height-transition, height 0s);
   }
+  .search-palette.is-browse-view {
+    --search-palette-height-transition: height var(--duration-normal) var(--easing-emphasized);
+    height: var(--search-palette-start-height);
+  }
+  .search-palette.is-browse-view.is-browse-expanded {
+    height: var(--search-palette-max-height);
+  }
+  /* Result groups rise in one after another when the palette opens or a new query lands. */
+  .search-palette.is-open .search-palette__group,
+  .search-palette.is-open .search-palette__browse-group {
+    animation: search-palette-group-in 520ms var(--ui-out) 120ms both;
+  }
+  .search-palette.is-open :is(.search-palette__group, .search-palette__browse-group):nth-child(2) { animation-delay: 170ms; }
+  .search-palette.is-open :is(.search-palette__group, .search-palette__browse-group):nth-child(3) { animation-delay: 220ms; }
+  .search-palette.is-open :is(.search-palette__group, .search-palette__browse-group):nth-child(n + 4) { animation-delay: 270ms; }
   .search-palette__actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); min-height: 38px; padding: var(--sp-1) var(--sp-2) 0; }
   .search-palette__actions.is-browse {
     justify-content: flex-start;
@@ -1299,13 +1372,16 @@
     scrollbar-color: var(--component-popover-scrollbar-thumb-bg) transparent;
     scrollbar-width: thin;
   }
-  .search-palette__result { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 56px; padding: var(--sp-2) var(--sp-3); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: left; }
+  .search-palette__result { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 56px; padding: var(--sp-2) var(--sp-3); border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-primary); text-align: left; transition: background 200ms ease, transform 450ms var(--ui-spring); }
   .search-palette__result:hover {
     background: var(--component-popover-item-hover-bg);
   }
+  .search-palette__result:active { transform: scale(0.98); }
+  /* Hover is only a soft surface; the keyboard-active result keeps a focus ring. */
   .search-palette__result.is-active,
   .search-palette__result:focus-visible,
   .search-palette__result.is-active:hover {
+    outline: none;
     border-color: var(--component-search-border-focus);
     background: var(--component-menu-item-hover-bg);
   }
@@ -1328,9 +1404,8 @@
     border-radius: var(--radius-lg);
     scroll-snap-align: start;
     transition:
-      border-color var(--duration-fast) var(--easing-standard),
-      background-color var(--duration-fast) var(--easing-standard),
-      box-shadow var(--duration-fast) var(--easing-standard);
+      background-color 200ms ease,
+      transform 450ms var(--ui-spring);
   }
   .search-palette__result.is-work-card:hover { background: var(--component-popover-item-hover-bg); }
   .search-palette__result.is-work-card .search-palette__result-media {
@@ -1340,6 +1415,11 @@
     border: 1px solid var(--component-library-card-cover-border);
     border-radius: var(--radius-xl);
     box-shadow: var(--component-library-card-cover-shadow);
+    transition: transform 500ms var(--ui-spring);
+  }
+  .search-palette__result.is-work-card:hover .search-palette__result-media,
+  .search-palette__result.is-work-card.is-active .search-palette__result-media {
+    transform: translateY(-3px);
   }
   .search-palette__result.is-work-card .search-palette__result-copy {
     display: flex;
@@ -1366,8 +1446,8 @@
     gap: 1px;
     font-family: var(--font-ui);
     line-height: var(--leading-tight);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
   .search-palette__result-work-meta span {
     min-width: 0;
@@ -1382,6 +1462,7 @@
   .search-palette__result.is-work-card.is-active,
   .search-palette__result.is-work-card:focus-visible,
   .search-palette__result.is-work-card.is-active:hover {
+    outline: none;
     border-color: var(--component-search-border-focus);
     background: var(--component-menu-item-hover-bg);
     box-shadow: inset 0 0 0 1px var(--component-search-border-focus);
@@ -1404,6 +1485,10 @@
   :global(.search-palette__scope-action-icon) {
     flex: 0 0 auto;
     color: var(--component-search-icon-focus-fg);
+    transition: transform 500ms var(--ui-bounce);
+  }
+  .search-palette__scope-action:hover :global(.search-palette__scope-action-icon) {
+    transform: translateX(4px);
   }
   .search-palette__browse-loading {
     display: flex;
@@ -1481,25 +1566,18 @@
   .search-palette__group-results.is-work-grid::-webkit-scrollbar-thumb:hover {
     background: var(--component-popover-scrollbar-color);
   }
-  @keyframes search-palette-in {
-    from { opacity: 0; transform: translate(-50%, -6px) scale(0.985); }
-    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  @keyframes search-palette-group-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
   }
   .search-palette__state { padding: var(--sp-8) var(--sp-4); color: var(--text-secondary); text-align: center; }
   .search-palette__state--compact { padding-block: var(--sp-4); }
-  @keyframes search-palette-in-narrow {
-    from { opacity: 0; transform: translateY(-6px) scale(0.985); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
   @media (max-width: 980px) {
     .search-palette {
       left: calc(var(--shell-sidebar-width) + var(--sp-2));
       right: var(--sp-3);
       width: auto;
-      transform: none;
-    }
-    .search-palette.is-open {
-      animation-name: search-palette-in-narrow;
+      --search-palette-rest: translateX(0);
     }
   }
   @media (max-width: 720px) {

@@ -2,6 +2,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { closeActivityPanel, store } from "../../store/state.svelte";
   import RecentActivity from "./RecentActivity.svelte";
+  import { enterViewOnMount } from "../../lib/motion/motion";
 
   function backLabel() {
     if (store.activityPanelReturnPage === "library") return $_("home.activity.backToLibrary");
@@ -12,7 +13,7 @@
   }
 </script>
 
-<div class="activity-overlay" role="dialog" aria-label={$_("ui_recentActivity")}>
+<div class="activity-overlay" role="dialog" aria-label={$_("ui_recentActivity")} use:enterViewOnMount>
   <div class="activity-overlay__header">
     <button class="activity-overlay__back" type="button" onclick={closeActivityPanel}>
       <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
@@ -37,6 +38,7 @@
     padding: var(--component-activity-overlay-padding);
     background: var(--component-activity-overlay-bg);
     backdrop-filter: var(--component-activity-overlay-blur);
+    animation: fadeIn 220ms ease both;
     -webkit-app-region: no-drag;
   }
 
@@ -56,7 +58,7 @@
     color: var(--component-activity-overlay-back-fg);
     font-size: var(--component-activity-overlay-back-font-size);
     letter-spacing: var(--component-activity-overlay-back-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     padding: var(--component-activity-overlay-back-padding);
     cursor: pointer;
   }

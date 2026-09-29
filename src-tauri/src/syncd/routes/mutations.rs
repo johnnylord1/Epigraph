@@ -6651,6 +6651,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mutations_survive_writes_committed_by_other_requests() {
+        let (_temp, state) = build_state().await;
+        let options = SqliteConnectOptions::new()
+            .filename(&state.config.db_path)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let mut other = SqliteConnection::connect_with(&options).await.unwrap();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let other_stop = stop.clone();
+        // Other requests refreshing their tokens commit between the mutation's reads and writes.
+        // The short pause stands in for the gap between requests; a writer that never lets go
+        // would starve any waiter past busy_timeout.
+        let writer = tokio::spawn(async move {
+            let mut tick = 0_i64;
+            while !other_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                tick += 1;
+                sqlx::query("UPDATE paired_device_tokens SET last_seen_at_ms = ?")
+                    .bind(tick)
+                    .execute(&mut other)
+                    .await
+                    .unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        });
+        let app = build_test_router(state.clone());
+        let mut failures = Vec::new();
+        for index in 0..150 {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    json!({
+                        "requestId": format!("contended-{index}"),
+                        "mutations": [{
+                            "entityType": "book.progress",
+                            "clientMutationId": format!("contended-mutation-{index}"),
+                            "scopeId": "books:global",
+                            "entityId": "contended-book",
+                            "lamport": index + 1,
+                            "patch": {
+                                "renderer": "pdf",
+                                "progressPercent": 0.5,
+                                "lastReadAtMs": index + 1,
+                                "pageIndex": 1,
+                                "totalPages": 10
+                            }
+                        }]
+                    }),
+                ))
+                .await
+                .unwrap();
+            if response.status() != StatusCode::OK {
+                failures.push((index, response.status(), json_body(response).await));
+            }
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        writer.await.unwrap();
+        assert!(failures.is_empty(), "{failures:?}");
+    }
+
+    #[tokio::test]
     async fn concurrent_identical_retries_apply_once() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state.clone());

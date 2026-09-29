@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../tauri/invoke";
 
 import { reconcileBookIdentityState } from "./identity";
 import { extractIsbns } from "./isbn";
@@ -269,7 +269,25 @@ export async function loadBookLibraryState(scope: BookLibraryStateScope = {}): P
   return reloadBookLibraryState(scope);
 }
 
-export async function reloadBookLibraryState(scope: BookLibraryStateScope = {}): Promise<PersistedBookLibraryState> {
+/** Restore must not treat a UI fallback/cache as evidence that disk is empty. */
+export async function loadBookLibraryStateForRestore(scope: BookLibraryStateScope = {}): Promise<PersistedBookLibraryState> {
+  if (!canUseDesktopBookStorage()) throw Error("RESTORE_BOOKS_STORAGE_UNAVAILABLE");
+  const raw = await invoke<string | null>("read_book_library_state", { profileId: bookLibraryStateCacheKey(scope) });
+  if (raw === null) return createEmptyState();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 1 || !["books", "bookProgress", "bookBookmarks", "booksCategories"].every(key => Array.isArray(parsed[key]))
+      || !parsed.booksCategoryAssignments || typeof parsed.booksCategoryAssignments !== "object" || Array.isArray(parsed.booksCategoryAssignments)) throw Error();
+    const normalized = normalizeBookLibraryState(parsed);
+    for (const key of ["books", "bookProgress", "bookBookmarks", "booksCategories"] as const) {
+      if (normalized[key].length !== parsed[key].length) throw Error();
+    }
+    return normalized;
+  } catch { throw Error("RESTORE_BOOKS_DESTINATION_CORRUPT"); }
+}
+
+export async function reloadBookLibraryState(scope: BookLibraryStateScope = {}, options: { strict?: boolean } = {}): Promise<PersistedBookLibraryState> {
+  if (options.strict) return persistBookLibraryStateCache(await loadBookLibraryStateForRestore(scope), scope);
   bookLibraryStateCache.delete(bookLibraryStateCacheKey(scope));
 
   if (!canUseDesktopBookStorage()) {

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { findAttestedPage, control } from "./epigraph-session-client.mjs";
 
 export const BUILTIN_THEME_IDS = [
   "nocturne",
@@ -95,14 +96,6 @@ export function computedContrastRatio(foregroundValue, backgroundValue, canvasVa
   const lighter = Math.max(luminance(foreground), luminance(background));
   const darker = Math.min(luminance(foreground), luminance(background));
   return (lighter + 0.05) / (darker + 0.05);
-}
-
-async function findEpigraphPage(browser) {
-  const pages = browser.contexts().flatMap((context) => context.pages());
-  for (const page of pages) {
-    if ((await page.title()).startsWith("Epigraph")) return page;
-  }
-  throw new Error("Epigraph WebView2 page was not found on the CDP endpoint.");
 }
 
 async function setRuntimeTheme(page, theme) {
@@ -206,8 +199,10 @@ export async function runThemeRuntimeAudit(options) {
   const outputDirectory = path.resolve(options.out);
   await mkdir(outputDirectory, { recursive: true });
   const browser = await chromium.connectOverCDP(options.cdp);
-  const page = await findEpigraphPage(browser);
-  await page.bringToFront();
+  const recordPath = process.env.EPIGRAPH_AUDIT_SESSION_RECORD;
+  if (!recordPath) throw new Error("Exact managed session record required for runtime audit");
+  const page = await findAttestedPage(browser, recordPath);
+  await control(recordPath, "focus");
 
   const snapshot = await page.evaluate(() => ({
     state: globalThis.__epigraphAudit?.getState?.() ?? null,

@@ -47,6 +47,15 @@ const snapshot: EpigraphNovelsSnapshot = {
 };
 
 describe("LNReader backup compatibility", () => {
+  it("maps category database references through imported stable Novel identities", async () => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    zip.file("NovelAndChapters/7.json", JSON.stringify({ id: 7, pluginId: "provider", path: "/valid", chapters: [] }));
+    zip.file("Category.json", JSON.stringify([{ id: 4, name: "Favorites", sort: 2, novelIds: [7, 999] }]));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(parsed.categories).toEqual([{ id: "4", name: "Favorites", order: 2, novelIds: [parsed.entries[0].id] }]);
+    expect(parsed.importIssues?.map(issue => issue.code)).toContain("unresolved-category-novel");
+  });
   it.each([null, 3, "invalid", []])("isolates a malformed novel from a valid neighbor: %j", async malformed => {
     const zip = new JSZip();
     zip.file("Version.json", "{}");

@@ -99,8 +99,9 @@ describe("ThemeEditor theme tokens", () => {
     expect(source).not.toContain('base = "nocturne"');
     expect(source).toContain("importThemeDocument(text)");
     expect(source).toContain("serializeThemeDocument(data)");
-    expect(source).toContain('"color-shadow-source": "Shadow source"');
-    expect(source).toContain('"color-highlight-source": "Highlight source"');
+    expect(source).toContain('"color-shadow-source": "themeEditor_token_colorShadowSource"');
+    expect(source).toContain('"color-highlight-source": "themeEditor_token_colorHighlightSource"');
+    expect(source).toContain("{$_(TOKEN_LABELS[token])}");
     expect(source).toContain("box-shadow: var(--component-theme-editor-preview-popover-shadow)");
     expect(source).not.toContain("version: 3");
     expect(source).toContain("style=\"background: {tokens[token]};\"");

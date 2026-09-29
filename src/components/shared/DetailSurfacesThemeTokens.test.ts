@@ -47,6 +47,7 @@ describe("detail surfaces theme tokens", () => {
 
     expect(layout).toContain('series: () => import("../pages/SeriesDetail.svelte")');
     expect(layout).toContain('book: () => import("../pages/BookDetail.svelte")');
+    expect(layout).toContain('novel: () => import("../pages/NovelDetail.svelte")');
     expect(series).toContain('import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte"');
     expect(series).toContain('import TrackingPanel from "../shared/TrackingPanel.svelte"');
     expect(novel).toContain('import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte"');

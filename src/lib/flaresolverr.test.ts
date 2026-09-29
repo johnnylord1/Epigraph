@@ -31,6 +31,11 @@ import {
   testFlareSolverrEndpoint,
   waitForFlareSolverrEndpoint,
 } from "./flaresolverr";
+import { applyAppLanguage } from "./i18n/runtime";
+
+beforeEach(() => {
+  applyAppLanguage("en");
+});
 
 describe("FlareSolverr integration contracts", () => {
   beforeEach(() => {

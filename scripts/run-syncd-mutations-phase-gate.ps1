@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 Set-StrictMode -Version Latest
 
 function Invoke-JsonRequest {
@@ -94,9 +95,8 @@ $syncd = $null
 function Stop-SyncdProcessTree {
   param($Process)
   if ($null -eq $Process) { return }
-  try { & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null } catch {}
   if (-not $Process.HasExited) {
-    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    Stop-EpigraphRetainedProcess -Process $Process
   }
   try { $null = $Process.WaitForExit(5000) } catch {}
 }
@@ -330,7 +330,7 @@ try {
   }
   Assert-Status $liveMutation 200 "live SSE book.progress"
   Wait-ForText -Path $liveOutput -Needle '"entityId":"book-live"' -TimeoutSeconds 10
-  if (-not $liveCapture.HasExited) { $liveCapture | Stop-Process -Force }
+  if (-not $liveCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $liveCapture }
 
   $replayOutput = Join-Path $tmpRoot "events-replay-progress.log"
   if (Test-Path $replayOutput) { Remove-Item $replayOutput -Force }
@@ -345,7 +345,7 @@ try {
     "--timeoutSeconds", "10"
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $replayOutput -Needle '"entityId":"book-live"' -TimeoutSeconds 10
-  if (-not $replayCapture.HasExited) { $replayCapture | Stop-Process -Force }
+  if (-not $replayCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $replayCapture }
 
   $bookBookmark = Invoke-JsonRequest -Method Post -Uri "$endpoint/v1/mutations" -Headers @{
     "Authorization" = "Bearer main-token"
@@ -494,7 +494,7 @@ try {
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $bookReplayResurrectionOutput -Needle '"op":"delete"' -TimeoutSeconds 10
   Wait-ForText -Path $bookReplayResurrectionOutput -Needle '"label":"Restored"' -TimeoutSeconds 10
-  if (-not $bookReplayResurrectionCapture.HasExited) { $bookReplayResurrectionCapture | Stop-Process -Force }
+  if (-not $bookReplayResurrectionCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $bookReplayResurrectionCapture }
   $bookReplayText = Get-Content $bookReplayResurrectionOutput -Raw
   if (([regex]::Matches($bookReplayText, '"entityId":"bookmark-1"')).Count -lt 3) {
     throw "book bookmark replay did not emit the expected create/delete/resurrect sequence"
@@ -631,7 +631,7 @@ try {
     "--timeoutSeconds", "10"
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $bookmarkReplayOutput -Needle '"op":"delete"' -TimeoutSeconds 10
-  if (-not $bookmarkReplayCapture.HasExited) { $bookmarkReplayCapture | Stop-Process -Force }
+  if (-not $bookmarkReplayCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $bookmarkReplayCapture }
 
   $novelChangesSequence = Invoke-JsonRequest -Method Get -Uri "$endpoint/v1/changes?scopeId=novels%3Aprofile%3Amain&sinceVersion=$($novelBookmarkVersion - 1)" -Headers @{
     "Authorization" = "Bearer main-token"
@@ -678,7 +678,7 @@ try {
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $novelReplayResurrectionOutput -Needle '"op":"delete"' -TimeoutSeconds 10
   Wait-ForText -Path $novelReplayResurrectionOutput -Needle '"chapterId":"c11"' -TimeoutSeconds 10
-  if (-not $novelReplayResurrectionCapture.HasExited) { $novelReplayResurrectionCapture | Stop-Process -Force }
+  if (-not $novelReplayResurrectionCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $novelReplayResurrectionCapture }
   $novelReplayText = Get-Content $novelReplayResurrectionOutput -Raw
   if (([regex]::Matches($novelReplayText, '"entityId":"novel-bookmark-1"')).Count -lt 3) {
     throw "novel bookmark replay did not emit the expected create/delete/resurrect sequence"

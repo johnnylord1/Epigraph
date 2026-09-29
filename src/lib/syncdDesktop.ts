@@ -62,6 +62,8 @@ export interface SyncdHostPairingState {
   claimedPlatform?: string | null;
   requestedScopes: string[];
   bootstrapBundle: string;
+  /** Six digits another desktop on the network types to pair without carrying the QR payload. */
+  pairingPin?: string;
   hostReady: boolean;
   error?: string | null;
 }
@@ -133,9 +135,12 @@ export interface SyncdReplicationSnapshot {
   activeSessionKey?: string | null;
   replicationStatus: SyncdReplicationStatus;
   lastConnectedAtMs?: number | null;
+  /** Current remote worker acknowledgement; absent for persisted/host-only state. */
+  remoteBootstrapGeneration?: number | null;
   lastError?: string | null;
   booksScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
   novelsScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
+  comicsScopeCheckpoint?: SyncdReplicationScopeCheckpoint | null;
   paused: boolean;
   lastAppliedScopes: string[];
   lastAppliedAtMs?: number | null;
@@ -195,7 +200,15 @@ export interface SyncdConnectBootstrapInput {
   manualOrigin?: string | null;
 }
 
+export interface SyncdResolvePairingPinInput {
+  origin: string;
+  tlsCertSha256: string;
+  fallbackOrigins?: string[];
+  pin: string;
+}
+
 export type PairingHostDecision = "approve" | "reject";
+
 
 export interface SyncdDisconnectSessionInput {
   sessionKey: string;
@@ -205,6 +218,10 @@ export type SyncdPairingStatusPayload = SyncdHostPairingState | SyncdConnectStat
 
 export function syncdListDiscoveryCandidates(): Promise<SyncdDesktopDiscoveryCandidate[]> {
   return invoke("syncd_list_discovery_candidates");
+}
+
+export function syncdResolvePairingPin(input: SyncdResolvePairingPinInput): Promise<string> {
+  return invoke("syncd_resolve_pairing_pin", { input });
 }
 
 export function syncdStartHostPairing(profileId: string): Promise<SyncdHostPairingState> {

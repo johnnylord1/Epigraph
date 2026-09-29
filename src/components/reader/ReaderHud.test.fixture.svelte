@@ -5,9 +5,10 @@
     domain: "comics" | "books";
     uiVisible?: boolean;
     isBookmarked?: boolean;
+    ondetach?: () => void;
   };
 
-  let { domain, uiVisible = true, isBookmarked = false }: Props = $props();
+  let { domain, uiVisible = true, isBookmarked = false, ondetach }: Props = $props();
 </script>
 
 <ReaderHud
@@ -19,6 +20,7 @@
   sliderPct={50}
   {isBookmarked}
   {uiVisible}
+  {ondetach}
 >
   <div data-testid="hud-content">{domain} content</div>
   {#snippet settingsPopover()}

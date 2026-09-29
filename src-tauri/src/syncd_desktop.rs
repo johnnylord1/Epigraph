@@ -104,6 +104,9 @@ pub struct SyncdHostPairingState {
     pub claimed_platform: Option<String>,
     pub requested_scopes: Vec<String>,
     pub bootstrap_bundle: String,
+    /// Six digits another desktop on the network can type instead of carrying the QR payload.
+    #[serde(default)]
+    pub pairing_pin: String,
     pub host_ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -172,6 +175,17 @@ pub struct SyncdDesktopSnapshot {
     pub host: Option<SyncdHostPairingState>,
     pub connect: Option<SyncdConnectState>,
     pub runtime_identity: Option<SyncdRuntimeIdentity>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdResolvePairingPinInput {
+    /// Origin of the discovered host and the certificate it advertised on the local network.
+    pub origin: String,
+    pub tls_cert_sha256: String,
+    #[serde(default)]
+    pub fallback_origins: Vec<String>,
+    pub pin: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -353,6 +367,16 @@ pub async fn syncd_list_discovery_candidates() -> Result<Vec<SyncdDesktopDiscove
     Ok(candidates)
 }
 
+/// Starts or reattaches this computer's Core for host actions. The detailed failure stays in the
+/// log; the UI receives a reason code it can present.
+async fn host_core(app: &AppHandle) -> Result<syncd_sidecar::SyncdRuntimeInfo, String> {
+    syncd_sidecar::ensure_host_mode(app).await.map_err(|error| {
+        automation_log(format!("syncd host Core unavailable: {error}"));
+        eprintln!("[syncd] host Core unavailable: {error}");
+        "SYNC_CORE_UNAVAILABLE".to_string()
+    })
+}
+
 #[tauri::command]
 pub async fn syncd_start_host_pairing(
     profile_id: String,
@@ -362,7 +386,7 @@ pub async fn syncd_start_host_pairing(
     automation_log(format!(
         "syncd_start_host_pairing begin profile_id={profile_id}"
     ));
-    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let runtime = host_core(&app).await?;
     reconcile_runtime_identity(&app, state.inner(), &runtime).await?;
     automation_log(format!(
         "syncd_start_host_pairing host_mode_ready profile_id={} local_base_url={} advertised_base_url={}",
@@ -415,6 +439,7 @@ pub async fn syncd_start_host_pairing(
         claimed_device_name: None,
         claimed_platform: None,
         requested_scopes: Vec::new(),
+        pairing_pin: crate::syncd::pairing_pin::pairing_pin(&bundle.pairing_code),
         bootstrap_bundle,
         host_ready: true,
         error: None,
@@ -442,7 +467,7 @@ pub async fn syncd_get_active_host_pairing(
     app: AppHandle,
     state: State<'_, SyncdDesktopState>,
 ) -> Result<Option<SyncdHostPairingState>, String> {
-    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let runtime = host_core(&app).await?;
     reconcile_runtime_identity(&app, state.inner(), &runtime).await?;
     Ok(state.runtime.lock().await.host.clone())
 }
@@ -452,8 +477,75 @@ pub async fn syncd_get_runtime_identity(
     app: AppHandle,
     state: State<'_, SyncdDesktopState>,
 ) -> Result<SyncdRuntimeIdentity, String> {
-    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let runtime = host_core(&app).await?;
     reconcile_runtime_identity(&app, state.inner(), &runtime).await
+}
+
+/// Exchanges the PIN shown by a discovered host for the same bootstrap bundle its QR code carries.
+/// The request is pinned to the certificate the host advertised, and the returned bundle must name
+/// that certificate too; connecting still goes through the host's approval.
+#[tauri::command]
+pub async fn syncd_resolve_pairing_pin(
+    input: SyncdResolvePairingPinInput,
+) -> Result<String, String> {
+    let pin = crate::syncd::pairing_pin::normalize_pin(&input.pin)
+        .ok_or_else(|| "SYNC_PIN_INVALID".to_string())?;
+    let expected_fingerprint = input.tls_cert_sha256.trim().to_string();
+    let client = build_pinned_http_client(&expected_fingerprint)?;
+    let mut origins = vec![normalize_syncd_origin(&input.origin)?];
+    for origin in input.fallback_origins.iter().filter_map(|raw| normalize_syncd_origin(raw).ok()) {
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
+    }
+
+    let mut last_error = None;
+    for origin in origins {
+        let response = match send_json(
+            client.post(format!("{origin}/v1/pairing/pin/resolve")),
+            &json!({ "pin": pin }),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            let body = response.bytes().await.unwrap_or_default();
+            let code = serde_json::from_slice::<ErrorBody>(&body)
+                .map(|body| body.error.code)
+                .unwrap_or_default();
+            return Err(match code.as_str() {
+                "PAIRING_PIN_NOT_FOUND" => "SYNC_PIN_NOT_FOUND",
+                "PAIRING_PIN_LOCKED" => "SYNC_PIN_LOCKED",
+                _ => "SYNC_PIN_FAILED",
+            }
+            .to_string());
+        }
+        let payload: BootstrapPayloadResponse = parse_json_response(response).await?;
+        if !payload
+            .tls_cert_sha256
+            .trim()
+            .eq_ignore_ascii_case(&expected_fingerprint)
+        {
+            return Err("SYNC_PIN_TLS_MISMATCH".to_string());
+        }
+        let bundle = SyncdBootstrapBundle {
+            pairing_session_id: payload.pairing_session_id,
+            pairing_code: payload.pairing_code,
+            device_name: Some(payload.device_name),
+            syncd_base_url: payload.syncd_base_url,
+            profile_id: payload.profile_id,
+            expires_at_ms: payload.expires_at_ms,
+            tls_cert_sha256: payload.tls_cert_sha256,
+        };
+        return serde_json::to_string_pretty(&bundle).map_err(|error| error.to_string());
+    }
+    automation_log(format!("resolve pairing pin unreachable error={last_error:?}"));
+    Err("SYNC_PIN_UNREACHABLE".to_string())
 }
 
 #[tauri::command]
@@ -618,7 +710,7 @@ pub async fn syncd_host_decide_pairing(
     app: AppHandle,
     state: State<'_, SyncdDesktopState>,
 ) -> Result<SyncdHostPairingState, String> {
-    let sidecar_runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let sidecar_runtime = host_core(&app).await?;
     reconcile_runtime_identity(&app, state.inner(), &sidecar_runtime).await?;
 
     let host = {
@@ -672,13 +764,13 @@ pub async fn syncd_host_decide_pairing(
 pub async fn syncd_list_paired_devices(
     app: AppHandle,
 ) -> Result<Vec<SyncdPairedDeviceView>, String> {
-    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let runtime = host_core(&app).await?;
     let client = insecure_local_client()?;
     let response = client
         .get(format!("{}/v1/pairing/devices", runtime.local_base_url))
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(transport_error_message)?
         .error_for_status()
         .map_err(|error| error.to_string())?;
     parse_json_response(response).await
@@ -691,7 +783,7 @@ pub async fn syncd_update_paired_device_granted_scopes(
     granted_scopes: Vec<String>,
     app: AppHandle,
 ) -> Result<SyncdPairedDeviceView, String> {
-    let runtime = syncd_sidecar::ensure_host_mode(&app).await?;
+    let runtime = host_core(&app).await?;
     let client = insecure_local_client()?;
     send_json_request(
         client.post(format!(
@@ -1400,7 +1492,7 @@ async fn validate_token(origin: &str, session: &PersistedSyncSession) -> Result<
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
 
     if response.status().is_success() || response.status().as_u16() == 409 {
         return Ok(());
@@ -1427,7 +1519,7 @@ async fn fetch_client_contract(
         .get(format!("{origin}/v1/discovery/client-contract"))
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(transport_error_message)?
         .error_for_status()
         .map_err(|error| error.to_string())?;
     parse_json_response(response).await
@@ -1441,7 +1533,7 @@ async fn fetch_client_guidance(
         .get(format!("{origin}/v1/discovery/client-guidance"))
         .send()
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(transport_error_message)?
         .error_for_status()
         .map_err(|error| error.to_string())?;
     parse_json_response(response).await
@@ -1456,7 +1548,7 @@ async fn fetch_bootstrap_payload(
         .get(format!("{origin}/v1/bootstrap/session/{session_id}"))
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
 
     if response.status().is_success() {
         return parse_json_response(response).await;
@@ -1559,7 +1651,7 @@ async fn send_json<T: Serialize>(
         .body(body)
         .send()
         .await
-        .map_err(|error| error.to_string())
+        .map_err(transport_error_message)
 }
 
 async fn send_json_request<TRequest: Serialize, TResponse: DeserializeOwned>(
@@ -1672,7 +1764,23 @@ pub(crate) fn save_persisted_state(state: &SyncdDesktopPersistedState) -> Result
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let payload = serde_json::to_vec_pretty(state).map_err(|error| error.to_string())?;
-    fs::write(path, payload).map_err(|error| error.to_string())
+    // This file holds the device identity and every paired session token. A torn write would
+    // make `load_persisted_state` fail and silently drop all pairings, so replace it atomically.
+    let temp_path = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)?;
+        file.write_all(&payload)?;
+        file.sync_all()?;
+        drop(file);
+        crate::suwayomi_maintenance::atomic_replace_file(&temp_path, &path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result.map_err(|error| error.to_string())
 }
 
 pub(crate) fn upsert_persisted_session(session: PersistedSyncSession) -> Result<(), String> {
@@ -1803,6 +1911,20 @@ pub(crate) fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+/// reqwest's `Display` stops at "error sending request for url (...)"; the cause
+/// ("tcp connect error", "connection refused", "timed out") lives in the source
+/// chain, and the offline/TLS classifiers below need to see it.
+pub(crate) fn transport_error_message(error: reqwest::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    message
 }
 
 pub(crate) fn is_connection_error(error: &str) -> bool {

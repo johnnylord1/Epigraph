@@ -98,6 +98,7 @@ export interface EpigraphNovelChapterEntry {
 export interface EpigraphNovelsSnapshot {
   /** Parse diagnostics carried to presentation; never executed as restore state. */
   importIssues?: EpigraphNovelsRestoreIssue[];
+  categories?: { id: string; name: string; order: number; novelIds: string[] }[];
   entries: EpigraphNovelEntry[];
   chapters: EpigraphNovelChapterEntry[];
   progress: EpigraphNovelProgressEntry[];
@@ -146,6 +147,8 @@ export type EpigraphNovelsRestoreIssueCode =
   | "invalid-novels-payload"
   | "invalid-novel-identity"
   | "invalid-chapter-identity"
+  | "invalid-category"
+  | "unresolved-category-novel"
   | "missing-required-repository"
   | "missing-required-plugin"
   | "missing-required-source"
@@ -319,6 +322,7 @@ function normalizeChapterEntry(entry: EpigraphNovelChapterEntry): EpigraphNovelC
 
 export function normalizeEpigraphNovelsSnapshot(snapshot: EpigraphNovelsSnapshot): EpigraphNovelsSnapshot {
   return {
+    ...(snapshot.categories ? { categories: snapshot.categories.map(category => ({ ...category, novelIds: [...category.novelIds] })) } : {}),
     ...(snapshot.importIssues?.length ? { importIssues: snapshot.importIssues.map(issue => ({ ...issue })) } : {}),
     entries: Array.isArray(snapshot.entries) ? snapshot.entries.map((entry, index) => normalizeEntry(entry, index)) : [],
     chapters: Array.isArray(snapshot.chapters)

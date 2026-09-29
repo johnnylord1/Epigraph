@@ -1,5 +1,5 @@
 import "../../styles/global.css";
-import { commands, page } from "@vitest/browser/context";
+import { commands, page, userEvent } from "@vitest/browser/context";
 import { afterEach, beforeEach, expect } from "vitest";
 import { applyAppLanguage } from "../../lib/i18n/runtime";
 
@@ -82,6 +82,9 @@ expect.extend({
     const baselinePath = `${SCREENSHOT_BASE_DIR}/${screenshotName}.png`;
     const actualPath = `${SCREENSHOT_ACTUAL_DIR}/${screenshotName}.actual.png`;
 
+    // Browser files run sequentially in one page, so a pointer left over by an earlier file
+    // would paint hover states into this capture. Park it on the page corner first.
+    await userEvent.unhover(document.body, { position: { x: 0, y: 0 }, force: true });
     const actual = await page.screenshot({ base64: true });
 
     let baselineBase64: string | null = null;

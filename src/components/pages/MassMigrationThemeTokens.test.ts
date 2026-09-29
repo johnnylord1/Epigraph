@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const ACTIVE_MASS_MIGRATION_FILES = [
   "src/components/pages/MassMigrateModal.svelte",
+  "src/components/pages/migrationModal.css",
 ] as const;
 
 const TOKEN_SOURCE_FILES = [

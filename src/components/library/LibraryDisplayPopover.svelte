@@ -262,10 +262,10 @@
   .n-popover-title {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 620;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--component-library-faint-fg);
   }
 
@@ -282,10 +282,10 @@
   .n-popover-meta {
     flex: 0 0 auto;
     font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 620;
-    letter-spacing: 0.055em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--component-library-accent-fg);
     white-space: nowrap;
   }
@@ -419,10 +419,10 @@
     background: transparent;
     color: var(--component-library-muted-fg);
     font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 800;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
     transition: all 250ms var(--easing-emphasized);
   }

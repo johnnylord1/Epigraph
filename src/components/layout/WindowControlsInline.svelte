@@ -3,6 +3,9 @@
   import { onMount } from "svelte";
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 
+  import { Minus, Square, X } from "phosphor-svelte";
+
+  let { variant = "inline" }: { variant?: "inline" | "titlebar" } = $props();
   let win = $state<Window | null>(null);
 
   onMount(() => {
@@ -29,13 +32,13 @@
   }
 </script>
 
-<div class="window-controls-inline" aria-label={$_("ui_windowControls")}>
+<div class="window-controls-inline" class:window-controls-inline--titlebar={variant === "titlebar"} data-no-window-drag aria-label={$_("ui_windowControls")}>
   <button type="button" class="window-controls-inline__btn" onclick={minimizeWindow} title={$_("ui_minimize")} aria-label={$_("ui_minimize")}>
-    <span class="material-symbols-outlined" aria-hidden="true">remove</span>
+    {#if variant === "titlebar"}<Minus size={14} aria-hidden="true" />{:else}<span class="material-symbols-outlined" aria-hidden="true">remove</span>{/if}
   </button>
 
   <button type="button" class="window-controls-inline__btn" onclick={toggleMaximizeWindow} title={$_("ui_maximize")} aria-label={$_("ui_maximize")}>
-    <span class="material-symbols-outlined" aria-hidden="true">crop_square</span>
+    {#if variant === "titlebar"}<Square size={14} aria-hidden="true" />{:else}<span class="material-symbols-outlined" aria-hidden="true">crop_square</span>{/if}
   </button>
 
   <button
@@ -45,7 +48,7 @@
     title={$_("ui_close_bbfa773e")}
     aria-label={$_("ui_close_bbfa773e")}
   >
-    <span class="material-symbols-outlined" aria-hidden="true">close</span>
+    {#if variant === "titlebar"}<X size={14} aria-hidden="true" />{:else}<span class="material-symbols-outlined" aria-hidden="true">close</span>{/if}
   </button>
 </div>
 
@@ -94,5 +97,13 @@
   .window-controls-inline__btn--close:hover {
     color: var(--component-window-control-close-fg-hover);
     background: var(--component-window-control-close-bg-hover);
+  }
+  .window-controls-inline--titlebar { gap: 0; flex: 0 0 auto; }
+  .window-controls-inline--titlebar .window-controls-inline__btn {
+    display: grid;
+    place-items: center;
+    width: 46px;
+    min-width: 46px;
+    height: 44px;
   }
 </style>

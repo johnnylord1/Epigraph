@@ -2,12 +2,17 @@
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
   import {
+    ArrowLeft,
     ArrowRight,
+    ArrowsLeftRight,
     BookOpen,
     Check,
     CircleNotch,
+    ListChecks,
     MagnifyingGlass,
+    Plugs,
     StackSimple,
+    Warning,
     X,
   } from "phosphor-svelte";
   import { onMount } from "svelte";
@@ -40,6 +45,8 @@
   import { getNovelMigrationBlocker, hasMinimumNovelMigrationSafeCohort, isNovelSourceMigrationSafe } from "../../lib/novels/migrationSafe";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
+  import { enterOnMount, glideHeight, listFlip } from "../../lib/motion/motion";
+  import "./migrationModal.css";
 
   interface Props {
     active: ActiveNovelDetailState;
@@ -74,6 +81,44 @@
   let overlayEl: HTMLDivElement | undefined = $state();
   let modalEl: HTMLDivElement | undefined = $state();
   let closeButtonEl: HTMLButtonElement | undefined = $state();
+  let pickingPath = $state<string | null>(null);
+
+  const modeSteps = $derived<Step[]>(mode === "mass" ? ["source", "mass-preview"] : ["source", "search", "confirm"]);
+  const visibleStep = $derived<Step>(step === "mass-preview" && !massPreview ? "source" : step);
+  const stepIdx = $derived(Math.max(0, modeSteps.indexOf(visibleStep)));
+  const currentSourceName = $derived(active.novel.source.sourceName ?? active.novel.source.pluginName ?? translate("ui_currentSource"));
+
+  function stepLabel(value: Step): string {
+    if (value === "source") return translate("ui_pickSource");
+    if (value === "search") return translate("migrate.stepSearch");
+    if (value === "mass-preview") return translate("massMigration.stepReview");
+    return translate("migrate.stepConfirm");
+  }
+
+  function statusLabel(status: string): string {
+    if (status === "ready") return translate("ui_ready");
+    if (status === "blocked") return translate("ui_blocked_99613c74");
+    return translate("ui_needsReview_33a506cf");
+  }
+
+  function statusTone(status: string): string {
+    if (status === "ready") return "mg-pill--good";
+    if (status === "blocked") return "mg-pill--bad";
+    return "mg-pill--warn";
+  }
+
+  const languageNames = (() => {
+    try { return new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "language" }); }
+    catch { return null; }
+  })();
+  function languageLabel(lang: string): string {
+    try { return languageNames?.of(lang) ?? lang.toUpperCase(); }
+    catch { return lang.toUpperCase(); }
+  }
+
+  function markBrokenImage(event: Event) {
+    (event.currentTarget as HTMLImageElement).dataset.broken = "true";
+  }
 
   const scopeInput = $derived({
     profileId: store.runtimeResolvedLocalProfileId,
@@ -82,7 +127,7 @@
   const migrationCohortReady = $derived(hasMinimumNovelMigrationSafeCohort(sourceClassificationState));
   const cohortBlocker = $derived.by(() => {
     if (!migrationCohortReady) {
-      return "Novel migration stays disabled until a small migration-safe LNReader cohort is fully proven on search, details, and chapter.";
+      return translate("novelMigrate.cohortBlocked");
     }
     return null;
   });
@@ -132,8 +177,9 @@
   }
 
   async function pickResult(result: NovelSourceSearchResult) {
-    if (!selectedSource) return;
+    if (!selectedSource || pickingPath !== null) return;
     error = null;
+    pickingPath = result.path;
     try {
       const detail = await readInstalledNovelDetails(scopeInput, selectedSource.pluginId, result.path, {
         title: result.title,
@@ -148,6 +194,8 @@
       step = "confirm";
     } catch (detailError) {
       error = detailError instanceof Error ? detailError.message : String(detailError);
+    } finally {
+      pickingPath = null;
     }
   }
 
@@ -210,7 +258,7 @@
       addToast({
         kind: "success",
         title: translate("ui_novelMigrated"),
-        body: `${active.novel.title} moved to ${selectedSource?.name ?? translate("ui_theNewSource")}.`,
+        body: translate("migrate.movedTo", { title: active.novel.title, source: selectedSource?.name ?? translate("ui_theNewSource") }),
         duration: 7000,
         action: {
           label: translate("ui_undo"),
@@ -276,7 +324,7 @@
       addToast({
         kind: "success",
         title: translate("ui_massMigrationApplied"),
-        body: `${result.migratedCount} novel${result.migratedCount !== 1 ? "s" : ""} moved to ${selectedSource?.name ?? translate("ui_theNewSource")}.`,
+        body: translate("novelMigrate.movedMany", { count: result.migratedCount, source: selectedSource?.name ?? translate("ui_theNewSource") }),
         duration: 9000,
         action: {
           label: translate("ui_undo"),
@@ -350,6 +398,16 @@
     }
   });
 
+  // Escape closes like the manga migration modal, but never while a migration is being written.
+  function onKey(event: KeyboardEvent) {
+    if (event.key === "Escape" && !migrating) onClose();
+  }
+
+  onMount(() => {
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   onMount(() => {
     if (!overlayEl || !modalEl) return;
     return createDialogFocusBoundary({
@@ -360,256 +418,289 @@
   });
 </script>
 
-<div bind:this={overlayEl} class="overlay">
-  <button class="backdrop" type="button" aria-label={$_("ui_closeMigrationModal")} onclick={onClose}></button>
-  <div bind:this={modalEl} class="modal" role="dialog" aria-modal="true" aria-label={$_("ui_migrateNovel")} tabindex="-1">
-    <div class="modal-header">
-      <div class="modal-title">
-        <span class="modal-title-label">{$_("ui_migrateNovel")}</span>
-        <span class="modal-title-name">{active.novel.title}</span>
+<div bind:this={overlayEl} class="mg-overlay">
+  <button class="mg-backdrop" type="button" aria-label={$_("ui_closeMigrationModal")} disabled={migrating} onclick={onClose}></button>
+  <div bind:this={modalEl} class="mg-modal mg-modal--novel" role="dialog" aria-modal="true" aria-label={$_("ui_migrateNovel")} tabindex="-1" use:glideHeight>
+    <header class="mg-header">
+      <span class="mg-header-cover">
+        {#if active.novel.coverUrl}<img src={active.novel.coverUrl} alt="" onerror={markBrokenImage} />{/if}
+      </span>
+      <div class="mg-heading">
+        <p class="mg-eyebrow">{$_("ui_migrateNovel")}</p>
+        <h2 class="mg-title" title={active.novel.title}>{active.novel.title}</h2>
+        <p class="mg-subtitle">{$_("migrate.fromSource", { source: currentSourceName, count: active.novel.chapterCount })}</p>
       </div>
-      <button bind:this={closeButtonEl} class="close-btn" type="button" onclick={onClose} aria-label={$_("ui_closeMigrationModal")}><X size={14} weight="light" /></button>
-    </div>
+      <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={migrating} aria-label={$_("ui_closeMigrationModal")}><X size={16} weight="bold" /></button>
+    </header>
 
-    {#if cohortBlocker}
-      <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={cohortBlocker} />
-    {:else}
-      <div class="body">
-        <div class="mode-tabs">
-          <button class="mode-tab" class:mode-tab-active={mode === "single"} type="button" onclick={() => setMode("single")}>
-            {$_("ui_single")}
-          </button>
-          <button class="mode-tab" class:mode-tab-active={mode === "mass"} type="button" onclick={() => setMode("mass")}>
-            <StackSimple size={12} weight="bold" />
-            {$_("ui_mass")}
-          </button>
+    {#if !cohortBlocker}
+      <nav class="mg-steps" aria-label={$_("ui_migrateNovel")}>
+        <ol>
+          {#each modeSteps as st, i}
+            <li class:is-complete={i < stepIdx} aria-current={visibleStep === st ? "step" : undefined}>
+              <span class="mg-step-chip">
+                <span class="mg-step-icon" aria-hidden="true">
+                  {#if i < stepIdx}<Check size={15} weight="bold" />{:else if st === "source"}<Plugs size={16} weight="duotone" />{:else if st === "search"}<MagnifyingGlass size={16} weight="duotone" />{:else if st === "mass-preview"}<ListChecks size={16} weight="duotone" />{:else}<ArrowsLeftRight size={16} weight="duotone" />{/if}
+                </span>
+                <span>{stepLabel(st)}</span>
+              </span>
+              {#if i < modeSteps.length - 1}<span class="mg-step-line" aria-hidden="true"><i></i></span>{/if}
+            </li>
+          {/each}
+        </ol>
+      </nav>
+    {/if}
+
+    <div class="mg-body">
+      {#key cohortBlocker ? "blocked" : step}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
+      {#if cohortBlocker}
+        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={cohortBlocker} />
+      {:else if step === "source"}
+        <div class="mg-segmented" role="group" aria-label={$_("ui_migrateNovel")}>
+          <button type="button" aria-pressed={mode === "single"} onclick={() => setMode("single")}><BookOpen size={14} weight="bold" /> {$_("ui_single")}</button>
+          <button type="button" aria-pressed={mode === "mass"} onclick={() => setMode("mass")}><StackSimple size={14} weight="bold" /> {$_("ui_mass")}</button>
         </div>
 
-        {#if step === "source"}
-          <div class="section">
-            {#if mode === "single"}
-              <div class="search-bar">
-                <input
-                  bind:value={query}
-                  class="search-input"
-                  placeholder={$_("ui_searchTitle_276e2d1e")}
-                  onkeydown={(event) => event.key === "Enter" && runSearch()}
-                />
-                <button class="search-btn" type="button" disabled={searching || !selectedSource || !query.trim()} onclick={runSearch}>
-                  {#if searching}
-                    <CircleNotch size={13} weight="light" class="anim-spin" />
-                  {:else}
-                    <MagnifyingGlass size={12} weight="bold" />
-                  {/if}
-                  {$_("novelSources_actions_search")}
-                </button>
-              </div>
-            {:else}
-              <NocturneState layout="compact" tone="info" icon="info" eyebrow={$_("ui_migration")} title={$_("ui_thisPreviewsAllLibraryNovelsFromTheCurrent")} />
-            {/if}
+        {#if mode === "single"}
+          <p class="mg-lede">{$_("migrate.sourceLede")}</p>
+          <label class="mg-field">
+            <MagnifyingGlass size={16} weight="bold" />
+            <input
+              bind:value={query}
+              placeholder={$_("ui_searchTitle_276e2d1e")}
+              aria-label={$_("ui_searchTitle_276e2d1e")}
+              onkeydown={(event) => event.key === "Enter" && runSearch()}
+            />
+          </label>
+        {:else}
+          <p class="mg-lede">{$_("ui_thisPreviewsAllLibraryNovelsFromTheCurrent")}</p>
+        {/if}
 
-            {#if loadingSources}
-              <div class="centered"><CircleNotch size={16} weight="light" class="anim-spin" /></div>
-            {:else if sources.length === 0}
-              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={$_("ui_noInstalledTrustedNovelSourceIsMarkedMigration")} />
-            {:else}
-              <div class="source-list">
-                {#each sources as source (source.pluginId)}
-                  <button
-                    class="source-row"
-                    class:source-row-active={selectedSource?.pluginId === source.pluginId}
-                    type="button"
-                    onclick={() => selectedSource = source}
-                  >
-                    <div class="source-info">
-                      <span class="source-name">{source.name}</span>
-                      <span class="source-meta">{source.lang.toUpperCase()}</span>
-                    </div>
-                    <ArrowRight size={13} weight="light" />
-                  </button>
-                {/each}
-              </div>
-              {#if mode === "mass" && selectedSource}
-                <div class="actions-row">
-                  <button class="search-btn primary" type="button" disabled={massPreviewLoading} onclick={buildMassPreview}>
-                    {#if massPreviewLoading}
-                      <CircleNotch size={13} weight="light" class="anim-spin" />
-                    {:else}
-                      <StackSimple size={13} weight="bold" />
-                    {/if}
-                    {$_("ui_previewMassMigration")}
-                  </button>
-                </div>
-              {/if}
-            {/if}
+        {#if loadingSources}
+          <div class="mg-list" aria-busy="true">
+            {#each Array(4) as _}<div class="mg-skeleton"></div>{/each}
           </div>
-        {:else if step === "search"}
-          <div class="section">
-            <button class="back-btn" type="button" onclick={() => step = "source"}>{$_("ui_back")}</button>
-            {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
-            {/if}
-            <div class="results">
-              {#each results as result (result.path)}
-                <button class="result-row" type="button" onclick={() => pickResult(result)}>
-                  <div class="result-cover">
-                    {#if result.coverUrl}
-                      <img src={result.coverUrl} alt={result.title} />
-                    {:else}
-                      <div class="cover-fallback"><BookOpen size={22} weight="duotone" /></div>
-                    {/if}
-                  </div>
-                  <div class="result-info">
-                    <span class="result-title">{result.title}</span>
-                    <span class="source-meta">{result.path}</span>
-                  </div>
-                  <ArrowRight size={13} weight="light" />
-                </button>
-              {/each}
-            </div>
-          </div>
-        {:else if step === "mass-preview" && massPreview}
-          <div class="section">
-            <button class="back-btn" type="button" onclick={() => step = "source"} disabled={migrating}>{$_("ui_back")}</button>
-            <div class="stats">
-              <div class="stat-row"><span>{$_("ui_ready")}</span><strong>{massPreview.readyCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_needsReview_33a506cf")}</span><strong>{massPreview.needsReviewCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_blocked_99613c74")}</span><strong>{massPreview.blockedCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_selectedToApply")}</span><strong>{massSelectedIds.size}</strong></div>
-            </div>
-            {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_massMigrationFailed")} body={error} />
-            {/if}
-            <div class="results">
-              {#each massPreview.items as item (item.currentNovelId)}
-                <div class="result-row" class:result-row-ready={item.status === "ready"} class:result-row-blocked={item.status === "blocked"}>
-                  <button
-                    class="mass-check"
-                    type="button"
-                    disabled={item.status !== "ready"}
-                    onclick={() => toggleMassSelection(item.currentNovelId)}
-                  >
-                    {#if massSelectedIds.has(item.currentNovelId)}<Check size={12} weight="bold" />{/if}
-                  </button>
-                  <div class="result-info">
-                    <span class="result-title">{item.currentTitle}</span>
-                    <span class="source-meta">
-                      {item.status}
-                      {#if item.match}
-                        {" · "}
-                        {item.match.detail.title}
-                        {" · "}
-                        {Math.round(item.match.similarity * 100)}{$_("ui_match")}{:else}
-                        {" · "}
-                        {item.reasonCode}
-                      {/if}
-                    </span>
-                    {#if item.preview}
-                      <span class="source-meta">
-                        {item.preview.matchedChapterCount} {$_("ui_matchedChapters")} {item.preview.transferredReadCount} {$_("ui_readCarried")} {item.preview.transferredBookmarkCount} {$_("ui_bookmarksCarried")}
-                      </span>
-                    {/if}
-                  </div>
-                </div>
-              {/each}
-            </div>
-            <div class="actions-row">
-              <button class="search-btn primary" type="button" disabled={migrating || massSelectedIds.size === 0} onclick={applyMassMigration}>
-                {#if migrating}
-                  <CircleNotch size={13} weight="light" class="anim-spin" />
-                {:else}
-                  <StackSimple size={13} weight="bold" />
-                {/if}
-                {$_("ui_applyReadyItems")}
+        {:else if sources.length === 0}
+          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_warning")} body={$_("ui_noInstalledTrustedNovelSourceIsMarkedMigration")} />
+        {:else}
+          <p class="mg-section-label">{$_("migrate.sourceCount", { count: sources.length })}</p>
+          <div class="mg-list" role="radiogroup" aria-label={$_("ui_targetSource")}>
+            {#each sources as source, i (source.pluginId)}
+              <button
+                animate:listFlip
+                style:--mg-i={i}
+                class="mg-row"
+                class:is-selected={selectedSource?.pluginId === source.pluginId}
+                type="button"
+                role="radio"
+                aria-checked={selectedSource?.pluginId === source.pluginId}
+                data-migration-source
+                onclick={() => selectedSource = source}
+              >
+                <span class="mg-mark"><BookOpen size={17} weight="duotone" /></span>
+                <span class="mg-row-copy">
+                  <strong>{source.name}</strong>
+                  <small>{languageLabel(source.lang)}</small>
+                </span>
+                <span class="mg-row-end">{#if selectedSource?.pluginId === source.pluginId}<Check size={16} weight="bold" />{/if}</span>
               </button>
-            </div>
-          </div>
-        {:else if selectedTarget && preview}
-          <div class="section confirm">
-            <button class="back-btn" type="button" onclick={() => step = "search"} disabled={migrating}>{$_("ui_back")}</button>
-            <div class="compare">
-              <div class="compare-card">
-                <span class="source-name">{active.novel.title}</span>
-                <span class="source-meta">{active.novel.source.sourceName ?? active.novel.source.pluginName ?? $_("ui_currentSource")}</span>
-              </div>
-              <ArrowRight size={16} weight="light" />
-              <div class="compare-card">
-                <span class="source-name">{selectedTarget.title}</span>
-                <span class="source-meta">{selectedSource?.name ?? $_("ui_targetSource")}</span>
-              </div>
-            </div>
-            <div class="stats">
-              <div class="stat-row"><span>{$_("ui_titleConfidence")}</span><strong>{Math.round(preview.confidence * 100)}%</strong></div>
-              <div class="stat-row"><span>{$_("ui_matchedChapters_ff5d3901")}</span><strong>{preview.matchedChapterCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_readStateTransferred")}</span><strong>{preview.transferredReadCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_bookmarksTransferred")}</span><strong>{preview.transferredBookmarkCount}</strong></div>
-              <div class="stat-row"><span>{$_("ui_chapterDiff")}</span><strong>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff}</strong></div>
-            </div>
-            {#if preview.confidence < 0.5}
-              <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_lowConfidenceMatch")} body={$_("feedback.reviewMigration")} />
-            {/if}
-            <NocturneState layout="compact" tone="success" icon="info" eyebrow={$_("ui_migration")} title={$_("ui_theOldNovelWillBeReplaceHiddenThrough")} />
-            {#if error}
-              <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
-            {/if}
-            <div class="actions-row">
-              <button class="search-btn primary" type="button" disabled={migrating} onclick={applyMigration}>
-                {#if migrating}
-                  <CircleNotch size={13} weight="light" class="anim-spin" />
-                {:else}
-                  <Check size={12} weight="bold" />
-                {/if}
-                {$_("detail_actions_migrate")}
-              </button>
-            </div>
+            {/each}
           </div>
         {/if}
-      </div>
-    {/if}
+
+        {#if massPreviewLoading}
+          <div class="mg-progress" aria-live="polite">
+            <div class="mg-progress-head"><span>{$_("ui_previewMassMigration")}</span><CircleNotch size={14} weight="bold" class="anim-spin" /></div>
+          </div>
+        {/if}
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={mode === "mass" ? $_("ui_massMigrationFailed") : $_("ui_searchFailed")} body={error} />
+        {/if}
+
+      {:else if step === "search"}
+        {#if selectedSource}
+          <div class="mg-context">
+            <span class="mg-mark"><BookOpen size={15} weight="duotone" /></span>
+            <span class="mg-row-copy">
+              <strong>{selectedSource.name}</strong>
+              <small>{languageLabel(selectedSource.lang)}</small>
+            </span>
+            <button class="mg-btn mg-btn--small" type="button" onclick={() => step = "source"}>{$_("ui_change")}</button>
+          </div>
+        {/if}
+        <form class="mg-field" onsubmit={(event) => { event.preventDefault(); void runSearch(); }}>
+          <MagnifyingGlass size={16} weight="bold" />
+          <input bind:value={query} placeholder={$_("ui_searchTitle_276e2d1e")} aria-label={$_("ui_searchTitle_276e2d1e")} />
+          <button class="mg-btn mg-btn--primary mg-btn--small" type="submit" disabled={searching || !selectedSource || !query.trim()}>
+            {#if searching}<CircleNotch size={14} weight="bold" class="anim-spin" />{/if}
+            {$_("novelSources_actions_search")}
+          </button>
+        </form>
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
+        {/if}
+        {#if searching}
+          <div class="mg-list" aria-busy="true">
+            {#each Array(4) as _}<div class="mg-skeleton"></div>{/each}
+          </div>
+        {:else if results.length > 0}
+          <p class="mg-section-label">{$_("migrate.resultCount", { count: results.length })}</p>
+          <div class="mg-list">
+            {#each results as result, i (result.path)}
+              <button class="mg-row" animate:listFlip style:--mg-i={i} type="button" data-migration-result disabled={pickingPath !== null} onclick={() => pickResult(result)}>
+                <span class="mg-cover">
+                  {#if result.coverUrl}<img src={result.coverUrl} alt="" onerror={markBrokenImage} />{:else}<BookOpen size={18} weight="duotone" />{/if}
+                </span>
+                <span class="mg-row-copy">
+                  <strong title={result.title}>{result.title}</strong>
+                  <small title={result.path}>{result.path}</small>
+                </span>
+                <span class="mg-row-end">
+                  {#if pickingPath === result.path}<CircleNotch size={16} weight="bold" class="anim-spin" />{:else}<ArrowRight size={16} weight="bold" />{/if}
+                </span>
+              </button>
+            {/each}
+          </div>
+        {:else if !error}
+          <div class="mg-empty">
+            <span class="mg-mark"><MagnifyingGlass size={18} weight="duotone" /></span>
+            <span>{$_("ui_noResultsTryADifferentTitle")}</span>
+          </div>
+        {/if}
+
+      {:else if step === "mass-preview" && massPreview}
+        <div class="mg-metrics">
+          <div class="mg-metric"><span>{$_("ui_ready")}</span><strong class="is-good">{massPreview.readyCount}</strong></div>
+          <div class="mg-metric"><span>{$_("ui_needsReview_33a506cf")}</span><strong class:is-warn={massPreview.needsReviewCount > 0}>{massPreview.needsReviewCount}</strong></div>
+          <div class="mg-metric"><span>{$_("ui_blocked_99613c74")}</span><strong class:is-bad={massPreview.blockedCount > 0}>{massPreview.blockedCount}</strong></div>
+          <div class="mg-metric"><span>{$_("ui_selectedToApply")}</span><strong>{massSelectedIds.size}</strong></div>
+        </div>
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_massMigrationFailed")} body={error} />
+        {/if}
+        <div class="mg-list">
+          {#each massPreview.items as item, i (item.currentNovelId)}
+            {@const selected = massSelectedIds.has(item.currentNovelId)}
+            <button
+              animate:listFlip
+              style:--mg-i={i}
+              class="mg-row"
+              class:is-selected={selected}
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              disabled={item.status !== "ready" || migrating}
+              onclick={() => toggleMassSelection(item.currentNovelId)}
+            >
+              <span class="mg-mark">{#if selected}<Check size={16} weight="bold" />{:else}<BookOpen size={16} weight="duotone" />{/if}</span>
+              <span class="mg-row-copy">
+                <strong title={item.currentTitle}>{item.currentTitle}</strong>
+                <small>
+                  {#if item.match}
+                    <ArrowRight size={11} weight="bold" />
+                    <span title={item.match.detail.title}>{item.match.detail.title}</span>
+                    <span>· {$_("migrate.matchPercent", { percent: Math.round(item.match.similarity * 100) })}</span>
+                  {:else}
+                    <span>{item.reasonCode}</span>
+                  {/if}
+                </small>
+                {#if item.preview}
+                  <small>{$_("novelMigrate.itemCarry", { chapters: item.preview.matchedChapterCount, read: item.preview.transferredReadCount, bookmarks: item.preview.transferredBookmarkCount })}</small>
+                {/if}
+              </span>
+              <span class="mg-pill {statusTone(item.status)}">{statusLabel(item.status)}</span>
+            </button>
+          {/each}
+        </div>
+
+      {:else if selectedTarget && preview}
+        <p class="mg-lede">{$_("migrate.confirmLede")}</p>
+        <div class="mg-compare">
+          <div class="mg-compare-card">
+            <span class="mg-cover">
+              {#if active.novel.coverUrl}<img src={active.novel.coverUrl} alt="" onerror={markBrokenImage} />{:else}<BookOpen size={18} weight="duotone" />{/if}
+            </span>
+            <span class="mg-row-copy">
+              <span class="mg-pill">{$_("bookDetail_filter_current")}</span>
+              <strong title={active.novel.title}>{active.novel.title}</strong>
+              <small>{currentSourceName}</small>
+            </span>
+          </div>
+          <span class="mg-compare-arrow" aria-hidden="true"><ArrowRight size={16} weight="bold" /></span>
+          <div class="mg-compare-card is-new">
+            <span class="mg-cover">
+              {#if selectedTarget.coverUrl}<img src={selectedTarget.coverUrl} alt="" onerror={markBrokenImage} />{:else}<BookOpen size={18} weight="duotone" />{/if}
+            </span>
+            <span class="mg-row-copy">
+              <span class="mg-pill mg-pill--accent">{$_("ui_new")}</span>
+              <strong title={selectedTarget.title}>{selectedTarget.title}</strong>
+              <small>{selectedSource?.name ?? $_("ui_targetSource")}</small>
+            </span>
+          </div>
+        </div>
+        <div class="mg-metrics">
+          <div class="mg-metric">
+            <span>{$_("ui_titleConfidence")}</span>
+            <strong class:is-good={preview.confidence > 0.7} class:is-warn={preview.confidence > 0.4 && preview.confidence <= 0.7} class:is-bad={preview.confidence <= 0.4}>{Math.round(preview.confidence * 100)}%</strong>
+          </div>
+          <div class="mg-metric">
+            <span>{$_("ui_matchedChapters_ff5d3901")}</span>
+            <strong>{preview.matchedChapterCount}</strong>
+            {#if preview.chapterDiff !== 0}<small>{preview.chapterDiff > 0 ? `+${preview.chapterDiff}` : preview.chapterDiff} {$_("ui_vsCurrent")}</small>{/if}
+          </div>
+          <div class="mg-metric"><span>{$_("ui_readStateTransferred")}</span><strong>{preview.transferredReadCount}</strong><small>{$_("ui_chapters")}</small></div>
+          <div class="mg-metric"><span>{$_("ui_bookmarksTransferred")}</span><strong>{preview.transferredBookmarkCount}</strong></div>
+        </div>
+        {#if preview.confidence < 0.5}
+          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_lowConfidenceMatch")} body={$_("feedback.reviewMigration")} />
+        {/if}
+        <p class="mg-note"><Warning size={12} weight="bold" /> {$_("ui_theOldNovelWillBeReplaceHiddenThrough")}</p>
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
+        {/if}
+      {/if}
+      </div>{/key}
+    </div>
+
+    <footer class="mg-footer">
+      {#if cohortBlocker}
+        <span class="mg-spacer"></span>
+        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
+      {:else if step === "source"}
+        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
+        <span class="mg-spacer"></span>
+        {#if mode === "single"}
+          <button class="mg-btn mg-btn--primary" type="button" disabled={searching || !selectedSource || !query.trim()} onclick={runSearch}>
+            {#if searching}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
+            {$_("novelSources_actions_search")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
+          </button>
+        {:else}
+          <button class="mg-btn mg-btn--primary" type="button" disabled={massPreviewLoading || !selectedSource} onclick={buildMassPreview}>
+            {#if massPreviewLoading}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
+            {$_("ui_previewMassMigration")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
+          </button>
+        {/if}
+      {:else if step === "search"}
+        <button class="mg-btn" type="button" onclick={() => step = "source"} disabled={pickingPath !== null}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+      {:else if step === "mass-preview"}
+        <button class="mg-btn" type="button" onclick={() => step = "source"} disabled={migrating}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+        <button class="mg-btn mg-btn--primary" type="button" disabled={migrating || massSelectedIds.size === 0} onclick={applyMassMigration}>
+          {#if migrating}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
+          {$_("ui_applyReadyItems")} ({massSelectedIds.size})
+        </button>
+      {:else}
+        <button class="mg-btn" type="button" onclick={() => step = "search"} disabled={migrating}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+        <button class="mg-btn mg-btn--primary" type="button" disabled={migrating} onclick={applyMigration}>
+          {#if migrating}
+            <CircleNotch size={15} weight="bold" class="anim-spin" /> {$_("ui_migrating")}
+          {:else}
+            {$_("detail_actions_migrate")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
+          {/if}
+        </button>
+      {/if}
+    </footer>
   </div>
 </div>
-
-<style>
-  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: var(--component-migration-overlay-z-index); }
-  .backdrop { position: absolute; inset: 0; border: none; background: var(--component-migration-overlay-bg); backdrop-filter: var(--component-migration-overlay-blur); cursor: pointer; }
-  .modal { position: relative; width: var(--component-novel-migrate-modal-width); max-height: var(--component-novel-migrate-modal-max-height); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--component-migration-modal-border); border-radius: var(--component-migration-modal-radius); background: var(--component-migration-modal-bg); box-shadow: var(--component-migration-modal-shadow); z-index: var(--component-novel-migrate-modal-z-index); animation: scaleIn var(--component-migration-animation-scale) both; }
-  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--component-migrate-modal-header-padding); border-bottom: 1px solid var(--component-migration-divider-strong); }
-  .modal-title { display: flex; flex-direction: column; gap: 2px; }
-  .modal-title-label { font-family: var(--font-ui); font-size: var(--component-migrate-modal-eyebrow-font-size); color: var(--component-migration-eyebrow-fg); letter-spacing: var(--component-migrate-modal-eyebrow-letter-spacing); text-transform: uppercase; }
-  .modal-title-name { font-size: var(--component-migrate-modal-title-font-size); font-weight: var(--weight-bold); color: var(--component-migration-title-fg); letter-spacing: var(--component-migrate-modal-title-letter-spacing); }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: var(--component-migrate-modal-icon-size); height: var(--component-migrate-modal-icon-size); border-radius: var(--component-migration-icon-radius); color: var(--component-migration-icon-fg); background: var(--component-migration-icon-bg); border: 1px solid var(--component-migration-icon-border); cursor: pointer; transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast), transform var(--component-migration-transition-fast); }
-  .close-btn:hover { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-icon-hover-bg); }
-  .close-btn:active { transform: scale(0.96); }
-  .body { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); overflow: auto; }
-  .section { display: flex; flex-direction: column; gap: var(--sp-3); }
-  .mode-tabs { display: flex; gap: 4px; }
-  .mode-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: none; color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); cursor: pointer; }
-  .mode-tab-active { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .search-bar { display: flex; align-items: center; gap: var(--sp-2); }
-  .search-input { flex: 1; min-height: 34px; padding: 0 var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); color: var(--text-primary); }
-  .source-list, .results { display: flex; flex-direction: column; gap: 6px; overflow: auto; }
-  .source-row, .result-row, .search-btn, .back-btn, .mass-check { cursor: pointer; }
-  .source-row, .result-row { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: 10px var(--sp-3); text-align: left; border-radius: var(--radius-md); border: 1px solid transparent; background: none; }
-  .source-row:hover, .result-row:hover { background: var(--component-migration-row-hover-bg); border-color: var(--component-migration-row-hover-border); }
-  .source-row-active { background: var(--component-migrate-modal-row-active-bg); border-color: var(--component-migrate-modal-row-active-border); }
-  .result-row-ready { border-color: var(--component-novel-migrate-ready-border); }
-  .result-row-blocked { border-color: var(--component-novel-migrate-blocked-border); }
-  .source-info, .result-info, .compare-card { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-  .source-name, .result-title { color: var(--text-secondary); font-size: var(--text-sm); font-weight: var(--weight-medium); }
-  .source-meta { color: var(--text-faint); font-size: var(--text-2xs); font-family: var(--font-ui); letter-spacing: var(--tracking-wide); }
-  .search-btn, .back-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 34px; padding: 0 var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--text-muted); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); }
-  .search-btn.primary { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .actions-row { display: flex; justify-content: flex-end; gap: var(--sp-2); }
-  .stats { display: flex; flex-direction: column; gap: 6px; padding: var(--sp-3); border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); }
-  .stat-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); font-size: var(--text-xs); color: var(--text-muted); }
-  .result-cover { width: 42px; height: 60px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-raised); flex-shrink: 0; }
-  .result-cover img { width: 100%; height: 100%; object-fit: cover; }
-  .cover-fallback, .centered { display: flex; align-items: center; justify-content: center; }
-  .cover-fallback { width: 100%; height: 100%; color: var(--text-faint); }
-  .centered { min-height: 120px; color: var(--text-faint); }
-  .mass-check { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: var(--bg-raised); color: var(--accent-fg); flex-shrink: 0; }
-  .mass-check:disabled { opacity: var(--component-novel-migrate-disabled-opacity); cursor: default; }
-  .compare { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); }
-  .compare-card { flex: 1; padding: var(--sp-3); border-radius: var(--radius-md); border: 1px solid var(--border-dim); background: var(--bg-raised); }
-  @keyframes scaleIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
-</style>

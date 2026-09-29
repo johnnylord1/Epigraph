@@ -127,35 +127,27 @@ describe("derived component color contract", () => {
     ]);
   });
 
-  test("keeps normal component boundaries restrained and reserves outline for focus", () => {
-    expect(fallbackDeclarations.get("--component-card-border")).toBe(
-      "color-mix(in srgb, var(--border-strong) 24%, transparent)",
-    );
+  test("keeps cards, buttons and fields borderless, overlays outlined, and reserves outline for focus", () => {
+    // Cards and buttons are soft surfaces without boxes; overlays (modals, toasts) and fields keep
+    // a restrained boundary so they stay distinct from what lies beneath them.
+    expect(fallbackDeclarations.get("--component-card-border")).toBe("transparent");
     expect(fallbackDeclarations.get("--component-modal-border")).toBe(
       "color-mix(in srgb, var(--border-strong) 28%, transparent)",
     );
-    expect(fallbackDeclarations.get("--component-button-border")).toBe(
-      "color-mix(in srgb, var(--border-strong) 28%, transparent)",
-    );
-    expect(fallbackDeclarations.get("--component-input-border")).toBe(
-      "color-mix(in srgb, var(--border-strong) 30%, transparent)",
-    );
+    expect(fallbackDeclarations.get("--component-button-border")).toBe("transparent");
+    expect(fallbackDeclarations.get("--component-input-border")).toBe("transparent");
     expect(fallbackDeclarations.get("--component-toast-border")).toBe(
       "color-mix(in srgb, var(--border-strong) 26%, transparent)",
     );
     expect(fallbackDeclarations.get("--component-toast-border-hover")).toBe("var(--color-outline)");
   });
 
-  test("derives interactive surfaces from the local surface ladder", () => {
-    expect(fallbackDeclarations.get("--component-button-bg")).toBe(
-      "color-mix(in srgb, var(--bg-raised) 94%, var(--bg-base))",
-    );
+  test("derives interactive surfaces from the shared soft surfaces", () => {
+    expect(fallbackDeclarations.get("--component-button-bg")).toBe("var(--ui-surface)");
     expect(fallbackDeclarations.get("--component-button-bg-hover")).toBe(
       "color-mix(in srgb, var(--accent-bright) 8%, var(--bg-overlay))",
     );
-    expect(fallbackDeclarations.get("--component-input-bg")).toBe(
-      "color-mix(in srgb, var(--bg-raised) 88%, var(--bg-base))",
-    );
+    expect(fallbackDeclarations.get("--component-input-bg")).toBe("var(--ui-surface-strong)");
     expect(fallbackDeclarations.get("--component-popover-radius")).toBe("var(--hud-popover-radius)");
     expect(fallbackDeclarations.get("--component-menu-radius")).toBe("var(--hud-popover-radius)");
   });

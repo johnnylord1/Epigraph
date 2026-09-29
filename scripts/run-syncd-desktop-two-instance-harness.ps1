@@ -12,11 +12,8 @@ $joinerRoot = Join-Path $tmpRoot "joiner"
 $statePath = Join-Path $tmpRoot "harness-processes.json"
 
 function Remove-ProcessTree {
-  param([int]$Pid)
-  try {
-    Stop-Process -Id $Pid -Force -ErrorAction Stop
-  } catch {
-  }
+  param([int]$ProcessId)
+  throw "Refusing PID-only cleanup of $ProcessId; persisted legacy harness PIDs are not ownership capabilities."
 }
 
 function Start-EpigraphInstance {
@@ -85,7 +82,7 @@ function Start-EpigraphInstance {
 }
 
 if ($Clean -and (Test-Path $tmpRoot)) {
-  Remove-Item -LiteralPath $tmpRoot -Recurse -Force
+  throw "Legacy harness evidence must be reconciled before profile deletion; preserved: $tmpRoot"
 }
 
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
@@ -142,7 +139,7 @@ finally {
       continue
     }
     if ($instance.Process -and -not $instance.Process.HasExited) {
-      Remove-ProcessTree -Pid $instance.Process.Id
+      Remove-ProcessTree -ProcessId $instance.Process.Id
     }
     try { $instance.StdoutWriter.Dispose() } catch {}
     try { $instance.StderrWriter.Dispose() } catch {}

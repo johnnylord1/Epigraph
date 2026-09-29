@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime";
 import type { NovelRepositoryScopeInput } from "./repositoryState";
 import {
   loadNovelLibraryState,
@@ -98,7 +99,7 @@ function sourceIdForNovelEntry(entry: PersistedNovelLibraryEntry): string | null
 }
 
 function sourceNameForNovelEntry(entry: PersistedNovelLibraryEntry): string {
-  return entry.source?.sourceName ?? entry.source?.pluginName ?? sourceIdForNovelEntry(entry) ?? "Unknown source";
+  return entry.source?.sourceName ?? entry.source?.pluginName ?? sourceIdForNovelEntry(entry) ?? translate("libraryUpdate_unknownSource");
 }
 
 function sourceScopedNovelEntries(entries: PersistedNovelLibraryEntry[], sourceIds?: readonly string[] | null) {
@@ -275,8 +276,8 @@ async function runNovelUpdate(
           novelId: entry.id,
           title: entry.title,
           sourceId: "unknown",
-          sourceName: "Unknown source",
-          error: "Missing source id",
+          sourceName: translate("libraryUpdate_unknownSource"),
+          error: translate("libraryUpdate_missingSourceId"),
           errorType: "missing-source",
         });
         options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
@@ -323,8 +324,8 @@ async function runNovelUpdate(
             sourceId,
             sourceName,
             error: classification.errorType === "source-challenge"
-              ? `${affected} novel${affected === 1 ? "" : "s"} need source challenge recovery: ${message}`
-              : `${affected} novel${affected === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
+              ? translate("libraryUpdate_novelChallengeIssue", { count: affected, message })
+              : translate("libraryUpdate_novelUnavailableIssue", { count: affected, message }),
             errorType: classification.errorType,
             retrySourceId: sourceId,
             retryKind: "novels-source",
@@ -368,6 +369,39 @@ async function runNovelUpdate(
     newChapters: newChapterEntries.length,
     newChapterEntries,
     failures,
+  };
+}
+
+export interface RefreshNovelDetailResult {
+  detail: NovelDetailRecord;
+  /** The saved library state when the novel is in the library, otherwise null. */
+  state: PersistedNovelLibraryState | null;
+  newChapters: number;
+}
+
+/**
+ * Reloads one novel's details and chapter list from its source. A novel in the library is merged into it
+ * (keeping read state, progress and bookmarks) and saved; a running library update finishes first.
+ */
+export async function refreshNovelDetailFromSource(
+  scopeInput: NovelRepositoryScopeInput,
+  novel: Pick<NovelDetailRecord, "id" | "sourceId" | "path" | "title" | "coverUrl">,
+  inLibrary: boolean,
+): Promise<RefreshNovelDetailResult> {
+  const detail = await readInstalledNovelDetails(scopeInput, novel.sourceId, novel.path, {
+    title: novel.title,
+    coverUrl: novel.coverUrl,
+  });
+  if (!inLibrary) return { detail, state: null, newChapters: 0 };
+  if (activeNovelUpdate) await activeNovelUpdate.catch(() => null);
+  const state = await loadNovelLibraryState(scopeInput);
+  const entry = state.entries.find((candidate) => candidate.id === novel.id);
+  if (!entry) return { detail, state: null, newChapters: 0 };
+  const merged = mergeNovelDetailIntoLibraryState(state, entry, detail, Date.now());
+  return {
+    detail,
+    state: await saveNovelLibraryState(merged.state, scopeInput),
+    newChapters: merged.newChapters.length,
   };
 }
 

@@ -1,4 +1,6 @@
 use fs2::FileExt;
+#[path = "restore_operation.rs"]
+pub mod restore_operation;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -84,6 +86,11 @@ struct Coordinator {
 }
 
 static COORDINATOR: OnceLock<Coordinator> = OnceLock::new();
+
+/// The coordinator is process-global. Tests that move its phase must not interleave, or a
+/// transient `Draining` phase from one test rejects operations started by another.
+#[cfg(test)]
+pub(crate) static COORDINATOR_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn coordinator() -> &'static Coordinator {
     COORDINATOR.get_or_init(|| Coordinator {
@@ -288,6 +295,14 @@ pub fn begin_exclusive_maintenance(
         }
     };
 
+    if let Err(error) = restore_operation::refuse_unresolved(runtime_root) {
+        if let Ok(mut state) = coordinator.state.lock() {
+            state.phase = MaintenancePhase::Ready;
+            state.owner = None;
+            state.started_at_ms = None;
+        }
+        return Err(error);
+    }
     let mut state = coordinator
         .state
         .lock()
@@ -381,13 +396,12 @@ fn unix_now_ms() -> u128 {
 
 #[cfg(windows)]
 pub(crate) fn atomic_replace_file(from: &Path, to: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
 
-    let from_w: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
-    let to_w: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    let from_w = win32_long_path(from)?;
+    let to_w = win32_long_path(to)?;
     let result = unsafe {
         MoveFileExW(
             from_w.as_ptr(),
@@ -399,6 +413,35 @@ pub(crate) fn atomic_replace_file(from: &Path, to: &Path) -> std::io::Result<()>
         return Err(std::io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// `MoveFileExW` receives raw paths, so unlike `std::fs` it fails with "path not found" once a
+/// path exceeds MAX_PATH, as restore inputs and imported books do under longer profile paths.
+/// Paths are normalized and passed in the `\\?\` form, which lifts that limit.
+#[cfg(windows)]
+fn win32_long_path(path: &Path) -> std::io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+
+    let absolute = std::path::absolute(path)?;
+    let wide: Vec<u16> = absolute.as_os_str().encode_wide().collect();
+    let separator = u16::from(b'\\');
+    let verbatim_or_device = wide.len() >= 4
+        && wide[0] == separator
+        && wide[1] == separator
+        && (wide[2] == u16::from(b'?') || wide[2] == u16::from(b'.'))
+        && wide[3] == separator;
+    let mut long: Vec<u16> = Vec::with_capacity(wide.len() + 9);
+    if verbatim_or_device {
+        long.extend_from_slice(&wide);
+    } else if wide.starts_with(&[separator, separator]) {
+        long.extend(r"\\?\UNC".encode_utf16());
+        long.extend_from_slice(&wide[1..]);
+    } else {
+        long.extend(r"\\?\".encode_utf16());
+        long.extend_from_slice(&wide);
+    }
+    long.push(0);
+    Ok(long)
 }
 
 #[cfg(not(windows))]
@@ -421,7 +464,33 @@ mod tests {
     }
 
     #[test]
+    fn atomic_replace_works_beyond_max_path() {
+        let temp = tempdir().unwrap();
+        let deep = temp.path().join("a".repeat(120)).join("b".repeat(120));
+        fs::create_dir_all(&deep).unwrap();
+        let target = deep.join(format!("{}.bin", "c".repeat(64)));
+        let temporary = target.with_extension(format!("{}.tmp", Uuid::new_v4()));
+        assert!(temporary.as_os_str().len() > 260);
+        fs::write(&temporary, b"new").unwrap();
+        fs::write(&target, b"old").unwrap();
+
+        atomic_replace_file(&temporary, &target).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!temporary.exists());
+
+        // Relative and ordinary paths keep working.
+        let near = temp.path().join("near.json");
+        fs::write(temp.path().join("near.tmp"), b"1").unwrap();
+        atomic_replace_file(&temp.path().join("near.tmp"), &near).unwrap();
+        assert_eq!(fs::read(&near).unwrap(), b"1");
+    }
+
+    #[test]
     fn maintenance_drains_active_operations_and_rejects_new_writes() {
+        let _coordinator = COORDINATOR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let temp = tempdir().unwrap();
         let token = begin_operation(temp.path(), "migration").unwrap();
         let releaser = thread::spawn(move || {

@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 Set-StrictMode -Version Latest
 function Invoke-JsonRequest {
   param(
@@ -139,7 +140,7 @@ function Stop-EpigraphPhaseGateApp {
     Start-Sleep -Milliseconds 250
   }
 
-  Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  Stop-EpigraphRetainedProcess -Process $Process
   throw "Epigraph phase-gate app did not exit after sentinel request"
 }
 
@@ -320,7 +321,7 @@ try {
     "--timeoutSeconds", "40"
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $pingOutput -Needle "event: ping" -TimeoutSeconds 40
-  if (-not $pingCapture.HasExited) { $pingCapture | Stop-Process -Force }
+  if (-not $pingCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $pingCapture }
   Write-Host "[phase-gate] ping keepalive ok"
 
   $null = Invoke-JsonRequest -Method Post -Uri "$endpoint/__audit/append-change" -Headers $auditHeaders -Body @{
@@ -359,7 +360,7 @@ try {
     patch = @{ progressPercent = 0.4 }
   }
   Wait-ForText -Path $handoffOutput -Needle "id: 2" -TimeoutSeconds 10
-  if (-not $handoffCapture.HasExited) { $handoffCapture | Stop-Process -Force }
+  if (-not $handoffCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $handoffCapture }
   Write-Host "[phase-gate] backlog to live handoff ok"
 
   $null = Invoke-JsonRequest -Method Post -Uri "$endpoint/__audit/append-change" -Headers $auditHeaders -Body @{
@@ -397,7 +398,7 @@ try {
   ) -WorkingDirectory $projectRoot -PassThru
   Wait-ForText -Path $reconnectOutput -Needle "id: 3" -TimeoutSeconds 10
   Wait-ForText -Path $reconnectOutput -Needle "id: 4" -TimeoutSeconds 10
-  if (-not $reconnectCapture.HasExited) { $reconnectCapture | Stop-Process -Force }
+  if (-not $reconnectCapture.HasExited) { Stop-EpigraphRetainedProcess -Process $reconnectCapture }
   Write-Host "[phase-gate] reconnect replay ok"
 
   $null = Invoke-JsonRequest -Method Post -Uri "$endpoint/__audit/runtime" -Headers $auditHeaders -Body @{

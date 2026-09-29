@@ -63,6 +63,13 @@ describe("reader command dispatcher", () => {
     } as unknown as EventTarget)).toBe(true);
     expect(isReaderControlKeyboardTarget({ tagName: "DIV" } as unknown as EventTarget)).toBe(false);
   });
+
+  it("treats keys pressed inside the HUD's page surface as reader commands", () => {
+    const surface = { getAttribute: (name: string) => name === "data-reader-surface" ? "" : null };
+    const control = { getAttribute: () => null };
+    expect(isReaderControlKeyboardTarget({ tagName: "DIV", closest: () => surface } as unknown as EventTarget)).toBe(false);
+    expect(isReaderControlKeyboardTarget({ tagName: "DIV", closest: () => control } as unknown as EventTarget)).toBe(true);
+  });
 });
 
 describe("reader command ownership integration", () => {

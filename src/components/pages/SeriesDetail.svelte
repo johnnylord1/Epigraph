@@ -1,5 +1,6 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
+  import { formatAppDate } from "../../lib/i18n/format";
   import { onMount, untrack } from "svelte";
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -117,7 +118,7 @@
     if (!ts) return "";
     const n = Number(ts);
     const d = new Date(n > 1e10 ? n : n * 1000);
-    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    return formatAppDate(d, { year: "numeric", month: "short", day: "numeric" });
   }
 
   function mangaChapterNumberLabel(chapter: Chapter): string {
@@ -327,9 +328,9 @@
   );
   const scanlatorButtonText = $derived.by(() => {
     if (mangaReaderPrefs.scanlatorFilter.length === 1) return mangaReaderPrefs.scanlatorFilter[0];
-    if (mangaReaderPrefs.scanlatorFilter.length > 1) return `${mangaReaderPrefs.scanlatorFilter.length} selected`;
-    if (mangaReaderPrefs.preferredScanlator) return `Prefer ${mangaReaderPrefs.preferredScanlator}`;
-    return "All Scanlators";
+    if (mangaReaderPrefs.scanlatorFilter.length > 1) return $_("detail.scanlators.selected", { count: mangaReaderPrefs.scanlatorFilter.length });
+    if (mangaReaderPrefs.preferredScanlator) return $_("detail.scanlators.prefer", { name: mangaReaderPrefs.preferredScanlator });
+    return $_("detail.scanlators.all");
   });
   const filteredChaptersAsc = $derived(buildReaderChapterList(chapters, mangaReaderPrefs, sourceScanlatorFallback));
 
@@ -412,7 +413,14 @@
   const statusLabel     = $derived.by(() => {
     const current = manga;
     if (!current?.status || current.status.toUpperCase() === "UNKNOWN") return null;
-    return current.status.charAt(0) + current.status.slice(1).toLowerCase();
+    const statusKeys: Record<string, string> = {
+      ONGOING: "library.status.ongoing",
+      COMPLETED: "library.status.completed",
+      CANCELLED: "library.status.cancelled",
+      HIATUS: "library.status.hiatus",
+    };
+    const key = statusKeys[current.status.toUpperCase()];
+    return key ? $_(key) : current.status.charAt(0) + current.status.slice(1).toLowerCase();
   });
   const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
   const hasFolders      = $derived(assignedFolders.length > 0);
@@ -775,14 +783,14 @@
       persistence: store.activeManga.inLibrary ? "persistent" : "memory",
       cacheGeneration: store.libraryCoverCacheGeneration,
     })}
-    fallbackLabel="Manga"
+    fallbackLabel={$_("detail.fallbackManga")}
     statusLabel={statusLabel}
     sourceLabel={manga?.source?.displayName ?? null}
-    sourceLine={(manga?.source?.displayName ?? store.activeManga.source?.displayName) ? `Manga - ${manga?.source?.displayName ?? store.activeManga.source?.displayName}` : null}
+    sourceLine={(manga?.source?.displayName ?? store.activeManga.source?.displayName) ? $_("detail.sourceLine", { source: manga?.source?.displayName ?? store.activeManga.source?.displayName }) : null}
     description={manga?.description ?? null}
     tags={manga?.genre ?? []}
     loading={loadingManga}
-    progressLabel={totalCount > 0 ? `${readCount} / ${totalCount} read` : null}
+    progressLabel={totalCount > 0 ? $_("detail.progressRead", { read: readCount, total: totalCount }) : null}
     progressPercent={progressPct}
     detailsOpen={detailsOpen}
     onBack={() => setActiveManga(null)}
@@ -839,7 +847,7 @@
             {/if}
             {#each allCategories as cat}
               {@const isIn = mangaCategories.some(c => c.id === cat.id)}
-              <button class="fp-item" class:fp-item-active={isIn} onclick={() => toggleCategory(cat)}><span class="fp-check">{isIn ? "On" : ""}</span>{getCategoryDisplayName(cat)}</button>
+              <button class="fp-item" class:fp-item-active={isIn} onclick={() => toggleCategory(cat)}><span class="fp-check" aria-hidden="true">{isIn ? "✓" : ""}</span>{getCategoryDisplayName(cat)}</button>
             {/each}
             <div class="fp-div"></div>
             {#if folderCreating}
@@ -870,7 +878,7 @@
                   <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
                   <strong>{downloadedCount} / {totalCount}</strong>
                 </div>
-                <span class="dl-state-label">{activeSeriesDownloadCount > 0 ? `${activeSeriesDownloadCount} active` : "Ready"}</span>
+                <span class="dl-state-label">{activeSeriesDownloadCount > 0 ? $_("detail.downloadsActive", { count: activeSeriesDownloadCount }) : $_("detail.downloadsReady")}</span>
               </div>
               {#if continueChapter}
                 {@const contIdx = sortedChapters.indexOf(continueChapter.chapter)}
@@ -882,7 +890,7 @@
                         {@const avail = sortedChapters.slice(contIdx, contIdx + n).filter(c => !c.isDownloaded).length}
                         <button class="dl-next-btn" disabled={avail === 0} onclick={() => { enqueueNext(n); dlOpen = false; }}>
                           <span>{$_("library_pagination_next")} {n}</span>
-                          <span class="dl-next-sub">{avail} {$_("ui_new_c2a6b03f")}</span>
+                          <span class="dl-next-sub">{$_("detail_download_newCount", { count: avail })}</span>
                         </button>
                       {/each}
                     </div>
@@ -908,17 +916,17 @@
               <div class="dl-section dl-actions">
                 <button class="dl-item" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isRead && !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
                   <span>{$_("library_sort_unreadChapters")}</span>
-                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length} {$_("ui_remaining_398658a6")}</span>
+                  <span class="dl-item-sub">{$_("detail_download_remainingCount", { count: sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length })}</span>
                 </button>
                 <button class="dl-item dl-item-primary" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
                   <span>{$_("ui_downloadAll")}</span>
-                  <span class="dl-item-sub">{sortedChapters.filter(c => !c.isDownloaded).length} {$_("ui_notDownloaded")}</span>
+                  <span class="dl-item-sub">{$_("detail_download_notDownloadedCount", { count: sortedChapters.filter(c => !c.isDownloaded).length })}</span>
                 </button>
               </div>
               <div class="dl-section dl-danger-zone" class:dl-danger-zone-empty={downloadedCount === 0}>
                 <button class="dl-item dl-item-danger" onclick={() => { deleteAllDownloads(); dlOpen = false; }} disabled={downloadedCount === 0 || deletingAll}>
-                  <span>{deletingAll ? "Deleting..." : $_("ui_deleteAllDownloads")}</span>
-                  <span class="dl-item-sub">{downloadedCount} {$_("ui_downloaded")}</span>
+                  <span>{deletingAll ? $_("detail_download_deleting") : $_("ui_deleteAllDownloads")}</span>
+                  <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
                 </button>
               </div>
             </div>
@@ -1017,7 +1025,7 @@
             <button class="grid-cell" class:read={ch.isRead} class:in-progress={inProgress} onclick={() => openChapterReader(ch)} oncontextmenu={(e) => { e.preventDefault(); ctx = { x: e.clientX, y: e.clientY, chapter: ch, idx: i }; }} title={mangaChapterTitle(ch)}>
               <span class="grid-cell-title">{mangaChapterPrimaryLabel(ch)}</span>
               {#if mangaChapterSecondaryLabel(ch)}<span class="grid-cell-sub">{mangaChapterSecondaryLabel(ch)}</span>{/if}
-              <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${gridProgress}%`}></span></span>
+              <span class="chapter-progress" class:is-empty={gridProgress <= 0}><span class="chapter-progress__fill" style={`width: ${gridProgress}%`}></span></span>
               {#if ch.isDownloaded}<span class="grid-cell-dl" title={$_("detail.stats.downloaded")}></span>{/if}
               {#if ch.isRead}<span class="grid-cell-dot"></span>{/if}
               {#if enqueueing.has(ch.id)}<span class="grid-cell-spinner"><CircleNotch size={10} weight="light" class="anim-spin" /></span>{/if}
@@ -1046,7 +1054,7 @@
                     <span class="ch-meta-item">{$_("bookDetail_page")} {ch.lastPageRead}</span>
                   </div>
                 {/if}
-                <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${rowProgress}%`}></div></div>
+                <div class="chapter-progress" class:is-empty={rowProgress <= 0}><div class="chapter-progress__fill" style={`width: ${rowProgress}%`}></div></div>
               </div>
               <span class="ch-provider">{effectiveScanlator(ch, sourceScanlatorFallback)}</span>
               <span class="ch-date">{ch.uploadDate ? formatDate(ch.uploadDate) : ""}</span>
@@ -1107,7 +1115,7 @@
                   <span class="link-manga-title">{m.title}</span>
                   {#if m.source?.displayName}<span class="link-source">{m.source.displayName}</span>{/if}
                 </div>
-                <span class="link-status">{isLinked ? "Linked" : "Link"}</span>
+                <span class="link-status">{isLinked ? $_("detail.link.linked") : $_("detail.link.link")}</span>
               </button>
             {/each}
           {/if}

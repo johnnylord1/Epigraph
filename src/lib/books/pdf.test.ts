@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   configurePdfJsWorker,
   createPdfDocumentInit,
@@ -6,6 +6,11 @@ import {
   extractPdfBookData,
   resolvePdfSectionLabel,
 } from "./pdf";
+import { applyAppLanguage } from "../i18n/runtime";
+
+beforeEach(() => {
+  applyAppLanguage("en");
+});
 
 function makeDocumentRef(overrides: Record<string, unknown> = {}) {
   return {

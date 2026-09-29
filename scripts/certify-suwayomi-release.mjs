@@ -1,3 +1,4 @@
+import { verifyJourney, sanitize } from './verification-evidence.mjs';
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -705,7 +706,7 @@ async function certifyRuntime({ java, jarPath, rootDir, endpoint, port, timeoutM
   return runs;
 }
 
-async function main() {
+async function main(evidence) {
   const options = parseArgs(process.argv.slice(2));
   const version = normalizeVersion(options.version ?? DEFAULT_CERTIFICATION_VERSION);
   const requestedPort = options.port === undefined ? null : Number.parseInt(options.port, 10);
@@ -713,11 +714,11 @@ async function main() {
     throw new Error("Port must be between 1024 and 65535.");
   }
   const timeoutMs = Number.parseInt(options["timeout-ms"] ?? String(DEFAULT_TIMEOUT_MS), 10);
-  const artifactDir = path.resolve(options["artifact-dir"] ?? path.join("tmp", "suwayomi-certification", `${version}-${process.platform}-${process.arch}`));
+  const artifactDir = options["artifact-dir"] ? path.join(path.resolve(options["artifact-dir"]), evidence.r.verificationId) : path.dirname(evidence.file);
   await mkdir(artifactDir, { recursive: true });
   const reportPath = path.join(artifactDir, "certification-report.json");
   const reviewPath = path.join(artifactDir, "compatibility-review.json");
-  await rm(reviewPath, { force: true });
+  // Unique verification ID prevents a rerun from replacing earlier failures.
   const report = {
     schemaVersion: 2,
     repository: REPOSITORY,
@@ -734,6 +735,7 @@ async function main() {
   };
   let runtimeRoot;
   try {
+    evidence.beginStage("artifact-preparation");
     const release = await fetchJson(`https://api.github.com/repos/${REPOSITORY}/releases/tags/${version}`);
     if (release.draft || release.prerelease) throw new Error("Draft and prerelease builds cannot be certified.");
     const assetName = `Suwayomi-Server-${version}.jar`;
@@ -759,6 +761,8 @@ async function main() {
     report.assetBytes = jarBytes.byteLength;
     report.sha256 = actualSha256;
     report.jarVersion = jarVersion;
+    evidence.r.artifacts.suwayomi = { sha256: actualSha256, version: jarVersion };
+    evidence.stage("artifact-preparation", "PASS");
     report.portPolicy = requestedPort === null ? "dynamic-loopback" : "explicit-loopback";
     report.runs = await certifyRuntime({
       java: javaExecutable(options.java),
@@ -789,6 +793,7 @@ async function main() {
     if (!report.baseline.restartStable) {
       throw new Error("Runtime schema or semantic contract changed after restart.");
     }
+    evidence.r.backend = sanitize({ kind: "live-disposable", version: jarVersion, capabilities: report.baseline.capabilities, source: "executed schema/semantic probes" });
     report.passed = true;
     await writeFile(reviewPath, `${JSON.stringify(buildCompatibilityReview({
       version,
@@ -799,6 +804,8 @@ async function main() {
   } catch (error) {
     report.error = error instanceof Error ? error.message : String(error);
     if (Array.isArray(error?.runs)) report.runs = error.runs;
+    if (evidence.r.stages.find(stage => stage.id === "artifact-preparation").status === "NOT_RUN") evidence.stage("artifact-preparation", "FAIL", { reason: report.error });
+    evidence.diagnostic("failure before disposable cleanup", report.error);
     process.exitCode = 1;
   } finally {
     if (runtimeRoot) {
@@ -806,14 +813,20 @@ async function main() {
         await rm(runtimeRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 500 });
       } catch (error) {
         report.cleanupError = error instanceof Error ? error.message : String(error);
+        evidence.r.cleanup = { status: "FAIL", reason: sanitize(report.cleanupError) };
+        evidence.r.failures.push({ location: "runtime-cleanup", reason: sanitize(report.cleanupError) });
+        evidence.save();
         report.error ??= "Certification runtime residue could not be cleaned safely.";
         report.passed = false;
         process.exitCode = 1;
       }
     }
+    if (runtimeRoot && !report.cleanupError) evidence.r.cleanup = { status: "PASS" };
     report.completedAt = new Date().toISOString();
     const safeReport = redactDiagnosticValue(report, [runtimeRoot]);
-    await writeFile(reportPath, `${JSON.stringify(safeReport, null, 2)}\n`);
+    evidence.diagnostic("Suwayomi certification detail", safeReport);
+    const bounded = JSON.stringify(sanitize(safeReport), null, 2);
+    await writeFile(reportPath, bounded.length <= 2 * 1024 * 1024 ? `${bounded}\n` : JSON.stringify({ schemaVersion: 2, passed: report.passed, detailTruncated: true, verificationId: evidence.r.verificationId }));
   }
   if (!report.passed) throw new Error(report.error ?? "Certification failed.");
   process.stdout.write(`Suwayomi ${version} certified on ${process.platform}-${process.arch}.\n`);
@@ -821,7 +834,7 @@ async function main() {
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
 if (import.meta.url === invokedPath) {
-  main().catch((error) => {
+  verifyJourney("certify-suwayomi-release.mjs", ["Exact JAR checksum/version, disposable schema/semantic probes and restart stability; no production update approval"], main, { artifactRequired: false, backend: "live-disposable", stages: [{ id: "artifact-preparation", name: "JAR download/hash/version preparation", kind: "preparation" }, { id: "journey", name: "Disposable runtime schema and restart verification", kind: "verification" }] }).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

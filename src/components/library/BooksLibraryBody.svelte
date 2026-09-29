@@ -11,7 +11,8 @@
   import { addToast, setActiveBookId, setLibraryScrollTop, store, updateSettings, upsertBook } from "../../store/state.svelte";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { BookAssetResolver } from "../../lib/books/assets";
-  import { importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
+  import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+  import { BOOK_IMPORT_EXTENSIONS, importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
   import { presentBookWithCoverSrc } from "../../lib/books/presentation";
   import { getBookSectionCount } from "../../lib/books/summary";
@@ -182,7 +183,7 @@
       progress: presented.showProgress
         ? {
             primaryLabel: String(readCount),
-            secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+            secondaryLabel: chapterCount > 0 ? translate("library.card.ofChapters", { count: chapterCount }) : undefined,
             percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : presented.readPercent,
           }
         : null,
@@ -228,7 +229,7 @@
   }
 
   function fileBasename(path: string): string {
-    return path.split(/[\\/]/).pop() ?? "Imported book";
+    return path.split(/[\\/]/).pop() ?? translate("library.import.fallbackName");
   }
 
   function fileStem(path: string): string {
@@ -286,8 +287,8 @@
     addToast({
       kind: "success",
       title: imported.existing
-        ? `Updated ${entry.subtype.toUpperCase()}`
-        : `Imported ${entry.subtype.toUpperCase()}`,
+        ? translate("library.import.updatedTitle", { type: entry.subtype.toUpperCase() })
+        : translate("library.import.importedTitle", { type: entry.subtype.toUpperCase() }),
       body: entry.title,
     });
     return entry;
@@ -322,10 +323,10 @@
           await importBookFile(path);
         } catch (error) {
           const message =
-            error instanceof Error ? error.message : `Could not import ${fileBasename(path)}.`;
+            error instanceof Error ? error.message : translate("library.import.failedBody", { file: fileBasename(path) });
           addToast({
             kind: "error",
-            title: `Import failed: ${fileBasename(path)}`,
+            title: translate("library.import.failedTitle", { file: fileBasename(path) }),
             body: message,
           });
         }
@@ -333,6 +334,18 @@
     } finally {
       importingDrop = false;
     }
+  }
+
+  /** Imports books chosen in the system file picker, for people who do not drag files in. */
+  export async function pickBooksToImport() {
+    if (importingDrop) return;
+    const picked = await openFileDialog({
+      multiple: true,
+      directory: false,
+      filters: [{ name: translate("library.import.pickerFilter"), extensions: [...BOOK_IMPORT_EXTENSIONS] }],
+    });
+    const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
+    if (paths.length) await importDroppedPaths(paths);
   }
 
   function openBook(cardId: string) {
@@ -373,7 +386,7 @@
   }
 
   function createCategoryAndAssign(book: BookEntry) {
-    const name = prompt("Category name:");
+    const name = prompt(translate("library.category.namePrompt"));
     if (!name?.trim()) return;
 
     const nextCategory = createBooksCategory(store.settings.booksCategories, name);
@@ -396,7 +409,9 @@
       );
 
       return {
-        label: assigned ? `Remove from ${category.name}` : `Add to ${category.name}`,
+        label: assigned
+          ? translate("library.category.removeFrom", { name: category.name })
+          : translate("library.category.addTo", { name: category.name }),
         icon: Folder,
         onClick: () => toggleCategory(book, category.id),
       };
@@ -725,6 +740,9 @@
         eyebrow={$_("library.eyebrow")}
         title={$_("ui_noBooksHereYet")}
         body={vm.emptyMessage}
+        actions={vm.dragDropEnabled
+          ? [{ label: $_("library.import.pick"), kind: "primary", icon: "books", disabled: importingDrop, onClick: () => void pickBooksToImport() }]
+          : []}
       />
     </div>
   {:else}

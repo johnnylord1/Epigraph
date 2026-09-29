@@ -1,0 +1,40 @@
+/* Motion helpers for the redesigned controls. The --ui-* motion and surface tokens live in
+   tokens.css with the rest of the theme layer. Nested theme hosts recompute the surfaces. */
+
+[data-theme] {
+  --ui-surface: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  --ui-surface-strong: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --ui-line: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+/* Press ripple host appended by pointerEffects; it clips the ripple to the control's corners. */
+.ui-ripple-host {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.ui-ripple-host > .fr-ripple {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.28;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .epigraph-app-shell *,
+  .epigraph-app-shell *::before,
+  .epigraph-app-shell *::after {
+    transition-duration: 0.01ms !important;
+  }
+
+  .ui-ripple-host {
+    display: none;
+  }
+}

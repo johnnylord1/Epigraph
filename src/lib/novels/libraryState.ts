@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../tauri/invoke";
 
 import {
   type EpigraphNovelBookmarkEntry,
@@ -265,6 +265,14 @@ export function peekNovelLibraryState(
     ?? createEmptyState(scopeInput);
 }
 
+/** A detached reader window keeps the state it read and changed here; the main window writes the file. */
+export function rememberNovelLibraryState(
+  state: PersistedNovelLibraryState,
+  scopeInput: NovelRepositoryScopeInput = {},
+): PersistedNovelLibraryState {
+  return persistNovelLibraryStateCache(normalizeNovelLibraryState(state, scopeInput));
+}
+
 export function resetNovelLibraryStateCacheForTests() {
   novelLibraryStateCache.clear();
 }
@@ -325,7 +333,9 @@ export async function loadNovelLibraryState(
 
 export async function reloadNovelLibraryState(
   scopeInput: NovelRepositoryScopeInput = {},
+  options: { strict?: boolean } = {},
 ): Promise<PersistedNovelLibraryState> {
+  if (options.strict) return persistNovelLibraryStateCache(await loadNovelLibraryStateForRestore(scopeInput));
   const scope = normalizeScopeInput(scopeInput);
   const scopeKey = resolveNovelsProfileScope(scope);
   novelLibraryStateCache.delete(scopeKey);

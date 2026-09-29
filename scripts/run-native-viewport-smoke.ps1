@@ -1,5 +1,6 @@
 param(
   [string]$App,
+  [string]$BuildReceipt=$env:EPIGRAPH_BUILD_RECEIPT,
   [string]$NativeDriver,
   [string]$NodeScript = "smoke-native-viewports.mjs",
   [switch]$ShowWindow
@@ -37,22 +38,21 @@ function Resolve-EdgeDriver {
   throw "msedgedriver was not found. Install Microsoft Edge WebDriver or set EPIGRAPH_EDGE_DRIVER."
 }
 
+ . (Join-Path $scriptDir 'VerificationEvidence.ps1')
+$verification=New-VerificationEvidence $projectRoot 'run-native-viewport-smoke.ps1' @(@{id='artifact';name='B1 artifact validation';kind='verification'},@{id='native';name='Requested native harness';kind='verification'}) @{environment='disposable';journeys=@('Requested NodeScript; detailed child receipt defines routes');backend=@{kind='mock';reason='Harness fixture, not live service certification'}}
+$artifactLock=$null;$coreLock=$null;$verificationStage='artifact'
+try {
+  $null=Invoke-VerificationEvidence begin $verification @{id='artifact'}
+  $appPath=Assert-VerificationArtifact $verification $BuildReceipt $App
+  $artifactLock=[IO.File]::Open($appPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+  $bound=Get-Content $BuildReceipt -Raw|ConvertFrom-Json
+  $coreLock=[IO.File]::Open($bound.coreExecutable,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+  $null=Assert-VerificationArtifact $verification $BuildReceipt $appPath
+  Set-VerificationStage $verification artifact PASS
+  $verificationStage='native'
+  $null=Invoke-VerificationEvidence begin $verification @{id='native'}
 if (-not (Test-Path $tauriDriver)) { throw "tauri-driver was not found at $tauriDriver" }
 if (-not (Test-Path $appPath)) { throw "Automation build was not found at $appPath" }
-
-if (-not $App) {
-  $productionInputs = @(
-    Get-ChildItem -Path (Join-Path $projectRoot "src") -Recurse -File -Include *.ts,*.svelte,*.css,*.json |
-      Where-Object { $_.FullName -notmatch '[\\/]src[\\/]test[\\/]' -and $_.Name -notmatch '\.(test|spec)\.' }
-    Get-ChildItem -Path (Join-Path $projectRoot "src-tauri\src") -Recurse -File -Include *.rs
-    Get-Item (Join-Path $projectRoot "package.json"), (Join-Path $projectRoot "vite.config.ts")
-  )
-  $latestInput = $productionInputs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-  $appFile = Get-Item $appPath
-  if ($latestInput -and $appFile.LastWriteTimeUtc -lt $latestInput.LastWriteTimeUtc) {
-    throw "Automation build is older than $($latestInput.FullName). Rebuild it or pass -App explicitly."
-  }
-}
 
 $edgeDriver = Resolve-EdgeDriver
 $driverPort = Get-FreePort
@@ -102,9 +102,33 @@ try {
   & node @nodeArguments
   if ($LASTEXITCODE -ne 0) { throw "Native viewport smoke failed" }
   $completed = $true
+  Set-VerificationStage $verification native PASS
+  $verificationStage=$null
+} catch {
+  if($verificationStage){Set-VerificationStage $verification $verificationStage FAIL $_.ToString()}
+  $null=Invoke-VerificationEvidence diagnostic $verification @{label='failure before cleanup';value=$_.ToString()}
+  $verificationStage=$null
+  throw
 } finally {
+  try {
   if ($driverProcess -and -not $driverProcess.HasExited) {
     $driverProcess.Kill()
     [void]$driverProcess.WaitForExit(5000)
   }
+    $null=Invoke-VerificationEvidence cleanup $verification @{result=@{status='PASS'}}
+  } catch {
+    $null=Invoke-VerificationEvidence cleanup $verification @{result=@{status='FAIL';reason=$_.ToString()}}
+  }
+
 }
+
+} catch {
+  if($verificationStage){Set-VerificationStage $verification $verificationStage FAIL $_.ToString()}
+  $null=Invoke-VerificationEvidence diagnostic $verification @{label='native runner failure';value=$_.ToString()}
+  throw
+} finally {
+  if($artifactLock){$artifactLock.Dispose()};if($coreLock){$coreLock.Dispose()}
+  $final=Invoke-VerificationEvidence finish $verification @{}|ConvertFrom-Json
+  Write-Host "Verification receipt: $verification"
+}
+if($final.outcome -ne 'PASS'){exit 1}

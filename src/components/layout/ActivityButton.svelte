@@ -87,7 +87,7 @@
   class:has-new-activity={newActivityCount > 0}
   type="button"
   title={$_("ui_recentActivity")}
-  aria-label={newActivityCount > 0 ? `Recent activity, ${newActivityCount} new` : "Recent activity"}
+  aria-label={newActivityCount > 0 ? $_("activity.buttonLabelNew", { count: newActivityCount }) : $_("ui_recentActivity")}
   onclick={openActivity}
 >
   <span class="material-symbols-outlined" aria-hidden="true">notifications</span>

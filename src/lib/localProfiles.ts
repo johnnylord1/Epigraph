@@ -139,8 +139,16 @@ export function normalizeCustomLocalProfiles(value: unknown): CustomLocalProfile
   return profiles;
 }
 
+/** Rejected profile input; `code` lets the UI show the message in the app language. */
+export class LocalProfileInputError extends Error {
+  constructor(readonly code: "port-out-of-range" | "port-in-use", message: string) {
+    super(message);
+    this.name = "LocalProfileInputError";
+  }
+}
+
 export function createCustomLocalProfile(
-  input: { label: string; port: number },
+  input: { label: string; port: number; fallbackLabel?: string },
   existing: readonly CustomLocalProfile[] = [],
 ): CustomLocalProfile {
   const normalizedExisting = normalizeCustomLocalProfiles(existing);
@@ -153,10 +161,10 @@ export function createCustomLocalProfile(
     ...normalizedExisting.map((profile) => profile.port),
   ]);
   const port = normalizeProfilePort(input.port);
-  if (!port) throw new Error("Use a local port between 1024 and 65535.");
-  if (usedPorts.has(port)) throw new Error("This port is already used by another profile.");
+  if (!port) throw new LocalProfileInputError("port-out-of-range", "Use a local port between 1024 and 65535.");
+  if (usedPorts.has(port)) throw new LocalProfileInputError("port-in-use", "This port is already used by another profile.");
 
-  const label = normalizeProfileLabel(input.label, `Profile ${port}`);
+  const label = normalizeProfileLabel(input.label, input.fallbackLabel ?? `Profile ${port}`);
   const baseId = slugifyLocalProfileId(label) || `profile-${port}`;
   let id = RESERVED_LOCAL_PROFILE_IDS.has(baseId) ? `${baseId}-${port}` : baseId;
   let suffix = 2;
@@ -185,6 +193,28 @@ export function getAllLocalProfiles(customProfiles: unknown = []): LocalProfileM
     ...normalizeCustomLocalProfiles(customProfiles).map(customProfileToMeta),
     ...BUILTIN_LOCAL_PROFILES,
   ];
+}
+
+/**
+ * The built-in profiles keep their MAIN and TEST labels, which launch targets and saved settings
+ * match on. People see a translated name instead.
+ */
+export function localProfileDisplayName(
+  label: string | null | undefined,
+  translate: (key: string) => string,
+): string {
+  const trimmed = label?.trim() ?? "";
+  switch (trimmed.toUpperCase()) {
+    case "MAIN":
+      return translate("settings.general.profiles.builtinMain");
+    case "TEST":
+      return translate("settings.general.profiles.builtinTest");
+    case "":
+    case "CUSTOM":
+      return translate("settings.general.profiles.unnamed");
+    default:
+      return trimmed;
+  }
 }
 
 export function getLocalProfileMeta(

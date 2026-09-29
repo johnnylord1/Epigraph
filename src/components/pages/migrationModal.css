@@ -1,0 +1,639 @@
+/* Shared shell for the manga, novel and mass migration modals. It follows the first-run language:
+   a stepper with a pill on the current step, filled fields with an accent underline, quiet rows,
+   text buttons that gain a soft pill, and one filled primary action in the footer.
+   Every visual value comes from the --component-migration-* / --component-migrate-modal-* tokens. */
+
+.mg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--component-migration-overlay-z-index);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--component-migration-overlay-bg);
+  backdrop-filter: var(--component-migration-overlay-blur);
+  animation: mg-fade var(--component-migration-animation-fade) both;
+}
+
+.mg-modal {
+  position: relative;
+  width: var(--component-migrate-modal-width);
+  /* Sized by its content up to the cap: a short list keeps the dialog small, a long one grows it
+     until the body starts to scroll. glideHeight turns each change of height into a glide. */
+  max-height: var(--component-migrate-modal-height);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--component-migration-modal-border);
+  border-radius: var(--component-migration-modal-radius);
+  background: var(--component-migration-modal-bg);
+  box-shadow: var(--component-migration-modal-shadow);
+  color: var(--component-migration-body-fg);
+  font-family: var(--font-ui);
+  animation: mg-rise var(--component-migration-animation-scale) both;
+}
+.mg-modal:focus { outline: none; }
+.mg-modal--novel { z-index: var(--component-novel-migrate-modal-z-index); width: var(--component-novel-migrate-modal-width); max-height: var(--component-novel-migrate-modal-height); }
+.mg-backdrop { position: absolute; inset: 0; border: 0; background: transparent; cursor: pointer; }
+.mg-backdrop:disabled { cursor: default; }
+.mg-modal--wide { width: var(--component-migration-mass-width); max-height: var(--component-migration-mass-height); }
+
+/* Header: eyebrow, title and a muted line, with the work cover when there is one. */
+.mg-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px 14px;
+}
+.mg-header-cover {
+  width: 38px;
+  aspect-ratio: 2 / 3;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--component-migration-cover-radius);
+  overflow: hidden;
+  background: var(--component-migration-surface);
+}
+.mg-header-cover img { width: 100%; height: 100%; object-fit: cover; }
+.mg-modal img[data-broken="true"] { visibility: hidden; }
+.mg-heading { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.mg-eyebrow {
+  margin: 0;
+  color: var(--component-migration-eyebrow-fg);
+  font-size: var(--text-2xs);
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.mg-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--component-migration-title-fg);
+  font-size: var(--text-xl);
+  font-weight: 750;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mg-subtitle {
+  margin: 0;
+  overflow: hidden;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mg-close {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--component-migration-button-radius);
+  color: var(--component-migration-icon-fg);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast), transform var(--component-migration-transition-spring);
+}
+.mg-close:hover:not(:disabled) { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-surface-strong); }
+.mg-close:active:not(:disabled) { transform: scale(0.92); }
+.mg-close:disabled { opacity: var(--component-migration-disabled-opacity); cursor: not-allowed; }
+
+/* Stepper: same anatomy as the first-run progress bar. */
+.mg-steps { padding: 0 20px 14px; border-bottom: 1px solid var(--component-migration-divider); }
+.mg-steps ol { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mg-steps li {
+  min-width: 0;
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--component-migration-step-pending-fg);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color var(--component-migration-transition-normal);
+}
+.mg-steps li:last-child { flex: 0 0 auto; }
+.mg-step-chip {
+  min-width: 0;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px 0 8px;
+  border-radius: var(--component-migration-pill-radius);
+  transition: background var(--component-migration-transition-normal), box-shadow var(--component-migration-transition-normal);
+}
+.mg-step-chip span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.mg-step-icon { width: 18px; height: 18px; flex: none; display: grid; place-items: center; }
+.mg-steps li[aria-current="step"] { color: var(--component-migration-strong-fg); }
+.mg-steps li[aria-current="step"] .mg-step-chip { background: var(--component-migration-step-current-bg); box-shadow: var(--component-migration-step-current-ring); }
+.mg-steps li[aria-current="step"] .mg-step-icon { color: var(--component-migration-accent-fg); }
+.mg-steps li.is-complete { color: var(--component-migration-body-fg); }
+.mg-steps li.is-complete .mg-step-icon { color: var(--component-migration-step-done-fg); }
+.mg-step-line {
+  min-width: 12px;
+  height: 2px;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-radius: var(--component-migration-pill-radius);
+  background: var(--component-migration-step-line);
+}
+.mg-step-line i {
+  display: block;
+  height: 100%;
+  background: var(--component-migration-step-done-fg);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--component-migration-transition-slow);
+}
+.mg-steps li.is-complete .mg-step-line i { transform: scaleX(1); }
+
+/* Body scrolls once the dialog reaches its cap; header, stepper and footer stay put. Each step's
+   content sits in one .mg-step that arrives as a whole when the step changes. */
+.mg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.mg-modal.is-gliding .mg-body { overflow-y: hidden; }
+.mg-step { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.mg-lede { margin: 0; color: var(--component-migration-muted-fg); font-size: var(--text-sm); line-height: 1.55; }
+.mg-lede strong { color: var(--component-migration-strong-fg); font-weight: 650; }
+.mg-section-label {
+  margin: 4px 8px 0;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-2xs);
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.mg-toolbar { display: flex; align-items: center; gap: 8px; }
+.mg-toolbar > .mg-field { flex: 1; min-width: 0; }
+
+/* Filled field with the growing accent underline. */
+.mg-field {
+  position: relative;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 12px;
+  border-radius: var(--component-migration-field-radius);
+  color: var(--component-migration-muted-fg);
+  background: var(--component-migration-surface);
+  transition: background var(--component-migration-transition-normal);
+}
+.mg-field:hover { background: var(--component-migration-surface-strong); }
+.mg-field:focus-within { background: var(--component-migration-field-focus-bg); }
+.mg-field::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  background: var(--component-migration-field-underline);
+  transform: scaleX(0);
+  transition: transform var(--component-migration-transition-slow);
+}
+.mg-field:focus-within::after { transform: scaleX(1); }
+.mg-field > svg { flex: none; }
+.mg-field:focus-within > svg { color: var(--component-migration-accent-fg); }
+.mg-field input,
+.mg-field select {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  color: var(--component-migration-input-fg);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-base);
+}
+.mg-field input::placeholder { color: var(--component-migration-muted-fg); }
+.mg-field select { cursor: pointer; }
+.mg-field select option { color: var(--component-migration-input-fg); background: var(--component-migration-menu-bg); }
+.mg-field--select { flex: none; width: 150px; }
+
+/* Rows: quiet until hovered, like the first-run lists. */
+.mg-list { display: grid; align-content: start; gap: 2px; }
+.mg-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--component-migration-row-radius);
+  color: var(--component-migration-body-fg);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--component-migration-transition-fast);
+}
+.mg-row:hover:not(:disabled) { background: var(--component-migration-surface); }
+.mg-row:disabled { cursor: default; }
+.mg-row.is-selected { background: var(--component-migration-row-selected-bg); box-shadow: var(--component-migration-row-selected-ring); }
+.mg-row.is-best { background: var(--component-migration-best-bg); box-shadow: var(--component-migration-best-ring); }
+.mg-row-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.mg-row-copy strong {
+  overflow: hidden;
+  color: var(--component-migration-strong-fg);
+  font-size: var(--text-base);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mg-row-copy small {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mg-row-end { flex: none; display: grid; place-items: center; color: var(--component-migration-muted-fg); transition: transform var(--component-migration-transition-spring), color var(--component-migration-transition-fast); }
+.mg-row:hover:not(:disabled) .mg-row-end { color: var(--component-migration-accent-fg); transform: translateX(3px); }
+.mg-row.is-selected .mg-row-end { color: var(--component-migration-accent-fg); }
+
+.mg-mark {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--component-migration-tile-radius);
+  color: var(--component-migration-tile-fg);
+  background: var(--component-migration-tile-bg);
+}
+.mg-mark img { width: 100%; height: 100%; object-fit: cover; }
+.mg-cover {
+  width: 40px;
+  aspect-ratio: 2 / 3;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--component-migration-cover-radius);
+  color: var(--component-migration-muted-fg);
+  background: var(--component-migration-cover-bg);
+}
+.mg-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Match meter and pills. */
+.mg-meter { width: 54px; height: 4px; flex: none; overflow: hidden; border-radius: var(--component-migration-pill-radius); background: var(--component-migration-surface-strong); }
+.mg-meter i { display: block; height: 100%; border-radius: inherit; background: var(--component-migration-accent-fg); }
+.mg-pill {
+  min-height: 20px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: var(--component-migration-pill-radius);
+  color: var(--component-migration-body-fg);
+  background: var(--component-migration-surface-strong);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.mg-pill--accent { color: var(--component-migration-accent-fg); background: var(--component-migration-step-current-bg); }
+.mg-pill--good { color: var(--component-migration-good-fg); background: var(--component-migration-good-bg); }
+.mg-pill--warn { color: var(--component-migration-warn-fg); background: var(--component-migration-warn-bg); }
+.mg-pill--bad { color: var(--component-migration-bad-fg); background: var(--component-migration-error-bg); }
+
+/* Current source / target context line above a search. */
+.mg-context {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 8px;
+  border-radius: var(--component-migration-field-radius);
+  background: var(--component-migration-surface);
+}
+.mg-context .mg-mark { width: 28px; height: 28px; }
+.mg-context .mg-row-copy strong { font-size: var(--text-sm); }
+
+/* Comparison of the current entry and the chosen match. */
+.mg-compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.mg-compare-card {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border-radius: var(--component-migration-panel-radius);
+  background: var(--component-migration-surface);
+}
+.mg-compare-card .mg-cover { width: 56px; }
+.mg-compare-card.is-new { background: var(--component-migration-best-bg); box-shadow: var(--component-migration-best-ring); }
+.mg-compare-arrow {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--component-migration-pill-radius);
+  color: var(--component-migration-accent-fg);
+  background: var(--component-migration-step-current-bg);
+}
+.mg-compare-card .mg-row-copy strong { white-space: normal; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mg-compare-card .mg-row-copy small { flex-wrap: wrap; white-space: normal; }
+
+.mg-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.mg-metric {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--component-migration-panel-radius);
+  background: var(--component-migration-surface);
+}
+.mg-metric span { overflow: hidden; color: var(--component-migration-muted-fg); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.mg-metric strong { color: var(--component-migration-strong-fg); font-size: var(--text-lg); font-weight: 750; font-variant-numeric: tabular-nums; }
+.mg-metric small { color: var(--component-migration-muted-fg); font-size: var(--text-2xs); }
+.mg-metric .is-good { color: var(--component-migration-good-fg); }
+.mg-metric .is-warn { color: var(--component-migration-warn-fg); }
+.mg-metric .is-bad { color: var(--component-migration-bad-fg); }
+.mg-note { margin: 0; color: var(--component-migration-muted-fg); font-size: var(--text-xs); line-height: 1.5; }
+.mg-note svg { vertical-align: -2px; }
+
+/* Segmented control (single / mass). */
+.mg-segmented {
+  align-self: flex-start;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--component-migration-pill-radius);
+  background: var(--component-migration-surface);
+}
+.mg-segmented button {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--component-migration-pill-radius);
+  color: var(--component-migration-muted-fg);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+  transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast);
+}
+.mg-segmented button:hover { color: var(--component-migration-strong-fg); }
+.mg-segmented button[aria-pressed="true"] { color: var(--component-migration-accent-fg); background: var(--component-migration-step-current-bg); box-shadow: var(--component-migration-step-current-ring); }
+
+/* Empty, loading and progress states. */
+.mg-empty {
+  flex: 1;
+  min-height: 140px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--component-migration-muted-fg);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+.mg-skeleton {
+  height: 56px;
+  border-radius: var(--component-migration-field-radius);
+  background: var(--component-migration-skeleton);
+  background-size: 300% 100%;
+  animation: mg-shimmer 1.3s linear infinite;
+}
+.mg-progress { display: grid; gap: 8px; padding: 12px; border-radius: var(--component-migration-panel-radius); background: var(--component-migration-surface); }
+.mg-progress-head { display: flex; justify-content: space-between; gap: 12px; color: var(--component-migration-body-fg); font-size: var(--text-sm); font-weight: 650; }
+.mg-progress-head span:last-child { color: var(--component-migration-muted-fg); font-variant-numeric: tabular-nums; }
+.mg-progress-bar { height: 4px; overflow: hidden; border-radius: var(--component-migration-pill-radius); background: var(--component-migration-surface-strong); }
+.mg-progress-bar i { display: block; height: 100%; border-radius: inherit; background: var(--component-migration-accent-fg); transition: width var(--component-migration-transition-normal); }
+
+/* Footer: back on the left, the one filled action on the right. */
+.mg-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--component-migration-divider);
+}
+.mg-spacer { flex: 1; }
+.mg-btn {
+  position: relative;
+  isolation: isolate;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--component-migration-button-radius);
+  color: var(--component-migration-secondary-fg);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast), transform var(--component-migration-transition-spring), filter var(--component-migration-transition-fast);
+}
+.mg-btn:hover:not(:disabled) { color: var(--component-migration-strong-fg); background: var(--component-migration-surface-strong); }
+.mg-btn:active:not(:disabled) { transform: scale(0.96); }
+.mg-btn:disabled { opacity: var(--component-migration-disabled-opacity); cursor: not-allowed; }
+.mg-btn--primary { padding: 0 18px; color: var(--component-migration-primary-ink); background: var(--component-migration-primary-bg); font-weight: 700; }
+.mg-btn--primary:hover:not(:disabled) { color: var(--component-migration-primary-ink); background: var(--component-migration-primary-bg); filter: var(--component-migration-primary-hover-filter); }
+.mg-btn--small { min-height: 30px; padding: 0 11px; font-size: var(--text-sm); }
+.mg-btn .mg-arrow-back,
+.mg-btn .mg-arrow-next { transition: transform var(--component-migration-transition-spring); }
+.mg-btn:hover:not(:disabled) .mg-arrow-back { transform: translateX(-3px); }
+.mg-btn:hover:not(:disabled) .mg-arrow-next { transform: translateX(3px); }
+
+/* Mass migration queue: one compact line per work, origin on the left and match on the right. */
+.mg-queue { display: grid; align-content: start; gap: 2px; }
+.mg-queue-item {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: var(--component-migration-row-radius);
+  transition: background var(--component-migration-transition-fast);
+}
+.mg-queue-item:hover { background: var(--component-migration-surface); }
+.mg-queue-item.is-selected { background: var(--component-migration-row-selected-bg); }
+.mg-queue-item.is-muted { opacity: var(--component-migration-item-muted-opacity); }
+.mg-queue-side { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.mg-queue-side .mg-cover { width: 34px; }
+.mg-queue-arrow { display: grid; place-items: center; color: var(--component-migration-muted-fg); }
+.mg-queue-note { grid-column: 2 / -1; color: var(--component-migration-muted-fg); font-size: var(--text-xs); }
+.mg-queue-note.is-error { color: var(--component-migration-bad-fg); }
+.mg-check {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1.5px solid var(--component-migration-step-line);
+  border-radius: var(--component-migration-check-radius);
+  color: var(--component-migration-primary-ink);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--component-migration-transition-fast), border-color var(--component-migration-transition-fast), transform var(--component-migration-transition-spring);
+}
+.mg-check:hover:not(:disabled) { border-color: var(--component-migration-accent-fg); }
+.mg-check:active:not(:disabled) { transform: scale(0.9); }
+.mg-check.is-checked { border-color: var(--component-migration-primary-bg); background: var(--component-migration-primary-bg); }
+.mg-check:disabled { opacity: var(--component-migration-disabled-opacity); cursor: not-allowed; }
+.mg-check:disabled.is-checked { opacity: 1; }
+.mg-menu-wrap { position: relative; }
+.mg-icon-btn {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--component-migration-button-radius);
+  color: var(--component-migration-icon-fg);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast);
+}
+.mg-icon-btn:hover,
+.mg-icon-btn[aria-expanded="true"] { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-surface-strong); }
+.mg-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: var(--component-migration-menu-z-index);
+  min-width: 160px;
+  display: grid;
+  padding: 5px;
+  border: 1px solid var(--component-migration-menu-border);
+  border-radius: var(--component-migration-menu-radius);
+  background: var(--component-migration-menu-bg);
+  box-shadow: var(--component-migration-menu-shadow);
+  transform-origin: top right;
+}
+.mg-menu button {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--component-migration-menu-item-radius);
+  color: var(--component-migration-menu-item-fg);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.mg-menu button:hover { color: var(--component-migration-accent-fg); background: var(--component-migration-menu-item-hover-bg); }
+
+.mg-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mg-close:focus-visible,
+.mg-row:focus-visible,
+.mg-btn:focus-visible,
+.mg-check:focus-visible,
+.mg-icon-btn:focus-visible,
+.mg-menu button:focus-visible,
+.mg-segmented button:focus-visible { outline: 2px solid var(--component-migration-focus-border); outline-offset: 2px; }
+
+/* Arrivals. Rows and queue lines cascade in by their --mg-i index (capped, so a long list never
+   waits on its tail); icons that swap in (a step turning done, a check) pop; the confirm cards and
+   the footer actions of a new step rise in order. Backwards fill only, so settled state styles such
+   as a muted queue line keep their own opacity. */
+.mg-list > .mg-row,
+.mg-queue > .mg-queue-item {
+  animation: mg-item-in var(--component-migration-animation-scale) backwards;
+  animation-delay: calc(min(var(--mg-i, 0), 12) * 28ms);
+}
+.mg-list > .mg-skeleton { animation: mg-shimmer 1.3s linear infinite, mg-fade var(--component-migration-animation-scale) backwards; }
+.mg-empty,
+.mg-progress,
+.mg-context,
+.mg-compare > *,
+.mg-metric,
+.mg-footer > .mg-btn { animation: mg-item-in var(--component-migration-animation-scale) backwards; }
+.mg-compare > :nth-child(2) { animation-delay: 70ms; }
+.mg-compare > :nth-child(3) { animation-delay: 140ms; }
+.mg-metric:nth-child(1) { animation-delay: 180ms; }
+.mg-metric:nth-child(2) { animation-delay: 230ms; }
+.mg-metric:nth-child(3) { animation-delay: 280ms; }
+.mg-metric:nth-child(4) { animation-delay: 330ms; }
+.mg-footer > .mg-btn + .mg-spacer + .mg-btn { animation-delay: 60ms; }
+.mg-step-icon > svg,
+.mg-row.is-selected .mg-row-end > svg,
+.mg-row.is-selected .mg-mark > svg,
+.mg-check > svg { animation: mg-pop var(--component-migration-transition-spring) backwards; }
+
+@keyframes mg-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mg-rise { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes mg-item-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
+@keyframes mg-pop { from { opacity: 0; transform: scale(0.4) rotate(-14deg); } }
+@keyframes mg-shimmer { from { background-position: 100% 0; } to { background-position: -200% 0; } }
+
+@media (max-width: 640px) {
+  .mg-steps li:not([aria-current="step"]) .mg-step-chip > span:last-child { display: none; }
+  .mg-compare { grid-template-columns: minmax(0, 1fr); }
+  .mg-compare-arrow { justify-self: center; transform: rotate(90deg); }
+  .mg-field--select { width: 120px; }
+  .mg-queue-item { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .mg-queue-arrow,
+  .mg-queue-item > .mg-queue-side:nth-of-type(2) { display: none; }
+  .mg-queue-item > .mg-pill { grid-column: 2; justify-self: start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-overlay,
+  .mg-modal,
+  .mg-skeleton,
+  .mg-list > .mg-skeleton,
+  .mg-list > .mg-row,
+  .mg-queue > .mg-queue-item,
+  .mg-empty,
+  .mg-progress,
+  .mg-context,
+  .mg-compare > *,
+  .mg-metric,
+  .mg-footer > .mg-btn,
+  .mg-step-icon > svg,
+  .mg-row.is-selected .mg-row-end > svg,
+  .mg-row.is-selected .mg-mark > svg,
+  .mg-check > svg { animation: none; }
+  .mg-modal *,
+  .mg-modal *::before,
+  .mg-modal *::after { transition-duration: 0.01ms; }
+}

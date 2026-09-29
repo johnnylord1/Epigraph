@@ -23,6 +23,30 @@ describe("SplashScreen (browser)", () => {
     expect(document.querySelector(".brand-mark")).toBeTruthy();
   });
 
+  test("keeps the default palette whatever theme is active", async () => {
+    const root = document.documentElement;
+    const previousTheme = root.dataset.theme;
+    root.dataset.theme = "light";
+    root.style.setProperty("--component-splash-ink-source", "rgb(1, 2, 3)");
+    root.style.setProperty("--component-splash-background-base-source", "rgb(250, 250, 250)");
+    root.style.setProperty("--color-highlight-source", "rgb(4, 5, 6)");
+    try {
+      render(SplashScreen, { props: { mode: "loading", statusText: "Loading", showCards: false } });
+      const stage = document.querySelector<HTMLElement>(".epigraph-port--splash");
+      expect(stage).toBeTruthy();
+      const style = getComputedStyle(stage!);
+      expect(style.getPropertyValue("--component-splash-ink-source").trim()).toBe("#efeaff");
+      expect(style.getPropertyValue("--color-highlight-source").trim()).toBe("#ffffff");
+      expect(style.getPropertyValue("--component-splash-background-base-source").trim()).toBe("#030306");
+    } finally {
+      root.style.removeProperty("--component-splash-ink-source");
+      root.style.removeProperty("--component-splash-background-base-source");
+      root.style.removeProperty("--color-highlight-source");
+      if (previousTheme === undefined) delete root.dataset.theme;
+      else root.dataset.theme = previousTheme;
+    }
+  });
+
   test("renders the error shell with visible runtime actions", async () => {
     render(SplashScreen, {
       props: {

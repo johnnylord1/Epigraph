@@ -94,73 +94,73 @@
   ]);
 
   const TOKEN_LABELS: Record<keyof ThemeTokens, string> = {
-    "bg-void":    "Void (deepest bg)",
-    "bg-base":    "Base",
-    "bg-surface": "Surface",
-    "bg-raised":  "Raised",
-    "bg-overlay": "Overlay",
-    "bg-subtle":  "Subtle",
-    "border-dim":    "Dim border",
-    "border-base":   "Base border",
-    "border-strong": "Strong border",
-    "border-focus":  "Focus ring",
-    "text-primary":   "Primary text",
-    "text-secondary": "Secondary text",
-    "text-muted":     "Muted text",
-    "text-faint":     "Faint text",
-    "text-disabled":  "Disabled text",
-    "text-tertiary":  "Tertiary text",
-    "text-inverse":   "Inverse text",
-    "accent":        "Accent",
-    "accent-dim":    "Accent dim",
-    "accent-muted":  "Accent muted",
-    "accent-fg":     "Accent foreground",
-    "accent-bright": "Accent bright",
-    "color-error":    "Error",
-    "color-error-bg": "Error background",
-    "color-danger":   "Danger",
-    "color-danger-bg": "Danger background",
-    "color-success":  "Success",
-    "color-success-bg": "Success background",
-    "color-warning": "Warning",
-    "color-warning-bg": "Warning background",
-    "color-info":     "Info",
-    "color-info-bg":  "Info background",
-    "color-background": "Background",
-    "color-background-void": "Void background",
-    "color-surface": "Surface",
-    "color-surface-secondary": "Secondary surface",
-    "color-elevated": "Elevated surface",
-    "color-card": "Card surface",
-    "color-modal": "Modal surface",
-    "color-popover": "Popover surface",
-    "color-menu": "Menu surface",
-    "color-overlay": "Overlay",
-    "color-border": "Border",
-    "color-outline": "Outline",
-    "color-divider": "Divider",
-    "color-accent": "Semantic accent",
-    "color-accent-muted": "Muted semantic accent",
-    "color-shadow-source": "Shadow source",
-    "color-highlight-source": "Highlight source",
+    "bg-void":    "themeEditor_token_bgVoid",
+    "bg-base":    "themeEditor_token_bgBase",
+    "bg-surface": "themeEditor_token_bgSurface",
+    "bg-raised":  "themeEditor_token_bgRaised",
+    "bg-overlay": "themeEditor_token_bgOverlay",
+    "bg-subtle":  "themeEditor_token_bgSubtle",
+    "border-dim":    "themeEditor_token_borderDim",
+    "border-base":   "themeEditor_token_borderBase",
+    "border-strong": "themeEditor_token_borderStrong",
+    "border-focus":  "themeEditor_token_borderFocus",
+    "text-primary":   "themeEditor_token_textPrimary",
+    "text-secondary": "themeEditor_token_textSecondary",
+    "text-muted":     "themeEditor_token_textMuted",
+    "text-faint":     "themeEditor_token_textFaint",
+    "text-disabled":  "themeEditor_token_textDisabled",
+    "text-tertiary":  "themeEditor_token_textTertiary",
+    "text-inverse":   "themeEditor_token_textInverse",
+    "accent":        "themeEditor_token_accent",
+    "accent-dim":    "themeEditor_token_accentDim",
+    "accent-muted":  "themeEditor_token_accentMuted",
+    "accent-fg":     "themeEditor_token_accentFg",
+    "accent-bright": "themeEditor_token_accentBright",
+    "color-error":    "themeEditor_token_colorError",
+    "color-error-bg": "themeEditor_token_colorErrorBg",
+    "color-danger":   "themeEditor_token_colorDanger",
+    "color-danger-bg": "themeEditor_token_colorDangerBg",
+    "color-success":  "themeEditor_token_colorSuccess",
+    "color-success-bg": "themeEditor_token_colorSuccessBg",
+    "color-warning": "themeEditor_token_colorWarning",
+    "color-warning-bg": "themeEditor_token_colorWarningBg",
+    "color-info":     "themeEditor_token_colorInfo",
+    "color-info-bg":  "themeEditor_token_colorInfoBg",
+    "color-background": "themeEditor_token_colorBackground",
+    "color-background-void": "themeEditor_token_colorBackgroundVoid",
+    "color-surface": "themeEditor_token_colorSurface",
+    "color-surface-secondary": "themeEditor_token_colorSurfaceSecondary",
+    "color-elevated": "themeEditor_token_colorElevated",
+    "color-card": "themeEditor_token_colorCard",
+    "color-modal": "themeEditor_token_colorModal",
+    "color-popover": "themeEditor_token_colorPopover",
+    "color-menu": "themeEditor_token_colorMenu",
+    "color-overlay": "themeEditor_token_colorOverlay",
+    "color-border": "themeEditor_token_colorBorder",
+    "color-outline": "themeEditor_token_colorOutline",
+    "color-divider": "themeEditor_token_colorDivider",
+    "color-accent": "themeEditor_token_colorAccent",
+    "color-accent-muted": "themeEditor_token_colorAccentMuted",
+    "color-shadow-source": "themeEditor_token_colorShadowSource",
+    "color-highlight-source": "themeEditor_token_colorHighlightSource",
   };
 
   const HUD_TOKEN_LABELS: Record<keyof HudThemeTokens, string> = {
-    "hud-control-height":        "Control height",
-    "hud-icon-button-size":      "Icon button size",
-    "hud-control-radius":        "Control radius",
-    "hud-chip-radius":           "Chip radius",
-    "hud-popover-radius":        "Popover radius",
-    "hud-status-radius":         "Status radius",
-    "hud-toast-radius":          "Toast radius",
-    "hud-chapter-row-radius":    "Chapter row radius",
-    "hud-surface-opacity":       "Surface opacity",
-    "hud-sidebar-width":         "Sidebar width",
-    "hud-toolbar-gap":           "Toolbar gap",
-    "hud-reader-chrome-opacity": "Reader chrome opacity",
-    "hud-selection-bg":          "Selection background",
-    "hud-selection-border":      "Selection border",
-    "hud-progress-height":       "Progress height",
+    "hud-control-height":        "themeEditor_hud_controlHeight",
+    "hud-icon-button-size":      "themeEditor_hud_iconButtonSize",
+    "hud-control-radius":        "themeEditor_hud_controlRadius",
+    "hud-chip-radius":           "themeEditor_hud_chipRadius",
+    "hud-popover-radius":        "themeEditor_hud_popoverRadius",
+    "hud-status-radius":         "themeEditor_hud_statusRadius",
+    "hud-toast-radius":          "themeEditor_hud_toastRadius",
+    "hud-chapter-row-radius":    "themeEditor_hud_chapterRowRadius",
+    "hud-surface-opacity":       "themeEditor_hud_surfaceOpacity",
+    "hud-sidebar-width":         "themeEditor_hud_sidebarWidth",
+    "hud-toolbar-gap":           "themeEditor_hud_toolbarGap",
+    "hud-reader-chrome-opacity": "themeEditor_hud_readerChromeOpacity",
+    "hud-selection-bg":          "themeEditor_hud_selectionBg",
+    "hud-selection-border":      "themeEditor_hud_selectionBorder",
+    "hud-progress-height":       "themeEditor_hud_progressHeight",
   };
 
   const HUD_PRESETS: {
@@ -244,7 +244,7 @@
       : DEFAULT_BUILTIN_THEME_ID;
     const baseContract = readBuiltinThemeContract(selectedBase);
     return {
-      name: "My Theme",
+      name: translate("themeEditor_defaultName"),
       base: selectedBase,
       primitives: {},
       semanticOverrides: {},
@@ -363,7 +363,7 @@
   // ── Actions ───────────────────────────────────────────────────────────────
 
   function handleSave() {
-    const name = themeName.trim() || "Untitled Theme";
+    const name = themeName.trim() || translate("themeEditor_untitled");
     const id   = editingId ?? `custom:${Math.random().toString(36).slice(2, 10)}`;
     try {
       const baseContract = readBuiltinThemeContract(base);
@@ -378,14 +378,14 @@
       saveStatus = "saved";
       setTimeout(() => (saveStatus = "idle"), 1800);
     } catch (error) {
-      importError = error instanceof Error ? error.message : "Could not save the theme";
+      importError = error instanceof Error ? error.message : translate("themeEditor_saveFailed");
       setTimeout(() => (importError = null), 4000);
     }
   }
 
   function handleDelete() {
     if (!editingId) { onClose(); return; }
-    if (!confirm(`Delete theme "${themeName}"? This cannot be undone.`)) return;
+    if (!confirm(translate("themeEditor_deleteConfirm", { name: themeName }))) return;
     deleteCustomTheme(editingId);
     onClose();
   }
@@ -396,7 +396,7 @@
       const data = createThemeDocumentV5(
         {
           id: editingId ?? "custom:export",
-          name: themeName.trim() || "Untitled Theme",
+          name: themeName.trim() || translate("themeEditor_untitled"),
           base,
           tokens: { ...tokens },
           hud: { ...hud },
@@ -413,7 +413,7 @@
       a.click();
       URL.revokeObjectURL(url);
     } catch (error) {
-      importError = error instanceof Error ? error.message : "Could not export the theme";
+      importError = error instanceof Error ? error.message : translate("themeEditor_exportFailed");
       setTimeout(() => (importError = null), 4000);
     }
   }
@@ -440,7 +440,7 @@
         motion      = imported.document.motion;
         importError = null;
       } catch (e: any) {
-        importError = e.message ?? "Could not parse theme file";
+        importError = e.message ?? translate("themeEditor_parseFailed");
         setTimeout(() => (importError = null), 3000);
       }
     };
@@ -508,7 +508,7 @@
         {/if}
         <button class="te-save-btn" class:saved={saveStatus === "saved"} onclick={handleSave}>
           <FloppyDisk size={13} />
-          <span>{saveStatus === "saved" ? "Saved!" : $_("ui_saveTheme")}</span>
+          <span>{saveStatus === "saved" ? $_("common_saved") : $_("ui_saveTheme")}</span>
         </button>
         <button class="te-icon-btn" onclick={onClose} title={$_("ui_close_bbfa773e")}>
           <X size={14} weight="bold" />
@@ -628,7 +628,7 @@
                         title={$_("ui_chooseColorVisually")}
                       />
                     </span>
-                    <span class="te-token-name">{TOKEN_LABELS[token]}</span>
+                    <span class="te-token-name">{$_(TOKEN_LABELS[token])}</span>
                     <span class="te-token-key">{token}</span>
                     <input
                       type="text"
@@ -685,7 +685,7 @@
               {#each HUD_SLIDER_TOKENS as item}
                 <div class="te-token-row te-slider-row">
                   <span class="te-color-swatch te-shape-swatch" style="border-radius: {hud[item.token]}"></span>
-                  <span class="te-token-name">{HUD_TOKEN_LABELS[item.token]}</span>
+                  <span class="te-token-name">{$_(HUD_TOKEN_LABELS[item.token])}</span>
                   <span class="te-token-key">{item.token}</span>
                   <input
                     type="range"
@@ -719,7 +719,7 @@
                       title={$_("ui_chooseColorVisually")}
                     />
                   </span>
-                  <span class="te-token-name">{HUD_TOKEN_LABELS[token as keyof HudThemeTokens]}</span>
+                  <span class="te-token-name">{$_(HUD_TOKEN_LABELS[token as keyof HudThemeTokens])}</span>
                   <span class="te-token-key">{token}</span>
                   <input
                     type="text"
@@ -1017,7 +1017,7 @@
     font-family: var(--component-theme-editor-label-font);
     font-size: var(--component-theme-editor-preview-control-font-size);
     letter-spacing: var(--component-theme-editor-preview-control-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
   }
   .prv-control.active {
     border-color: var(--hud-selection-border);
@@ -1207,7 +1207,7 @@
     font-family: var(--component-theme-editor-label-font);
     font-size: var(--component-theme-editor-tab-font-size);
     letter-spacing: var(--component-theme-editor-tab-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     color: var(--component-theme-editor-tab-fg);
     border: 1px solid var(--component-theme-editor-tab-border);
     border-radius: var(--component-theme-editor-tab-radius);

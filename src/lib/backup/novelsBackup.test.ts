@@ -19,7 +19,7 @@ it("does not manufacture path identity or fresh reading clocks from incomplete b
     progress: [{ novelId: "backup-local-7", progressPercent: 0.8 }],
     bookmarks: [{ novelId: "backup-local-7" }],
     history: [{ novelId: "backup-local-7" }],
-  } as EpigraphNovelsSnapshot);
+  } as unknown as EpigraphNovelsSnapshot);
   expect(parsed.entries[0].path).toBe("");
   expect(parsed.progress[0].updatedAt).toBe(0);
   expect(parsed.bookmarks[0].savedAt).toBe(0);

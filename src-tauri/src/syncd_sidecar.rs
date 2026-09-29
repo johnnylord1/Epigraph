@@ -50,6 +50,8 @@ impl SyncdLaunchMode {
 }
 
 pub struct RunningSyncd {
+    pub manifest: Option<SyncdRuntimeManifest>,
+    pub birth: Option<crate::suwayomi_runtime::RuntimeProcessIdentity>,
     pub child: Option<CommandChild>,
     pub ownership: SyncdOwnershipMode,
     pub pid: u32,
@@ -132,8 +134,7 @@ pub fn maybe_install_exit_sentinel(app: &AppHandle) {
                 // child down before asking Tauri to exit instead of relying
                 // solely on RunEvent::Exit, which can race the WebView
                 // teardown on Windows and leave epigraph-syncd alive.
-                shutdown(&app);
-                app.exit(0);
+                crate::request_owned_desktop_shutdown(&app);
                 break;
             }
         }
@@ -287,6 +288,10 @@ pub fn handle_run_event(app: &AppHandle, event: &RunEvent) {
 }
 
 pub fn shutdown(app: &AppHandle) {
+    if let Err(error) = shutdown_confirmed(app) { eprintln!("[Core cleanup] {error}"); }
+}
+
+pub fn shutdown_confirmed(app: &AppHandle) -> Result<(), String> {
     let running = {
         let state = app.state::<SyncdState>();
         let mut guard = state.runtime.lock().unwrap();
@@ -300,7 +305,22 @@ pub fn shutdown(app: &AppHandle) {
                     &running.log_path,
                     &format!("[{}] ephemeral shutdown requested by app", running.pid),
                 );
-                terminate_ephemeral_syncd(running.child, running.pid);
+                let result = (|| {
+                    let child = running.child.as_ref().ok_or("Missing retained Core spawn")?;
+                    let manifest = running.manifest.as_ref().ok_or("Missing original Core run identity")?;
+                    if manifest.pid != child.pid() || manifest.process_identity != running.birth || running.birth.is_none() {
+                        return Err("Core control manifest differs from retained birth identity".into());
+                    }
+                    tauri::async_runtime::block_on(crate::syncd::lifecycle::request_exact_shutdown(
+                        &running.data_dir, crate::syncd::lifecycle::ShutdownReason::ParentExited, Duration::from_secs(15), manifest,
+                    )).map_err(|e| e.to_string())?;
+                    Ok::<(), String>(())
+                })();
+                if let Err(error) = result {
+                    let _ = append_line(&running.log_path, &format!("cleanup unconfirmed: {error}"));
+                    *app.state::<SyncdState>().runtime.lock().unwrap() = Some(running);
+                    return Err(error);
+                }
             }
             SyncdOwnershipMode::PersistentAttached => {
                 let _ = append_line(
@@ -314,6 +334,7 @@ pub fn shutdown(app: &AppHandle) {
     if let Some(status_path) = phase_gate_status_path() {
         let _ = fs::remove_file(status_path);
     }
+    Ok(())
 }
 
 pub(crate) fn current_runtime_info(app: &AppHandle) -> Option<SyncdRuntimeInfo> {
@@ -326,6 +347,7 @@ async fn ensure_spawned(
     app: &AppHandle,
     request: SpawnRequest,
 ) -> Result<SyncdRuntimeInfo, String> {
+    let _launch = crate::session_control::begin_launch()?;
     let state = app.state::<SyncdState>();
     let _ensure_guard = state.ensure_gate.lock().await;
 
@@ -364,7 +386,10 @@ async fn ensure_spawned(
             let stale = state.runtime.lock().unwrap().take();
             if let Some(stale) = stale {
                 if stale.ownership == SyncdOwnershipMode::EphemeralOwned {
-                    terminate_ephemeral_syncd(stale.child, stale.pid);
+                    if let Err(error) = terminate_ephemeral_syncd(stale.child.as_ref()) {
+                        *state.runtime.lock().unwrap() = Some(stale);
+                        return Err(error);
+                    }
                 }
             }
         } else {
@@ -377,7 +402,10 @@ async fn ensure_spawned(
                             .to_string(),
                     );
                 }
-                terminate_ephemeral_syncd(existing.child, existing.pid);
+                if let Err(error) = terminate_ephemeral_syncd(existing.child.as_ref()) {
+                    *state.runtime.lock().unwrap() = Some(existing);
+                    return Err(error);
+                }
             }
         }
     }
@@ -451,16 +479,30 @@ async fn ensure_spawned(
         .map_err(|err| format!("failed to spawn syncd sidecar: {err}"))?;
 
     let pid = child.pid();
+    let birth = crate::suwayomi_runtime::capture_process_identity(pid);
     spawn_log_drain(rx, log_path.clone(), pid);
 
     let running = match request.ownership {
         SyncdOwnershipMode::EphemeralOwned => {
             if let Err(err) = wait_for_ready(&local_base_url).await {
-                terminate_ephemeral_syncd(Some(child), pid);
+                if let Err(cleanup_error) = terminate_ephemeral_syncd(Some(&child)) {
+                    let _ = append_line(&log_path, &format!("readiness failed: {err}; cleanup unconfirmed: {cleanup_error}"));
+                    *state.runtime.lock().unwrap() = Some(RunningSyncd {
+                        manifest: None, birth,
+                        child: Some(child), ownership: request.ownership, pid, server_id: None,
+                        local_base_url, advertised_base_url, host_mode: request.bind_host != "127.0.0.1",
+                        bind_host: request.bind_host, port: request.port, data_dir: request.data_dir,
+                        db_path, cert_path, log_path,
+                    });
+                    return Err(cleanup_error);
+                }
                 return Err(format!("syncd sidecar failed readiness probe: {err}"));
             }
             let host_mode = request.bind_host != "127.0.0.1";
-            RunningSyncd {
+            let manifest = read_runtime_manifest(&request.data_dir).ok()
+                .filter(|manifest| birth.is_some() && manifest.process_identity == birth);
+            let running = RunningSyncd {
+                manifest, birth,
                 child: Some(child),
                 ownership: request.ownership,
                 pid,
@@ -474,16 +516,24 @@ async fn ensure_spawned(
                 db_path,
                 cert_path,
                 log_path,
+            };
+            if running.manifest.is_none() {
+                *state.runtime.lock().unwrap() = Some(running);
+                return Err("Core readiness did not agree with captured birth; process and evidence retained".into());
             }
+            running
         }
         SyncdOwnershipMode::PersistentAttached => {
-            let validated = match wait_for_persistent_runtime(&request, pid).await {
+            let validated = match wait_for_persistent_runtime(&request, pid, birth.as_ref()).await {
                 Ok(validated) => validated,
                 Err(error) => {
-                    drop(child);
-                    return Err(format!(
-                        "persistent syncd failed identity readiness probe: {error}"
-                    ));
+                    *state.runtime.lock().unwrap() = Some(RunningSyncd {
+                        manifest: None, birth, child: Some(child), ownership: request.ownership,
+                        pid, server_id: None, local_base_url, advertised_base_url,
+                        host_mode: request.bind_host != "127.0.0.1", bind_host: request.bind_host,
+                        port: request.port, data_dir: request.data_dir, db_path, cert_path, log_path,
+                    });
+                    return Err(format!("persistent Core identity readiness failed; evidence retained: {error}"));
                 }
             };
             running_from_validated(&request, validated, Some(child))
@@ -494,21 +544,10 @@ async fn ensure_spawned(
     Ok(info)
 }
 
-/// Stop an ephemeral sidecar through both ownership handles available on
-/// Windows. The shell plugin handle can disappear during WebView teardown,
-/// while the PID remains alive; the direct process fallback prevents phase
-/// gates and failed starts from leaking a Core process.
-fn terminate_ephemeral_syncd(child: Option<CommandChild>, pid: u32) {
-    if let Some(child) = child {
-        let _ = child.kill();
-    }
-
-    let process_pid = Pid::from_u32(pid);
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::Some(&[process_pid]), true);
-    if let Some(process) = system.process(process_pid) {
-        let _ = process.kill();
-    }
+/// Only a retained spawn object grants authority; a remembered PID never does.
+fn terminate_ephemeral_syncd(child: Option<&CommandChild>) -> Result<(), String> {
+    let child = child.ok_or("Missing spawn handle; process preserved")?;
+    crate::suwayomi_runtime::stop_spawned_child(child)
 }
 
 fn runtime_info_from_running(running: &RunningSyncd) -> SyncdRuntimeInfo {
@@ -558,6 +597,7 @@ fn running_from_validated(
 ) -> RunningSyncd {
     let local_base_url = format!("https://127.0.0.1:{}", validated.manifest.port);
     RunningSyncd {
+        birth: validated.manifest.process_identity.clone(), manifest: Some(validated.manifest.clone()),
         child,
         ownership: SyncdOwnershipMode::PersistentAttached,
         pid: validated.manifest.pid,
@@ -588,14 +628,18 @@ async fn validate_existing_persistent_runtime(
     if !runtime_manifest_path(&request.data_dir).exists() {
         return Ok(None);
     }
+    if crate::syncd::runtime_manifest::reconcile_exited_runtime_manifest(&runtime_manifest_path(
+        &request.data_dir,
+    )) {
+        return Ok(None);
+    }
     let manifest = match read_runtime_manifest(&request.data_dir) {
         Ok(manifest) => manifest,
         Err(error) => return Err(error),
     };
 
     if !runtime_process_matches(&manifest)? {
-        let _ = fs::remove_file(runtime_manifest_path(&request.data_dir));
-        return Ok(None);
+        return Err("Stale or unverifiable persistent Core identity; manifest and process preserved".into());
     }
 
     let descriptor = fetch_pinned_descriptor(&manifest).await?;
@@ -609,7 +653,9 @@ async fn validate_existing_persistent_runtime(
 async fn wait_for_persistent_runtime(
     request: &SpawnRequest,
     expected_pid: u32,
+    birth: Option<&crate::suwayomi_runtime::RuntimeProcessIdentity>,
 ) -> Result<ValidatedPersistentRuntime, String> {
+    let birth = birth.ok_or("Missing captured Core birth identity")?;
     let started = std::time::Instant::now();
     let mut last_error = "runtime manifest has not been published".to_string();
     loop {
@@ -619,6 +665,9 @@ async fn wait_for_persistent_runtime(
 
         match read_runtime_manifest(&request.data_dir) {
             Ok(manifest) if manifest.pid == expected_pid => {
+                if manifest.process_identity.as_ref() != Some(birth) {
+                    return Err("Core manifest does not match retained spawn identity".into());
+                }
                 match runtime_process_matches(&manifest) {
                     Ok(true) => {}
                     Ok(false) => {
@@ -705,7 +754,7 @@ fn runtime_process_matches(manifest: &SyncdRuntimeManifest) -> Result<bool, Stri
 }
 
 #[cfg(windows)]
-fn paths_identical(left: &Path, right: &Path) -> bool {
+pub(crate) fn paths_identical(left: &Path, right: &Path) -> bool {
     normalize_windows_path(left) == normalize_windows_path(right)
 }
 
@@ -718,7 +767,7 @@ fn normalize_windows_path(path: &Path) -> String {
 }
 
 #[cfg(not(windows))]
-fn paths_identical(left: &Path, right: &Path) -> bool {
+pub(crate) fn paths_identical(left: &Path, right: &Path) -> bool {
     left == right
 }
 

@@ -1,6 +1,7 @@
 import type { BookEntry } from "../books/types";
 import type { BookProgress } from "../books/types";
 import { hasBookLocalAsset } from "../books/availability";
+import { formatWorkStatus } from "../i18n/format";
 import { translate } from "../i18n/runtime";
 import type { Manga } from "../types";
 import { rankSearchResults } from "./ranking";
@@ -28,24 +29,6 @@ function mangaResult(manga: Manga): SearchResult {
     },
     action: { kind: "manga", manga },
   };
-}
-
-function formatWorkStatus(status: string | null | undefined): string {
-  const normalized = status?.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!normalized) return translate("library.status.unknown");
-  const statusKey = normalized.toLowerCase().replace(/\s+/g, "_");
-  const translatedStatus = {
-    ongoing: "library.status.ongoing",
-    completed: "library.status.completed",
-    finished: "library.collections.finished",
-    cancelled: "library.status.cancelled",
-    hiatus: "library.status.hiatus",
-    unknown: "library.status.unknown",
-  }[statusKey];
-  if (translatedStatus) return translate(translatedStatus);
-  return normalized
-    .toLowerCase()
-    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function bookResult(book: BookEntry, progress?: BookProgress): SearchResult {

@@ -80,8 +80,8 @@
     gap: 5px;
     font-family: var(--font-ui);
     font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     padding: 4px 10px;
     border-radius: var(--radius-sm);
     color: var(--text-faint);

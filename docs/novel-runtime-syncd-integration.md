@@ -87,6 +87,22 @@ Novels runtime state must never leak across profiles:
 - history
 
 Books remain global and intentionally separate from novels profile scope.
+On the desktop, `books:global` is bound to the main local profile's book
+library; saves from other local profiles are not replicated and must never be
+written into the main library (fixed in the
+[2026-09-26 audit](audit-2026-09-26.md), A-04).
+
+## Runtime host isolation
+
+The hidden `novel-runtime-host` webview evaluates third-party LNReader plugin
+code with the real `globalThis`. It must never gain application-command access:
+
+- the host communicates with the main window only through Tauri events and its
+  capability-scoped HTTP plugin;
+- the desktop rejects every application command that does not come from the
+  `main` webview (`main_window_commands_only` in `src-tauri/src/lib.rs`);
+- plugin settings, storage seeds and responses crossing the event boundary are
+  data, never authority.
 
 ## Current status
 

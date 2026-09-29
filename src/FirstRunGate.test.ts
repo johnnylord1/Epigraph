@@ -12,6 +12,43 @@ vi.mock("./components/pages/Downloads.svelte", () => import("./test/fixtures/Fir
 vi.mock("./components/pages/SourcesView.svelte", () => import("./test/fixtures/FirstRunSurface.svelte"));
 vi.mock("./components/settings/Settings.svelte", () => import("./test/fixtures/FirstRunSurface.svelte"));
 vi.mock("./components/pages/SeriesDetail.svelte", () => import("./test/fixtures/FirstRunDetail.svelte"));
+vi.mock("./lib/setup/firstRunSourcesWorkflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/setup/firstRunSourcesWorkflow")>();
+  return {
+    ...actual,
+    createProductionFirstRunSourcesWorkflow: () => actual.createFirstRunSourcesWorkflow({
+      loadRepositories: async () => [{
+        id: "test-repo", kind: "manga", url: "https://extensions.test/index.min.json", name: "Test repository",
+        extensions: [{ id: "test-extension", name: "Test extension", lang: "en", version: "1", iconUrl: null, installed: false, status: "idle" }],
+      }],
+      addRepository: vi.fn(),
+      installExtension: vi.fn().mockResolvedValue(undefined),
+    }),
+  };
+});
+vi.mock("./lib/tracking/firstRunTrackerWorkflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/tracking/firstRunTrackerWorkflow")>();
+  return {
+    ...actual,
+    createProductionFirstRunTrackerWorkflow: () => actual.createFirstRunTrackerWorkflow({
+      loadTrackers: async () => [],
+      loadHardcover: () => ({ connected: false, username: null }),
+      loginOAuth: vi.fn(), loginCredentials: vi.fn(), logoutTracker: vi.fn(),
+      connectHardcover: vi.fn(), disconnectHardcover: vi.fn(),
+    }),
+  };
+});
+vi.mock("./lib/setup/firstRunDiscoveryWorkflow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/setup/firstRunDiscoveryWorkflow")>();
+  return {
+    ...actual,
+    createProductionFirstRunDiscoveryWorkflow: () => actual.createFirstRunDiscoveryWorkflow({
+      loadMangaSources: async () => [], loadNovelSources: async () => [],
+      findManga: async () => [], findNovels: async () => [],
+      addManga: vi.fn(), addNovel: vi.fn(),
+    }),
+  };
+});
 
 describe("first-run startup gate", () => {
   beforeEach(() => {
@@ -38,9 +75,15 @@ describe("first-run startup gate", () => {
     render(Layout);
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await fireEvent.click(screen.getByRole("button", { name: "Set up from scratch" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Install test extension" }));
+    const install = await screen.findByRole("button", { name: "Install Test extension" });
+    await waitFor(() => expect(install.hasAttribute("disabled")).toBe(false));
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(install);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const skipTrackers = await screen.findByRole("button", { name: "Continue without a tracker" });
+    await waitFor(() => expect(skipTrackers.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(skipTrackers);
     store.books = [{ id: "book-1" } as (typeof store.books)[number]];
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));

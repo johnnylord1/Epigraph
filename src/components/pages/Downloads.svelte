@@ -619,7 +619,7 @@
   let finishedCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "finished").length);
   let storageSummary: string = $derived.by(() =>
     storageInfo
-      ? `${fmtBytes(storageInfo.manga_bytes)} / ${fmtBytes(storageInfo.free_bytes)} free`
+      ? $_("downloads.storageSummary", { used: fmtBytes(storageInfo.manga_bytes), free: fmtBytes(storageInfo.free_bytes) })
       : "�",
   );
   let speedSummary: string = $derived(
@@ -1127,7 +1127,7 @@
     font-size: var(--component-downloads-summary-label-font-size);
     font-weight: var(--component-downloads-summary-label-font-weight);
     letter-spacing: var(--component-downloads-summary-label-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1184,7 +1184,7 @@
     font-size: var(--component-downloads-summary-button-font-size);
     font-weight: var(--component-downloads-primary-button-font-weight);
     letter-spacing: var(--component-downloads-primary-button-letter-spacing);
-    text-transform: uppercase;
+    text-transform: none;
     box-shadow: var(--component-downloads-primary-button-shadow);
     transition:
       filter var(--component-downloads-transition-fast),

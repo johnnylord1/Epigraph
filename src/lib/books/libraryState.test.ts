@@ -10,6 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   loadBookLibraryState,
+  loadBookLibraryStateForRestore,
   peekBookLibraryState,
   reloadBookLibraryState,
   resetBookLibraryStateCacheForTests,
@@ -105,6 +106,21 @@ describe("book library state storage", () => {
       configurable: true,
       writable: true,
     });
+  });
+
+  it("restore bypasses cached fallback and refuses corrupt destination evidence", async () => {
+    invokeMock.mockResolvedValueOnce(JSON.stringify(createState()));
+    await loadBookLibraryState({ profileId: "test" });
+    invokeMock.mockResolvedValueOnce("{broken");
+    await expect(loadBookLibraryStateForRestore({ profileId: "test" })).rejects.toThrow("RESTORE_BOOKS_DESTINATION_CORRUPT");
+    expect((await loadBookLibraryState({ profileId: "test" })).books).toHaveLength(1);
+  });
+
+  it("restore propagates unreadable destination and distinguishes an absent file", async () => {
+    invokeMock.mockRejectedValueOnce(Error("access denied"));
+    await expect(loadBookLibraryStateForRestore()).rejects.toThrow("access denied");
+    invokeMock.mockResolvedValueOnce(null);
+    expect((await loadBookLibraryStateForRestore()).books).toEqual([]);
   });
 
   it("loads persisted desktop book state from the books root file", async () => {
@@ -212,5 +228,24 @@ describe("book library state storage", () => {
     expect(testState.books[0]?.title).toBe("Test Profile Book");
     expect(invokeMock).toHaveBeenNthCalledWith(1, "read_book_library_state", { profileId: "main" });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "read_book_library_state", { profileId: "test" });
+  });
+});
+
+
+describe("B4 strict synchronization refresh", () => {
+  it("refuses read failures and corrupt state instead of acknowledging an empty library", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValueOnce(Error("read failed"));
+    await expect(reloadBookLibraryState({ profileId: "test" }, { strict: true })).rejects.toThrow("read failed");
+    invokeMock.mockResolvedValueOnce("{broken");
+    await expect(reloadBookLibraryState({ profileId: "test" }, { strict: true })).rejects.toThrow();
+  });
+  it("hydrates the domain cache after a successful empty remote read", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockReset().mockResolvedValue(null);
+    const value = await reloadBookLibraryState({ profileId: "test" }, { strict: true });
+    expect(await loadBookLibraryState({ profileId: "test" })).toEqual(value);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });

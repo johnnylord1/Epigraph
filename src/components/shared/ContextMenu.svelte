@@ -115,7 +115,7 @@
     background: var(--component-menu-bg);
     box-shadow: var(--component-menu-shadow);
     backdrop-filter: var(--blur-backdrop) saturate(120%);
-    animation: scaleIn 0.12s ease both;
+    animation: scaleIn 320ms var(--ui-spring) both;
     transform-origin: top left;
   }
   .item {

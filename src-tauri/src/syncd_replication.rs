@@ -38,8 +38,9 @@ use crate::syncd::models::{
 };
 use crate::syncd_desktop::{
     build_pinned_http_client, desktop_state_dir, is_connection_error, is_needs_reauth_error,
-    load_persisted_state, now_ms, revalidate_session, save_persisted_state, PersistedSyncSession,
-    SyncdDesktopConnectionStatus, SyncdDesktopPersistedState, SyncdReconnectStatus,
+    load_persisted_state, now_ms, revalidate_session, save_persisted_state,
+    transport_error_message, PersistedSyncSession, SyncdDesktopConnectionStatus,
+    SyncdDesktopPersistedState, SyncdReconnectStatus,
 };
 use crate::{
     book_library_state_path, books_data_dir, novel_library_state_path_for_target,
@@ -49,6 +50,7 @@ use crate::{
 
 const CLIENT_PROTOCOL_VERSION: u32 = 1;
 const BOOKS_SCOPE_ID: &str = "books:global";
+const LAST_EVENT_ID_HEADER: &str = "Last-Event-ID";
 const EVENT_REPLICATION_STATE: &str = "syncd-replication-state";
 const EVENT_REPLICATION_ERROR: &str = "syncd-replication-error";
 const EVENT_COMIC_READER_STATE_APPLIED: &str = "syncd-comic-reader-state-applied";
@@ -130,6 +132,8 @@ pub struct SyncdReplicationSnapshot {
     pub active_session_key: Option<String>,
     pub replication_status: SyncdReplicationStatus,
     pub last_connected_at_ms: Option<i64>,
+    // Runtime-only acknowledgement; never recovered from persisted Live state.
+    pub remote_bootstrap_generation: Option<u64>,
     pub last_error: Option<String>,
     pub books_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
     pub novels_scope_checkpoint: Option<SyncdReplicationScopeCheckpoint>,
@@ -234,6 +238,7 @@ impl PersistedReplicationProfileState {
             active_session_key: self.active_session_key.clone(),
             replication_status: self.replication_status.clone(),
             last_connected_at_ms: self.last_connected_at_ms,
+            remote_bootstrap_generation: None,
             last_error: self.last_error.clone(),
             books_scope_checkpoint: self.books_scope_checkpoint.clone(),
             novels_scope_checkpoint: self.novels_scope_checkpoint.clone(),
@@ -275,11 +280,13 @@ struct PersistedReplicationState {
 #[derive(Default)]
 struct ReplicationRuntime {
     workers: HashMap<String, WorkerHandle>,
+    next_generation: u64,
     local_authority: HashMap<String, LocalAuthoritySession>,
 }
 
 struct WorkerHandle {
     generation: u64,
+    remote_bootstrap_session: Option<String>,
     task: tauri::async_runtime::JoinHandle<()>,
 }
 
@@ -734,7 +741,7 @@ async fn remote_asset_size(
         authenticated_asset_request(endpoint.client.head(endpoint.asset_url(sha256)), endpoint)
             .send()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(transport_error_message)?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
@@ -820,7 +827,7 @@ async fn upload_book_asset(
     )
     .send()
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(transport_error_message)?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
@@ -899,7 +906,7 @@ async fn download_book_asset_to_root(
         if downloaded > 0 {
             request = request.header(RANGE, format!("bytes={downloaded}-"));
         }
-        let response = request.send().await.map_err(|error| error.to_string())?;
+        let response = request.send().await.map_err(transport_error_message)?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -982,39 +989,9 @@ async fn download_book_asset_to_root(
     }
 }
 
-#[cfg(windows)]
+/// Shares the long-path-safe replace used by the runtime maintenance state.
 fn replace_file_atomic(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-    let source_wide = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let destination_wide = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let moved = unsafe {
-        MoveFileExW(
-            source_wide.as_ptr(),
-            destination_wide.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_file_atomic(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
+    crate::suwayomi_maintenance::atomic_replace_file(source, destination)
 }
 
 fn save_replication_state(state: &PersistedReplicationState) -> Result<(), String> {
@@ -1119,9 +1096,11 @@ async fn emit_replication_state_for_profile(
     profile_id: &str,
 ) -> Result<(), String> {
     let state = load_replication_state()?;
+    let mut snapshot = profile_snapshot(&state, profile_id);
+    attach_remote_bootstrap(&mut snapshot, &app.state::<SyncdReplicationState>()).await;
     app.emit(
         EVENT_REPLICATION_STATE,
-        profile_snapshot(&state, profile_id),
+        snapshot,
     )
     .map_err(|error| error.to_string())
 }
@@ -1149,16 +1128,37 @@ fn update_profile_state(
 #[tauri::command]
 pub async fn syncd_get_replication_state(
     profile_id: String,
+    runtime: State<'_, SyncdReplicationState>,
 ) -> Result<SyncdReplicationSnapshot, String> {
     let state = load_replication_state()?;
-    Ok(profile_snapshot(&state, &profile_id))
+    let mut snapshot = profile_snapshot(&state, &profile_id);
+    attach_remote_bootstrap(&mut snapshot, &runtime).await;
+    Ok(snapshot)
 }
 
 #[tauri::command]
-pub async fn syncd_get_session_catalog(profile_id: String) -> Result<SyncdSessionCatalog, String> {
+pub async fn syncd_get_session_catalog(profile_id: String, runtime: State<'_, SyncdReplicationState>) -> Result<SyncdSessionCatalog, String> {
     let persisted = load_persisted_state()?;
     let replication = load_replication_state()?;
-    Ok(build_session_catalog(&persisted, &replication, &profile_id))
+    let mut catalog = build_session_catalog(&persisted, &replication, &profile_id);
+    attach_remote_bootstrap(&mut catalog.replication, &runtime).await;
+    Ok(catalog)
+}
+
+fn confirmed_remote_bootstrap(snapshot: &SyncdReplicationSnapshot, completion: Option<(u64, &str)>) -> Option<u64> {
+    let (generation, session) = completion?;
+    (generation > 0 && !snapshot.paused
+        && snapshot.replication_status == SyncdReplicationStatus::Live
+        && snapshot.last_error.is_none()
+        && snapshot.active_session_key.as_deref() == Some(session))
+        .then_some(generation)
+}
+
+async fn attach_remote_bootstrap(snapshot: &mut SyncdReplicationSnapshot, state: &SyncdReplicationState) {
+    let runtime = state.runtime.lock().await;
+    let completion = runtime.workers.get(&snapshot.local_profile_id)
+        .and_then(|worker| worker.remote_bootstrap_session.as_deref().map(|session| (worker.generation, session)));
+    snapshot.remote_bootstrap_generation = confirmed_remote_bootstrap(snapshot, completion);
 }
 
 #[tauri::command]
@@ -1299,7 +1299,7 @@ struct SerializableMutationsRequest {
     mutations: Vec<SerializableMutationInput>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "entityType")]
 #[allow(dead_code)]
 enum SerializableMutationInput {
@@ -1499,6 +1499,32 @@ impl SerializableMutationInput {
             | Self::BookLibraryUi { base, .. } => &base.client_mutation_id,
         }
     }
+
+    fn base(&self) -> &SerializableMutationBase {
+        match self {
+            Self::BookEntry { base, .. }
+            | Self::BookCategory { base, .. }
+            | Self::BookCategoryAssignment { base, .. }
+            | Self::BookProgress { base, .. }
+            | Self::BookHistory { base, .. }
+            | Self::NovelProgress { base, .. }
+            | Self::BookBookmark { base, .. }
+            | Self::NovelEntry { base, .. }
+            | Self::NovelChapter { base, .. }
+            | Self::NovelBookmark { base, .. }
+            | Self::NovelHistory { base, .. }
+            | Self::NovelClassification { base, .. }
+            | Self::NovelRepository { base, .. }
+            | Self::NovelPlugin { base, .. }
+            | Self::ComicHistory { base, .. }
+            | Self::ComicPageBookmark { base, .. }
+            | Self::BookLibraryUi { base, .. } => base,
+        }
+    }
+
+    fn is_novel_plugin_merge(&self) -> bool {
+        matches!(self, Self::NovelPlugin { patch: Some(_), .. })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1537,7 +1563,7 @@ fn summarize_mutations(mutations: &[SerializableMutationInput]) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SerializableMutationBase {
     client_mutation_id: String,
@@ -1920,7 +1946,7 @@ pub async fn ensure_local_authority_for_profile(
         })
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(if body.trim().is_empty() {
@@ -2036,9 +2062,12 @@ async fn ensure_worker_for_profile(
     state: &SyncdReplicationState,
     profile_id: &str,
 ) -> Result<(), String> {
-    let generation = now_ms() as u64;
     {
         let mut runtime = state.runtime.lock().await;
+        // Generations identify worker replacements; wall-clock time can repeat.
+        runtime.next_generation = runtime.next_generation.checked_add(1)
+            .ok_or_else(|| "Sync worker generation exhausted.".to_string())?;
+        let generation = runtime.next_generation;
         if let Some(existing) = runtime.workers.remove(profile_id) {
             existing.task.abort();
         }
@@ -2050,7 +2079,7 @@ async fn ensure_worker_for_profile(
         });
         runtime
             .workers
-            .insert(profile_id.to_string(), WorkerHandle { generation, task });
+            .insert(profile_id.to_string(), WorkerHandle { generation, remote_bootstrap_session: None, task });
     }
     Ok(())
 }
@@ -2194,6 +2223,8 @@ async fn run_profile_worker(
             } => {
                 replay_and_stream_remote(
                     &app,
+                    &state,
+                    generation,
                     &profile_id,
                     session,
                     connected_origin,
@@ -2237,7 +2268,6 @@ async fn run_profile_worker(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChangesResponsePayload {
-    #[allow(dead_code)]
     current_server_version: i64,
     min_replayable_server_version: i64,
     changes: Vec<ChangeEnvelope>,
@@ -2250,6 +2280,8 @@ enum ChangesFetchOutcome {
 
 async fn replay_and_stream_remote(
     app: &AppHandle,
+    state: &SyncdReplicationState,
+    generation: u64,
     profile_id: &str,
     session: &PersistedSyncSession,
     connected_origin: &str,
@@ -2298,6 +2330,10 @@ async fn replay_and_stream_remote(
                 continue;
             }
         };
+        // Every change up to this version was either returned above or filtered out by the
+        // session scopes. The live stream resumes after it so commits that land between this
+        // poll and the SSE subscription are replayed instead of skipped.
+        let resume_after_version = changes.current_server_version;
         let _ = update_profile_state(profile_id, |profile| {
             profile.replication_status = SyncdReplicationStatus::Replaying;
             profile.last_error = None;
@@ -2321,6 +2357,15 @@ async fn replay_and_stream_remote(
             profile.last_connected_at_ms = Some(now_ms());
             profile.last_error = None;
         });
+        spawn_outbound_mutation_flush(app, profile_id);
+        {
+            let mut runtime = state.runtime.lock().await;
+            if let Some(worker) = runtime.workers.get_mut(profile_id) {
+                if worker.generation == generation {
+                    worker.remote_bootstrap_session = Some(session.session_key.clone());
+                }
+            }
+        }
         let _ = emit_replication_state_for_profile(app, profile_id).await;
         match stream_live_events(
             app,
@@ -2330,6 +2375,7 @@ async fn replay_and_stream_remote(
             connected_origin,
             novels_profile_id,
             &asset_endpoint,
+            resume_after_version,
         )
         .await
         {
@@ -2388,6 +2434,7 @@ async fn replay_and_stream_local_authority(
                 continue;
             }
         };
+        let resume_after_version = changes.current_server_version;
         let _ = update_profile_state(profile_id, |profile| {
             profile.replication_status = SyncdReplicationStatus::Replaying;
             profile.last_error = None;
@@ -2411,6 +2458,7 @@ async fn replay_and_stream_local_authority(
             profile.last_connected_at_ms = Some(now_ms());
             profile.last_error = None;
         });
+        spawn_outbound_mutation_flush(app, profile_id);
         let _ = emit_replication_state_for_profile(app, profile_id).await;
         match stream_live_events_local_authority(
             app,
@@ -2418,6 +2466,7 @@ async fn replay_and_stream_local_authority(
             profile_id,
             authority,
             &asset_endpoint,
+            resume_after_version,
         )
         .await
         {
@@ -2452,7 +2501,7 @@ async fn fetch_changes_remote(
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if response.status().is_success() {
         return response
             .json()
@@ -2501,7 +2550,7 @@ async fn fetch_changes_local_authority(
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if response.status().is_success() {
         return response
             .json()
@@ -2548,7 +2597,7 @@ async fn fetch_authoritative_snapshot(
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if response.status().is_success() {
         let snapshot = response
             .json::<SnapshotResponse>()
@@ -2690,6 +2739,7 @@ fn materialize_novel_snapshot(
     current: &PersistedNovelLibraryState,
     current_classification: &PersistedNovelSourceClassificationState,
     snapshot: &SnapshotResponse,
+    local_scope_key: &str,
 ) -> Result<
     (
         PersistedNovelLibraryState,
@@ -2698,13 +2748,13 @@ fn materialize_novel_snapshot(
     String,
 > {
     let mut next = PersistedNovelLibraryState {
-        version: current.version,
-        scope_key: current.scope_key.clone(),
+        version: Some(current.version.unwrap_or(1)),
+        scope_key: Some(current.scope_key.clone().unwrap_or_else(|| local_scope_key.to_string())),
         ..PersistedNovelLibraryState::default()
     };
     let mut next_classification = PersistedNovelSourceClassificationState {
-        version: current_classification.version,
-        scope_key: current_classification.scope_key.clone(),
+        version: Some(current_classification.version.unwrap_or(1)),
+        scope_key: Some(current_classification.scope_key.clone().unwrap_or_else(|| local_scope_key.to_string())),
         ..PersistedNovelSourceClassificationState::default()
     };
     for entity in &snapshot.entities {
@@ -2748,6 +2798,30 @@ fn materialize_novel_snapshot(
     next.updated_at_ms = Some(now_ms());
     next_classification.updated_at_ms = Some(now_ms());
     Ok((next, next_classification))
+}
+
+fn ensure_novel_scope_metadata(
+    state: &mut PersistedNovelLibraryState,
+    local_scope_key: &str,
+) {
+    if state.version.is_none() {
+        state.version = Some(1);
+    }
+    if state.scope_key.is_none() {
+        state.scope_key = Some(local_scope_key.to_string());
+    }
+}
+
+fn ensure_novel_classification_scope_metadata(
+    state: &mut PersistedNovelSourceClassificationState,
+    local_scope_key: &str,
+) {
+    if state.version.is_none() {
+        state.version = Some(1);
+    }
+    if state.scope_key.is_none() {
+        state.scope_key = Some(local_scope_key.to_string());
+    }
 }
 
 fn comic_snapshot_changes(
@@ -2927,6 +3001,7 @@ async fn apply_authoritative_snapshots(
         &read_novels_state(launch_target, local_profile_id)?,
         &read_novel_classification_state(launch_target, local_profile_id)?,
         &novels_snapshot,
+        &format!("profile:{local_profile_id}"),
     )?;
     let comic_changes = comic_snapshot_changes(&comics_snapshot, remote_profile_id)?;
 
@@ -3041,6 +3116,7 @@ async fn recover_from_snapshots_local_authority(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_live_events(
     app: &AppHandle,
     launch_target: &LaunchTargetInfo,
@@ -3049,11 +3125,13 @@ async fn stream_live_events(
     origin: &str,
     novels_profile_id: &str,
     asset_endpoint: &BookAssetEndpoint,
+    resume_after_version: i64,
 ) -> Result<StreamExit, String> {
     let client = build_pinned_http_client(&session.tls_cert_sha256)?;
     let response = client
         .get(format!("{origin}/v1/events"))
         .header("Authorization", format!("Bearer {}", session.access_token))
+        .header(LAST_EVENT_ID_HEADER, resume_after_version.to_string())
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
@@ -3066,7 +3144,7 @@ async fn stream_live_events(
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if !response.status().is_success() {
         return Err(format!(
             "Live sync stream failed with HTTP {}.",
@@ -3129,6 +3207,7 @@ async fn stream_live_events_local_authority(
     profile_id: &str,
     authority: &LocalAuthoritySession,
     asset_endpoint: &BookAssetEndpoint,
+    resume_after_version: i64,
 ) -> Result<StreamExit, String> {
     let client = insecure_local_syncd_client()?;
     let response = client
@@ -3137,6 +3216,7 @@ async fn stream_live_events_local_authority(
             "Authorization",
             format!("Bearer {}", authority.access_token),
         )
+        .header(LAST_EVENT_ID_HEADER, resume_after_version.to_string())
         .header(CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(LEGACY_CLIENT_VERSION_HEADER.as_str(), CURRENT_CLIENT_VERSION)
         .header(
@@ -3149,7 +3229,7 @@ async fn stream_live_events_local_authority(
         )
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if !response.status().is_success() {
         return Err(format!(
             "Live sync stream failed with HTTP {}.",
@@ -3453,10 +3533,15 @@ async fn apply_remote_envelopes(
         write_books_state(&books_state)?;
     }
     if outcome.novels_changed {
+        ensure_novel_scope_metadata(&mut novels_state, &format!("profile:{profile_id}"));
         novels_state.updated_at_ms = Some(now_ms());
         write_novels_state(launch_target, profile_id, &novels_state)?;
     }
     if classification_state.updated_at_ms.is_some() {
+        ensure_novel_classification_scope_metadata(
+            &mut classification_state,
+            &format!("profile:{profile_id}"),
+        );
         write_novel_classification_state(launch_target, profile_id, &classification_state)?;
     }
     if !outcome.comic_reader_changes.is_empty() {
@@ -5596,15 +5681,291 @@ fn diff_novel_dependency_mutations(
     mutations
 }
 
+// Mutations that could not reach the Core because it was unreachable or the
+// session has to be renewed. Each entry keeps its original clientMutationId and
+// lamport: the Core answers a replay from its receipt table, and a queued write
+// still loses to newer writes from other devices.
+const OUTBOUND_MUTATION_CHUNK_SIZE: usize = 250;
+const MAX_OUTBOUND_MUTATIONS_PER_PROFILE: usize = 20_000;
+static OUTBOUND_MUTATIONS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OutboundMutationQueue {
+    /// The Core endpoint the mutations were addressed to. Scopes and receipts
+    /// belong to that endpoint, so a queue is never replayed against another.
+    target: String,
+    mutations: Vec<SerializableMutationInput>,
+}
+
+fn outbound_mutations_path() -> PathBuf {
+    desktop_state_dir().join("syncd-outbox.json")
+}
+
+fn load_outbound_mutations_unlocked() -> Result<BTreeMap<String, OutboundMutationQueue>, String> {
+    let path = outbound_mutations_path();
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    match serde_json::from_str(&raw) {
+        Ok(queues) => Ok(queues),
+        Err(error) => {
+            // Keep the unreadable file for diagnosis instead of blocking every later write.
+            let quarantine = path.with_extension(format!("json.corrupt-{}", now_ms()));
+            replication_log(format!(
+                "outbox unreadable error={error} quarantine={}",
+                quarantine.display()
+            ));
+            fs::rename(&path, &quarantine).map_err(|error| error.to_string())?;
+            Ok(BTreeMap::new())
+        }
+    }
+}
+
+fn update_outbound_mutations<T>(
+    profile_id: &str,
+    update: impl FnOnce(&mut OutboundMutationQueue) -> T,
+) -> Result<T, String> {
+    let _guard = OUTBOUND_MUTATIONS_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let mut queues = load_outbound_mutations_unlocked()?;
+    let before = queues
+        .get(profile_id)
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let queue = queues.entry(profile_id.to_string()).or_default();
+    let result = update(queue);
+    if queue.mutations.is_empty() {
+        queues.remove(profile_id);
+    }
+    let after = queues
+        .get(profile_id)
+        .map(serde_json::to_vec)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    if before == after {
+        return Ok(result);
+    }
+    let path = outbound_mutations_path();
+    if queues.is_empty() {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    } else {
+        let payload = serde_json::to_vec(&queues).map_err(|error| error.to_string())?;
+        write_file_atomic(&path, &payload)?;
+    }
+    Ok(result)
+}
+
+fn has_outbound_mutations(profile_id: &str) -> bool {
+    let _guard = OUTBOUND_MUTATIONS_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    load_outbound_mutations_unlocked()
+        .map(|queues| queues.contains_key(profile_id))
+        .unwrap_or(false)
+}
+
+/// Appends `batch` in order and returns how many of the oldest entries were
+/// dropped to stay within the per-profile bound.
+fn enqueue_outbound_mutations(
+    queue: &mut Vec<SerializableMutationInput>,
+    batch: &[SerializableMutationInput],
+) -> usize {
+    let mut queued_ids = queue
+        .iter()
+        .map(|mutation| mutation.client_mutation_id().to_string())
+        .collect::<HashSet<_>>();
+    for mutation in batch {
+        if !queued_ids.insert(mutation.client_mutation_id().to_string()) {
+            continue;
+        }
+        let base = mutation.base();
+        if matches!(base.op, MutationOperation::Delete) {
+            // The delete supersedes older writes to the same entity on the Core anyway;
+            // replaying them would only re-upload assets for something already gone.
+            queue.retain(|queued| {
+                let queued_base = queued.base();
+                queued.entity_type_label() != mutation.entity_type_label()
+                    || queued_base.scope_id != base.scope_id
+                    || queued_base.entity_id != base.entity_id
+                    || queued_base.lamport > base.lamport
+            });
+        }
+        queue.push(mutation.clone());
+    }
+    let overflow = queue.len().saturating_sub(MAX_OUTBOUND_MUTATIONS_PER_PROFILE);
+    queue.drain(..overflow);
+    overflow
+}
+
+fn forget_outbound_mutations(
+    queue: &mut Vec<SerializableMutationInput>,
+    settled: &[SerializableMutationInput],
+) {
+    let settled = settled
+        .iter()
+        .map(|mutation| mutation.client_mutation_id())
+        .collect::<HashSet<_>>();
+    queue.retain(|queued| !settled.contains(queued.client_mutation_id()));
+}
+
+enum MutationTarget<'a> {
+    LocalAuthority(&'a LocalAuthoritySession),
+    Remote(&'a PersistedSyncSession),
+}
+
+impl MutationTarget<'_> {
+    fn key(&self) -> String {
+        match self {
+            Self::LocalAuthority(authority) => format!("local:{}", authority.profile_id),
+            Self::Remote(session) => format!("session:{}", session.session_key),
+        }
+    }
+
+    fn mode(&self) -> &'static str {
+        match self {
+            Self::LocalAuthority(_) => "local_authority",
+            Self::Remote(_) => "remote",
+        }
+    }
+
+    async fn post(
+        &self,
+        mutations: &[SerializableMutationInput],
+        novel_plugin_assets: &HashMap<String, PathBuf>,
+    ) -> Result<(), String> {
+        match self {
+            Self::LocalAuthority(authority) => {
+                post_mutations_for_local_authority(authority, mutations, novel_plugin_assets).await
+            }
+            Self::Remote(session) => {
+                post_mutations_for_session(session, mutations, novel_plugin_assets).await
+            }
+        }
+    }
+}
+
+struct MutationDelivery {
+    /// Leading mutations that reached a terminal answer (applied, superseded or rejected).
+    settled: usize,
+    error: Option<String>,
+    /// The error came from the transport or the session, not from the content.
+    retryable: bool,
+}
+
+fn is_retryable_delivery_error(error: &str) -> bool {
+    is_connection_error(error) || is_needs_reauth_error(error)
+}
+
+async fn deliver_mutations(
+    target: &MutationTarget<'_>,
+    mutations: &[SerializableMutationInput],
+    novel_plugin_assets: &HashMap<String, PathBuf>,
+) -> MutationDelivery {
+    let mut settled = 0;
+    let mut error = None;
+    for chunk in mutations.chunks(OUTBOUND_MUTATION_CHUNK_SIZE) {
+        match target.post(chunk, novel_plugin_assets).await {
+            Ok(()) => {}
+            Err(chunk_error) if is_retryable_delivery_error(&chunk_error) => {
+                return MutationDelivery {
+                    settled,
+                    error: Some(chunk_error),
+                    retryable: true,
+                };
+            }
+            // The Core answered and refused this content; sending it again would get the
+            // same answer and block everything queued behind it.
+            Err(chunk_error) => error = Some(chunk_error),
+        }
+        settled += chunk.len();
+    }
+    MutationDelivery {
+        settled,
+        error,
+        retryable: false,
+    }
+}
+
+/// Queued mutations go first so a replay keeps the order in which they were written.
+fn outbound_batch(
+    app: &AppHandle,
+    profile_id: &str,
+    target_key: &str,
+    mutations: &[SerializableMutationInput],
+    novel_plugin_assets: &HashMap<String, PathBuf>,
+) -> Result<(Vec<SerializableMutationInput>, HashMap<String, PathBuf>), String> {
+    let queued = update_outbound_mutations(profile_id, |queue| {
+        if queue.target != target_key && !queue.mutations.is_empty() {
+            // The new endpoint receives the current library state when it bootstraps.
+            replication_log(format!(
+                "outbox drop profile_id={profile_id} count={} reason=target_changed from={} to={target_key}",
+                queue.mutations.len(),
+                queue.target
+            ));
+            queue.mutations.clear();
+        }
+        queue.mutations.clone()
+    })?;
+    let mut assets = novel_plugin_assets.clone();
+    let mut stale = Vec::new();
+    let mut batch = Vec::with_capacity(queued.len() + mutations.len());
+    for mutation in queued {
+        if mutation.is_novel_plugin_merge() {
+            match collect_novel_plugin_asset_paths(app, Some(profile_id), std::slice::from_ref(&mutation)) {
+                Ok(paths) => assets.extend(paths),
+                Err(error) => {
+                    // The plugin changed while offline; its current state is published on its own.
+                    replication_log(format!(
+                        "outbox drop profile_id={profile_id} client_mutation_id={} reason=stale_plugin error={error}",
+                        mutation.client_mutation_id()
+                    ));
+                    stale.push(mutation);
+                    continue;
+                }
+            }
+        }
+        batch.push(mutation);
+    }
+    if !stale.is_empty() {
+        update_outbound_mutations(profile_id, |queue| {
+            forget_outbound_mutations(&mut queue.mutations, &stale)
+        })?;
+    }
+    batch.extend(mutations.iter().cloned());
+    Ok((batch, assets))
+}
+
+fn spawn_outbound_mutation_flush(app: &AppHandle, profile_id: &str) {
+    if !has_outbound_mutations(profile_id) {
+        return;
+    }
+    let app = app.clone();
+    let profile_id = profile_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) =
+            submit_mutations_for_active_profiles(&app, Some(&profile_id), Vec::new()).await
+        {
+            replication_log(format!(
+                "outbox flush profile_id={profile_id} status=error error={error}"
+            ));
+        }
+    });
+}
+
 async fn submit_mutations_for_active_profiles(
     app: &AppHandle,
     restrict_profile_id: Option<&str>,
     mutations: Vec<SerializableMutationInput>,
 ) -> Result<(), String> {
-    if mutations.is_empty() {
-        return Ok(());
-    }
-
     let novel_plugin_assets =
         collect_novel_plugin_asset_paths(app, restrict_profile_id, &mutations)?;
 
@@ -5615,13 +5976,16 @@ async fn submit_mutations_for_active_profiles(
         let runtime = state.runtime.lock().await;
         runtime.local_authority.clone()
     };
-    replication_log(format!(
-        "submit_mutations start restrict_profile_id={restrict_profile_id:?} mutation_count={} mutations=[{}]",
-        mutations.len(),
-        summarize_mutations(&mutations)
-    ));
+    if !mutations.is_empty() {
+        replication_log(format!(
+            "submit_mutations start restrict_profile_id={restrict_profile_id:?} mutation_count={} mutations=[{}]",
+            mutations.len(),
+            summarize_mutations(&mutations)
+        ));
+    }
     let mut attempted = false;
     let mut delivered = false;
+    let mut queued = false;
     let mut last_delivery_error: Option<String> = None;
     for (profile_id, profile) in &replication.profiles {
         if restrict_profile_id.is_some() && restrict_profile_id != Some(profile_id.as_str()) {
@@ -5634,88 +5998,87 @@ async fn submit_mutations_for_active_profiles(
             ));
             continue;
         }
-        if let Some(authority) = local_authority.get(profile_id) {
-            attempted = true;
-            replication_log(format!(
-                "submit_mutations target profile_id={} mode=local_authority base_url={}",
-                profile_id, authority.local_base_url
-            ));
-            if let Err(error) =
-                post_mutations_for_local_authority(authority, &mutations, &novel_plugin_assets)
-                    .await
-            {
-                last_delivery_error = Some(error.clone());
+        let target = if let Some(authority) = local_authority.get(profile_id) {
+            MutationTarget::LocalAuthority(authority)
+        } else {
+            let Some(active_key) = profile.active_session_key.as_deref() else {
+                continue;
+            };
+            let Some(session) = desktop.sessions.iter().find(|session| {
+                session.local_profile_id == *profile_id && session.session_key == active_key
+            }) else {
                 replication_log(format!(
-                    "submit_mutations result profile_id={} mode=local_authority status=error error={}",
-                    profile_id, error
+                    "submit_mutations skip profile_id={} reason=missing_active_session key={}",
+                    profile_id, active_key
                 ));
-                emit_replication_error(app, profile_id, error.clone());
-                let _ = update_profile_state(profile_id, |profile| {
-                    profile.last_error = Some(error.clone());
-                    profile.replication_status = if is_needs_reauth_error(&error) {
-                        SyncdReplicationStatus::NeedsReauth
-                    } else if is_connection_error(&error) {
-                        SyncdReplicationStatus::Offline
-                    } else {
-                        SyncdReplicationStatus::Degraded
-                    };
-                });
-                let _ = emit_replication_state_for_profile(app, profile_id).await;
-            } else {
-                delivered = true;
-                replication_log(format!(
-                    "submit_mutations result profile_id={} mode=local_authority status=ok",
-                    profile_id
-                ));
-            }
+                continue;
+            };
+            MutationTarget::Remote(session)
+        };
+        let target_key = target.key();
+        let (batch, assets) =
+            outbound_batch(app, profile_id, &target_key, &mutations, &novel_plugin_assets)?;
+        if batch.is_empty() {
             continue;
         }
-        let Some(active_key) = profile.active_session_key.as_deref() else {
-            continue;
-        };
-        let Some(session) = desktop.sessions.iter().find(|session| {
-            session.local_profile_id == *profile_id && session.session_key == active_key
-        }) else {
-            replication_log(format!(
-                "submit_mutations skip profile_id={} reason=missing_active_session key={}",
-                profile_id, active_key
-            ));
-            continue;
-        };
         attempted = true;
         replication_log(format!(
-            "submit_mutations target profile_id={} mode=remote canonical_origin={}",
-            profile_id, session.canonical_origin
+            "submit_mutations target profile_id={} mode={} target={} queued_count={} mutation_count={}",
+            profile_id,
+            target.mode(),
+            target_key,
+            batch.len() - mutations.len(),
+            batch.len()
         ));
-        if let Err(error) =
-            post_mutations_for_session(session, &mutations, &novel_plugin_assets).await
-        {
-            last_delivery_error = Some(error.clone());
+        let delivery = deliver_mutations(&target, &batch, &assets).await;
+        let (settled, unsent) = batch.split_at(delivery.settled);
+        let dropped = update_outbound_mutations(profile_id, |queue| {
+            forget_outbound_mutations(&mut queue.mutations, settled);
+            if delivery.retryable {
+                queue.target = target_key.clone();
+                enqueue_outbound_mutations(&mut queue.mutations, unsent)
+            } else {
+                0
+            }
+        })?;
+        if dropped > 0 {
             replication_log(format!(
-                "submit_mutations result profile_id={} mode=remote status=error error={}",
-                profile_id, error
-            ));
-            emit_replication_error(app, profile_id, error.clone());
-            let _ = update_profile_state(profile_id, |profile| {
-                profile.last_error = Some(error.clone());
-                profile.replication_status = if is_needs_reauth_error(&error) {
-                    SyncdReplicationStatus::NeedsReauth
-                } else if is_connection_error(&error) {
-                    SyncdReplicationStatus::Offline
-                } else {
-                    SyncdReplicationStatus::Degraded
-                };
-            });
-            let _ = emit_replication_state_for_profile(app, profile_id).await;
-        } else {
-            delivered = true;
-            replication_log(format!(
-                "submit_mutations result profile_id={} mode=remote status=ok",
-                profile_id
+                "outbox drop profile_id={profile_id} count={dropped} reason=capacity"
             ));
         }
+        let Some(error) = delivery.error else {
+            delivered = true;
+            replication_log(format!(
+                "submit_mutations result profile_id={} mode={} status=ok",
+                profile_id,
+                target.mode()
+            ));
+            continue;
+        };
+        queued |= delivery.retryable;
+        last_delivery_error = Some(error.clone());
+        replication_log(format!(
+            "submit_mutations result profile_id={} mode={} status=error queued={} error={}",
+            profile_id,
+            target.mode(),
+            if delivery.retryable { unsent.len() } else { 0 },
+            error
+        ));
+        emit_replication_error(app, profile_id, error.clone());
+        let _ = update_profile_state(profile_id, |profile| {
+            profile.last_error = Some(error.clone());
+            profile.replication_status = if is_needs_reauth_error(&error) {
+                SyncdReplicationStatus::NeedsReauth
+            } else if is_connection_error(&error) {
+                SyncdReplicationStatus::Offline
+            } else {
+                SyncdReplicationStatus::Degraded
+            };
+        });
+        let _ = emit_replication_state_for_profile(app, profile_id).await;
     }
-    if restrict_profile_id.is_some() && !delivered {
+    // A durably queued mutation is accepted: it is delivered when the profile is Live again.
+    if restrict_profile_id.is_some() && !mutations.is_empty() && !delivered && !queued {
         return Err(last_delivery_error.unwrap_or_else(|| {
             if attempted {
                 "Core rejected the comic reader mutation.".to_string()
@@ -5835,6 +6198,14 @@ async fn ensure_book_assets_uploaded(
     endpoint: &BookAssetEndpoint,
     mutations: &[SerializableMutationInput],
 ) -> Result<(), String> {
+    if !mutations.iter().any(|mutation| {
+        matches!(
+            mutation,
+            SerializableMutationInput::BookEntry { patch: Some(_), .. }
+        )
+    }) {
+        return Ok(());
+    }
     let state = read_books_state()?;
     let mut uploaded = HashSet::new();
     for mutation in mutations {
@@ -6024,7 +6395,7 @@ async fn post_mutations_for_local_authority(
         .json(&request)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(transport_error_message)?;
     if response.status().is_success() {
         let receipts = response
             .json::<MutationsResponse>()
@@ -6140,11 +6511,14 @@ async fn post_mutations_for_session(
                 }
                 last_error = Some(format!("Mutation submit failed with HTTP {status}."));
             }
-            Err(error) if is_connection_error(&error.to_string()) && index + 1 < origins.len() => {
-                last_error = Some(error.to_string());
-                continue;
+            Err(error) => {
+                let error = transport_error_message(error);
+                if is_connection_error(&error) && index + 1 < origins.len() {
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
             }
-            Err(error) => return Err(error.to_string()),
         }
     }
     Err(last_error.unwrap_or_else(|| "Mutation submit failed.".to_string()))
@@ -6152,6 +6526,34 @@ async fn post_mutations_for_session(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn b4_remote_bootstrap_requires_current_remote_completion() {
+        use super::*;
+        let mut profile = PersistedReplicationProfileState::default();
+        profile.active_session_key = Some("session-a".into());
+        profile.replication_status = SyncdReplicationStatus::Live;
+        let mut snapshot = profile.snapshot("main");
+        assert_eq!(snapshot.remote_bootstrap_generation, None);
+        // Restart and host/local-authority Live have no remote completion.
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, None), None);
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), Some(4));
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "old-session"))), None);
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((0, "session-a"))), None);
+        for status in [SyncdReplicationStatus::Idle, SyncdReplicationStatus::Connecting,
+            SyncdReplicationStatus::Replaying, SyncdReplicationStatus::Paused,
+            SyncdReplicationStatus::Offline, SyncdReplicationStatus::Degraded,
+            SyncdReplicationStatus::NeedsReauth] {
+            snapshot.replication_status = status;
+            assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+        }
+        snapshot.replication_status = SyncdReplicationStatus::Live;
+        snapshot.paused = true;
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+        snapshot.paused = false;
+        snapshot.last_error = Some("apply failed".into());
+        assert_eq!(confirmed_remote_bootstrap(&snapshot, Some((4, "session-a"))), None);
+    }
+
     use super::*;
     use crate::syncd::models::{
         MutationEntityType, MutationResult, SnapshotEntity, SnapshotTombstone,
@@ -7613,13 +8015,70 @@ mod tests {
         };
 
         let (next, classification) =
-            materialize_novel_snapshot(&current, &current_classification, &snapshot).unwrap();
+            materialize_novel_snapshot(
+                &current,
+                &current_classification,
+                &snapshot,
+                "profile:local-main",
+            )
+            .unwrap();
         assert_eq!(next.version, Some(3));
         assert_eq!(next.scope_key.as_deref(), Some("local-main"));
         assert_eq!(next.progress.len(), 1);
         assert_eq!(next.progress[0].novel_id, "novel-remote");
         assert_eq!(classification.version, Some(2));
         assert!(classification.records.is_empty());
+    }
+
+    #[test]
+    fn authoritative_novel_snapshot_initializes_empty_scope_metadata() {
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: Some("empty-novels-snapshot".to_string()),
+            complete: Some(true),
+            entity_count: Some(0),
+            tombstone_count: Some(0),
+            scope_id: "novels:profile:remote-main".to_string(),
+            snapshot_version: 1,
+            min_replayable_server_version: 1,
+            entities: Vec::new(),
+            tombstones: Vec::new(),
+        };
+
+        let (next, classification) = materialize_novel_snapshot(
+            &PersistedNovelLibraryState::default(),
+            &PersistedNovelSourceClassificationState::default(),
+            &snapshot,
+            "profile:test",
+        )
+        .unwrap();
+
+        assert_eq!(next.version, Some(1));
+        assert_eq!(next.scope_key.as_deref(), Some("profile:test"));
+        assert_eq!(classification.version, Some(1));
+        assert_eq!(classification.scope_key.as_deref(), Some("profile:test"));
+    }
+
+    #[test]
+    fn incremental_novel_state_initializes_missing_scope_metadata_without_overwriting_valid_values() {
+        let mut empty = PersistedNovelLibraryState::default();
+        ensure_novel_scope_metadata(&mut empty, "profile:test");
+        assert_eq!(empty.version, Some(1));
+        assert_eq!(empty.scope_key.as_deref(), Some("profile:test"));
+
+        let mut existing = PersistedNovelLibraryState {
+            version: Some(7),
+            scope_key: Some("profile:other".to_string()),
+            ..PersistedNovelLibraryState::default()
+        };
+        ensure_novel_scope_metadata(&mut existing, "profile:test");
+        assert_eq!(existing.version, Some(7));
+        assert_eq!(existing.scope_key.as_deref(), Some("profile:other"));
+
+        let mut classification = PersistedNovelSourceClassificationState::default();
+        ensure_novel_classification_scope_metadata(&mut classification, "profile:test");
+        assert_eq!(classification.version, Some(1));
+        assert_eq!(classification.scope_key.as_deref(), Some("profile:test"));
     }
 
     #[test]
@@ -7911,5 +8370,336 @@ mod tests {
                 .and_then(|profile| profile.active_session_key.clone()),
             Some("session-a".to_string())
         );
+    }
+
+    fn outbox_mutation(
+        client_mutation_id: &str,
+        entity_id: &str,
+        op: MutationOperation,
+        lamport: i64,
+    ) -> SerializableMutationInput {
+        SerializableMutationInput::ComicHistory {
+            base: SerializableMutationBase {
+                client_mutation_id: client_mutation_id.to_string(),
+                scope_id: "comics:profile:main".to_string(),
+                entity_id: entity_id.to_string(),
+                op,
+                lamport,
+            },
+            patch: None,
+        }
+    }
+
+    fn outbox_ids(queue: &[SerializableMutationInput]) -> Vec<&str> {
+        queue
+            .iter()
+            .map(|mutation| mutation.client_mutation_id())
+            .collect()
+    }
+
+    #[test]
+    fn outbound_mutations_survive_a_serde_roundtrip_unchanged() {
+        let comic_id = format!("suwayomi:{}:manga:42", "a".repeat(64));
+        let history_id = format!("comic.history::{comic_id}");
+        let mutations = vec![
+            SerializableMutationInput::ComicHistory {
+                base: SerializableMutationBase {
+                    client_mutation_id: "mutation-a".to_string(),
+                    scope_id: "comics:profile:remote-a".to_string(),
+                    entity_id: history_id.clone(),
+                    op: MutationOperation::Merge,
+                    lamport: 123,
+                },
+                patch: Some(ComicHistoryPatch {
+                    portable_work_ref: None,
+                    portable_chapter_ref: None,
+                    history_id,
+                    comic_id,
+                    chapter_id: "9".to_string(),
+                    page_index: 3,
+                    page_count: Some(20),
+                    progress_percent: 0.2,
+                    read_at_ms: 123,
+                }),
+            },
+            outbox_mutation("mutation-b", "history-b", MutationOperation::Delete, 124),
+        ];
+        let queue = OutboundMutationQueue {
+            target: "local:main".to_string(),
+            mutations,
+        };
+
+        let raw = serde_json::to_string(&queue).unwrap();
+        let restored = serde_json::from_str::<OutboundMutationQueue>(&raw).unwrap();
+
+        assert_eq!(restored.target, "local:main");
+        // The Core recognizes a replay by clientMutationId and content hash, so the
+        // queued wire form has to be byte-for-byte what the first attempt sent.
+        assert_eq!(serde_json::to_string(&restored).unwrap(), raw);
+    }
+
+    #[test]
+    fn outbound_queue_dedupes_compacts_deletes_and_stays_bounded() {
+        let mut queue = Vec::new();
+        let dropped = enqueue_outbound_mutations(
+            &mut queue,
+            &[
+                outbox_mutation("m1", "history-a", MutationOperation::Merge, 10),
+                outbox_mutation("m2", "history-b", MutationOperation::Merge, 11),
+                outbox_mutation("m3", "history-a", MutationOperation::Merge, 30),
+            ],
+        );
+        assert_eq!(dropped, 0);
+
+        // A replayed batch does not duplicate what is already queued.
+        enqueue_outbound_mutations(
+            &mut queue,
+            &[outbox_mutation("m2", "history-b", MutationOperation::Merge, 11)],
+        );
+        assert_eq!(outbox_ids(&queue), ["m1", "m2", "m3"]);
+
+        // A delete drops older writes to the same entity only; a newer write survives.
+        enqueue_outbound_mutations(
+            &mut queue,
+            &[outbox_mutation("m4", "history-a", MutationOperation::Delete, 20)],
+        );
+        assert_eq!(outbox_ids(&queue), ["m2", "m3", "m4"]);
+
+        forget_outbound_mutations(
+            &mut queue,
+            &[outbox_mutation("m3", "history-a", MutationOperation::Merge, 30)],
+        );
+        assert_eq!(outbox_ids(&queue), ["m2", "m4"]);
+
+        let overflow = (0..MAX_OUTBOUND_MUTATIONS_PER_PROFILE)
+            .map(|index| {
+                outbox_mutation(
+                    &format!("bulk-{index}"),
+                    &format!("history-{index}"),
+                    MutationOperation::Merge,
+                    100 + index as i64,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(enqueue_outbound_mutations(&mut queue, &overflow), 2);
+        assert_eq!(queue.len(), MAX_OUTBOUND_MUTATIONS_PER_PROFILE);
+        assert_eq!(queue[0].client_mutation_id(), "bulk-0");
+    }
+
+    #[test]
+    fn outbound_queue_persists_per_profile_and_quarantines_unreadable_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let _env = crate::syncd_desktop::DesktopStateDirTestGuard::override_with(temp.path());
+
+        update_outbound_mutations("local-a", |queue| {
+            queue.target = "local:local-a".to_string();
+            enqueue_outbound_mutations(
+                &mut queue.mutations,
+                &[outbox_mutation("m1", "history-a", MutationOperation::Merge, 1)],
+            )
+        })
+        .unwrap();
+        assert!(has_outbound_mutations("local-a"));
+        assert!(!has_outbound_mutations("local-b"));
+        let persisted = load_outbound_mutations_unlocked().unwrap();
+        assert_eq!(persisted["local-a"].target, "local:local-a");
+        assert_eq!(outbox_ids(&persisted["local-a"].mutations), ["m1"]);
+
+        update_outbound_mutations("local-a", |queue| queue.mutations.clear()).unwrap();
+        assert!(!outbound_mutations_path().exists());
+
+        std::fs::write(outbound_mutations_path(), b"{not json").unwrap();
+        assert!(!has_outbound_mutations("local-a"));
+        assert!(!outbound_mutations_path().exists());
+        let quarantined = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+            .count();
+        assert_eq!(quarantined, 1);
+    }
+
+    #[derive(Clone, Default)]
+    struct TestMutationServer {
+        batches: Arc<Mutex<Vec<Vec<String>>>>,
+        reject: Arc<HashSet<String>>,
+        unauthorized_from_batch: Option<usize>,
+    }
+
+    async fn test_mutations_post(
+        AxumState(state): AxumState<TestMutationServer>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> Response<Body> {
+        let mutations = body["mutations"].as_array().cloned().unwrap_or_default();
+        let ids = mutations
+            .iter()
+            .map(|mutation| mutation["clientMutationId"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        let batch_index = {
+            let mut batches = state.batches.lock().await;
+            batches.push(ids);
+            batches.len() - 1
+        };
+        if state
+            .unauthorized_from_batch
+            .is_some_and(|first| batch_index >= first)
+        {
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({ "error": { "code": "UNAUTHORIZED", "message": "token expired" } })
+                        .to_string(),
+                ))
+                .unwrap();
+        }
+        let results = mutations
+            .iter()
+            .map(|mutation| {
+                let id = mutation["clientMutationId"].as_str().unwrap();
+                let rejected = state.reject.contains(id);
+                let mut result = json!({
+                    "clientMutationId": id,
+                    "entityType": mutation["entityType"],
+                    "entityId": mutation["entityId"],
+                    "scopeId": mutation["scopeId"],
+                    "op": mutation["op"],
+                    "status": if rejected { "rejected" } else { "applied" },
+                });
+                if rejected {
+                    result["error"] = json!({ "code": "INVALID", "message": "invalid patch" });
+                }
+                result
+            })
+            .collect::<Vec<_>>();
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "requestId": body["requestId"],
+                    "currentServerVersion": 1,
+                    "results": results,
+                })
+                .to_string(),
+            ))
+            .unwrap()
+    }
+
+    async fn spawn_test_mutation_server(
+        state: TestMutationServer,
+    ) -> (LocalAuthoritySession, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/v1/mutations", axum::routing::post(test_mutations_post))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (
+            LocalAuthoritySession {
+                profile_id: "main".to_string(),
+                local_base_url: origin,
+                access_token: "test-token".to_string(),
+            },
+            task,
+        )
+    }
+
+    fn outbox_batch(count: usize) -> Vec<SerializableMutationInput> {
+        (0..count)
+            .map(|index| {
+                outbox_mutation(
+                    &format!("m{index}"),
+                    &format!("history-{index}"),
+                    MutationOperation::Merge,
+                    index as i64,
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn mutation_delivery_is_chunked_and_a_rejected_chunk_does_not_block_the_rest() {
+        let state = TestMutationServer {
+            reject: Arc::new(HashSet::from(["m300".to_string()])),
+            ..TestMutationServer::default()
+        };
+        let (authority, task) = spawn_test_mutation_server(state.clone()).await;
+        let batch = outbox_batch(600);
+
+        let delivery = deliver_mutations(
+            &MutationTarget::LocalAuthority(&authority),
+            &batch,
+            &HashMap::new(),
+        )
+        .await;
+
+        let sizes = state
+            .batches
+            .lock()
+            .await
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>();
+        assert_eq!(sizes, [250, 250, 100]);
+        assert_eq!(delivery.settled, 600);
+        assert!(!delivery.retryable);
+        assert!(delivery.error.unwrap().contains("rejected"));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn mutation_delivery_stops_at_an_expired_session_and_keeps_the_rest_in_order() {
+        let state = TestMutationServer {
+            unauthorized_from_batch: Some(1),
+            ..TestMutationServer::default()
+        };
+        let (authority, task) = spawn_test_mutation_server(state.clone()).await;
+        let batch = outbox_batch(600);
+
+        let delivery = deliver_mutations(
+            &MutationTarget::LocalAuthority(&authority),
+            &batch,
+            &HashMap::new(),
+        )
+        .await;
+
+        assert_eq!(delivery.settled, 250);
+        assert!(delivery.retryable);
+        assert!(is_needs_reauth_error(delivery.error.as_deref().unwrap()));
+        // Delivery stopped at the refused chunk instead of skipping past it.
+        assert_eq!(state.batches.lock().await.len(), 2);
+
+        let mut queue = Vec::new();
+        enqueue_outbound_mutations(&mut queue, &batch[delivery.settled..]);
+        assert_eq!(queue.len(), 350);
+        assert_eq!(queue[0].client_mutation_id(), "m250");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn mutation_delivery_to_a_stopped_core_is_retryable_and_classified_offline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let authority = LocalAuthoritySession {
+            profile_id: "main".to_string(),
+            local_base_url: origin,
+            access_token: "test-token".to_string(),
+        };
+
+        let delivery = deliver_mutations(
+            &MutationTarget::LocalAuthority(&authority),
+            &outbox_batch(3),
+            &HashMap::new(),
+        )
+        .await;
+
+        let error = delivery.error.unwrap();
+        assert_eq!(delivery.settled, 0);
+        assert!(delivery.retryable, "{error}");
+        assert!(is_connection_error(&error), "{error}");
     }
 }

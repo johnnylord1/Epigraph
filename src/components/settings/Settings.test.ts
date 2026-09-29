@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { applyAppLanguage, translate } from "../../lib/i18n/runtime";
 import type { Tracker } from "../../lib/types";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 
@@ -15,6 +16,8 @@ const {
   tauriFetchMock,
   gqlMock,
   loadSettingsStorageRuntimeMock,
+  restoreProductionNovelsMock,
+  productionWorkflowMock,
 } = vi.hoisted(() => {
   const epigraphUpdateFixture = {
     releases: [{
@@ -34,8 +37,11 @@ const {
   };
 
   return {
+    restoreProductionNovelsMock: vi.fn(),
+    productionWorkflowMock: vi.fn(),
     epigraphUpdateFixture,
-    invokeMock: vi.fn(async (command: string) => {
+    invokeMock: vi.fn(async (command: string, _args?: Record<string, any>) => {
+    if (command === "restore_session_admit") return "settings-fixture-session";
     if (command === "get_storage_info") {
       return {
         manga_bytes: 32_000_000,
@@ -98,7 +104,7 @@ const {
       json: async () => [],
     })),
     loadSettingsStorageRuntimeMock: vi.fn(async () => ({
-    parseMihonBackup: vi.fn(async () => ({ trackerIds: [] })),
+    parseMihonBackup: vi.fn(async (): Promise<{ trackerIds: number[]; backupSources?: unknown[]; backupManga?: unknown[]; extensionStores?: unknown[] }> => ({ trackerIds: [] })),
     embedMihonExtensionStores: vi.fn((bytes) => bytes),
     buildEpigraphBackupContainer: vi.fn(async () => ({ bytes: new Uint8Array() })),
     buildEpigraphRestorePlan: vi.fn(async () => ({ payloads: [], summary: { summaryLabel: "", summaryBody: "" }, containerIssues: [], executionBlockedReason: null })),
@@ -135,7 +141,7 @@ const {
     loadSourceInventory: vi.fn(async () => ({ inventory: [], availableExtensions: [], repoUrls: [], warnings: [] })),
     readOverlayFile: vi.fn(async () => []),
     upsertOverlayEntry: vi.fn(async () => {}),
-    analyzeBackupReconciliation: vi.fn(async () => ({ analysis: { needsReview: [], unresolved: [], warnings: [] } })),
+    analyzeBackupReconciliation: vi.fn(async (): Promise<{ analysis: { exactMatches?: unknown[]; autoReconciled?: unknown[]; needsReview: unknown[]; unresolved: unknown[]; warnings: unknown[] } }> => ({ analysis: { needsReview: [], unresolved: [], warnings: [] } })),
     overlayEntryFromAnalysis: vi.fn(() => ({})),
     buildReconciledBackupFile: vi.fn(() => new File([], "reconciled.tachibk")),
     readFileAsArrayBuffer: vi.fn(async () => new ArrayBuffer(0)),
@@ -156,7 +162,7 @@ const {
       warnings: [],
     })),
   })),
-  gqlMock: vi.fn(async (query: string) => {
+  gqlMock: vi.fn(async (query: string, _variables?: unknown) => {
     const normalized = String(query).toLowerCase();
     if (normalized.includes("sources")) return { sources: { nodes: [] } };
     if (normalized.includes("extensions")) return { extensions: { nodes: [] } };
@@ -190,6 +196,12 @@ const {
   };
 });
 
+vi.mock("../../lib/backup/restoreAdapters", () => ({ prepareProductionNovels: async () => {}, restoreProductionNovels: restoreProductionNovelsMock }));
+vi.mock("../../lib/backup/productionRestoreWorkflow", async original => {
+  const actual = await original<typeof import("../../lib/backup/productionRestoreWorkflow")>();
+  productionWorkflowMock.mockImplementation(actual.createProductionRestoreWorkflow);
+  return { ...actual, createProductionRestoreWorkflow: productionWorkflowMock };
+});
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
   convertFileSrc: vi.fn((path: string) => path),
@@ -420,6 +432,16 @@ describe("Settings", () => {
     expect(screen.getByText("Connected services")).toBeTruthy();
   });
 
+  test("renders tracker services and their actions when embedded in first-run setup", async () => {
+    const { container } = renderSettings({ firstRunPane: "tracking" });
+
+    expect(await screen.findByText("Connected services")).toBeTruthy();
+    expect(await screen.findByAltText("Hardcover")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Login" })).toBeTruthy();
+    expect(container.querySelector<HTMLElement>('[data-settings-pane="tracking"]')?.hidden).toBe(false);
+    expect(screen.queryByRole("navigation", { name: "Settings groups" })).toBeNull();
+  });
+
   test("flushes and exports books from the active runtime profile", async () => {
     const runtime = await loadSettingsStorageRuntimeMock();
     loadSettingsStorageRuntimeMock.mockClear();
@@ -481,15 +503,69 @@ describe("Settings", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Tracking" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Tracker service unavailable")).toBeTruthy();
+      expect(screen.getByText(translate("firstRun.trackers.loadError"))).toBeTruthy();
     });
     expect(trackerRequests).toBe(1);
+    applyAppLanguage("pt-BR");
+    await waitFor(() => expect(screen.getByText(translate("firstRun.trackers.loadError"))).toBeTruthy());
+    expect(screen.queryByText("Tracker service unavailable")).toBeNull();
+    applyAppLanguage("en");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy());
 
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => {
       expect(screen.getByText("MyAnimeList")).toBeTruthy();
     });
     expect(trackerRequests).toBe(2);
+    gqlMock.mockImplementation(originalImplementation!);
+  });
+
+  test("completes tracker OAuth only from the login window it opened", async () => {
+    const originalImplementation = gqlMock.getMockImplementation();
+    const logins: unknown[] = [];
+    gqlMock.mockImplementation(async (query: string, variables?: unknown) => {
+      const normalized = String(query).toLowerCase();
+      if (normalized.includes("query gettrackers")) {
+        return {
+          trackers: {
+            nodes: [{
+              id: 2,
+              name: "AniList",
+              icon: "",
+              isLoggedIn: false,
+              authUrl: "https://anilist.test/oauth?response_type=token",
+              supportsPrivateTracking: false,
+              scores: [],
+              statuses: [],
+            }],
+          },
+        };
+      }
+      if (normalized.includes("mutation logintrackeroauth")) logins.push(variables);
+      return originalImplementation!(query);
+    });
+    const listeners = new Map<string, (event: { payload: unknown }) => unknown>();
+    listenMock.mockImplementation((async (name: string, handler: (event: { payload: unknown }) => unknown) => {
+      listeners.set(name, handler);
+      return () => listeners.delete(name);
+    }) as any);
+
+    renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Content & Integrations" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Tracking" }));
+    const aniListRow = (await screen.findByAltText("AniList")).closest<HTMLElement>(".settings-row")!;
+    await fireEvent.click(within(aniListRow).getByRole("button", { name: "Login" }));
+
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("open_tracker_oauth_window", { url: "https://anilist.test/oauth?response_type=token", sessionId: expect.any(String) }));
+    const sessionId = invokeMock.mock.calls.find(([command]) => command === "open_tracker_oauth_window")![1]!.sessionId;
+    const callback = listeners.get("tracker-oauth-callback")!;
+    await callback({ payload: { url: "https://suwayomi.org/tracker-oauth#access_token=forged" } });
+    await callback({ payload: { url: "https://suwayomi.org/tracker-oauth#access_token=forged", sessionId: "other-window" } });
+    expect(logins).toEqual([]);
+
+    await callback({ payload: { url: "https://suwayomi.org/tracker-oauth#access_token=real", sessionId } });
+    await waitFor(() => expect(logins).toEqual([{ trackerId: 2, callbackUrl: "access_token=real" }]));
+    listenMock.mockImplementation(async () => () => {});
     gqlMock.mockImplementation(originalImplementation!);
   });
 
@@ -580,6 +656,7 @@ describe("Settings", () => {
     await fireEvent.change(input!, { target: { files: [backup] } });
 
     await waitFor(() => expect(screen.getByText(/Detected format: LNReader ZIP/i)).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Review Novel dependencies" })).toBeTruthy();
     await waitFor(() => {
       const preview = container.querySelector("[data-backup-dependencies]");
       expect(preview?.textContent).toContain("9 titles");
@@ -593,18 +670,36 @@ describe("Settings", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false));
 
     let rejectRestore!: (error: Error) => void;
-    storageRuntime.provisionEpigraphNovelDependencies.mockImplementationOnce(() => new Promise((_, reject) => {
+    restoreProductionNovelsMock.mockImplementationOnce(() => new Promise((_, reject) => {
       rejectRestore = reject;
     }));
     const restoreButton = screen.getByRole("button", { name: "LNReader novels restore" });
     await fireEvent.click(restoreButton);
+    await waitFor(() => expect(productionWorkflowMock).toHaveBeenCalled());
     await waitFor(() => expect(container.querySelector(".backup-progress")?.textContent).toMatch(/Restoring/i));
     expect(restoreButton.hasAttribute("disabled")).toBe(true);
     await waitFor(() => expect(rejectRestore).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(productionWorkflowMock.mock.results.at(-1)?.value.snapshot().cancelled).toBe(true);
     rejectRestore(new Error("Repository is temporarily unavailable. Please retry."));
-    await waitFor(() => expect(screen.getByText("Repository is temporarily unavailable. Please retry.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(translate("firstRun.backup.restoreError"))).toBeTruthy());
     expect(container.querySelector(".backup-progress")).toBeNull();
     expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false);
+    // About ten role queries over the whole Settings page take 3-4 s alone and more under full-suite load.
+  }, 15_000);
+
+  test("offers the shared Manga dependency review after selecting a native backup", async () => {
+    const runtime = await loadSettingsStorageRuntimeMock();
+    runtime.parseMihonBackup.mockResolvedValue({ trackerIds: [], backupSources: [], backupManga: [], extensionStores: [] });
+    runtime.analyzeBackupReconciliation.mockResolvedValue({ analysis: { exactMatches: [], autoReconciled: [], needsReview: [], unresolved: [], warnings: [] } });
+    loadSettingsStorageRuntimeMock.mockResolvedValue(runtime);
+    store.runtimeSettingsTab = "storage"; store.runtimeResolvedLocalProfileId = "test";
+    const { container } = renderSettings();
+    await fireEvent.click(screen.getByRole("button", { name: "Restore backup" }));
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await fireEvent.change(input, { target: { files: [new File(["fixture"], "backup.tachibk")] } });
+    expect(await screen.findByRole("button", { name: "Review Manga dependencies" })).toBeTruthy();
+    expect(gqlMock.mock.calls.some(([query]) => /updateExtension/i.test(String(query)))).toBe(false);
   });
 
   test("rebinds the appearance pane theme editor affordances and help action", async () => {
@@ -661,12 +756,66 @@ describe("Settings", () => {
     expect(DEFAULT_SETTINGS.discordRpcImproveCovers).toBe(false);
     expect(store.settings.discordRpcImproveCovers).toBe(false);
 
-    const toggle = screen.getByRole("switch", { name: "Improve Discord cover framing" });
+    const toggle = screen.getByRole("switch", { name: "Improve Discord cover framing" }) as HTMLButtonElement;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.disabled).toBe(true);
+
+    await fireEvent.click(screen.getByRole("switch", { name: "Discord Rich Presence" }));
+    expect(store.settings.discordRpc).toBe(true);
+    await waitFor(() => expect(toggle.disabled).toBe(false));
 
     await fireEvent.click(toggle);
 
     expect(store.settings.discordRpcImproveCovers).toBe(true);
+  });
+
+  test("saves the FlareSolverr switch immediately and reverts it when the server refuses", async () => {
+    const originalImplementation = gqlMock.getMockImplementation();
+    let refuse = false;
+    gqlMock.mockImplementation(async (query: string, variables?: unknown) => {
+      if (String(query).includes("SetFlareSolverr")) {
+        if (refuse) throw new Error("server offline");
+        return {};
+      }
+      if (String(query).includes("GetServerSecurity")) {
+        const settings = {
+          authMode: "NONE", authUsername: "",
+          socksProxyEnabled: false, socksProxyHost: "", socksProxyPort: "", socksProxyVersion: 5, socksProxyUsername: "",
+          flareSolverrEnabled: false, flareSolverrUrl: "http://localhost:8191", flareSolverrTimeout: 60,
+          flareSolverrSessionName: "epigraph", flareSolverrSessionTtl: 15, flareSolverrAsResponseFallback: false,
+        };
+        return { settings } as unknown as Awaited<ReturnType<typeof originalImplementation & {}>>;
+      }
+      return originalImplementation!(query, variables);
+    });
+    try {
+      renderSettings();
+      await fireEvent.click(screen.getByRole("button", { name: "System" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Security" }));
+
+      const [toggle] = screen.getAllByRole("switch", { name: "Enable FlareSolverr" });
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+      await fireEvent.click(toggle);
+      await waitFor(() => expect(store.settings.flareSolverrEnabled).toBe(true));
+      expect(gqlMock).toHaveBeenCalledWith(
+        expect.stringContaining("SetFlareSolverr"),
+        expect.objectContaining({ flareSolverrEnabled: true }),
+      );
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+      refuse = true;
+      await waitFor(() => expect((toggle as HTMLButtonElement).disabled).toBe(false));
+      await fireEvent.click(toggle);
+      await waitFor(() => expect(toggle.getAttribute("aria-checked")).toBe("true"));
+      expect(store.settings.flareSolverrEnabled).toBe(true);
+      expect(gqlMock).toHaveBeenLastCalledWith(
+        expect.stringContaining("SetFlareSolverr"),
+        expect.objectContaining({ flareSolverrEnabled: false }),
+      );
+    } finally {
+      gqlMock.mockImplementation(originalImplementation!);
+    }
   });
 
   test("renders density as a discrete slider-family control with fixed steps", async () => {
@@ -693,6 +842,13 @@ describe("Settings", () => {
 
   test("allows resetting the main profile workspace data", async () => {
     renderSettings();
+
+    // The built-in profile is shown by its translated name, not its internal MAIN label.
+    const profileSelect = document.querySelector<HTMLElement>("#general-profile .select-btn");
+    expect(profileSelect?.textContent?.trim()).toBe("Default");
+    await fireEvent.click(profileSelect!);
+    expect(screen.getByRole("button", { name: "Default :4567" })).toBeTruthy();
+    expect(screen.queryByText(/MAIN/)).toBeNull();
 
     const resetButton = screen.getByRole("button", { name: "Reset data" });
     await fireEvent.click(resetButton);

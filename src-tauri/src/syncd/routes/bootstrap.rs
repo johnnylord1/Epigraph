@@ -9,8 +9,9 @@ use serde::Deserialize;
 use crate::syncd::db::{self, PairingSessionRow};
 use crate::syncd::models::{
     AppError, BootstrapPayloadResponse, BootstrapSessionCreateRequest, BootstrapSuwayomiHint,
-    ErrorDetail, SharedAppState,
+    ErrorDetail, PairingPinResolveRequest, SharedAppState,
 };
+use crate::syncd::pairing_pin::{normalize_pin, pairing_pin, PIN_ATTEMPTS};
 
 pub async fn post_bootstrap_session(
     State(state): State<SharedAppState>,
@@ -86,6 +87,68 @@ async fn fetch_bootstrap_session(
     }
 
     build_bootstrap_payload(&state, &session).await
+}
+
+/// Resolves the six-digit PIN shown by the host to the bootstrap payload of that open session.
+/// Claiming still requires the host's approval; the PIN only replaces carrying the QR payload over.
+pub async fn post_pairing_pin_resolve(
+    State(state): State<SharedAppState>,
+    Json(request): Json<PairingPinResolveRequest>,
+) -> Response {
+    bootstrap_response(resolve_pairing_pin(state, request).await)
+}
+
+fn pin_locked_error() -> AppError {
+    AppError::Conflict(ErrorDetail {
+        code: "PAIRING_PIN_LOCKED".to_string(),
+        message: "Too many incorrect pairing codes. Open Add device again on the host.".to_string(),
+        retryable: Some(true),
+        min_client_version: None,
+        current_server_version: None,
+        min_replayable_server_version: None,
+        required_action: Some("retry_later".to_string()),
+        details: None,
+    })
+}
+
+async fn resolve_pairing_pin(
+    state: SharedAppState,
+    request: PairingPinResolveRequest,
+) -> Result<BootstrapPayloadResponse, AppError> {
+    let now = db::now_ms();
+    if PIN_ATTEMPTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).is_locked(now) {
+        return Err(pin_locked_error());
+    }
+    let Some(pin) = normalize_pin(&request.pin) else {
+        return Err(AppError::BadRequest(
+            "Pairing code must have six digits.".to_string(),
+        ));
+    };
+    let sessions = db::list_open_bootstrap_sessions(&state.pool, now)
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to load pairing sessions: {error}")))?;
+    if let Some(session) = sessions
+        .iter()
+        .find(|session| pairing_pin(&session.pairing_code) == pin)
+    {
+        return build_bootstrap_payload(&state, session).await;
+    }
+
+    let reached_lock = PIN_ATTEMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .record_failure(now);
+    if reached_lock {
+        db::expire_open_bootstrap_sessions(&state.pool)
+            .await
+            .map_err(|error| AppError::Internal(format!("Failed to expire pairing sessions: {error}")))?;
+        return Err(pin_locked_error());
+    }
+    Err(AppError::not_found(
+        "PAIRING_PIN_NOT_FOUND",
+        "No open pairing matches this code.",
+        None,
+    ))
 }
 
 async fn build_bootstrap_payload(

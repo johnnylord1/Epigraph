@@ -1,0 +1,46 @@
+name: Verify evidence contract
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/*evidence*'
+      - 'scripts/VerificationEvidence.ps1'
+      - 'scripts/verify-release.ps1'
+      - '.github/workflows/verify-evidence.yml'
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      EPIGRAPH_VERIFICATION_ROOT: ${{ runner.temp }}/epigraph-verification
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Record CI retention request separately from local retention
+        id: retention
+        shell: pwsh
+        run: |
+          $configured = if ($env:GITHUB_RETENTION_DAYS) { [int]$env:GITHUB_RETENTION_DAYS } else { 30 }
+          $days = [Math]::Min(30, $configured)
+          "days=$days" >> $env:GITHUB_OUTPUT
+          "EPIGRAPH_CI_RETENTION_DAYS=$days" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:EPIGRAPH_VERIFICATION_ROOT | Out-Null
+          @{requestedDays=$days;githubConfiguredDays=$configured;localPolicyControlsGitHub=$false} | ConvertTo-Json | Set-Content (Join-Path $env:EPIGRAPH_VERIFICATION_ROOT 'ci-retention.json')
+      - name: Test evidence lifecycle and deliberate failures
+        run: node --test scripts/verification-evidence.test.mjs scripts/epigraph-build-receipt.test.mjs
+      - name: Test PowerShell runner boundary
+        if: always()
+        shell: powershell
+        run: ./scripts/test-verification-evidence.ps1
+      - name: Upload focused fixture evidence (not application certification)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/epigraph-verification/
+          retention-days: ${{ steps.retention.outputs.days || 1 }}
+          if-no-files-found: warn

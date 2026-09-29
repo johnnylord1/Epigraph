@@ -124,20 +124,18 @@ export function formatLibraryUpdateFinalSummary(
 ) {
   const total = Number(jobsInfo?.totalJobs ?? 0);
   const finished = Math.max(0, Math.min(total, Number(jobsInfo?.finishedJobs ?? 0)));
-  const suffix = issueCount > 0
-    ? ` with ${issueCount} issue${issueCount === 1 ? "" : "s"}`
-    : "";
+  const suffix = issueCount > 0 ? translate("libraryUpdate.issueSuffix", { count: issueCount }) : "";
 
   if (total > 0) {
-    if (finished >= total) return `${label} checked ${total}/${total} titles${suffix}.`;
-    return `${label} stopped after ${finished}/${total} titles${suffix}.`;
+    if (finished >= total) return translate("libraryUpdate.summaryChecked", { label, total, suffix });
+    return translate("libraryUpdate.summaryStopped", { label, finished, total, suffix });
   }
 
-  return `${label} update finished${suffix}.`;
+  return translate("libraryUpdate.summaryFinished", { label, suffix });
 }
 
 export function formatLibraryUpdateWaiting() {
-  return "Waiting for Suwayomi progress.";
+  return translate("libraryUpdate.waitingProgress");
 }
 
 function sourceParallelism(reason: SharedLibraryUpdateRunOptions["reason"]) {
@@ -336,8 +334,8 @@ async function runComicsSourceQueueUpdate(
     const detail = currentTitle && sourceName ? ` - ${sourceName}: ${currentTitle}` : "";
     showLibraryUpdateProgress(
       total > 0
-        ? `Checking titles ${Math.min(finishedJobs, total)}/${total} - ${percent}%${detail}.`
-        : "No eligible comics titles to update.",
+        ? translate("libraryUpdate.checkingDetail", { current: Math.min(finishedJobs, total), total, percent, detail })
+        : translate("libraryUpdate.noEligible"),
       0,
       total > 0 ? { current: Math.min(finishedJobs, total), total, percent } : undefined,
     );
@@ -392,8 +390,8 @@ async function runComicsSourceQueueUpdate(
               sourceName: group.sourceName,
               extensionName: group.sourceName,
               message: isChallenge
-                ? `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} need source challenge recovery: ${message}`
-                : `${affectedTitles} title${affectedTitles === 1 ? "" : "s"} could not refresh because this source is unavailable: ${message}`,
+                ? translate("libraryUpdate.challengeIssue", { count: affectedTitles, message })
+                : translate("libraryUpdate.unavailableIssue", { count: affectedTitles, message }),
               errorType: classification.errorType,
               actionUrl: actionUrlForMangas(group.mangas.slice(index)),
               retrySourceId: group.sourceId,
@@ -652,7 +650,7 @@ export async function clearStaleLibraryUpdateInFlight() {
 
   store.setLibraryUpdateInFlight(false);
   showLibraryUpdateProgress(
-    total > 0 ? formatLibraryUpdateProgress(jobsInfo) : "Library update complete.",
+    total > 0 ? formatLibraryUpdateProgress(jobsInfo) : translate("libraryUpdate.complete"),
     1800,
     libraryUpdateProgressNumbers(jobsInfo),
   );
@@ -664,19 +662,19 @@ export function stopSharedLibraryUpdate() {
 
   stopLibraryUpdateRun = (async () => {
     libraryUpdateStopRequested = true;
-    showLibraryUpdateProgress("Stopping library update.");
+    showLibraryUpdateProgress(translate("libraryUpdate.stopping"));
     await gql(UPDATE_STOP).catch((error) => {
       console.warn("Could not send Suwayomi batch stop request; local source queue stop was still requested.", error);
     });
     if (activeLibraryUpdateRun) {
-      showLibraryUpdateProgress("Stop requested. Finishing the current title before stopping.");
+      showLibraryUpdateProgress(translate("libraryUpdate.stopRequestedCurrent"));
       return true;
     }
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const jobsInfo = await readLibraryUpdateStatusLive();
       if (jobsInfo && !jobsInfo.isRunning) {
         showLibraryUpdateProgress(
-          Number(jobsInfo.totalJobs ?? 0) > 0 ? formatLibraryUpdateProgress(jobsInfo) : "Library update stopped.",
+          Number(jobsInfo.totalJobs ?? 0) > 0 ? formatLibraryUpdateProgress(jobsInfo) : translate("libraryUpdate.stoppedPlain"),
           1800,
           libraryUpdateProgressNumbers(jobsInfo),
         );
@@ -684,19 +682,19 @@ export function stopSharedLibraryUpdate() {
       }
       if (jobsInfo) {
         showLibraryUpdateProgress(
-          `Stopping library update - checked ${Number(jobsInfo.finishedJobs ?? 0)}/${Number(jobsInfo.totalJobs ?? 0)} titles.`,
+          translate("libraryUpdate.stoppingChecked", { current: Number(jobsInfo.finishedJobs ?? 0), total: Number(jobsInfo.totalJobs ?? 0) }),
           0,
           libraryUpdateProgressNumbers(jobsInfo),
         );
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    showLibraryUpdateProgress("Stop requested. Waiting for Suwayomi to settle.");
+    showLibraryUpdateProgress(translate("libraryUpdate.stopWaiting"));
     return false;
   })()
     .catch((error) => {
       console.warn("Could not stop Library update:", error);
-      showLibraryUpdateProgress("Could not stop library update.", 2200);
+      showLibraryUpdateProgress(translate("libraryUpdate.stopFailed"), 2200);
       return false;
     })
     .finally(() => {
@@ -715,8 +713,8 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
     try {
       showLibraryUpdateProgress(
         options.reason === "auto-library-update"
-          ? "Automatic library update is starting."
-          : "Waking Suwayomi and preparing update.",
+          ? translate("libraryUpdate.autoStarting")
+          : translate("libraryUpdate.waking"),
       );
       const awake = await ensureServerAwakeFor(options.reason, {
         serverUrl: store.runtimeServerUrl,
@@ -725,11 +723,11 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
         profileId: store.runtimeResolvedLocalProfileId,
         profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
       });
-      if (!awake) throw new Error("Suwayomi is not reachable.");
+      if (!awake) throw new Error(translate("libraryUpdate.serverUnreachable"));
 
-      showLibraryUpdateProgress("Applying Epigraph update rules.");
+      showLibraryUpdateProgress(translate("libraryUpdate.applyingRules"));
       await ensureEpigraphLibraryUpdateRules();
-      showLibraryUpdateProgress("Suwayomi is checking your library.");
+      showLibraryUpdateProgress(translate("libraryUpdate.checkingServer"));
 
       const sourceQueueResult = await runComicsSourceQueueUpdate(options, runId);
       return {

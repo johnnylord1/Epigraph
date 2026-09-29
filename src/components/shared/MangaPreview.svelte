@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
+  import { formatWorkStatus } from "../../lib/i18n/format";
   import { onMount, onDestroy } from "svelte";
   import { X, BookmarkSimple, ArrowSquareOut, Play, CircleNotch, Books, CaretDown, FolderSimplePlus, Folder, LinkSimpleHorizontalBreak } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -87,7 +88,7 @@
   const uploadDates     = $derived(chapters.map((c) => c.uploadDate ? new Date(c.uploadDate).getTime() : null).filter((d): d is number => d !== null && !isNaN(d)));
   const firstUpload     = $derived(uploadDates.length ? new Date(Math.min(...uploadDates)) : null);
   const lastUpload      = $derived(uploadDates.length ? new Date(Math.max(...uploadDates)) : null);
-  const statusLabel     = $derived(displayManga?.status ? displayManga.status.charAt(0) + displayManga.status.slice(1).toLowerCase() : null);
+  const statusLabel     = $derived(displayManga?.status ? formatWorkStatus(displayManga.status) : null);
   const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
 
   function resolveLibraryMembership(loadedManga: Manga | null, previewManga: Manga | null): boolean {
@@ -132,7 +133,7 @@
     }).catch((e) => {
       if (e?.name === "AbortError") return;
       manga = store.previewManga as Manga;
-      fetchError = "Could not load full details — showing cached data";
+      fetchError = translate("preview_cachedDetails");
       loadingDetail = false;
     });
 
@@ -173,7 +174,7 @@
     if (!ids.length) return;
     queueingAll = true;
     await gql(ENQUEUE_CHAPTERS_DOWNLOAD, { chapterIds: ids }).catch(console.error);
-    addToast({ kind: "download", title: translate("ui_downloading"), body: `${ids.length} chapters queued` });
+    addToast({ kind: "download", title: translate("ui_downloading"), body: translate("preview_chaptersQueued", { count: ids.length }) });
     queueingAll = false;
   }
 
@@ -371,12 +372,12 @@
           {:else if totalCount > 0}
             <div class="chapter-meta">
               <span class="chapter-label">
-                {totalCount} {totalCount === 1 ? "chapter" : "chapters"}{readCount > 0 ? ` · ${readCount} read` : ""}{unreadCount > 0 && readCount > 0 ? ` · ${unreadCount} left` : ""}{downloadedCount > 0 ? ` · ${downloadedCount} dl` : ""}
+                {totalCount === 1 ? $_("preview_chapterCountOne") : $_("home_chapterCount", { count: totalCount })}{readCount > 0 ? ` · ${$_("preview_readCount", { count: readCount })}` : ""}{unreadCount > 0 && readCount > 0 ? ` · ${$_("preview_leftCount", { count: unreadCount })}` : ""}{downloadedCount > 0 ? ` · ${$_("preview_downloadedCount", { count: downloadedCount })}` : ""}
               </span>
               {#if unreadCount > 0}
                 <button class="dl-all-btn" onclick={downloadAll} disabled={queueingAll}>
                   {#if queueingAll}<CircleNotch size={11} weight="light" class="anim-spin" />{/if}
-                  {queueingAll ? "Queuing…" : $_("ui_downloadUnread")}
+                  {queueingAll ? $_("preview_queuing") : $_("ui_downloadUnread")}
                 </button>
               {/if}
             </div>
@@ -427,7 +428,7 @@
             {#if displayManga?.artist && displayManga.artist !== displayManga.author}<div class="meta-row"><span class="meta-key">{$_("ui_artist")}</span><span class="meta-val">{displayManga.artist}</span></div>{/if}
             {#if statusLabel}<div class="meta-row"><span class="meta-key">{$_("downloads_summary_status")}</span><span class="meta-val">{statusLabel}</span></div>{/if}
             {#if displayManga?.source}<div class="meta-row"><span class="meta-key">{$_("detail_fields_source")}</span><span class="meta-val">{displayManga.source.displayName}</span></div>{/if}
-            {#if !loadingChapters && scanlators.length > 0}<div class="meta-row"><span class="meta-key">{scanlators.length === 1 ? "Scanlator" : "Scanlators"}</span><span class="meta-val">{scanlators.join(", ")}</span></div>{/if}
+            {#if !loadingChapters && scanlators.length > 0}<div class="meta-row"><span class="meta-key">{scanlators.length === 1 ? $_("preview_scanlator") : $_("preview_scanlators")}</span><span class="meta-val">{scanlators.join(", ")}</span></div>{/if}
             {#if !loadingChapters && firstUpload && lastUpload}
               <div class="meta-row">
                 <span class="meta-key">{$_("ui_published")}</span>
@@ -472,7 +473,7 @@
                 <span class="link-manga-title">{m.title}</span>
                 {#if m.source?.displayName}<span class="link-source">{m.source.displayName}</span>{/if}
               </div>
-              <span class="link-status">{isLinked ? $_("ui_linked") : "Link"}</span>
+              <span class="link-status">{isLinked ? $_("ui_linked") : $_("preview_link")}</span>
             </button>
           {/each}
         {/if}
@@ -534,7 +535,7 @@
   .sk-line-long { width: var(--component-manga-preview-skeleton-line-long-width); }
   .sk-line-medium { width: var(--component-manga-preview-skeleton-line-medium-width); }
   .badges { display: flex; flex-wrap: wrap; gap: var(--component-manga-preview-badge-gap); }
-  .badge { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-badge-letter-spacing); text-transform: uppercase; padding: var(--component-manga-preview-badge-padding); border-radius: var(--component-manga-preview-badge-radius); border: 1px solid var(--component-manga-preview-badge-border); background: var(--component-manga-preview-badge-bg); color: var(--component-manga-preview-badge-fg); }
+  .badge { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-badge-font-size); letter-spacing: var(--component-manga-preview-badge-letter-spacing); text-transform: none; padding: var(--component-manga-preview-badge-padding); border-radius: var(--component-manga-preview-badge-radius); border: 1px solid var(--component-manga-preview-badge-border); background: var(--component-manga-preview-badge-bg); color: var(--component-manga-preview-badge-fg); }
   .badge-green { background: var(--component-manga-preview-status-success-bg); border-color: var(--component-manga-preview-status-success-border); color: var(--component-manga-preview-status-success-fg); }
   .badge-accent { background: var(--component-manga-preview-accent-bg); border-color: var(--component-manga-preview-accent-border); color: var(--component-manga-preview-accent-fg); }
   .badge-unread { background: var(--component-manga-preview-status-warning-bg); border-color: var(--component-manga-preview-status-warning-border); color: var(--component-manga-preview-status-warning-fg); }
@@ -564,7 +565,7 @@
   .genre-tag:hover { color: var(--component-manga-preview-accent-fg); border-color: var(--component-manga-preview-accent-border); background: var(--component-manga-preview-accent-bg); }
   .meta-table { display: flex; flex-direction: column; gap: var(--component-manga-preview-meta-gap); border-top: 1px solid var(--component-manga-preview-divider); padding-top: var(--component-manga-preview-meta-padding-top); }
   .meta-row { display: flex; align-items: baseline; gap: var(--component-manga-preview-meta-row-gap); padding: var(--component-manga-preview-meta-row-padding); }
-  .meta-key { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); text-transform: uppercase; min-width: var(--component-manga-preview-meta-key-width); flex-shrink: 0; }
+  .meta-key { font-family: var(--component-manga-preview-font-ui); font-size: var(--component-manga-preview-action-font-size); color: var(--component-manga-preview-muted-fg); letter-spacing: var(--component-manga-preview-action-letter-spacing); text-transform: none; min-width: var(--component-manga-preview-meta-key-width); flex-shrink: 0; }
   .meta-val { font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-body-fg); line-height: var(--component-manga-preview-body-line-height); }
   .meta-link { display: inline-flex; align-items: center; gap: var(--component-manga-preview-meta-link-gap); font-size: var(--component-manga-preview-body-font-size); color: var(--component-manga-preview-accent-fg); text-decoration: none; transition: opacity var(--component-manga-preview-transition-normal); }
   .meta-link:hover { opacity: var(--component-manga-preview-link-hover-opacity); }

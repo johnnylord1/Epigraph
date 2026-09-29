@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { _ } from "../../lib/i18n/runtime";
+  import { _, translate } from "../../lib/i18n/runtime";
   import { onMount, type Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
@@ -46,7 +46,7 @@
     title,
     subtitle = null,
     coverUrl = null,
-    fallbackLabel = "Series",
+    fallbackLabel = translate("home_metrics_series"),
     statusLabel = null,
     sourceLabel = null,
     sourceLine = null,
@@ -58,7 +58,7 @@
     progressPercent = 0,
     detailsOpen = false,
     loading = false,
-    emptyDetailsLabel = "No extra details available.",
+    emptyDetailsLabel = translate("detail_noExtraDetails"),
     onBack = () => {},
     onTagClick = () => {},
     onDetailsToggle = () => {},
@@ -95,10 +95,10 @@
     const values = [statusLabel, ...tags].filter((value): value is string => hasRealText(value));
     return [...new Set(values.map((value) => value.trim()))].slice(0, 12);
   });
-  const titleText = $derived(title?.trim() || "Untitled");
+  const titleText = $derived(title?.trim() || $_("ui_untitled"));
   const subtitleText = $derived(hasRealText(subtitle) ? subtitle!.trim() : null);
   const sourceNameText = $derived(hasRealText(sourceLabel) ? sourceLabel!.trim() : hasRealText(languageLabel) ? languageLabel!.trim() : null);
-  const sourceLineText = $derived(hasRealText(sourceLine) ? sourceLine!.trim() : sourceNameText ? `${mediaKind === "novel" ? "Novel" : "Manga"} - ${sourceNameText}` : null);
+  const sourceLineText = $derived(hasRealText(sourceLine) ? sourceLine!.trim() : sourceNameText ? $_("detail_kindSourceLine", { kind: mediaKind === "novel" ? $_("ui_novel") : $_("ui_manga"), source: sourceNameText }) : null);
 
   $effect(() => {
     const current = resolvedCoverUrl;
@@ -465,8 +465,8 @@
     gap: 8px;
     color: var(--series-muted-soft);
     font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
+    text-transform: none;
+    letter-spacing: 0;
   }
 
   .hero-meta {
@@ -491,9 +491,9 @@
     color: var(--series-primary-strong);
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.16em;
+    letter-spacing: 0;
     line-height: 1;
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .tag {
@@ -503,8 +503,8 @@
     color: var(--component-detail-tag-color);
     font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .tag {
@@ -792,18 +792,18 @@
     background: transparent;
     box-shadow: none;
     font: var(--component-detail-series-v3-root-page-btn-font);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     white-space: nowrap;
     cursor: pointer;
     transform: translateY(0) scale(1);
     transition:
-      background 150ms ease,
-      border-color 150ms ease,
-      color 150ms ease,
-      opacity 150ms ease,
-      transform 150ms ease,
-      box-shadow 150ms ease;
+      background 220ms ease,
+      border-color 220ms ease,
+      color 220ms ease,
+      opacity 220ms ease,
+      transform 450ms var(--ui-spring),
+      box-shadow 220ms ease;
   }
 
   .series-v3-root :global(.read-btn.v3-primary),
@@ -1166,8 +1166,8 @@
     justify-content: center;
     width: 24px;
     color: var(--series-primary-strong);
-    font-size: 10px;
-    text-transform: uppercase;
+    font-size: 11.5px;
+    text-transform: none;
   }
 
   .series-v3-root :global(.fp-div) {
@@ -1405,10 +1405,10 @@
     border-radius: var(--component-detail-series-v3-root-status-pill-border-radius);
     color: var(--series-muted-soft);
     background: var(--component-detail-series-v3-root-status-pill-background);
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .series-v3-root :global(.status-pill.is-current),
@@ -1430,6 +1430,11 @@
     overflow: hidden;
     border-radius: var(--component-detail-series-v3-root-chapter-progress-border-radius);
     background: var(--component-detail-series-v3-root-chapter-progress-background);
+  }
+
+  /* An unstarted chapter shows no empty track; the status column already says it is unread. */
+  .series-v3-root :global(.chapter-progress.is-empty) {
+    visibility: hidden;
   }
 
   .series-v3-root :global(.chapter-progress__fill) {
@@ -1482,10 +1487,10 @@
 
   .series-v3-root :global(.grid-cell-sub) {
     color: var(--series-muted-faint);
-    font-size: 10px;
+    font-size: 11.5px;
     font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .series-v3-root :global(.pagination-bottom.v3-pagination) {
@@ -1521,8 +1526,8 @@
     color: var(--series-muted-soft);
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .series-v3-root :global(.detail-val) {

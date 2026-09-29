@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import JSZip from "jszip";
 
-export const WINDOWS_SUWAYOMI_BUNDLE = Object.freeze({
+const WINDOWS_JAVA21_ARCHIVE = Object.freeze({
   version: "v2.1.1867",
   url: "https://github.com/Suwayomi/Suwayomi-Server/releases/download/v2.1.1867/Suwayomi-Server-v2.1.1867-windows-x64.zip",
   sha256: "ab6687d278e0dd0984f67abbc853511a7e764f84b126a35d09bfd9b0307321ff",
@@ -22,6 +22,37 @@ export const WINDOWS_SUWAYOMI_BUNDLE = Object.freeze({
       path: "jre/bin/java.exe",
       sha256: "8853c818fd84d27656b4ce1cc97371e9542e83540899b000a91b0770be40421b",
     }),
+    Object.freeze({
+      path: "jre/bin/javaw.exe",
+      sha256: "8422c3ab62ce8c2ab0104bbb8a156018dfc6ce9bc41bb787d57a8df704c5fce5",
+    }),
+    Object.freeze({
+      path: "jre/bin/server/jvm.dll",
+      sha256: "d6a6eb00ed6c9fa618d45513e846c476605c1c00c226692461b26ac1f387a6df",
+    }),
+    Object.freeze({
+      path: "jre/lib/modules",
+      sha256: "d8195948077e71588585157eea8c83d2024300708b279776c635f9dc92ad84ea",
+    }),
+  ]),
+});
+
+// Keep the Java 21 distribution used by the certified V23 runtime. The upstream
+// V23 Windows ZIP ships Java 25, which is not this project's certified baseline.
+export const WINDOWS_SUWAYOMI_BUNDLE = Object.freeze({
+  ...WINDOWS_JAVA21_ARCHIVE,
+  version: "v2.3.2243",
+  archiveRequiredFiles: WINDOWS_JAVA21_ARCHIVE.requiredFiles,
+  runtimeJar: Object.freeze({
+    url: "https://github.com/Suwayomi/Suwayomi-Server/releases/download/v2.3.2243/Suwayomi-Server-v2.3.2243.jar",
+    sha256: "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
+  }),
+  requiredFiles: Object.freeze([
+    Object.freeze({
+      path: "bin/Suwayomi-Server.jar",
+      sha256: "821141b32e170d4a02d3cbdfed577ed8f07bd22383ff5f4132ebb5ae40e98dd5",
+    }),
+    ...WINDOWS_JAVA21_ARCHIVE.requiredFiles.slice(1),
   ]),
 });
 
@@ -67,7 +98,7 @@ export async function stageWindowsBundleFromArchive({
   bundleRoot,
   archivePath,
   sha256,
-  requiredFiles = WINDOWS_SUWAYOMI_BUNDLE.requiredFiles,
+  requiredFiles = WINDOWS_JAVA21_ARCHIVE.requiredFiles,
 }) {
   const actualHash = await sha256File(archivePath);
   if (actualHash.toLowerCase() !== sha256.toLowerCase()) {
@@ -121,17 +152,48 @@ export async function ensureWindowsSuwayomiBundle({
   let temporaryRoot;
   let resolvedArchive = archivePath;
   try {
-    if (!resolvedArchive) {
+    let stagedJar;
+    if (artifact.runtimeJar) {
       temporaryRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "epigraph-suwayomi-bundle-"));
-      resolvedArchive = path.join(temporaryRoot, `Suwayomi-Server-${artifact.version}-windows-x64.zip`);
-      await downloadPinnedArchive(artifact.url, resolvedArchive);
+      stagedJar = path.join(temporaryRoot, "Suwayomi-Server.jar");
+      await downloadPinnedArchive(artifact.runtimeJar.url, stagedJar);
+      if (!await fileMatchesHash(stagedJar, artifact.runtimeJar.sha256)) {
+        throw new Error("Suwayomi runtime JAR SHA-256 mismatch");
+      }
     }
-    return await stageWindowsBundleFromArchive({
-      bundleRoot,
-      archivePath: resolvedArchive,
-      sha256: artifact.sha256,
-      requiredFiles: artifact.requiredFiles,
-    });
+    const archiveRequiredFiles = artifact.archiveRequiredFiles ?? artifact.requiredFiles;
+    const baseFiles = artifact.runtimeJar
+      ? artifact.requiredFiles.filter((entry) => entry.path !== "bin/Suwayomi-Server.jar")
+      : archiveRequiredFiles;
+    let copiedFiles = 0;
+    if (!await hasCompleteWindowsBundle(bundleRoot, baseFiles)) {
+      if (!resolvedArchive) {
+        temporaryRoot ??= await fsp.mkdtemp(path.join(os.tmpdir(), "epigraph-suwayomi-bundle-"));
+        resolvedArchive = path.join(temporaryRoot, "java21-base.zip");
+        await downloadPinnedArchive(artifact.url, resolvedArchive);
+      }
+      const staged = await stageWindowsBundleFromArchive({
+        bundleRoot, archivePath: resolvedArchive, sha256: artifact.sha256,
+        requiredFiles: archiveRequiredFiles,
+      });
+      copiedFiles += staged.copiedFiles;
+    }
+    if (stagedJar) {
+      const destination = path.join(bundleRoot, "bin", "Suwayomi-Server.jar");
+      const sibling = `${destination}.${path.basename(temporaryRoot)}.new`;
+      await fsp.mkdir(path.dirname(destination), { recursive: true });
+      try {
+        await fsp.copyFile(stagedJar, sibling);
+        await fsp.rename(sibling, destination);
+        copiedFiles += 1;
+      } finally {
+        await fsp.rm(sibling, { force: true });
+      }
+    }
+    if (!await hasCompleteWindowsBundle(bundleRoot, artifact.requiredFiles)) {
+      throw new Error("Suwayomi bundle did not match the certified runtime and Java hashes");
+    }
+    return { status: "staged", copiedFiles };
   } finally {
     if (temporaryRoot) await fsp.rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -139,7 +201,8 @@ export async function ensureWindowsSuwayomiBundle({
 
 async function main() {
   if (process.platform !== "win32") {
-    throw new Error("The bundled Suwayomi Windows runtime can only be prepared on Windows");
+    process.stdout.write("Skipping Windows Suwayomi preparation on this platform.\n");
+    return;
   }
   const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const bundleRoot = path.join(projectRoot, "src-tauri", "binaries", "suwayomi-bundle");

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../tauri/invoke";
 import { Activity, ActivityType, Assets, Button, Timestamps } from "tauri-plugin-drpc/activity";
 import { applyPrivacyFilter } from "./privacyFilter";
 import {

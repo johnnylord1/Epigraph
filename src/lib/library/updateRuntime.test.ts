@@ -82,19 +82,19 @@ describe("library update runtime helpers", () => {
       isRunning: false,
       finishedJobs: 633,
       totalJobs: 633,
-    })).toBe("Comics library checked 633/633 titles.");
+    })).toBe("Comics library: checked 633/633 titles.");
 
     expect(formatLibraryUpdateFinalSummary("Comics library", {
       isRunning: false,
       finishedJobs: 633,
       totalJobs: 633,
-    }, 6)).toBe("Comics library checked 633/633 titles with 6 issues.");
+    }, 6)).toBe("Comics library: checked 633/633 titles, 6 with issues.");
 
     expect(formatLibraryUpdateFinalSummary("Library", {
       isRunning: false,
       finishedJobs: 128,
       totalJobs: 633,
-    }, 1)).toBe("Library stopped after 128/633 titles with 1 issue.");
+    }, 1)).toBe("Library: stopped after 128/633 titles, 1 with issues.");
   });
 
   it("keeps waiting and preparation text stable", () => {

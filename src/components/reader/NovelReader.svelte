@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
+  import { PROSE_THEME_LABEL_KEYS, readerValueLabel } from "../../lib/reader/readerLabels";
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { registerReaderCloseGuard } from "../../lib/reader/runtime";
   import { ArrowLeft, ArrowRight, BookmarkSimple, BookOpen, CaretLeft, CaretRight, CircleNotch, SlidersHorizontal, X } from "phosphor-svelte";
@@ -12,6 +13,7 @@
     getNovelLibraryEntry,
     getNovelProgressEntry,
     getNovelReadStats,
+    isNovelChapterBookmarked,
     loadNovelLibraryState,
     parseNovelScrollLocator,
     peekNovelLibraryState,
@@ -19,11 +21,8 @@
     toggleNovelChapterBookmark,
     updateNovelReadingProgress,
   } from "../../lib/novels/libraryState";
-  import {
-    loadCachedNovelChapter,
-    saveCachedNovelChapter,
-  } from "../../lib/novels/offlineChapters";
-  import { readInstalledNovelChapter } from "../../lib/novels/sources";
+  import { loadNovelChapterContent, relayNovelReaderChanges, type NovelReaderChange } from "../../lib/novels/readerData";
+  import { isDetachedReaderWindow } from "../../lib/reader/detachedChannel";
   import NocturneState from "../shared/NocturneState.svelte";
   import ReaderHud from "./ReaderHud.svelte";
   import TtsControls from "./TtsControls.svelte";
@@ -92,6 +91,10 @@
   let discordPublicCoverUrl: string | null = null;
   let chapterLoadGeneration = 0;
   let scopeLoadGeneration = 0;
+  const inDetachedWindow = isDetachedReaderWindow();
+  /** Changes a detached window has not handed to the main window yet. */
+  let unsentChanges: NovelReaderChange[] = [];
+  let detaching = false;
   let libraryState = $state(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -146,8 +149,15 @@
     if (version === persistedProgressVersion) return progressSaveChain;
     const snapshot = libraryState;
     const requestScope = { ...scopeInput };
+    const changes = inDetachedWindow ? unsentChanges.splice(0) : [];
     const operation = progressSaveChain.then(async () => {
-      const saved = await saveNovelLibraryState(snapshot, requestScope);
+      let saved: typeof libraryState;
+      if (inDetachedWindow) {
+        try { saved = await relayNovelReaderChanges(changes, snapshot, requestScope); }
+        catch (relayError) { unsentChanges = [...changes, ...unsentChanges]; throw relayError; }
+      } else {
+        saved = await saveNovelLibraryState(snapshot, requestScope);
+      }
       persistedProgressVersion = version;
       if (version === progressVersion) libraryState = saved;
     });
@@ -166,13 +176,16 @@
     if (!reader || !getNovelLibraryEntry(libraryState, reader.novelId)) return;
     const normalized = Math.max(0, Math.min(1, chapterProgress));
     if (normalized <= 0 && !completed) return;
-    libraryState = updateNovelReadingProgress(libraryState, {
+    const change = {
       novelId: reader.novelId,
       chapterId: reader.chapterId,
       chapterTitle: reader.chapterTitle,
       chapterProgress: normalized,
       completed,
-    });
+      updatedAt: Date.now(),
+    };
+    libraryState = updateNovelReadingProgress(libraryState, change);
+    if (inDetachedWindow) unsentChanges.push({ kind: "progress", ...change });
     progressVersion += 1;
     syncActiveDetail(libraryState);
     bumpContentSetupVersion();
@@ -207,6 +220,8 @@
   });
 
   $effect(() => {
+    // Rich presence belongs to the main window; a second window would fight it for the same activity.
+    if (inDetachedWindow) return;
     hardcoverStateVersion;
     const novelId = currentNovel?.id ?? null;
     const title = currentNovel?.title;
@@ -240,6 +255,7 @@
   });
 
   $effect(() => {
+    if (inDetachedWindow) return;
     ttsStateVersion;
     const playing = tts.state.isPlaying;
     const title = currentNovel?.title;
@@ -352,7 +368,7 @@
   }
 
   function novelDiscordState(chapter: NonNullable<typeof currentNovel>["chapters"][number] | null): string | undefined {
-    return chapter ? `Chapter ${chapter.order}` : undefined;
+    return chapter ? translate("detail_chapterNumber", { value: chapter.order }) : undefined;
   }
 
   function novelDiscordProgressPercent(): number | undefined {
@@ -518,25 +534,9 @@
       const nextLibraryState = await loadNovelLibraryState(requestScope);
       if (!isCurrent()) return;
       libraryState = nextLibraryState;
-      const cached = await loadCachedNovelChapter(requestScope, reader.sourceId, reader.chapterPath);
+      const content = await loadNovelChapterContent(requestScope, reader);
       if (!isCurrent()) return;
-      if (cached) {
-        chapterHtml = sanitizeChapterHtml(cached.content);
-      } else {
-        const result = await readInstalledNovelChapter(requestScope, reader.sourceId, reader.chapterPath);
-        if (!isCurrent()) return;
-        chapterHtml = sanitizeChapterHtml(result.content);
-        await saveCachedNovelChapter(requestScope, {
-          sourceId: reader.sourceId,
-          novelId: reader.novelId,
-          chapterId: reader.chapterId,
-          chapterPath: reader.chapterPath,
-          chapterTitle: reader.chapterTitle,
-          content: result.content,
-        }).catch(() => null);
-        if (!isCurrent()) return;
-      }
-
+      chapterHtml = sanitizeChapterHtml(content);
     } catch (chapterError) {
       if (!isCurrent()) return;
       error = chapterError instanceof Error ? chapterError.message : String(chapterError);
@@ -580,12 +580,16 @@
   async function toggleCurrentChapterBookmark() {
     if (readerQuiescing || !activeReader || !getNovelLibraryEntry(libraryState, activeReader.novelId)) return;
     const chapterTitle = activeReader.chapterTitle;
-    libraryState = toggleNovelChapterBookmark(libraryState, {
+    const bookmark = {
       novelId: activeReader.novelId,
       chapterId: activeReader.chapterId,
       chapterTitle: activeReader.chapterTitle,
       locator: activeReader.chapterId,
-    });
+    };
+    libraryState = toggleNovelChapterBookmark(libraryState, bookmark);
+    if (inDetachedWindow) {
+      unsentChanges.push({ kind: "bookmark", ...bookmark, bookmarked: isNovelChapterBookmarked(libraryState, bookmark) });
+    }
     progressVersion += 1;
     try { await flushNovelProgress(); }
     catch (saveError) { reportProgressSaveError(saveError); return; }
@@ -652,6 +656,35 @@
     })();
     void closeOperation.finally(() => { closeOperation = null; });
     return closeOperation;
+  }
+
+  /** A detached window closes through here so its progress reaches the main window first. */
+  export function requestNovelReaderClose(): Promise<RestorePreparationResult> {
+    return requestClose();
+  }
+
+  async function detachReader() {
+    if (detaching || readerQuiescing || !activeReader) return;
+    detaching = true;
+    try {
+      try { await flushNovelProgress(); }
+      catch (saveError) { reportProgressSaveError(saveError); return; }
+      const reader = activeReader;
+      if (!reader || readerQuiescing) return;
+      const detail = activeDetail?.novel.id === reader.novelId ? $state.snapshot(activeDetail) : null;
+      const title = [currentNovel?.title, reader.chapterTitle].filter(Boolean).join(" - ") || "Epigraph";
+      try {
+        const { openDetachedReader } = await import("../../lib/reader/detachedReaderHost");
+        await openDetachedReader({ kind: "novel", reader: { ...reader }, detail }, title);
+      } catch (detachError) {
+        console.error("Could not open the reader in a new window:", detachError);
+        addToast({ kind: "error", title: translate("reader_detachFailed") });
+        return;
+      }
+      await requestClose();
+    } finally {
+      detaching = false;
+    }
   }
 
   export function prepareNovelReaderForRestore(): Promise<RestorePreparationResult> {
@@ -730,6 +763,7 @@
 
   onMount(() => {
     const unregisterCommands = registerReaderCommandHandler("novel", onKey);
+    viewerEl?.focus({ preventScroll: true });
     const unregisterCloseGuard = registerReaderCloseGuard(flushNovelProgress, reportProgressSaveError);
     const flushProgress = () => { void flushNovelProgress().catch(console.error); };
     window.addEventListener("pagehide", flushProgress);
@@ -760,6 +794,7 @@
 {#if activeReader}
   <ReaderHud
     bind:toolsOpen={toolsOpen}
+    readerKind="novel"
     title={currentNovel?.title ?? $_("ui_novel")}
     chapterTitle={activeReader?.chapterTitle ?? ""}
     progressLabel={progressLabel}
@@ -772,6 +807,7 @@
     nextDisabled={loading || !nextChapter}
     uiVisible={true}
     onclose={requestClose}
+    ondetach={inDetachedWindow ? undefined : detachReader}
     onprev={() => openRelativeChapter("prev")}
     onnext={() => openRelativeChapter("next")}
     onjump={(val) => openChapterByIndex(val - 1)}
@@ -785,7 +821,7 @@
           {#if activeSubPanel === "main"}
             <div class="popover-tts-row" onclick={() => activeSubPanel = "appearance"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "appearance"; }}>
               <dt>{$_("ui_appearance")}</dt>
-              <dd>{proseTheme} <span class="popover-chevron">&gt;</span></dd>
+              <dd>{readerValueLabel(PROSE_THEME_LABEL_KEYS, proseTheme, $_)} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "typography"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "typography"; }}>
               <dt>{$_("ui_typography")}</dt>
@@ -1013,7 +1049,9 @@
     <div
       class="viewer novel-viewer"
       class:full-width-panel={store.settings.proseReaderFullWidth}
-      style={`--prose-page-bg:${prosePalette.bg};`}
+      style={`--prose-page-bg:${prosePalette.bg};--prose-bg:${prosePalette.surface};--prose-text:${prosePalette.text};`}
+      role="presentation"
+      tabindex="-1"
       bind:this={viewerEl}
       onscroll={handleNovelScroll}
     >
@@ -1067,7 +1105,7 @@
         <article
           class="reader-body prose"
           bind:this={readerBodyEl}
-          style={`--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-text:${prosePalette.text};--prose-bg:${prosePalette.surface};--prose-page-bg:${prosePalette.bg};--prose-align:${proseTextAlign};`}
+          style={`--prose-font-size:${proseFontSize}px;--prose-line-height:${proseLineHeight};--prose-paragraph-spacing:${proseParagraphSpacing}em;--prose-content-width:${proseContentWidth}px;--prose-font-family:${proseFontFamily};--prose-align:${proseTextAlign};`}
         >{@html chapterHtml}</article>
       {/if}
     </div>
@@ -1075,6 +1113,10 @@
 {/if}
 
 <style>
+  .novel-viewer:focus {
+    outline: none;
+  }
+
   .novel-viewer {
     flex: 1;
     overflow-y: auto;

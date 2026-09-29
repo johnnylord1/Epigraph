@@ -7,6 +7,7 @@ const repoRoot = resolve(__dirname, "../../..");
 const MIGRATION_MODAL_FILES = [
   "src/components/pages/MigrateModal.svelte",
   "src/components/pages/NovelMigrateModal.svelte",
+  "src/components/pages/migrationModal.css",
 ] as const;
 
 const MIGRATION_PRESENCE_FILES = [
@@ -24,7 +25,8 @@ function readRepoFile(path: string) {
   return readFileSync(resolve(repoRoot, path), "utf8");
 }
 
-function styleBlock(source: string) {
+function styleBlock(file: string, source: string) {
+  if (file.endsWith(".css")) return source;
   return source.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
 }
 
@@ -34,7 +36,7 @@ describe("individual migration modal theme tokens", () => {
       /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|oklch\(|color-mix\(|linear-gradient\(|radial-gradient\(|backdrop-filter:\s*blur|box-shadow:\s*[^;]*rgba|z-index:\s*\d|opacity:\s*0\.\d|border-radius:\s*(?:\d|50%)|--n-/;
 
     const offenders = MIGRATION_MODAL_FILES.flatMap((file) =>
-      styleBlock(readRepoFile(file))
+      styleBlock(file, readRepoFile(file))
         .split(/\r?\n/)
         .map((text, index) => ({ file, line: index + 1, text: text.trim() }))
         .filter(({ text }) => text.length > 0 && directVisualPattern.test(text)),

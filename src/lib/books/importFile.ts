@@ -15,6 +15,9 @@ import type { BookEntry, BookSubtype } from "./types";
 
 const SUPPORTED_IMPORTED_BOOK_EXTENSIONS = new Set<BookSubtype>(["epub", "pdf"]);
 
+/** The extensions a file picker offers for book import. */
+export const BOOK_IMPORT_EXTENSIONS: readonly BookSubtype[] = [...SUPPORTED_IMPORTED_BOOK_EXTENSIONS];
+
 export type ImportedBookResult = {
   entry: BookEntry;
   existing: BookEntry | null;

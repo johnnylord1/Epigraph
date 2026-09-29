@@ -1,13 +1,15 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
+  import { formatAppDate } from "../../lib/i18n/format";
   import { _ } from "../../lib/i18n/runtime";
   import { invoke } from "@tauri-apps/api/core";
-  import { ArrowsClockwise, ArrowsLeftRight, BookOpen, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, Circle, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, X } from "phosphor-svelte";
+  import { ArrowSquareOut, ArrowsClockwise, ArrowsLeftRight, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, CircleNotch, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, Trash, X } from "phosphor-svelte";
   import {
     addToast,
     bumpContentSetupVersion,
     setActiveNovelDetail,
     setActiveNovelReader,
+    setSettingsOpen,
     store,
     updateSettings,
   } from "../../store/state.svelte";
@@ -26,8 +28,18 @@
     upsertNovelInLibrary,
   } from "../../lib/novels/libraryState";
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
-  import { getNovelMigrationBlocker } from "../../lib/novels/migrationSafe";
-  import { readInstalledNovelChapter } from "../../lib/novels/sources";
+  import { getNovelMigrationBlockerKind } from "../../lib/novels/migrationSafe";
+  import { loadInstalledNovelSources } from "../../lib/novels/sources";
+  import {
+    deleteCachedNovelChapters,
+    downloadNovelChaptersForOffline,
+    listCachedNovelChapterKeys,
+    loadCachedNovelChapter,
+    novelChapterCacheKey,
+  } from "../../lib/novels/offlineChapters";
+  import { refreshNovelDetailFromSource } from "../../lib/novels/libraryRefresh";
+  import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
+  import { NOVEL_READER_CHANGES_SAVED_EVENT } from "../../lib/novels/readerData";
   import {
     createBooksCategory,
     sortBooksCategories,
@@ -57,6 +69,13 @@
   let linkSearch = $state("");
   let dlOpen = $state(false);
   let downloadingNovel = $state(false);
+  let downloadingIds = $state(new Set<string>());
+  let downloadProgress = $state<{ done: number; total: number } | null>(null);
+  let deletingAll = $state(false);
+  let refreshing = $state(false);
+  // Keys of this source's chapters saved for offline reading (see lib/novels/offlineChapters).
+  let cachedKeys = $state(new Set<string>());
+  let sourceSite = $state<string | null>(null);
   let showRange = $state(false);
   let rangeFrom = $state("");
   let rangeTo = $state("");
@@ -96,7 +115,24 @@
         .filter((entry): entry is string => Boolean(entry)),
     );
   });
-  const migrationBlocker = $derived(activeDetail ? getNovelMigrationBlocker(activeDetail.novel.sourceId, sourceClassificationState) : null);
+  const migrationBlockerKind = $derived(activeDetail ? getNovelMigrationBlockerKind(activeDetail.novel.sourceId, sourceClassificationState) : null);
+  const MIGRATION_BLOCKER_KEYS = {
+    pending: "novelDetail_migrateBlocked_pending",
+    unverified: "novelDetail_migrateBlocked_unverified",
+    site: "novelDetail_migrateBlocked_site",
+    limited: "novelDetail_migrateBlocked_limited",
+  } as const;
+  const migrationBlocker = $derived(migrationBlockerKind ? $_(MIGRATION_BLOCKER_KEYS[migrationBlockerKind]) : null);
+  const novelUrl = $derived.by(() => {
+    const path = displayedNovel?.path ?? activeDetail?.novel.path;
+    if (!path) return null;
+    try {
+      const url = new URL(path, sourceSite ?? undefined);
+      return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+    } catch {
+      return null;
+    }
+  });
   const sortedNovelChapters = $derived.by(() => {
     const chapters = displayedNovel?.chapters ?? [];
     return [...chapters].sort((left, right) => chapterSortDir === "asc" ? left.order - right.order : right.order - left.order);
@@ -116,6 +152,7 @@
       progressPercent: total > 0 ? read / total : 0,
     };
   });
+  const downloadedCount = $derived(sortedNovelChapters.filter(isChapterDownloaded).length);
   const sourceName = $derived(activeDetail?.novel.source.sourceName ?? activeDetail?.novel.source.pluginName ?? null);
   const allBookCategories = $derived(sortBooksCategories(store.settings.booksCategories ?? []));
   const assignedNovelCategoryIds = $derived(activeDetail ? store.settings.booksCategoryAssignments[activeDetail.novel.id] ?? [] : []);
@@ -186,11 +223,25 @@
   function formatDate(ts: number | null | undefined): string {
     if (!ts) return "";
     const d = new Date(ts > 1e10 ? ts : ts * 1000);
-    return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    return formatAppDate(d, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function localizeNovelStatus(status: string | null): string | null {
+    if (!status) return null;
+    const statusKeys: Record<string, string> = {
+      ongoing: "library.status.ongoing",
+      completed: "library.status.completed",
+      cancelled: "library.status.cancelled",
+      hiatus: "library.status.hiatus",
+      "on hiatus": "library.status.hiatus",
+      unknown: "library.status.unknown",
+    };
+    const key = statusKeys[status.trim().toLowerCase()];
+    return key ? $_(key) : status;
   }
 
   function chapterNumberLabel(order: number): string {
-    return `Chapter ${order + 1}`;
+    return $_("detail.chapterNumber", { value: order + 1 });
   }
 
   function chapterTitle(chapter: { title: string; order: number }): string {
@@ -311,36 +362,180 @@
     }[char] ?? char));
   }
 
-  async function exportNovelChapterBatch(chaptersToExport: typeof sortedNovelChapters, label: string) {
-    if (!activeDetail || !displayedNovel || downloadingNovel) return;
-    if (chaptersToExport.length === 0) {
+  function isChapterDownloaded(chapter: { path: string }): boolean {
+    return cachedKeys.has(novelChapterCacheKey(chapter.path));
+  }
+
+  async function reloadCachedKeys() {
+    const sourceId = activeDetail?.novel.sourceId;
+    if (!sourceId || metadataOnly) {
+      cachedKeys = new Set();
+      return;
+    }
+    try {
+      const keys = await listCachedNovelChapterKeys(scopeInput, sourceId);
+      if (activeDetail?.novel.sourceId === sourceId) cachedKeys = keys;
+    } catch {
+      cachedKeys = new Set();
+    }
+  }
+
+  function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  async function downloadChapters(chaptersToSave: typeof sortedNovelChapters) {
+    if (!activeDetail || !displayedNovel || downloadingNovel || metadataOnly) return;
+    dlOpen = false;
+    if (chaptersToSave.length === 0) {
       addToast({ kind: "info", title: translate("ui_noChaptersToDownload"), body: displayedNovel.title });
       return;
     }
+    const pending = chaptersToSave.filter((chapter) => !isChapterDownloaded(chapter));
+    if (pending.length === 0) {
+      addToast({ kind: "info", title: translate("novelDetail_download_nothingNew"), body: displayedNovel.title });
+      return;
+    }
 
+    const sourceId = activeDetail.novel.sourceId;
+    const title = displayedNovel.title;
     downloadingNovel = true;
-    dlOpen = false;
+    downloadingIds = new Set(pending.map((chapter) => chapter.id));
+    downloadProgress = { done: 0, total: pending.length };
     try {
+      const result = await downloadNovelChaptersForOffline(scopeInput, {
+        sourceId,
+        novelId: activeDetail.novel.id,
+        chapters: pending.map((chapter) => ({ id: chapter.id, path: chapter.path, title: chapter.title || null })),
+      }, (chapterId, ok) => {
+        if (downloadProgress) downloadProgress = { ...downloadProgress, done: downloadProgress.done + 1 };
+        const remaining = new Set(downloadingIds);
+        remaining.delete(chapterId);
+        downloadingIds = remaining;
+        const chapter = pending.find((entry) => entry.id === chapterId);
+        if (ok && chapter && activeDetail?.novel.sourceId === sourceId) {
+          cachedKeys = new Set([...cachedKeys, novelChapterCacheKey(chapter.path)]);
+        }
+      });
+      if (result.failed.length > 0) {
+        addToast({
+          kind: "error",
+          title: translate("novelDetail_download_failedTitle"),
+          body: translate("novelDetail_download_failedBody", { count: result.failed.length, saved: result.saved.length }),
+          duration: 7000,
+        });
+      } else {
+        addToast({
+          kind: "success",
+          title: translate("novelDetail_download_savedTitle"),
+          body: translate("novelDetail_download_savedBody", { title, count: result.saved.length }),
+        });
+      }
+    } catch (error) {
+      addToast({ kind: "error", title: translate("ui_novelDownloadFailed"), body: errorMessage(error) });
+    } finally {
+      downloadingNovel = false;
+      downloadingIds = new Set();
+      downloadProgress = null;
+      void reloadCachedKeys();
+    }
+  }
+
+  async function deleteDownloadedChapters(chaptersToDelete: typeof sortedNovelChapters) {
+    if (!activeDetail || chaptersToDelete.length === 0) return;
+    try {
+      await deleteCachedNovelChapters(scopeInput, activeDetail.novel.sourceId, chaptersToDelete.map((chapter) => chapter.path));
+      if (chaptersToDelete.length > 1) {
+        addToast({ kind: "info", title: translate("novelDetail_download_deletedTitle"), body: displayedNovel?.title ?? activeDetail.novel.title });
+      }
+    } catch (error) {
+      addToast({ kind: "error", title: translate("novelDetail_download_deleteFailed"), body: errorMessage(error) });
+    } finally {
+      await reloadCachedKeys();
+    }
+  }
+
+  async function deleteAllDownloads() {
+    if (deletingAll) return;
+    dlOpen = false;
+    deletingAll = true;
+    try {
+      await deleteDownloadedChapters(sortedNovelChapters.filter(isChapterDownloaded));
+    } finally {
+      deletingAll = false;
+    }
+  }
+
+  // Exports the chapters already saved offline into one HTML file, at a place the user picks.
+  async function exportDownloadedAsHtml() {
+    if (!activeDetail || !displayedNovel || downloadingNovel) return;
+    dlOpen = false;
+    const chaptersToExport = [...sortedNovelChapters]
+      .sort((left, right) => left.order - right.order)
+      .filter(isChapterDownloaded);
+    if (chaptersToExport.length === 0) {
+      addToast({ kind: "info", title: translate("ui_noChaptersToDownload"), body: translate("novelDetail_download_nothingToExport") });
+      return;
+    }
+
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const targetPath = await save({
+        defaultPath: `${sanitizeFilename(displayedNovel.title)}.html`,
+        filters: [{ name: "HTML", extensions: ["html"] }],
+      });
+      if (typeof targetPath !== "string" || !targetPath.trim()) return;
       const parts: string[] = [];
       for (const chapter of chaptersToExport) {
-        const result = await readInstalledNovelChapter(scopeInput, activeDetail.novel.sourceId, chapter.path);
+        const result = await loadCachedNovelChapter(scopeInput, activeDetail.novel.sourceId, chapter.path);
+        if (!result) continue;
         parts.push(`<section class="chapter"><h2>${escapeHtml(chapterPrimaryLabel(chapter))}</h2>${chapterSecondaryLabel(chapter) ? `<p class="subtitle">${escapeHtml(chapterSecondaryLabel(chapter))}</p>` : ""}<div class="content">${result.content}</div></section>`);
       }
 
       const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(displayedNovel.title)}</title><style>body{margin:0;background:#111;color:#e8e4eb;font-family:Georgia,serif;line-height:1.7}.wrap{max-width:860px;margin:0 auto;padding:48px 28px}h1{font-family:Inter,Arial,sans-serif}h2{margin-top:42px;color:#d3c4ff}.subtitle{color:#9f98ad}.chapter{border-top:1px solid #2c2933}.content img{max-width:100%;height:auto}</style></head><body><main class="wrap"><h1>${escapeHtml(displayedNovel.title)}</h1>${parts.join("\n")}</main></body></html>`;
-      const { downloadDir, join } = await import("@tauri-apps/api/path");
-      const fileName = `${sanitizeFilename(displayedNovel.title)}-${sanitizeFilename(label).toLowerCase()}-${Date.now()}.html`;
-      const targetPath = await join(await downloadDir(), fileName);
       await invoke("write_file_base64", { path: targetPath, bytesBase64: encodeBase64Utf8(html) });
-      addToast({ kind: "success", title: translate("ui_novelDownloaded"), body: fileName, duration: 4500 });
+      addToast({ kind: "success", title: translate("novelDetail_download_exported"), body: targetPath, duration: 4500 });
     } catch (error) {
       addToast({
         kind: "error",
         title: translate("ui_novelDownloadFailed"),
         body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotExportThisNovel"),
       });
+    }
+  }
+
+  async function refreshNovel() {
+    const current = activeDetail;
+    if (!current || metadataOnly || refreshing) return;
+    refreshing = true;
+    try {
+      const result = await refreshNovelDetailFromSource(scopeInput, current.novel, current.inLibrary);
+      if (result.state) {
+        libraryState = result.state;
+        bumpContentSetupVersion();
+      }
+      const latest = store.activeNovelDetail;
+      if (latest && latest.novel.id === current.novel.id && result.detail.id === current.novel.id) {
+        setActiveNovelDetail({ ...latest, novel: result.detail });
+      }
+      addToast({ kind: "success", title: translate("ui_chaptersRefreshed") });
+      void reloadCachedKeys();
+    } catch (error) {
+      const message = sourceAccessErrorMessage(error);
+      const challenge = isConfirmedAntibotChallengeMessage(message);
+      addToast({
+        kind: "error",
+        title: translate("ui_refreshFailed"),
+        body: challenge
+          ? store.settings.flareSolverrEnabled
+            ? translate("ui_checkFlaresolverrAndRetryThisSource")
+            : translate("novelSources_errors_blockedFlareDisabled")
+          : message,
+        duration: challenge ? 7000 : undefined,
+        action: challenge ? { label: translate("detail_actions_openSettings"), run: () => setSettingsOpen(true) } : undefined,
+      });
     } finally {
-      downloadingNovel = false;
+      refreshing = false;
     }
   }
 
@@ -351,15 +546,15 @@
   }
 
   function downloadNext(count: number) {
-    void exportNovelChapterBatch(chaptersFromResume(count), `next-${count}`);
+    void downloadChapters(chaptersFromResume(count));
   }
 
   function downloadUnread() {
-    void exportNovelChapterBatch(sortedNovelChapters.filter((chapter) => chapter.unread), "unread");
+    void downloadChapters(sortedNovelChapters.filter((chapter) => chapter.unread));
   }
 
   function downloadAll() {
-    void exportNovelChapterBatch(sortedNovelChapters, "all");
+    void downloadChapters(sortedNovelChapters);
   }
 
   function downloadRange() {
@@ -372,7 +567,7 @@
       const number = chapter.order + 1;
       return number >= lo && number <= hi;
     });
-    void exportNovelChapterBatch(selected, `ch-${lo}-${hi}`);
+    void downloadChapters(selected);
     rangeFrom = "";
     rangeTo = "";
     showRange = false;
@@ -395,6 +590,34 @@
   });
 
   $effect(() => {
+    void activeDetail?.novel.sourceId;
+    void scopeInput;
+    void reloadCachedKeys();
+  });
+
+  $effect(() => {
+    const sourceId = activeDetail?.novel.sourceId;
+    sourceSite = null;
+    if (!sourceId || metadataOnly) return;
+    void loadInstalledNovelSources(scopeInput)
+      .then((sources) => {
+        if (activeDetail?.novel.sourceId === sourceId) sourceSite = sources.find((source) => source.pluginId === sourceId)?.site ?? null;
+      })
+      .catch(() => {});
+  });
+
+  // A detached reader window saves through the main window while this page stays open.
+  $effect(() => {
+    const scope = scopeInput;
+    const handleReaderChangesSaved = (event: Event) => {
+      if ((event as CustomEvent<{ scopeKey?: string }>).detail?.scopeKey !== libraryState.scopeKey) return;
+      libraryState = peekNovelLibraryState(scope);
+    };
+    globalThis.addEventListener?.(NOVEL_READER_CHANGES_SAVED_EVENT, handleReaderChangesSaved);
+    return () => globalThis.removeEventListener?.(NOVEL_READER_CHANGES_SAVED_EVENT, handleReaderChangesSaved);
+  });
+
+  $effect(() => {
     if (chapterPage > totalPages) chapterPage = totalPages;
     if (chapterPage < 1) chapterPage = 1;
   });
@@ -412,34 +635,47 @@
     title={displayedNovel?.title ?? activeDetail.novel.title}
     subtitle={displayedNovel?.author ?? null}
     coverUrl={displayedNovel?.coverUrl ?? null}
-    fallbackLabel="Novel"
-    statusLabel={displayedNovel?.status ?? null}
+    fallbackLabel={$_("detail.fallbackNovel")}
+    statusLabel={localizeNovelStatus(displayedNovel?.status ?? null)}
     sourceLabel={sourceName}
-    sourceLine={sourceName ? `Novel - ${sourceName}` : null}
+    sourceLine={sourceName ? $_("detail.novelSourceLine", { source: sourceName }) : null}
     languageLabel={activeDetail.novel.source.lang ? activeDetail.novel.source.lang.toUpperCase() : null}
     description={displayedNovel?.description ?? null}
     tags={displayedNovel?.tags ?? []}
     detailsOpen={detailsOpen}
-    progressLabel={novelCounts.total > 0 ? `${novelCounts.read} / ${novelCounts.total} chapters read` : null}
+    progressLabel={novelCounts.total > 0 ? $_("detail.novelProgress", { read: novelCounts.read, total: novelCounts.total }) : null}
     progressPercent={(readStats && activeDetail.inLibrary ? readStats.progressPercent : novelCounts.progressPercent) * 100}
     metrics={[
-      { label: "Chapters", value: String(novelCounts.total) },
-      { label: "Unread", value: String(novelCounts.unread) },
-      { label: "Bookmarks", value: String(bookmarkedChapterIds.size) },
+      { label: $_("detail.metric.chapters"), value: String(novelCounts.total) },
+      { label: $_("detail.metric.unread"), value: String(novelCounts.unread) },
+      { label: $_("detail.stats.downloaded"), value: String(downloadedCount) },
     ]}
     onBack={() => setActiveNovelDetail(null)}
     onDetailsToggle={() => detailsOpen = !detailsOpen}
   >
+    {#snippet topbarActions()}
+      {#if novelUrl}
+        <a href={novelUrl} target="_blank" rel="noreferrer" class="series-icon" title={$_("detail.actions.openInBrowser")}>
+          <ArrowSquareOut size={14} weight="light" />
+        </a>
+      {/if}
+      {#if !metadataOnly}
+        <button class="series-icon" type="button" onclick={refreshNovel} disabled={refreshing} title={$_("detail.actions.refreshChapters")}>
+          <ArrowsClockwise size={14} weight="light" class={refreshing ? "anim-spin" : ""} />
+        </button>
+      {/if}
+    {/snippet}
+
     {#snippet primaryAction()}
       <button class="series-primary" disabled={!resumeChapter} onclick={() => resumeChapter && openChapter(resumeChapter.id, resumeChapter.path, resumeChapter.title)}>
         <Play size={13} weight="fill" />
-        {resumeChapter ? (lastReadChapterId ? `Continue Ch.${resumeChapter.order + 1}` : $_("detail_actions_startReading")) : $_("detail_empty_noChapters")}
+        {resumeChapter ? (lastReadChapterId ? $_("detail.continueNovelChapter", { number: resumeChapter.order + 1 }) : $_("detail_actions_startReading")) : $_("detail_empty_noChapters")}
       </button>
     {/snippet}
 
     {#snippet secondaryActions()}
       {#if !metadataOnly}
-        <button class="series-action series-icon-action" class:active={activeDetail.inLibrary} onclick={activeDetail.inLibrary ? removeFromLibrary : addToLibrary} title={activeDetail.inLibrary ? "In Library" : "Add to Library"} aria-label={activeDetail.inLibrary ? "In Library" : "Add to Library"}>
+        <button class="series-action series-icon-action" class:active={activeDetail.inLibrary} onclick={activeDetail.inLibrary ? removeFromLibrary : addToLibrary} title={activeDetail.inLibrary ? $_("detail.status.inLibrary") : $_("detail.actions.addToLibrary")} aria-label={activeDetail.inLibrary ? $_("detail.status.inLibrary") : $_("detail.actions.addToLibrary")}>
           <BookmarkSimple size={13} weight={activeDetail.inLibrary ? "fill" : "light"} />
         </button>
         <button class="series-action series-icon-action" type="button" onclick={() => trackingOpen = true} title={$_("home_sections_tracking")} aria-label={$_("home_sections_tracking")}>
@@ -489,28 +725,29 @@
       </button>
       <div class="dl-wrap">
         <button class="series-utility dl-unified-btn" class:active={dlOpen || downloadingNovel} class:dl-downloading={downloadingNovel} type="button" onclick={() => dlOpen = !dlOpen} title={$_("detail_download_options")}>
-          <DownloadSimple size={13} weight={downloadingNovel ? "fill" : "light"} />
+          {#if downloadingNovel}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}<DownloadSimple size={13} weight={downloadedCount > 0 ? "fill" : "light"} />{/if}
           {$_("detail_actions_download")}
-          <span class="dl-unified-count" class:dl-unified-count-empty={!downloadingNovel}>{downloadingNovel ? 1 : 0}</span>
+          <span class="dl-unified-count" class:dl-unified-count-empty={!downloadingNovel && downloadedCount === 0}>{downloadingNovel ? downloadingIds.size : downloadedCount}</span>
         </button>
         {#if dlOpen}
+          {@const unreadToSave = sortedNovelChapters.filter((chapter) => chapter.unread && !isChapterDownloaded(chapter)).length}
           <div class="dl-dropdown">
             <div class="dl-pop-head">
               <div>
                 <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
-                <strong>0 / {novelCounts.total}</strong>
+                <strong>{downloadedCount} / {novelCounts.total}</strong>
               </div>
-              <span class="dl-state-label">{downloadingNovel ? "Working" : "Ready"}</span>
+              <span class="dl-state-label">{downloadProgress ? $_("novelDetail_download_progress", { done: downloadProgress.done, total: downloadProgress.total }) : $_("detail.downloadsReady")}</span>
             </div>
             {#if resumeChapter}
               <div class="dl-section">
                 <p class="dl-section-label">{$_("ui_fromCh")}{resumeChapter.order + 1}</p>
                 <div class="dl-next-row">
                   {#each [5, 10, 25] as amount}
-                    {@const available = chaptersFromResume(amount).length}
+                    {@const available = chaptersFromResume(amount).filter((chapter) => !isChapterDownloaded(chapter)).length}
                     <button class="dl-next-btn" type="button" disabled={available === 0 || downloadingNovel} onclick={() => downloadNext(amount)}>
                       <span>{$_("library_pagination_next")} {amount}</span>
-                      <span class="dl-next-sub">{available} {$_("ui_new_c2a6b03f")}</span>
+                      <span class="dl-next-sub">{$_("detail_download_newCount", { count: available })}</span>
                     </button>
                   {/each}
                 </div>
@@ -533,25 +770,29 @@
               {/if}
             </div>
             <div class="dl-section dl-actions">
-              <button class="dl-item" type="button" onclick={downloadUnread} disabled={novelCounts.unread === 0 || downloadingNovel}>
+              <button class="dl-item" type="button" onclick={downloadUnread} disabled={unreadToSave === 0 || downloadingNovel}>
                 <span>{$_("library_sort_unreadChapters")}</span>
-                <span class="dl-item-sub">{novelCounts.unread} {$_("ui_remaining_398658a6")}</span>
+                <span class="dl-item-sub">{$_("detail_download_remainingCount", { count: unreadToSave })}</span>
               </button>
-              <button class="dl-item dl-item-primary" type="button" onclick={downloadAll} disabled={novelCounts.total === 0 || downloadingNovel}>
+              <button class="dl-item dl-item-primary" type="button" onclick={downloadAll} disabled={novelCounts.total - downloadedCount <= 0 || downloadingNovel}>
                 <span>{$_("ui_downloadAll")}</span>
-                <span class="dl-item-sub">{novelCounts.total} {$_("ui_notDownloaded")}</span>
+                <span class="dl-item-sub">{$_("detail_download_notDownloadedCount", { count: Math.max(0, novelCounts.total - downloadedCount) })}</span>
+              </button>
+              <button class="dl-item" type="button" onclick={exportDownloadedAsHtml} disabled={downloadedCount === 0 || downloadingNovel}>
+                <span>{$_("novelDetail_download_exportHtml")}</span>
+                <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
               </button>
             </div>
-            <div class="dl-section dl-danger-zone dl-danger-zone-empty">
-              <button class="dl-item dl-item-danger" type="button" disabled>
-                <span>{$_("ui_deleteAllDownloads")}</span>
-                <span class="dl-item-sub">{$_("ui_0Downloaded")}</span>
+            <div class="dl-section dl-danger-zone" class:dl-danger-zone-empty={downloadedCount === 0}>
+              <button class="dl-item dl-item-danger" type="button" onclick={deleteAllDownloads} disabled={downloadedCount === 0 || deletingAll || downloadingNovel}>
+                <span>{deletingAll ? $_("detail_download_deleting") : $_("ui_deleteAllDownloads")}</span>
+                <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
               </button>
             </div>
           </div>
         {/if}
       </div>
-      <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? "Migrate this novel to another source"} aria-label={$_("ui_migrateThisNovelToAnotherSource")} onclick={() => migrateOpen = true}>
+      <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? $_("novelDetail_migrateTitle")} aria-label={$_("ui_migrateThisNovelToAnotherSource")} onclick={() => migrateOpen = true}>
         <ArrowsLeftRight size={15} weight="light" />
         {$_("detail_actions_migrate")}
       </button>
@@ -605,8 +846,9 @@
               <button class="grid-cell novel-grid-cell" class:read={!chapter.unread} class:in-progress={isCurrent} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} title={chapterTitle(chapter)}>
                 <span class="grid-cell-title">{chapterPrimaryLabel(chapter)}</span>
                 {#if chapterSecondaryLabel(chapter)}<span class="grid-cell-sub">{chapterSecondaryLabel(chapter)}</span>{/if}
-                <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></span></span>
-                {#if isCurrent}<span class="grid-cell-dl novel-current-dot" title={$_("bookDetail_filter_current")}></span>{/if}
+                <span class="chapter-progress" class:is-empty={chapter.unread}><span class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></span></span>
+                {#if downloadingIds.has(chapter.id)}<span class="grid-cell-spinner"><CircleNotch size={10} weight="light" class="anim-spin" /></span>{:else if isChapterDownloaded(chapter)}<span class="grid-cell-dl" title={$_("detail.stats.downloaded")}></span>{/if}
+                {#if isCurrent}<span class="grid-cell-mark novel-current-dot" title={$_("bookDetail_filter_current")}></span>{/if}
                 {#if isBookmarked}<span class="grid-cell-dot" title={$_("bookDetail_filter_bookmarked")}></span>{/if}
               </button>
             {/each}
@@ -620,35 +862,39 @@
             {#each pageChapters as chapter (chapter.id)}
               {@const isCurrent = chapter.id === lastReadChapterId}
               {@const isBookmarked = bookmarkedChapterIds.has(chapter.id)}
-              <button class="ch-row v3-ch-row" class:read={!chapter.unread} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)}>
+              {@const isDownloaded = isChapterDownloaded(chapter)}
+              <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={!chapter.unread} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} onkeydown={(event) => event.key === "Enter" && openChapter(chapter.id, chapter.path, chapter.title)}>
                 <div class="ch-left">
                   <span class="ch-name">{chapterPrimaryLabel(chapter)}</span>
-                  <div class="ch-meta">
-                    {#if chapterSecondaryLabel(chapter)}<span class="ch-meta-item">{chapterSecondaryLabel(chapter)}</span>{/if}
-                    {#if isCurrent}<span class="ch-meta-item current">{$_("bookDetail_filter_current")}</span>{/if}
-                    {#if isBookmarked}<span class="ch-meta-item bookmarked">{$_("bookDetail_filter_bookmarked")}</span>{/if}
-                    {#if chapter.unread}<span class="ch-meta-item unread">{$_("detail_stats_unread")}</span>{/if}
-                  </div>
-                  <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></div></div>
+                  {#if chapterSecondaryLabel(chapter) || isCurrent || isBookmarked}
+                    <div class="ch-meta">
+                      {#if chapterSecondaryLabel(chapter)}<span class="ch-meta-item">{chapterSecondaryLabel(chapter)}</span>{/if}
+                      {#if isCurrent}<span class="ch-meta-item">{$_("bookDetail_filter_current")}</span>{/if}
+                      {#if isBookmarked}<span class="ch-meta-item"><BookmarkSimple size={10} weight="fill" /> {$_("bookDetail_filter_bookmarked")}</span>{/if}
+                    </div>
+                  {/if}
+                  <div class="chapter-progress" class:is-empty={chapter.unread}><div class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></div></div>
                 </div>
                 <span class="ch-provider">{sourceName ?? ""}</span>
                 <span class="ch-date">{formatDate(chapter.releaseTime)}</span>
-                <div class="ch-status">
-                  <span class="ch-status-read"></span>
+                <div class="ch-status" class:ch-status-downloaded-row={isDownloaded} class:ch-status-read-row={!chapter.unread}>
+                  <span class="ch-status-read">{#if !chapter.unread}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
                   <span class="ch-status-main">
-                    {#if isCurrent}
-                      <BookOpen size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_current")} />
-                    {:else if isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_bookmarked")} />
-                    {:else if !chapter.unread}
-                      <CheckCircle size={14} weight="fill" class="read-icon" title={$_("bookDetail_filter_read")} />
-                    {:else if chapter.unread}
-                      <Circle size={14} weight="regular" class="unread-icon" title={$_("detail_stats_unread")} />
+                    {#if isDownloaded}
+                      <DownloadSimple size={13} weight="fill" title={$_("detail.stats.downloaded")} />
+                    {:else if downloadingIds.has(chapter.id)}
+                      <CircleNotch size={14} weight="light" class="anim-spin enqueue-icon" />
+                    {:else if !metadataOnly}
+                      <button class="dl-btn" type="button" disabled={downloadingNovel} onclick={(event) => { event.stopPropagation(); void downloadChapters([chapter]); }} title={$_("detail.actions.download")}><DownloadSimple size={13} weight="light" /></button>
                     {/if}
                   </span>
-                  <span class="ch-status-action"></span>
+                  <span class="ch-status-action">
+                    {#if isDownloaded}
+                      <button class="dl-btn dl-btn-delete" type="button" disabled={downloadingNovel} onclick={(event) => { event.stopPropagation(); void deleteDownloadedChapters([chapter]); }} title={$_("detail.download.delete")}><Trash size={13} weight="light" /></button>
+                    {/if}
+                  </span>
                 </div>
-              </button>
+              </div>
             {/each}
           {/if}
         </div>
@@ -671,7 +917,7 @@
   <NovelTrackingPanel
     title={activeDetail.novel.title}
     sourceNovelId={activeDetail.novel.id}
-    contentLabel="Novel"
+    contentLabel={$_("ui_novel")}
     onClose={() => trackingOpen = false}
   />
 {/if}
@@ -701,9 +947,9 @@
               {#if novel.coverUrl}<img class="link-thumb" src={novel.coverUrl} alt="" />{:else}<span class="link-thumb link-thumb-empty">N</span>{/if}
               <span class="link-info">
                 <span class="link-novel-title">{novel.title}</span>
-                <span class="link-source">{novel.source?.sourceName ?? novel.source?.pluginName ?? novel.author ?? "Novel"}</span>
+                <span class="link-source">{novel.source?.sourceName ?? novel.source?.pluginName ?? novel.author ?? $_("detail.fallbackNovel")}</span>
               </span>
-              <span class="link-status">{isLinked ? "Linked" : "Link"}</span>
+              <span class="link-status">{isLinked ? $_("detail.link.linked") : $_("detail.link.link")}</span>
             </button>
           {/each}
         {/if}
@@ -718,6 +964,38 @@
     height: 5px;
     border-radius: var(--component-detail-novel-current-dot-border-radius);
     background: var(--component-detail-novel-current-dot-background);
+  }
+
+  .grid-cell-dl,
+  .grid-cell-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: var(--component-detail-grid-cell-dot-border-radius);
+    background: var(--component-detail-grid-cell-dot-background);
+  }
+
+  .grid-cell-dl,
+  .grid-cell-dot,
+  .grid-cell-mark,
+  .grid-cell-spinner {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+
+  .grid-cell-mark {
+    right: 18px;
+  }
+
+  .grid-cell-dot {
+    right: 28px;
+    opacity: var(--component-detail-grid-cell-dot-opacity);
+  }
+
+  .grid-cell-spinner {
+    top: 6px;
+    right: 6px;
+    color: var(--component-detail-grid-cell-spinner-color);
   }
 
   .dl-wrap {
@@ -1054,8 +1332,8 @@
     color: var(--component-detail-link-subtitle-color);
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .link-close {

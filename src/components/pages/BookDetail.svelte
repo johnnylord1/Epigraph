@@ -6,7 +6,6 @@
     CaretDown,
     ChartLineUp,
     CheckCircle,
-    Circle,
     FolderSimplePlus,
     FunnelSimple,
     List,
@@ -386,7 +385,7 @@
   }
 
   function sectionSubtitle(item: BookSectionView) {
-    if (usesPagesLabel) return `Page ${item.pageNumber ?? item.sectionNumber}`;
+    if (usesPagesLabel) return t("bookDetail.pageNumber", { number: item.pageNumber ?? item.sectionNumber });
     return splitChapterLabel(item.label).subtitle;
   }
 
@@ -601,7 +600,7 @@
       });
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Book files could not be fully removed.";
+        error instanceof Error ? error.message : t("bookDetail.removeFilesFailed");
       addToast({
         kind: "info",
         title: t("ui_removedFromLibrary"),
@@ -700,7 +699,7 @@
     progressPercent={readPercent * 100}
     metrics={[
       { label: usesPagesLabel ? $_("bookDetail.pages") : $_("detail.stats.chapters"), value: String(displaySectionCount) },
-      { label: $_("bookDetail.filter.read"), value: String(readSectionCount) },
+      { label: $_("detail.stats.unread"), value: String(Math.max(0, displaySectionCount - readSectionCount)) },
       { label: $_("bookDetail.filter.bookmarks"), value: String(currentBookmark ? 1 : 0) },
     ]}
     onBack={closeDetail}
@@ -740,7 +739,7 @@
             {#each allBookCategories as category (category.id)}
               {@const isIn = assignedBookCategoryIds.includes(category.id)}
               <button class="fp-item" class:fp-item-active={isIn} type="button" onclick={() => toggleFolder(category)}>
-                <span class="fp-check">{isIn ? "On" : ""}</span>
+                <span class="fp-check" aria-hidden="true">{isIn ? "✓" : ""}</span>
                 {category.name}
               </button>
             {/each}
@@ -862,8 +861,8 @@
               <button class="grid-cell book-grid-cell" class:read={item.isRead} class:in-progress={item.isCurrent} onclick={() => openBookSection(item)} title={item.label}>
                 <span class="grid-cell-title">{sectionTitle(item)}</span>
                 {#if sectionSubtitle(item)}<span class="grid-cell-sub">{sectionSubtitle(item)}</span>{/if}
-                <span class="chapter-progress"><span class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></span></span>
-                {#if item.isCurrent}<span class="grid-cell-dl book-current-dot" title={$_("bookDetail.filter.current")}></span>{/if}
+                <span class="chapter-progress" class:is-empty={!item.isRead}><span class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></span></span>
+                {#if item.isCurrent}<span class="grid-cell-mark" title={$_("bookDetail.filter.current")}></span>{/if}
                 {#if item.isBookmarked}<span class="grid-cell-dot" title={$_("bookDetail.filter.bookmarked")}></span>{/if}
               </button>
             {/each}
@@ -880,26 +879,21 @@
                   <span class="ch-name">{sectionTitle(item)}</span>
                   <div class="ch-meta">
                     {#if sectionSubtitle(item)}<span class="ch-meta-item">{sectionSubtitle(item)}</span>{/if}
-                    {#if item.isCurrent}<span class="ch-meta-item current">{$_("bookDetail.filter.current")}</span>{/if}
-                    {#if item.isBookmarked}<span class="ch-meta-item bookmarked">{$_("bookDetail.filter.bookmarked")}</span>{/if}
-                    {#if !item.isRead && !item.isCurrent}<span class="ch-meta-item unread">{$_("detail.stats.unread")}</span>{/if}
+                    {#if item.isCurrent}<span class="ch-meta-item">{$_("bookDetail.filter.current")}</span>{/if}
+                    {#if item.isBookmarked}<span class="ch-meta-item"><BookmarkSimple size={10} weight="fill" /> {$_("bookDetail.filter.bookmarked")}</span>{/if}
                     {#if item.depth > 0}<span class="ch-meta-item">{$_("bookDetail.depthValue", { depth: item.depth })}</span>{/if}
                   </div>
-                  <div class="chapter-progress"><div class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></div></div>
+                  <div class="chapter-progress" class:is-empty={!item.isRead}><div class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></div></div>
                 </div>
                 <span class="ch-provider">{activePresentation?.subtypeLabel ?? activeBook.subtype.toUpperCase()}</span>
                 <span class="ch-date">{activeBook.subtype === "pdf" && item.pageNumber ? `${Math.round(item.progressPercent * 100)}%` : (item.depth > 0 ? $_("bookDetail.depthValue", { depth: item.depth }) : "")}</span>
-                <div class="ch-status">
-                  <span class="ch-status-read"></span>
+                <div class="ch-status" class:ch-status-read-row={item.isRead}>
+                  <span class="ch-status-read">{#if item.isRead}<CheckCircle size={14} weight="fill" class="read-icon" />{/if}</span>
                   <span class="ch-status-main">
                     {#if item.isCurrent}
                       <BookOpen size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.current")} />
                     {:else if item.isBookmarked}
                       <BookmarkSimple size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.bookmarked")} />
-                    {:else if item.isRead}
-                      <CheckCircle size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.read")} />
-                    {:else if !item.isRead}
-                      <Circle size={14} weight="regular" class="unread-icon" title={$_("detail.stats.unread")} />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -934,7 +928,7 @@
     <NovelTrackingPanel
       title={activePresentation?.title ?? activeBook.title}
       sourceNovelId={activeBook.id}
-      contentLabel="Book"
+      contentLabel={t("bookDetail.contentLabel")}
       onHardcoverLinkChanged={updateBookHardcoverLink}
       onClose={() => trackingOpen = false}
     />
@@ -956,6 +950,22 @@
 {/if}
 
 <style>
+  .grid-cell-mark,
+  .grid-cell-dot {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 5px;
+    height: 5px;
+    border-radius: var(--component-detail-grid-cell-dot-border-radius);
+    background: var(--component-detail-grid-cell-dot-background);
+  }
+
+  .grid-cell-dot {
+    right: 18px;
+    opacity: var(--component-detail-grid-cell-dot-opacity);
+  }
+
   .root {
     display: flex;
     height: 100%;
@@ -977,8 +987,8 @@
     gap: var(--sp-3);
     color: var(--text-muted);
     font-size: var(--text-sm);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .detail-file {

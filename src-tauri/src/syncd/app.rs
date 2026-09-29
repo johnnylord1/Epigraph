@@ -104,9 +104,6 @@ pub async fn run() -> anyhow::Result<()> {
         }
     }
     let (shutdown, shutdown_receiver) = ShutdownCoordinator::channel();
-    if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
-        super::suwayomi_process::start_headless_supervisor(shutdown.subscribe());
-    }
     spawn_gc_task(state.clone(), shutdown.subscribe());
     super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
     super::suwayomi_progress_mirror::spawn_progress_mirror_task(
@@ -126,8 +123,7 @@ pub async fn run() -> anyhow::Result<()> {
         "epigraph-syncd starting"
     );
 
-    let _runtime_manifest_lease = if config.ownership_mode == SyncdOwnershipMode::PersistentAttached
-    {
+    let _runtime_manifest_lease = {
         let executable =
             std::env::current_exe().context("failed to resolve epigraph-syncd executable path")?;
         let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
@@ -142,10 +138,14 @@ pub async fn run() -> anyhow::Result<()> {
             RuntimeManifestLease::publish(&config.data_dir, &manifest)
                 .context("failed to publish syncd runtime manifest")?,
         )
-    } else {
-        None
     };
 
+    // Bind before starting anything capable of spawning a JVM.
+    let listener = super::listener::bind_core_listener(config.bind_addr).context("Core listener bind failed")?;
+    listener.set_nonblocking(true)?;
+    if config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
+        super::suwayomi_process::start_headless_supervisor(shutdown.subscribe());
+    }
     let server_handle = axum_server::Handle::new();
     let shutdown_task = spawn_shutdown_task(
         state.clone(),
@@ -153,7 +153,7 @@ pub async fn run() -> anyhow::Result<()> {
         shutdown.clone(),
         server_handle.clone(),
     );
-    let serve_result = axum_server::bind_rustls(config.bind_addr, tls.rustls_config)
+    let serve_result = axum_server::from_tcp_rustls(listener, tls.rustls_config)
         .handle(server_handle)
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
@@ -236,6 +236,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route(
             "/v1/bootstrap/session/:session_id",
             get(bootstrap::get_bootstrap_session),
+        )
+        .route(
+            "/v1/pairing/pin/resolve",
+            post(bootstrap::post_pairing_pin_resolve),
         )
         .route(
             "/v1/bootstrap/session/:session_id/live",
@@ -324,6 +328,8 @@ fn spawn_parent_watchdog(state: Arc<AppState>, shutdown: ShutdownCoordinator) {
                     "syncd parent process missing; shutting down sidecar"
                 );
                 shutdown.request(ShutdownRequest {
+                    run_id: super::runtime_manifest::current_run_id().into(),
+                    nonce: uuid::Uuid::new_v4().to_string(),
                     server_id: String::new(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::ParentExited,
@@ -348,6 +354,8 @@ fn spawn_shutdown_task(
                     tracing::warn!(error = %error, "failed to listen for Core shutdown signal");
                 }
                 let request = ShutdownRequest {
+                    run_id: super::runtime_manifest::current_run_id().into(),
+                    nonce: uuid::Uuid::new_v4().to_string(),
                     server_id: String::new(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::OsSignal,
@@ -361,6 +369,12 @@ fn spawn_shutdown_task(
         };
 
         tracing::info!(reason = ?request.reason, "graceful Core shutdown requested");
+        if state.config.ownership_mode == SyncdOwnershipMode::PersistentAttached {
+            if let Err(error) = super::suwayomi_process::prepare_shutdown().await {
+                tracing::error!(%error, "Core shutdown refused; ownership state retained");
+                return;
+            }
+        }
         tokio::time::sleep(response_delay()).await;
         stop_discovery_provider(&state).await;
         server_handle.graceful_shutdown(Some(std::time::Duration::from_secs(15)));
@@ -534,6 +548,70 @@ mod tests {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let payload = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
         (status, payload)
+    }
+
+    #[tokio::test]
+    async fn pairing_pin_resolves_the_open_bootstrap_session_only() {
+        let (_temp, state) = build_state_for_http().await;
+        let app = build_test_router(state.clone());
+        let (status, created) = request_json(
+            &app,
+            Method::POST,
+            "/v1/bootstrap/session",
+            None,
+            Some(serde_json::json!({ "profileId": "main" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let code = created["pairingCode"].as_str().unwrap();
+        let pin = crate::syncd::pairing_pin::pairing_pin(code);
+
+        let (status, resolved) = request_json(
+            &app,
+            Method::POST,
+            "/v1/pairing/pin/resolve",
+            None,
+            Some(serde_json::json!({ "pin": format!("{} {}", &pin[..3], &pin[3..]) })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(resolved["pairingSessionId"], created["pairingSessionId"]);
+        assert_eq!(resolved["tlsCertSha256"], "fingerprint");
+
+        let wrong = if pin == "000000" { "000001" } else { "000000" };
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/v1/pairing/pin/resolve",
+            None,
+            Some(serde_json::json!({ "pin": wrong })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "PAIRING_PIN_NOT_FOUND");
+
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/v1/pairing/pin/resolve",
+            None,
+            Some(serde_json::json!({ "pin": "12ab56" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        crate::syncd::db::expire_open_bootstrap_sessions(&state.pool)
+            .await
+            .unwrap();
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/v1/pairing/pin/resolve",
+            None,
+            Some(serde_json::json!({ "pin": pin })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "an expired session no longer resolves");
     }
 
     async fn request_bytes(
@@ -1804,6 +1882,141 @@ mod tests {
         assert!(text.contains("event: change"));
         assert!(text.contains(&format!("id: {}", second.server_version)));
         assert!(text.contains("\"scopeId\":\"books:global\""));
+    }
+
+    async fn open_books_event_stream(app: Router) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .uri("/v1/events?scopeId=books:global")
+                .header(CLIENT_VERSION_HEADER, "0.1.0")
+                .header(CLIENT_PROTOCOL_HEADER, "1")
+                .header("authorization", "Bearer secret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn events_stream_closes_after_token_revocation() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+
+        let response = open_books_event_stream(build_test_router(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        crate::syncd::db::revoke_token(&state.pool, &token_hash("secret-token"))
+            .await
+            .unwrap();
+
+        let body = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            response.into_body().collect(),
+        )
+        .await
+        .expect("a revoked token must not keep its live stream open")
+        .unwrap()
+        .to_bytes();
+        assert!(!String::from_utf8_lossy(&body).contains("event: change"));
+    }
+
+    #[tokio::test]
+    async fn open_event_stream_keeps_a_connected_device_active() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global"],
+        )
+        .await
+        .unwrap();
+
+        let response = open_books_event_stream(build_test_router(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        // A device that only listens sends no other requests; its window is about to lapse.
+        let nearly_expired = crate::syncd::db::now_ms() + 60_000;
+        sqlx::query("UPDATE paired_device_tokens SET inactivity_expires_at_ms = ? WHERE token_hash = ?")
+            .bind(nearly_expired)
+            .bind(token_hash("secret-token"))
+            .execute(&state.pool)
+            .await
+            .unwrap();
+
+        let body = tokio::spawn(response.into_body().collect());
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(!body.is_finished(), "an active device must keep its live stream");
+        body.abort();
+
+        let token = crate::syncd::db::load_token_state(&state.pool, &token_hash("secret-token"))
+            .await
+            .unwrap()
+            .expect("token");
+        assert!(
+            token.inactivity_expires_at_ms
+                > nearly_expired + state.config.token_inactivity_window.as_millis() as i64 / 2,
+            "the open stream must extend the inactivity window"
+        );
+    }
+
+    #[tokio::test]
+    async fn events_stream_closes_when_streamed_scope_is_removed() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global", "novels:profile:main"],
+        )
+        .await
+        .unwrap();
+
+        let response = open_books_event_stream(build_test_router(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        crate::syncd::db::update_paired_device_granted_scopes(
+            &state.pool,
+            "device-a",
+            "main",
+            &["novels:profile:main".to_string()],
+        )
+        .await
+        .unwrap()
+        .expect("paired device");
+        let envelope = append_change_log_entry(
+            &state.pool,
+            "books:global",
+            None,
+            "book.progress",
+            "book-1",
+            "merge",
+            1,
+            "device-b",
+            Some(&serde_json::json!({"progressPercent": 0.5})),
+            state.config.retention_window,
+        )
+        .await
+        .unwrap();
+        let _ = state.change_sender.send(envelope);
+
+        let body = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            response.into_body().collect(),
+        )
+        .await
+        .expect("a stream must close once its scope is no longer granted")
+        .unwrap()
+        .to_bytes();
+        assert!(!String::from_utf8_lossy(&body).contains("event: change"));
     }
 
     #[tokio::test]

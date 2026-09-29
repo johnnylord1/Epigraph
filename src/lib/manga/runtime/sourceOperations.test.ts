@@ -16,6 +16,7 @@ import {
   fetchSourceMangaChapters,
   fetchSourceMangaDetails,
   searchSourceManga,
+  setChapterPagesRelay,
 } from "./sourceOperations";
 
 describe("SourceRuntime source operations", () => {
@@ -94,5 +95,39 @@ describe("SourceRuntime source operations", () => {
     expect(details.fetchManga.manga).toEqual(expect.objectContaining({ genre: ["Action"] }));
     expect(chapters.fetchChapters.chapters).toEqual([expect.objectContaining({ id: 9, mangaId: 7 })]);
     expect(pages.fetchChapterPages.pages).toEqual(["a", "b"]);
+  });
+
+  test("readers opening the same chapter together share one page-list request", async () => {
+    let answer!: (pages: { index: number; url: string }[]) => void;
+    runtime.getPages.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    runtime.getPages.mockResolvedValue([{ index: 0, url: "later" }]);
+
+    const first = fetchSourceChapterPages({ chapterId: 9 });
+    const second = fetchSourceChapterPages({ chapterId: 9 });
+    const other = fetchSourceChapterPages({ chapterId: 10 });
+    await vi.waitFor(() => expect(runtime.getPages).toHaveBeenCalledTimes(2));
+    answer([{ index: 0, url: "a" }]);
+
+    expect((await first).fetchChapterPages.pages).toEqual(["a"]);
+    expect((await second).fetchChapterPages.pages).toEqual(["a"]);
+    expect((await other).fetchChapterPages.pages).toEqual(["later"]);
+    expect(runtime.getPages.mock.calls.map(([target]) => target.id)).toEqual([9, 10]);
+    // Once answered, a later open asks again instead of reusing a list the source may since have changed.
+    expect((await fetchSourceChapterPages({ chapterId: 9 })).fetchChapterPages.pages).toEqual(["later"]);
+    expect(runtime.getPages).toHaveBeenCalledTimes(3);
+  });
+
+  test("a detached reader window gets page lists from the main window", async () => {
+    const relay = vi.fn(async () => ["x", "y"]);
+    setChapterPagesRelay(relay);
+    try {
+      expect((await fetchSourceChapterPages({ chapterId: 9 })).fetchChapterPages.pages).toEqual(["x", "y"]);
+      expect(relay).toHaveBeenCalledWith({ chapterId: 9, mangaId: 0 });
+      expect(runtime.getPages).not.toHaveBeenCalled();
+      relay.mockResolvedValueOnce([1] as never);
+      await expect(fetchSourceChapterPages({ chapterId: 9 })).rejects.toThrow("Chapter pages were not returned.");
+    } finally {
+      setChapterPagesRelay(null);
+    }
   });
 });

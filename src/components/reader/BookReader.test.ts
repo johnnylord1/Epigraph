@@ -31,3 +31,17 @@ describe("BookReader PDF initialization", () => {
     expect(source).toContain("await flushBookLibraryPersistence()");
   });
 });
+
+describe("BookReader EPUB resume", () => {
+  it("shows the saved spot again after the reader stylesheet reflows the text", () => {
+    const load = source.slice(source.indexOf("async function loadEpub("), source.indexOf("async function renderPdfPage("));
+    const firstDisplay = load.indexOf("if (target) await rendition.display(target);");
+    const theme = load.indexOf("applyEpubTheme();", firstDisplay);
+    const redisplay = load.indexOf("await rendition.display(target);", theme);
+    expect(firstDisplay).toBeGreaterThan(-1);
+    expect(theme).toBeGreaterThan(firstDisplay);
+    expect(redisplay).toBeGreaterThan(theme);
+    expect(load.slice(theme, redisplay)).toContain("fonts?.ready");
+    expect(load.slice(theme, redisplay)).toContain("if (token !== loadToken || currentRendition !== rendition) return;");
+  });
+});

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
+  import { formatDayLabel, formatRelativeTime } from "../../lib/i18n/format";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-shell";
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
@@ -37,26 +38,11 @@
   let activeTab: ActivityTab = $state("all");
 
   function timeAgo(ts: number): string {
-    const diff = Date.now() - ts, m = Math.floor(diff / 60000);
-    if (m < 1)  return "Just now";
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    if (d < 7)  return `${d}d ago`;
-    return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return formatRelativeTime(ts);
   }
 
   function dayLabel(ts: number): string {
-    const d = new Date(ts), now = new Date();
-    if (d.toDateString() === now.toDateString()) return "Today";
-    const yest = new Date(now); yest.setDate(now.getDate() - 1);
-    if (d.toDateString() === yest.toDateString()) return "Yesterday";
-    return d.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  }
-
-  function plural(count: number, singular: string, pluralLabel = `${singular}s`): string {
-    return `${count} ${count === 1 ? singular : pluralLabel}`;
+    return formatDayLabel(ts);
   }
 
   function issueAffectedCount(issue: LibraryUpdateIssue) {
@@ -145,18 +131,21 @@
       .map((notification): UpdateEntry => {
         const manga = typeof notification.mangaId === "number" ? mangaById.get(notification.mangaId) ?? null : null;
         const count = Math.max(1, Number(notification.chapterDelta ?? 1));
-        const chapterText = notification.chapterTitles?.[0]
-          ? `${notification.chapterTitles[0]}${count > 1 ? ` + ${count - 1} more` : ""}`
-          : plural(count, "chapter");
+        const firstTitle = notification.chapterTitles?.[0];
+        const subtitle = firstTitle
+          ? count > 1
+            ? translate("activity.updateTitleMore", { title: firstTitle, more: count - 1 })
+            : translate("activity.updateTitle", { title: firstTitle })
+          : translate("activity.updateCount", { count });
         return {
           id: notification.id,
           notification,
           manga,
           isNovel: notification.kind === "novels",
           title: notification.mangaTitle || manga?.title || translate("downloads_unknownTitle"),
-          subtitle: `${chapterText} added in the latest refresh`,
+          subtitle,
           count,
-          source: notification.sourceName || manga?.source?.displayName || manga?.source?.name || "Library",
+          source: notification.sourceName || manga?.source?.displayName || manga?.source?.name || translate("shell.navigation.library"),
           readAt: notification.createdAt,
         };
       })
@@ -170,8 +159,8 @@
       const key = `${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`;
       const current = groups.get(key) ?? {
         id: key,
-        sourceName: issue.sourceName || "Unknown source",
-        extensionName: issue.extensionName || issue.sourceName || "Unknown extension",
+        sourceName: issue.sourceName || translate("libraryUpdate.unknownSource"),
+        extensionName: issue.extensionName || issue.sourceName || translate("activity.unknownExtension"),
         count: 0,
         latestAt: 0,
         items: [] as LibraryUpdateIssue[],
@@ -280,7 +269,7 @@
       if (issue.contentKind === "manga") {
         await invoke("open_reader_webview", {
           url: toSuwayomiWebViewUrl(getServerUrl(), issue.actionUrl),
-          title: `Source challenge - ${issue.sourceName}`,
+          title: translate("activity.challengeWindowTitle", { source: issue.sourceName }),
         });
         return;
       }
@@ -341,7 +330,11 @@
         addToast({
           kind: result.failed > 0 ? "info" : "success",
           title: result.failed > 0 ? translate("ui_sourceRetryFinishedWithIssues") : translate("ui_sourceRetryFinished"),
-          body: `${result.updated}/${result.checked} novels refreshed${result.newChapters > 0 ? `, ${result.newChapters} new chapters` : ""}.`,
+          body: translate("activity.novelRetryBody", {
+            updated: result.updated,
+            checked: result.checked,
+            newChapters: result.newChapters > 0 ? translate("libraryUpdate.booksNewChaptersPart", { count: result.newChapters }) : "",
+          }),
         });
         return;
       }
@@ -351,7 +344,7 @@
       addToast({
         kind: result.issues.length > 0 ? "info" : "success",
         title: result.issues.length > 0 ? translate("ui_sourceRetryFinishedWithIssues") : translate("ui_sourceRetryFinished"),
-        body: `${result.changedMangaIds.length} comics checked for ${issue.sourceName}.`,
+        body: translate("activity.comicsRetryBody", { count: result.changedMangaIds.length, source: issue.sourceName }),
       });
     } catch (error) {
       addToast({
@@ -407,9 +400,9 @@
 
       {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
-          title={confirmClear ? "Click again to confirm" : activeTab === "all" ? "Clear all notifications and history" : activeTab === "updates" ? "Clear update notifications" : activeTab === "system" ? "Clear system notifications" : "Clear history"}>
+          title={confirmClear ? $_("activity.clearConfirmHint") : activeTab === "all" ? $_("activity.clearAll") : activeTab === "updates" ? $_("activity.clearUpdates") : activeTab === "system" ? $_("activity.clearSystem") : $_("activity.clearHistory")}>
           <Trash size={14} weight="light" />
-          <span>{confirmClear ? "Confirm" : "Clear"}</span>
+          <span>{confirmClear ? $_("activity.confirm") : $_("activity.clear")}</span>
         </button>
       {/if}
     </div>
@@ -664,10 +657,10 @@
     background: var(--component-activity-center-clear-bg);
     color: var(--component-activity-center-muted);
     cursor: pointer;
-    font-size: calc(10px * var(--component-activity-scale));
+    font-size: calc(11.5px * var(--component-activity-scale));
     font-weight: 780;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     transition: color var(--t-fast), background var(--t-fast), border-color var(--t-fast);
   }
 
@@ -708,8 +701,8 @@
     cursor: pointer;
     font-size: calc(12px * var(--component-activity-scale));
     font-weight: 850;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     white-space: nowrap;
     transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast);
   }
@@ -766,8 +759,8 @@
     color: var(--component-activity-center-text);
     font-size: calc(13px * var(--component-activity-scale));
     font-weight: 850;
-    letter-spacing: 0.11em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .section-title small {
@@ -998,11 +991,11 @@
     border-radius: var(--radius-sm);
     background: var(--component-activity-center-pill-bg);
     color: var(--component-activity-center-pill-fg);
-    font-size: calc(10px * var(--component-activity-scale));
+    font-size: calc(11.5px * var(--component-activity-scale));
     font-weight: 820;
-    letter-spacing: 0.08em;
+    letter-spacing: 0;
     opacity: var(--component-activity-center-pill-hidden-opacity);
-    text-transform: uppercase;
+    text-transform: none;
     transform: var(--component-activity-center-pill-hidden-transform);
     transition: var(--component-activity-center-pill-transition);
   }

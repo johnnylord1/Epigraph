@@ -1,3 +1,4 @@
+import { verifyJourney, cleanupAttempt, recordJourneyFailure } from './verification-evidence.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -189,7 +190,7 @@ async function launchDesktop({ appPath, driverUrl, profileRoot, serverUrl, name 
 
 async function closeDriver(driver) {
   if (!driver) return;
-  await driver.quit().catch(() => {});
+  await driver.quit();
 }
 
 async function removeWithRetries(target) {
@@ -208,7 +209,7 @@ async function removeWithRetries(target) {
   return false;
 }
 
-async function main() {
+async function main(evidence) {
   const args = parseArgs(process.argv.slice(2));
   const runId = `release-data-${Date.now()}-${process.pid}`;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `${runId}-`));
@@ -293,6 +294,7 @@ async function main() {
     assert.deepEqual(normalizeBookState(await callAudit(driver, "readBookLibraryPersistence")), stateB);
     await driver.takeScreenshot().then((image) => fs.writeFile(path.join(root, "profile-b-restored.png"), image, "base64"));
 
+    evidence.diagnostic("completed books assertions", { subtypes: stateB.books.map(entry => entry.subtype), progressCount: stateB.progress.length, bookmarkCount: stateB.bookmarks.length, corruptedRestoreRejected: true });
     process.stdout.write(`${JSON.stringify({
       ok: true,
       books: stateB.books.map((entry) => entry.subtype),
@@ -300,16 +302,19 @@ async function main() {
       bookmarkCount: stateB.bookmarks.length,
       corruptedRestoreRejected: true,
     }, null, 2)}\n`);
+  } catch (error) {
+    recordJourneyFailure(evidence, error);
+    throw error;
   } finally {
-    await closeDriver(driver);
-    await fakeCore?.close().catch(() => {});
-    if (!keepArtifacts) await removeWithRetries(root);
+    await cleanupAttempt(evidence, "WebDriver session", async () => { await driver?.quit(); });
+    await cleanupAttempt(evidence, "mock Core", async () => { await fakeCore?.close(); });
+    if (!keepArtifacts) await cleanupAttempt(evidence, "disposable profile", async () => { if (!await removeWithRetries(root)) throw new Error("Disposable profile cleanup deferred"); });
     else process.stdout.write(`Artifacts retained at ${root}\n`);
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
+  verifyJourney("certify-local-data.mjs", ["Books EPUB/PDF import, local persistence, restart, backup export/restore and corrupted backup rejection; mock Core; first-run bypassed"], main).catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
     process.exitCode = 1;
   });

@@ -199,55 +199,11 @@ async function restartDesktop(instance, overrides = {}) {
 }
 
 async function killListeningProcessOnPort(port) {
-  if (!port) return;
-
-  const script = `
-    $listenerPids = Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue |
-      Select-Object -ExpandProperty OwningProcess -Unique
-    if (-not $listenerPids) { exit 0 }
-    foreach ($listenerPid in $listenerPids) {
-      taskkill /PID $listenerPid /F /T | Out-Null
-    }
-  `;
-
-  try {
-    await execFileAsync("powershell", ["-NoProfile", "-Command", script], {
-      windowsHide: true,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to kill listener on port ${port}: ${message}`);
-  }
+  if (port) throw new Error(`Refusing port-only termination on ${port}; an explicit owned spawn capability is required.`);
 }
 
-async function replaceSyncdDaemon(instance) {
-  const manifestPath = path.join(
-    instance.localAppDataDir,
-    "Epigraph",
-    "syncd",
-    "runtime.json",
-  );
-  const previous = JSON.parse(await fs.readFile(manifestPath, "utf8"));
-  await execFileAsync(
-    "taskkill.exe",
-    ["/PID", String(previous.pid), "/F", "/T"],
-    { windowsHide: true },
-  ).catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to stop Syncd PID ${previous.pid}: ${message}`);
-  });
-
-  const next = await waitForCondition(async () => {
-    const raw = await fs.readFile(manifestPath, "utf8").catch(() => null);
-    if (!raw) return null;
-    const candidate = JSON.parse(raw);
-    return candidate.pid !== previous.pid ? candidate : null;
-  }, SCENARIO_STATUS_TIMEOUT_MS, "Timed out waiting for the desktop to replace its Syncd daemon.");
-
-  return {
-    previous: { pid: previous.pid, serverId: previous.serverId },
-    next: { pid: next.pid, serverId: next.serverId },
-  };
+async function replaceSyncdDaemon(_instance) {
+  throw new Error("Daemon replacement requires a retained spawn capability; a persisted runtime PID cannot authorize termination.");
 }
 
 async function waitForBootstrapPayloadReachable(

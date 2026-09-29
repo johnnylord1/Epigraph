@@ -1,3 +1,4 @@
+import { verifyJourney, cleanupAttempt, recordJourneyFailure } from './verification-evidence.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -106,7 +107,7 @@ async function assertViewport(driver, surface, viewport) {
   return evidence;
 }
 
-async function main() {
+async function main(evidence) {
   const args = parseArgs(process.argv.slice(2));
   const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"));
   const outputDirectory = path.resolve(args.out || path.join(projectRoot, "docs", "screenshots", "marco67-native-viewports"));
@@ -157,20 +158,24 @@ async function main() {
         await waitForSurface(driver, surface.selector, surface.name, surface.blockedSelector);
         await new Promise((resolve) => setTimeout(resolve, 250));
         report.push({ surface: surface.name, viewport, ...(await assertViewport(driver, surface.name, viewport)) });
+        evidence.diagnostic("completed viewport assertion", report.at(-1));
         const image = await driver.takeScreenshot();
         await fs.writeFile(path.join(outputDirectory, `${surface.name}-${viewport.width}x${viewport.height}.png`), image, "base64");
       }
     }
     await fs.writeFile(path.join(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({ ok: true, checks: report.length, outputDirectory }, null, 2)}\n`);
+  } catch (error) {
+    recordJourneyFailure(evidence, error);
+    throw error;
   } finally {
-    await driver?.quit().catch(() => {});
-    await fakeCore.close().catch(() => {});
-    await fs.rm(profileRoot, { recursive: true, force: true }).catch(() => {});
+    await cleanupAttempt(evidence, "WebDriver session", async () => { await driver?.quit(); });
+    await cleanupAttempt(evidence, "mock Core", () => fakeCore.close());
+    await cleanupAttempt(evidence, "disposable profile", () => fs.rm(profileRoot, { recursive: true, force: true }));
   }
 }
 
-main().catch((error) => {
+verifyJourney("smoke-native-viewports.mjs", ["Home, Library, Settings layout at 1280x800 and 800x600; first-run bypassed"], main).catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

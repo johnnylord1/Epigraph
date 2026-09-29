@@ -7,6 +7,18 @@ import { store } from "../../store/state.svelte";
 
 let dragHandler: ((event: { payload: { type: string; paths: string[] } }) => void) | undefined;
 
+const importMocks = vi.hoisted(() => ({
+  openDialog: vi.fn(async (_options?: unknown): Promise<string | string[] | null> => null),
+  importLocalBookFile: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: importMocks.openDialog }));
+
+vi.mock("../../lib/books/importFile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/books/importFile")>()),
+  importLocalBookFile: importMocks.importLocalBookFile,
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onDragDropEvent: async (callback: typeof dragHandler) => {
@@ -324,5 +336,71 @@ describe("BooksLibraryBody", () => {
 
     expect(onOpenNovel).toHaveBeenCalledWith("novel-0");
     expect(store.activeBookId).toBeNull();
+  });
+
+  test("imports the EPUB and PDF files chosen in the file picker from the empty shelf", async () => {
+    const { default: BooksLibraryBody } = await import("./BooksLibraryBody.svelte");
+    const imported: BookEntry = {
+      id: "book-picked",
+      title: "Picked",
+      author: null,
+      description: null,
+      coverPath: null,
+      subtype: "epub",
+      createdAt: 1,
+      updatedAt: 1,
+      importPath: "C:/books/picked.epub",
+      assetPath: "C:/books/library/picked.epub",
+      sectionsSummary: [],
+      sectionCount: 1,
+      tocCount: 1,
+      spineCount: 1,
+    };
+    importMocks.openDialog.mockResolvedValueOnce(["C:/books/picked.epub", "C:/books/notes.txt"]);
+    importMocks.importLocalBookFile.mockResolvedValueOnce({ entry: imported, existing: null, subtype: "epub" });
+
+    render(BooksLibraryBody, {
+      props: {
+        vm: {
+          kind: "books",
+          sectionTabs: [],
+          collections: [],
+          toolbar: {
+            searchValue: "",
+            searchPlaceholder: "Search books",
+            sortMode: "recentlyAdded",
+            sortDir: "desc",
+            sortOptions: [],
+            filterValue: "ALL",
+            filterOptions: [],
+          },
+          loading: false,
+          error: null,
+          emptyMessage: "Empty",
+          cards: [],
+          typeOptions: [],
+          activeCategoryId: null,
+          activeType: "all",
+          activeStatus: "all",
+          dragDropEnabled: true,
+          importing: false,
+          dropActive: false,
+        },
+        books: [],
+        totalBooks: 0,
+        viewKey: "all",
+      },
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Import books" }));
+
+    await vi.waitFor(() => expect(importMocks.importLocalBookFile).toHaveBeenCalledTimes(1));
+    expect(importMocks.openDialog).toHaveBeenCalledWith(expect.objectContaining({
+      multiple: true,
+      directory: false,
+      filters: [expect.objectContaining({ extensions: ["epub", "pdf"] })],
+    }));
+    expect(importMocks.importLocalBookFile.mock.calls[0]?.[0]).toBe("C:/books/picked.epub");
+    await vi.waitFor(() => expect(store.books.some((book) => book.id === "book-picked")).toBe(true));
   });
 });

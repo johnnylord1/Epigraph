@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { _ } from "../../lib/i18n/runtime";
   import type { LibrarySectionKind, LibrarySectionTabVM } from "../../lib/library/contracts";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
@@ -30,7 +31,7 @@
   <AppTopbar className="library-header-topbar">
     {#snippet left()}
       <div class="header-left">
-      <nav class="n-segmented section-tabs" aria-label={`${heading} sections`} data-active={sectionTabs.find((tab) => tab.active)?.id ?? "comics"}>
+      <nav class="n-segmented section-tabs" aria-label={$_("library_sectionsAria")} data-active={sectionTabs.find((tab) => tab.active)?.id ?? "comics"}>
         <span class="n-segmented__thumb" aria-hidden="true"></span>
         {#each sectionTabs as tab}
           <button

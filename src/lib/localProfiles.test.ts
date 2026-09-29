@@ -4,6 +4,7 @@ import {
   DEFAULT_LOCAL_PROFILE_ID,
   getAllLocalProfiles,
   getLocalProfileMeta,
+  localProfileDisplayName,
   resolveSessionProfile,
 } from "./localProfiles";
 
@@ -92,5 +93,20 @@ describe("resolveSessionProfile", () => {
 
     expect(() => createCustomLocalProfile({ label: "Other", port: 4777 }, [custom])).toThrow("already used");
     expect(() => createCustomLocalProfile({ label: "Main Copy", port: 4567 }, [custom])).toThrow("already used");
+  });
+});
+
+describe("localProfileDisplayName", () => {
+  const translate = (key: string) => `t:${key}`;
+
+  it("shows built-in and unnamed profiles by their translated names", () => {
+    expect(localProfileDisplayName("MAIN", translate)).toBe("t:settings.general.profiles.builtinMain");
+    expect(localProfileDisplayName(" test ", translate)).toBe("t:settings.general.profiles.builtinTest");
+    expect(localProfileDisplayName("CUSTOM", translate)).toBe("t:settings.general.profiles.unnamed");
+    expect(localProfileDisplayName(null, translate)).toBe("t:settings.general.profiles.unnamed");
+  });
+
+  it("keeps the name people gave their own profiles", () => {
+    expect(localProfileDisplayName(" Laptop ", translate)).toBe("Laptop");
   });
 });

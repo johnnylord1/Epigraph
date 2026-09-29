@@ -101,55 +101,8 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is not configured"
           }
 
-      - name: Download Suwayomi (Windows x64)
-        shell: bash
-        run: |
-          curl -fsSL \
-            "https://github.com/Suwayomi/Suwayomi-Server/releases/download/v2.1.1867/Suwayomi-Server-v2.1.1867-windows-x64.zip" \
-            -o suwayomi-windows.zip
-          echo "ab6687d278e0dd0984f67abbc853511a7e764f84b126a35d09bfd9b0307321ff  suwayomi-windows.zip" | sha256sum -c -
-          unzip -q suwayomi-windows.zip -d suwayomi-raw
-
-      - name: Extract Suwayomi bundle
-        shell: bash
-        run: |
-          mkdir -p suwayomi-extracted
-          TOP_DIRS=$(find suwayomi-raw -mindepth 1 -maxdepth 1 -type d | wc -l)
-          TOP_FILES=$(find suwayomi-raw -mindepth 1 -maxdepth 1 -type f | wc -l)
-          if [ "$TOP_DIRS" -eq 1 ] && [ "$TOP_FILES" -eq 0 ]; then
-            INNER=$(find suwayomi-raw -mindepth 1 -maxdepth 1 -type d | head -1)
-            cp -r "$INNER"/. suwayomi-extracted/
-          else
-            cp -r suwayomi-raw/. suwayomi-extracted/
-          fi
-
-      - name: Stage Suwayomi bundle
-        shell: bash
-        run: |
-          rm -rf src-tauri/binaries/suwayomi-bundle
-          mkdir -p src-tauri/binaries/suwayomi-bundle
-          JAVA=$(find suwayomi-extracted -path "*/jre/bin/java.exe" | head -1)
-          JAR=$(find suwayomi-extracted -name "Suwayomi-Server.jar" | head -1)
-          if [ -z "$JAVA" ]; then
-            echo "ERROR: jre/bin/java.exe not found"
-            find suwayomi-extracted -type f | head -50
-            exit 1
-          fi
-          if [ -z "$JAR" ]; then
-            echo "ERROR: Suwayomi-Server.jar not found"
-            find suwayomi-extracted -type f | head -50
-            exit 1
-          fi
-          cp -r suwayomi-extracted/. src-tauri/binaries/suwayomi-bundle/
-
-      - name: Validate staging
-        shell: bash
-        run: |
-          test -f src-tauri/binaries/suwayomi-bundle/jre/bin/java.exe \
-            || (echo "ERROR: jre/bin/java.exe missing at bundle root" && exit 1)
-          test -f src-tauri/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar \
-            || (echo "ERROR: bin/Suwayomi-Server.jar missing at bundle root" && exit 1)
-          echo "Staging OK"
+      - name: Prepare certified Suwayomi and Java bundle
+        run: pnpm suwayomi:prepare-bundle:windows
 
       - name: Build and smoke-test Syncd sidecar
         run: pnpm syncd:prepare-sidecar:release

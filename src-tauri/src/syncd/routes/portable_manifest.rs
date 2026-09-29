@@ -1442,6 +1442,13 @@ fn manifest_snapshot_too_large() -> AppError {
 mod tests {
     use super::*;
 
+    /// The snapshot cache is shared by the whole process. Tests that store into it take turns,
+    /// so one test's purge of expired entries cannot remove the entry another test is checking.
+    fn snapshot_cache_turn() -> std::sync::MutexGuard<'static, ()> {
+        static TURN: Mutex<()> = Mutex::new(());
+        TURN.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn test_session(token_id: &str, device_id: &str) -> AuthenticatedSession {
         AuthenticatedSession {
             token_id: token_id.to_string(),
@@ -1556,6 +1563,7 @@ mod tests {
 
     #[test]
     fn snapshot_rejects_changed_fingerprint_or_different_session() {
+        let _cache = snapshot_cache_turn();
         let session = test_session("token-a", "device-a");
         let entry = store_manifest_snapshot(
             &session,
@@ -1587,6 +1595,7 @@ mod tests {
 
     #[test]
     fn expired_snapshot_is_removed_and_rejected() {
+        let _cache = snapshot_cache_turn();
         let session = test_session("token-expired", "device-expired");
         let mut entry = store_manifest_snapshot(
             &session,

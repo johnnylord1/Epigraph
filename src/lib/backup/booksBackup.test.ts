@@ -373,9 +373,9 @@ describe("books backup payload", () => {
     expect(restored.books[0]).toEqual(
       expect.objectContaining({
         id: "epub-alpha",
-        assetPath: "C:/managed/books/epub-alpha.epub",
-        importPath: "C:/managed/books/epub-alpha.epub",
-        coverPath: "C:/managed/books/covers/epub-alpha.jpg",
+        assetPath: expect.stringMatching(/^C:\/managed\/books\/restore-[0-9a-f]{64}\.epub$/),
+        importPath: expect.stringMatching(/^C:\/managed\/books\/restore-[0-9a-f]{64}\.epub$/),
+        coverPath: expect.stringMatching(/^C:\/managed\/books\/covers\/restore-[0-9a-f]{64}\.jpg$/),
         genres: ["Fantasy", "Adventure"],
         isbns: ["9780306406157"],
         metadataBackfillVersion: 3,
@@ -390,6 +390,56 @@ describe("books backup payload", () => {
     expect(restored.booksLibraryUi).toEqual(sampleSnapshot.booksLibraryUi);
     expect(writeManagedBookAsset).toHaveBeenCalledTimes(1);
     expect(writeManagedBookCover).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a restored book when an archive has an unsupported optional SVG cover", async () => {
+    const snapshot = {
+      ...sampleSnapshot,
+      books: [{ ...sampleSnapshot.books[0], coverPath: "C:/fixture/cover.svg" }],
+      bookProgress: [sampleSnapshot.bookProgress[0]],
+      bookBookmarks: [sampleSnapshot.bookBookmarks[0]],
+      booksCategoryAssignments: { "epub-alpha": ["favorites"] },
+    };
+    const built = await buildEpigraphBooksBackupContainer(snapshot, { exportMode: "full" }, {
+      readBinaryFile: vi.fn(async (filePath: string) => new TextEncoder().encode(
+        filePath.endsWith(".svg") ? SAMPLE_COVER_SVG : "EPUB-BYTES",
+      ).buffer),
+    });
+    const writeManagedBookAsset = vi.fn(async () => "C:/managed/books/restored.epub");
+    const writeManagedBookCover = vi.fn(async () => "C:/managed/books/covers/restored.svg");
+
+    const restored = await restoreEpigraphBooksPayload(built.bytes, {
+      writeManagedBookAsset,
+      writeManagedBookCover,
+    });
+
+    expect(restored.books).toHaveLength(1);
+    expect(restored.books[0]).toMatchObject({
+      id: "epub-alpha",
+      assetPath: "C:/managed/books/restored.epub",
+      coverPath: null,
+    });
+    expect(restored.issues).toContainEqual(expect.objectContaining({
+      code: "unsupported-cover-format",
+      bookId: "epub-alpha",
+    }));
+    expect(writeManagedBookAsset).toHaveBeenCalledOnce();
+    expect(writeManagedBookCover).not.toHaveBeenCalled();
+  });
+
+  it("uses content identity for asset storage when two backups reuse a local book ID", async () => {
+    const keys: string[] = [];
+    for (const content of ["first-book", "different-book", "first-book"]) {
+      const built = await buildEpigraphBooksBackupContainer(sampleSnapshot, { exportMode: "full" }, {
+        readBinaryFile: async () => new TextEncoder().encode(content).buffer,
+      });
+      await restoreEpigraphBooksPayload(built.bytes, {
+        writeManagedBookAsset: async (key, _bytes, ext) => { keys.push(key); return `managed/${key}.${ext}`; },
+        writeManagedBookCover: async (key, _bytes, ext) => `managed/${key}.${ext}`,
+      });
+    }
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[0]).toBe(keys[2]);
   });
 
   it("restores metadata-only books payload with explicit issues instead of pretending files exist", async () => {
@@ -455,7 +505,10 @@ describe("books backup payload", () => {
       }),
     });
 
-    expect(restored.issues).toEqual([]);
+    expect(restored.issues.map((issue) => issue.code)).toEqual([
+      "unsupported-cover-format",
+      "unsupported-cover-format",
+    ]);
     expect(restored.books.map((book) => book.id).sort()).toEqual(["audit-epub", "audit-pdf"]);
     expect(restored.books.find((book) => book.id === "audit-epub")?.assetPath).not.toBe(fixture.epubPath);
     expect(restored.books.find((book) => book.id === "audit-pdf")?.assetPath).not.toBe(fixture.pdfPath);

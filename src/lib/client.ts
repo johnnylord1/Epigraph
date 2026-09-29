@@ -1,4 +1,6 @@
 import { acquireSuwayomiOperationLease } from "./suwayomiUpdateLock.svelte";
+import { store } from "../store/state.svelte";
+import { translate } from "./i18n/runtime";
 import {
   getServerAuthHeader,
   getServerUrl,
@@ -29,6 +31,21 @@ export function isGraphqlMutation(query: string): boolean {
 
 function gqlUrl(): string {
   return `${getServerUrl()}/api/graphql`;
+}
+
+function captureRequestContext() {
+  const url = gqlUrl();
+  const authHeader = getServerAuthHeader();
+  const profileId = store.runtimeResolvedLocalProfileId;
+  return {
+    url,
+    authHeader,
+    assertCurrent() {
+      if (url !== gqlUrl() || authHeader !== getServerAuthHeader() || profileId !== store.runtimeResolvedLocalProfileId) {
+        throw new Error(translate("errors.connectionChanged"));
+      }
+    },
+  };
 }
 
 interface GQLResponse<T> {
@@ -75,26 +92,47 @@ export async function fetchWithRetry(
   throw new Error("unreachable");
 }
 
+const DEFAULT_GQL_TIMEOUT_MS = 12000;
+
+/**
+ * Without a caller signal the request is bounded by the default timeout. A caller signal keeps
+ * ownership of cancellation and disables the default, but an explicit `timeoutMs` is always
+ * honoured: readiness probes pass both and must not hang on a JVM that accepts the connection
+ * without answering.
+ */
+export function resolveGqlTimeoutMs(signal: AbortSignal | undefined, timeoutMs: number | undefined): number | null {
+  const effective = timeoutMs ?? (signal ? null : DEFAULT_GQL_TIMEOUT_MS);
+  return effective !== null && Number.isFinite(effective) && effective > 0 ? effective : null;
+}
+
 export async function gql<T>(
   query: string,
   variables?: Record<string, unknown>,
   signal?: AbortSignal,
-  timeoutMs = 12000,
+  timeoutMs?: number,
 ): Promise<T> {
+  const context = captureRequestContext();
   const mutation = isGraphqlMutation(query);
   const releaseMutationLease = mutation
     ? await acquireSuwayomiOperationLease("mutation")
     : null;
-  const controller = signal ? null : new AbortController();
-  const effectiveSignal = signal ?? controller?.signal;
+  const requestTimeoutMs = resolveGqlTimeoutMs(signal, timeoutMs);
+  const controller = requestTimeoutMs === null ? null : new AbortController();
+  const forwardCallerAbort = () => controller?.abort();
+  if (controller && signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", forwardCallerAbort, { once: true });
+  }
+  const effectiveSignal = controller?.signal ?? signal;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   try {
-    if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
-      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    context.assertCurrent();
+    if (controller && requestTimeoutMs !== null) {
+      timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
     }
-    const authHeader = getServerAuthHeader();
-    const response = await fetchWithRetry(gqlUrl(), {
+    const { authHeader } = context;
+    const response = await fetchWithRetry(context.url, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(authHeader ? { Authorization: authHeader } : {}) },
       body: JSON.stringify({ query, variables }),
@@ -111,6 +149,7 @@ export async function gql<T>(
     return json.data;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", forwardCallerAbort);
     await releaseMutationLease?.();
   }
 }
@@ -121,6 +160,7 @@ export async function gqlUpload<T>(
   uploads: Record<string, File>,
   signal?: AbortSignal,
 ): Promise<T> {
+  const context = captureRequestContext();
   const mutation = isGraphqlMutation(query);
   const releaseMutationLease = mutation
     ? await acquireSuwayomiOperationLease("mutation")
@@ -145,8 +185,9 @@ export async function gqlUpload<T>(
   }
 
   try {
-    const authHeader = getServerAuthHeader();
-    const response = await fetchWithRetry(gqlUrl(), {
+    context.assertCurrent();
+    const { authHeader } = context;
+    const response = await fetchWithRetry(context.url, {
       method: "POST",
       headers: authHeader ? { Authorization: authHeader } : {},
       body: form,

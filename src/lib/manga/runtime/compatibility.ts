@@ -291,6 +291,8 @@ function decodeExtension(value: unknown, path: string, v23: boolean): ExtensionR
     isInstalled: boolean(field(raw, "isInstalled", path), `${path}.isInstalled`),
     isObsolete: boolean(field(raw, "isObsolete", path), `${path}.isObsolete`),
     hasUpdate: boolean(field(raw, "hasUpdate", path), `${path}.hasUpdate`),
+    // Absent on fixtures and older payloads; the extension is then treated as not adult-only.
+    isNsfw: raw.isNsfw === true,
     iconUrl: nullableString(raw.iconUrl, `${path}.iconUrl`),
     storeId: nullableString(v23 ? raw.storeIndexUrl : raw.repo, `${path}.${v23 ? "storeIndexUrl" : "repo"}`),
     apkName: nullableString(raw.apkName, `${path}.apkName`),
@@ -302,11 +304,11 @@ function decodeExtension(value: unknown, path: string, v23: boolean): ExtensionR
 function extensionFields(v23: boolean): string {
   return v23
     ? `
-      pkgName name lang versionName versionCodeLong isInstalled isObsolete hasUpdate
+      pkgName name lang versionName versionCodeLong isInstalled isObsolete hasUpdate isNsfw
       iconUrl storeIndexUrl apkName apkUrl jarUrl
     `
     : `
-      pkgName name lang versionName versionCode isInstalled isObsolete hasUpdate
+      pkgName name lang versionName versionCode isInstalled isObsolete hasUpdate isNsfw
       iconUrl repo apkName
     `;
 }

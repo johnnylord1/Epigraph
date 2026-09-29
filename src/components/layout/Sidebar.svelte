@@ -38,6 +38,25 @@
   function goHome() {
     openHomeDashboard();
   }
+
+  // One highlight travels between the main destinations instead of each button toggling its own
+  // background; it hides while Settings (in the footer) is the active page.
+  let navElement = $state<HTMLElement>();
+  let indicatorOffset = $state<number | null>(null);
+  $effect(() => {
+    const page = store.navPage;
+    const nav = navElement;
+    if (!nav) return;
+    const measure = () => {
+      const active = nav.querySelector<HTMLElement>(`.n-sidebar-btn[data-nav-id="${page}"]`);
+      indicatorOffset = active ? active.offsetTop : null;
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  });
 </script>
 
 <aside class="n-sidebar" aria-label={$_("shell.navigation.primary")}>
@@ -51,7 +70,13 @@
     <img src={splashMark} alt={$_("shell.navigation.logoAlt")} />
   </button>
 
-  <nav class="n-sidebar__nav" aria-label={$_("shell.navigation.primary")}>
+  <nav class="n-sidebar__nav" aria-label={$_("shell.navigation.primary")} bind:this={navElement}>
+    <span
+      class="n-sidebar__indicator"
+      class:is-hidden={indicatorOffset === null}
+      style:transform={`translateY(${indicatorOffset ?? 0}px)`}
+      aria-hidden="true"
+    ></span>
     {#each MAIN_TABS as tab}
     <button
       class="n-sidebar-btn"
@@ -62,7 +87,6 @@
       data-tooltip={$_(tab.labelKey)}
       type="button"
         aria-label={$_(tab.labelKey)}
-        title={$_(tab.labelKey)}
         onclick={() => navigate(tab.id)}
       >
         <span class="n-icon material-symbols-outlined" aria-hidden="true">{sidebarIcon(tab.id)}</span>
@@ -82,7 +106,6 @@
       data-nav-id="settings"
       data-tooltip={$_("shell.navigation.settings")}
       type="button"
-      title={$_("shell.navigation.settings")}
       aria-label={$_("shell.navigation.settings")}
       onclick={() => setSettingsOpen(true)}
     >

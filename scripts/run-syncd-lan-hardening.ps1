@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 Set-StrictMode -Version Latest
 
 function Wait-ForPath {
@@ -56,18 +57,8 @@ function Start-AppWithEnv {
 
 function Stop-LingeringRepoSuwayomi {
   param([string]$ProjectRoot)
-
-  $bundleRoot = (Join-Path $ProjectRoot "src-tauri\target\debug\binaries\suwayomi-bundle").ToLowerInvariant()
-  $targets = Get-CimInstance Win32_Process |
-    Where-Object {
-      $_.Name -eq "java.exe" -and
-      $_.CommandLine -and
-      $_.CommandLine.ToLowerInvariant().Contains($bundleRoot)
-    }
-
-  foreach ($target in $targets) {
-    Stop-Process -Id $target.ProcessId -Force -ErrorAction SilentlyContinue
-  }
+  # Discovery is not ownership. Existing servers remain untouched; startup's
+  # bounded bind/readiness checks report a conflict if the requested port is busy.
 }
 
 function Stop-App {
@@ -79,7 +70,7 @@ function Stop-App {
 
   New-Item -ItemType File -Force -Path $ExitSentinelPath | Out-Null
   if (-not $Process.WaitForExit($TimeoutSeconds * 1000)) {
-    Stop-Process -Id $Process.Id -Force
+    Stop-EpigraphRetainedProcess -Process $Process
     throw "App did not exit after sentinel request"
   }
 }

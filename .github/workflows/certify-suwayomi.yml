@@ -20,6 +20,8 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      EPIGRAPH_VERIFICATION_ROOT: ${{ runner.temp }}/epigraph-verification
 
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +35,17 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Record CI retention request
+        id: retention
+        shell: pwsh
+        run: |
+          $configured = if ($env:GITHUB_RETENTION_DAYS) { [int]$env:GITHUB_RETENTION_DAYS } else { 30 }
+          $days = [Math]::Min(30, $configured)
+          "days=$days" >> $env:GITHUB_OUTPUT
+          "EPIGRAPH_CI_RETENTION_DAYS=$days" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:EPIGRAPH_VERIFICATION_ROOT | Out-Null
+          @{requestedDays=$days;githubConfiguredDays=$configured;localPolicyControlsGitHub=$false} | ConvertTo-Json | Set-Content (Join-Path $env:EPIGRAPH_VERIFICATION_ROOT 'ci-retention.json')
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -45,13 +58,13 @@ jobs:
         run: pnpm test:suwayomi-certification
 
       - name: Certify release
-        run: pnpm certify:suwayomi -- --version "${{ inputs.version }}" --artifact-dir "artifacts/${{ runner.os }}-${{ runner.arch }}"
+        run: pnpm certify:suwayomi -- --version "${{ inputs.version }}"
 
       - name: Upload certification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: suwayomi-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}
-          path: artifacts/${{ runner.os }}-${{ runner.arch }}/
+          name: suwayomi-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/epigraph-verification/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ steps.retention.outputs.days || 1 }}

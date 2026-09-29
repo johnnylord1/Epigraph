@@ -21,6 +21,10 @@ pub struct SyncdRuntimeManifest {
     pub fingerprint: String,
     pub exe: String,
     pub started_at_ms: u128,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub process_identity: Option<crate::suwayomi_runtime::RuntimeProcessIdentity>,
 }
 
 impl SyncdRuntimeManifest {
@@ -39,6 +43,8 @@ impl SyncdRuntimeManifest {
             fingerprint: fingerprint.into(),
             exe: exe.into(),
             started_at_ms: unix_now_millis(),
+            run_id: current_run_id().to_string(),
+            process_identity: if pid == std::process::id() { crate::suwayomi_runtime::capture_process_identity(pid) } else { None },
         }
     }
 
@@ -68,12 +74,13 @@ impl SyncdRuntimeManifest {
     }
 }
 
-#[derive(Debug)]
-pub struct RuntimeManifestLease {
-    path: PathBuf,
-    pid: u32,
-    server_id: String,
+pub fn current_run_id() -> &'static str {
+    static RUN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    RUN.get_or_init(|| uuid::Uuid::new_v4().to_string())
 }
+
+#[derive(Debug)]
+pub struct RuntimeManifestLease;
 
 #[derive(Debug)]
 pub struct RuntimeProcessLock {
@@ -117,30 +124,49 @@ impl RuntimeManifestLease {
             .validate()
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let path = runtime_manifest_path(data_dir);
+        if !reconcile_exited_runtime_manifest(&path) {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Unconfirmed Core evidence preserved; graceful/manual reconciliation required"));
+        }
         let payload = serde_json::to_vec_pretty(manifest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         atomic_write(&path, &payload)?;
-        Ok(Self {
-            path,
-            pid: manifest.pid,
-            server_id: manifest.server_id.clone(),
-        })
+        Ok(Self)
     }
 }
 
 impl Drop for RuntimeManifestLease {
     fn drop(&mut self) {
-        let Ok(current) = read_runtime_manifest_path(&self.path) else {
-            return;
-        };
-        if current.pid == self.pid && current.server_id == self.server_id {
-            let _ = fs::remove_file(&self.path);
-        }
+        // Self teardown cannot certify our own OS exit. The controller retains
+        // the process handle and records completion; preserve original evidence.
     }
 }
 
 pub fn runtime_manifest_path(data_dir: &Path) -> PathBuf {
     data_dir.join(RUNTIME_MANIFEST_FILE_NAME)
+}
+
+/// Returns `true` when no live process can own the manifest at `path`: it is absent, carries a
+/// stop receipt, or the Core it records is proven gone. A Core ended by a reboot, logoff or crash
+/// never receives a graceful stop, so its proven exit is recorded as the receipt here; otherwise
+/// the next Core, the installer and the desktop would refuse that data directory forever.
+/// Live, unverifiable or malformed evidence is preserved and returns `false`.
+pub fn reconcile_exited_runtime_manifest(path: &Path) -> bool {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(error) => return error.kind() == io::ErrorKind::NotFound,
+    };
+    if crate::suwayomi_runtime::has_confirmed_stop(path) {
+        return true;
+    }
+    let Ok(manifest) = serde_json::from_slice::<SyncdRuntimeManifest>(&raw) else {
+        return false;
+    };
+    crate::suwayomi_runtime::confirm_exited_owner(
+        path,
+        &raw,
+        manifest.pid,
+        manifest.process_identity.as_ref(),
+    )
 }
 
 #[allow(dead_code)]
@@ -190,40 +216,9 @@ fn atomic_write(path: &Path, payload: &[u8]) -> io::Result<()> {
     result
 }
 
-#[cfg(windows)]
+/// Shares the long-path-safe replace used by the runtime maintenance state.
 fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    let source_wide = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let destination_wide = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let moved = unsafe {
-        MoveFileExW(
-            source_wide.as_ptr(),
-            destination_wide.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
+    crate::suwayomi_maintenance::atomic_replace_file(source, destination)
 }
 
 fn is_sha256_hex(value: &str) -> bool {
@@ -268,6 +263,20 @@ mod tests {
     }
 
     #[test]
+    fn atomic_write_replaces_a_manifest_beyond_max_path() {
+        let temp = tempdir().unwrap();
+        let deep = temp.path().join("a".repeat(120)).join("b".repeat(120));
+        let path = deep.join(RUNTIME_MANIFEST_FILE_NAME);
+        assert!(path.as_os_str().len() > 260);
+
+        atomic_write(&path, b"first").unwrap();
+        atomic_write(&path, b"second").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"second");
+        assert_eq!(fs::read_dir(&deep).unwrap().count(), 1);
+    }
+
+    #[test]
     fn manifest_serializes_required_attach_identity() {
         let value = serde_json::to_value(manifest(42, "server-a")).unwrap();
         assert_eq!(value["pid"], 42);
@@ -280,7 +289,16 @@ mod tests {
     #[test]
     fn atomic_publish_replaces_previous_manifest() {
         let temp = tempdir().unwrap();
-        let first = RuntimeManifestLease::publish(temp.path(), &manifest(41, "server-a")).unwrap();
+        // The first owner is this live test process, so its evidence cannot be reconciled away.
+        let first = RuntimeManifestLease::publish(
+            temp.path(),
+            &manifest(std::process::id(), "server-a"),
+        )
+        .unwrap();
+        assert!(RuntimeManifestLease::publish(temp.path(), &manifest(42, "server-a")).is_err());
+        let raw = fs::read(runtime_manifest_path(temp.path())).unwrap();
+        // Fixture certificate represents an externally confirmed old process exit.
+        crate::suwayomi_runtime::record_confirmed_stop(&runtime_manifest_path(temp.path()), &raw).unwrap();
         let second = RuntimeManifestLease::publish(temp.path(), &manifest(42, "server-a")).unwrap();
 
         assert_eq!(read_runtime_manifest(temp.path()).unwrap().pid, 42);
@@ -294,7 +312,41 @@ mod tests {
         drop(first);
         assert_eq!(read_runtime_manifest(temp.path()).unwrap().pid, 42);
         drop(second);
-        assert!(!runtime_manifest_path(temp.path()).exists());
+        assert!(runtime_manifest_path(temp.path()).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn manifest_left_by_an_exited_core_is_reconciled_on_the_next_start() {
+        use std::os::windows::process::CommandExt;
+        let temp = tempdir().unwrap();
+        let mut child = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+            .creation_flags(0x08000000)
+            .spawn()
+            .unwrap();
+        let mut crashed = manifest(child.id(), "server-a");
+        crashed.process_identity = crate::suwayomi_runtime::capture_process_identity(child.id());
+        let path = runtime_manifest_path(temp.path());
+        fs::write(&path, serde_json::to_vec_pretty(&crashed).unwrap()).unwrap();
+
+        // While the recorded Core is alive its evidence is preserved.
+        assert!(!reconcile_exited_runtime_manifest(&path));
+        assert!(RuntimeManifestLease::publish(temp.path(), &manifest(42, "server-a")).is_err());
+
+        // A reboot or crash ends the Core without a graceful stop.
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let _next = RuntimeManifestLease::publish(temp.path(), &manifest(42, "server-a")).unwrap();
+        assert_eq!(read_runtime_manifest(temp.path()).unwrap().pid, 42);
+
+        let missing = temp.path().join("missing").join(RUNTIME_MANIFEST_FILE_NAME);
+        assert!(reconcile_exited_runtime_manifest(&missing));
+        fs::write(&path, b"{ malformed").unwrap();
+        assert!(
+            !reconcile_exited_runtime_manifest(&path),
+            "malformed evidence is preserved"
+        );
     }
 
     #[test]

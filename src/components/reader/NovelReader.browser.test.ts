@@ -1,10 +1,15 @@
 /// <reference types="@vitest/browser/matchers" />
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { userEvent } from "@vitest/browser/context";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import { resetNovelLibraryStateCacheForTests } from "../../lib/novels/libraryState";
 import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
 import { createNovelReaderPreparation, prepareNovelReaderForRestore, registerNovelReaderPreparation } from "../../lib/reader/restorePreparation";
+import { PROSE_READER_PALETTES } from "../../lib/reader/prosePalette";
+import JSZip from "jszip";
+import { createProductionRestoreWorkflow } from "../../lib/backup/productionRestoreWorkflow";
+import { setNovelReaderRelay, type NovelReaderChange } from "../../lib/novels/readerData";
 
 const { disk, readChapter } = vi.hoisted(() => ({
   disk: { state: null as any, failNextSave: false, failures: 0, writes: 0, pending: null as Promise<void> | null, reads: 0, pendingFirstRead: null as Promise<void> | null, firstReadMissing: false, pendingFirstWrite: null as Promise<void> | null },
@@ -12,6 +17,8 @@ const { disk, readChapter } = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (command: string, args: any) => {
+    if (command === "restore_session_admit") return "reader-fixture-session";
+    if (command === "read_novel_repository_state") return JSON.stringify({ version: 1, repositories: [{ id: "novel-repo:https%3A%2F%2Fraw.githubusercontent.com%2FLNReader%2Flnreader-plugins%2Fplugins%2F.dist%2Fplugins.min.json", name: "Fixture", url: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/.dist/plugins.min.json", normalizedUrl: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/.dist/plugins.min.json", enabled: true, trustState: "trusted" }], catalogEntries: [], installedPlugins: [{ repositoryId: "novel-repo:https%3A%2F%2Fraw.githubusercontent.com%2FLNReader%2Flnreader-plugins%2Fplugins%2F.dist%2Fplugins.min.json", pluginId: "fixture", version: "1", artifactPath: "fixture.js", enabled: true }] });
     if (command === "read_novel_library_state") {
       disk.reads++;
       if (disk.reads === 1 && disk.pendingFirstRead) await disk.pendingFirstRead;
@@ -32,6 +39,8 @@ vi.mock("../../lib/novels/sources", () => ({ readInstalledNovelChapter: readChap
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ onCloseRequested: async () => () => {}, close: vi.fn() }) }));
 vi.mock("../../lib/novels/offlineChapters", () => ({ loadCachedNovelChapter: async () => null, saveCachedNovelChapter: async () => {} }));
 vi.mock("../../lib/discord", () => ({ setGenericReading: vi.fn(async () => {}), setTtsPresence: vi.fn(async () => {}) }));
+const { openDetached } = vi.hoisted(() => ({ openDetached: vi.fn() }));
+vi.mock("../../lib/reader/detachedReaderHost", () => ({ openDetachedReader: openDetached }));
 
 import NovelReader from "./NovelReader.svelte";
 const content = Array.from({ length: 80 }, (_, index) => `<p>Reading paragraph ${index}. A quiet afternoon in the library.</p>`).join("");
@@ -71,6 +80,41 @@ describe("novel reader progress lifecycle", () => {
   });
   afterEach(() => { cleanup(); store.activeNovelReader = null; delete (window as any).__TAURI_INTERNALS__; });
 
+  test.each(["light", "nocturne", "dark"])("uses the selected reading colors inside the %s app theme", async (theme) => {
+    document.documentElement.dataset.theme = theme;
+    const { container } = render(NovelReader);
+    await waitFor(() => expect(container.querySelector("article")?.textContent).toContain("Reading paragraph"));
+    const article = container.querySelector("article")!;
+    const viewer = container.querySelector<HTMLElement>(".novel-viewer")!;
+    const cssColor = (value: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = value;
+      document.body.append(probe);
+      const result = getComputedStyle(probe).color;
+      probe.remove();
+      return result;
+    };
+    for (const palette of ["nocturne", "light", "sepia"] as const) {
+      store.settings.proseReaderTheme = palette;
+      const expectedBackground = cssColor(PROSE_READER_PALETTES[palette].surface);
+      const expectedText = cssColor(PROSE_READER_PALETTES[palette].text);
+      await waitFor(() => {
+        expect(getComputedStyle(article).backgroundColor).toBe(expectedBackground);
+        expect(getComputedStyle(article).color).toBe(expectedText);
+        expect(getComputedStyle(viewer).color).toBe(expectedText);
+      });
+    }
+    store.settings.proseReaderTheme = "nocturne";
+    store.settings.proseReaderTextColor = "#203040";
+    store.settings.proseReaderBackgroundColor = "#f0e0d0";
+    await waitFor(() => {
+      expect(getComputedStyle(article).backgroundColor).toBe("rgb(240, 224, 208)");
+      expect(getComputedStyle(article).color).toBe("rgb(32, 48, 64)");
+    });
+    expect(disk.state.progress).toEqual([]);
+    expect(disk.state.chapters.every((chapter: { unread: boolean }) => chapter.unread)).toBe(true);
+  });
+
   test("does not mark the next chapter as read while its content is loading", async () => {
     const { container } = render(NovelReader);
     await waitFor(() => expect(container.querySelector("article")?.textContent).toContain("Reading paragraph"));
@@ -98,6 +142,18 @@ describe("novel reader progress lifecycle", () => {
     await scrollTo(viewer, 0.6);
     await waitFor(() => expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1));
     expect(disk.state.chapters[0].unread).toBe(true);
+  });
+
+  test("scrolls the chapter with the keyboard as soon as it opens", async () => {
+    const { container } = render(NovelReader);
+    await waitFor(() => expect(container.querySelector("article")?.textContent).toContain("Reading paragraph"));
+    const viewer = container.querySelector<HTMLElement>(".novel-viewer")!;
+    expect(document.activeElement).toBe(viewer);
+    await userEvent.keyboard("{PageDown}");
+    await waitFor(() => expect(viewer.scrollTop).toBeGreaterThan(0));
+    const afterPageDown = viewer.scrollTop;
+    await userEvent.keyboard(" ");
+    await waitFor(() => expect(viewer.scrollTop).toBeGreaterThan(afterPageDown));
   });
 
   async function mountedReader() {
@@ -140,6 +196,52 @@ describe("novel reader progress lifecycle", () => {
     expect(store.activeNovelReader).not.toBeNull();
     expect(await component.prepareNovelReaderForRestore()).toEqual({ ok: true });
     expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.2, 1);
+  });
+
+  test("opens the chapter in its own window after saving progress, then closes the docked reader", async () => {
+    let progressWhenOpened: number | undefined;
+    openDetached.mockReset();
+    openDetached.mockImplementation(async () => { progressWhenOpened = disk.state.progress[0]?.progressPercent; });
+    const { viewer } = await mountedReader();
+    await scrollTo(viewer, 0.6);
+    await fireEvent.click(screen.getByTitle("Open in a new window"));
+    await waitFor(() => expect(store.activeNovelReader).toBeNull());
+    expect(openDetached).toHaveBeenCalledOnce();
+    expect(openDetached).toHaveBeenCalledWith({
+      kind: "novel",
+      reader: { novelId: "novel", chapterId: "chapter-0", chapterPath: "/chapter-0", chapterTitle: "Chapter 1", sourceId: "fixture" },
+      detail: null,
+    }, "Reading fixture - Chapter 1");
+    expect(progressWhenOpened).toBeCloseTo(0.3, 1);
+  });
+
+  test("inside a detached window, chapters and reading changes go through the main window", async () => {
+    const original = `${location.pathname}${location.search}${location.hash}`;
+    history.replaceState(history.state, "", `${location.pathname}${location.search ? `${location.search}&` : "?"}detachedReader=1${location.hash}`);
+    const saveChanges = vi.fn(async (_scope: unknown, _changes: NovelReaderChange[]) => null);
+    const loadChapter = vi.fn(async () => content);
+    setNovelReaderRelay({ loadChapter, saveChanges });
+    try {
+      const { container, viewer } = await mountedReader();
+      expect(screen.queryByTitle("Open in a new window")).toBeNull();
+      await scrollTo(viewer, 0.6);
+      await fireEvent.click(container.querySelector<HTMLButtonElement>("button[title='Bookmark']")!);
+      await waitFor(() => expect(saveChanges).toHaveBeenCalled());
+      await fireEvent.click(container.querySelector(".reader-back-link")!);
+      await waitFor(() => expect(store.activeNovelReader).toBeNull());
+
+      const changes = saveChanges.mock.calls.flatMap(([, list]) => list);
+      const progress = changes.filter((change) => change.kind === "progress");
+      expect(progress.at(-1)).toMatchObject({ novelId: "novel", chapterId: "chapter-0", completed: false });
+      expect(progress.at(-1)?.kind === "progress" && progress.at(-1)?.chapterProgress).toBeCloseTo(0.6, 1);
+      expect(changes).toContainEqual({ kind: "bookmark", novelId: "novel", chapterId: "chapter-0", chapterTitle: "Chapter 1", locator: "chapter-0", bookmarked: true });
+      expect(loadChapter).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ chapterId: "chapter-0", sourceId: "fixture" }));
+      expect(readChapter).not.toHaveBeenCalled();
+      expect(disk.writes).toBe(0);
+    } finally {
+      setNovelReaderRelay(null);
+      history.replaceState(history.state, "", original);
+    }
   });
 
   test("restore preparation with no active or pending reader is a no-op", async () => {
@@ -276,6 +378,35 @@ describe("novel reader progress lifecycle", () => {
       expect(await preparation).toEqual({ ok: true });
       expect(store.activeNovelReader).toBeNull();
       expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1);
+    } finally { release(); unregister(); }
+  });
+
+  test("the production restore workflow drains the mounted reader before merging and awaiting native persistence", async () => {
+    const { component, viewer } = await mountedReader();
+    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component, () => store.activeNovelReader !== null));
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    zip.file("NovelAndChapters/99.json", JSON.stringify({ id: 99, pluginId: "fixture", path: "/novel", name: "Old title", chapters: [{ id: 90, path: "/chapter-2", name: "Missing chapter", position: 2, unread: true }] }));
+    const workflow = createProductionRestoreWorkflow();
+    const files = await workflow.inspectFiles([new File([await zip.generateAsync({ type: "arraybuffer" })], "lnreader.zip")]);
+    expect(files[0].status).toBe("ready");
+    let release!: () => void;
+    disk.pending = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await scrollTo(viewer, 0.6);
+      let complete = false;
+      const run = workflow.restoreFiles(files).then(() => { complete = true; });
+      await waitFor(() => expect(disk.writes).toBe(1));
+      expect(complete).toBe(false);
+      expect(disk.state.chapters.map((chapter: any) => chapter.path)).not.toContain("/chapter-2");
+      release(); await run;
+      expect(disk.writes).toBe(2);
+      expect(store.activeNovelReader).toBeNull();
+      expect(disk.state.entries.map((entry: any) => entry.id)).toEqual(["novel"]);
+      expect(disk.state.chapters.map((chapter: any) => chapter.path)).toEqual(["/chapter-0", "/chapter-1", "/chapter-2"]);
+      expect(disk.state.progress[0]?.progressPercent).toBeCloseTo(0.3, 1);
+      await workflow.restoreFiles(files);
+      expect(disk.writes).toBe(2);
     } finally { release(); unregister(); }
   });
 });

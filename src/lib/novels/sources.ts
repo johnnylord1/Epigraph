@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { TauriNovelRuntimeHostAdapter } from "./runtimeHost";
+import { NovelRuntimeSession } from "./runtimeSession";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "./repositoryState";
 import { resolveSearchResultsWithFallback } from "../search/queryFallback";
 import type { NovelCatalogEntry, NovelRepositoryRecord } from "./contracts";
@@ -15,7 +16,11 @@ import {
   type NovelSourceSearchResult,
 } from "./domain";
 
-const runtimeHost = new TauriNovelRuntimeHostAdapter();
+const runtimeHost = new NovelRuntimeSession(new TauriNovelRuntimeHostAdapter());
+
+export function acquireInstalledNovelSourcesRuntime(): () => Promise<void> {
+  return runtimeHost.acquire();
+}
 
 type NovelSourceRuntimeEntry = {
   name: string | null;

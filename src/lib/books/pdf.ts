@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime";
 import { filePathAsStableUrl, writeBookCover } from "./storage";
 import { extractIsbns } from "./isbn";
 import type { BookSectionSummaryItem } from "./types";
@@ -148,7 +149,7 @@ function readAllMetadata(metadata: any): unknown {
 }
 
 function prettifyPdfOutlineLabel(label: unknown, pageNumber: number) {
-  return readOptionalText(label) ?? `Page ${pageNumber}`;
+  return readOptionalText(label) ?? translate("bookDetail_pageNumber", { number: pageNumber });
 }
 
 export function createPdfPageHref(pageNumber: number): string {
@@ -168,7 +169,7 @@ export function resolvePdfSectionLabel(
   pageNumber: number,
 ): string {
   if (!Array.isArray(sectionsSummary) || !sectionsSummary.length) {
-    return `Page ${pageNumber}`;
+    return translate("bookDetail_pageNumber", { number: pageNumber });
   }
 
   let bestMatch: BookSectionSummaryItem | null = null;
@@ -182,7 +183,7 @@ export function resolvePdfSectionLabel(
     }
   }
 
-  return bestMatch?.label ?? `Page ${pageNumber}`;
+  return bestMatch?.label ?? translate("bookDetail_pageNumber", { number: pageNumber });
 }
 
 async function resolveOutlineDestinationPage(

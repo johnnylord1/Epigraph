@@ -148,6 +148,7 @@
   let activeBooksStandardFilter: "saved" | "downloaded" | "finished" = $state("saved");
   let settledLibrarySection: LibrarySectionKind = $state(store.librarySection);
   let genreScrollEl: HTMLDivElement | null = $state(null);
+  let booksLibraryBody: ReturnType<typeof BooksLibraryBody> | undefined = $state();
   let genreDragStartX = 0;
   let genreDragStartScrollLeft = 0;
   let genreDragActive = $state(false);
@@ -1268,10 +1269,13 @@
   }
 
   const activeHeroTitle = $derived(visualLibrarySection === "books" ? $_("library.sections.books") : $_("library.sections.comics"));
-  const activeHeroCountLabel = $derived(
+  const activeHeroCount = $derived(
     visualLibrarySection === "books"
-      ? $_("library.count.titles", { count: store.books.length + novelsLibraryState.entries.length })
-      : $_("library.count.titles", { count: comicsSectionState?.counts.library ?? 0 }),
+      ? store.books.length + novelsLibraryState.entries.length
+      : comicsSectionState?.counts.library ?? 0,
+  );
+  const activeHeroCountLabel = $derived(
+    activeHeroCount === 1 ? $_("library.count.titleOne") : $_("library.count.titles", { count: activeHeroCount }),
   );
   const booksStandardCollections = $derived<LibraryCollectionVM[]>([
     {
@@ -1560,29 +1564,12 @@
     return undefined;
   }
 
-  function formatLibraryUpdateProgress(jobsInfo: any) {
-    const finished = Number(jobsInfo?.finishedJobs ?? 0);
-    const total = Number(jobsInfo?.totalJobs ?? 0);
-    const skippedMangas = Number(jobsInfo?.skippedMangasCount ?? 0);
-    if (total > 0) {
-      const skipped = skippedMangas > 0 ? `, ${skippedMangas} skipped by folder rules` : "";
-      if (finished <= 0 && jobsInfo?.isRunning) {
-        return `Starting update for ${total} titles${skipped}.`;
-      }
-      const current = Math.min(finished, total);
-      const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
-      return `Checking titles ${current}/${total} · ${percent}%${skipped}.`;
-    }
-    if (jobsInfo?.isRunning) return "Suwayomi is checking your library.";
-    return "Preparing library update.";
-  }
-
   async function openLibraryRefreshDialog() {
     if (store.libraryUpdateInFlight) {
       await clearStaleLibraryUpdateInFlight();
     }
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
-      showSharedLibraryUpdateProgress("Library update already running.", 1800);
+      showSharedLibraryUpdateProgress(translate("libraryUpdate.alreadyRunning"), 1800);
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
@@ -1610,13 +1597,13 @@
     });
     const updatedAt = updateRun.updatedAt;
     updateSettings({ lastLibraryUpdateAt: updatedAt });
-    showSharedLibraryUpdateProgress("Refreshing local Comics data.");
+    showSharedLibraryUpdateProgress(translate("libraryUpdate.refreshingComics"));
     cache.clearGroup(CACHE_GROUPS.LIBRARY);
     await waitForLibraryLoadIdle();
     await loadData();
     bumpLibraryCoverCacheGeneration();
     if (updateRun.cancelled) {
-      showSharedLibraryUpdateProgress("Comics library update stopped.", 1800);
+      showSharedLibraryUpdateProgress(translate("libraryUpdate.comicsStopped"), 1800);
       addToast({
         kind: "info",
         title: translate("ui_comicsUpdateStopped"),
@@ -1625,7 +1612,7 @@
       return updateRun;
     }
     if (updateRun.changedMangaIds.length > 0) {
-      showSharedLibraryUpdateProgress("Reconciling changed titles.");
+      showSharedLibraryUpdateProgress(translate("libraryUpdate.reconciling"));
     }
     const comicsReconcile = await reconcileCurrentLibraryChaptersAfterUpdate(
       beforeUpdate,
@@ -1636,7 +1623,7 @@
     const entries = recordComicsUpdateNotifications(comicsReconcile.notifications, updatedAt);
     const reconcileIssues = comicsReconcile.failedIds.map((mangaId) => {
       const manga = store.libraryMangaSnapshot.find((entry) => entry.id === mangaId) ?? beforeUpdate.find((entry) => entry.id === mangaId);
-      const sourceName = manga?.source?.displayName || manga?.source?.name || manga?.sourceId || "Unknown source";
+      const sourceName = manga?.source?.displayName || manga?.source?.name || manga?.sourceId || translate("libraryUpdate.unknownSource");
       return {
         runId: `comics-reconcile:${updatedAt}`,
         contentKind: "manga" as const,
@@ -1645,13 +1632,13 @@
         sourceId: String(manga?.source?.id ?? manga?.sourceId ?? "unknown"),
         sourceName,
         extensionName: sourceName,
-        message: "Epigraph could not verify this title's chapter list after the update.",
+        message: translate("libraryUpdate.chapterListUnverified"),
         errorType: "unknown" as const,
       };
     });
     const issues = recordLibraryUpdateIssues([...updateRun.issues, ...reconcileIssues], updatedAt);
     showSharedLibraryUpdateProgress(
-      formatLibraryUpdateFinalSummary("Comics library", updateRun.jobsInfo, issues.length),
+      formatLibraryUpdateFinalSummary(translate("feedback.comicsLibrary"), updateRun.jobsInfo, issues.length),
       1800,
       libraryUpdateProgressNumbers(updateRun.jobsInfo),
     );
@@ -1659,9 +1646,9 @@
       kind: issues.length > 0 ? "info" : "success",
       title: issues.length > 0 ? translate("ui_comicsLibraryRefreshedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibrarySyncCompleted"),
       body: issues.length > 0
-        ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update across ${new Set(issues.map((issue) => issue.sourceId)).size} source${new Set(issues.map((issue) => issue.sourceId)).size === 1 ? "" : "s"}.`
+        ? translate("libraryUpdate.comicsIssuesBody", { count: issues.length, sources: new Set(issues.map((issue) => issue.sourceId)).size })
         : entries.length > 0
-          ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+          ? translate("libraryUpdate.newChaptersBody", { chapters: entries.reduce((sum, entry) => sum + entry.chapterDelta, 0), titles: entries.length })
           : translate("ui_epigraphRefreshedYourComicsLibrary"),
       createdAt: updatedAt,
     });
@@ -1669,9 +1656,9 @@
       kind: issues.length > 0 ? "info" : "success",
       title: issues.length > 0 ? translate("ui_comicsUpdatedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibraryUpdated"),
       body: issues.length > 0
-        ? `${issues.length} title${issues.length === 1 ? "" : "s"} could not update. See Recent Activity.`
+        ? translate("libraryUpdate.issuesSeeActivity", { count: issues.length })
         : entries.length > 0
-          ? `${entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)} new chapters added across ${entries.length} titles.`
+          ? translate("libraryUpdate.newChaptersBody", { chapters: entries.reduce((sum, entry) => sum + entry.chapterDelta, 0), titles: entries.length })
           : translate("ui_epigraphRefreshedYourComicsLibrary"),
     });
     return updateRun;
@@ -1692,7 +1679,7 @@
   }
 
   async function refreshBooksLibrary(options: { categoryNovelIds?: readonly string[] | null } = {}) {
-    showSharedLibraryUpdateProgress("Refreshing Books and source novels.");
+    showSharedLibraryUpdateProgress(translate("libraryUpdate.refreshingBooks"));
     const updatedAt = Date.now();
     updateSettings({ lastLibraryUpdateAt: updatedAt });
     const result = await refreshNovelLibraryFromSources({
@@ -1710,10 +1697,10 @@
         const current = Math.max(0, Math.min(total, checked));
         const percent = current >= total ? 100 : Math.max(0, Math.min(99, Math.floor((current / total) * 100)));
         const titlePart = currentTitle ? ` - ${currentTitle}` : "";
-        const newPart = newChapters > 0 ? `, ${newChapters} new` : "";
-        const failedPart = failed > 0 ? `, ${failed} failed` : "";
+        const newPart = newChapters > 0 ? translate("libraryUpdate.newPart", { count: newChapters }) : "";
+        const failedPart = failed > 0 ? translate("libraryUpdate.failedPart", { count: failed }) : "";
         showSharedLibraryUpdateProgress(
-          `Checking source novels ${current}/${total}${newPart}${failedPart}${titlePart}.`,
+          translate("libraryUpdate.novelProgress", { current, total, newPart, failedPart, titlePart }),
           0,
           { current, total, percent },
         );
@@ -1740,12 +1727,17 @@
       retryKind: failure.retryKind,
       recoveryHint: failure.recoveryHint,
     })), updatedAt);
-    const title = result.failed > 0 ? "Books library refreshed with warnings" : "Books library updated";
+    const title = result.failed > 0 ? translate("libraryUpdate.booksWarningsTitle") : translate("libraryUpdate.booksUpdatedTitle");
     const body = result.checked > 0
-      ? `${result.updated}/${result.checked} source novels refreshed${result.newChapters > 0 ? `, ${result.newChapters} new chapters found` : ""}${result.failed > 0 ? `, ${result.failed} failed` : ""}.`
-      : "No source novels were available to refresh.";
+      ? translate("libraryUpdate.booksSummary", {
+        updated: result.updated,
+        checked: result.checked,
+        newChapters: result.newChapters > 0 ? translate("libraryUpdate.booksNewChaptersPart", { count: result.newChapters }) : "",
+        failed: result.failed > 0 ? translate("libraryUpdate.failedPart", { count: result.failed }) : "",
+      })
+      : translate("libraryUpdate.booksNothing");
     showSharedLibraryUpdateProgress(
-      "Books library update finished.",
+      translate("libraryUpdate.booksFinished"),
       1800,
       result.total > 0 ? { current: result.checked, total: result.total, percent: 100 } : undefined,
     );
@@ -1753,7 +1745,7 @@
       kind: result.failed > 0 ? "info" : "success",
       title: novelNotifications.length > 0 ? translate("ui_newNovelChaptersFound") : title,
       body: novelIssues.length > 0
-        ? `${body} ${novelIssues.length} issue${novelIssues.length === 1 ? "" : "s"} were saved to Recent Activity.`
+        ? translate("libraryUpdate.issuesSaved", { body, count: novelIssues.length })
         : body,
     });
     addToast({
@@ -1768,7 +1760,7 @@
       await clearStaleLibraryUpdateInFlight();
     }
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
-      showSharedLibraryUpdateProgress("Library update already running.", 1800);
+      showSharedLibraryUpdateProgress(translate("libraryUpdate.alreadyRunning"), 1800);
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
@@ -1793,7 +1785,7 @@
       }
     } catch (refreshError) {
       console.error(refreshError);
-      showSharedLibraryUpdateProgress("Library update failed.", 1800);
+      showSharedLibraryUpdateProgress(translate("libraryUpdate.failed"), 1800);
       addToast({
         kind: "error",
         title: translate("ui_couldNotUpdateLibrary"),
@@ -1874,7 +1866,7 @@
       addToast({
         kind: "error",
         title: translate("ui_couldNotRemoveEveryTitle"),
-        body: `${failedIds.length} of ${idSet.size} selected titles could not be removed.`,
+        body: translate("libraryUpdate.removeSelectedFailed", { failed: failedIds.length, total: idSet.size }),
       });
     }
   }
@@ -1952,7 +1944,7 @@
       addToast({
         kind: "error",
         title: translate("ui_couldNotUpdateEveryFolderItem"),
-        body: `${failed} of ${ids.length} selected titles could not be updated.`,
+        body: translate("libraryUpdate.updateSelectedFailed", { failed, total: ids.length }),
       });
     }
   }
@@ -2159,6 +2151,10 @@
                 onShowProgressChange={handleShowProgressChange}
                 onShowOutlineChange={handleShowOutlineChange}
                 onRefresh={openLibraryRefreshDialog}
+                onImport={visualLibrarySection === "books" && localizedBooksSectionVm.dragDropEnabled
+                  ? () => void booksLibraryBody?.pickBooksToImport()
+                  : undefined}
+                importLabel={$_("library.import.pick")}
                 refreshPending={manualRefreshInFlight || store.libraryUpdateInFlight}
                 showSearch={false}
               />
@@ -2173,6 +2169,7 @@
       aria-hidden={visualLibrarySection !== "books"}
     >
       <BooksLibraryBody
+        bind:this={booksLibraryBody}
         vm={localizedBooksSectionVm}
         active={store.navPage === "library" && visualLibrarySection === "books"}
         books={genreFilteredBooks}
@@ -2239,7 +2236,7 @@
             <h2 id="library-refresh-title">{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</h2>
           </div>
           <button class="n-icon-btn library-refresh-modal__close" type="button" aria-label={$_("library.refresh.close")} onclick={closeLibraryRefreshDialog} disabled={manualRefreshInFlight || store.libraryUpdateInFlight}>
-            <span aria-hidden="true">x</span>
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
           </button>
         </div>
         <div class="library-refresh-options">
@@ -2251,6 +2248,7 @@
           >
             <span>{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</span>
             <small>{store.librarySection === "comics" ? $_("library.refresh.updateComicsHint") : $_("library.refresh.updateBooksHint")}</small>
+            <i class="material-symbols-outlined library-refresh-option__arrow" aria-hidden="true">arrow_forward</i>
           </button>
           <button
             type="button"
@@ -2260,6 +2258,7 @@
           >
             <span>{$_("library.refresh.updateAll")}</span>
             <small>{$_("library.refresh.updateAllHint")}</small>
+            <i class="material-symbols-outlined library-refresh-option__arrow" aria-hidden="true">arrow_forward</i>
           </button>
         </div>
       </div>
@@ -2315,7 +2314,7 @@
     box-shadow: var(--component-library-refresh-modal-shadow);
     color: var(--component-library-fg);
     font-family: var(--component-library-font);
-    animation: refreshModalIn 0.14s ease both;
+    animation: scaleIn 460ms var(--ui-spring) both;
   }
 
   .library-refresh-modal__head {
@@ -2338,16 +2337,11 @@
     width: 32px;
     height: 32px;
     flex: 0 0 auto;
-    border-color: var(--component-library-refresh-option-border);
-    background: var(--component-library-refresh-option-bg);
   }
 
   .library-refresh-modal__close span {
     color: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1;
+    font-size: 18px;
   }
 
   .library-refresh-options {
@@ -2363,14 +2357,36 @@
     gap: 6px;
     width: 100%;
     min-height: 74px;
-    padding: 13px 14px 13px 18px;
+    padding: 13px 44px 13px 18px;
     border: 1px solid var(--component-library-refresh-option-border);
     border-radius: var(--radius-lg);
     background: var(--component-library-refresh-option-bg);
     color: var(--component-library-fg);
     text-align: left;
     cursor: pointer;
-    transition: border-color var(--t-base), background var(--t-base), transform var(--t-fast), box-shadow var(--t-base);
+    transition: background 250ms ease, transform 450ms var(--ui-spring), box-shadow 250ms ease;
+  }
+
+  .library-refresh-option__arrow {
+    position: absolute;
+    top: 50%;
+    right: 16px;
+    color: var(--text-muted);
+    font-size: 18px;
+    font-style: normal;
+    transform: translate(-4px, -50%);
+    opacity: 0.5;
+    transition: transform 500ms var(--ui-bounce), opacity 250ms ease, color 250ms ease;
+  }
+
+  .library-refresh-option:hover:not(:disabled) .library-refresh-option__arrow {
+    color: var(--accent-fg);
+    opacity: 1;
+    transform: translate(0, -50%);
+  }
+
+  .library-refresh-option:active:not(:disabled) {
+    transform: scale(0.98);
   }
 
   .library-refresh-option::before {
@@ -2382,7 +2398,7 @@
     width: 2px;
     border-radius: var(--radius-full);
     background: var(--component-library-refresh-option-accent-bg);
-    opacity: 0.72;
+    opacity: 0;
   }
 
   .library-refresh-option:hover:not(:disabled) {
@@ -2421,12 +2437,9 @@
   .library-refresh-option--primary::before {
     background: var(--accent-bright);
     box-shadow: var(--component-library-refresh-option-accent-shadow);
+    opacity: 0.9;
   }
 
-  @keyframes refreshModalIn {
-    from { opacity: 0; transform: translateY(8px) scale(0.985); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
 
   .library-hero {
     position: relative;
@@ -2503,10 +2516,6 @@
     padding-left: var(--library-system-chip-indent, 18px);
   }
 
-  .library-chip-row--system :global(.n-chip.is-active) {
-    opacity: 1;
-  }
-
   .chip-divider {
     width: 1px;
     height: var(--library-chip-divider-height, 16px);
@@ -2519,21 +2528,15 @@
   .library-chip-row :global(.n-chip),
   .library-chip-row :global(.n-genre-chip) {
     flex-shrink: 0;
-    min-height: var(--library-chip-height, 32px);
-    padding-inline: var(--library-chip-padding-x, 18px);
-    font-size: var(--library-chip-font-size, 11px);
+    min-height: var(--library-chip-height, 30px);
+    padding-inline: var(--library-chip-padding-x, 14px);
+    font-size: var(--library-chip-font-size, 12.5px);
   }
 
   .library-chip-row--system :global(.n-chip.n-chip--system) {
     min-height: 28px;
-    padding-inline: 14px;
-    font-size: 10px;
-    opacity: 0.88;
-    letter-spacing: 0.055em;
-  }
-
-  .library-chip-row--system :global(.n-chip.n-chip--system.is-active) {
-    opacity: 1;
+    padding-inline: 12px;
+    font-size: 12px;
   }
 
   .library-genre-frame {

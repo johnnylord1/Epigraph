@@ -46,8 +46,8 @@
     font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
   }
 

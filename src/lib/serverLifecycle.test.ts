@@ -1,6 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("server lifecycle notifications", () => {
+  // Startup lazily loads the managed runtime, whose graph reaches the message catalog; transform it once
+  // up front so each test measures lifecycle work rather than the cold catalog transform.
+  beforeAll(async () => {
+    await import("./manga/runtime/managed");
+    vi.resetModules();
+  }, 30_000);
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

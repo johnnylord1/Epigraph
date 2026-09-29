@@ -12,6 +12,7 @@
   import LibraryCollectionsBar from "./LibraryCollectionsBar.svelte";
   import LibraryHeader from "./LibraryHeader.svelte";
   import LibraryToolbar from "./LibraryToolbar.svelte";
+  import { enterOnChange } from "../../lib/motion/motion";
 
   type Props = {
     sectionTabs: LibrarySectionTabVM[];
@@ -70,6 +71,9 @@
     onShowOutlineChange = () => {},
     children,
   }: Props = $props();
+
+  // Comics and books share this shell; switching between them plays the view arrival.
+  const activeSectionId = $derived(sectionTabs.find((tab) => tab.active)?.id ?? "");
 </script>
 
 <div class="root">
@@ -132,12 +136,12 @@
   </LibraryHeader>
 
   {#if hero}
-    <div class="hero-slot">
+    <div class="hero-slot" use:enterOnChange={activeSectionId}>
       {@render hero?.()}
     </div>
   {/if}
 
-  <div class="body-slot">
+  <div class="body-slot" use:enterOnChange={activeSectionId}>
     {@render children?.()}
   </div>
 </div>

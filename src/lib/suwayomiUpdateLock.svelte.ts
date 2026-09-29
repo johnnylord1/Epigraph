@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./tauri/invoke";
 
 export const SUWAYOMI_UPDATE_WRITE_BLOCKED_MESSAGE =
   "Suwayomi is updating. Please try again after the update finishes.";

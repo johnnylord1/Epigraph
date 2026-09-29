@@ -37,7 +37,7 @@ describe("SplashScreen", () => {
     };
   });
 
-  test("ringFull without app lock exits after the shortened dwell and exit timing", async () => {
+  test("ringFull without app lock exits after the short dwell and the dissolve handoff", async () => {
     const onReady = vi.fn();
 
     render(SplashScreen, {
@@ -49,7 +49,7 @@ describe("SplashScreen", () => {
       },
     });
 
-    await vi.advanceTimersByTimeAsync(499);
+    await vi.advanceTimersByTimeAsync(799);
     expect(onReady).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translate } from "../../lib/i18n/runtime";
   import {
     ArrowsClockwise,
     Books,
@@ -15,7 +16,7 @@
   type Layout = "panel" | "compact" | "center";
 
   let {
-    eyebrow = "Status",
+    eyebrow = translate("downloads_summary_status"),
     title,
     body = "",
     detail = "",

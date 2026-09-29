@@ -5,6 +5,7 @@
   import type { ManagedExtension } from "../../lib/managedExtensions";
   import type {
     ObservedCompatibilityReport,
+    ObservedCompatibilityStage,
     SourcePreference,
     SourcePreferenceAccess,
     SourcePreferenceGroup,
@@ -137,6 +138,31 @@
             ? $_("extensionSettings_cancelled")
             : $_("extensionSettings_inconclusive");
   }
+
+  const stageLabelKeys: Record<string, string> = {
+    "runtime-readiness": "extensionSettings_stageRuntimeReadiness",
+    "source-registration": "extensionSettings_stageSourceRegistration",
+    "live-search": "extensionSettings_stageLiveSearch",
+    "http-parser-internals": "extensionSettings_stageHttpParserInternals",
+  };
+
+  function stageLabel(stage: ObservedCompatibilityStage): string {
+    const key = stageLabelKeys[stage.id];
+    return key ? $_(key) : stage.label;
+  }
+
+  function stageStatusLabel(status: ObservedCompatibilityStage["status"]): string {
+    switch (status) {
+      case "PASS": return $_("extensionSettings_passed");
+      case "FAIL": return $_("extensionSettings_failed");
+      case "SKIPPED": return $_("extensionSettings_skipped");
+      case "UNSUPPORTED": return $_("extensionSettings_unsupported");
+      case "NOT_OBSERVED": return $_("extensionSettings_notObserved");
+      case "TIMED_OUT": return $_("extensionSettings_timedOut");
+      case "CANCELLED": return $_("extensionSettings_cancelled");
+      default: return $_("extensionSettings_inconclusive");
+    }
+  }
 </script>
 
 <div class="settingsBackdrop" onclick={onClose} aria-hidden="true"></div>
@@ -228,8 +254,8 @@
       <div class="compatibilityStages">
         {#each compatibilityReport.stages as stage}
           <div>
-            <span>{stage.label}</span>
-            <strong>{stage.status}</strong>
+            <span>{stageLabel(stage)}</span>
+            <strong>{stageStatusLabel(stage.status)}</strong>
           </div>
         {/each}
       </div>
@@ -624,8 +650,8 @@
   .compatibilitySection summary strong {
     color: var(--component-sources-installed-fg);
     font-family: var(--font-ui);
-    font-size: 9px;
-    text-transform: uppercase;
+    font-size: 11px;
+    text-transform: none;
   }
 
   .compatibilitySection summary strong.reportFailed {
@@ -983,7 +1009,7 @@
     font-family: var(--font-ui);
     font-size: 8px;
     font-weight: 800;
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .preferenceRow {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { hadPersistedStoreAtStartup, store } from "../../store/state.svelte";
   import type { EpigraphRestorePlan } from "../../lib/backup/epigraphRestorePlanner";
@@ -10,6 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
+  import { enterView } from "../../lib/motion/motion";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -47,7 +48,7 @@
   const readerActive = $derived(!!store.activeChapter || !!store.activeBookReaderId || !!store.activeNovelReader);
 
   type PageKey = NavPage;
-  type DetailKey = "book" | "series";
+  type DetailKey = "book" | "novel" | "series";
   type PageModule = { default: any };
 
   const pageLoaders: Record<PageKey, () => Promise<PageModule>> = {
@@ -60,6 +61,7 @@
 
   const detailLoaders: Record<DetailKey, () => Promise<PageModule>> = {
     book: () => import("../pages/BookDetail.svelte"),
+    novel: () => import("../pages/NovelDetail.svelte"),
     series: () => import("../pages/SeriesDetail.svelte"),
   };
 
@@ -76,6 +78,47 @@
   let detailComponent = $state<any>(null);
   let detailKey = $state<DetailKey | null>(null);
   let detailLoadedKey = $state<DetailKey | null>(null);
+  let mainElement = $state<HTMLDivElement>();
+  // A page that was loaded before renders in the same frame as the switch, so no loading state
+  // flashes between two cached pages (the load effect only runs after that first render).
+  const cachedPageForNav = $derived.by(() => {
+    const page = navPage;
+    return pageLoadedKey === page || pageComponentCache.has(page) ? pageComponentCache.get(page) ?? null : null;
+  });
+  let enteredPage = "";
+  // Page arrivals follow the menu: moving down the sidebar rises from below, moving up drops in.
+  const NAV_ORDER: string[] = ["home", "library", "search", "downloads", "settings"];
+  let enteredDetail = "";
+
+  // Every arrival of a page plays once; a kept-alive page replays when the user returns to it.
+  $effect(() => {
+    const page = navPage;
+    const ready = page === "library" ? !!libraryComponent : pageLoadedKey === page || !!cachedPageForNav;
+    if (!ready || !mainElement || page === enteredPage) return;
+    const direction = NAV_ORDER.indexOf(page) >= NAV_ORDER.indexOf(enteredPage) ? 1 : -1;
+    enteredPage = page;
+    void tick().then(() => {
+      const root = page === "library"
+        ? mainElement?.querySelector(":scope > .page-keepalive.is-active > *")
+        : mainElement?.querySelector(":scope > :not(.page-keepalive):not(.detail-layer):not(.activity-overlay-pending)");
+      enterView(root, { y: 24 * direction });
+    });
+  });
+
+  // A detail view (a series, a novel or a book) rises in over the page each time a different work opens.
+  const detailIdentity = $derived(
+    detailLoadedKey === "series" && store.activeManga ? `series:${store.activeManga.id}`
+      : detailLoadedKey === "novel" && store.activeNovelDetail ? `novel:${store.activeNovelDetail.novel.id}`
+      : detailLoadedKey === "book" && hasActiveBook ? `book:${store.activeBookId}`
+      : "",
+  );
+  $effect(() => {
+    const identity = detailIdentity;
+    if (identity === enteredDetail) return;
+    enteredDetail = identity;
+    if (!identity) return;
+    void tick().then(() => enterView(mainElement?.querySelector(":scope > .detail-layer > *"), { y: 16 }));
+  });
   let detailError = $state<string | null>(null);
   let detailLoadRequestId = 0;
   let ActivityOverlayComponent = $state<any>(null);
@@ -145,6 +188,12 @@
     }
   }
 
+  function detailActive(key: DetailKey) {
+    if (key === "series") return !!store.activeManga;
+    if (key === "novel") return !!store.activeNovelDetail;
+    return hasActiveBook;
+  }
+
   async function loadDetail(nextKey: DetailKey) {
     const requestId = ++detailLoadRequestId;
     detailKey = nextKey;
@@ -202,6 +251,11 @@
       return;
     }
 
+    if (store.activeNovelDetail) {
+      void loadDetail("novel");
+      return;
+    }
+
     if (hasActiveBook) {
       void loadDetail("book");
       return;
@@ -235,12 +289,12 @@
 
 {#snippet detailSurface()}
   {#if navPage !== "settings" && navPage !== "downloads" && !readerActive}
-    {#if detailComponent && ((detailLoadedKey === "series" && store.activeManga) || (detailLoadedKey === "book" && hasActiveBook))}
+    {#if detailComponent && detailLoadedKey && detailActive(detailLoadedKey)}
       {@const DetailPage = detailComponent}
       <div class="detail-layer">
         <DetailPage />
       </div>
-    {:else if detailKey && ((detailKey === "series" && store.activeManga) || (detailKey === "book" && hasActiveBook))}
+    {:else if detailKey && detailActive(detailKey)}
       <div class="detail-layer detail-layer--state">
         <NocturneState
           layout="center"
@@ -280,7 +334,7 @@
 {:else}
 <div class="root epigraph-app-shell">
   <Sidebar />
-  <div class="main" class:main--settings={navPage === "settings"}>
+  <div class="main" class:main--settings={navPage === "settings"} bind:this={mainElement}>
     {#if libraryComponent}
       {@const LibraryPage = libraryComponent}
       <div
@@ -353,8 +407,8 @@
               }]}
             />
           </div>
-        {:else if pageComponent && pageLoadedKey === navPage}
-          {@const Page = pageComponent}
+        {:else if cachedPageForNav || (pageComponent && pageLoadedKey === navPage)}
+          {@const Page = cachedPageForNav ?? pageComponent}
           <Page
             {onOpenThemeEditor}
             {backupAuditPlan}
@@ -489,6 +543,8 @@
     display: grid;
     place-items: center;
     padding: 32px;
+    /* Only a slow first load shows its opening state; fast loads never flash it. */
+    animation: fadeIn 240ms ease 180ms both;
   }
 
 </style>

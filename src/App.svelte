@@ -15,6 +15,7 @@
   import {
     DEFAULT_LOCAL_PROFILE_ID,
     type LocalProfileId,
+    localProfileDisplayName,
     normalizeLocalProfileId as normalizeLocalProfileIdFromSession,
     normalizeServerUrl as normalizeServerUrlFromSession,
     resolveSessionProfile as resolveSessionProfileFromLocalProfiles,
@@ -67,6 +68,7 @@
   import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
   import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
   import { isEditableKeyboardTarget } from "./lib/keybinds";
+  import { observeMotionWake } from "./lib/motionWake";
   import { hasActiveReaderCommandScope } from "./lib/reader/commands";
   import {
     configureLocalServerRuntime,
@@ -85,8 +87,10 @@
   import { getImageCacheStats, trimImageCacheIfLoaded } from "./lib/imageCacheMetrics";
   import type { EpigraphUpdateStatus } from "./lib/epigraphUpdater";
   import { _, applyAppLanguage, translate } from "./lib/i18n/runtime";
+  import { operationFailure, presentOperationFailure, restorePlanSummary, type OperationFailure } from "./lib/i18n/operationPresentation";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
+  import { playShellEntrance, pointerEffects, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
   import { FIRST_RUN_COMPLETED_EVENT, writeCompletedFirstRunMarker } from "./lib/firstRun";
 
@@ -147,7 +151,6 @@
     | "toaster"
     | "mangaReader"
     | "bookReader"
-    | "novelDetail"
     | "novelReader"
     | "themeEditor"
     | "mangaPreview"
@@ -159,7 +162,6 @@
     toaster: () => import("./components/layout/Toaster.svelte"),
     mangaReader: () => import("./components/reader/Reader.svelte"),
     bookReader: () => import("./components/reader/BookReader.svelte"),
-    novelDetail: () => import("./components/pages/NovelDetail.svelte"),
     novelReader: () => import("./components/reader/NovelReader.svelte"),
     themeEditor: () => import("./components/settings/ThemeEditor.svelte"),
     mangaPreview: () => import("./components/shared/MangaPreview.svelte"),
@@ -171,7 +173,6 @@
   let ToasterComponent = $state<any>(null);
   let MangaReaderComponent = $state<any>(null);
   let BookReaderComponent = $state<any>(null);
-  let NovelDetailComponent = $state<any>(null);
   let NovelReaderComponent = $state<any>(null);
   let novelReaderInstance = $state<NovelReaderPreparation | null>(null);
   const prepareNovelReader = createNovelReaderPreparation(
@@ -248,12 +249,12 @@
   let startupLandingApplied = $state(false);
   let failed        = $state(false);
   let notConfigured = $state(false);
-  let startupFailureTitle = $state(translate("startup.couldNotStartProfile", { profile: "MAIN" }));
-  let startupFailureDetail = $state(translate("startup.profileUnavailable", {
-    profile: "MAIN",
+  let startupFailureTitle = $state(translate("startup.couldNotStartProfile", { profile: localProfileDisplayName("MAIN", translate) }));
+  let startupFailureDetail = $state<string | OperationFailure>(translate("startup.profileUnavailable", {
+    profile: localProfileDisplayName("MAIN", translate),
     serverUrl: "http://127.0.0.1:4567",
   }));
-  let startupStatusText = $state(translate("startup.initializingProfile", { profile: "MAIN" }));
+  let startupStatusText = $state(translate("startup.initializingProfile", { profile: localProfileDisplayName("MAIN", translate) }));
   let startupHealthWatchInFlight = false;
   let startupFailsafeTimer: number | null = null;
   let idle          = $state(false);
@@ -388,15 +389,6 @@
     if (store.activeNovelReader && !NovelReaderComponent) {
       void ensureLazyComponent("novelReader").then((component) => {
         if (component) NovelReaderComponent = component;
-      });
-    }
-  });
-
-  $effect(() => {
-    lazyRetryEpoch;
-    if (store.activeNovelDetail && !NovelDetailComponent) {
-      void ensureLazyComponent("novelDetail").then((component) => {
-        if (component) NovelDetailComponent = component;
       });
     }
   });
@@ -778,7 +770,7 @@
       await preloadLibrarySnapshot(true);
       bumpLibraryCoverCacheGeneration();
       if (updateRun.cancelled) {
-        updateRuntime.showLibraryUpdateProgress("Library update stopped.", 1800);
+        updateRuntime.showLibraryUpdateProgress(translate("libraryUpdate.stoppedPlain"), 1800);
         return;
       }
       const comicsReconcile = await reconcileLibrarySnapshotChaptersAfterUpdate(
@@ -811,7 +803,7 @@
       );
       const comicsReconcileIssues = comicsReconcile.failedIds.map((mangaId) => {
         const manga = store.libraryMangaSnapshot.find((entry) => entry.id === mangaId) ?? beforeUpdate.find((entry) => entry.id === mangaId);
-        const sourceName = manga?.source?.displayName || manga?.source?.name || manga?.sourceId || "Unknown source";
+        const sourceName = manga?.source?.displayName || manga?.source?.name || manga?.sourceId || translate("libraryUpdate.unknownSource");
         return {
           runId: `comics-reconcile:${updatedAt}`,
           contentKind: "manga" as const,
@@ -820,7 +812,7 @@
           sourceId: String(manga?.source?.id ?? manga?.sourceId ?? "unknown"),
           sourceName,
           extensionName: sourceName,
-          message: "Epigraph could not verify this title's chapter list after the update.",
+          message: translate("libraryUpdate.chapterListUnverified"),
           errorType: "unknown" as const,
         };
       });
@@ -910,21 +902,6 @@
       void clearStaleLibraryUpdateInFlight();
     }, 5_000);
   });
-
-  function formatAutomaticLibraryUpdateProgress(jobsInfo: any) {
-    const finished = Number(jobsInfo?.finishedJobs ?? 0);
-    const total = Number(jobsInfo?.totalJobs ?? 0);
-    const skippedMangas = Number(jobsInfo?.skippedMangasCount ?? 0);
-    if (total > 0) {
-      const current = Math.max(0, Math.min(total, finished));
-      const percent = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
-      const skipped = skippedMangas > 0 ? `, ${skippedMangas} skipped by folder rules` : "";
-      return current <= 0 && jobsInfo?.isRunning
-        ? `Starting update for ${total} titles${skipped}.`
-        : `Checking titles ${current}/${total} · ${percent}%${skipped}.`;
-    }
-    return jobsInfo?.isRunning ? "Suwayomi is checking your library." : "Preparing library update.";
-  }
 
   async function reconcileLibrarySnapshotChaptersAfterUpdate(
     beforeUpdate: Manga[],
@@ -1657,9 +1634,10 @@
   }
 
   function activeProfileLabel(): string {
-    return store.runtimeResolvedLocalProfileMeta?.label
-      ?? store.runtimeServerLabel
-      ?? "CUSTOM";
+    return localProfileDisplayName(
+      store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+      translate,
+    );
   }
 
   function startupUnavailableDetail() {
@@ -1784,8 +1762,8 @@
 
       addToast({
         kind: restored.issues.length ? "info" : "success",
-        title: restored.issues.length ? "Books restore loaded with warnings" : "Books restore loaded",
-        body: `${restored.books.length} restored book${restored.books.length === 1 ? "" : "s"}.`,
+        title: restored.issues.length ? $_("feedback.booksRestoreLoadedWithWarnings") : $_("feedback.booksRestoreLoaded"),
+        body: $_("feedback.booksRestoredCount", { count: restored.books.length }),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Books restore audit failed.";
@@ -1916,13 +1894,13 @@
     restoredNeedsPluginCount: number;
     restoredMetadataOnlyCount: number;
   }): string {
-    return [
-      `${summary.totalEntries} entries`,
-      `${summary.restoredUsableCount} usable`,
-      `${summary.restoredNeedsRepositoryCount} need repo`,
-      `${summary.restoredNeedsPluginCount} need plugin`,
-      `${summary.restoredMetadataOnlyCount} metadata-only`,
-    ].join(" · ");
+    return $_("feedback.novelsRestoreSummary", {
+      total: summary.totalEntries,
+      usable: summary.restoredUsableCount,
+      repository: summary.restoredNeedsRepositoryCount,
+      plugin: summary.restoredNeedsPluginCount,
+      metadata: summary.restoredMetadataOnlyCount,
+    });
   }
 
   async function applyPendingAuditEpigraphBackupPlan() {
@@ -1972,7 +1950,7 @@
             ? "success"
             : "info",
         title: $_("feedback.unifiedRestorePlanLoaded"),
-        body: plan.summary.summaryLabel,
+        body: restorePlanSummary(plan.summary, $_),
         duration: 20000,
       });
     } catch (error) {
@@ -2073,7 +2051,7 @@
 
       addToast({
         kind: toastKind,
-        title: hasBlocked ? "Novels restore classified with requirements" : "Novels restore classified",
+        title: hasBlocked ? $_("feedback.novelsRestoreClassifiedWithRequirements") : $_("feedback.novelsRestoreClassified"),
         body: novelsAuditSummaryBody(restored.summary),
         duration: 20000,
       });
@@ -2240,7 +2218,7 @@
       addToast({
         kind: "success",
         title: $_("feedback.mangaRestoreLoaded"),
-        body: `${finalStatus?.totalManga ?? parsed.parsedBackup.backupManga.length} manga restored into the current profile.`,
+        body: $_("feedback.mangaRestoredCount", { count: finalStatus?.totalManga ?? parsed.parsedBackup.backupManga.length }),
       });
     } catch (error) {
       const message = describeAuditError(error);
@@ -2265,7 +2243,7 @@
     serverProbeOk = true;
     shellReady = true;
     shellReadyAt = Date.now();
-    startupSplashVisible = false;
+    releaseStartupSplash();
     notifyServerReady(store.runtimeServerUrl);
     applyStartupLandingPage();
     await applyPendingAuditEpigraphBackupPlan().catch((error) => {
@@ -2484,6 +2462,9 @@
         });
     }
     updatePageBackgroundState();
+    // Pointer listeners only exist once the shell is ready; first-run steps and late content still
+    // need their entrance animations to run while motion is idle.
+    const stopMotionWake = observeMotionWake(document.body, () => !uiMotionActive && !pageHidden, scheduleUiMotionPause);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleWindowFocusStateChange, { passive: true });
     window.addEventListener("blur", handleWindowFocusStateChange, { passive: true });
@@ -2620,7 +2601,7 @@
           } else {
             failed = true;
             startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
-            startupFailureDetail = err?.message ?? startupUnavailableDetail();
+            startupFailureDetail = operationFailure(err, "outcomes.runtimeUnavailable");
             console.warn("Could not start server:", err);
           }
         }
@@ -2653,6 +2634,7 @@
       cancelled = true;
       cancelProbe = true;
       clearStartupFailsafe();
+      stopMotionWake();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocusStateChange);
       window.removeEventListener("blur", handleWindowFocusStateChange);
@@ -2821,6 +2803,13 @@
   $effect(() => {
     if (!shellReady) return;
     if (store.navPage !== "home") return;
+  });
+
+  // When the splash starts dissolving, the app arrives beneath it instead of simply being uncovered.
+  onMount(() => {
+    const handleSplashExit = () => playShellEntrance(document.getElementById("app-shell"));
+    window.addEventListener(SPLASH_EXIT_EVENT, handleSplashExit);
+    return () => window.removeEventListener(SPLASH_EXIT_EVENT, handleSplashExit);
   });
 
   $effect(() => {
@@ -3004,13 +2993,23 @@
       } catch (error) {
         failed = true;
         startupFailureTitle = translate("startup.couldNotStartProfile", { profile: activeProfileLabel() });
-        startupFailureDetail = error instanceof Error
-          ? error.message
-          : startupUnavailableDetail();
+        startupFailureDetail = operationFailure(error, "outcomes.runtimeUnavailable");
         return;
       }
     }
     startProbe();
+  }
+
+  // A ready server lets the splash finish on its own: it dwells, asks for the PIN when the app is
+  // locked, then dissolves while the app arrives (onReady hides it). Removing it here would skip
+  // both the handoff and the lock. The fallback only covers an unlocked splash that never reports.
+  let startupSplashFallback: ReturnType<typeof setTimeout> | null = null;
+  function releaseStartupSplash() {
+    if (lockEnabled || startupSplashFallback) return;
+    startupSplashFallback = setTimeout(() => {
+      startupSplashFallback = null;
+      if (shellReady && !failed && !notConfigured) startupSplashVisible = false;
+    }, 2500);
   }
 
   function handleBypass() {
@@ -3038,7 +3037,7 @@
 
     bootReadyNotified = true;
     if (!failed && !notConfigured) {
-      startupSplashVisible = false;
+      releaseStartupSplash();
     }
     queueMicrotask(() => {
       window.dispatchEvent(new CustomEvent("epigraph:boot-ready"));
@@ -3054,7 +3053,7 @@
       <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true} />
     {/if}
   {:else}
-    <div id="app-shell" class="root epigraph-app-shell" class:epigraph-motion-idle={!uiMotionActive}>
+    <div id="app-shell" class="root epigraph-app-shell" class:epigraph-motion-idle={!uiMotionActive} use:pointerEffects>
       {#if showIdleSplash}
         <SplashScreen mode="idle" showCards={store.settings.splashCards ?? true}
           onDismiss={() => { idle = false; resetIdle(); }} />
@@ -3082,13 +3081,6 @@
             <NovelReaderView bind:this={novelReaderInstance} />
           {:else}
             <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingNovel")}</div>
-          {/if}
-        {:else if store.activeNovelDetail}
-          {#if NovelDetailComponent}
-            {@const NovelDetailView = NovelDetailComponent}
-            <NovelDetailView />
-          {:else}
-            <div class="page-loading" aria-busy="true" aria-live="polite">{$_("ui_loadingDetails")}</div>
           {/if}
         {:else if store.navPage === "settings" || store.navPage === "home" || store.navPage === "library" || store.navPage === "search" || store.navPage === "downloads"}
           {#if LayoutComponent}
@@ -3166,7 +3158,7 @@
   {:else if startupSplashVisible}
     <SplashScreen mode="loading" interactive={!shellReady} ringFull={serverProbeOk} {failed} {notConfigured}
       failureTitle={startupFailureTitle}
-      failureDetail={startupFailureDetail}
+      failureDetail={typeof startupFailureDetail === "string" ? startupFailureDetail : presentOperationFailure(startupFailureDetail, $_)}
       statusText={startupStatusText}
       showCards={store.settings.splashCards ?? true}
       onReady={() => startupSplashVisible = false}

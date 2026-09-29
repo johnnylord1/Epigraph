@@ -23,6 +23,8 @@ export type EpigraphBooksRestoreIssueCode =
   | "missing-categories-file"
   | "missing-asset-file"
   | "missing-cover-file"
+  | "unsupported-cover-format"
+  | "cover-write-failed"
   | "metadata-only-book";
 
 export interface EpigraphBooksCategoryRecord {
@@ -119,6 +121,8 @@ type BooksBackupWriteDeps = {
   writeManagedBookAsset: (bookId: string, bytesBase64: string, ext: string) => Promise<string>;
   writeManagedBookCover: (bookId: string, bytesBase64: string, ext: string) => Promise<string>;
 };
+
+const MANAGED_BOOK_COVER_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
 
 const defaultReadDeps: BooksBackupReadDeps = {
   readBinaryFile: readFileAsArrayBuffer,
@@ -324,10 +328,11 @@ async function loadJsonFromZip<T>(zip: JSZip, path: string): Promise<T | null> {
   return JSON.parse(await file.async("text")) as T;
 }
 
-async function readArchiveBinary(zip: JSZip, path: string): Promise<Uint8Array | null> {
+async function readArchiveBinary(zip: JSZip, path: string): Promise<Uint8Array<ArrayBuffer> | null> {
   const entry = zip.file(path);
   if (!entry) return null;
-  return entry.async("uint8array");
+  // JSZip builds this array over its own ArrayBuffer, never a shared one.
+  return entry.async("uint8array") as Promise<Uint8Array<ArrayBuffer>>;
 }
 
 export async function buildEpigraphBooksPayload(
@@ -542,7 +547,7 @@ export async function restoreEpigraphBooksPayload(
         });
       } else {
         const ext = fileExtension(record.assetArchivePath, record.subtype);
-        assetPath = await deps.writeManagedBookAsset(record.id, arrayBufferToBase64(assetBytes), ext);
+        assetPath = await deps.writeManagedBookAsset(await restoredAssetKey(assetBytes), arrayBufferToBase64(assetBytes), ext);
         importPath = assetPath;
       }
     } else {
@@ -564,11 +569,30 @@ export async function restoreEpigraphBooksPayload(
           path: archivePath,
         });
       } else {
-        coverPath = await deps.writeManagedBookCover(
-          record.id,
-          arrayBufferToBase64(coverBytes),
-          fileExtension(record.coverArchivePath, "png"),
-        );
+        const extension = fileExtension(record.coverArchivePath, "png");
+        if (!MANAGED_BOOK_COVER_EXTENSIONS.has(extension)) {
+          issues.push({
+            code: "unsupported-cover-format",
+            message: `The cover for "${record.title}" was not restored because its ${extension.toUpperCase()} format is unsupported.`,
+            bookId: record.id,
+            path: archivePath,
+          });
+        } else {
+          try {
+            coverPath = await deps.writeManagedBookCover(
+              await restoredAssetKey(coverBytes),
+              arrayBufferToBase64(coverBytes),
+              extension,
+            );
+          } catch {
+            issues.push({
+              code: "cover-write-failed",
+              message: `The cover for "${record.title}" could not be restored.`,
+              bookId: record.id,
+              path: archivePath,
+            });
+          }
+        }
       }
     }
 
@@ -627,4 +651,9 @@ export async function restoreEpigraphBooksPayload(
     booksLibraryUi: normalizeBooksLibraryUi(parsed.categories.ui),
     issues,
   };
+}
+
+async function restoredAssetKey(bytes: ArrayBuffer | Uint8Array<ArrayBuffer>): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return `restore-${[...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2, "0")).join("")}`;
 }

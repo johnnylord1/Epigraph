@@ -1,8 +1,9 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
   import type { Snippet } from "svelte";
-  import { CaretLeft, CaretRight, BookmarkSimple, SlidersHorizontal, Sun } from "phosphor-svelte";
+  import { CaretLeft, CaretRight, BookmarkSimple, PictureInPicture, SlidersHorizontal, Sun } from "phosphor-svelte";
   import { store, updateSettings } from "../../store/state.svelte";
+  import { READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
 
   type Props = {
     title?: string;
@@ -17,6 +18,8 @@
     nextDisabled?: boolean;
     uiVisible?: boolean;
     rtl?: boolean;
+    /** Selects which reader's brightness this HUD reads and writes. */
+    readerKind?: ReaderKind;
     onMouseMove?: (event: MouseEvent) => void;
     onHudMouseEnter?: () => void;
     onHudMouseLeave?: () => void;
@@ -25,6 +28,8 @@
     onnext?: () => void;
     onjump?: (val: number) => void;
     onbookmark?: () => void;
+    /** Moves this reader into its own window; the button is shown only when set. */
+    ondetach?: () => void;
     toolsOpen?: boolean;
     settingsPopover?: Snippet;
     children?: Snippet;
@@ -43,6 +48,7 @@
     nextDisabled = false,
     uiVisible = true,
     rtl = false,
+    readerKind = "manga",
     onMouseMove = () => {},
     onHudMouseEnter = () => {},
     onHudMouseLeave = () => {},
@@ -51,12 +57,15 @@
     onnext = () => {},
     onjump = () => {},
     onbookmark = () => {},
+    ondetach,
     settingsPopover,
     children,
     toolsOpen = $bindable(false),
   }: Props = $props();
 
   let brightnessOpen = $state(false);
+  const brightnessKey = $derived(READER_BRIGHTNESS_SETTING_KEY[readerKind]);
+  const brightness = $derived(store.settings[brightnessKey] ?? 1.0);
   let manualHudVisible: boolean | null = $state(null);
   const effectiveHudVisible = $derived(manualHudVisible ?? uiVisible);
 
@@ -73,8 +82,17 @@
     }
   }
 
+  function scrollsWithKeyboard(target: EventTarget | null, surface: EventTarget | null) {
+    for (let element = target instanceof HTMLElement ? target : null; element && element !== surface; element = element.parentElement) {
+      if (element.scrollHeight > element.clientHeight && /(auto|scroll)/.test(getComputedStyle(element).overflowY)) return true;
+    }
+    return false;
+  }
+
   function toggleHudFromKeyboard(event: KeyboardEvent) {
     if (event.key !== "Enter" && event.key !== " ") return;
+    // Space pressed in a scrolling chapter scrolls it instead of toggling the bar.
+    if (event.key === " " && scrollsWithKeyboard(event.target, event.currentTarget)) return;
     event.preventDefault();
     manualHudVisible = !effectiveHudVisible;
     if (manualHudVisible === false) {
@@ -88,9 +106,10 @@
   <!-- Main Reading Viewport Content -->
   <div
     class="reader-viewport-wrapper"
-    style="filter: brightness({store.settings.readerBrightness ?? 1.0});"
+    style="filter: brightness({brightness});"
     role="button"
     tabindex="-1"
+    data-reader-surface
     onclick={toggleHudFromViewport}
     onkeydown={toggleHudFromKeyboard}
   >
@@ -134,11 +153,11 @@
           min={0.2}
           max={1.0}
           step={0.05}
-          value={store.settings.readerBrightness ?? 1.0}
-          oninput={(event) => updateSettings({ readerBrightness: Number(event.currentTarget.value) })}
+          value={brightness}
+          oninput={(event) => updateSettings({ [brightnessKey]: Number(event.currentTarget.value) })}
           aria-label={$_("ui_adjustBrightness")}
         />
-        <span class="brightness-val-text">{Math.round((store.settings.readerBrightness ?? 1.0) * 100)}%</span>
+        <span class="brightness-val-text">{Math.round(brightness * 100)}%</span>
       </div>
     {/if}
 
@@ -197,6 +216,13 @@
       <button class="capsule-btn" class:active={toolsOpen} onclick={() => { toolsOpen = !toolsOpen; brightnessOpen = false; }} title={$_("shell_navigation_settings")}>
         <SlidersHorizontal size={17} weight="regular" />
       </button>
+
+      {#if ondetach}
+        <!-- 8. Open in a new window -->
+        <button class="capsule-btn" onclick={ondetach} title={$_("reader_detach")} aria-label={$_("reader_detach")}>
+          <PictureInPicture size={17} weight="regular" />
+        </button>
+      {/if}
     </div>
   </div>
 </div>

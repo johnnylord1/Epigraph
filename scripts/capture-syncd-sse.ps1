@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 Set-StrictMode -Version Latest
 
 if (Test-Path $OutputPath) {
@@ -60,6 +61,6 @@ try {
 }
 finally {
   if (-not $process.HasExited) {
-    Stop-Process -Id $process.Id -Force
+    Stop-EpigraphRetainedProcess -Process $process
   }
 }

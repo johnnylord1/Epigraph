@@ -286,6 +286,15 @@ struct TombstoneRow {
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations-syncd");
 
+/// Starts a transaction that holds the write lock from the start. A deferred transaction that
+/// reads first cannot upgrade once another connection has committed: SQLite fails it with
+/// "database is locked" without waiting. Taking the lock up front waits through busy_timeout.
+pub(crate) async fn begin_write(
+    pool: &sqlx::SqlitePool,
+) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    pool.begin_with("BEGIN IMMEDIATE").await
+}
+
 pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
     std::fs::create_dir_all(&config.data_dir).with_context(|| {
         format!(
@@ -1086,7 +1095,7 @@ pub async fn approve_pairing_session(
     pool: &sqlx::SqlitePool,
     session_id: &str,
 ) -> anyhow::Result<Option<PairingSessionRow>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let now_ms = now_ms();
     let session = load_pairing_session_in_tx(&mut tx, session_id).await?;
     let Some(session) = session else {
@@ -1127,7 +1136,7 @@ pub async fn expire_pairing_session_if_needed(
     session_id: &str,
     now_ms: i64,
 ) -> anyhow::Result<Option<PairingSessionRow>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let session = load_pairing_session_in_tx(&mut tx, session_id).await?;
     let Some(session) = session else {
         tx.commit().await?;
@@ -1147,7 +1156,7 @@ pub async fn reject_pairing_session(
     pool: &sqlx::SqlitePool,
     session_id: &str,
 ) -> anyhow::Result<Option<PairingSessionRow>> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let now_ms = now_ms();
     let session = load_pairing_session_in_tx(&mut tx, session_id).await?;
     let Some(session) = session else {
@@ -1189,7 +1198,7 @@ pub async fn claim_pairing_session(
     platform: PairingPlatform,
     requested_scopes: Option<&[String]>,
 ) -> Result<PairingClaimOutcome, PairingClaimError> {
-    let mut tx = pool.begin().await.map_err(storage_pairing_claim_error)?;
+    let mut tx = begin_write(pool).await.map_err(storage_pairing_claim_error)?;
     let now_ms = now_ms();
     let mut session = load_pairing_session_in_tx(&mut tx, session_id)
         .await
@@ -1359,6 +1368,56 @@ async fn load_pairing_session_in_tx(
     .fetch_optional(&mut **tx)
     .await?;
     Ok(row)
+}
+
+/// Bootstrap sessions that can still be resolved by PIN: pending (not yet claimed) and not expired.
+pub async fn list_open_bootstrap_sessions(
+    pool: &sqlx::SqlitePool,
+    now_ms: i64,
+) -> anyhow::Result<Vec<PairingSessionRow>> {
+    let rows = sqlx::query_as::<_, PairingSessionRow>(
+        r#"
+        SELECT
+            session_id,
+            profile_id,
+            pairing_code,
+            tls_cert_sha256,
+            status,
+            claimed_device_id,
+            claimed_device_name,
+            claimed_platform,
+            expires_at_ms,
+            claimed_at_ms,
+            approved_at_ms,
+            rejected_at_ms,
+            created_at_ms,
+            requested_scopes_json
+        FROM pairing_sessions
+        WHERE status = 'pending'
+          AND expires_at_ms > ?
+          AND session_id LIKE 'bootstrap-%'
+        ORDER BY created_at_ms DESC
+        "#,
+    )
+    .bind(now_ms)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Ends every PIN-resolvable session, so the host shows a new PIN after repeated wrong guesses.
+pub async fn expire_open_bootstrap_sessions(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE pairing_sessions
+        SET status = 'expired'
+        WHERE status = 'pending'
+          AND session_id LIKE 'bootstrap-%'
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 async fn mark_pairing_session_expired_in_tx(
@@ -1575,7 +1634,7 @@ pub async fn update_paired_device_granted_scopes(
 ) -> anyhow::Result<Option<SyncdPairedDeviceView>> {
     let scopes =
         canonicalize_pairing_scopes(profile_id, scopes, false).map_err(anyhow::Error::msg)?;
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let token_ids = sqlx::query_scalar::<_, String>(
         r#"
         SELECT token_id
@@ -1653,7 +1712,7 @@ pub async fn append_change_log_entry(
     patch: Option<&Value>,
     retention_window: Duration,
 ) -> anyhow::Result<ChangeEnvelope> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let applied_at_ms = now_ms();
     let replay_until_ms = applied_at_ms + retention_window.as_millis() as i64;
     let patch_json = patch.map(serde_json::to_string).transpose()?;
@@ -1748,7 +1807,7 @@ pub async fn fetch_replay_changes(
 }
 
 pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow::Result<()> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
 
     sqlx::query("DELETE FROM tombstones WHERE retain_until_ms < ?")
         .bind(now_ms)
@@ -1804,7 +1863,7 @@ pub async fn apply_book_entry_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookEntryRow>(
         r#"
         SELECT
@@ -1984,7 +2043,7 @@ pub async fn delete_book_entry_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.entry", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_book_entry_against_tombstone(client_lamport, tombstone)?;
@@ -2060,7 +2119,7 @@ pub async fn apply_book_category_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookCategoryRow>(
         r#"SELECT scope_id, category_id, name, sort_order, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
         FROM book_categories WHERE scope_id = ? AND category_id = ?"#,
@@ -2139,7 +2198,7 @@ pub async fn delete_book_category_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -2207,7 +2266,7 @@ pub async fn apply_book_category_assignment_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookCategoryAssignmentRow>(
         r#"SELECT scope_id, book_id, category_ids_json, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
         FROM book_category_assignments WHERE scope_id = ? AND book_id = ?"#,
@@ -2292,7 +2351,7 @@ pub async fn delete_book_category_assignment_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone =
         load_tombstone_in_tx(&mut tx, scope_id, "book.category_assignment", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
@@ -2361,7 +2420,7 @@ pub async fn apply_book_library_ui_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookLibraryUiRow>(
         r#"SELECT scope_id, ui_state_id, active_category_id, type_filter, status_filter, search, sort_mode, sort_dir,
             record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -2444,7 +2503,7 @@ pub async fn apply_novel_entry_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelEntryRow>(
         r#"SELECT
             scope_id, novel_id, identity_key, title, author, description, cover_url, external_novel_id, external_url,
@@ -2735,7 +2794,7 @@ pub async fn delete_novel_entry_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.entry", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -2814,7 +2873,7 @@ pub async fn apply_novel_chapter_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelChapterRow>(
         r#"SELECT scope_id, chapter_id, novel_id, path, title, chapter_order_key, release_time_ms, unread,
             record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -2903,7 +2962,7 @@ pub async fn delete_novel_chapter_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.chapter", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -2971,7 +3030,7 @@ pub async fn apply_novel_chapter_asset_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let novel_exists = sqlx::query_scalar::<_, i64>(
         "SELECT 1 FROM novel_library_entries WHERE scope_id = ? AND novel_id = ?",
     )
@@ -3090,7 +3149,7 @@ pub async fn delete_novel_chapter_asset_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone =
         load_tombstone_in_tx(&mut tx, scope_id, "novel.chapter_asset", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
@@ -3159,7 +3218,7 @@ pub async fn apply_novel_history_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelHistoryRow>(
         r#"SELECT scope_id, history_id, novel_id, chapter_id, chapter_title, chapter_order_key, locator, locator_sort_key,
             read_at_ms, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -3246,7 +3305,7 @@ pub async fn delete_novel_history_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.history", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -3314,7 +3373,7 @@ pub async fn apply_novel_classification_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelClassificationRow>(
         r#"
         SELECT
@@ -3431,7 +3490,7 @@ pub async fn delete_novel_classification_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone =
         load_tombstone_in_tx(&mut tx, scope_id, "novel.classification", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
@@ -3502,7 +3561,7 @@ pub async fn apply_novel_repository_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelRepositoryRow>(
         "SELECT * FROM novel_repositories WHERE scope_id = ? AND repository_id = ?",
     )
@@ -3611,7 +3670,7 @@ pub async fn delete_novel_repository_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.repository", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -3658,7 +3717,7 @@ pub async fn apply_novel_plugin_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let repository_exists = sqlx::query_scalar::<_, i64>(
         "SELECT 1 FROM novel_repositories WHERE scope_id = ? AND repository_id = ?",
     )
@@ -3834,7 +3893,7 @@ pub async fn delete_novel_plugin_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.plugin", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -3870,7 +3929,7 @@ pub async fn apply_novel_category_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelCategoryRow>(
         "SELECT * FROM novel_categories WHERE scope_id = ? AND category_id = ?",
     )
@@ -3949,7 +4008,7 @@ pub async fn delete_novel_category_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
@@ -4028,7 +4087,7 @@ pub async fn apply_novel_category_assignment_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelCategoryAssignmentRow>(
         "SELECT * FROM novel_category_assignments WHERE scope_id = ? AND assignment_id = ?",
     )
@@ -4131,7 +4190,7 @@ pub async fn delete_novel_category_assignment_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone =
         load_tombstone_in_tx(&mut tx, scope_id, "novel.category_assignment", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
@@ -4296,7 +4355,7 @@ pub async fn apply_book_progress_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let book_id = normalize_book_progress_book_id(entity_id);
     let canonical_entity_id = if entity_id.starts_with("book.progress::") {
         format!("book.progress::{book_id}")
@@ -4574,7 +4633,7 @@ pub async fn apply_novel_progress_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelProgressRow>(
         r#"
         SELECT
@@ -4761,7 +4820,7 @@ pub async fn apply_book_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookBookmarkRow>(
         r#"
         SELECT
@@ -4898,7 +4957,7 @@ pub async fn apply_book_highlight_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookHighlightRow>(
         "SELECT * FROM book_highlights WHERE scope_id = ? AND highlight_id = ?",
     )
@@ -4998,7 +5057,7 @@ pub async fn apply_novel_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelBookmarkRow>(
         r#"
         SELECT
@@ -5127,7 +5186,7 @@ pub async fn apply_book_history_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookHistoryRow>(
         "SELECT * FROM book_history WHERE scope_id = ? AND history_id = ?",
     )
@@ -5222,7 +5281,7 @@ pub async fn delete_book_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.bookmark", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -5293,7 +5352,7 @@ pub async fn delete_book_highlight_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.highlight", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -5363,7 +5422,7 @@ pub async fn delete_novel_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.bookmark", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -5434,7 +5493,7 @@ pub async fn delete_book_history_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.history", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -5559,7 +5618,7 @@ async fn apply_comic_sync_state_mutation_inner(
     retention_window: Duration,
     enqueue_projection: bool,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicSyncStateRow>(
         r#"
         SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
@@ -5701,7 +5760,7 @@ pub async fn delete_comic_sync_state_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicSyncStateRow>(
         r#"
         SELECT entity_type, entity_id, record_json, record_lamport, record_server_version
@@ -6030,7 +6089,7 @@ pub async fn apply_comic_history_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicHistoryRow>(
         r#"
         SELECT
@@ -6200,7 +6259,7 @@ pub async fn delete_comic_history_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "comic.history", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -6269,7 +6328,7 @@ pub async fn apply_comic_page_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicPageBookmarkRow>(
         r#"
         SELECT
@@ -6389,7 +6448,7 @@ pub async fn delete_comic_page_bookmark_mutation(
     client_lamport: i64,
     retention_window: Duration,
 ) -> anyhow::Result<MutationWriteOutcome> {
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
     let tombstone =
         load_tombstone_in_tx(&mut tx, scope_id, "comic.page_bookmark", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
@@ -7843,7 +7902,7 @@ pub async fn issue_local_authority_token(
         format!("comics:profile:{profile_id}"),
     ];
 
-    let mut tx = pool.begin().await?;
+    let mut tx = begin_write(pool).await?;
 
     sqlx::query(
         r#"
@@ -7979,6 +8038,68 @@ pub async fn load_token_state(
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+/// Returns the scopes a token still grants, or `None` when the token is unknown, revoked or
+/// past its inactivity window. Long-lived streams use this to stop delivering data after the
+/// host revokes a device or narrows its scopes.
+pub async fn load_active_token_scopes(
+    pool: &sqlx::SqlitePool,
+    token_id: &str,
+    now_ms: i64,
+) -> anyhow::Result<Option<std::collections::BTreeSet<String>>> {
+    let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+        r#"
+        SELECT inactivity_expires_at_ms, revoked_at_ms
+        FROM paired_device_tokens
+        WHERE token_id = ?
+        "#,
+    )
+    .bind(token_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((inactivity_expires_at_ms, revoked_at_ms)) = row else {
+        return Ok(None);
+    };
+    if revoked_at_ms.is_some() || inactivity_expires_at_ms < now_ms {
+        return Ok(None);
+    }
+    let scopes = sqlx::query_scalar::<_, String>(
+        "SELECT scope_id FROM paired_device_scopes WHERE token_id = ?",
+    )
+    .bind(token_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(scopes.into_iter().collect()))
+}
+
+/// An open live stream is device activity even when the device sends no other request. Extends
+/// the inactivity window of a still-active token once less than half of it remains, so a listening
+/// device is not signed out while connected and the write happens rarely.
+pub async fn extend_streaming_token_activity(
+    pool: &sqlx::SqlitePool,
+    token_id: &str,
+    now_ms: i64,
+    window_ms: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE paired_device_tokens
+        SET last_seen_at_ms = ?, inactivity_expires_at_ms = ?
+        WHERE token_id = ?
+          AND revoked_at_ms IS NULL
+          AND inactivity_expires_at_ms >= ?
+          AND inactivity_expires_at_ms < ?
+        "#,
+    )
+    .bind(now_ms)
+    .bind(now_ms + window_ms)
+    .bind(token_id)
+    .bind(now_ms)
+    .bind(now_ms + window_ms / 2)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

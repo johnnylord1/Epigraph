@@ -1,16 +1,81 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { store } from "../store/state.svelte";
-import { getServerUrl, gql, gqlUpload, isGraphqlMutation } from "./client";
+import { getServerUrl, gql, gqlUpload, isGraphqlMutation, resolveGqlTimeoutMs } from "./client";
 import {
   setSuwayomiUpdateInProgressForTests,
   SUWAYOMI_UPDATE_WRITE_BLOCKED_MESSAGE,
 } from "./suwayomiUpdateLock.svelte";
 
+describe("GraphQL request timeouts", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    store.runtimeServerUrl = null;
+  });
+
+  test("keeps the default without a caller signal and leaves signal-only calls unbounded", () => {
+    const signal = new AbortController().signal;
+    expect(resolveGqlTimeoutMs(undefined, undefined)).toBe(12000);
+    expect(resolveGqlTimeoutMs(undefined, 8000)).toBe(8000);
+    expect(resolveGqlTimeoutMs(signal, undefined)).toBeNull();
+    expect(resolveGqlTimeoutMs(undefined, 0)).toBeNull();
+  });
+
+  test("honours an explicit timeout when the caller also owns cancellation", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    store.runtimeServerUrl = "http://127.0.0.1:51001";
+    const caller = new AbortController();
+    const settled = expect(gql("query Ready { __typename }", undefined, caller.signal, 4000)).rejects.toThrow("Aborted");
+    await vi.advanceTimersByTimeAsync(4000);
+    await settled;
+    expect(caller.signal.aborted).toBe(false);
+  });
+});
+
 describe("GraphQL client errors", () => {
+  test.each(["json", "upload"])("does not retarget a pending %s mutation after a server switch", async (kind) => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      requests.push(url);
+      return new Response(JSON.stringify({ data: { ok: true } }));
+    });
+    store.runtimeServerUrl = "http://127.0.0.1:51001";
+    const pending = kind === "json"
+      ? gql("mutation Add { ok }")
+      : gqlUpload("mutation Install { ok }", {}, {});
+    store.runtimeServerUrl = "http://127.0.0.1:51002";
+    await expect(pending).rejects.toThrow();
+    expect(requests).toEqual([]);
+  });
+
+  test.each(["profile", "credentials"])("rejects a pending mutation when only its %s changes", async (change) => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      requests.push(url);
+      return new Response(JSON.stringify({ data: { ok: true } }));
+    });
+    store.runtimeResolvedLocalProfileId = "profile-a";
+    store.settings.serverAuthEnabled = true;
+    store.settings.serverAuthUser = "user";
+    store.settings.serverAuthPass = "test-a";
+    const pending = gql("mutation Add { ok }");
+    if (change === "profile") store.runtimeResolvedLocalProfileId = "profile-b";
+    else store.settings.serverAuthPass = "test-b";
+    await expect(pending).rejects.toThrow();
+    expect(requests).toEqual([]);
+  });
+
   afterEach(() => {
     setSuwayomiUpdateInProgressForTests(false);
     store.runtimeServerUrl = null;
+    store.runtimeResolvedLocalProfileId = null;
+    store.settings.serverAuthEnabled = false;
+    store.settings.serverAuthUser = "";
+    store.settings.serverAuthPass = "";
     store.runtimeResolvedLocalProfileMeta = null;
     vi.unstubAllGlobals();
   });

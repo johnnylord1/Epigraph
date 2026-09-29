@@ -164,7 +164,7 @@ describe("test-only theme probe", () => {
       const builtinShadow = computedShadow("--component-card-shadow");
       const builtinRadius = computedToken("--component-toast-radius");
 
-      expect(exactProperties).toHaveLength(281);
+      expect(exactProperties).toHaveLength(256);
       expect(applyCustomTheme(root, {
         version: 5,
         id: "custom:empty-nocturne-browser",
@@ -376,7 +376,7 @@ describe("test-only theme probe", () => {
       const sourceNames = builtinExactSourceNames();
       const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
 
-      expect(sourceNames).toHaveLength(224);
+      expect(sourceNames).toHaveLength(202);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));
@@ -396,7 +396,7 @@ describe("test-only theme probe", () => {
       expect(
         sourceNames.filter((token) => custom.get(token) !== builtin.get(token)).length,
         "the custom V5 contract must materially change the exact Nocturne source palette",
-      ).toBeGreaterThanOrEqual(220);
+      ).toBeGreaterThanOrEqual(201);
     } finally {
       restoreRootState(original);
       await new Promise(requestAnimationFrame);
@@ -415,7 +415,7 @@ describe("test-only theme probe", () => {
       const roleNames = builtinExactDerivedColorNames();
       const builtin = new Map(roleNames.map((token) => [token, computedToken(token)]));
 
-      expect(roleNames).toHaveLength(57);
+      expect(roleNames).toHaveLength(54);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(roleNames.map((token) => [token, computedToken(token)]));

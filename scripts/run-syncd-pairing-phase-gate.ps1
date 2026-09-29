@@ -1,6 +1,7 @@
 param()
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 Set-StrictMode -Version Latest
 
 function Invoke-JsonRequest {
@@ -118,10 +119,9 @@ function Stop-SyncdProcessTree {
   param($Process)
   if ($null -eq $Process) { return }
   try {
-    & taskkill.exe /PID $Process.Id /T /F 2>$null | Out-Null
   } catch {}
   if (-not $Process.HasExited) {
-    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    Stop-EpigraphRetainedProcess -Process $Process
   }
   try { $null = $Process.WaitForExit(5000) } catch {}
 }

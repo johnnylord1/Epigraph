@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime";
 import { librarySnapshotScopeKey, type LibrarySnapshotScope } from "./snapshot";
 import {
   deriveMangaCountsFromChapters,
@@ -355,7 +356,7 @@ export async function reconcileComicsChapterSnapshot(
           mangaTitle: manga.title,
           thumbnailUrl: manga.thumbnailUrl,
           sourceName,
-          chapterTitles: newChapters.map((entry) => entry.name || `Chapter ${entry.sourceOrder ?? entry.id}`).slice(0, 5),
+          chapterTitles: newChapters.map((entry) => entry.name || translate("detail_chapterNumber", { value: entry.sourceOrder ?? entry.id })).slice(0, 5),
           previousChapterCount: previous.chapters.length,
           nextChapterCount: entries.length,
         });

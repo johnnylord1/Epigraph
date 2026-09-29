@@ -128,7 +128,7 @@ function normalizeSource(source: DiscordCoverSource): NormalizedDiscordCoverSour
 }
 
 async function tauriDiscordCoverProcessor(input: DiscordCoverProcessorInput): Promise<DiscordCoverProcessorResult> {
-  const { invoke } = await import("@tauri-apps/api/core");
+  const { invoke } = await import("../tauri/invoke");
   const source = input.source;
   const request = {
     sourceUrl: source.type === "public-url" || source.type === "trusted-thumbnail" ? source.value : null,

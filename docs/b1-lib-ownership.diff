@@ -1,0 +1,874 @@
+--- original-dirty/lib.rs
++++ B1/lib.rs
+@@ -10,6 +10,8 @@
+ mod syncd_desktop;
+ mod syncd_replication;
+ mod syncd_sidecar;
++mod session_control_protocol;
++mod session_control;
+ 
+ pub use compat::{
+     migrate_legacy_core_storage, migrate_legacy_storage, promote_legacy_environment,
+@@ -57,10 +59,11 @@
+         JobObjects::{
+             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+             SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
++            QueryInformationJobObject, JobObjectBasicAccountingInformation, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+             JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+         },
+         Threading::{
+-            CreateProcessW, ResumeThread, TerminateProcess, CREATE_NO_WINDOW, CREATE_SUSPENDED,
++            CreateProcessW, ResumeThread, TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED,
+             PROCESS_INFORMATION, STARTUPINFOW,
+         },
+     },
+@@ -231,7 +234,11 @@
+ struct RunningServer {
+     child: CommandChild,
+     owner_path: PathBuf,
+-    spawn_lock_path: PathBuf,
++    run_id: String,
++    birth_identity: Option<suwayomi_runtime::RuntimeProcessIdentity>,
++    profile_key: String,
++    server_url: String,
++    port: u16,
+ }
+ 
+ struct ServerState(Mutex<Option<RunningServer>>);
+@@ -422,6 +429,8 @@
+     run_id: Option<String>,
+     #[serde(default)]
+     process_identity: Option<suwayomi_runtime::RuntimeProcessIdentity>,
++    #[serde(default)]
++    spawned_by_app: bool,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -879,11 +888,14 @@
+ 
+     let pid = process_info.dwProcessId;
+     if let Err(error) = assign_local_flaresolverr_job(pid, process_info.hProcess) {
+-        unsafe {
+-            TerminateProcess(process_info.hProcess, 1);
++        let confirmed = unsafe {
++            let terminated = TerminateProcess(process_info.hProcess, 1) != 0;
++            let confirmed = terminated && WaitForSingleObject(process_info.hProcess, 5000) == 0;
+             CloseHandle(process_info.hThread);
+             CloseHandle(process_info.hProcess);
+-        }
++            confirmed
++        };
++        if !confirmed { return Err(format!("{error}; suspended spawn {pid} termination unconfirmed")); }
+         return Err(error);
+     }
+ 
+@@ -925,38 +937,39 @@
+ 
+ #[cfg(windows)]
+ fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
+-    let job = FLARESOLVERR_LOCAL_JOB
++    let mut guard = FLARESOLVERR_LOCAL_JOB
+         .lock()
+-        .map_err(|_| "FlareSolverr Job Object state is unavailable.".to_string())?
+-        .take();
+-    let Some(job) = job else {
+-        return Err("The FlareSolverr process tree has no active Job Object.".to_string());
+-    };
++        .map_err(|_| "FlareSolverr Job Object state is unavailable.".to_string())?;
++    let job = guard.as_ref().ok_or("The FlareSolverr process tree has no active Job Object.")?;
+     if job.pid != pid {
+-        unsafe { CloseHandle(job.handle as HANDLE) };
+         return Err("The FlareSolverr Job Object does not match the ownership lease.".to_string());
+     }
+-    let terminated = unsafe {
+-        let handle = job.handle as HANDLE;
+-        let result = TerminateJobObject(handle, 1) != 0;
+-        CloseHandle(handle);
+-        result
+-    };
+-    if !terminated {
+-        return Err(
+-            "Could not terminate the Epigraph-managed FlareSolverr process tree.".to_string(),
+-        );
+-    }
+-    Ok(())
++    let handle = job.handle as HANDLE;
++    if unsafe { TerminateJobObject(handle, 1) } == 0 {
++        return Err("FlareSolverr termination failed; job and ownership retained".into());
++    }
++    let deadline = std::time::Instant::now() + Duration::from_secs(5);
++    loop {
++        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
++        let queried = unsafe { QueryInformationJobObject(handle, JobObjectBasicAccountingInformation,
++            &mut accounting as *mut _ as *mut std::ffi::c_void,
++            std::mem::size_of_val(&accounting) as u32, std::ptr::null_mut()) };
++        if queried == 0 { return Err("Cannot confirm FlareSolverr termination; evidence retained".into()); }
++        if accounting.ActiveProcesses == 0 {
++            unsafe { CloseHandle(handle); }
++            guard.take();
++            return Ok(());
++        }
++        if std::time::Instant::now() >= deadline {
++            return Err("FlareSolverr termination timed out; evidence retained".into());
++        }
++        std::thread::sleep(Duration::from_millis(25));
++    }
+ }
+ 
+ #[cfg(not(windows))]
+-fn terminate_local_flaresolverr_job(pid: u32) -> Result<(), String> {
+-    let system = System::new_all();
+-    if let Some(process) = system.process(Pid::from_u32(pid)) {
+-        let _ = process.kill();
+-    }
+-    Ok(())
++fn terminate_local_flaresolverr_job(_pid: u32) -> Result<(), String> {
++    Err("Handle-bound FlareSolverr cleanup unavailable; process preserved".into())
+ }
+ 
+ #[cfg(windows)]
+@@ -995,8 +1008,7 @@
+             }
+             LocalFlareSolverrOwnerState::Stale => {}
+         }
+-        release_local_flaresolverr_job(owner.pid);
+-        let _ = fs::remove_file(local_flaresolverr_owner_path());
++        // Stale or inconsistent evidence never authorizes termination or deletion.
+     }
+     None
+ }
+@@ -1039,6 +1051,7 @@
+ 
+ #[tauri::command]
+ fn start_flaresolverr_local() -> Result<LocalFlareSolverrStatus, String> {
++    let _launch = session_control::begin_launch()?;
+     let _lifecycle_guard = FLARESOLVERR_LIFECYCLE_LOCK
+         .lock()
+         .map_err(|_| "FlareSolverr lifecycle is unavailable.".to_string())?;
+@@ -2395,6 +2408,7 @@
+             server_url: "http://127.0.0.1:4667".to_string(),
+             started_at: 1,
+             run_id: None,
++            spawned_by_app: false,
+             process_identity: None,
+         };
+ 
+@@ -2778,6 +2792,7 @@
+             server_url: "http://127.0.0.1:4667".to_string(),
+             started_at: 1,
+             run_id: None,
++            spawned_by_app: false,
+             process_identity: None,
+         };
+ 
+@@ -2785,6 +2800,16 @@
+             validate_server_owner(&target, &owner),
+             OwnerReuseDecision::Stale
+         ));
++    }
++
++    #[test]
++    fn b1_existing_spawn_lock_is_preserved_without_live_ownership_proof() {
++        let temp = tempfile::tempdir().unwrap();
++        let path = temp.path().join("server.spawn.lock");
++        let evidence = b"pid=invalid\ntimestamp=0\n";
++        std::fs::write(&path, evidence).unwrap();
++        assert!(!acquire_spawn_lock(&path, temp.path()).unwrap());
++        assert_eq!(std::fs::read(&path).unwrap(), evidence);
+     }
+ 
+     #[cfg(windows)]
+@@ -3397,21 +3422,7 @@
+ }
+ 
+ fn runtime_process_identity(pid: u32) -> Option<suwayomi_runtime::RuntimeProcessIdentity> {
+-    let system = System::new_all();
+-    let process = system.process(Pid::from_u32(pid))?;
+-    let args = process
+-        .cmd()
+-        .iter()
+-        .map(|arg| arg.to_string_lossy().into_owned())
+-        .collect::<Vec<_>>();
+-    Some(suwayomi_runtime::RuntimeProcessIdentity {
+-        pid,
+-        process_creation_time: Some(process.start_time()),
+-        executable_path: process
+-            .exe()
+-            .map(|path| path.to_string_lossy().into_owned()),
+-        command_line_hash: Some(suwayomi_runtime::command_line_hash(&args)),
+-    })
++    suwayomi_runtime::capture_process_identity(pid)
+ }
+ 
+ pub(crate) fn set_runtime_status(
+@@ -3861,10 +3872,6 @@
+     serde_json::from_str::<ServerOwner>(&text).ok()
+ }
+ 
+-fn remove_server_owner_files(data_dir: &Path) {
+-    let _ = std::fs::remove_file(server_owner_path(data_dir));
+-    let _ = std::fs::remove_file(server_owner_tmp_path(data_dir));
+-}
+ 
+ fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> OwnerReuseDecision {
+     if owner.profile_key.to_ascii_lowercase() != target.profile_key
+@@ -3891,17 +3898,12 @@
+         return OwnerReuseDecision::Stale;
+     }
+ 
+-    if let Some(expected) = &owner.process_identity {
+-        let Some(actual) = runtime_process_identity(owner.java_pid) else {
+-            return OwnerReuseDecision::Stale;
+-        };
+-        if expected.process_creation_time != actual.process_creation_time
+-            || expected.executable_path != actual.executable_path
+-            || expected.command_line_hash != actual.command_line_hash
+-        {
+-            return OwnerReuseDecision::Stale;
+-        }
+-    }
++    if !owner.run_id.as_ref().is_some_and(|run| uuid::Uuid::parse_str(run).is_ok_and(|id| !id.is_nil())) {
++        return OwnerReuseDecision::Stale;
++    }
++    let Some(expected) = &owner.process_identity else { return OwnerReuseDecision::Stale; };
++    let Some(actual) = runtime_process_identity(owner.java_pid) else { return OwnerReuseDecision::Stale; };
++    if expected != &actual { return OwnerReuseDecision::Stale; }
+ 
+     if !probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
+         return OwnerReuseDecision::ConflictingLiveProcess;
+@@ -3924,20 +3926,9 @@
+             Ok(true)
+         }
+         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+-            let metadata = std::fs::metadata(lock_path)?;
+-            let is_stale = metadata
+-                .modified()
+-                .ok()
+-                .and_then(|time| SystemTime::now().duration_since(time).ok())
+-                .map(|age| age > Duration::from_secs(45))
+-                .unwrap_or(true);
+-
+-            if is_stale {
+-                let _ = std::fs::remove_file(lock_path);
+-                acquire_spawn_lock(lock_path, data_dir)
+-            } else {
+-                Ok(false)
+-            }
++            // Age and saved PID are not sufficient authority to take over a
++            // startup lease. Preserve it until explicitly reconciled.
++            Ok(false)
+         }
+         Err(err) => Err(err),
+     }
+@@ -4526,64 +4517,100 @@
+     Ok(())
+ }
+ 
+-fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) {
++fn kill_tachidesk(app: &tauri::AppHandle, server_url: Option<&str>) -> Result<(), String> {
+     let launch_target = app.state::<LaunchTarget>().0.clone();
+-    let Ok(target) = resolve_local_server_target(&launch_target, server_url, None, None) else {
+-        return;
++    let target = resolve_local_server_target(&launch_target, server_url, None, None)
++        .map_err(|_| "Cannot resolve cleanup scope; runtime preserved".to_string())?;
++    kill_tachidesk_target(app, &target)
++}
++
++pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
++    use suwayomi_runtime::ownership::Ownership;
++    if target.attach_only || managed_startup_owner(&target.profile_key, target.port) == ManagedStartupOwner::PersistentCore {
++        return Err("Refusing desktop cleanup of an attached/persistent Core runtime".into());
++    }
++    let owner_path = server_owner_path(&target.root_dir);
++    let raw = std::fs::read(&owner_path).map_err(|_| "Missing ownership record; runtime preserved")?;
++    let owner: ServerOwner = serde_json::from_slice(&raw).map_err(|_| "Malformed ownership record; runtime preserved")?;
++    if owner.app_pid != std::process::id() || owner.java_pid != owner.process_identity.as_ref().map_or(0, |identity| identity.pid)
++        || owner.server_url.trim_end_matches('/') != target.server_url || owner.port != target.port {
++        return Err("Inconsistent ownership record; runtime preserved".into());
++    }
++    // Authority comes from this application's retained spawn, never from discovery.
++    let state = app.state::<ServerState>();
++    let guard = state.0.lock().unwrap();
++    let running = guard.as_ref().ok_or("No live spawn lease; runtime preserved")?;
++    if running.owner_path != owner_path || running.child.pid() != owner.java_pid
++        || owner.run_id.as_deref() != Some(running.run_id.as_str()) {
++        return Err("Owner belongs to a different application run; runtime preserved".into());
++    }
++    let root = target.root_dir.to_string_lossy();
++    let ownership = Ownership {
++        run_id: owner.run_id.as_deref(), requested_run_id: &running.run_id, profile: &owner.profile_key, root: &owner.root_dir,
++        requested_profile: &target.profile_key, requested_root: &root,
++        spawned: owner.spawned_by_app, attach_only: target.attach_only,
++        identity: owner.process_identity.as_ref().and_then(|identity| identity.for_termination()),
+     };
+-    kill_tachidesk_target(app, &target);
+-}
+-
+-pub(crate) fn kill_tachidesk_target(app: &tauri::AppHandle, target: &LocalServerTarget) {
+-    let running = {
+-        let state = app.state::<ServerState>();
++    #[cfg(windows)]
++    {
++        suwayomi_runtime::ownership::validate_record(&ownership)?;
++        let birth = running.birth_identity.as_ref().ok_or("Missing retained birth identity")?;
++        let recorded = owner.process_identity.as_ref().ok_or("Missing owner identity")?;
++        if !suwayomi_runtime::retained_child_has_exited(&running.child, recorded, birth)? {
++            let mut process = suwayomi_runtime::ownership::windows::Process::open(owner.java_pid, suwayomi_runtime::command_line_hash)?;
++            suwayomi_runtime::ownership::stop_verified(&ownership, &mut process, || {
++                std::fs::read(&owner_path).ok().as_deref() == Some(raw.as_slice())
++            })?;
++        } else if std::fs::read(&owner_path).ok().as_deref() != Some(raw.as_slice()) {
++            return Err("Owner changed during completion validation; evidence retained".into());
++        }
++        suwayomi_runtime::record_confirmed_stop(&owner_path, &raw)?;
++        // Keep the evidence record even after confirmed exit. Startup may reconcile it;
++        // cleanup must never race a replacement writer by deleting its ownership record.
++        drop(guard);
+         let mut guard = state.0.lock().unwrap();
+-        match guard.as_ref() {
+-            Some(running) if running.owner_path == server_owner_path(&target.root_dir) => {
+-                guard.take()
+-            }
+-            _ => None,
+-        }
++        if guard.as_ref().is_some_and(|running| Some(running.run_id.as_str()) == owner.run_id.as_deref()) { guard.take(); }
++        set_runtime_status(app, suwayomi_runtime::RuntimeLifecycleState::Unavailable,
++            Some(target.profile_key.clone()), Some(target.server_url.clone()), None, None);
++        Ok(())
++    }
++    #[cfg(not(windows))]
++    { let _ = (app, ownership); Err("Handle-bound cleanup is unavailable on this platform; runtime preserved".into()) }
++}
++
++fn kill_tachidesk_target_for_retained_restart(running: &RunningServer) -> Result<(), String> {
++    let raw = std::fs::read(&running.owner_path).map_err(|_| "Missing retained ownership")?;
++    let owner: ServerOwner = serde_json::from_slice(&raw).map_err(|_| "Malformed retained ownership")?;
++    if owner.app_pid != std::process::id() || owner.java_pid != running.child.pid()
++        || owner.port != running.port || owner.server_url != running.server_url
++        || owner.process_identity.as_ref().map(|identity| identity.pid) != Some(owner.java_pid) {
++        return Err("Inconsistent retained ownership; process preserved".into());
++    }
++    let root = running.owner_path.parent().ok_or("Missing retained root")?.to_string_lossy();
++    let ownership = suwayomi_runtime::ownership::Ownership {
++        run_id: owner.run_id.as_deref(), requested_run_id: &running.run_id,
++        profile: &owner.profile_key, root: &owner.root_dir,
++        requested_profile: &running.profile_key, requested_root: &root,
++        spawned: owner.spawned_by_app,
++        attach_only: managed_startup_owner(&running.profile_key, running.port) == ManagedStartupOwner::PersistentCore,
++        identity: owner.process_identity.as_ref().and_then(|identity| identity.for_termination()),
+     };
+-
+-    if let Some(running) = running {
+-        let _ = running.child.kill();
+-        let _ = std::fs::remove_file(&running.spawn_lock_path);
+-        let _ = std::fs::remove_file(&running.owner_path);
+-        if let Some(parent) = running.owner_path.parent() {
+-            let _ = std::fs::remove_file(parent.join("server.owner.json.tmp"));
+-        }
+-        set_runtime_status(
+-            app,
+-            suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+-            Some(target.profile_key.clone()),
+-            Some(target.server_url.clone()),
+-            None,
+-            None,
+-        );
+-        return;
+-    }
+-
+-    let owner_path = server_owner_path(&target.root_dir);
+-    let Some(owner) = read_server_owner(&owner_path) else {
+-        return;
+-    };
+-
+-    let mut system = System::new_all();
+-    system.refresh_all();
+-    if let Some(process) = system.process(Pid::from_u32(owner.java_pid)) {
+-        let _ = process.kill();
+-    }
+-    let _ = std::fs::remove_file(server_spawn_lock_path(&target.root_dir));
+-    remove_server_owner_files(&target.root_dir);
+-    set_runtime_status(
+-        app,
+-        suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+-        Some(target.profile_key.clone()),
+-        Some(target.server_url.clone()),
+-        None,
+-        None,
+-    );
++    #[cfg(windows)]
++    {
++        suwayomi_runtime::ownership::validate_record(&ownership)?;
++        let birth = running.birth_identity.as_ref().ok_or("Missing retained birth identity")?;
++        let recorded = owner.process_identity.as_ref().ok_or("Missing owner identity")?;
++        if !suwayomi_runtime::retained_child_has_exited(&running.child, recorded, birth)? {
++            let mut process = suwayomi_runtime::ownership::windows::Process::open(owner.java_pid, suwayomi_runtime::command_line_hash)?;
++            suwayomi_runtime::ownership::stop_verified(&ownership, &mut process,
++                || std::fs::read(&running.owner_path).ok().as_deref() == Some(raw.as_slice()))?;
++        } else if std::fs::read(&running.owner_path).ok().as_deref() != Some(raw.as_slice()) {
++            return Err("Owner changed during completion validation; evidence retained".into());
++        }
++        suwayomi_runtime::record_confirmed_stop(&running.owner_path, &raw)
++    }
++    #[cfg(not(windows))]
++    { let _ = ownership; Err("Handle-bound restart cleanup unavailable; process preserved".into()) }
+ }
+ 
+ const DEFAULT_SERVER_CONF: &str = r#"server.ip = "127.0.0.1"
+@@ -4810,7 +4837,7 @@
+                 default_local_server_port(profile),
+                 LocalServerUpdateIntensity::Balanced,
+             );
+-            kill_tachidesk(&app, Some(&server_url));
++            if let Err(error) = kill_tachidesk(&app, Some(&server_url)) { eprintln!("[runtime cleanup] {error}"); }
+         });
+     }
+ }
+@@ -5297,6 +5324,7 @@
+     app: tauri::AppHandle,
+     recover_update: bool,
+ ) -> Result<(), SpawnError> {
++    let _launch = session_control::begin_launch().map_err(SpawnError::SpawnFailed)?;
+     let launch_target = app.state::<LaunchTarget>().0.clone();
+     let mut target = resolve_local_server_target(
+         &launch_target,
+@@ -5431,22 +5459,17 @@
+                 );
+                 stale_tracked_server = guard.take();
+             } else {
+-                do_log(
+-                    &mut log,
+-                    &format!(
+-                        "[spawn_server] tracked server belongs to a different root {:?}; continuing target validation",
+-                        running.owner_path.parent()
+-                    ),
+-                );
++                return Err(SpawnError::SpawnFailed(
++                    "Another profile retains the runtime spawn lease; process and ownership preserved".into(),
++                ));
+             }
+         }
+         drop(guard);
+         if let Some(running) = stale_tracked_server {
+-            let _ = running.child.kill();
+-            let _ = std::fs::remove_file(&running.spawn_lock_path);
+-            let _ = std::fs::remove_file(&running.owner_path);
+-            if let Some(parent) = running.owner_path.parent() {
+-                let _ = std::fs::remove_file(parent.join("server.owner.json.tmp"));
++            let result = kill_tachidesk_target_for_retained_restart(&running);
++            if let Err(error) = result {
++                *app.state::<ServerState>().0.lock().unwrap() = Some(running);
++                return Err(SpawnError::SpawnFailed(error));
+             }
+         }
+     }
+@@ -5490,14 +5513,11 @@
+     }
+ 
+     if owner_tmp_path.exists() {
+-        do_log(
+-            &mut log,
+-            "[spawn_server] removing stale partial owner tmp before validation",
+-        );
+-        let _ = std::fs::remove_file(&owner_tmp_path);
+-    }
+-
+-    if owner_path.exists() {
++        let _ = std::fs::remove_file(&spawn_lock_path);
++        return Err(SpawnError::SpawnFailed("Partial ownership metadata retained; refusing takeover".into()));
++    }
++
++    if owner_path.exists() && !suwayomi_runtime::has_confirmed_stop(&owner_path) {
+         match read_server_owner(&owner_path) {
+             Some(owner) => match validate_server_owner(&target, &owner) {
+                 OwnerReuseDecision::Reusable => {
+@@ -5509,8 +5529,8 @@
+                     return Ok(());
+                 }
+                 OwnerReuseDecision::Stale => {
+-                    do_log(&mut log, "[spawn_server] owner stale, removing");
+-                    remove_server_owner_files(&data_dir);
++                    let _ = std::fs::remove_file(&spawn_lock_path);
++                    return Err(SpawnError::SpawnFailed("Unconfirmed stale ownership retained; refusing takeover".into()));
+                 }
+                 OwnerReuseDecision::ConflictingLiveProcess => {
+                     do_log(
+@@ -5527,9 +5547,10 @@
+             None => {
+                 do_log(
+                     &mut log,
+-                    "[spawn_server] owner file is malformed or partial; removing stale owner files",
++                    "[spawn_server] malformed ownership preserved; refusing takeover",
+                 );
+-                remove_server_owner_files(&data_dir);
++                let _ = std::fs::remove_file(&spawn_lock_path);
++                return Err(SpawnError::SpawnFailed("Malformed ownership retained".into()));
+             }
+         }
+     }
+@@ -5545,6 +5566,7 @@
+                 server_url: target.server_url.clone(),
+                 started_at: unix_now_secs(),
+                 run_id: Some(uuid::Uuid::new_v4().to_string()),
++                spawned_by_app: false,
+                 process_identity: runtime_process_identity(java_pid),
+             };
+             if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
+@@ -5605,7 +5627,6 @@
+         Ok(i) => i,
+         Err(e) => {
+             let _ = std::fs::remove_file(&spawn_lock_path);
+-            remove_server_owner_files(&data_dir);
+             do_log(&mut log, &format!("[spawn_server] resolve FAILED: {:?}", e));
+             return Err(e);
+         }
+@@ -5667,6 +5688,62 @@
+                 );
+                 spawn_main_startup_event_drain(rx, diagnostic_log_path.clone(), java_pid);
+             }
++            let run_id = uuid::Uuid::new_v4().to_string();
++            let owner = ServerOwner {
++                profile_key: target.profile_key.clone(),
++                root_dir: data_dir.to_string_lossy().into_owned(),
++                app_pid: std::process::id(),
++                java_pid,
++                port: target.port,
++                server_url: target.server_url.clone(),
++                started_at: unix_now_secs(),
++                run_id: Some(run_id),
++                spawned_by_app: true,
++                process_identity: runtime_process_identity(java_pid),
++            };
++
++            if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
++                do_log(
++                    &mut log,
++                    &format!("[spawn_server] owner publish FAILED: {}", err),
++                );
++                if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
++                    append_timestamped_line(
++                        diagnostic_log_path,
++                        &format!("owner publish failed: {}", err),
++                    );
++                }
++                if let Err(error) = suwayomi_runtime::stop_spawned_child(&child) { return Err(SpawnError::SpawnFailed(error)); }
++                let _ = std::fs::remove_file(&spawn_lock_path);
++                set_runtime_status(
++                    &app,
++                    suwayomi_runtime::RuntimeLifecycleState::Unavailable,
++                    Some(target.profile_key.clone()),
++                    Some(target.server_url.clone()),
++                    None,
++                    Some(format!("Failed to publish local server owner: {err}")),
++                );
++                return Err(SpawnError::SpawnFailed(format!(
++                    "Failed to publish local server owner: {}",
++                    err
++                )));
++            }
++            if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
++                append_timestamped_line(
++                    diagnostic_log_path,
++                    &format!("owner published pid={} path={:?}", java_pid, owner_path),
++                );
++            }
++
++            let running = RunningServer {
++                child,
++                owner_path,
++                profile_key: target.profile_key.clone(),
++                server_url: target.server_url.clone(),
++                port: target.port,
++                run_id: owner.run_id.clone().expect("spawn generated run identity"),
++                birth_identity: owner.process_identity.clone(),
++            };
+             let boot_probe_attempts = if data_dir.join("database.mv.db").exists() {
+                 // Existing profiles can run scheduled backup/update work before binding the API port.
+                 // Give them enough room to finish startup instead of killing a healthy-but-slow boot.
+@@ -5678,6 +5755,10 @@
+             let mut port_collision_message: Option<String> = None;
+             let boot_started_at = std::time::Instant::now();
+             for attempt in 1..=boot_probe_attempts {
++                // Stop waiting for health when the app is closing. The existing
++                // failure path below validates this retained run and confirms
++                // exit; a shutdown request itself never grants ownership.
++                if session_control::shutdown_pending() { break; }
+                 let probe_started_at = std::time::Instant::now();
+                 let probe_ok =
+                     probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT);
+@@ -5795,9 +5876,11 @@
+                 if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
+                     append_timestamped_line(diagnostic_log_path, &message);
+                 }
+-                let _ = child.kill();
++                if let Err(error) = kill_tachidesk_target_for_retained_restart(&running) {
++                    *app.state::<ServerState>().0.lock().unwrap() = Some(running);
++                    return Err(SpawnError::SpawnFailed(error));
++                }
+                 let _ = std::fs::remove_file(&spawn_lock_path);
+-                remove_server_owner_files(&data_dir);
+                 set_runtime_status(
+                     &app,
+                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+@@ -5824,9 +5907,11 @@
+                         ),
+                     );
+                 }
+-                let _ = child.kill();
++                if let Err(error) = kill_tachidesk_target_for_retained_restart(&running) {
++                    *app.state::<ServerState>().0.lock().unwrap() = Some(running);
++                    return Err(SpawnError::SpawnFailed(error));
++                }
+                 let _ = std::fs::remove_file(&spawn_lock_path);
+-                remove_server_owner_files(&data_dir);
+                 set_runtime_status(
+                     &app,
+                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+@@ -5840,59 +5925,8 @@
+                 ));
+             }
+ 
+-            let run_id = uuid::Uuid::new_v4().to_string();
+-            let owner = ServerOwner {
+-                profile_key: target.profile_key.clone(),
+-                root_dir: data_dir.to_string_lossy().into_owned(),
+-                app_pid: std::process::id(),
+-                java_pid,
+-                port: target.port,
+-                server_url: target.server_url.clone(),
+-                started_at: unix_now_secs(),
+-                run_id: Some(run_id),
+-                process_identity: runtime_process_identity(java_pid),
+-            };
+-
+-            if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
+-                do_log(
+-                    &mut log,
+-                    &format!("[spawn_server] owner publish FAILED: {}", err),
+-                );
+-                if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
+-                    append_timestamped_line(
+-                        diagnostic_log_path,
+-                        &format!("owner publish failed: {}", err),
+-                    );
+-                }
+-                let _ = child.kill();
+-                let _ = std::fs::remove_file(&spawn_lock_path);
+-                remove_server_owner_files(&data_dir);
+-                set_runtime_status(
+-                    &app,
+-                    suwayomi_runtime::RuntimeLifecycleState::Unavailable,
+-                    Some(target.profile_key.clone()),
+-                    Some(target.server_url.clone()),
+-                    None,
+-                    Some(format!("Failed to publish local server owner: {err}")),
+-                );
+-                return Err(SpawnError::SpawnFailed(format!(
+-                    "Failed to publish local server owner: {}",
+-                    err
+-                )));
+-            }
+-            if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
+-                append_timestamped_line(
+-                    diagnostic_log_path,
+-                    &format!("owner published pid={} path={:?}", java_pid, owner_path),
+-                );
+-            }
+-
+             let _ = std::fs::remove_file(&spawn_lock_path);
+-            *app.state::<ServerState>().0.lock().unwrap() = Some(RunningServer {
+-                child,
+-                owner_path,
+-                spawn_lock_path,
+-            });
++            *app.state::<ServerState>().0.lock().unwrap() = Some(running);
+             set_runtime_status(
+                 &app,
+                 suwayomi_runtime::RuntimeLifecycleState::Ready,
+@@ -5925,6 +5959,10 @@
+     profile_id: Option<String>,
+     app: tauri::AppHandle,
+ ) -> Result<(), SpawnError> {
++    if profile_id.as_deref() == Some("main") {
++        return tauri::async_runtime::block_on(syncd_sidecar::ensure_host_mode(&app))
++            .map(|_| ()).map_err(SpawnError::SpawnFailed);
++    }
+     spawn_server_unlocked(
+         String::new(),
+         server_url,
+@@ -6029,9 +6067,6 @@
+ 
+ #[tauri::command]
+ fn reset_local_profile_data(profile_id: String, app: tauri::AppHandle) -> Result<bool, String> {
+-    let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
+-        &suwayomi_maintenance::default_runtime_root(),
+-    )?;
+     let profile_key = local_server_profile_key_from_id(Some(profile_id.as_str()))
+         .ok_or_else(|| "Invalid profile id.".to_string())?;
+     let server_url = format!(
+@@ -6077,7 +6112,10 @@
+     app: &tauri::AppHandle,
+ ) -> Result<bool, String> {
+     let root_dir = target.root_dir.clone();
+-    kill_tachidesk_target(app, target);
++    let _exclusive = suwayomi_maintenance::begin_exclusive_maintenance(
++        &suwayomi_maintenance::default_runtime_root(), "profile-reset", suwayomi_maintenance::MaintenancePhase::Updating,
++    )?;
++    stop_runtime_for_maintenance(app, target)?;
+     if !root_dir.exists() {
+         return Ok(false);
+     }
+@@ -6087,6 +6125,17 @@
+ 
+     std::fs::remove_dir_all(&root_dir).map_err(|err| err.to_string())?;
+     Ok(true)
++}
++
++pub(crate) fn stop_runtime_for_maintenance(app: &tauri::AppHandle, target: &LocalServerTarget) -> Result<(), String> {
++    if target.attach_only { return Err("Attached runtime maintenance refused".into()); }
++    if managed_startup_owner(&target.profile_key, target.port) != ManagedStartupOwner::PersistentCore {
++        return kill_tachidesk_target(app, target);
++    }
++    // Core cannot reacquire its shared startup lease while this caller holds the
++    // exclusive maintenance lease. Do not stop a disk-selected Core or promote
++    // files until an exact-owner maintenance handoff is implemented.
++    Err("Persistent Core maintenance requires an owner-scoped lease handoff; process and profile preserved".into())
+ }
+ 
+ #[tauri::command]
+@@ -6094,8 +6143,7 @@
+     let _lease = suwayomi_maintenance::try_acquire_shared_file_lease(
+         &suwayomi_maintenance::default_runtime_root(),
+     )?;
+-    kill_tachidesk(&app, server_url.as_deref());
+-    Ok(())
++    kill_tachidesk(&app, server_url.as_deref())
+ }
+ 
+ // ── Update commands ───────────────────────────────────────────────────────────
+@@ -6214,6 +6262,9 @@
+     app: tauri::AppHandle,
+     expected_version: String,
+ ) -> Result<(), String> {
++    // The Windows updater exits through std::process::exit after starting its
++    // installer. It cannot bypass the owned shutdown/attested relaunch contract.
++    session_control::require_native_install_handoff()?;
+     #[cfg(not(target_os = "windows"))]
+     return Err("Native install is Windows-only; open the GitHub release page instead.".into());
+ 
+@@ -6258,12 +6309,20 @@
+ 
+ /// Restart the app after a successful update install.
+ #[tauri::command]
+-fn restart_app(app: tauri::AppHandle) {
++fn restart_app(app: tauri::AppHandle) -> Result<(), String> {
++    if std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some() {
++        return Err("Managed run restart requires graceful close and a fresh attested launcher run".into());
++    }
++    prepare_owned_desktop_shutdown(&app)?;
+     tauri::process::restart(&app.env());
+ }
+ 
+ #[tauri::command]
+ fn relaunch_with_args(app: tauri::AppHandle, args: Vec<String>) -> Result<(), String> {
++    if std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some() {
++        return Err("Managed run relaunch requires graceful close and a fresh run UUID".into());
++    }
++    prepare_owned_desktop_shutdown(&app)?;
+     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+     let mut command = Command::new(exe);
+     command.args(args);
+@@ -6671,6 +6730,40 @@
+ }
+ 
+ // ── App entry point ───────────────────────────────────────────────────────────
++
++static DESKTOP_EXIT_CONFIRMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
++static DESKTOP_SHUTDOWN: Mutex<()> = Mutex::new(());
++
++pub(crate) fn prepare_owned_desktop_shutdown(app: &tauri::AppHandle) -> Result<(), String> {
++    let _shutdown = DESKTOP_SHUTDOWN.lock().map_err(|_| "Shutdown state unavailable")?;
++    if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) { return Ok(()); }
++    session_control::quiesce(Duration::from_secs(15))?;
++    // Use the retained scope even when the selected UI profile changed. An empty
++    // retained state means this app has no spawn authority, not that other PIDs died.
++    let state = app.state::<ServerState>();
++    let mut running = state.0.lock().map_err(|_| "Runtime state unavailable")?;
++    if let Some(owned) = running.as_ref() { kill_tachidesk_target_for_retained_restart(owned)?; }
++    running.take();
++    drop(running);
++    syncd_sidecar::shutdown_confirmed(app)?;
++    #[cfg(windows)]
++    if FLARESOLVERR_LOCAL_JOB.lock().map_err(|_| "FlareSolverr state unavailable")?.is_some() {
++        stop_flaresolverr_local()?;
++    }
++    clear_suwayomi_lan_state();
++    DESKTOP_EXIT_CONFIRMED.store(true, std::sync::atomic::Ordering::Release);
++    Ok(())
++}
++
++fn request_owned_desktop_shutdown(app: &tauri::AppHandle) {
++    let app = app.clone();
++    tauri::async_runtime::spawn_blocking(move || {
++        match prepare_owned_desktop_shutdown(&app) {
++            Ok(()) => app.exit(0),
++            Err(error) => eprintln!("[desktop shutdown] {error}; application and evidence preserved"),
++        }
++    });
++}
+ 
+ #[cfg_attr(mobile, tauri::mobile_entry_point)]
+ pub fn run() {
+@@ -6696,6 +6789,7 @@
+         .manage(syncd_replication::SyncdReplicationState::default())
+         .manage(syncd_sidecar::SyncdState::default())
+         .invoke_handler(tauri::generate_handler![
++            session_control::session_page_attestation,
+             get_launch_target,
+             is_webdriver_automation,
+             record_media_audit_event,
+@@ -6809,6 +6903,8 @@
+             // while legacy data is copied in the background.
+             tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
+             configure_webdriver_window(app.handle());
++            session_control::install(app.handle())
++                .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+             maybe_start_phase_gate_temporary_lan_session();
+             sanitize_suwayomi_lan_state();
+             schedule_suwayomi_lan_session_watchers(app.handle());
+@@ -6823,16 +6919,33 @@
+                     .clone(),
+             ))
+             .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
++            session_control::ready();
+             Ok(())
+         })
+-        .on_window_event(|_window, _event| {})
++        .on_page_load(|window, _payload| { if window.label() == "main" { session_control::page_loaded(); } })
++        .on_window_event(|window, event| {
++            if window.label() == "main" {
++                if let WindowEvent::CloseRequested { api, .. } = event {
++                    api.prevent_close();
++                    request_owned_desktop_shutdown(window.app_handle());
++                }
++            }
++        })
+         .build(tauri::generate_context!())
+         .expect("error while building epigraph");
+ 
+     app.run(|app_handle, event| {
++        if let tauri::RunEvent::ExitRequested { api, .. } = &event {
++            if !DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) {
++                api.prevent_exit();
++                request_owned_desktop_shutdown(app_handle);
++                return;
++            }
++        }
++        if DESKTOP_EXIT_CONFIRMED.load(std::sync::atomic::Ordering::Acquire) { return; }
+         syncd_sidecar::handle_run_event(app_handle, &event);
+         if matches!(event, tauri::RunEvent::Exit) {
+-            kill_tachidesk(app_handle, None);
++            if let Err(error) = kill_tachidesk(app_handle, None) { eprintln!("[runtime cleanup] {error}"); }
+             clear_suwayomi_lan_state();
+         }
+     });

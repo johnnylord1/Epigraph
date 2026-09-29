@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getNovelMigrationBlocker,
+  getNovelMigrationBlockerKind,
   getNovelMigrationSafetyRecord,
   hasMinimumNovelMigrationSafeCohort,
   isNovelSourceMigrationSafe,
@@ -21,11 +22,14 @@ describe("novel migration-safe cohort", () => {
     expect(isNovelSourceMigrationSafe("royalroad")).toBe(true);
     expect(isNovelSourceMigrationSafe("illusia")).toBe(true);
     expect(getNovelMigrationBlocker("illusia")).toBeNull();
+    expect(getNovelMigrationBlockerKind("illusia")).toBeNull();
   });
 
   it("keeps blocked or limited sources out of the migration-safe cohort", () => {
     expect(isNovelSourceMigrationSafe("lightnovelbrasil")).toBe(false);
     expect(getNovelMigrationBlocker("lightnovelbrasil")).toMatch(/redirect|anti-bot/i);
+    expect(getNovelMigrationBlockerKind("lightnovelbrasil")).toBe("site");
+    expect(getNovelMigrationBlockerKind("not-a-known-plugin")).toBe("unverified");
     expect(isNovelSourceMigrationSafe("inkitt")).toBe(false);
   });
 
@@ -61,6 +65,8 @@ describe("novel migration-safe cohort", () => {
 
     expect(isNovelSourceMigrationSafe("archiveofourown", state)).toBe(true);
     expect(getNovelMigrationBlocker("illusia", state)).toMatch(/automatic classification/i);
+    expect(getNovelMigrationBlockerKind("illusia", state)).toBe("pending");
+    expect(getNovelMigrationBlockerKind("archiveofourown", state)).toBeNull();
     expect(hasMinimumNovelMigrationSafeCohort(state)).toBe(false);
     expect(getNovelMigrationSafetyRecord("archiveofourown", state)?.notes).toMatch(/Automatic smoke passed/i);
   });

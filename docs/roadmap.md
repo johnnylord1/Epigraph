@@ -2,6 +2,32 @@
 
 This roadmap records known development priorities without committing to dates or adding new scope.
 
+## Technical audit — 2026-09-26
+
+A repository-wide audit fixed eight defects in live Syncd authorization and
+resume, progress-mirror broadcasting, cross-profile book writes, the Tauri
+command boundary, atomic state writes and GraphQL timeouts. Its record,
+invariants and the remaining outbox/event-boundary work are in
+[audit-2026-09-26.md](audit-2026-09-26.md). The new tests still have to be run
+with installed dependencies before the checkpoint is treated as verified.
+
+## Current audit checkpoint — 2026-09-19
+
+The original audit items B1, ORIGINAL_B2, B3, B4, B5 and ORIGINAL_B6 are closed
+on their verified working-tree checkpoints. B4's final attested candidate
+passes clean Fresh, Backup and Sync journeys through completion and restart;
+the final receipt and criterion mapping are recorded in
+[the audit backlog](project-audit-backlog.md#original_b4-closure-reconciliation--2026-09-19).
+
+The B4 fixes are limited to the active Sync readiness boundary: an in-flight
+hydration remains attached across unrelated replication updates, and native
+incremental/authoritative Novel snapshots publish strict profile metadata.
+Existing post-setup bypass harnesses remain regression gates and do not
+substitute for clean-user acceptance. B1 ownership, restore-domain execution,
+localization and B6 evidence contracts are preserved. B7-B12 remain unstarted;
+the canonical backlog currently defines no named next item, so no new scope is
+inferred here.
+
 ## Completed Foundation
 
 - Theme infrastructure, active-surface token migration, ThemeEditor V5
@@ -38,15 +64,17 @@ This roadmap records known development priorities without committing to dates or
   port, runs native evidence on DISPLAY3, executes the deterministic Suwayomi
   workflow, and distinguishes app-owned navigation work from
   environment-sensitive WebView2 frame scheduling.
-- The aggregate `pnpm release:verify` passed all 16 blocking gates on the
-  current HEAD (`50f1c8f6`) on 2026-08-01. The milestone is closed; the
+- The historical aggregate `pnpm release:verify` passed its then-declared gates
+  at commit `50f1c8f6` on 2026-08-01. The milestone is closed; the
   remaining items below are conditional release evidence or non-blocking
   follow-up work.
 
 ## Short Term
 
-- Keep `pnpm release:verify` as the pre-release gate. The current HEAD passed
-  its 16 blocking stages, including cleanup and worktree preservation.
+- Keep `pnpm release:verify` as the pre-release gate. Use the
+  [verification evidence entry point](verification-evidence.md) for dated,
+  artifact-specific results and the runner-derived stage inventory. The historical
+  result above does not certify the current working tree.
 - Exercise the real Docker FlareSolverr lifecycle when Docker is available;
   deterministic ownership and resource-policy tests remain the blocking gate.
 - Validate manga/fullscreen with an accessible catalog and complete a manual
@@ -83,6 +111,10 @@ This roadmap records known development priorities without committing to dates or
   configuration but are intentionally omitted from portable provenance.
 
 ## Medium Term
+
+- Add a durable, per-profile desktop replication outbox with event clocks so
+  edits made while a remote Core is unreachable are delivered without
+  resurrecting remote deletes.
 
 - Inventory remaining V2 sessions and `LEGACY_UNBOUND` rows before retiring
   local-ID synchronization. Never backfill those rows by title matching.

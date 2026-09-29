@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'EpigraphSessionTools.ps1')
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Resolve-Path (Join-Path $scriptDir "..")
@@ -72,19 +73,9 @@ function Get-MatchingProcesses {
 }
 
 function Stop-ProcessByPathPattern {
-  param(
-    [string[]]$Patterns
-  )
-
-  $processes = Get-MatchingProcesses -Patterns $Patterns
-  foreach ($process in $processes) {
-    try {
-      $location = if ($process.ExecutablePath) { $process.ExecutablePath } elseif ($process.CommandLine) { $process.CommandLine } else { "<unknown>" }
-      Write-Host "Stopping $($process.Name) [$($process.ProcessId)] at $location"
-      Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-    } catch {
-      Write-Host "Warning: could not stop process $($process.Name) [$($process.ProcessId)]"
-    }
+  param([string[]]$Patterns)
+  if (@(Get-MatchingProcesses -Patterns $Patterns).Count) {
+    throw 'Unowned automation residue detected; path matches cannot authorize cleanup. Inspect its originating run.'
   }
 }
 
@@ -104,27 +95,10 @@ function Assert-NoMatchingProcesses {
 }
 
 function Stop-ListeningPorts {
-  param(
-    [int[]]$Ports
-  )
-
+  param([int[]]$Ports)
   foreach ($port in $Ports) {
-    $listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue |
-      Select-Object -ExpandProperty OwningProcess -Unique
-    if (-not $listeners) {
-      continue
-    }
-
-    foreach ($listenerPid in $listeners) {
-      if ($protectedProcessIds.Contains([uint32]$listenerPid)) {
-        continue
-      }
-      try {
-        Write-Host "Stopping listener on port $port via PID $listenerPid"
-        Stop-Process -Id $listenerPid -Force -ErrorAction Stop
-      } catch {
-        Write-Host "Warning: could not stop listener PID $listenerPid on port $port"
-      }
+    if (@(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue).Count) {
+      throw "Port $port is occupied; listener preserved because no spawn capability was supplied."
     }
   }
 }
@@ -342,7 +316,7 @@ try {
 }
 finally {
   if ($driverProcess -and -not $driverProcess.HasExited) {
-    Stop-Process -Id $driverProcess.Id -Force
+    Stop-EpigraphRetainedProcess -Process $driverProcess
   }
 
   if (Test-Path $failurePath) {

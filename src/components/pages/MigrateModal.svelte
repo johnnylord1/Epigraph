@@ -1,7 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
-  import { X, MagnifyingGlass, CircleNotch, ArrowRight, Check, Sparkle } from "phosphor-svelte";
+  import { X, MagnifyingGlass, CircleNotch, ArrowRight, ArrowLeft, Check, Sparkle, Plugs, ArrowsLeftRight, Warning } from "phosphor-svelte";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
@@ -21,6 +21,8 @@
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import { enterOnMount, glideHeight, listFlip } from "../../lib/motion/motion";
+  import "./migrationModal.css";
 
   interface Props {
     manga:           Manga;
@@ -54,11 +56,11 @@
   let sources: Source[]     = $state([]);
   let loadingSources        = $state(true);
   let sourceLoadError: string | null = $state(null);
-  let selectedSource: Source | null = $state(null);
+  let selectedSource = $state<Source | null>(null);
+  let sourceFilter          = $state("");
 
   // Lang filter: "en" first, then alphabetical
   let selectedLang: string       = $state("all");
-  let langStripEl: HTMLDivElement | undefined = $state();
   const availableLangs           = $derived.by(() => {
     const langs = Array.from(new Set<string>(sources.map(s => s.lang))).sort();
     const en = langs.indexOf("en");
@@ -67,33 +69,38 @@
   });
   const hasMultipleLangs         = $derived(availableLangs.length > 1);
 
-  function scrollLangStrip(dir: -1 | 1) {
-    if (!langStripEl) return;
-    const strip = langStripEl;
-    const chips = Array.from(strip.children) as HTMLElement[];
-    const scrollLeft = strip.scrollLeft;
-    const viewEnd = scrollLeft + strip.clientWidth;
-
-    if (dir === 1) {
-      // Find first chip that is cut off or fully outside the right edge, scroll it flush left
-      const next = chips.find(c => c.offsetLeft + c.offsetWidth > viewEnd + 2);
-      if (next) strip.scrollTo({ left: next.offsetLeft, behavior: "smooth" });
-    } else {
-      // Find last chip that is cut off or fully outside the left edge, scroll it flush right
-      const prev = [...chips].reverse().find(c => c.offsetLeft < scrollLeft - 2);
-      if (prev) strip.scrollTo({ left: prev.offsetLeft + prev.offsetWidth - strip.clientWidth, behavior: "smooth" });
-    }
+  // With every language shown, one row per source name: the current work's language wins, then the
+  // preferred extension language, then English, then the first alphabetically.
+  function langRank(lang: string): number {
+    if (lang === manga.source?.lang) return 0;
+    if (lang === store?.settings?.preferredExtensionLang) return 1;
+    if (lang === "en") return 2;
+    return 3;
   }
   const visibleSources           = $derived.by(() => {
-    if (selectedLang !== "all") return sources.filter(s => s.lang === selectedLang);
+    const needle = sourceFilter.trim().toLowerCase();
+    const matches = (s: Source) => !needle || s.displayName.toLowerCase().includes(needle) || s.name.toLowerCase().includes(needle);
+    if (selectedLang !== "all") return sources.filter(s => s.lang === selectedLang && matches(s));
     const map = new Map<string, Source>();
     for (const s of sources) {
+      if (!matches(s)) continue;
       const existing = map.get(s.name);
       if (!existing) { map.set(s.name, s); continue; }
-      if (s.lang < existing.lang) map.set(s.name, s);
+      const rank = langRank(s.lang) - langRank(existing.lang);
+      if (rank < 0 || (rank === 0 && s.lang < existing.lang)) map.set(s.name, s);
     }
     return Array.from(map.values());
   });
+
+  const languageNames = (() => {
+    try { return new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "language" }); }
+    catch { return null; }
+  })();
+  function languageLabel(lang: string): string {
+    if (lang === "all") return $_("migrate.allLanguages");
+    try { return languageNames?.of(lang) ?? lang.toUpperCase(); }
+    catch { return lang.toUpperCase(); }
+  }
 
   let query                         = $state(untrack(() => manga.title));
   let results: { manga: Manga; similarity: number }[] = $state([]);
@@ -110,9 +117,23 @@
   const chapterDiff = $derived(chapterDifference(selectedMatch, totalCount));
   const currentSteps = ["source", "search", "confirm"] as const satisfies Step[];
   const stepIdx = $derived(currentSteps.indexOf(step));
+  const currentSourceName = $derived(manga.source?.displayName ?? $_("libraryUpdate.unknownSource"));
+  const selectedSourceName = $derived(selectedSource?.displayName ?? $_("libraryUpdate.unknownSource"));
 
   function chapterDifference(match: Match | null, currentTotal: number): number {
     return match ? match.chapters.length - currentTotal : 0;
+  }
+
+  function stepLabel(st: Step): string {
+    return st === "source" ? $_("ui_pickSource") : st === "search" ? $_("migrate.stepSearch") : $_("migrate.stepConfirm");
+  }
+
+  function percent(similarity: number): number {
+    return Math.round(similarity * 100);
+  }
+
+  function markBrokenImage(event: Event) {
+    (event.currentTarget as HTMLImageElement).dataset.broken = "true";
   }
 
   async function attemptWakeWithDeadline(timeoutMs = 3500) {
@@ -157,7 +178,7 @@
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose(); }
+  function onKey(e: KeyboardEvent) { if (e.key === "Escape" && !migrating) onClose(); }
 
   onMount(() => {
     if (!overlayEl || !modalEl) return;
@@ -194,6 +215,12 @@
     error = null;
     step = "search";
     searchSource(src, query);
+  }
+
+  function backToSources() {
+    step = "source";
+    results = [];
+    error = null;
   }
 
   async function selectMatch(m: Manga, similarity: number) {
@@ -234,7 +261,7 @@
       addToast({
         kind: "success",
         title: translate("ui_sourceMigrated"),
-        body: `${manga.title} moved to ${selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? translate("ui_theNewSource")}.`,
+        body: translate("migrate.movedTo", { title: manga.title, source: selectedMatch.manga.source?.displayName ?? selectedSource?.displayName ?? translate("ui_theNewSource") }),
         duration: 7000,
         action: {
           label: translate("ui_undo"),
@@ -270,50 +297,50 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div bind:this={overlayEl} class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+<div bind:this={overlayEl} class="mg-overlay" onclick={(e) => { if (e.target === e.currentTarget && !migrating) onClose(); }}>
   <div
     bind:this={modalEl}
-    class="modal"
+    class="mg-modal"
     role="dialog"
     aria-modal="true"
     aria-label={$_("ui_migrateSource")}
     tabindex="-1"
+    use:glideHeight
   >
-
-    <!-- Header -->
-    <div class="modal-header">
-      <div class="modal-title">
-        <span class="modal-title-label">{$_("ui_migrateSource")}</span>
-        <span class="modal-title-manga">{manga.title}</span>
+    <header class="mg-header">
+      <span class="mg-header-cover">
+        <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt="" onerror={markBrokenImage} />
+      </span>
+      <div class="mg-heading">
+        <p class="mg-eyebrow">{$_("migrate.eyebrow")}</p>
+        <h2 class="mg-title" title={manga.title}>{manga.title}</h2>
+        <p class="mg-subtitle">{$_("migrate.fromSource", { source: currentSourceName, count: totalCount })}</p>
       </div>
-      <button bind:this={closeButtonEl} class="close-btn" type="button" onclick={onClose} aria-label={$_("ui_closeMigrationModal")}><X size={14} weight="light" /></button>
-    </div>
+      <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={migrating} aria-label={$_("ui_closeMigrationModal")}><X size={16} weight="bold" /></button>
+    </header>
 
-    <!-- Step indicators -->
-    <div class="steps">
-      {#each currentSteps as st, i}
-        <div class="step" class:step-active={step === st} class:step-done={i < stepIdx}>
-          <span class="step-dot">
-            {#if i < stepIdx}<Check size={9} weight="bold" />{:else}{i + 1}{/if}
-          </span>
-          <span class="step-label">
-            {st === "source"
-              ? $_("ui_pickSource")
-              : st === "search"
-                ? (selectedSource ? selectedSource.displayName : "Search")
-                : "Confirm"}
-          </span>
-        </div>
-      {/each}
-    </div>
+    <nav class="mg-steps" aria-label={$_("ui_migrateSource")}>
+      <ol>
+        {#each currentSteps as st, i}
+          <li class:is-complete={i < stepIdx} aria-current={step === st ? "step" : undefined}>
+            <span class="mg-step-chip">
+              <span class="mg-step-icon" aria-hidden="true">
+                {#if i < stepIdx}<Check size={15} weight="bold" />{:else if st === "source"}<Plugs size={16} weight="duotone" />{:else if st === "search"}<MagnifyingGlass size={16} weight="duotone" />{:else}<ArrowsLeftRight size={16} weight="duotone" />{/if}
+              </span>
+              <span>{stepLabel(st)}</span>
+            </span>
+            {#if i < currentSteps.length - 1}<span class="mg-step-line" aria-hidden="true"><i></i></span>{/if}
+          </li>
+        {/each}
+      </ol>
+    </nav>
 
-    <!-- Body -->
-    <div class="body">
-      <!-- Step 1: Pick source -->
+    <div class="mg-body">
+      {#key step}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
       {#if step === "source"}
         {#if loadingSources}
-          <div class="centered">
-            <CircleNotch size={16} weight="light" class="anim-spin" style="color:var(--text-faint)" />
+          <div class="mg-list" aria-busy="true">
+            {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
           </div>
         {:else if sourceLoadError}
           <NocturneState
@@ -326,320 +353,206 @@
             actions={[{ label: $_("sources.actions.refresh"), kind: "primary", icon: "retry", onClick: loadSources }]}
           />
         {:else if sources.length === 0}
-          <div class="centered"><span class="hint">{$_("ui_noOtherSourcesInstalled")}</span></div>
+          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("ui_noOtherSourcesInstalled")}</span></div>
         {:else}
-          {#if hasMultipleLangs}
-            <div class="src-lang-bar">
-              <button class="src-lang-nav" onclick={() => scrollLangStrip(-1)}>‹</button>
-              <div class="src-lang-chips" bind:this={langStripEl}>
-                <button class="src-lang-chip" class:src-lang-chip-active={selectedLang === "all"} onclick={() => selectedLang = "all"}>{$_("downloads_filter_all")}</button>
-                {#each availableLangs as lang}
-                  <button class="src-lang-chip" class:src-lang-chip-active={selectedLang === lang} onclick={() => selectedLang = lang}>
-                    {lang.toUpperCase()}
-                  </button>
-                {/each}
-              </div>
-              <button class="src-lang-nav" onclick={() => scrollLangStrip(1)}>›</button>
+          <p class="mg-lede">{$_("migrate.sourceLede")}</p>
+          <div class="mg-toolbar">
+            <label class="mg-field">
+              <MagnifyingGlass size={16} weight="bold" />
+              <input bind:value={sourceFilter} placeholder={$_("migrate.filterSources")} aria-label={$_("migrate.filterSources")} />
+            </label>
+            {#if hasMultipleLangs}
+              <label class="mg-field mg-field--select">
+                <select bind:value={selectedLang} aria-label={$_("migrate.allLanguages")}>
+                  <option value="all">{languageLabel("all")}</option>
+                  {#each availableLangs as lang}<option value={lang}>{languageLabel(lang)}</option>{/each}
+                </select>
+              </label>
+            {/if}
+          </div>
+          <p class="mg-section-label">{$_("migrate.sourceCount", { count: visibleSources.length })}</p>
+          {#if visibleSources.length === 0}
+            <div class="mg-empty">{$_("migrate.noSourceMatches")}</div>
+          {:else}
+            <div class="mg-list">
+              {#each visibleSources as src, i (src.id)}
+                <button
+                  animate:listFlip
+                  style:--mg-i={i}
+                  class="mg-row"
+                  class:is-selected={selectedSource?.id === src.id}
+                  type="button"
+                  data-migration-source
+                  onclick={() => pickSource(src)}>
+                  <span class="mg-mark">
+                    <img src={resolveServiceIconUrl(src, { kind: "source" })} alt="" onerror={(e) => applyServiceIconFallback(e, "source")} />
+                  </span>
+                  <span class="mg-row-copy">
+                    <strong>{src.displayName}</strong>
+                    <small>{languageLabel(src.lang)}{src.isNsfw ? " · NSFW" : ""}</small>
+                  </span>
+                  <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
+                </button>
+              {/each}
             </div>
           {/if}
-          <div class="source-list">
-            {#each visibleSources as src}
-              <button
-                class="source-row"
-                class:source-row-active={selectedSource?.id === src.id}
-                onclick={() => pickSource(src)}>
-                <img src={resolveServiceIconUrl(src, { kind: "source" })} alt={src.name} class="source-icon"
-                  onerror={(e) => applyServiceIconFallback(e, "source")} />
-                <div class="source-info">
-                  <span class="source-name">{src.displayName}</span>
-                  <span class="source-meta">{src.lang.toUpperCase()}{src.isNsfw ? " · NSFW" : ""}</span>
-                </div>
-                <ArrowRight size={13} weight="light" class="source-arrow" />
+        {/if}
+
+      {:else if step === "search"}
+        {#if selectedSource}
+          <div class="mg-context">
+            <span class="mg-mark">
+              <img src={resolveServiceIconUrl(selectedSource, { kind: "source" })} alt="" onerror={(e) => applyServiceIconFallback(e, "source")} />
+            </span>
+            <span class="mg-row-copy">
+              <strong>{selectedSource.displayName}</strong>
+              <small>{languageLabel(selectedSource.lang)}</small>
+            </span>
+            <button class="mg-btn mg-btn--small" type="button" onclick={backToSources}>{$_("ui_change")}</button>
+          </div>
+        {/if}
+        <p class="mg-lede">{$_("migrate.searchLede", { source: selectedSourceName })}</p>
+        <form class="mg-field" onsubmit={(e) => { e.preventDefault(); if (selectedSource) searchSource(selectedSource, query); }}>
+          <MagnifyingGlass size={16} weight="bold" />
+          <input bind:value={query} placeholder={$_("ui_searchTitle")} aria-label={$_("ui_searchTitle")} use:focusOnMount />
+          <button class="mg-btn mg-btn--primary mg-btn--small" type="submit" disabled={searching || !selectedSource || !query.trim()}>
+            {#if searching}<CircleNotch size={14} weight="bold" class="anim-spin" />{/if}
+            {$_("novelSources_actions_search")}
+          </button>
+        </form>
+
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
+        {/if}
+
+        {#if searching}
+          <div class="mg-list" aria-busy="true">
+            {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
+          </div>
+        {:else if results.length > 0}
+          <p class="mg-section-label">{$_("migrate.resultCount", { count: results.length })}</p>
+          <div class="mg-list">
+            {#each results as { manga: m, similarity }, idx (m.id)}
+              {@const best = idx === 0 && similarity > 0.5}
+              <button class="mg-row"
+                animate:listFlip
+                style:--mg-i={idx}
+                class:is-best={best}
+                type="button"
+                data-migration-result
+                onclick={() => selectMatch(m, similarity)}
+                disabled={loadingMatchId !== null}>
+                <span class="mg-cover">
+                  <img src={resolveMangaCoverUrl(m, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
+                </span>
+                <span class="mg-row-copy">
+                  <strong title={m.title}>{m.title}</strong>
+                  <small>
+                    {#if best}<span class="mg-pill mg-pill--accent"><Sparkle size={11} weight="fill" /> {$_("ui_bestMatch")}</span>{/if}
+                    <span class="mg-meter"><i style:width="{percent(similarity)}%"></i></span>
+                    <span>{$_("migrate.matchPercent", { percent: percent(similarity) })}</span>
+                  </small>
+                </span>
+                <span class="mg-row-end">
+                  {#if loadingMatchId === m.id}<CircleNotch size={16} weight="bold" class="anim-spin" />{:else}<ArrowRight size={16} weight="bold" />{/if}
+                </span>
               </button>
             {/each}
           </div>
+        {:else if !error}
+          <div class="mg-empty">
+            <span class="mg-mark"><MagnifyingGlass size={18} weight="duotone" /></span>
+            <span>{query ? $_("ui_noResultsTryADifferentTitle") : $_("ui_enterATitleToSearch")}</span>
+          </div>
         {/if}
 
-      <!-- Step 2: Search & pick match -->
-      {:else if step === "search"}
-        <div class="search-step">
-
-          <!-- Source context pill -->
-          {#if selectedSource}
-            <div class="search-context">
-              <img src={resolveServiceIconUrl(selectedSource, { kind: "source" })} alt="" class="search-context-icon"
-                onerror={(e) => applyServiceIconFallback(e, "source")} />
-              <span class="search-context-name">{selectedSource.displayName}</span>
-              <button class="search-context-change" onclick={() => { step = "source"; results = []; }}>{$_("ui_change")}</button>
-            </div>
-          {/if}
-
-          <div class="search-row">
-            <div class="search-bar">
-              <MagnifyingGlass size={13} weight="light" class="search-icon" />
-                <input class="search-input" bind:value={query}
-                onkeydown={(e) => e.key === "Enter" && selectedSource && searchSource(selectedSource, query)}
-                placeholder={$_("ui_searchTitle")} use:focusOnMount />
-            </div>
-            <button class="search-btn"
-              onclick={() => selectedSource && searchSource(selectedSource, query)}
-              disabled={searching || !selectedSource}>
-              {#if searching}
-                <CircleNotch size={13} weight="light" class="anim-spin" />
-              {:else}
-                <MagnifyingGlass size={12} weight="bold" /> {$_("novelSources_actions_search")}{/if}
-            </button>
-          </div>
-
-          {#if error}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
-          {/if}
-
-          <div class="results">
-            {#if searching}
-              {#each Array(6) as _, i}
-                <div class="sk-result">
-                  <div class="skeleton sk-cover"></div>
-                  <div class="sk-meta">
-                    <div class="skeleton sk-title"></div>
-                    <div class="skeleton sk-title" style="width:40%"></div>
-                  </div>
-                </div>
-              {/each}
-            {:else}
-              {#each results as { manga: m, similarity }, idx}
-                <button class="result-row"
-                  onclick={() => selectMatch(m, similarity)}
-                  disabled={loadingMatchId !== null}>
-                  <div class="result-cover-wrap">
-                    <img src={resolveMangaCoverUrl(m, { context: "migration", persistence: "memory" })} alt={m.title} class="result-cover" />
-                  </div>
-                  <div class="result-info">
-                    <span class="result-title">{m.title}</span>
-                    <div class="result-meta">
-                      {#if idx === 0 && similarity > 0.5}
-                        <span class="best-match-badge"><Sparkle size={9} weight="fill" /> {$_("ui_bestMatch")}</span>
-                      {/if}
-                      <span class="sim-bar"><span class="sim-fill" style="width:{Math.round(similarity * 100)}%"></span></span>
-                      <span class="sim-label">{Math.round(similarity * 100)}{$_("ui_match")}</span>
-                    </div>
-                  </div>
-                  {#if loadingMatchId === m.id}
-                    <CircleNotch size={13} weight="light" class="anim-spin" style="color:var(--text-faint);flex-shrink:0" />
-                  {:else}
-                    <ArrowRight size={13} weight="light" style="color:var(--text-faint);flex-shrink:0;opacity:0.5" />
-                  {/if}
-                </button>
-              {/each}
-              {#if !searching && results.length === 0 && !error}
-                <div class="centered">
-                  <span class="hint">{query ? $_("ui_noResultsTryADifferentTitle") : $_("ui_enterATitleToSearch")}</span>
-                </div>
-              {/if}
-            {/if}
-          </div>
-        </div>
-
       {:else if step === "confirm" && selectedMatch}
-        <div class="confirm-step">
-          <div class="confirm-row">
-            <div class="confirm-manga">
-              <div class="confirm-cover-wrap">
-                <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={manga.title} class="confirm-cover" />
-              </div>
-              <p class="confirm-title">{manga.title}</p>
-              <p class="confirm-source">{manga.source?.displayName ?? "Unknown"}</p>
-              <span class="confirm-tag">{$_("bookDetail_filter_current")}</span>
-            </div>
-
-            <div class="confirm-divider">
-              <ArrowRight size={16} weight="light" class="confirm-arrow" />
-            </div>
-
-            <div class="confirm-manga">
-              <div class="confirm-cover-wrap">
-                <img src={resolveMangaCoverUrl(selectedMatch.manga, { context: "migration", persistence: "memory" })} alt={selectedMatch.manga.title} class="confirm-cover" />
-              </div>
-              <p class="confirm-title">{selectedMatch.manga.title}</p>
-              <p class="confirm-source">{selectedSource?.displayName ?? "Unknown"}</p>
-              <span class="confirm-tag confirm-tag-new">{$_("ui_new")}</span>
-            </div>
+        <p class="mg-lede">{$_("migrate.confirmLede")}</p>
+        <div class="mg-compare">
+          <div class="mg-compare-card">
+            <span class="mg-cover">
+              <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt="" onerror={markBrokenImage} />
+            </span>
+            <span class="mg-row-copy">
+              <span class="mg-pill">{$_("bookDetail_filter_current")}</span>
+              <strong title={manga.title}>{manga.title}</strong>
+              <small>{currentSourceName}</small>
+            </span>
           </div>
-
-          <div class="confirm-stats">
-            <div class="stat-row">
-              <span class="stat-label">{$_("ui_titleMatch")}</span>
-              <span class="stat-val"
-                class:stat-good={selectedMatch.similarity > 0.7}
-                class:stat-warn={selectedMatch.similarity > 0.4 && selectedMatch.similarity <= 0.7}
-                class:stat-bad={selectedMatch.similarity <= 0.4}>
-                {Math.round(selectedMatch.similarity * 100)}%
-              </span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{$_("ui_chaptersOnNewSource")}</span>
-              <span class="stat-val" class:stat-warn={chapterDiff < -5}>
-                {selectedMatch.chapters.length}
-                {#if chapterDiff !== 0}
-                  <span class="chapter-diff">{chapterDiff > 0 ? `+${chapterDiff}` : chapterDiff} {$_("ui_vsCurrent")}</span>
-                {/if}
-              </span>
-            </div>
-            <div class="stat-row">
-              <span class="stat-label">{$_("ui_readProgressToCarryOver")}</span>
-              <span class="stat-val">{selectedMatch.readCount} / {readCount} {$_("ui_chapters")}</span>
-            </div>
-          </div>
-
-          {#if chapterDiff < -5}
-            <NocturneState
-              layout="compact"
-              tone="warning"
-              icon="warning"
-              eyebrow={$_("ui_migration")}
-              title={$_("ui_warning")}
-              body={`${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`}
-            />
-          {/if}
-
-          <p class="confirm-note">{$_("ui_theCurrentEntryWillBeRemovedFromYour")}</p>
-
-          {#if error}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
-          {/if}
-
-          <div class="confirm-actions">
-            <button class="back-btn" onclick={() => step = "search"} disabled={migrating}>{$_("ui_back")}</button>
-            <button class="migrate-btn" onclick={migrate} disabled={migrating}>
-              {#if migrating}
-                <CircleNotch size={13} weight="light" class="anim-spin" /> {$_("ui_migrating")}{:else}
-                <Check size={13} weight="bold" /> {$_("detail_actions_migrate")}{/if}
-            </button>
+          <span class="mg-compare-arrow" aria-hidden="true"><ArrowRight size={16} weight="bold" /></span>
+          <div class="mg-compare-card is-new">
+            <span class="mg-cover">
+              <img src={resolveMangaCoverUrl(selectedMatch.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
+            </span>
+            <span class="mg-row-copy">
+              <span class="mg-pill mg-pill--accent">{$_("ui_new")}</span>
+              <strong title={selectedMatch.manga.title}>{selectedMatch.manga.title}</strong>
+              <small>{selectedSourceName}</small>
+            </span>
           </div>
         </div>
-      {/if}
 
+        <div class="mg-metrics">
+          <div class="mg-metric">
+            <span>{$_("ui_titleMatch")}</span>
+            <strong
+              class:is-good={selectedMatch.similarity > 0.7}
+              class:is-warn={selectedMatch.similarity > 0.4 && selectedMatch.similarity <= 0.7}
+              class:is-bad={selectedMatch.similarity <= 0.4}>{percent(selectedMatch.similarity)}%</strong>
+          </div>
+          <div class="mg-metric">
+            <span>{$_("ui_chaptersOnNewSource")}</span>
+            <strong class:is-warn={chapterDiff < -5}>{selectedMatch.chapters.length}</strong>
+            {#if chapterDiff !== 0}<small>{chapterDiff > 0 ? `+${chapterDiff}` : chapterDiff} {$_("ui_vsCurrent")}</small>{/if}
+          </div>
+          <div class="mg-metric">
+            <span>{$_("ui_readProgressToCarryOver")}</span>
+            <strong>{selectedMatch.readCount} / {readCount}</strong>
+            <small>{$_("ui_chapters")}</small>
+          </div>
+        </div>
+
+        {#if chapterDiff < -5}
+          <NocturneState
+            layout="compact"
+            tone="warning"
+            icon="warning"
+            eyebrow={$_("ui_migration")}
+            title={$_("ui_warning")}
+            body={`${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`}
+          />
+        {/if}
+
+        <p class="mg-note"><Warning size={12} weight="bold" /> {$_("ui_theCurrentEntryWillBeRemovedFromYour")}</p>
+
+        {#if error}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
+        {/if}
+      {/if}
+      </div>{/key}
     </div>
+
+    <footer class="mg-footer">
+      {#if step === "source"}
+        <span class="mg-spacer"></span>
+        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
+      {:else if step === "search"}
+        <button class="mg-btn" type="button" onclick={backToSources} disabled={loadingMatchId !== null}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+      {:else}
+        <button class="mg-btn" type="button" onclick={() => step = "search"} disabled={migrating}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+        <button class="mg-btn mg-btn--primary" type="button" onclick={migrate} disabled={migrating || !selectedMatch}>
+          {#if migrating}
+            <CircleNotch size={15} weight="bold" class="anim-spin" /> {$_("ui_migrating")}
+          {:else}
+            {$_("detail_actions_migrate")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
+          {/if}
+        </button>
+      {/if}
+    </footer>
   </div>
 </div>
-
-<style>
-  .overlay { position: fixed; inset: 0; background: var(--component-migration-overlay-bg); display: flex; align-items: center; justify-content: center; z-index: var(--component-migration-overlay-z-index); backdrop-filter: var(--component-migration-overlay-blur); animation: fadeIn var(--component-migration-animation-fade) both; }
-  .modal { background: var(--component-migration-modal-bg); border: 1px solid var(--component-migration-modal-border); border-radius: var(--component-migration-modal-radius); width: var(--component-migrate-modal-width); max-height: var(--component-migrate-modal-max-height); display: flex; flex-direction: column; overflow: hidden; box-shadow: var(--component-migration-modal-shadow); animation: scaleIn var(--component-migration-animation-scale) both; }
-  .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: var(--component-migrate-modal-header-padding); border-bottom: 1px solid var(--component-migration-divider-strong); flex-shrink: 0; }
-  .modal-title { display: flex; flex-direction: column; gap: 2px; }
-  .modal-title-label { font-family: var(--font-ui); font-size: var(--component-migrate-modal-eyebrow-font-size); color: var(--component-migration-eyebrow-fg); letter-spacing: var(--component-migrate-modal-eyebrow-letter-spacing); text-transform: uppercase; }
-  .modal-title-manga { font-size: var(--component-migrate-modal-title-font-size); font-weight: var(--weight-bold); color: var(--component-migration-title-fg); letter-spacing: var(--component-migrate-modal-title-letter-spacing); }
-  .close-btn { display: flex; align-items: center; justify-content: center; width: var(--component-migrate-modal-icon-size); height: var(--component-migrate-modal-icon-size); border-radius: var(--component-migration-icon-radius); color: var(--component-migration-icon-fg); background: var(--component-migration-icon-bg); border: 1px solid var(--component-migration-icon-border); cursor: pointer; transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast), transform var(--component-migration-transition-fast); flex-shrink: 0; }
-  .close-btn:hover { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-icon-hover-bg); }
-  .close-btn:active { transform: scale(0.96); }
-
-  /* Steps */
-  .steps { display: flex; align-items: center; gap: var(--sp-1); padding: var(--component-migrate-modal-steps-padding); border-bottom: 1px solid var(--component-migration-divider-strong); flex-shrink: 0; }
-  .step { display: flex; align-items: center; gap: var(--sp-2); opacity: var(--component-migrate-modal-step-opacity); transition: opacity var(--t-base); }
-  .step + .step::before { content: "›"; color: var(--text-faint); margin-right: var(--sp-1); font-size: var(--text-sm); }
-  .step-active { opacity: 1; }
-  .step-done   { opacity: var(--component-migrate-modal-step-done-opacity); }
-  .step-dot { width: 18px; height: 18px; border-radius: var(--radius-full); background: var(--bg-raised); border: 1px solid var(--border-base); display: flex; align-items: center; justify-content: center; font-family: var(--font-ui); font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
-  .step-active .step-dot { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .step-label { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); color: var(--text-muted); }
-  .step-active .step-label { color: var(--text-secondary); }
-
-  /* Body */
-  .body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-  .centered { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--sp-8); }
-  .hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-
-  /* Source list */
-  .source-list { flex: 1; overflow-y: auto; padding: var(--sp-2); display: flex; flex-direction: column; gap: 1px; }
-  .source-row { display: flex; align-items: center; gap: var(--sp-3); padding: 9px var(--sp-3); border-radius: var(--radius-md); border: 1px solid transparent; background: none; text-align: left; width: 100%; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast); }
-  .source-row:hover { background: var(--component-migration-row-hover-bg); border-color: var(--component-migration-row-hover-border); }
-  .source-row-active { background: var(--component-migrate-modal-row-active-bg); border-color: var(--component-migrate-modal-row-active-border); }
-  .source-icon { width: 28px; height: 28px; border-radius: var(--radius-md); object-fit: cover; flex-shrink: 0; background: var(--bg-raised); }
-  .source-info { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
-  .source-name { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .source-meta { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); }
-  :global(.source-arrow) { color: var(--text-faint); opacity: 0; transition: opacity var(--t-base); }
-  .source-row:hover :global(.source-arrow) { opacity: 1; }
-
-  /* Lang filter bar */
-  .src-lang-bar { display: flex; align-items: center; gap: var(--sp-1); padding: var(--sp-2); border-bottom: 1px solid var(--border-dim); flex-shrink: 0; }
-  .src-lang-nav { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex-shrink: 0; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); font-size: 15px; line-height: 1; cursor: pointer; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .src-lang-nav:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-raised); }
-  .src-lang-chips { display: flex; align-items: center; gap: var(--sp-1); flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; }
-  .src-lang-chip:last-child { margin-right: var(--sp-1); }
-  .src-lang-chips::-webkit-scrollbar { display: none; }
-  .src-lang-chip { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 3px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); background: none; color: var(--text-faint); cursor: pointer; white-space: nowrap; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .src-lang-chip:hover { color: var(--text-muted); border-color: var(--border-strong); background: var(--bg-raised); }
-  .src-lang-chip-active { color: var(--accent-fg); border-color: var(--accent-dim); background: var(--accent-muted); }
-  .src-lang-chip-active:hover { color: var(--accent-fg); border-color: var(--accent); }
-
-  /* Search step */
-  .search-step { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
-  .search-context { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); flex-shrink: 0; }
-  .search-context-icon { width: 18px; height: 18px; border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; }
-  .search-context-name { flex: 1; font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .search-context-change { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); color: var(--accent-fg); background: none; border: none; cursor: pointer; padding: 0; flex-shrink: 0; transition: opacity var(--t-base); }
-  .search-context-change:hover { opacity: var(--component-migrate-modal-link-hover-opacity); }
-  .search-row { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
-  .search-bar { flex: 1; display: flex; align-items: center; gap: var(--sp-2); background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: 0 var(--sp-3) 0 var(--sp-2); transition: border-color var(--t-base); }
-  .search-bar:focus-within { border-color: var(--border-strong); }
-  :global(.search-icon) { color: var(--text-faint); flex-shrink: 0; }
-  .search-input { flex: 1; background: none; border: none; outline: none; color: var(--text-primary); font-size: var(--text-sm); padding: 7px 0; }
-  .search-input::placeholder { color: var(--text-faint); }
-  .search-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 6px 12px; border-radius: var(--radius-md); background: var(--accent-muted); color: var(--accent-fg); border: 1px solid var(--accent-dim); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; gap: var(--sp-1); transition: filter var(--t-base); }
-  .search-btn:hover:not(:disabled) { filter: brightness(1.1); }
-  .search-btn:disabled { opacity: var(--component-migrate-modal-disabled-opacity); cursor: default; }
-  .results { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
-  .result-row { display: flex; align-items: center; gap: var(--sp-3); padding: 7px var(--sp-2); border-radius: var(--radius-md); border: none; background: none; text-align: left; width: 100%; cursor: pointer; transition: background var(--t-fast); }
-  .result-row:hover:not(:disabled) { background: var(--bg-raised); }
-  .result-row:disabled { opacity: var(--component-migrate-modal-disabled-opacity-strong); cursor: default; }
-  .result-cover-wrap { width: 36px; height: 54px; border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); flex-shrink: 0; }
-  .result-cover { width: 100%; height: 100%; object-fit: cover; }
-  .result-info { flex: 1; display: flex; flex-direction: column; gap: 4px; overflow: hidden; min-width: 0; }
-  .result-title { font-size: var(--text-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .result-meta { display: flex; align-items: center; gap: var(--sp-2); }
-  .best-match-badge { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-ui); font-size: 9px; letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--accent-fg); background: var(--accent-muted); border: 1px solid var(--accent-dim); padding: 1px 5px; border-radius: var(--radius-sm); flex-shrink: 0; }
-  .sim-bar { width: 48px; height: 3px; background: var(--bg-overlay); border-radius: var(--radius-full); overflow: hidden; flex-shrink: 0; display: inline-block; }
-  .sim-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-full); transition: width 0.2s ease; }
-  .sim-label { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); white-space: nowrap; }
-  /* Skeletons */
-  .sk-result { display: flex; align-items: center; gap: var(--sp-3); padding: 7px var(--sp-2); }
-  .sk-cover { width: 36px; height: 54px; border-radius: var(--radius-sm); flex-shrink: 0; }
-  .sk-meta { flex: 1; display: flex; flex-direction: column; gap: var(--sp-2); }
-  .sk-title { height: 13px; width: 65%; border-radius: var(--radius-sm); }
-
-  /* Confirm step */
-  .confirm-step { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-4) var(--sp-5); }
-  .confirm-row { display: flex; align-items: center; justify-content: center; gap: var(--sp-4); }
-  .confirm-manga { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); flex: 1; max-width: 160px; }
-  .confirm-cover-wrap { width: 100%; aspect-ratio: 2/3; border-radius: var(--radius-md); overflow: hidden; background: var(--bg-raised); border: 1px solid var(--border-dim); }
-  .confirm-cover { width: 100%; height: 100%; object-fit: cover; }
-  .confirm-title { font-size: var(--text-xs); color: var(--text-secondary); text-align: center; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: var(--leading-snug); }
-  .confirm-source { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--text-faint); letter-spacing: var(--tracking-wide); text-align: center; }
-  .confirm-divider { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  :global(.confirm-arrow) { color: var(--text-faint); }
-  .confirm-tag { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-full); background: var(--bg-raised); border: 1px solid var(--border-dim); color: var(--text-faint); }
-  .confirm-tag-new { background: var(--accent-muted); border-color: var(--accent-dim); color: var(--accent-fg); }
-  .confirm-stats { display: flex; flex-direction: column; gap: var(--sp-2); background: var(--bg-raised); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: var(--sp-3) var(--sp-4); }
-  .stat-row { display: flex; justify-content: space-between; align-items: center; }
-  .stat-label { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-muted); letter-spacing: var(--tracking-wide); }
-  .stat-val { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary); letter-spacing: var(--tracking-wide); }
-  .stat-good { color: var(--color-success) !important; }
-  .stat-warn { color: var(--component-migrate-modal-warning-fg) !important; }
-  .stat-bad  { color: var(--color-error) !important; }
-  .chapter-diff { font-family: var(--font-ui); font-size: var(--text-2xs); color: var(--component-migrate-modal-warning-fg); letter-spacing: var(--tracking-wide); margin-left: var(--sp-2); }
-  .confirm-note { font-size: var(--text-xs); color: var(--text-faint); line-height: var(--leading-base); }
-  .confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); flex-shrink: 0; }
-  .back-btn { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 6px 10px; border-radius: var(--radius-md); background: none; color: var(--text-muted); border: 1px solid var(--border-dim); cursor: pointer; flex-shrink: 0; transition: color var(--t-base), border-color var(--t-base), background var(--t-base); }
-  .back-btn:hover:not(:disabled) { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-raised); }
-  .back-btn:disabled { opacity: var(--component-migrate-modal-disabled-opacity); cursor: default; }
-  .migrate-btn { display: flex; align-items: center; gap: var(--sp-2); font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 7px 16px; border-radius: var(--radius-md); background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent-fg); cursor: pointer; transition: background var(--t-base), border-color var(--t-base); }
-  .migrate-btn:hover:not(:disabled) { background: var(--accent-muted); border-color: var(--accent-bright); }
-  .migrate-btn:disabled { opacity: var(--component-migrate-modal-disabled-opacity-strong); cursor: default; }
-
-  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-</style>
 
 <script module lang="ts">
   function focusOnMount(node: HTMLElement) { node.focus(); }

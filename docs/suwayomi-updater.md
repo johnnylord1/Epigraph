@@ -53,10 +53,21 @@ Checksum validation is integrity only. If Suwayomi publishes a verifiable signat
 Current compatibility decision:
 
 - `v2.1.1867` remains the supported baseline.
+- Fresh Windows release builds bundle the allowlisted `v2.3.2243` JAR with
+  the previously certified Java 21 distribution. The local `tauri:build`
+  command and Windows CI use `scripts/prepare-suwayomi-bundle.mjs`; the JAR
+  and required Java files are SHA-256 pinned. Preparation is idempotent and
+  repairs missing required Java files. It skips on non-Windows platforms,
+  whose existing packaging flow remains separate.
 - `v2.3.2243` is the maximum tested version after Windows x64/Java 21
   certification of H2 migration, Extension Stores, installed extension
   registration, restart and rollback on a disposable profile copy.
 - `v2.2.2100` is explicitly blocked after a managed-runtime smoke run failed to become GraphQL-healthy. Tests may use an isolated allowlist fixture for update-flow coverage, but production must continue to follow the bundled manifest.
+
+This packaging choice does not relax updater ownership, attach-only,
+blocked-version, or integrity checks. The current release candidate still
+requires the complete first-run and upgrade regression gates before release;
+a successful bundle preparation is not release certification.
 
 ## Release Certification
 

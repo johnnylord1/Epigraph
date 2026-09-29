@@ -11,6 +11,7 @@ export interface FirstRunState {
   path: FirstRunPath | null;
   backupRestored?: true;
   backupNeedsSources?: boolean;
+  backupSourceTypes?: Array<"manga" | "novels">;
   sourceContentType?: "manga" | "novels";
 }
 
@@ -33,6 +34,7 @@ export interface FirstRunBackupReadiness {
   hasSelection: boolean;
   contentType: "manga" | "novels";
   requiresSources?: boolean;
+  sourceTypes?: Array<"manga" | "novels">;
 }
 
 const STEPS: FirstRunStep[] = ["theme", "entry", "sync", "backup", "sources", "trackers", "discover", "complete"];
@@ -97,6 +99,9 @@ export function normalizeFirstRunState(savedStore: unknown): FirstRunState {
     path,
     ...(candidate.backupRestored === true ? { backupRestored: true as const } : {}),
     ...(typeof candidate.backupNeedsSources === "boolean" ? { backupNeedsSources: candidate.backupNeedsSources } : {}),
+    ...(Array.isArray(candidate.backupSourceTypes) && candidate.backupSourceTypes.length > 0
+      && candidate.backupSourceTypes.every((type) => type === "manga" || type === "novels")
+      ? { backupSourceTypes: [...new Set(candidate.backupSourceTypes)] } : {}),
     ...(candidate.sourceContentType === "manga" || candidate.sourceContentType === "novels"
       ? { sourceContentType: candidate.sourceContentType } : {}),
   };
@@ -104,7 +109,7 @@ export function normalizeFirstRunState(savedStore: unknown): FirstRunState {
 
 export function updateFirstRunState(
   current: FirstRunState,
-  patch: Partial<Pick<FirstRunState, "step" | "path" | "backupRestored" | "backupNeedsSources" | "sourceContentType">>,
+  patch: Partial<Pick<FirstRunState, "step" | "path" | "backupRestored" | "backupNeedsSources" | "backupSourceTypes" | "sourceContentType">>,
 ): FirstRunState {
   if (current.status === "complete") return current;
   return { ...current, ...patch };

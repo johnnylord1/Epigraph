@@ -1,5 +1,5 @@
 import { cleanup, render, screen, fireEvent } from "@testing-library/svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveCssColor } from "../../test/themeColor";
@@ -101,6 +101,20 @@ describe("ReaderHud", () => {
     }
   });
 
+  it("offers the detach button only when the reader can detach", async () => {
+    const first = render(ReaderHudFixture, { props: { domain: "comics" } });
+    expect(first.container.querySelector('button[title="Open in a new window"]')).toBeNull();
+    first.unmount();
+
+    const ondetach = vi.fn();
+    const { container } = render(ReaderHudFixture, { props: { domain: "comics", ondetach } });
+    const detachBtn = container.querySelector('button[title="Open in a new window"]');
+    expect(detachBtn).not.toBeNull();
+    expect(detachBtn?.getAttribute("aria-label")).toBe("Open in a new window");
+    await fireEvent.click(detachBtn!);
+    expect(ondetach).toHaveBeenCalledTimes(1);
+  });
+
   it("toggles HUD chrome when the reading viewport is clicked", async () => {
     const { container } = render(ReaderHudFixture, {
       props: {
@@ -118,6 +132,34 @@ describe("ReaderHud", () => {
 
     await fireEvent.click(content);
     expect(overlay?.classList.contains("hidden")).toBe(true);
+  });
+
+  it("leaves Space to a scrolling chapter and still toggles HUD chrome with Enter", async () => {
+    const { container } = render(ReaderHudFixture, {
+      props: {
+        domain: "books",
+        uiVisible: false,
+      },
+    });
+
+    const overlay = container.querySelector(".reader-hud-overlay");
+    const content = screen.getByTestId("hud-content");
+    await fireEvent.keyDown(content, { key: " " });
+    expect(overlay?.classList.contains("hidden")).toBe(false);
+    await fireEvent.keyDown(content, { key: " " });
+    expect(overlay?.classList.contains("hidden")).toBe(true);
+
+    content.style.overflowY = "auto";
+    Object.defineProperty(content, "scrollHeight", { configurable: true, value: 2000 });
+    Object.defineProperty(content, "clientHeight", { configurable: true, value: 500 });
+    const space = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    content.dispatchEvent(space);
+    await Promise.resolve();
+    expect(space.defaultPrevented).toBe(false);
+    expect(overlay?.classList.contains("hidden")).toBe(true);
+
+    await fireEvent.keyDown(content, { key: "Enter" });
+    expect(overlay?.classList.contains("hidden")).toBe(false);
   });
 
   it("does not toggle HUD chrome when an interactive control is clicked", async () => {

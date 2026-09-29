@@ -103,6 +103,7 @@ export interface ExtensionRef {
   isInstalled: boolean;
   isObsolete: boolean;
   hasUpdate: boolean;
+  isNsfw?: boolean;
   iconUrl: string | null;
   storeId: string | null;
   apkName: string | null;

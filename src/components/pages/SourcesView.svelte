@@ -43,6 +43,7 @@
   import {
     addNovelRepositoryToState,
     deriveNovelRepositoryUiState,
+    isBuiltinNovelRepository,
     loadNovelRepositoryState,
     refreshAllNovelRepositories,
     refreshNovelRepositoryCatalog,
@@ -95,8 +96,6 @@
     { id: "available", labelKey: "sources.filters.available" },
     { id: "updates", labelKey: "sources.filters.updates" },
   ];
-  const LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL =
-    "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
 
   const renderLimit = 60;
 
@@ -498,7 +497,7 @@
     addToast({
       kind: "info",
       title: translate("ui_restartingExtensionManager"),
-      body: `${extension.name} is already cached, but Suwayomi is holding the file. Epigraph will restart the local server and check again.`,
+      body: translate("sources_lockedExtensionBody", { name: extension.name }),
       duration: 6000,
     });
 
@@ -606,6 +605,7 @@
       lastNovelExtensions = next;
       extensions = next;
       extensionLoadError = null;
+      void refreshBuiltinNovelCatalogOnce(state);
     } catch (error) {
       console.error(error);
       if (isCurrentExtensionLoad(run, "novels")) {
@@ -791,6 +791,22 @@
     }
   }
 
+  let builtinNovelCatalogRequested = false;
+
+  /** The built-in LNReader feed lists its plugins without asking the user to refresh it first. */
+  async function refreshBuiltinNovelCatalogOnce(state: PersistedNovelRepositoryState) {
+    const builtin = state.repositories.find(isBuiltinNovelRepository);
+    if (builtinNovelCatalogRequested || !builtin?.enabled || builtin.lastSuccessAtMs !== null
+      || state.catalogEntries.some((entry) => entry.repositoryId === builtin.id)) return;
+    builtinNovelCatalogRequested = true;
+    try {
+      const result = await refreshNovelRepositoryCatalog(state, builtin.id);
+      if (result.status !== "error") await saveNovelState(result.state);
+    } catch (error) {
+      console.warn("Built-in LNReader catalog refresh failed:", error);
+    }
+  }
+
   async function saveNovelState(nextState: PersistedNovelRepositoryState) {
     novelRepositoryState = await saveNovelRepositoryState(nextState, {
       profileId: store.runtimeResolvedLocalProfileId,
@@ -840,7 +856,7 @@
         body:
           result.status === "error"
             ? (result.repository.lastError ?? translate("ui_refreshFailed_0a5e2c85"))
-            : `${result.catalogCount} source plugins cached.`,
+            : translate("sources_pluginsCached", { count: result.catalogCount }),
       });
     } catch (error) {
       repoError = error instanceof Error ? error.message : translate("ui_refreshFailed");
@@ -936,7 +952,7 @@
       if (!isServerUnavailableState(nextState)) {
         addToast({
           kind: "error",
-          title: `${extensionOperationLabel(operation)} ${extensionName} failed`,
+          title: translate("sources_operationFailed", { operation: extensionOperationLabel(operation), name: extensionName }),
           body: message,
           duration: 6000,
         });
@@ -981,7 +997,7 @@
         addToast({
           kind: "success",
           title: extension.hasUpdate ? translate("ui_novelSourceUpdated") : translate("ui_novelSourceInstalled"),
-          body: `${extension.name} is ready to use.`,
+          body: translate("sources_readyToUse", { name: extension.name }),
         });
       } catch (error) {
         console.error(error);
@@ -1620,9 +1636,11 @@
                     <button type="button" disabled={savingRepos} onclick={() => toggleNovelRepo(repo)}>
                       {repo.enabled ? $_("sources.actions.disable") : $_("sources.actions.enable")}
                     </button>
-                    <button type="button" disabled={savingRepos} onclick={() => removeNovelRepo(repo)}>
-                      {$_("sources.actions.remove")}
-                    </button>
+                    {#if !isBuiltinNovelRepository(repo)}
+                      <button type="button" disabled={savingRepos} onclick={() => removeNovelRepo(repo)}>
+                        {$_("sources.actions.remove")}
+                      </button>
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -1640,9 +1658,6 @@
             />
             <button type="button" disabled={savingRepos || !newRepoUrl.trim()} onclick={() => addNovelRepo(newRepoUrl)}>
               {#if savingRepos}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}{$_("sources.actions.add")}{/if}
-            </button>
-            <button type="button" disabled={savingRepos} onclick={() => addNovelRepo(LNREADER_AUDITED_OFFICIAL_REPOSITORY_URL, true)}>
-              {$_("sources.actions.official")}
             </button>
           </div>
           {#if repoError}
@@ -2774,8 +2789,8 @@
     font-family: var(--font-ui);
     font-size: 8.5px;
     font-weight: 800;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     line-height: 1.2;
   }
 

@@ -1,3 +1,4 @@
+import { createVerification, sanitize } from './verification-evidence.mjs';
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -5,16 +6,17 @@ import { spawnSync } from "node:child_process";
 const root = resolve(process.cwd());
 const pnpmCli = process.env.npm_execpath;
 
-function sanitize(output) {
-  return String(output ?? "")
-    .replaceAll(root, "<workspace>")
-    .replaceAll(root.replaceAll("\\", "/"), "<workspace>")
-    .replaceAll(homedir(), "<home>")
-    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
-    .replace(/((?:api[_ -]?key|token|cookie|authorization)[\s\"']*[:=][\s\"']*)[^\s,\"'}]+/gi, "$1[redacted]");
-}
+const declarations = [
+  { id: 'deterministic TypeScript contracts', kind: 'verification' },
+  { id: 'Suwayomi updater certification', kind: 'verification', condition: 'EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION != 1' },
+  { id: 'native updater policy', kind: 'verification' },
+].map(stage => ({ ...stage, name: stage.id }));
+const evidence = createVerification({ runner: 'certify-integration-contracts.mjs', stages: declarations,
+  scope: { environment: 'deterministic', journeys: ['Listed integration contract tests only'], backend: { kind: 'mock' } } });
+let activeStage;
 
 function run(label, executable, args, extraEnv = {}) {
+  activeStage = label; evidence.beginStage(label);
   process.stdout.write(`\n[release integrations] ${label}\n`);
   const result = spawnSync(executable, args, {
     cwd: root,
@@ -27,8 +29,10 @@ function run(label, executable, args, extraEnv = {}) {
   process.stdout.write(output);
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status}.`);
+  evidence.stage(label, "PASS", { exitCode: result.status }); activeStage = null;
 }
 
+try {
 if (!pnpmCli) throw new Error("pnpm CLI path is unavailable; run this gate through pnpm.");
 
 run("deterministic TypeScript contracts", process.execPath, [
@@ -57,7 +61,7 @@ run("deterministic TypeScript contracts", process.execPath, [
 if (process.env.EPIGRAPH_SKIP_SUWAYOMI_CERTIFICATION !== "1") {
   run("Suwayomi updater certification", process.execPath, ["--test", "scripts/certify-suwayomi-release.test.mjs"]);
 } else {
-  console.log("[release integrations] Suwayomi updater certification skipped by the aggregate gate (already certified separately)");
+  evidence.stage("Suwayomi updater certification", "SKIPPED", { reason: "Explicit skip requested; no separate certification is inferred" });
 }
 run(
   "native updater policy",
@@ -67,3 +71,14 @@ run(
 );
 
 process.stdout.write("\n[release integrations] all deterministic contracts passed\n");
+
+} catch (error) {
+  if (activeStage) evidence.stage(activeStage, 'FAIL', { reason: error.message });
+  else evidence.r.failures.push({ location: 'runner', reason: sanitize(error.message) });
+  evidence.diagnostic('integration failure', error.message);
+  process.exitCode = 1;
+} finally {
+  const result = evidence.finish();
+  console.log(`Verification receipt: ${evidence.file}`);
+  if (result.outcome === 'FAIL') process.exitCode = 1;
+}

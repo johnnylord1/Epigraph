@@ -555,6 +555,12 @@ pub struct BootstrapSessionCreateRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct PairingPinResolveRequest {
+    pub pin: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct BootstrapSuwayomiHint {
     pub base_url: String,
     pub expires_at_ms: i64,

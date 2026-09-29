@@ -124,5 +124,9 @@ Reviewed on `2026-07-28`.
   token contracts have deterministic coverage.
 - Accessible manga/fullscreen with a real catalog and a manual screen-reader
   audit remain conditional validations.
+- Manga, novel and book readers can run in detached windows (2026-09-27). A
+  detached window keeps the same shell, preferences, keyboard commands and
+  progress semantics; the main window stays the only persister. See the
+  [audit notes](audit-2026-09-26.md#detached-reader-windows-2026-09-27).
 
 The target is parity of UX contract, not foreign implementation coupling.

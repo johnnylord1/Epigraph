@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{bail, Context};
 use axum::extract::{ConnectInfo, Extension, State};
@@ -24,7 +24,9 @@ use super::models::{
     SyncdDiscoveryDescriptor,
 };
 use super::network::detect_lan_ip;
-use super::runtime_manifest::{read_runtime_manifest, runtime_manifest_path, SyncdRuntimeManifest};
+use super::runtime_manifest::{
+    reconcile_exited_runtime_manifest, runtime_manifest_path, SyncdRuntimeManifest,
+};
 
 const SHUTDOWN_RESPONSE_DELAY: Duration = Duration::from_millis(100);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
@@ -36,6 +38,10 @@ const LOCAL_AUTHORITY_PROFILE_ID: &str = "main";
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShutdownRequest {
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub nonce: String,
     pub server_id: String,
     pub expected_pid: u32,
     pub reason: ShutdownReason,
@@ -67,6 +73,8 @@ impl ShutdownReason {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShutdownResponse {
+    pub run_id: String,
+    pub nonce: String,
     pub accepted: bool,
     pub server_id: String,
     pub pid: u32,
@@ -134,6 +142,10 @@ pub async fn post_local_shutdown(
             "Core shutdown PID does not match the running process.".to_string(),
         ));
     }
+    if request.run_id != crate::syncd::runtime_manifest::current_run_id()
+        || uuid::Uuid::parse_str(&request.nonce).ok().is_none_or(|id| id.is_nil() || id.to_string() != request.nonce) {
+        return Err(AppError::Forbidden("Core control run or nonce mismatch".into()));
+    }
 
     let identity = super::db::load_server_identity(&state.pool)
         .await
@@ -144,10 +156,20 @@ pub async fn post_local_shutdown(
         ));
     }
 
+    static CONTROL_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _control = CONTROL_GATE.lock().await;
+    if coordinator.subscribe().borrow().is_some() {
+        return Err(AppError::Forbidden("Core shutdown already pending; request not accepted".into()));
+    }
+    if state.config.ownership_mode == super::config::SyncdOwnershipMode::PersistentAttached {
+        super::suwayomi_process::prepare_shutdown().await.map_err(AppError::Internal)?;
+    }
     let accepted = coordinator.request(request.clone());
     Ok((
         StatusCode::ACCEPTED,
         Json(ShutdownResponse {
+            run_id: request.run_id,
+            nonce: request.nonce,
             accepted,
             server_id: identity.server_id,
             pid: std::process::id(),
@@ -227,22 +249,6 @@ async fn run_shutdown_command(arguments: Vec<std::ffi::OsString>) -> anyhow::Res
 
     let data_dir = data_dir.unwrap_or_else(|| SyncdConfig::from_env().data_dir);
     request_persistent_shutdown(&data_dir, reason, timeout).await?;
-    if matches!(
-        reason,
-        ShutdownReason::PreUpdate | ShutdownReason::Uninstall
-    ) {
-        let stopped = super::suwayomi_process::stop_owned_instances(timeout)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        for instance in stopped {
-            tracing::info!(
-                profile = instance.profile_key,
-                pid = instance.java_pid,
-                root = %instance.root_dir.display(),
-                "stopped owned Suwayomi for Core maintenance"
-            );
-        }
-    }
     Ok(())
 }
 
@@ -280,17 +286,47 @@ pub async fn request_persistent_shutdown(
     reason: ShutdownReason,
     timeout: Duration,
 ) -> anyhow::Result<bool> {
+    tokio::time::timeout(timeout, request_shutdown_inner(data_dir, reason, timeout, None))
+        .await.context("Core shutdown deadline exceeded; evidence retained")?
+}
+
+pub async fn request_exact_shutdown(data_dir: &Path, reason: ShutdownReason, timeout: Duration, expected: &SyncdRuntimeManifest) -> anyhow::Result<bool> {
+    tokio::time::timeout(timeout, request_shutdown_inner(data_dir, reason, timeout, Some(expected)))
+        .await.context("Exact Core shutdown deadline exceeded; evidence retained")?
+}
+
+async fn request_shutdown_inner(data_dir: &Path, reason: ShutdownReason, timeout: Duration, retained: Option<&SyncdRuntimeManifest>) -> anyhow::Result<bool> {
     let manifest_path = runtime_manifest_path(data_dir);
-    if !manifest_path.exists() {
+    // Nothing to stop when no Core ever ran here, it already stopped gracefully, or it was ended
+    // by a reboot/crash. Installer hooks and repeated requests rely on this being idempotent.
+    if reconcile_exited_runtime_manifest(&manifest_path) {
         return Ok(false);
     }
-    let manifest = read_runtime_manifest(data_dir).map_err(anyhow::Error::msg)?;
+    let original = std::fs::read(&manifest_path).context("Missing Core ownership; graceful/manual reconciliation required")?;
+    let manifest: SyncdRuntimeManifest = serde_json::from_slice(&original).context("Malformed Core evidence preserved")?;
+    manifest.validate().map_err(anyhow::Error::msg)?;
+    if retained.is_some_and(|expected| expected != &manifest) { bail!("Core run evidence differs from retained spawn; control refused"); }
+    if uuid::Uuid::parse_str(&manifest.run_id).ok().is_none_or(|id| id.is_nil() || id.to_string() != manifest.run_id) {
+        bail!("Legacy Core run identity missing; process and evidence preserved");
+    }
+    #[cfg(windows)]
+    let process = {
+        use crate::suwayomi_runtime::ownership::ProcessObject;
+        let expected = manifest.process_identity.as_ref().and_then(|i| i.for_termination()).context("Core birth identity missing")?;
+        let process = crate::suwayomi_runtime::ownership::windows::Process::open(manifest.pid, crate::suwayomi_runtime::command_line_hash).map_err(anyhow::Error::msg)?;
+        if process.identity().map_err(anyhow::Error::msg)? != expected { bail!("Core process identity changed"); }
+        process
+    };
+    #[cfg(not(windows))]
+    bail!("Retained Core exit proof unavailable on this platform");
     let client = build_pinned_client(&manifest.fingerprint)?;
     let descriptor = fetch_descriptor(&client, &manifest).await?;
     verify_runtime_identity(&manifest, &descriptor)?;
 
     let token = issue_local_authority_token(&client, &manifest).await?;
     let url = format!("https://127.0.0.1:{}/v1/local/shutdown", manifest.port);
+    let nonce = uuid::Uuid::new_v4().to_string();
+    if std::fs::read(&manifest_path).ok().as_deref() != Some(original.as_slice()) { bail!("Core evidence changed"); }
     let response = client
         .post(url)
         .header("authorization", format!("Bearer {}", token.access_token))
@@ -299,6 +335,8 @@ pub async fn request_persistent_shutdown(
         .header(CLIENT_PROTOCOL_HEADER, "1")
         .header(LEGACY_CLIENT_PROTOCOL_HEADER, "1")
         .json(&ShutdownRequest {
+            run_id: manifest.run_id.clone(),
+            nonce: nonce.clone(),
             server_id: manifest.server_id.clone(),
             expected_pid: manifest.pid,
             reason,
@@ -319,11 +357,19 @@ pub async fn request_persistent_shutdown(
         .json::<ShutdownResponse>()
         .await
         .context("Core returned an invalid shutdown response")?;
-    if response.server_id != manifest.server_id || response.pid != manifest.pid {
+    if !response.accepted || response.run_id != manifest.run_id || response.nonce != nonce
+        || response.server_id != manifest.server_id || response.pid != manifest.pid {
         bail!("Core shutdown acknowledgement identity mismatch");
     }
 
-    wait_for_process_exit(data_dir, manifest.pid, timeout).await?;
+    #[cfg(windows)]
+    {
+        use crate::suwayomi_runtime::ownership::ProcessObject;
+        tokio::task::spawn_blocking(move || process.wait(timeout.as_millis().min(u32::MAX as u128) as u32))
+            .await?.map_err(anyhow::Error::msg)?;
+        if std::fs::read(&manifest_path).ok().as_deref() != Some(original.as_slice()) { bail!("Core evidence replaced; completion receipt refused"); }
+        crate::suwayomi_runtime::record_confirmed_stop(&manifest_path, &original).map_err(anyhow::Error::msg)?;
+    }
     Ok(true)
 }
 
@@ -385,28 +431,6 @@ async fn issue_local_authority_token(
         .context("Core returned an invalid local authority token")
 }
 
-async fn wait_for_process_exit(data_dir: &Path, pid: u32, timeout: Duration) -> anyhow::Result<()> {
-    let started = Instant::now();
-    loop {
-        if !runtime_manifest_path(data_dir).exists() && !process_exists(pid) {
-            return Ok(());
-        }
-        if started.elapsed() >= timeout {
-            bail!("timed out waiting for Core PID {pid} to shut down");
-        }
-        tokio::time::sleep(Duration::from_millis(150)).await;
-    }
-}
-
-fn process_exists(pid: u32) -> bool {
-    use sysinfo::{Pid, ProcessesToUpdate, System};
-
-    let pid = Pid::from_u32(pid);
-    let mut system = System::new();
-    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-    system.process(pid).is_some()
-}
-
 #[derive(Debug)]
 struct FingerprintVerifier {
     expected_fingerprint: String,
@@ -438,20 +462,20 @@ impl ServerCertVerifier for FingerprintVerifier {
 
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &rustls::crypto::CryptoProvider::get_default().ok_or_else(|| RustlsError::General("Crypto provider unavailable".into()))?.signature_verification_algorithms)
     }
 
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &rustls::crypto::CryptoProvider::get_default().ok_or_else(|| RustlsError::General("Crypto provider unavailable".into()))?.signature_verification_algorithms)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -479,6 +503,7 @@ fn build_pinned_client(fingerprint: &str) -> anyhow::Result<Client> {
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Client::builder()
+        .timeout(Duration::from_secs(30))
         .use_preconfigured_tls(tls)
         .build()
         .context("failed to build pinned Core lifecycle client")
@@ -525,11 +550,15 @@ mod tests {
     fn coordinator_accepts_only_the_first_shutdown_request() {
         let (coordinator, receiver) = ShutdownCoordinator::channel();
         let first = ShutdownRequest {
+            run_id: crate::syncd::runtime_manifest::current_run_id().into(),
+            nonce: uuid::Uuid::new_v4().to_string(),
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::PreUpdate,
         };
         let second = ShutdownRequest {
+            run_id: crate::syncd::runtime_manifest::current_run_id().into(),
+            nonce: uuid::Uuid::new_v4().to_string(),
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::Uninstall,
@@ -544,6 +573,8 @@ mod tests {
     async fn wait_observes_an_existing_request() {
         let (coordinator, mut receiver) = ShutdownCoordinator::channel();
         coordinator.request(ShutdownRequest {
+            run_id: crate::syncd::runtime_manifest::current_run_id().into(),
+            nonce: uuid::Uuid::new_v4().to_string(),
             server_id: "server-a".to_string(),
             expected_pid: 10,
             reason: ShutdownReason::Manual,
@@ -559,7 +590,8 @@ mod tests {
 
     async fn test_state() -> (tempfile::TempDir, SharedAppState) {
         let temp = tempfile::tempdir().unwrap();
-        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let mut config = SyncdConfig::for_test(temp.path().to_path_buf());
+        config.ownership_mode = super::super::config::SyncdOwnershipMode::EphemeralOwned;
         let pool = connect(&config).await.unwrap();
         upsert_server_identity(&pool, &config, &"a".repeat(64))
             .await
@@ -597,6 +629,25 @@ mod tests {
             .collect()
     }
 
+    #[tokio::test]
+    async fn b1_shutdown_rejects_missing_foreign_and_nil_run_or_nonce() {
+        let (_temp, state) = test_state().await;
+        let identity = super::super::db::load_server_identity(&state.pool).await.unwrap();
+        let token = issue_test_local_token(&state.pool, &state.config, LOCAL_AUTHORITY_DEVICE_ID, LOCAL_AUTHORITY_PROFILE_ID).await.unwrap();
+        let (coordinator, receiver) = ShutdownCoordinator::channel();
+        let app = super::super::app::build_test_router_with_shutdown(state, coordinator);
+        for (field, value) in [("runId", ""), ("runId", "3de1e5e7-51b8-4527-932f-62262013a814"),
+            ("nonce", ""), ("nonce", "00000000-0000-0000-0000-000000000000")] {
+            let req = shutdown_http_request(&token.access_token, &identity.server_id, "127.0.0.1:61234");
+            let (parts, body) = req.into_parts();
+            let mut value_json: serde_json::Value = serde_json::from_slice(&body.collect().await.unwrap().to_bytes()).unwrap();
+            value_json[field] = serde_json::json!(value);
+            let response = app.clone().oneshot(Request::from_parts(parts, Body::from(serde_json::to_vec(&value_json).unwrap()))).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{field}");
+            assert!(receiver.borrow().is_none());
+        }
+    }
+
     fn shutdown_http_request(token: &str, server_id: &str, remote: &str) -> Request<Body> {
         Request::post("/v1/local/shutdown")
             .header("content-type", "application/json")
@@ -608,6 +659,8 @@ mod tests {
             .extension(ConnectInfo(remote.parse::<SocketAddr>().unwrap()))
             .body(Body::from(
                 serde_json::to_vec(&ShutdownRequest {
+                    run_id: crate::syncd::runtime_manifest::current_run_id().into(),
+                    nonce: uuid::Uuid::new_v4().to_string(),
                     server_id: server_id.to_string(),
                     expected_pid: std::process::id(),
                     reason: ShutdownReason::PreUpdate,

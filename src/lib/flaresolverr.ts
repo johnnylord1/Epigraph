@@ -1,3 +1,4 @@
+import { translate } from "./i18n/runtime";
 import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
@@ -126,7 +127,7 @@ async function startManagedFlareSolverrAndEnable(
         await invoke(stopCommand);
       } catch (cleanupError) {
         throw new Error(
-          `${sourceAccessErrorMessage(error)} Managed FlareSolverr cleanup also failed: ${sourceAccessErrorMessage(cleanupError)}`,
+          translate("flaresolverr_cleanupFailed", { error: sourceAccessErrorMessage(error), cleanup: sourceAccessErrorMessage(cleanupError) }),
           { cause: error },
         );
       }
@@ -140,7 +141,7 @@ export function startLocalFlareSolverrAndEnable(configPatch: FlareSolverrConfigP
     "start_flaresolverr_local",
     "get_flaresolverr_local_status",
     "stop_flaresolverr_local",
-    "Local FlareSolverr did not become reachable.",
+    translate("flaresolverr_localUnreachable"),
     configPatch,
   ).finally(() => { localStart = null; });
   return localStart;
@@ -151,7 +152,7 @@ export function startDockerFlareSolverrAndEnable(configPatch: FlareSolverrConfig
     "start_flaresolverr_docker",
     "get_flaresolverr_docker_status",
     "stop_flaresolverr_docker",
-    "Docker FlareSolverr did not become reachable.",
+    translate("flaresolverr_dockerUnreachable"),
     configPatch,
   ).finally(() => { dockerStart = null; });
   return dockerStart;

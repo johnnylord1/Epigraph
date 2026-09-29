@@ -9,6 +9,7 @@ import {
   type NovelTrustState,
 } from "./contracts";
 import {
+  BUILTIN_LNREADER_REPOSITORY_URL,
   buildNovelRepositoryFetchHeaders,
   createNovelRepositoryRecord,
   extractNovelRepositoryRefreshMetadata,
@@ -229,6 +230,39 @@ export function normalizeNovelRepositoryState(
   };
 }
 
+/**
+ * The official LNReader feed is built in: every profile sees it, trusted and enabled, without
+ * having to paste its URL. Users can still disable it; it is never removed. The record is added
+ * in memory and persisted by the next save, so reading a state never writes to disk.
+ */
+export function withBuiltinNovelRepository(state: PersistedNovelRepositoryState): PersistedNovelRepositoryState {
+  const normalizedUrl = normalizeNovelRepositoryUrl(BUILTIN_LNREADER_REPOSITORY_URL);
+  const existing = state.repositories.find((repository) => repository.normalizedUrl === normalizedUrl);
+  if (existing) {
+    return existing.recommendedSeed
+      ? state
+      : replaceRepository(state, existing.id, (repository) => ({ ...repository, recommendedSeed: true }));
+  }
+  const scopedProfileId = state.scopeKey.startsWith("profile:") ? state.scopeKey.slice("profile:".length) : null;
+  const withRepository = addNovelRepositoryToState(state, {
+    profileId: scopedProfileId,
+    url: BUILTIN_LNREADER_REPOSITORY_URL,
+    recommendedSeed: true,
+  });
+  const added = withRepository.repositories.at(-1)!;
+  return {
+    ...withRepository,
+    repositories: [added, ...withRepository.repositories.slice(0, -1)].map((repository) => (
+      repository.id === added.id ? { ...repository, trustState: "trusted" as const, enabled: true } : repository
+    )),
+    updatedAtMs: state.updatedAtMs,
+  };
+}
+
+export function isBuiltinNovelRepository(repository: Pick<NovelRepositoryRecord, "normalizedUrl">): boolean {
+  return repository.normalizedUrl === normalizeNovelRepositoryUrl(BUILTIN_LNREADER_REPOSITORY_URL);
+}
+
 export async function loadNovelRepositoryState(scopeInput: NovelRepositoryScopeInput = {}): Promise<PersistedNovelRepositoryState> {
   const normalized = normalizeScopeInput(scopeInput);
   const raw = await invoke<string | null>("read_novel_repository_state", {
@@ -237,13 +271,13 @@ export async function loadNovelRepositoryState(scopeInput: NovelRepositoryScopeI
   });
 
   if (!raw) {
-    return createEmptyNovelRepositoryState(normalized);
+    return withBuiltinNovelRepository(createEmptyNovelRepositoryState(normalized));
   }
 
   try {
-    return normalizeNovelRepositoryState(JSON.parse(raw), normalized);
+    return withBuiltinNovelRepository(normalizeNovelRepositoryState(JSON.parse(raw), normalized));
   } catch {
-    return createEmptyNovelRepositoryState(normalized);
+    return withBuiltinNovelRepository(createEmptyNovelRepositoryState(normalized));
   }
 }
 
@@ -309,6 +343,9 @@ export function removeNovelRepositoryFromState(
   state: PersistedNovelRepositoryState,
   repositoryId: string,
 ): PersistedNovelRepositoryState {
+  if (state.repositories.some((repository) => repository.id === repositoryId && isBuiltinNovelRepository(repository))) {
+    return state;
+  }
   return {
     ...state,
     repositories: state.repositories.filter((repository) => repository.id !== repositoryId),

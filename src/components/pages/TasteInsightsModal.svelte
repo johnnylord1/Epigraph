@@ -102,7 +102,8 @@
       .map(([format, weight]) => {
         const rawWeight = weight;
         const normalized = Math.max(0, Math.min(1, weight / maxWeight));
-        const name = format === "novel" ? "Web Novel" : format === "manga" ? "Manga" : format === "manhwa" ? "Manhwa" : format === "manhua" ? "Manhua" : format === "book" ? "E-Book" : format.charAt(0).toUpperCase() + format.slice(1);
+        const formatKeys: Record<string, string> = { novel: "taste_formatWebNovel", manga: "taste_formatManga", manhwa: "taste_formatManhwa", manhua: "taste_formatManhua", book: "taste_formatEbook" };
+        const name = formatKeys[format] ? translate(formatKeys[format]) : format.charAt(0).toUpperCase() + format.slice(1);
         return {
           name,
           weight: Math.round(normalized * 100),

@@ -44,7 +44,7 @@ pub async fn get_events(
     let receiver = state.change_sender.subscribe();
     let replay =
         replay::prepare_replay(&state, &session, query.scope_id.as_deref(), &headers).await?;
-    let stream = sse_stream(state, replay, receiver);
+    let stream = sse_stream(state, replay, receiver, session.token_id);
     Ok(Sse::new(stream))
 }
 
@@ -94,6 +94,7 @@ fn sse_stream(
     state: SharedAppState,
     replay: ReplayContext,
     mut receiver: tokio::sync::broadcast::Receiver<ChangeEnvelope>,
+    token_id: String,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     stream! {
         for envelope in replay.backlog {
@@ -107,6 +108,17 @@ fn sse_stream(
         loop {
             tokio::select! {
                 _ = ping.tick() => {
+                    if !token_still_grants(&state, &token_id, &replay.allowed_scopes).await {
+                        break;
+                    }
+                    // Best effort: a failed refresh is retried on the next ping.
+                    let _ = db::extend_streaming_token_activity(
+                        &state.pool,
+                        &token_id,
+                        db::now_ms(),
+                        state.config.token_inactivity_window.as_millis() as i64,
+                    )
+                    .await;
                     yield Ok(Event::default().event("ping").data(""));
                 }
                 recv = receiver.recv() => {
@@ -117,6 +129,9 @@ fn sse_stream(
                             }
                             if !replay.allowed_scopes.contains(&envelope.scope_id) {
                                 continue;
+                            }
+                            if !token_still_grants(&state, &token_id, &replay.allowed_scopes).await {
+                                break;
                             }
                             last_sent_version = envelope.server_version;
                             yield Ok(change_event(&envelope));
@@ -154,6 +169,21 @@ fn sse_stream(
                 }
             }
         }
+    }
+}
+
+/// Authentication happens once when the stream opens, but the stream can stay open for days.
+/// Revoking a device, letting its token expire or narrowing its scopes must stop delivery
+/// immediately; the client reconnects and receives the regular authorization error. Storage
+/// failures also close the stream so a transient error can never extend access.
+async fn token_still_grants(
+    state: &SharedAppState,
+    token_id: &str,
+    allowed_scopes: &std::collections::BTreeSet<String>,
+) -> bool {
+    match db::load_active_token_scopes(&state.pool, token_id, db::now_ms()).await {
+        Ok(Some(granted)) => allowed_scopes.iter().all(|scope| granted.contains(scope)),
+        Ok(None) | Err(_) => false,
     }
 }
 

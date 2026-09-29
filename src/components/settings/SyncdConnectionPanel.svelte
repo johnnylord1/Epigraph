@@ -1,9 +1,11 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
+  import { operationFailure, presentOperationFailure, type OperationFailure } from "../../lib/i18n/operationPresentation";
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
+  import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
   import { CircleNotch, X } from "phosphor-svelte";
-  import { addToast } from "../../store/state.svelte";
+  import { addToast, store } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
   import NocturneState from "../shared/NocturneState.svelte";
   import {
@@ -41,6 +43,7 @@
     type SyncdReconnectStatus,
     type SyncdRuntimeIdentity,
   } from "../../lib/syncdDesktop";
+  import { pairingVerificationCode } from "../../lib/syncPairingVerification";
 
   interface Props {
     profileId?: string | null;
@@ -85,7 +88,8 @@
   let persistedSessionsRefreshQueued = false;
   let manualOrigin = $state("");
   let bootstrapBundleInput = $state("");
-  let panelError = $state<string | null>(null);
+  let panelError = $state<OperationFailure | null>(null);
+  const panelErrorText = $derived(presentOperationFailure(panelError, $_));
   let copiedBundle = $state(false);
   let qrCodeDataUrl = $state<string | null>(null);
   let qrBusy = $state(false);
@@ -101,8 +105,20 @@
   let modalElement = $state<HTMLElement | null>(null);
   let modalBodyElement = $state<HTMLElement | null>(null);
   let runtimeIdentity = $state<SyncdRuntimeIdentity | null>(null);
-  let panelMounted = false;
+  let panelMounted = $state(false);
   let subscriptionGeneration = 0;
+  let replicationReadGeneration = 0;
+  let initialSyncReady = $state(false);
+  let initialSyncError = $state<OperationFailure | null>(null);
+  let initialSyncPhase = $state<"idle" | "loading" | "ready" | "error">("idle");
+  let initialSyncRetry = $state(0);
+  let initialSyncAttemptKey: string | null = null;
+  let initialSyncRunId = 0;
+  const initialSyncKey = $derived.by(() => {
+    const key = firstRunSyncReadinessKey(activeProfileId, replicationSnapshot);
+    const targetProfile = store.runtimeResolvedLocalProfileId ?? store.settings.defaultLocalProfileId;
+    return key && activeProfileId === targetProfile ? JSON.stringify([key, store.runtimeServerUrl]) : null;
+  });
   let panelUnlisteners: Array<() => void> = [];
 
   const HOST_DECISION_TIMEOUT_MS = 10_000;
@@ -126,7 +142,7 @@
   );
 
   const overviewStatus = $derived.by(() => {
-    if (panelError) return { tone: "danger", label: translate("syncd_status_actionRequired"), title: translate("syncd_modal_syncNeedsAttention"), body: panelError };
+    if (panelError) return { tone: "danger", label: translate("syncd_status_actionRequired"), title: translate("syncd_modal_syncNeedsAttention"), body: panelErrorText };
     if (connect?.status === "connected") {
       return { tone: "success", label: statusLabel("connected"), title: translate("syncd_modal_desktopSyncActive"), body: translate("syncd_modal_pairedChangesReplicate") };
     }
@@ -194,6 +210,29 @@
       || pairedDevice?.platform
       || translate("syncd_modal_pairDesktop");
   });
+
+  /* Seconds left on the open host pairing. The PIN renews itself while this panel stays open. */
+  let hostNowMs = $state(Date.now());
+  let hostRenewing = false;
+  const hostSecondsLeft = $derived(host ? Math.max(0, Math.ceil((host.expiresAtMs - hostNowMs) / 1000)) : 0);
+  const hostPinDisplay = $derived(host?.pairingPin ? `${host.pairingPin.slice(0, 3)} ${host.pairingPin.slice(3)}` : null);
+  const hostVerificationCode = $derived(host ? pairingVerificationCode(host.tlsCertSha256) : "");
+
+  $effect(() => {
+    if (pairingStage !== "waiting" || !host) return;
+    const timer = window.setInterval(() => {
+      hostNowMs = Date.now();
+      if (host && host.status === "pending" && host.expiresAtMs <= hostNowMs && !hostRenewing && !loadingHost) {
+        hostRenewing = true;
+        void startHostPairing().finally(() => { hostRenewing = false; });
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  });
+
+  function formatCountdown(seconds: number): string {
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
 
   const pairingStage = $derived.by(() => {
     if (host?.status === "claimed") return "approval" as const;
@@ -412,7 +451,7 @@
       }
     } catch (error) {
       if (panelMounted) {
-        panelError = error instanceof Error ? error.message : String(error);
+        panelError = { cause: error, fallback: "ui_syncActionFailed" };
       }
     }
   }
@@ -422,7 +461,7 @@
       const nextHost = await withTimeout(
         syncdGetActiveHostPairing(),
         HOST_REFRESH_TIMEOUT_MS,
-        "Sync pairing status refresh timed out.",
+        "SYNC_REFRESH_TIMEOUT",
       );
       if (!panelMounted || !nextHost) return;
       host = mergeHostState(host, nextHost);
@@ -431,7 +470,7 @@
       }
     } catch (error) {
       if (panelMounted && !panelError) {
-        panelError = error instanceof Error ? error.message : String(error);
+        panelError = { cause: error, fallback: "ui_syncActionFailed" };
       }
     }
   }
@@ -443,12 +482,16 @@
       return;
     }
     loadingPersisted = true;
+    const requestedProfile = activeProfileId;
+    const generation = ++replicationReadGeneration;
     try {
-      const catalog = await syncdGetSessionCatalog(activeProfileId);
+      const catalog = await syncdGetSessionCatalog(requestedProfile);
+      if (!panelMounted || requestedProfile !== activeProfileId || catalog.localProfileId !== requestedProfile) return;
       persistedSessions = catalog.sessions ?? [];
-      replicationSnapshot = catalog.replication ?? null;
+      if (generation === replicationReadGeneration) replicationSnapshot = catalog.replication ?? null;
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      if (generation === replicationReadGeneration) replicationSnapshot = null;
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       loadingPersisted = false;
     }
@@ -459,7 +502,7 @@
     try {
       pairedDevices = (await syncdListPairedDevices()) ?? [];
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       loadingPairedDevices = false;
     }
@@ -500,7 +543,7 @@
           : candidate,
       );
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       pairedDeviceScopeBusy = null;
     }
@@ -511,11 +554,16 @@
       replicationSnapshot = null;
       return;
     }
+    const requestedProfile = activeProfileId;
+    const generation = ++replicationReadGeneration;
     try {
-      replicationSnapshot = await syncdGetReplicationState(activeProfileId);
+      const snapshot = await syncdGetReplicationState(requestedProfile);
+      if (panelMounted && generation === replicationReadGeneration && requestedProfile === activeProfileId) {
+        replicationSnapshot = snapshot.localProfileId === requestedProfile ? snapshot : null;
+      }
     } catch {
-      // The session catalog refresh owns user-visible errors. This lightweight
-      // poll only keeps the compact replication badge from missing early events.
+      // An unavailable read cannot keep granting setup readiness from stale state.
+      if (generation === replicationReadGeneration) replicationSnapshot = null;
     }
   }
 
@@ -544,7 +592,7 @@
     try {
       candidates = (await syncdListDiscoveryCandidates()) ?? [];
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
       candidates = [];
     } finally {
       loadingCandidates = false;
@@ -554,7 +602,7 @@
   async function startHostPairing() {
     modalView = "pairing";
     if (!activeProfileId) {
-      panelError = translate("syncd_error_hostProfileRequired");
+      panelError = operationFailure(null, "syncd_error_hostProfileRequired");
       hostStartStage = "error";
       return;
     }
@@ -576,7 +624,7 @@
         body: translate("ui_theBootstrapBundleAndQrPayloadAreLive"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
       hostStartStage = "error";
     } finally {
       loadingHost = false;
@@ -586,14 +634,14 @@
   async function connectToRemote() {
     modalView = "pairing";
     if (!activeProfileId) {
-      panelError = translate("syncd_error_profileRequired");
+      panelError = operationFailure(null, "syncd_error_profileRequired");
       return;
     }
     const nextBootstrapBundle = currentBootstrapBundleValue().trim();
     const nextManualOrigin = currentManualOriginValue().trim();
 
     if (!nextBootstrapBundle) {
-      panelError = translate("syncd_error_bundleRequired");
+      panelError = operationFailure(null, "syncd_error_bundleRequired");
       return;
     }
     connectBusy = true;
@@ -612,7 +660,7 @@
       });
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       connectBusy = false;
     }
@@ -626,7 +674,7 @@
       const nextHost = await withTimeout(
         syncdHostDecidePairing(host.sessionId, decision),
         HOST_DECISION_TIMEOUT_MS,
-        "Sync pairing decision timed out. The session status will refresh automatically.",
+        "SYNC_DECISION_TIMEOUT",
       );
       if (!panelMounted) return;
       host = mergeHostState(host, nextHost);
@@ -639,7 +687,7 @@
       });
     } catch (error) {
       if (panelMounted) {
-        panelError = error instanceof Error ? error.message : String(error);
+        panelError = { cause: error, fallback: "ui_syncActionFailed" };
       }
     } finally {
       if (panelMounted) {
@@ -664,7 +712,7 @@
         copiedBundle = false;
       }, 2000);
     } catch (error) {
-      panelError = error instanceof Error ? error.message : translate("syncd_error_copyBundle");
+      panelError = { cause: error, fallback: "syncd_error_copyBundle" };
     }
   }
 
@@ -686,7 +734,7 @@
     try {
       qrCodeDataUrl = await buildSyncdQrDataUrl(nextHost.bootstrapBundle);
     } catch (error) {
-      panelError = error instanceof Error ? error.message : translate("syncd_error_renderQr");
+      panelError = { cause: error, fallback: "syncd_error_renderQr" };
       qrCodeDataUrl = null;
     } finally {
       qrBusy = false;
@@ -709,7 +757,7 @@
         body: translate("ui_theBootstrapBundleWasFilledFromTheQr"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : translate("syncd_error_decodeQr");
+      panelError = { cause: error, fallback: "syncd_error_decodeQr" };
     } finally {
       qrDecodeBusy = false;
     }
@@ -742,7 +790,7 @@
       lastReconnectStatuses = Object.fromEntries(results.map((entry) => [entry.sessionKey, entry]));
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       revalidateBusy = false;
     }
@@ -760,7 +808,7 @@
         body: translate("ui_theLocalDesktopForgotTheApprovedSyncSession"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       disconnectBusyKey = null;
     }
@@ -779,7 +827,7 @@
         body: translate("ui_replicationWillNowFollowTheSelectedDesktopSession"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       activeSessionBusyKey = null;
     }
@@ -793,7 +841,7 @@
       replicationSnapshot = await syncdPauseReplication(activeProfileId);
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       replicationActionBusy = null;
     }
@@ -807,7 +855,7 @@
       replicationSnapshot = await syncdResumeReplication(activeProfileId);
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       replicationActionBusy = null;
     }
@@ -821,7 +869,7 @@
       replicationSnapshot = await syncdForceReplicationReconnect(activeProfileId);
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       replicationActionBusy = null;
     }
@@ -839,7 +887,7 @@
       };
       void refreshPersistedSessions();
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       singleRevalidateBusyKey = null;
     }
@@ -858,7 +906,7 @@
         body: translate("ui_theLocalCatalogNoLongerKeepsThatInactive"),
       });
     } catch (error) {
-      panelError = error instanceof Error ? error.message : String(error);
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
       forgetBusyKey = null;
     }
@@ -884,6 +932,8 @@
       && previousIdentity
       && runtimeIdentityKey(previousIdentity) !== runtimeIdentityKey(nextIdentity)
     ) {
+      replicationReadGeneration += 1;
+      replicationSnapshot = null;
       void reconnectPanelSubscriptions().then(() => loadHostState());
     }
   }
@@ -932,7 +982,8 @@
           void refreshPersistedSessions();
         }),
         listenSyncdReplicationState((payload) => {
-          if (panelMounted && activeProfileId && payload.localProfileId === activeProfileId) {
+          if (panelMounted && generation === subscriptionGeneration && activeProfileId && payload.localProfileId === activeProfileId) {
+            replicationReadGeneration += 1;
             replicationSnapshot = payload;
             void refreshPersistedSessions();
           }
@@ -947,7 +998,7 @@
       panelSubscriptionsReady = true;
     } catch (error) {
       if (panelMounted && generation === subscriptionGeneration) {
-        panelError = error instanceof Error ? error.message : String(error);
+        panelError = { cause: error, fallback: "ui_syncActionFailed" };
       }
     }
   }
@@ -995,6 +1046,8 @@
 
     return () => {
       panelMounted = false;
+      replicationReadGeneration += 1;
+      initialSyncRunId += 1;
       window.removeEventListener("epigraph:syncd-import-qr-data-url", handleAutomationQrImport as EventListener);
       window.clearInterval(replicationPoll);
       stopPanelSubscriptions();
@@ -1013,7 +1066,44 @@
   });
 
   $effect(() => {
-    onReadyChange(pairingStage === "connected");
+    const key = initialSyncKey;
+    const profile = activeProfileId;
+    const requiresMangaRefresh = Boolean(
+      replicationSnapshot?.comicsScopeCheckpoint
+      || replicationSnapshot?.lastAppliedScopes.some(scope => scope.startsWith("comics:")),
+    );
+    initialSyncRetry;
+    if (presentation !== "embedded" || !key || !profile || !panelMounted) {
+      initialSyncRunId += 1;
+      initialSyncAttemptKey = null;
+      initialSyncReady = false;
+      initialSyncError = null;
+      initialSyncPhase = "idle";
+      return;
+    }
+    const attemptKey = `${key}:${initialSyncRetry}`;
+    if (initialSyncAttemptKey === attemptKey) return;
+    initialSyncAttemptKey = attemptKey;
+    const runId = ++initialSyncRunId;
+    initialSyncReady = false;
+    initialSyncError = null;
+    initialSyncPhase = "loading";
+    const stillCurrent = () => runId === initialSyncRunId && panelMounted && key === initialSyncKey && profile === activeProfileId;
+    void refreshFirstRunSyncLibrary(profile, stillCurrent, { requiresMangaRefresh }).then(() => {
+      if (stillCurrent()) {
+        initialSyncReady = true;
+        initialSyncPhase = "ready";
+      }
+    }).catch(error => {
+      if (stillCurrent()) {
+        initialSyncError = operationFailure(error, "ui_syncActionFailed");
+        initialSyncPhase = "error";
+      }
+    });
+  });
+
+  $effect(() => {
+    onReadyChange(initialSyncReady && initialSyncKey !== null);
   });
 </script>
 
@@ -1071,13 +1161,14 @@
           {:else if pairingStage === "waiting" && host}
             <div class="syncd-pairing-live">
               <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">{#if qrCodeDataUrl}<img class="syncd-qr-image" data-testid="syncd-host-qr-image" data-session-id={host.sessionId} data-origin={host.advertisedBaseUrl} src={qrCodeDataUrl} alt={$_("ui_syncBootstrapQrCode")} />{:else}<CircleNotch size={24} weight="bold" class="syncd-status__spinner" />{/if}</div>
-              <div class="syncd-pairing-live__copy"><span>{$_("ui_pairingCode")}</span><strong class="syncd-pairing-code">{host.pairingCode}</strong><small>{$_("ui_expires")} {formatWhen(host.expiresAtMs)}</small><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>{copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}</button><button class="syncd-link" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>{$_("ui_saveQrImage")}</button></div></div>
+              <div class="syncd-pairing-live__copy">{#if hostPinDisplay}<span>{$_("syncd_modal_pinLabel")}</span><strong class="syncd-pairing-pin" data-testid="syncd-host-pin">{hostPinDisplay}</strong><small class="syncd-pin-hint">{$_("syncd_modal_pinHint", { name: localDeviceName })}</small><div class="syncd-pin-expiry" aria-live="off"><span class="syncd-pin-expiry__bar"><i style:transform={`scaleX(${Math.min(1, hostSecondsLeft / 300)})`}></i></span><small>{$_("syncd_modal_pinRenews", { time: formatCountdown(hostSecondsLeft) })}</small></div>{/if}<span>{$_("ui_pairingCode")}</span><strong class="syncd-pairing-code">{host.pairingCode}</strong><small>{$_("ui_expires")} {formatWhen(host.expiresAtMs)}</small><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>{copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}</button><button class="syncd-link" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>{$_("ui_saveQrImage")}</button></div></div>
               <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
             </div>
             <div class="syncd-note">{$_("syncd_modal_keepWindowsOpen")}</div>
           {:else if pairingStage === "approval" && host}
             <div class="syncd-start-copy"><h3>{$_("syncd_modal_desktopWantsConnect")}</h3><p>{$_("syncd_modal_reviewApprove")}</p></div>
             <div class="syncd-request"><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div><span>{statusLabel("claimed")}</span></div>
+            <div class="syncd-verification" data-testid="syncd-host-verification"><span>{$_("syncd_modal_verificationLabel")}</span><strong>{hostVerificationCode}</strong><small>{$_("syncd_modal_verificationHint")}</small></div>
             <div class="syncd-scope-list" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<span>{permissionScopeLabel(scope)}</span>{/each}</div>
             <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}
@@ -1093,7 +1184,16 @@
 
           {#if connect}<div class="syncd-hidden-value" data-testid="syncd-connect-state"><span data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>{#if connect.error}<span data-testid="syncd-connect-error">{connect.error}</span>{/if}</div>{/if}
           {#if host?.error}<div data-testid="syncd-host-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_host")} title={$_("ui_hostPairingFailed")} body={host.error} /></div>{/if}
-          {#if panelError}<div data-testid="syncd-panel-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_sync")} title={$_("ui_syncActionFailed")} body={panelError} /></div>{/if}
+          {#if presentation === "embedded" && initialSyncError}
+            <div role="alert" data-testid="syncd-initial-sync-error">
+              <p>{presentOperationFailure(initialSyncError, $_)}</p>
+              <button type="button" class="n-btn n-btn--sm" onclick={() => initialSyncRetry += 1}>{$_("setup_retry")}</button>
+            </div>
+          {/if}
+          {#if presentation === "embedded" && pairingStage === "connected" && !initialSyncReady && !initialSyncError}
+            <p role="status" data-testid="syncd-initial-sync-status" data-phase={initialSyncPhase}>{initialSyncKey ? $_("ui_loading") : statusLabel(replicationSnapshot?.replicationStatus ?? "connecting")}</p>
+          {/if}
+          {#if panelError}<div data-testid="syncd-panel-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_sync")} title={$_("ui_syncActionFailed")} body={panelErrorText} /></div>{/if}
         </section>
 
         <section class="syncd-view syncd-manage" hidden={modalView !== "details"} aria-hidden={modalView !== "details"} data-testid="syncd-details-view">
@@ -1177,7 +1277,7 @@
     height: 100%;
     max-height: none;
     border: 0;
-    border-radius: 0;
+    border-radius: inherit;
     box-shadow: none;
     animation: none;
   }
@@ -1540,7 +1640,7 @@
     background: var(--component-syncd-pill-bg);
     color: var(--component-syncd-pill-fg);
     font-size: var(--component-syncd-pill-font-size);
-    text-transform: uppercase;
+    text-transform: none;
     white-space: nowrap;
   }
 
@@ -1573,6 +1673,64 @@
 
   .syncd-pairing-live {
     align-items: stretch;
+  }
+
+  .syncd-pairing-pin {
+    color: var(--text-primary);
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .syncd-pin-hint {
+    margin-bottom: 6px;
+  }
+
+  .syncd-pin-expiry {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .syncd-pin-expiry__bar {
+    flex: 0 0 120px;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--border-base);
+  }
+
+  .syncd-pin-expiry__bar i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transform-origin: left;
+    transition: transform 1s linear;
+  }
+
+  .syncd-verification {
+    display: grid;
+    gap: 4px;
+    margin: 12px 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--accent-muted);
+  }
+
+  .syncd-verification span,
+  .syncd-verification small {
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+  }
+
+  .syncd-verification strong {
+    color: var(--accent-fg);
+    font-size: 26px;
+    font-weight: 800;
+    letter-spacing: .18em;
+    font-variant-numeric: tabular-nums;
   }
 
   .syncd-pairing-live .syncd-qr-surface {

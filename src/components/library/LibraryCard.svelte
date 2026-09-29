@@ -147,14 +147,33 @@
   );
   const displayedGridBadge = $derived(primaryGridBadge);
 
+  // Library view models keep canonical status tokens (they are also sort/filter inputs);
+  // they are translated here so labels follow the selected app language.
+  const CARD_LABEL_KEYS: Record<string, string> = {
+    Ongoing: "library.status.ongoing",
+    Completed: "library.status.completed",
+    Cancelled: "library.status.cancelled",
+    Hiatus: "library.status.hiatus",
+    Unknown: "library.status.unknown",
+    Finished: "library.status.finished",
+    "Not started": "library.status.unopened",
+    "Missing file": "library.card.missingFile",
+    "Metadata only": "library.card.metadataOnly",
+  };
+
+  function localizeCardLabel(label: string): string {
+    const key = CARD_LABEL_KEYS[label];
+    return key ? $_(key) : label;
+  }
+
   function formatGridStateLabel(label: string, _kind: string): string {
-    return label;
+    return localizeCardLabel(label);
   }
 
   function visibleGridStatusLabel(label: string | undefined): string | null {
     const normalized = label?.trim();
     if (!normalized) return null;
-    return normalized;
+    return localizeCardLabel(normalized);
   }
 
   function toCoverProgressWidth(percent: number | null | undefined): number {
@@ -480,14 +499,14 @@
     {#if viewMode === "list" && vm.badges.length}
       <div class="meta-row">
         {#each vm.badges as badge, index (badge.kind + badge.label + index)}
-          <span class={`meta-chip meta-chip-badge meta-chip-${badge.kind}`}>{badge.label}</span>
+          <span class={`meta-chip meta-chip-badge meta-chip-${badge.kind}`}>{localizeCardLabel(badge.label)}</span>
         {/each}
       </div>
     {/if}
     {#if viewMode === "list" && vm.metaChips.length}
       <div class="meta-row">
         {#each vm.metaChips as chip}
-          <span class="meta-chip">{chip}</span>
+          <span class="meta-chip">{localizeCardLabel(chip)}</span>
         {/each}
       </div>
     {/if}
@@ -707,8 +726,8 @@
     font-family: var(--font-ui);
     font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     box-shadow: var(--component-library-card-badge-shadow);
   }
 
@@ -727,8 +746,8 @@
     font-family: var(--font-ui);
     font-size: var(--library-card-badge-font-size, 9px);
     font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     box-shadow: var(--component-library-card-badge-shadow);
   }
 
@@ -965,8 +984,8 @@
 
   .subtitle.n-library-card__author {
     font-size: var(--library-card-meta-font-size, 9px);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--component-library-card-meta-fg);
   }
 
@@ -982,8 +1001,8 @@
   .n-library-card__vol {
     font-family: var(--font-ui);
     font-size: var(--library-card-meta-font-size, 9px);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     color: var(--component-library-card-meta-fg);
     white-space: nowrap;
     overflow: hidden;

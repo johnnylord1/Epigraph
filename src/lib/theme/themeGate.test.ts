@@ -189,10 +189,10 @@ describe("final derived theme gate", () => {
 
     expect(selectorStart).toBeGreaterThan(-1);
     expect(selectorEnd).toBeGreaterThan(selectorStart);
-    expect(exactSources).toHaveLength(224);
+    expect(exactSources).toHaveLength(202);
     expect(builtinBlock).toContain("--color-on-accent-strong: #352660;");
     expect(outsideBuiltin).not.toMatch(/--color-on-accent-strong\s*:/);
-    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(224);
+    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(202);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
     expect(leaked).toEqual([]);
@@ -223,8 +223,8 @@ describe("final derived theme gate", () => {
       )
       .map(({ name, value }) => `${name}: ${value}`);
 
-    expect(exactRoles).toHaveLength(57);
-    expect(new Set(exactRoles.map(({ name }) => name)).size).toBe(57);
+    expect(exactRoles).toHaveLength(54);
+    expect(new Set(exactRoles.map(({ name }) => name)).size).toBe(54);
     expect(missingFallback).toEqual([]);
     expect(leaked).toEqual([]);
   });
@@ -318,13 +318,13 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1500,
-      editable: 1472,
-      absolute: 290,
+      componentColors: 1471,
+      editable: 1316,
+      absolute: 238,
       absoluteOnly: 0,
-      mixedEditableAbsolute: 290,
+      mixedEditableAbsolute: 238,
       runtime: 9,
-      neutral: 28,
+      neutral: 155,
     });
     expect(unresolved).toEqual([]);
   });

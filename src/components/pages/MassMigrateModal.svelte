@@ -3,14 +3,18 @@
   import {
     ArrowLeft,
     ArrowRight,
+    ArrowsLeftRight,
     Check,
     CircleNotch,
     DotsThreeVertical,
+    ListChecks,
     MagnifyingGlass,
+    Plugs,
     Warning,
     X,
   } from "phosphor-svelte";
   import { _, translate } from "../../lib/i18n/runtime";
+  import { formatWorkStatus } from "../../lib/i18n/format";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -43,6 +47,8 @@
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import { enterOnMount, glideHeight, listFlip, popIn, popOut } from "../../lib/motion/motion";
+  import "./migrationModal.css";
 
   interface Props {
     extension: ManagedExtension;
@@ -154,6 +160,49 @@
     manualSearchItemId === null ? null : preview?.items.find((item) => item.currentManga.id === manualSearchItemId) ?? null
   ));
 
+  const massSteps = ["origin", "target", "review", "migrating"] as const satisfies Step[];
+  const massStepIdx = $derived(massSteps.indexOf(step));
+  // Each body view gets its own entrance, so switching steps reads as a page turn rather than a swap.
+  const bodyView = $derived.by(() => {
+    if (loading) return "loading";
+    if (error && !preview && step !== "target") return "error";
+    if (step === "origin" || step === "target") return step;
+    if (preview) return manualSearchItem ? "manual" : "review";
+    return "none";
+  });
+
+  const languageNames = (() => {
+    try { return new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "language" }); }
+    catch { return null; }
+  })();
+
+  function languageLabel(lang: string): string {
+    try { return languageNames?.of(lang) ?? lang.toUpperCase(); }
+    catch { return lang.toUpperCase(); }
+  }
+
+  function massStepLabel(st: Step): string {
+    if (st === "origin") return $_("massMigration.stepOrigin");
+    if (st === "target") return $_("massMigration.stepTarget");
+    if (st === "review") return $_("massMigration.stepReview");
+    return $_("massMigration.stepMigrate");
+  }
+
+  function statusTone(item: MassMangaMigrationPreviewItem): string {
+    const runtime = runtimeStatuses.get(item.currentManga.id);
+    if (runtime === "migrated" || runtime === "copied") return "mg-pill--good";
+    if (runtime === "failed") return "mg-pill--bad";
+    if (runtime === "excluded") return "";
+    if (runtime === "migrating") return "mg-pill--accent";
+    if (item.status === "matched") return "mg-pill--good";
+    if (item.status === "needs_review") return "mg-pill--warn";
+    return "mg-pill--bad";
+  }
+
+  function markBrokenImage(event: Event) {
+    (event.currentTarget as HTMLImageElement).dataset.broken = "true";
+  }
+
   function onKey(event: KeyboardEvent) {
     if (event.key === "Escape" && activeActionsMenuId !== null) {
       activeActionsMenuId = null;
@@ -163,7 +212,7 @@
       closeManualSearch();
       return;
     }
-    if (event.key === "Escape") onClose();
+    if (event.key === "Escape" && !applying) onClose();
   }
 
   function handleOverlayPointerDown(event: PointerEvent) {
@@ -171,7 +220,7 @@
   }
 
   function handleOverlayClick(event: MouseEvent) {
-    if (pointerStartedOnOverlay && event.target === event.currentTarget) {
+    if (pointerStartedOnOverlay && event.target === event.currentTarget && !applying) {
       onClose();
     }
     pointerStartedOnOverlay = false;
@@ -615,6 +664,22 @@
     activeActionsMenuId = activeActionsMenuId === item.currentManga.id ? null : item.currentManga.id;
   }
 
+  // The dialog is only as tall as its queue, so an open menu near the bottom would be cut off by the
+  // scrolling body. Reserving its overhang below the queue lets the dialog grow (or scroll) to show it.
+  function keepMenuInView(menu: HTMLElement) {
+    const body = menu.closest<HTMLElement>(".mg-body");
+    const queue = menu.closest<HTMLElement>(".mg-queue");
+    if (!body || !queue) return;
+    const overhang = menu.getBoundingClientRect().bottom + 12 - body.getBoundingClientRect().bottom;
+    if (overhang > 0) queue.style.paddingBottom = `${Math.ceil(overhang)}px`;
+    menu.scrollIntoView?.({ block: "nearest" });
+    return {
+      destroy() {
+        queue.style.paddingBottom = "";
+      },
+    };
+  }
+
   function openManualSearch(item: MassMangaMigrationPreviewItem) {
     activeActionsMenuId = null;
     manualSearchItemId = item.currentManga.id;
@@ -793,10 +858,10 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div bind:this={overlayEl} class="overlay" onpointerdown={handleOverlayPointerDown} onclick={handleOverlayClick}>
+<div bind:this={overlayEl} class="mg-overlay" onpointerdown={handleOverlayPointerDown} onclick={handleOverlayClick}>
   <div
     bind:this={modalEl}
-    class="modal"
+    class="mg-modal mg-modal--wide"
     role="dialog"
     aria-modal="true"
     aria-labelledby={dialogTitleId}
@@ -804,29 +869,46 @@
     tabindex="-1"
     onpointerdown={stopModalPointerEvent}
     onclick={stopModalPointerEvent}
+    use:glideHeight
   >
-    <header class="modalHeader">
-      <div>
-        <p>{$_("massMigration.title")}</p>
-        <h2 id={dialogTitleId}>{extension.name}</h2>
-        <span id={dialogDescriptionId} class="srOnly">{$_("massMigration.description")}</span>
+    <header class="mg-header">
+      <span class="mg-mark"><img src={resolveServiceIconUrl(originSource ?? extension, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
+      <div class="mg-heading">
+        <p class="mg-eyebrow">{$_("massMigration.title")}</p>
+        <h2 class="mg-title" id={dialogTitleId}>{extension.name}</h2>
+        {#if originSource && targetSource && step !== "origin"}
+          <p class="mg-subtitle">{$_("massMigration.sourceToTarget", { values: { origin: originSource.displayName, target: targetSource.displayName } })}</p>
+        {/if}
+        <span id={dialogDescriptionId} class="mg-sr-only">{$_("massMigration.description")}</span>
       </div>
-      <button bind:this={closeButtonEl} class="iconButton" type="button" onclick={onClose} aria-label={$_("massMigration.close")}>
-        <X size={15} weight="bold" />
+      <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={applying} aria-label={$_("massMigration.close")}>
+        <X size={16} weight="bold" />
       </button>
     </header>
 
-    <div class="steps" aria-label={$_("massMigration.steps")}>
-      <span class:active={step === "origin"}>{$_("massMigration.stepOrigin")}</span>
-      <span class:active={step === "target"}>{$_("massMigration.stepTarget")}</span>
-      <span class:active={step === "review"}>{$_("massMigration.stepReview")}</span>
-      <span class:active={step === "migrating"}>{$_("massMigration.stepMigrate")}</span>
-    </div>
+    <nav class="mg-steps" aria-label={$_("massMigration.steps")}>
+      <ol>
+        {#each massSteps as st, i}
+          <li class:is-complete={i < massStepIdx} aria-current={step === st ? "step" : undefined}>
+            <span class="mg-step-chip">
+              <span class="mg-step-icon" aria-hidden="true">
+                {#if i < massStepIdx}<Check size={15} weight="bold" />{:else if st === "origin"}<Plugs size={16} weight="duotone" />{:else if st === "target"}<MagnifyingGlass size={16} weight="duotone" />{:else if st === "review"}<ListChecks size={16} weight="duotone" />{:else}<ArrowsLeftRight size={16} weight="duotone" />{/if}
+              </span>
+              <span>{massStepLabel(st)}</span>
+            </span>
+            {#if i < massSteps.length - 1}<span class="mg-step-line" aria-hidden="true"><i></i></span>{/if}
+          </li>
+        {/each}
+      </ol>
+    </nav>
 
-    {#if loading}
-      <div class="center"><CircleNotch size={18} weight="bold" class="anim-spin" /></div>
-    {:else if error && !preview && step !== "target"}
-      <div class="center">
+    <div class="mg-body">
+      {#key bodyView}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
+      {#if loading}
+        <div class="mg-list" aria-busy="true">
+          {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
+        </div>
+      {:else if error && !preview && step !== "target"}
         <NocturneState
           layout="compact"
           tone="danger"
@@ -836,343 +918,244 @@
           body={error}
           actions={[{ label: $_("massMigration.retry"), kind: "primary", icon: "retry", onClick: loadInitialState }]}
         />
-      </div>
-    {:else if step === "origin"}
-      <section class="pane">
-        <div class="paneIntro">
-          <strong>{$_("massMigration.chooseSourceFrom", { values: { name: extension.name } })}</strong>
-          <span>{$_("massMigration.installedSourcesForExtension", { values: { count: originSources.length } })}</span>
-        </div>
-        <div class="sourceList">
-          {#if originSources.length === 0}
-            <p class="emptyLine">{$_("massMigration.noLinkedInstalledSource")}</p>
-          {:else}
-            {#each originSources as source}
-              <button class="sourceRow" type="button" onclick={() => pickOrigin(source)}>
-                <img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} />
-                <span>{source.displayName}</span>
-                <small>{source.lang.toUpperCase()}</small>
-                <ArrowRight size={14} weight="bold" />
+      {:else if step === "origin"}
+        <p class="mg-lede"><strong>{$_("massMigration.chooseSourceFrom", { values: { name: extension.name } })}</strong></p>
+        <p class="mg-section-label">{$_("massMigration.installedSourcesForExtension", { values: { count: originSources.length } })}</p>
+        {#if originSources.length === 0}
+          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("massMigration.noLinkedInstalledSource")}</span></div>
+        {:else}
+          <div class="mg-list">
+            {#each originSources as source, i}
+              <button class="mg-row" style:--mg-i={i} type="button" data-migration-source onclick={() => pickOrigin(source)}>
+                <span class="mg-mark"><img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
+                <span class="mg-row-copy">
+                  <strong>{source.displayName}</strong>
+                  <small>{languageLabel(source.lang)}</small>
+                </span>
+                <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
               </button>
             {/each}
-          {/if}
+          </div>
+        {/if}
+      {:else if step === "target"}
+        <div class="mg-context">
+          <span class="mg-mark"><img src={resolveServiceIconUrl(originSource ?? extension, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
+          <span class="mg-row-copy">
+            <strong>{originSource?.displayName ?? extension.name}</strong>
+            <small>{$_("massMigration.libraryTitlesCompared", { values: { count: sourceItems.length } })}</small>
+          </span>
+          <button class="mg-btn mg-btn--small" type="button" onclick={() => step = "origin"} disabled={buildingPreview}>{$_("ui_change")}</button>
         </div>
-      </section>
-    {:else if step === "target"}
-      <section class="pane">
-        <div class="paneIntro">
-          <strong>{originSource?.displayName ?? extension.name}</strong>
-          <span>{$_("massMigration.libraryTitlesCompared", { values: { count: sourceItems.length } })}</span>
-        </div>
-        <div class="sourceList">
-          {#if targetSourceGroups.length === 0}
-            <p class="emptyLine">{$_("massMigration.noAlternativeSource")}</p>
-          {:else}
-            {#each targetSourceGroups as group}
-              <div class="sourceGroup">
-                <span>{group.name}</span>
-                {#each group.sources as source}
-                  <button class="sourceRow" class:selected={targetSource?.id === source.id} type="button" onclick={() => pickTarget(source)}>
-                    <img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} />
-                    <span>{source.displayName}</span>
-                    <small>{source.lang.toUpperCase()}</small>
-                    <ArrowRight size={14} weight="bold" />
-                  </button>
-                {/each}
-              </div>
-            {/each}
-          {/if}
-        </div>
+        {#if buildingPreview}
+          <div class="mg-progress" aria-live="polite">
+            <div class="mg-progress-head">
+              <span>{previewProgress?.stage ?? $_("massMigration.searchMatches")}</span>
+              {#if previewProgress}<span>{previewProgress.done}/{previewProgress.total}</span>{/if}
+            </div>
+            <div class="mg-progress-bar"><i style:width="{previewProgress && previewProgress.total > 0 ? Math.round((previewProgress.done / previewProgress.total) * 100) : 0}%"></i></div>
+          </div>
+        {/if}
         {#if error}
           <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.targetSource")} title={$_("ui_searchFailed")} body={error} />
         {/if}
-        <footer class="modalFooter">
-          <button class="secondaryButton" type="button" onclick={() => step = "origin"}>{$_("ui_back")}</button>
-          <button class="primaryButton" type="button" disabled={!targetSource || sourceItems.length === 0 || buildingPreview} onclick={buildPreview}>
-            {#if buildingPreview}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}<MagnifyingGlass size={13} weight="bold" />{/if}
-            {#if buildingPreview && previewProgress}
-              {previewProgress.stage} {previewProgress.done}/{previewProgress.total}
-            {:else}
-              {$_("massMigration.searchMatches")}
-            {/if}
-          </button>
-        </footer>
-      </section>
-    {:else if preview}
-      <section class="reviewPane">
-        {#if manualSearchItem}
-          <div class="manualSearchHeader">
-            <button class="iconButton" type="button" onclick={closeManualSearch} aria-label={$_("massMigration.backToReview")}>
-              <ArrowLeft size={15} weight="bold" />
-            </button>
-            <div>
-              <span>{$_("massMigration.manualSearch")}</span>
-              <strong>{manualSearchItem.currentManga.title}</strong>
-            </div>
-          </div>
-
-          <div class="manualSearchTop">
-            <input
-              value={manualQuery.get(manualSearchItem.currentManga.id) ?? manualSearchItem.currentManga.title}
-              oninput={(event) => setManualQuery(manualSearchItem.currentManga.id, (event.currentTarget as HTMLInputElement).value)}
-              onkeydown={(event) => event.key === "Enter" && searchManual(manualSearchItem)}
-              placeholder={$_("massMigration.searchTitleOnTarget")}
-              aria-label={$_("massMigration.searchTitleOnTarget")}
-            />
-            <button class="primaryButton" type="button" disabled={manualSearching.has(manualSearchItem.currentManga.id)} onclick={() => searchManual(manualSearchItem)}>
-              {#if manualSearching.has(manualSearchItem.currentManga.id)}
-                <CircleNotch size={13} weight="bold" class="anim-spin" />
-                {$_("ui_searching")}
-              {:else}
-                <MagnifyingGlass size={13} weight="bold" />
-                {$_("novelSources_actions_search")}
-              {/if}
-            </button>
-          </div>
-
-          {#if runtimeErrors.get(manualSearchItem.currentManga.id)}
-            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.manualSearch")} title={$_("ui_searchFailed")} body={runtimeErrors.get(manualSearchItem.currentManga.id)} />
-          {/if}
-
-          <div class="manualResultGrid">
-            {#if manualSearching.has(manualSearchItem.currentManga.id)}
-              <div class="manualEmpty">
-                <CircleNotch size={18} weight="bold" class="anim-spin" />
-                <span>{$_("massMigration.searchingTarget", { values: { name: targetSource?.displayName ?? $_("massMigration.targetSource") } })}</span>
-              </div>
-            {:else if manualResults.get(manualSearchItem.currentManga.id)?.length}
-              {#each manualResults.get(manualSearchItem.currentManga.id) ?? [] as result}
-                <button class="manualResultCard" type="button" onclick={() => chooseManualMatch(manualSearchItem, result)}>
-                  <img class="cover" src={resolveMangaCoverUrl(result, { context: "migration", persistence: "memory" })} alt="" />
-                  <span>{result.title}</span>
-                  <small>{result.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}</small>
+        {#if targetSourceGroups.length === 0}
+          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("massMigration.noAlternativeSource")}</span></div>
+        {:else}
+          {#each targetSourceGroups as group}
+            <p class="mg-section-label">{group.name}</p>
+            <div class="mg-list" role="radiogroup" aria-label={group.name}>
+              {#each group.sources as source, i}
+                <button
+                  style:--mg-i={i}
+                  class="mg-row"
+                  class:is-selected={targetSource?.id === source.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={targetSource?.id === source.id}
+                  data-migration-source
+                  disabled={buildingPreview}
+                  onclick={() => pickTarget(source)}
+                >
+                  <span class="mg-mark"><img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
+                  <span class="mg-row-copy">
+                    <strong>{source.displayName}</strong>
+                    <small>{languageLabel(source.lang)}</small>
+                  </span>
+                  <span class="mg-row-end">{#if targetSource?.id === source.id}<Check size={16} weight="bold" />{/if}</span>
                 </button>
               {/each}
-            {:else}
-              <div class="manualEmpty">
-                <MagnifyingGlass size={18} weight="bold" />
-                <span>{$_("massMigration.noManualResults")}</span>
-              </div>
-            {/if}
-          </div>
+            </div>
+          {/each}
+        {/if}
+      {:else if preview && manualSearchItem}
+        <div class="mg-context">
+          <span class="mg-cover"><img src={resolveMangaCoverUrl(manualSearchItem.currentManga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
+          <span class="mg-row-copy">
+            <small>{$_("massMigration.manualSearch")}</small>
+            <strong title={manualSearchItem.currentManga.title}>{manualSearchItem.currentManga.title}</strong>
+          </span>
+        </div>
+        <form class="mg-field" onsubmit={(event) => { event.preventDefault(); void searchManual(manualSearchItem); }}>
+          <MagnifyingGlass size={16} weight="bold" />
+          <input
+            value={manualQuery.get(manualSearchItem.currentManga.id) ?? manualSearchItem.currentManga.title}
+            oninput={(event) => setManualQuery(manualSearchItem.currentManga.id, (event.currentTarget as HTMLInputElement).value)}
+            placeholder={$_("massMigration.searchTitleOnTarget")}
+            aria-label={$_("massMigration.searchTitleOnTarget")}
+          />
+          <button class="mg-btn mg-btn--primary mg-btn--small" type="submit" disabled={manualSearching.has(manualSearchItem.currentManga.id)}>
+            {#if manualSearching.has(manualSearchItem.currentManga.id)}<CircleNotch size={14} weight="bold" class="anim-spin" /> {$_("ui_searching")}{:else}{$_("novelSources_actions_search")}{/if}
+          </button>
+        </form>
 
-          <footer class="modalFooter">
-            <button class="secondaryButton" type="button" onclick={closeManualSearch}>{$_("massMigration.backToReview")}</button>
-          </footer>
+        {#if runtimeErrors.get(manualSearchItem.currentManga.id)}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.manualSearch")} title={$_("ui_searchFailed")} body={runtimeErrors.get(manualSearchItem.currentManga.id)} />
+        {/if}
+
+        {#if manualSearching.has(manualSearchItem.currentManga.id)}
+          <div class="mg-list" aria-busy="true" aria-label={$_("massMigration.searchingTarget", { values: { name: targetSource?.displayName ?? $_("massMigration.targetSource") } })}>
+            {#each Array(4) as _}<div class="mg-skeleton"></div>{/each}
+          </div>
+        {:else if manualResults.get(manualSearchItem.currentManga.id)?.length}
+          <div class="mg-list">
+            {#each manualResults.get(manualSearchItem.currentManga.id) ?? [] as result, i}
+              <button class="mg-row" style:--mg-i={i} type="button" data-migration-result onclick={() => chooseManualMatch(manualSearchItem, result)}>
+                <span class="mg-cover"><img src={resolveMangaCoverUrl(result, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
+                <span class="mg-row-copy">
+                  <strong title={result.title}>{result.title}</strong>
+                  <small>{result.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}</small>
+                </span>
+                <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
+              </button>
+            {/each}
+          </div>
         {:else}
-        <div class="reviewToolbar">
-          <div>
-            <strong>{$_("massMigration.sourceToTarget", { values: { origin: originSource?.displayName, target: targetSource?.displayName } })}</strong>
-            <span>{$_("massMigration.reviewCounts", { values: { ready: preview.readyCount, review: preview.needsReviewCount, attention: preview.blockedCount } })}</span>
+          <div class="mg-empty">
+            <span class="mg-mark"><MagnifyingGlass size={18} weight="duotone" /></span>
+            <span>{$_("massMigration.noManualResults")}</span>
           </div>
-          <div class="toolbarActions">
+        {/if}
+      {:else if preview}
+        <p class="mg-lede">{$_("massMigration.reviewCounts", { values: { ready: preview.readyCount, review: preview.needsReviewCount, attention: preview.blockedCount } })}</p>
+        <div class="mg-toolbar">
+          <label class="mg-field">
+            <MagnifyingGlass size={16} weight="bold" />
             <input bind:value={searchFilter} placeholder={$_("massMigration.filterQueue")} aria-label={$_("massMigration.filterQueue")} />
-            <button class="secondaryButton bulkSelectButton" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
-              {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
-            </button>
-          </div>
+          </label>
+          <button class="mg-btn" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
+            {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
+          </button>
         </div>
 
         {#if error}
           <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.title")} title={$_("ui_massMigrationFailed")} body={error} />
         {/if}
 
-        <div class="queueList">
-          {#if visiblePreviewItems.length === 0}
-            <p class="emptyLine">{$_("massMigration.noQueueMatches")}</p>
-          {:else}
-          {#each visiblePreviewItems as item}
-            {@const runtime = runtimeStatuses.get(item.currentManga.id)}
-            {@const match = item.match}
-            {@const sourceLabel = item.currentManga.source?.displayName ?? originSource?.displayName ?? $_("massMigration.source")}
-            {@const targetLabel = match?.manga.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}
-            {@const sourceStatus = item.currentManga.status ?? "UNKNOWN"}
-            {@const targetStatus = match?.manga.status ?? "UNKNOWN"}
-            {@const selected = selectedIds.has(item.currentManga.id)}
-            <article class="queueItem" class:queueItemMuted={runtime === "excluded"} class:queueItemDone={runtime === "migrated" || runtime === "copied"}>
-              <div class="queueMain">
-                <div class="migrationPair">
-                  <div class="miniManga libraryLikeCard">
-                    <button
-                      class="checkButton"
-                      class:checkButtonSelected={selected || runtime === "migrated" || runtime === "copied"}
-                      type="button"
-                      disabled={!canSelect(item)}
-                      onclick={(event) => toggleItem(item, event)}
-                      aria-pressed={selected}
-                      aria-label={$_("massMigration.selectTitle", { values: { title: item.currentManga.title } })}
-                    >
-                      {#if runtime === "migrated" || runtime === "copied"}<Check size={15} weight="bold" />{:else if selected}<Check size={15} weight="bold" />{/if}
-                    </button>
-                    <img class="cover" src={resolveMangaCoverUrl(item.currentManga, { context: "migration", persistence: "memory" })} alt="" />
-                    <div class="cardCopy">
-                      <strong>{item.currentManga.title}</strong>
-                      <span><b>{sourceLabel}</b><em>{sourceStatus}</em></span>
-                    </div>
-                  </div>
-                  <span class="pairArrow"><ArrowRight size={28} weight="bold" /></span>
-                  <div class="miniManga libraryLikeCard">
-                    {#if match}
-                      <img class="cover" src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" />
-                    {:else}
-                      <div class="cover noCover"><Warning size={16} weight="bold" /></div>
-                    {/if}
-                    <div class="cardCopy">
-                      <strong>{match?.manga.title ?? statusLabel(item)}</strong>
-                      <span><b>{targetLabel}</b><em>{targetStatus}</em></span>
-                    </div>
-                    <div class="itemActions">
-                      <button
-                        class="iconButton actionTrigger"
-                        type="button"
-                        onclick={() => toggleActionsMenu(item)}
-                        aria-haspopup="menu"
-                        aria-expanded={activeActionsMenuId === item.currentManga.id}
-                        aria-label={$_("massMigration.actionsForTitle", { values: { title: item.currentManga.title } })}
-                      >
-                        <DotsThreeVertical size={19} weight="bold" />
-                      </button>
-                      {#if activeActionsMenuId === item.currentManga.id}
-                        <div class="actionMenu" role="menu">
-                          {#if canSelect(item)}
-                            <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
-                            <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
-                          {/if}
-                          <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
-                          <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
-                          <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
-                        </div>
+        {#if visiblePreviewItems.length === 0}
+          <div class="mg-empty">{$_("massMigration.noQueueMatches")}</div>
+        {:else}
+          <div class="mg-queue">
+            {#each visiblePreviewItems as item, i (item.currentManga.id)}
+              {@const runtime = runtimeStatuses.get(item.currentManga.id)}
+              {@const match = item.match}
+              {@const sourceLabel = item.currentManga.source?.displayName ?? originSource?.displayName ?? $_("massMigration.source")}
+              {@const targetLabel = match?.manga.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}
+              {@const sourceStatus = formatWorkStatus(item.currentManga.status)}
+              {@const targetStatus = formatWorkStatus(match?.manga.status)}
+              {@const selected = selectedIds.has(item.currentManga.id)}
+              {@const done = runtime === "migrated" || runtime === "copied"}
+              <article animate:listFlip style:--mg-i={i} class="mg-queue-item" class:is-selected={selected} class:is-muted={runtime === "excluded"}>
+                <button
+                  class="mg-check"
+                  class:is-checked={selected || done}
+                  type="button"
+                  disabled={!canSelect(item)}
+                  onclick={(event) => toggleItem(item, event)}
+                  aria-pressed={selected}
+                  aria-label={$_("massMigration.selectTitle", { values: { title: item.currentManga.title } })}
+                >
+                  {#if selected || done}<Check size={13} weight="bold" />{/if}
+                </button>
+                <div class="mg-queue-side">
+                  <span class="mg-cover"><img src={resolveMangaCoverUrl(item.currentManga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
+                  <span class="mg-row-copy">
+                    <strong title={item.currentManga.title}>{item.currentManga.title}</strong>
+                    <small>{sourceLabel}{sourceStatus ? ` · ${sourceStatus}` : ""}</small>
+                  </span>
+                </div>
+                <span class="mg-queue-arrow" aria-hidden="true"><ArrowRight size={15} weight="bold" /></span>
+                <div class="mg-queue-side">
+                  <span class="mg-cover">
+                    {#if match}<img src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />{:else}<Warning size={16} weight="bold" />{/if}
+                  </span>
+                  <span class="mg-row-copy">
+                    <strong title={match?.manga.title ?? ""}>{match?.manga.title ?? statusLabel(item)}</strong>
+                    <small>{targetLabel}{targetStatus ? ` · ${targetStatus}` : ""}</small>
+                  </span>
+                </div>
+                <span class="mg-pill {statusTone(item)}">{statusLabel(item)}</span>
+                <div class="mg-menu-wrap">
+                  <button
+                    class="mg-icon-btn"
+                    type="button"
+                    onclick={() => toggleActionsMenu(item)}
+                    aria-haspopup="menu"
+                    aria-expanded={activeActionsMenuId === item.currentManga.id}
+                    aria-label={$_("massMigration.actionsForTitle", { values: { title: item.currentManga.title } })}
+                  >
+                    <DotsThreeVertical size={18} weight="bold" />
+                  </button>
+                  {#if activeActionsMenuId === item.currentManga.id}
+                    <div class="mg-menu" role="menu" use:keepMenuInView in:popIn out:popOut>
+                      {#if canSelect(item)}
+                        <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
+                        <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
                       {/if}
+                      <button type="button" role="menuitem" onclick={() => retryItem(item)}>{$_("massMigration.retry")}</button>
+                      <button type="button" role="menuitem" onclick={() => openManualSearch(item)}>{$_("novelSources_actions_search")}</button>
+                      <button type="button" role="menuitem" onclick={() => excludeItem(item)}>{$_("massMigration.exclude")}</button>
                     </div>
-                  </div>
+                  {/if}
                 </div>
                 {#if issueReasonLabel(item)}
-                  <small class="itemNote">{issueReasonLabel(item)}</small>
+                  <small class="mg-queue-note">{issueReasonLabel(item)}</small>
                 {/if}
                 {#if runtimeErrors.get(item.currentManga.id)}
-                  <small class="itemError">{runtimeErrors.get(item.currentManga.id)}</small>
+                  <small class="mg-queue-note is-error">{runtimeErrors.get(item.currentManga.id)}</small>
                 {/if}
-              </div>
-            </article>
-          {/each}
-          {/if}
-        </div>
-
-        <footer class="modalFooter">
-          <button class="secondaryButton" type="button" onclick={() => step = applying ? "review" : "target"}>{applying ? $_("massMigration.backToReview") : $_("ui_back")}</button>
-          <button class="primaryButton" type="button" onclick={() => applySelected("migrate")} disabled={applying || selectedMigratableCount === 0}>
-            {#if applying}<CircleNotch size={13} weight="bold" class="anim-spin" />{:else}<Check size={13} weight="bold" />{/if}
-            {$_("massMigration.migrateSelected", { values: { count: selectedMigratableCount } })}
-          </button>
-        </footer>
+              </article>
+            {/each}
+          </div>
         {/if}
-      </section>
-    {/if}
+      {/if}
+      </div>{/key}
+    </div>
+
+    <footer class="mg-footer">
+      {#if loading || (error && !preview && step !== "target")}
+        <span class="mg-spacer"></span>
+        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
+      {:else if step === "origin"}
+        <span class="mg-spacer"></span>
+        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
+      {:else if step === "target"}
+        <button class="mg-btn" type="button" onclick={() => step = "origin"} disabled={buildingPreview}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+        <button class="mg-btn mg-btn--primary" type="button" disabled={!targetSource || sourceItems.length === 0 || buildingPreview} onclick={buildPreview}>
+          {#if buildingPreview}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
+          {$_("massMigration.searchMatches")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
+        </button>
+      {:else if preview && manualSearchItem}
+        <button class="mg-btn" type="button" onclick={closeManualSearch}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("massMigration.backToReview")}</button>
+        <span class="mg-spacer"></span>
+      {:else if preview}
+        <button class="mg-btn" type="button" onclick={() => step = applying ? "review" : "target"}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {applying ? $_("massMigration.backToReview") : $_("ui_back")}</button>
+        <span class="mg-spacer"></span>
+        <button class="mg-btn mg-btn--primary" type="button" onclick={() => applySelected("migrate")} disabled={applying || selectedMigratableCount === 0}>
+          {#if applying}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
+          {$_("massMigration.migrateSelected", { values: { count: selectedMigratableCount } })}
+        </button>
+      {/if}
+    </footer>
   </div>
 </div>
-
-<style>
-  .overlay { position: fixed; inset: 0; z-index: var(--component-migration-overlay-z-index); display: flex; align-items: center; justify-content: center; background: var(--component-migration-overlay-bg); backdrop-filter: var(--component-migration-overlay-blur); animation: fadeIn var(--component-migration-animation-fade) both; }
-  .modal { width: min(800px, calc(100vw - 48px)); height: min(690px, calc(100vh - 64px)); display: flex; flex-direction: column; overflow: hidden; border-radius: var(--component-migration-modal-radius); border: 1px solid var(--component-migration-modal-border); background: var(--component-migration-modal-bg); box-shadow: var(--component-migration-modal-shadow); animation: scaleIn var(--component-migration-animation-scale) both; }
-  .srOnly { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  .modalHeader, .reviewToolbar, .manualSearchHeader, .manualSearchTop, .modalFooter, .sourceRow, .queueItem, .toolbarActions, .itemActions, .steps, .migrationPair { display: flex; align-items: center; }
-  .modalHeader { justify-content: space-between; gap: 14px; padding: 15px 18px; border-bottom: 1px solid var(--component-migration-divider-strong); }
-  .modalHeader p { margin: 0 0 2px; font-family: var(--font-ui); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--component-migration-eyebrow-fg); }
-  .modalHeader h2 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: var(--component-migration-title-fg); }
-  .iconButton { display: grid; place-items: center; width: 32px; height: 32px; border-radius: var(--component-migration-icon-radius); color: var(--component-migration-icon-fg); border: 1px solid var(--component-migration-icon-border); background: var(--component-migration-icon-bg); transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast), transform var(--component-migration-transition-fast); }
-  .iconButton:hover { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-icon-hover-bg); }
-  .iconButton:active { transform: scale(0.96); }
-  .steps { gap: var(--sp-2); padding: 10px 18px; border-bottom: 1px solid var(--component-migration-divider-strong); }
-  .steps span { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--component-migration-muted-fg); }
-  .steps span.active { color: var(--component-migration-accent-fg); }
-  .center { flex: 1; display: grid; place-items: center; gap: 12px; color: var(--component-migration-body-fg); text-align: center; }
-  .pane, .reviewPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .paneIntro { display: grid; gap: 4px; padding: 14px 18px; color: var(--component-migration-body-fg); }
-  .paneIntro strong, .reviewToolbar strong { color: var(--component-migration-strong-fg); }
-  .paneIntro span, .reviewToolbar span { color: var(--component-migration-muted-fg); }
-  .sourceList, .queueList { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 18px 18px; display: grid; align-content: start; gap: 6px; }
-  .sourceGroup { display: grid; gap: 6px; }
-  .sourceGroup > span { padding: 7px 4px 2px; font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--component-migration-eyebrow-fg); }
-  .emptyLine { margin: 20px 4px; color: var(--component-migration-muted-fg); text-align: center; }
-  .sourceRow { width: 100%; gap: 10px; text-align: left; padding: 10px; border-radius: var(--component-migration-row-radius); border: 1px solid var(--component-migration-row-border); background: var(--component-migration-row-bg); color: var(--component-migration-body-fg); }
-  .sourceRow:hover, .sourceRow.selected { border-color: var(--component-migration-row-hover-border); background: var(--component-migration-row-hover-bg); }
-  .sourceRow img { width: 28px; height: 28px; border-radius: var(--component-migration-source-icon-radius); object-fit: cover; }
-  .sourceRow span { flex: 1; min-width: 0; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sourceRow small { color: var(--component-migration-muted-fg); }
-  .reviewToolbar { justify-content: space-between; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--component-migration-divider); }
-  .reviewToolbar > div:first-child { display: grid; gap: 3px; }
-  .toolbarActions { gap: 8px; }
-  input { min-height: 32px; border-radius: var(--component-migration-input-radius); border: 1px solid var(--component-migration-input-border); background: var(--component-migration-input-bg); color: var(--component-migration-input-fg); padding: 0 10px; outline: none; }
-  input:focus { border-color: var(--component-migration-input-focus-border); }
-  input:focus-visible { box-shadow: var(--component-migration-focus-ring); }
-  .queueItem { position: relative; display: block; padding: 12px; border-radius: var(--component-migration-item-radius); border: 1px solid var(--component-migration-item-border); background: var(--component-migration-item-bg); }
-  .queueItemMuted { opacity: var(--component-migration-item-muted-opacity); }
-  .queueItemDone { border-color: var(--component-migration-done-border); }
-  .checkButton { position: absolute; left: 10px; top: 10px; z-index: var(--component-migration-select-z-index); display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--component-migration-select-radius); border: 1px solid var(--component-migration-select-border); color: var(--component-migration-select-fg); background: var(--component-migration-select-bg); box-shadow: var(--component-migration-select-shadow); backdrop-filter: var(--component-migration-select-blur); }
-  .checkButton:hover:not(:disabled) { border-color: var(--component-migration-select-hover-border); background: var(--component-migration-select-hover-bg); box-shadow: var(--component-migration-select-hover-shadow); }
-  .checkButtonSelected { color: var(--component-migration-select-active-fg); border-color: var(--component-migration-select-active-border); background: var(--component-migration-select-active-bg); box-shadow: var(--component-migration-select-active-shadow); }
-  .checkButton:disabled { color: var(--component-migration-select-disabled-fg); border-color: var(--component-migration-select-disabled-border); background: var(--component-migration-select-disabled-bg); box-shadow: var(--component-migration-select-disabled-shadow); cursor: not-allowed; }
-  .queueMain { flex: 1; min-width: 0; display: grid; gap: 7px; }
-  .migrationPair { min-width: 0; width: 100%; display: grid; grid-template-columns: minmax(180px, 210px) 1fr 48px 1fr minmax(180px, 210px); align-items: start; gap: 0; }
-  .miniManga { position: relative; min-width: 0; }
-  .libraryLikeCard { width: min(210px, 100%); display: grid; align-content: start; gap: 8px; }
-  .libraryLikeCard:first-child { grid-column: 1; justify-self: start; }
-  .libraryLikeCard:last-child { grid-column: 5; justify-self: end; }
-  .cardCopy { min-width: 0; display: grid; gap: 5px; }
-  .cardCopy strong { color: var(--component-migration-strong-fg); font-size: 13px; line-height: 1.2; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .cardCopy span { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
-  .cardCopy b, .cardCopy em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; }
-  .cardCopy b { flex: 1; }
-  .cardCopy em { flex: 0 0 auto; color: var(--component-migration-body-fg); }
-  .pairArrow {
-    place-self: center;
-    grid-column: 3;
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-full);
-    color: var(--component-migration-accent-fg);
-    background: var(--component-migration-pair-arrow-bg);
-    border: 1px solid var(--component-migration-pair-arrow-border);
-    box-shadow: var(--component-migration-pair-arrow-shadow);
-  }
-  .cover { width: 100%; aspect-ratio: 2 / 3; border-radius: var(--component-migration-cover-radius); object-fit: cover; background: var(--component-migration-cover-bg); border: 1px solid var(--component-migration-cover-border); }
-  .noCover { display: grid; place-items: center; color: var(--component-migration-muted-fg); }
-  .itemNote { color: var(--component-migration-muted-fg); font-size: 11px; }
-  .itemError {
-    padding-inline-start: var(--space-xs);
-    border-inline-start: 1px solid var(--component-migration-error-border);
-    color: var(--component-migration-error-fg);
-    background: var(--component-migration-error-bg);
-    font-size: 11px;
-  }
-  .manualSearchHeader { gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--component-migration-divider); }
-  .manualSearchHeader > div { min-width: 0; display: grid; gap: 2px; }
-  .manualSearchHeader span { font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
-  .manualSearchHeader strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--component-migration-strong-fg); font-size: 15px; }
-  .manualSearchTop { gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--component-migration-divider); }
-  .manualSearchTop input { flex: 1; min-width: 0; }
-  .manualResultGrid { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 18px 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); align-content: start; gap: 14px; }
-  .manualResultCard { min-width: 0; display: grid; gap: 8px; text-align: left; padding: 0; border: 0; background: transparent; color: var(--component-migration-result-fg); }
-  .manualResultCard .cover { transition: border-color var(--component-migration-transition-normal), box-shadow var(--component-migration-transition-normal), transform var(--component-migration-transition-normal); }
-  .manualResultCard:hover .cover { transform: translateY(-1px); border-color: var(--component-migration-result-cover-hover-border); box-shadow: var(--component-migration-result-cover-hover-shadow); }
-  .manualResultCard span { min-width: 0; color: var(--component-migration-strong-fg); font-size: 12px; font-weight: 850; line-height: 1.25; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .manualResultCard small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-ui); font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--component-migration-muted-fg); }
-  .manualEmpty { grid-column: 1 / -1; min-height: 220px; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--component-migration-muted-fg); text-align: center; }
-  .itemActions { position: absolute; right: 10px; top: 10px; z-index: var(--component-migration-select-z-index); }
-  .actionTrigger { width: 34px; height: 34px; border-radius: var(--component-migration-select-radius); color: var(--component-migration-select-fg); border-color: var(--component-migration-select-border); background: var(--component-migration-select-bg); box-shadow: var(--component-migration-select-shadow); backdrop-filter: var(--component-migration-select-blur); }
-  .actionTrigger:hover { border-color: var(--component-migration-select-hover-border); background: var(--component-migration-select-hover-bg); box-shadow: var(--component-migration-select-hover-shadow); }
-  .actionMenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: var(--component-migration-menu-z-index); min-width: 118px; display: grid; padding: 5px; border-radius: var(--component-migration-menu-radius); border: 1px solid var(--component-migration-menu-border); background: var(--component-migration-menu-bg); box-shadow: var(--component-migration-menu-shadow); }
-  .actionMenu button { width: 100%; text-align: left; border: 0; border-radius: var(--component-migration-menu-item-radius); padding: 7px 9px; color: var(--component-migration-menu-item-fg); background: transparent; font-size: 12px; font-weight: 800; }
-  .actionMenu button:hover { background: var(--component-migration-menu-item-hover-bg); color: var(--component-migration-accent-fg); }
-  .modalFooter { justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--component-migration-divider); }
-  .primaryButton, .secondaryButton { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: var(--radius-md); font-family: var(--font-ui); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--tracking-wide); }
-  .primaryButton { color: var(--component-migration-primary-ink); background: var(--component-migration-primary-bg); border: 1px solid var(--component-migration-primary-border); padding: 0 14px; }
-  .secondaryButton { color: var(--component-migration-secondary-fg); background: var(--component-migration-secondary-bg); border: 1px solid var(--component-migration-secondary-border); padding: 0 10px; }
-  .bulkSelectButton { font-family: var(--font-ui); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--tracking-wide); text-transform: none; -webkit-font-smoothing: antialiased; }
-  .primaryButton:disabled, .secondaryButton:disabled { opacity: var(--component-migration-disabled-opacity); }
-  .iconButton:focus-visible, .sourceRow:focus-visible, .checkButton:focus-visible, .manualResultCard:focus-visible, .actionTrigger:focus-visible, .actionMenu button:focus-visible, .primaryButton:focus-visible, .secondaryButton:focus-visible { outline: 1px solid var(--component-migration-focus-border); outline-offset: 2px; border-color: var(--component-migration-focus-border); box-shadow: var(--component-migration-focus-ring); }
-  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes scaleIn { from { opacity: 0; transform: translateY(8px) scale(0.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
-</style>

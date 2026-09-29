@@ -1,4 +1,5 @@
 import { createComicLibraryCardId } from "./cardIdentity";
+import { translate } from "../i18n/runtime";
 import type {
   ComicsLibraryActions,
   ComicsSectionVM,
@@ -289,16 +290,11 @@ function buildComicsCollections(
 }
 
 function buildComicsEmptyMessage(libraryFilter: LibraryFilter, profileLabel?: string | null, mangaCount = 0): string {
-  if (libraryFilter === "library") {
-    if (mangaCount === 0 && profileLabel) {
-      return `This ${profileLabel} profile is empty. Browse sources to add manga.`;
-    }
-    return "No manga saved to library. Browse sources to add some.";
-  }
-  if (libraryFilter === "downloaded") {
-    return "No downloaded manga.";
-  }
-  return "No manga in this folder yet. Right-click manga anywhere to assign them.";
+  void profileLabel;
+  void mangaCount;
+  if (libraryFilter === "library") return translate("library.empty.comics");
+  if (libraryFilter === "downloaded") return translate("library.empty.downloaded");
+  return translate("library.empty.folder");
 }
 
 function formatSourceStatusLabel(status: string | null | undefined): string | null {
@@ -482,7 +478,7 @@ export function buildComicsLibraryCardVm(
     ],
     progress: {
       primaryLabel: String(readCount),
-      secondaryLabel: chapterCount > 0 ? `/ ${chapterCount} chapters` : undefined,
+      secondaryLabel: chapterCount > 0 ? translate("library.card.ofChapters", { count: chapterCount }) : undefined,
       percent: chapterCount > 0 ? Math.max(0, Math.min(1, readCount / chapterCount)) : undefined,
     },
     selectable: true,

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
   import { onDestroy } from "svelte";
+  import { flip } from "svelte/animate";
+  import { cubicIn, cubicInOut, cubicOut } from "svelte/easing";
   import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
   import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
 
@@ -80,6 +82,36 @@
   function roleForKind(kind: Toast["kind"]): "alert" | "status" {
     return kind === "error" ? "alert" : "status";
   }
+
+  // Motion is skipped when the user asks for less of it, or where Web Animations are unavailable.
+  function skipMotion() {
+    if (typeof Element === "undefined" || typeof Element.prototype.animate !== "function") return true;
+    return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  // A dismissed toast drifts back out to the right and softens, then folds its space away so the
+  // toasts above it settle down smoothly instead of jumping when it is removed.
+  function toastLeave(node: Element) {
+    if (skipMotion()) return { duration: 0 };
+    const style = getComputedStyle(node);
+    const height = (node as HTMLElement).offsetHeight;
+    const padTop = parseFloat(style.paddingTop) || 0;
+    const padBottom = parseFloat(style.paddingBottom) || 0;
+    const gap = node.parentElement ? parseFloat(getComputedStyle(node.parentElement).rowGap) || 0 : 0;
+    return {
+      duration: 600,
+      css: (_t: number, u: number) => {
+        const fade = cubicIn(Math.min(1, u / 0.55));
+        const fold = cubicInOut(Math.max(0, (u - 0.45) / 0.55));
+        const drift = `opacity: ${1 - fade}; transform: translate3d(${fade * 36}px, 0, 0) scale(${1 - fade * 0.03}); filter: blur(${fade * 4}px);`;
+        if (fold === 0) return drift;
+        return `${drift} box-sizing: border-box; min-height: 0; height: ${height * (1 - fold)}px; padding-top: ${padTop * (1 - fold)}px; padding-bottom: ${padBottom * (1 - fold)}px; margin-top: ${-gap * fold}px;`;
+      },
+    };
+  }
+
+  // The rest of the stack glides into the freed space.
+  const stackFlip = { duration: () => (skipMotion() ? 0 : 520), easing: cubicOut };
 </script>
 
 {#if store.toasts.length || store.libraryUpdateProgress}
@@ -92,6 +124,7 @@
         role={roleForKind(p.kind)}
         aria-atomic="true"
         style="--toast-duration: 0ms"
+        out:toastLeave|global
       >
         <div class="state-border" aria-hidden="true"></div>
         <div class="toast-main">
@@ -139,6 +172,8 @@
         role={roleForKind(t.kind)}
         aria-atomic="true"
         style={`--toast-duration: ${t.duration ?? 3500}ms`}
+        animate:flip={stackFlip}
+        out:toastLeave|global
       >
         <div class="state-border" aria-hidden="true"></div>
         <div class="toast-main">
@@ -208,38 +243,45 @@
     width: var(--component-toast-width);
   }
 
+  /* A floating card: a hairline rim (where the slow state glow shows through), an opaque
+     surface inset by one hairline, a soft wash of the state colour from the left edge and
+     the content on top. */
   .toast {
-    --toast-glow-z-index: calc(var(--z-toast) - 3);
-    --toast-mask-z-index: calc(var(--z-toast) - 2);
+    --toast-glow-z-index: calc(var(--z-toast) - 4);
+    --toast-mask-z-index: calc(var(--z-toast) - 3);
+    --toast-wash-z-index: calc(var(--z-toast) - 2);
     --toast-content-z-index: calc(var(--z-toast) - 1);
     --toast-life-z-index: var(--z-toast);
-    --toast-rail-z-index: calc(var(--z-toast) + 1);
     --toast-accent: var(--component-toast-info-fg);
     --toast-surface: var(--component-toast-mask-bg);
     --toast-glow: var(--component-toast-info-glow);
+    --toast-frame-radius: var(--radius-xl);
+    --toast-badge-size: 32px;
     position: relative;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: var(--toast-badge-size) minmax(0, 1fr) auto;
+    grid-template-areas: "icon body close";
+    align-items: center;
+    column-gap: var(--sp-3);
     width: 100%;
     height: var(--component-toast-height);
     overflow: hidden;
     isolation: isolate;
     box-sizing: border-box;
-    justify-content: center;
-    gap: 0;
     font-family: var(--component-toast-font);
     padding: var(--component-nocturne-state-compact-padding);
-    border: var(--component-toast-border-width) solid transparent;
-    border-radius: var(--component-nocturne-state-compact-radius, var(--component-toast-accent-radius));
-    background: transparent;
+    border: 0;
+    border-radius: var(--toast-frame-radius);
+    background: var(--component-toast-border);
     color: var(--component-nocturne-state-title-fg);
-    box-shadow: var(--component-nocturne-state-panel-shadow);
+    /* Toasts float above everything, so they keep their own elevation (state panels are flat). */
+    box-shadow: var(--component-toast-shadow);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
     pointer-events: all;
     min-width: 0;
-    animation: toast-enter 360ms var(--easing-emphasized) both;
-    transition: border-color var(--t-base), background var(--t-base), opacity var(--t-base), transform var(--t-base);
+    animation: toast-enter 760ms var(--ui-out) both;
+    transition: opacity var(--t-base), transform 420ms var(--ui-out);
   }
 
   .toast::before {
@@ -261,72 +303,57 @@
   .toast::after {
     content: "";
     position: absolute;
-    inset: 0;
+    inset: var(--component-toast-border-width);
     z-index: var(--toast-mask-z-index);
-    border-radius: var(--component-nocturne-state-compact-radius);
+    border-radius: calc(var(--toast-frame-radius) - var(--component-toast-border-width));
     background: var(--toast-surface);
     pointer-events: none;
-  }
-
-  .toast > :not(.state-border) {
-    position: relative;
-    z-index: var(--toast-content-z-index);
+    transition: background var(--t-base);
   }
 
   .toast:hover {
     --toast-surface: var(--component-toast-mask-bg-hover);
   }
 
-  .toast:active { transform: scale(0.99); }
+  .toast:active { transform: scale(0.992); }
 
+  /* The main row's children join the card's grid, so a single action can sit beside the text. */
   .toast-main {
-    display: grid;
-    grid-template-columns: var(--component-nocturne-state-compact-icon-size) minmax(0, 1fr) var(--component-toast-close-size);
-    align-items: center;
-    column-gap: var(--component-nocturne-state-gap);
-    min-width: 0;
+    display: contents;
   }
 
-  .toast-life {
-    position: absolute;
-    right: var(--component-toast-border-width);
-    bottom: var(--component-toast-border-width);
-    left: var(--component-toast-border-width);
-    z-index: var(--toast-life-z-index);
-    height: var(--component-toast-progress-height);
-    background: var(--component-toast-life-bg);
-    transform-origin: left;
-    animation: toastLife var(--toast-duration) linear forwards;
+  .toast-with-actions {
+    grid-template-columns: var(--toast-badge-size) minmax(0, 1fr) auto auto;
+    grid-template-areas: "icon body actions close";
   }
 
-  .toast-persistent .toast-life {
-    display: none;
+  /* Two or more actions get their own row under the text; the card grows to fit them. */
+  .toast-with-actions:has(.toast-action + .toast-action) {
+    grid-template-columns: var(--toast-badge-size) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "icon body close"
+      ". actions actions";
+    row-gap: var(--sp-3);
+    height: auto;
+    min-height: var(--component-toast-height);
   }
 
-  @keyframes toast-enter {
-    from { opacity: 0; transform: translate3d(18px, 0, 0) scale(0.985); }
-    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  .icon,
+  .body,
+  .toast-close,
+  .toast-actions {
+    position: relative;
+    z-index: var(--toast-content-z-index);
   }
 
-  @keyframes toastLife {
-    from { transform: scaleX(1); }
-    to { transform: scaleX(0); }
-  }
-
-  @keyframes toast-glow-pulse {
-    from { opacity: var(--component-toast-glow-min-opacity); }
-    to { opacity: calc(var(--component-toast-glow-min-opacity) * 1.28); }
-  }
-
+  /* The kind of toast reads from a soft wash of its colour rising from the left edge. */
   .state-border {
     position: absolute;
-    inset: var(--component-nocturne-state-rail-inset);
-    bottom: var(--component-toast-border-width);
-    z-index: var(--toast-rail-z-index);
-    width: var(--component-toast-border-width);
-    border-radius: var(--component-nocturne-state-rail-radius);
-    background: var(--toast-accent);
-    opacity: var(--component-nocturne-state-rail-opacity);
+    inset: var(--component-toast-border-width);
+    z-index: var(--toast-wash-z-index);
+    border-radius: var(--component-toast-accent-radius);
+    background: radial-gradient(120% 150% at 0% 50%, var(--toast-accent), transparent 62%);
+    opacity: 0.085;
     pointer-events: none;
   }
 
@@ -347,25 +374,37 @@
     --toast-glow: var(--component-toast-download-glow);
   }
 
+  /* The glyph sits in a round, tinted badge; hovering the card lights the badge's halo. */
   .icon {
-    flex: 0 0 auto;
+    grid-area: icon;
+    align-self: center;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: var(--component-nocturne-state-compact-icon-size);
-    height: var(--component-nocturne-state-compact-icon-size);
+    width: var(--toast-badge-size);
+    height: var(--toast-badge-size);
     color: var(--toast-accent);
-    background: transparent;
-    border: 0;
-    border-radius: var(--component-nocturne-state-compact-icon-radius);
-    box-shadow: var(--component-nocturne-state-icon-shadow);
-    font-size: var(--component-nocturne-state-compact-icon-font-size);
-    align-self: flex-start;
-    margin-top: calc(var(--sp-1) / 2);
+    border-radius: var(--radius-full);
+    font-size: calc(var(--component-nocturne-state-compact-icon-font-size) + 2px);
+    transition: box-shadow 520ms var(--ui-out);
+  }
+
+  .icon::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: currentColor;
+    opacity: 0.13;
+  }
+
+  .toast:hover .icon {
+    box-shadow: var(--component-toast-state-shadow);
   }
 
   .toast-icon,
   .toast-close-icon {
+    position: relative;
     display: block;
     width: 1em;
     height: 1em;
@@ -378,17 +417,18 @@
   .toast-download .icon { color: var(--component-toast-download-fg); }
 
   .body {
+    grid-area: body;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: var(--component-nocturne-state-content-gap);
   }
 
   .title {
     margin: 0;
     font-family: var(--component-nocturne-state-font-ui);
-    color: var(--component-nocturne-state-title-fg);
+    color: var(--text-primary);
     font-size: var(--component-nocturne-state-compact-title-font-size);
     font-weight: var(--component-nocturne-state-title-font-weight);
     line-height: var(--component-nocturne-state-title-line-height);
@@ -417,23 +457,18 @@
     line-clamp: 2;
   }
 
-  .toast-with-actions .sub,
   .library-update-toast .sub {
     -webkit-line-clamp: 1;
     line-clamp: 1;
   }
 
-  .library-update-toast .body {
-    gap: var(--component-nocturne-state-content-gap);
-  }
-
   .library-progress-track {
     width: 100%;
     height: var(--component-toast-progress-height);
+    margin-top: calc(var(--component-nocturne-state-content-gap) / 2);
     border-radius: var(--component-toast-progress-radius);
     overflow: hidden;
     background: var(--component-toast-progress-track);
-    box-shadow: inset 0 0 0 var(--component-toast-border-width) var(--component-toast-border);
   }
 
   .library-progress-fill {
@@ -444,77 +479,129 @@
     transition: width var(--duration-slow) var(--easing-standard);
   }
 
+  .toast-actions {
+    grid-area: actions;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--component-toast-gap);
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  /* Actions are soft capsules: the first carries the state action surface, the rest stay quiet. */
   .toast-action {
     flex-shrink: 0;
-    min-height: var(--component-nocturne-state-compact-icon-size);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 56px;
+    min-height: 28px;
     padding: 0 var(--space-sm);
-    border: var(--component-nocturne-state-action-border, var(--component-toast-action-border));
+    border: 0;
     border-radius: var(--component-nocturne-state-action-radius, var(--component-toast-action-radius));
-    background: var(--component-nocturne-state-action-bg, var(--component-toast-action-bg));
-    color: var(--component-nocturne-state-action-fg, var(--component-toast-action-fg));
+    background: transparent;
+    color: var(--component-toast-action-fg);
+    box-shadow: inset 0 0 0 var(--component-toast-border-width) var(--component-toast-action-border);
     font-family: var(--component-nocturne-state-font-ui);
-    font-size: var(--text-2xs, var(--component-toast-action-font-size));
-    font-weight: var(--component-nocturne-state-action-font-weight, var(--component-toast-action-font-weight));
-    letter-spacing: var(--component-nocturne-state-action-letter-spacing, var(--component-toast-action-letter-spacing));
+    font-size: var(--component-toast-action-font-size);
+    font-weight: var(--component-toast-action-font-weight);
+    letter-spacing: var(--component-toast-action-letter-spacing);
     line-height: 1;
+    white-space: nowrap;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     cursor: pointer;
-    transition: background var(--t-base), color var(--t-base), border-color var(--t-base);
-  }
-
-  .toast-action:hover {
-    color: var(--component-nocturne-state-action-hover-fg, var(--component-toast-action-fg));
-    background: var(--component-nocturne-state-action-hover-bg, var(--component-toast-action-bg-hover));
-    border-color: var(--component-nocturne-state-action-hover-border, var(--component-toast-action-border));
+    transition: background var(--t-base), color var(--t-base), box-shadow var(--t-base), transform 450ms var(--ui-spring);
   }
 
   .toast-action:first-child {
     background: var(--component-nocturne-state-action-bg, var(--component-toast-action-bg));
-    border-color: var(--component-nocturne-state-action-border, var(--component-toast-action-border));
+    box-shadow: inset 0 0 0 var(--component-toast-border-width) var(--component-toast-border);
   }
 
-  .toast-action:not(:first-child) {
-    background: transparent;
-    border-color: transparent;
+  .toast-action:hover {
+    background: var(--component-toast-action-bg-hover);
   }
 
-  .toast-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--component-toast-gap);
-    justify-content: flex-start;
-    margin-top: var(--component-nocturne-state-content-gap);
-    margin-left: calc(var(--component-nocturne-state-compact-icon-size) + var(--component-nocturne-state-gap));
+  .toast-action:active {
+    transform: scale(0.95);
   }
 
   .toast-close {
+    grid-area: close;
+    align-self: start;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: var(--component-toast-close-size);
     height: var(--component-toast-close-size);
+    margin-top: calc((var(--toast-badge-size) - var(--component-toast-close-size)) / 2);
+    padding: 0;
     border: 0;
     border-radius: var(--component-toast-close-radius);
     color: var(--component-toast-close-fg);
     background: transparent;
+    font-size: calc(var(--component-toast-close-size) / 2);
+    opacity: 0.6;
     cursor: pointer;
-    transition: color var(--t-base), border-color var(--t-base), background var(--t-base), transform var(--t-base);
+    transition: color var(--t-base), background var(--t-base), opacity var(--t-base), transform var(--t-base);
   }
 
-  .toast-action:focus-visible,
-  .toast-close:focus-visible {
-    outline: none;
-    box-shadow: var(--component-toast-focus-ring);
-  }
-
-  .toast-close:active {
-    transform: scale(0.96);
+  .toast:hover .toast-close,
+  .toast:focus-within .toast-close {
+    opacity: 1;
   }
 
   .toast-close:hover {
     color: var(--component-toast-close-fg-hover);
     background: var(--component-toast-close-bg-hover);
+  }
+
+  .toast-close:active {
+    transform: scale(0.92);
+  }
+
+  .toast-action:focus-visible,
+  .toast-close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--component-toast-focus-ring);
+  }
+
+  /* The lifetime is a hairline that drains along the bottom edge, inset from the corners. */
+  .toast-life {
+    position: absolute;
+    right: var(--toast-frame-radius);
+    bottom: var(--component-toast-border-width);
+    left: var(--toast-frame-radius);
+    z-index: var(--toast-life-z-index);
+    height: var(--component-toast-progress-height);
+    border-radius: var(--component-toast-progress-radius);
+    background: var(--component-toast-life-bg);
+    opacity: 0.7;
+    transform-origin: left;
+    pointer-events: none;
+    animation: toastLife var(--toast-duration) linear forwards;
+  }
+
+  .toast-persistent .toast-life {
+    display: none;
+  }
+
+  @keyframes toast-enter {
+    from { opacity: 0; transform: translate3d(32px, 6px, 0) scale(0.965); filter: blur(6px); }
+    45%  { opacity: 1; filter: blur(0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
+  }
+
+  @keyframes toastLife {
+    from { transform: scaleX(1); }
+    to { transform: scaleX(0); }
+  }
+
+  @keyframes toast-glow-pulse {
+    from { opacity: var(--component-toast-glow-min-opacity); }
+    to { opacity: calc(var(--component-toast-glow-min-opacity) * 1.28); }
   }
 
   @media (max-width: 480px) {
@@ -524,8 +611,6 @@
       left: var(--space-sm);
       width: auto;
     }
-
-    .toast-main { grid-template-columns: var(--component-nocturne-state-compact-icon-size) minmax(0, 1fr) var(--component-toast-close-size); }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -538,6 +623,7 @@
       animation: none;
     }
 
+    .icon,
     .library-progress-fill {
       transition: none;
     }

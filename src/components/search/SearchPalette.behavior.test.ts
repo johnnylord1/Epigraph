@@ -251,6 +251,27 @@ describe("SearchPalette behavior", () => {
     });
   });
 
+  test("keeps the dim when the typed query is erased in the focused input", async () => {
+    const origin = originInput();
+    store.openSearchPalette("home", "moon");
+    render(SearchPalette);
+    await screen.findByRole("dialog");
+
+    store.setSearchQuery("");
+
+    await waitFor(() => {
+      expect(store.searchOpen).toBe(false);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    expect(store.searchEngaged).toBe(true);
+    expect(document.body.classList.contains("epigraph-search-engaged")).toBe(true);
+    expect(document.activeElement).toBe(origin);
+
+    store.openSearchPalette("home", "moo");
+    await screen.findByRole("dialog");
+    expect(document.body.classList.contains("epigraph-search-engaged")).toBe(true);
+  });
+
   test("restores focus from the close button and backdrop without reopening", async () => {
     const origin = originInput();
     store.openSearchPalette("home", "m");

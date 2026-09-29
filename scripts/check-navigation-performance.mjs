@@ -1,3 +1,4 @@
+import { verifyJourney, cleanupAttempt, recordJourneyFailure } from './verification-evidence.mjs';
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -758,7 +759,7 @@ async function createSession(driverUrl, appPath, fakeCoreUrl, profileRoot) {
   return driver;
 }
 
-async function main() {
+async function main(evidence) {
   const args = parseArgs(process.argv.slice(2));
   const appPath = path.resolve(args.app || path.join(projectRoot, "src-tauri", "target", "release", "epigraph.exe"));
   const driverUrl = args["driver-url"];
@@ -914,13 +915,19 @@ async function main() {
           await fs.writeFile(path.join(outputDirectory, "toast-loading-bar.png"), imageToast, "base64");
         }
         viewportAfter = await collectViewportEvidence(driver);
+      } catch (error) {
+        recordJourneyFailure(evidence, error);
+        throw error;
       } finally {
-        await driver?.quit().catch(() => {});
-        await removeDirectoryWithRetry(profileRoot);
+        await cleanupAttempt(evidence, "WebDriver session", async () => { await driver?.quit(); });
+        await cleanupAttempt(evidence, "disposable profile", () => removeDirectoryWithRetry(profileRoot));
       }
     }
+  } catch (error) {
+    recordJourneyFailure(evidence, error);
+    throw error;
   } finally {
-    await fakeCore.close().catch(() => {});
+    await cleanupAttempt(evidence, "mock Core", () => fakeCore.close());
   }
 
   assert.equal(viewportAfter?.loadingVisible, false, "A lazy-loading placeholder remained visible.");
@@ -1146,12 +1153,13 @@ async function main() {
       failures,
     },
   };
+  evidence.diagnostic("navigation budget results", { measuredMedians, budgetChecks, failures });
   await fs.writeFile(path.join(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   assert.deepEqual(failures, [], `Navigation performance budgets failed: ${failures.join(", ")}`);
   process.stdout.write(`${JSON.stringify({ ok: true, outputDirectory, ...report }, null, 2)}\n`);
 }
 
-main().catch((error) => {
+verifyJourney("check-navigation-performance.mjs", ["Declared startup, Library, Search, toast and viewport budget assertions; first-run bypassed"], main).catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

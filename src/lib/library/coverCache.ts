@@ -1,4 +1,5 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "../tauri/invoke";
 import { getServerAuthHeader, getServerUrl } from "../client";
 import { resolveMangaCoverUrl } from "../manga/coverResolver";
 import type { Manga } from "../types";

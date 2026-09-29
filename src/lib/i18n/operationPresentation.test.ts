@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyAppLanguage, translate } from "./runtime";
-import { operationError, operationFailure, presentOperationFailure, restoreNote, restorePayloadSummary } from "./operationPresentation";
+import { operationError, operationFailure, presentOperationFailure, restoreNote, restorePayloadSummary, restorePlanSummary } from "./operationPresentation";
 
 afterEach(() => applyAppLanguage("en"));
 describe("localized operation presentation", () => {
@@ -21,6 +21,7 @@ describe("localized operation presentation", () => {
     ["RESTORE_EXTERNAL_UNRESOLVED", "outcomes.uncertain"],
     ["RESTORE_CANCELLED", "outcomes.cancelled"],
     ["RESTORE_HTTP_RESPONSE_UNCERTAIN", "outcomes.uncertain"],
+    ["SYNC_CORE_UNAVAILABLE", "outcomes.syncCoreUnavailable"],
   ])("preserves the actionable distinction for %s", (code, key) => {
     applyAppLanguage("pt-BR");
     expect(operationError(new Error(code))).toBe(translate(key));
@@ -58,5 +59,17 @@ describe("localized operation presentation", () => {
     applyAppLanguage("en"); const english = restoreNote(outcome);
     applyAppLanguage("pt-BR"); expect(restoreNote(outcome)).not.toBe(english);
     expect(outcome.message).toBe("server output");
+  });
+  it("summarizes a restore plan from its counts instead of the planner prose", () => {
+    const summary = { recommendedSelection: ["books", "manga"], blockedKinds: ["novels"], unsupportedKinds: [], warningOnlyKinds: [], skippedKinds: ["app"] };
+    applyAppLanguage("pt-BR");
+    expect(restorePlanSummary(summary)).toBe([
+      translate("outcomes.planSelected", { count: 2 }),
+      translate("outcomes.planBlocked", { count: 1 }),
+      translate("outcomes.planSkipped", { count: 1 }),
+    ].join(" · "));
+    expect(restorePlanSummary(summary)).toContain("2");
+    expect(restorePlanSummary({ ...summary, recommendedSelection: [], blockedKinds: [], skippedKinds: [] })).toBe(translate("outcomes.planNothingSelected"));
+    expect(restorePlanSummary(summary)).not.toMatch(/payload|sandbox|outcomes\./);
   });
 });

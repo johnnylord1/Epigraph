@@ -1,9 +1,17 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from "svelte";
+  import { createProductionRestoreWorkflow } from "../../lib/backup/productionRestoreWorkflow";
+  import RestoreNovelDependencies from "./RestoreNovelDependencies.svelte";
+  import RestoreMangaDependencies from "./RestoreMangaDependencies.svelte";
+  import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { enterOnChange } from "../../lib/motion/motion";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
+  import { formatRelativeTime } from "../../lib/i18n/format";
+  import { operationFailure, presentOperationFailure, restoreNote, restorePayloadSummary, type OperationFailure } from "../../lib/i18n/operationPresentation";
   import "../../lib/i18n/runtime";
   import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
+  import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, GitBranch } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -18,10 +26,12 @@
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import {
     createCustomLocalProfile,
+    LocalProfileInputError,
     DEFAULT_LOCAL_PROFILE_ID,
     getAllLocalProfiles,
     getLocalProfileMeta,
     isBuiltInLocalProfileId,
+    localProfileDisplayName,
     normalizeCustomLocalProfiles,
     normalizeLocalProfileId,
     type LocalProfileId,
@@ -58,7 +68,7 @@
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
-  import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS, UPDATE_EXTENSION } from "../../lib/queries";
+  import { GET_DOWNLOADS_PATH, SET_DOWNLOADS_PATH, SET_LOCAL_SOURCE_PATH, GET_TRACKERS, LOGIN_TRACKER_OAUTH, LOGIN_TRACKER_CREDENTIALS, LOGOUT_TRACKER, GET_TRACKER_RECORDS, GET_SERVER_SECURITY, SET_SERVER_AUTH, SET_SOCKS_PROXY, SET_FLARESOLVERR, CREATE_BACKUP, RESTORE_BACKUP, GET_RESTORE_STATUS } from "../../lib/queries";
   import { buildRestoreReadiness } from "../../lib/reconciliation/readiness";
   import { normalizeTrackerOAuthInput, trackerOAuthParamName } from "../../lib/trackerOAuth";
   import {
@@ -70,6 +80,7 @@
   import type { Category, Source, Extension } from "../../lib/types";
   import { BOOKS_FILTER_OPTIONS } from "../../lib/library/booksSection";
   import { BUILTIN_THEMES } from "../../lib/theme/contract";
+  import { builtinThemeLabel } from "../../lib/theme/themeLabels";
   import {
     DEFAULT_PROSE_READER_BACKGROUND_COLOR,
     DEFAULT_PROSE_READER_TEXT_COLOR,
@@ -313,19 +324,19 @@
     devtools: true,
   };
   const PAGE_STYLE_LABELS: Record<string, string> = {
-    single: "Single page",
-    longstrip: "Long strip",
-    fade: "Fade",
+    single: "settings_reader_singlePage",
+    longstrip: "settings_reader_longStrip",
+    fade: "ui_fade",
   };
   const READING_DIRECTION_LABELS: Record<string, string> = {
-    ltr: "Left to right",
-    rtl: "Right to left",
+    ltr: "settings_reader_leftToRight",
+    rtl: "settings_reader_rightToLeft",
   };
   const FIT_MODE_LABELS: Record<string, string> = {
-    width: "Fit width",
-    height: "Fit height",
-    screen: "Fit screen",
-    original: "Original (1:1)",
+    width: "ui_fitWidth",
+    height: "ui_fitHeight",
+    screen: "ui_fitScreen",
+    original: "ui_original11",
   };
 
   function idleTimeoutLabel(value: number | null | undefined): string {
@@ -355,16 +366,16 @@
 
   function pageStyleLabel(value: Settings["pageStyle"]): string {
     const normalized = value === "double" ? "single" : value;
-    return PAGE_STYLE_LABELS[normalized] ?? PAGE_STYLE_LABELS.single;
+    return $_(PAGE_STYLE_LABELS[normalized] ?? PAGE_STYLE_LABELS.single);
   }
 
   function readingDirectionLabel(value: Settings["readingDirection"]): string {
-    return READING_DIRECTION_LABELS[value] ?? READING_DIRECTION_LABELS.ltr;
+    return $_(READING_DIRECTION_LABELS[value] ?? READING_DIRECTION_LABELS.ltr);
   }
 
   function fitModeLabel(value: FitMode | null | undefined): string {
     const normalized = value ?? "width";
-    return FIT_MODE_LABELS[normalized] ?? FIT_MODE_LABELS.width;
+    return $_(FIT_MODE_LABELS[normalized] ?? FIT_MODE_LABELS.width);
   }
   type UiDensityMode = "compact" | "default" | "comfort";
 
@@ -382,11 +393,11 @@
   }
 
   function libraryDensityLabel(value: Settings["libraryPreferredGridColumns"]): string {
-    return value === "auto" ? "Auto" : `${value} cols`;
+    return value === "auto" ? $_("library_display_auto") : $_("settings_library_columns", { count: value });
   }
   const LIBRARY_DENSITY_OPTIONS: Settings["libraryPreferredGridColumns"][] = ["auto", 4, 5, 6, 7, 8, 9, 10];
   function libraryDensityOptionLabel(value: Settings["libraryPreferredGridColumns"]): string {
-    return value === "auto" ? "Auto" : String(value);
+    return value === "auto" ? $_("library_display_auto") : String(value);
   }
   function getLibraryDensityOptionIndex(value: Settings["libraryPreferredGridColumns"]): number {
     return Math.max(0, LIBRARY_DENSITY_OPTIONS.findIndex((option) => option === value));
@@ -401,13 +412,13 @@
   }
 
   function renderLimitLabel(value: number | null | undefined): string {
-    return `${value ?? 48} items`;
+    return translate("settings_inline_renderLimitCount", { count: value ?? 48 });
   }
 
   function themeLabel(value: string | null | undefined): string {
     const normalized = value ?? "nocturne";
     const builtIn = BUILTIN_THEMES.find((theme) => theme.id === normalized);
-    if (builtIn) return builtIn.label;
+    if (builtIn) return builtinThemeLabel(builtIn, $_);
     const custom = (store.settings.customThemes ?? []).find((theme) => theme.id === normalized);
     return custom?.name ?? "Nocturne";
   }
@@ -430,6 +441,7 @@
       tab = "storage";
       activeGroup = "system";
     } else if (firstRunPane === "tracking") {
+      ensurePaneHydrated("tracking");
       tab = "tracking";
       activeGroup = "content";
     }
@@ -666,7 +678,7 @@
   }
   let profileCreateLabel = $state("");
   let profileCreatePort = $state("");
-  let profileCreateError: string | null = $state(null);
+  let profileCreateError: OperationFailure | null = $state(null);
   let profileDataDeleteConfirmId: LocalProfileId | null = $state(null);
   let profileDataDeleteBusy: LocalProfileId | null = $state(null);
   const profileOptions = $derived.by(() => getAllLocalProfiles(store.settings.customLocalProfiles));
@@ -681,7 +693,11 @@
     profileCreateError = null;
     try {
       const profile = createCustomLocalProfile(
-        { label: profileCreateLabel, port: Number(profileCreatePort) },
+        {
+          label: profileCreateLabel,
+          port: Number(profileCreatePort),
+          fallbackLabel: translate("profiles_defaultLabel", { port: Number(profileCreatePort) }),
+        },
         store.settings.customLocalProfiles,
       );
       const customLocalProfiles = [
@@ -697,7 +713,9 @@
       profileCreateLabel = "";
       profileCreatePort = "";
     } catch (error) {
-      profileCreateError = error instanceof Error ? error.message : "Could not create profile.";
+      profileCreateError = error instanceof LocalProfileInputError
+        ? operationFailure(null, error.code === "port-in-use" ? "profiles_portInUse" : "profiles_portOutOfRange")
+        : operationFailure(error, "outcomes.failed");
     }
   }
 
@@ -705,7 +723,7 @@
     const normalized = normalizeLocalProfileId(profileId);
     if (!normalized || isBuiltInLocalProfileId(normalized)) return;
     if (currentRuntimeProfileId === normalized) {
-      profileCreateError = "Close this session before deleting the active profile.";
+      profileCreateError = operationFailure(null, "outcomes.closeProfileFirst");
       return;
     }
     const customLocalProfiles = normalizeCustomLocalProfiles(store.settings.customLocalProfiles)
@@ -730,7 +748,7 @@
     if (!normalized) return;
     if (profileDataDeleteConfirmId !== normalized) {
       profileDataDeleteConfirmId = normalized;
-      profileCreateError = "Click Reset data again to permanently remove this profile workspace data.";
+      profileCreateError = operationFailure(null, "outcomes.confirmProfileReset");
       return;
     }
 
@@ -742,12 +760,12 @@
         kind: "success",
         title: translate("ui_profileDataReset"),
         body: currentRuntimeProfileId === normalized
-          ? "Restart Epigraph to start this profile from a clean workspace."
-          : "The profile workspace will be recreated cleanly next time it starts.",
+          ? translate("settings_profile_resetRestartHint")
+          : translate("settings_profile_resetNextStartHint"),
       });
       profileDataDeleteConfirmId = null;
     } catch (error) {
-      profileCreateError = error instanceof Error ? error.message : "Could not reset profile data.";
+      profileCreateError = operationFailure(error, "outcomes.failed");
     } finally {
       profileDataDeleteBusy = null;
     }
@@ -779,7 +797,7 @@
   interface StorageInfo { manga_bytes: number; total_bytes: number; free_bytes: number; path: string; }
   let storageInfo: StorageInfo | null = $state(null);
   let storageLoading = $state(false);
-  let storageError: string | null = $state(null);
+  let storageError: OperationFailure | null = $state(null);
   let clearing = $state(false);
   let cleared  = $state(false);
 
@@ -795,6 +813,7 @@
   const persistedDefaultProfileId = $derived.by(
     () => getLocalProfileMeta(normalizeLocalProfileId(store.settings.defaultLocalProfileId), store.settings.customLocalProfiles)?.id ?? DEFAULT_LOCAL_PROFILE_ID
   );
+  const profileName = (label: string | null | undefined) => localProfileDisplayName(label, $_);
   const currentProfileMeta = $derived.by(() => store.runtimeResolvedLocalProfileMeta);
   const nextLaunchProfileMeta = $derived.by(() => getLocalProfileMeta(persistedDefaultProfileId, store.settings.customLocalProfiles));
   const currentSessionProfileLabel = $derived.by(() => {
@@ -803,11 +822,11 @@
   });
   const currentSessionProfileSummary = $derived.by(
     () => store.runtimeIsOverrideSession
-      ? `${currentSessionProfileLabel} (launch override)`
-      : currentSessionProfileLabel
+      ? $_("settings.general.profiles.launchOverride", { profile: profileName(currentSessionProfileLabel) })
+      : profileName(currentSessionProfileLabel)
   );
   const nextLaunchProfileSummary = $derived.by(
-    () => nextLaunchProfileMeta?.label ?? currentSessionProfileLabel
+    () => profileName(nextLaunchProfileMeta?.label ?? currentSessionProfileLabel)
   );
   const otherLocalProfileId = $derived.by(
     () => resolveOtherLocalProfileId(currentRuntimeProfileId)
@@ -831,8 +850,8 @@
   let downloadsPathInput    = $state(store.settings.serverDownloadsPath ?? "");
   let localSourcePathInput  = $state(store.settings.serverLocalSourcePath ?? "");
   let pathsSaving           = $state(false);
-  let pathsError: string | null = $state(null);
-  let pathsFieldError: { dl?: string; loc?: string } = $state({});
+  let pathsError: OperationFailure | null = $state(null);
+  let pathsFieldError: { dl?: OperationFailure; loc?: OperationFailure } = $state({});
   let pathsSaved            = $state(false);
 
   // The actual resolved default path from Rust Ã¢â‚¬â€ shown as placeholder + scanned when dl path is empty.
@@ -856,7 +875,7 @@
   let migrateTo:   string | null   = $state(null); // new path
   let migrating                    = $state(false);
   let migrateProgress: { done: number; total: number; current: string } | null = $state(null);
-  let migrateError: string | null  = $state(null);
+  let migrateError: OperationFailure | null  = $state(null);
   let migrateUnlisten: (() => void) | null = null;
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Extra scan directories (local-only, stored in app settings) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -914,7 +933,7 @@
     const infos = multiStorageInfos.length > 0
       ? multiStorageInfos
       : storageInfo
-        ? [{ ...storageInfo, label: "Downloads" }]
+        ? [{ ...storageInfo, label: translate("shell_navigation_downloads") }]
         : [];
 
     if (infos.length === 0) {
@@ -940,7 +959,7 @@
       pct: capBytes > 0 ? Math.min(100, (usedBytes / capBytes) * 100) : 0,
       usageLabel: capBytes > 0 ? `${fmtBytes(usedBytes)} / ${fmtBytes(capBytes)}` : fmtBytes(usedBytes),
       pathLabel: infos[0]?.path ?? null,
-      freeLabel: freeBytes > 0 ? `${fmtBytes(freeBytes)} free` : null,
+      freeLabel: freeBytes > 0 ? translate("settings_storage_freeSpace", { size: fmtBytes(freeBytes) }) : null,
     };
   });
 
@@ -968,8 +987,8 @@
       const effectiveDl = dl || defaultDownloadsPath;
 
       const dirsToScan: { path: string; label: string }[] = [];
-      if (effectiveDl) dirsToScan.push({ path: effectiveDl, label: dl ? "Downloads" : "Downloads (default)" });
-      if (loc && loc !== effectiveDl) dirsToScan.push({ path: loc, label: "Local source" });
+      if (effectiveDl) dirsToScan.push({ path: effectiveDl, label: dl ? translate("shell_navigation_downloads") : translate("ui_downloadsDefault") });
+      if (loc && loc !== effectiveDl) dirsToScan.push({ path: loc, label: translate("ui_localSource") });
       for (const p of extraScanDirs) {
         if (p && !dirsToScan.find(d => d.path === p)) dirsToScan.push({ path: p, label: p });
       }
@@ -990,22 +1009,22 @@
         .map(r => r.value);
       storageInfo = multiStorageInfos[0] ?? null;
     } catch (e: any) {
-      storageError = e instanceof Error ? e.message : String(e);
+      storageError = operationFailure(e, "outcomes.failed");
     } finally {
       storageLoading = false;
     }
   }
 
-  /** Validate a path exists on disk. Returns error string or null.
+  /** Validate a path exists on disk. Returns a presentation error or null.
    *  Only runs for local servers Ã¢â‚¬â€ we can't stat a remote filesystem via Tauri. */
-  async function validatePath(path: string): Promise<string | null> {
+  async function validatePath(path: string): Promise<OperationFailure | null> {
     if (!path.trim()) return null; // empty = use default, always valid
     if (isExternalServer) return null; // can't check remote paths locally
     try {
       const exists = await invoke<boolean>("check_path_exists", { path: path.trim() });
-      return exists ? null : "Directory does not exist";
+      return exists ? null : operationFailure(null, "outcomes.missingDirectory");
     } catch {
-      return "Could not check path";
+      return operationFailure(null, "outcomes.pathCheckFailed");
     }
   }
 
@@ -1052,7 +1071,7 @@
       setTimeout(() => pathsSaved = false, 2000);
       await fetchStorage();
     } catch (e: any) {
-      pathsError = e?.message ?? "Failed to save paths";
+      pathsError = operationFailure(e, "settings.storage.pathSaveError");
     } finally {
       pathsSaving = false;
     }
@@ -1094,7 +1113,7 @@
       migrateFrom = null; migrateTo = null; migrateProgress = null;
       await fetchStorage();
     } catch (e: any) {
-      migrateError = e?.message ?? "Migration failed";
+      migrateError = operationFailure(e, "settings_inline_pathMigrationFailed");
     } finally {
       void setMigrationPresence(false, store.settings, "settings");
       migrating = false;
@@ -1131,11 +1150,19 @@
     state: string;
     totalManga: number;
   };
+  const restoreWorkflows = new Map<string, ReturnType<typeof createProductionRestoreWorkflow>>();
+  let activeRestoreWorkflow = $state<ReturnType<typeof createProductionRestoreWorkflow> | null>(null);
+  let restoreCancellationRequested = $state(false);
+  onDestroy(() => { activeRestoreWorkflow?.detach(); });
+  function cancelRestore() {
+    activeRestoreWorkflow?.requestCancel();
+    restoreCancellationRequested = true;
+  }
   let backupFileInput = $state<HTMLInputElement | undefined>(undefined);
   let backupExporting = $state(false);
   let backupValidating = $state(false);
   let backupRestoring = $state(false);
-  let backupError: string | null = $state(null);
+  let backupError: OperationFailure | null = $state(null);
   let backupSavedPath: string | null = $state(null);
   let backupSelectedFile: File | null = $state(null);
   let backupParsed: ParsedBackup | null = $state(null);
@@ -1145,7 +1172,7 @@
   let backupSuggestedExtensions = $state<MissingSourceExtensionSuggestion[]>([]);
   let backupAvailableExtensions = $state<AvailableExtensionEntry[]>([]);
   let backupInventory = $state<SourceInventoryEntry[]>([]);
-  let backupExtensionLookupError: string | null = $state(null);
+  let backupExtensionLookupError: OperationFailure | null = $state(null);
   let backupExtensionLookupLoading = $state(false);
   let backupInstalling = $state(new Set<string>());
   let backupReviewSelections = $state<Record<string, NativeSourceRestoreChoice>>({});
@@ -1164,12 +1191,14 @@
   let backupRestoreCurrentProfileConfirmed = $state(false);
   let backupRestoreHandoffSession = $state(false);
   let backupRestoreSourceProfileId = $state<LocalProfileId | null>(null);
-  let backupRestoreResults = $state<Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> | null>(null);
+  let backupRestoreResults = $state<Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; outcome: string; warnings: string[]; summary: string; detail?: string | null }> | null>(null);
   let backupLaunchIntentKey = $state<string | null>(null);
   let backupAuditPlanKey = $state<string | null>(null);
   let backupLastLegacyAnalysisPath: string | null = $state(null);
   let backupDependencyPreview = $state<BackupDependencyPreview | null>(null);
   let backupDependenciesConfirmed = $state(false);
+  let backupDependenciesWorking = $state(false);
+  let mangaDependencyPanel = $state<{ review(): Promise<void> }>();
 
   const backupReadiness = $derived.by<RestoreReadinessSummary | null>(() =>
     backupAnalysis
@@ -1191,6 +1220,8 @@
         hasSelection: Boolean(backupSelectedFile || backupUnifiedPlan),
         requiresSources: backupRestoreResults?.some((result) =>
           (result.kind === "manga" || result.kind === "novels") && result.status !== "skipped") ?? true,
+        sourceTypes: (["manga", "novels"] as const).filter((kind) =>
+          backupRestoreResults?.some((result) => result.kind === kind && result.status !== "skipped")),
         contentType: backupImportKind === "novels-lnreader"
           || (backupRestoreResults?.some((result) => result.kind === "novels")
             && !backupRestoreResults.some((result) => result.kind === "manga"))
@@ -1211,9 +1242,9 @@
   );
   const backupCurrentTargetSummary = $derived.by(
     () => backupRestoreTargetMode === "current-profile"
-      ? `${$_("settings_inline_currentProfile")} (${currentProfileMeta?.label ?? currentSessionProfileLabel})`
+      ? `${$_("settings_inline_currentProfile")} (${profileName(currentProfileMeta?.label ?? currentSessionProfileLabel)})`
       : otherLocalProfileMeta
-        ? `${$_("settings_inline_otherLocalProfile")} (${otherLocalProfileMeta.label})`
+        ? `${$_("settings_inline_otherLocalProfile")} (${profileName(otherLocalProfileMeta.label)})`
         : $_("settings_inline_otherLocalProfile")
   );
   const backupCurrentProfileGateRequired = $derived.by(
@@ -1239,6 +1270,7 @@
     return preview?.requiresConfirmation === true && !backupDependenciesConfirmed;
   });
   const backupExecuteDisabled = $derived.by(() => {
+    if (backupDependenciesWorking) return true;
     if (backupResolvedExecutionBlockedReason) return true;
     if (backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
     if (backupRestoreTargetMode === "current-profile" && backupDependencyConfirmationRequired) return true;
@@ -1290,7 +1322,7 @@
     }
   }
 
-  function backupPayloadStatusLabel(status: EpigraphPayloadRestorePlan["status"] | "success" | "warning" | "failed"): string {
+  function backupPayloadStatusLabel(status: EpigraphPayloadRestorePlan["status"] | "success" | "warning" | "failed" | "unknown"): string {
     switch (status) {
       case "restorable":
         return translate("settings_inline_restorable");
@@ -1306,6 +1338,8 @@
         return translate("settings_inline_success");
       case "warning":
         return translate("settings_inline_completedWithWarnings");
+      case "unknown":
+        return translate("settings_inline_unresolved");
       case "failed":
         return translate("settings_inline_failed");
       default:
@@ -1316,8 +1350,8 @@
   function backupRestoreButtonLabel(): string {
     if (backupRestoreTargetMode === "other-local-profile") {
       return otherLocalProfileMeta
-        ? `Continue in ${otherLocalProfileMeta.label}`
-        : "Continue in other profile";
+        ? translate("settings_profile_continueIn", { profile: profileName(otherLocalProfileMeta.label) })
+        : translate("settings_inline_continueInOtherProfile");
     }
     if (backupRestoring) {
       return backupImportKind === "manga" ? translate("settings_inline_restoringManga") : translate("settings_inline_restoring");
@@ -1368,13 +1402,7 @@
       serverUrl: currentRuntimeServerUrl,
     });
 
-    return {
-      repositoryUrls: state.repositories.map((repository) => repository.normalizedUrl),
-      installedPluginIds: state.installedPlugins
-        .filter((plugin) => plugin.enabled)
-        .map((plugin) => plugin.pluginId),
-      availableSourceIds: [...new Set(state.catalogEntries.map((entry) => entry.pluginId))],
-    };
+    return novelRestoreRuntimeState(state);
   }
 
   async function loadEpigraphRestoreRuntime(): Promise<EpigraphRestorePlannerRuntime> {
@@ -1630,9 +1658,9 @@
       multiple: false,
       directory: false,
       filters: [
-        { name: "Epigraph backups (including supported legacy formats)", extensions: ["epigraphbk", "aethonbk"] },
-        { name: "Manga backups", extensions: ["tachibk", "proto", "gz"] },
-        { name: "LNReader backups", extensions: ["zip"] },
+        { name: translate("settings_backup_fileTypeEpigraphWithLegacy"), extensions: ["epigraphbk", "aethonbk"] },
+        { name: translate("settings_backup_fileTypeManga"), extensions: ["tachibk", "proto", "gz"] },
+        { name: translate("settings_backup_fileTypeLnreader"), extensions: ["zip"] },
       ],
     });
     if (typeof selected !== "string" || !selected.trim()) return;
@@ -1701,7 +1729,7 @@
       ?? payload.metadata.bookCount
       ?? payload.metadata.entryCount;
     return typeof count === "number"
-      ? `${count} ${count === 1 ? "title" : "titles"}`
+      ? (count === 1 ? translate("settings_backup_titleCountOne") : translate("settings_backup_titleCount", { count }))
       : null;
   }
 
@@ -1742,7 +1770,7 @@
         : "current-profile";
 
     if (!backupImportKind) {
-      backupError = translate("settings_inline_chooseBackupFileError");
+      backupError = operationFailure(null, "settings_inline_chooseBackupFileError");
       return;
     }
 
@@ -1757,6 +1785,7 @@
 
     if (backupImportKind === "epigraph") {
       await loadUnifiedBackupPlan(path);
+      backupSelectedFile = await fileFromPath(path);
       return;
     }
 
@@ -1795,7 +1824,7 @@
       backupAuditPlanKey = null;
       return;
     }
-    const key = `${plan.summary.summaryLabel}|${plan.payloads.map((payload) => `${payload.kind}:${payload.status}:${payload.summaryLabel}`).join("|")}`;
+    const key = `${plan.summary.summaryLabel}|${plan.payloads.map((payload) => `${payload.kind}:${payload.status}:${restorePayloadSummary(payload, $_)}`).join("|")}`;
     if (key === backupAuditPlanKey) return;
     backupAuditPlanKey = key;
     backupUnifiedPlan = plan;
@@ -1815,7 +1844,7 @@
       handoff: intent.handoff,
       sourceProfileId: intent.sourceProfileId ?? null,
     }).catch((error) => {
-      backupError = error instanceof Error ? error.message : "Could not load restore handoff.";
+      backupError = operationFailure(error, "firstRun.backup.restoreError");
     });
   });
 
@@ -1851,7 +1880,7 @@
       && !backupRestoring;
     if (!shouldAnalyze) return;
     void loadLegacyBackupPath(backupSelectedFilePath!).catch((error) => {
-      backupError = error instanceof Error ? error.message : translate("settings_inline_prepareMangaRestoreFailed");
+      backupError = operationFailure(error, "settings_inline_prepareMangaRestoreFailed");
     });
   });
 
@@ -1873,10 +1902,10 @@
       );
       backupSuggestedExtensions = result.suggestions;
       if (result.failedRepos.length > 0) {
-        backupExtensionLookupError = `Some extension repos could not be checked: ${result.failedRepos.join(", ")}`;
+        backupExtensionLookupError = operationFailure(result.failedRepos, "outcomes.repositoryChecks", { count: result.failedRepos.length });
       }
     } catch (error) {
-      backupExtensionLookupError = error instanceof Error ? error.message : "Could not load extensions";
+      backupExtensionLookupError = operationFailure(error, "settings_inline_couldNotInspectExtensionMatches");
     } finally {
       backupExtensionLookupLoading = false;
     }
@@ -1891,8 +1920,8 @@
       const savePath = await saveDialog({
         defaultPath: defaultExportFilename(),
         filters: backupExportMode === "manga"
-          ? [{ name: "Manga backups", extensions: ["tachibk"] }]
-          : [{ name: "Epigraph backups", extensions: ["epigraphbk"] }],
+          ? [{ name: translate("settings_backup_fileTypeManga"), extensions: ["tachibk"] }]
+          : [{ name: translate("settings_backup_fileTypeEpigraph"), extensions: ["epigraphbk"] }],
       });
       if (typeof savePath !== "string" || !savePath.trim()) return;
       const normalizedPath = normalizeBackupSavePath(
@@ -1907,7 +1936,7 @@
         body: savedPath,
       });
     } catch (e: any) {
-      backupError = e?.message ?? "Failed to export backup";
+      backupError = operationFailure(e, "firstRun.backup.restoreError");
     } finally {
       backupExporting = false;
     }
@@ -1923,7 +1952,7 @@
     backupSelectedFilePath = null;
 
     if (!backupImportKind) {
-      backupError = translate("settings_inline_chooseBackupFileError");
+      backupError = operationFailure(null, "settings_inline_chooseBackupFileError");
       return;
     }
 
@@ -2000,7 +2029,7 @@
         })),
       );
     } catch (e: any) {
-      backupError = e?.message ?? "Failed to validate backup";
+      backupError = operationFailure(e, "firstRun.backup.restoreError");
     } finally {
       backupValidating = false;
     }
@@ -2012,120 +2041,9 @@
     await analyzeSelectedBackupFile(backupSelectedFile);
   }
 
-  async function installMissingSourceExtension(extension: Extension, refreshAfter = true) {
-    const nextWorking = new Set(backupInstalling);
-    nextWorking.add(extension.pkgName);
-    backupInstalling = nextWorking;
-    backupError = null;
-    try {
-      await gql(UPDATE_EXTENSION, { id: extension.pkgName, install: true });
-      addToast({
-        kind: "success",
-        title: translate("ui_extensionInstalled"),
-        body: `${extension.name} was sent to Suwayomi. Epigraph will refresh restore readiness once the source inventory catches up.`,
-      });
-      if (refreshAfter && backupSelectedFile) {
-        await refreshBackupReadiness();
-      }
-    } catch (error) {
-      backupError = error instanceof Error ? error.message : `Could not install ${extension.name}`;
-    } finally {
-      const doneWorking = new Set(backupInstalling);
-      doneWorking.delete(extension.pkgName);
-      backupInstalling = doneWorking;
-    }
-  }
-
-  async function installRequiredRestoreExtensions() {
-    const required = backupReadiness?.installableExtensions ?? [];
-    if (required.length === 0) return;
-
-    for (const extension of required) {
-      if (backupInstalling.has(extension.pkgName)) continue;
-      await installMissingSourceExtension(extension, false);
-    }
-    await refreshBackupReadiness();
-  }
-
-  async function pollRestoreStatus(id: string) {
-    while (true) {
-      const res = await gql<{ restoreStatus: BackupRestoreProgress }>(GET_RESTORE_STATUS, { id });
-      backupRestoreStatus = res.restoreStatus;
-      const state = (res.restoreStatus?.state ?? "").toUpperCase();
-      if (["SUCCESS", "COMPLETED", "FAILED", "ERROR", "CANCELLED"].includes(state)) break;
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    }
-  }
-
-  async function restoreBackup(): Promise<{ ok: boolean; finalState: string | null }> {
-    return withSuwayomiOperationLease("backup-restore", async () => {
-      if (!backupSelectedFile || !backupParsed || !backupAnalysis) {
-        return { ok: false, finalState: null };
-      }
-      if (backupReadiness?.blocksRestore) {
-        backupError = backupReadiness.requiresInstallCount > 0
-          ? translate("settings_inline_installRequiredExtensionsFirst")
-          : translate("settings_inline_unavailableSourcesResolveFirst");
-        return { ok: false, finalState: null };
-      }
-      backupError = null;
-      backupRestoreId = null;
-      backupRestoreStatus = null;
-      try {
-      const storageRuntime = await getStorageRuntime();
-      const reconciledFile = storageRuntime.buildReconciledBackupFile(
-        backupParsed,
-        backupAnalysis,
-        backupReviewSelections,
-        backupSelectedFile.name,
-      );
-      const overlayEntry: OverlayEntry = storageRuntime.overlayEntryFromAnalysis({
-        ...backupAnalysis,
-        needsReview: backupAnalysis.needsReview.map((cluster) => {
-          const selected = backupReviewSelections[cluster.orphanSourceId];
-          if (!selected || selected.mode !== "map") return cluster;
-          const chosen = cluster.candidates.find((candidate) => candidate.sourceId === selected.sourceId) ?? null;
-          return {
-            ...cluster,
-            status: chosen ? "auto_reconciled" : cluster.status,
-            selectedCandidate: chosen,
-          };
-        }),
-      });
-      await storageRuntime.upsertOverlayEntry(overlayEntry);
-      const res = await gqlUpload<{ restoreBackup: { id: string; status: BackupRestoreProgress | null } }>(
-        RESTORE_BACKUP,
-        { backup: null },
-        { "variables.backup": reconciledFile },
-      );
-      backupRestoreId = res.restoreBackup.id;
-      backupRestoreStatus = res.restoreBackup.status;
-      await pollRestoreStatus(res.restoreBackup.id);
-      const finalState = (backupRestoreStatus?.state ?? "").toUpperCase();
-      if (["SUCCESS", "COMPLETED"].includes(finalState)) {
-        if (backupImportKind === "manga") {
-          try {
-            await hydrateAppReadingStateFromImportedMangaBackup();
-          } catch (error) {
-            console.warn("Could not hydrate Home reading state from imported manga backup:", error);
-          }
-          await refreshHomeRestoreSnapshots();
-        }
-        addToast({
-          kind: "success",
-          title: translate("ui_backupRestored"),
-          body: translate("ui_restartOrRefreshViewsToPickUpRestored"),
-        });
-        return { ok: true, finalState };
-      } else {
-        backupError = `Restore finished with state: ${backupRestoreStatus?.state ?? "unknown"}`;
-        return { ok: false, finalState: backupRestoreStatus?.state ?? null };
-      }
-      } catch (e: any) {
-        backupError = e?.message ?? "Failed to restore backup";
-        return { ok: false, finalState: null };
-      }
-    });
+  async function reviewMangaDependencies() {
+    // Compatibility action opens the shared origin review; it cannot install.
+    await mangaDependencyPanel?.review();
   }
 
   async function relaunchRestoreIntoOtherProfile() {
@@ -2146,45 +2064,6 @@
       },
     });
     await invoke("relaunch_with_args", { args });
-  }
-
-  async function applyCurrentProfileNovelsRestore(
-    bytes: ArrayBuffer,
-    format: "epigraph" | "lnreader" = "epigraph",
-  ) {
-    const storageRuntime = await getStorageRuntime();
-    const scopeInput = {
-      profileId: currentRuntimeProfileId,
-      serverUrl: currentRuntimeServerUrl,
-    };
-    const initialRuntime = await loadNovelRuntimeState();
-    const initialRestored = format === "lnreader"
-      ? await storageRuntime.restoreLnReaderNovelsBackup(bytes, initialRuntime)
-      : await storageRuntime.restoreEpigraphNovelsPayload(bytes, initialRuntime);
-    const repositoryState = await storageRuntime.loadNovelRepositoryState(scopeInput);
-    const provisioning = await storageRuntime.provisionEpigraphNovelDependencies({
-      restored: initialRestored,
-      state: repositoryState,
-      scopeInput,
-      operations: {
-        addRepository: storageRuntime.addNovelRepositoryToState,
-        trustRepository: storageRuntime.setNovelRepositoryTrustState,
-        refreshRepository: storageRuntime.refreshNovelRepositoryCatalog,
-        installPlugin: storageRuntime.installNovelCatalogPlugin,
-        saveState: storageRuntime.saveNovelRepositoryState,
-      },
-    });
-    const finalRuntime = await loadNovelRuntimeState();
-    const restored = format === "lnreader"
-      ? await storageRuntime.restoreLnReaderNovelsBackup(bytes, finalRuntime)
-      : await storageRuntime.restoreEpigraphNovelsPayload(bytes, finalRuntime);
-    const currentState = await storageRuntime.loadNovelLibraryState(scopeInput);
-    const nextState = storageRuntime.applyRestoredNovelsSnapshotToLibraryState({
-      currentState,
-      restored,
-    });
-    await storageRuntime.saveNovelLibraryState(nextState, scopeInput);
-    return { ...restored, provisioning };
   }
 
   async function ensureMangaRestoreRepositories(repositoryUrls: readonly string[]) {
@@ -2428,7 +2307,7 @@
       const chapterName = matchedLiveChapter?.name
         ?? backupChapter?.name
         ?? row.history.url?.split("/").pop()
-        ?? "Chapter";
+        ?? translate("settings_backup_chapterFallback");
       const thumbnailUrl = typeof liveManga.thumbnailUrl === "string" && liveManga.thumbnailUrl.length > 0
         ? liveManga.thumbnailUrl
         : (typeof row.manga.thumbnailUrl === "string" ? row.manga.thumbnailUrl : "");
@@ -2464,146 +2343,6 @@
     return true;
   }
 
-  async function applyUnifiedRestore() {
-    if (!backupUnifiedPlan || (!backupSelectedFilePath && !backupSelectedFile)) {
-      throw new Error(translate("settings_inline_chooseEpigraphBackupFirst"));
-    }
-    const selectedKinds = selectedExecutablePayloadKinds(backupUnifiedPlan, backupUnifiedSelection);
-    if (selectedKinds.length === 0) {
-      throw new Error(translate("settings_inline_selectExecutablePayload"));
-    }
-
-    const storageRuntime = await getStorageRuntime();
-    const bytes = backupSelectedFilePath
-      ? await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath)
-      : await backupSelectedFile!.arrayBuffer();
-    await preflightEpigraphRestorePayloads(bytes, selectedKinds, {
-      parseManga: storageRuntime.parseEpigraphMangaPayload,
-      parseNativeManga: storageRuntime.parseMihonBackup,
-      parseBooks: storageRuntime.parseEpigraphBooksPayload,
-      parseNovels: storageRuntime.parseEpigraphNovelsPayload,
-      parseApp: storageRuntime.parseEpigraphAppPayload,
-    });
-    const results: Array<{ kind: string; status: "success" | "warning" | "failed" | "skipped"; summary: string; detail?: string | null }> = [];
-
-    for (const kind of ["manga", "books", "novels", "app"] as const) {
-      if (!selectedKinds.includes(kind)) continue;
-      try {
-        if (kind === "manga") {
-          const mangaPayload = await storageRuntime.parseEpigraphMangaPayload(bytes);
-          await ensureMangaRestoreRepositories(mangaPayload.payloadManifest.requiresRepositories ?? []);
-          const extracted = await storageRuntime.extractEpigraphMangaPayloadFile(bytes);
-          backupSelectedFile = extracted;
-          await analyzeSelectedBackupFile(extracted);
-          const readiness = backupAnalysis
-            ? buildRestoreReadiness(backupAnalysis, backupReviewSelections, backupInventory, backupAvailableExtensions)
-            : null;
-          for (const extension of readiness?.installableExtensions ?? []) {
-            await installMissingSourceExtension(extension, false);
-          }
-          if ((readiness?.installableExtensions.length ?? 0) > 0) {
-            await waitForInstalledRestoreSources(extracted);
-          }
-          const outcome = await restoreBackup();
-          results.push({
-            kind,
-            status: outcome.ok ? "success" : "failed",
-            summary: outcome.ok
-              ? "Manga restored into the current profile."
-              : backupError ?? "Manga restore did not finish successfully.",
-            detail: outcome.finalState,
-          });
-          continue;
-        }
-
-        if (kind === "books") {
-          const restored = await storageRuntime.restoreEpigraphBooksPayload(bytes);
-          replaceBooksState({
-            books: restored.books,
-            bookProgress: restored.bookProgress,
-            bookBookmarks: restored.bookBookmarks,
-            booksCategories: restored.booksCategories,
-            booksCategoryAssignments: restored.booksCategoryAssignments,
-            booksLibraryUi: restored.booksLibraryUi,
-          });
-          results.push({
-            kind,
-            status: restored.issues.length > 0 ? "warning" : "success",
-            summary: restored.issues.length > 0
-              ? `Books restored with ${restored.issues.length} warning${restored.issues.length === 1 ? "" : "s"}.`
-              : "Books restored into managed storage.",
-            detail: restored.exportMode,
-          });
-          continue;
-        }
-
-        if (kind === "novels") {
-          const restored = await applyCurrentProfileNovelsRestore(bytes);
-          const provisioningWarnings = restored.provisioning.warnings.length;
-          const hasWarnings = restored.summary.restoredMetadataOnlyCount > 0 || provisioningWarnings > 0;
-          results.push({
-            kind,
-            status: hasWarnings ? "warning" : "success",
-            summary: hasWarnings
-              ? `${restored.summary.totalEntries} novel entries restored with ${provisioningWarnings + restored.summary.restoredMetadataOnlyCount} warning${provisioningWarnings + restored.summary.restoredMetadataOnlyCount === 1 ? "" : "s"}.`
-              : `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
-            detail: `${restored.provisioning.addedRepositories} repositories added / ${restored.provisioning.installedPlugins} extensions installed / ${restored.summary.restoredMetadataOnlyCount} metadata-only`,
-          });
-          continue;
-        }
-
-        if (kind === "app") {
-          const restored = await storageRuntime.parseEpigraphAppPayload(new Uint8Array(bytes));
-          updateSettings({
-            defaultLocalProfileId: restored.profile.defaultLocalProfileId,
-          });
-          if (restored.profile.version >= 2) {
-            replaceAppReadingState({
-              history: restored.profile.history,
-              readLog: restored.profile.readLog,
-              readingStats: restored.profile.readingStats,
-            });
-          } else {
-            replaceAppReadingState({
-              history: [],
-              readLog: [],
-              readingStats: DEFAULT_READING_STATS,
-            });
-          }
-          results.push({
-            kind,
-            status: restored.profile.version >= 2 ? "success" : "warning",
-            summary: restored.profile.version >= 2
-              ? "App reading state restored into the current session."
-              : "App payload restored, but this backup does not include Home reading history.",
-            detail: `schema v${restored.profile.version}`,
-          });
-          continue;
-        }
-
-      } catch (error) {
-        results.push({
-          kind,
-          status: "failed",
-          summary: error instanceof Error ? error.message : `Could not restore ${kind}.`,
-        });
-      }
-    }
-
-    if (results.some((entry) => (entry.kind === "manga" || entry.kind === "app") && entry.status !== "failed")) {
-      await refreshHomeRestoreSnapshots();
-    }
-
-    backupRestoreResults = results;
-    const failed = results.filter((entry) => entry.status === "failed").length;
-    addToast({
-      kind: failed > 0 ? "info" : "success",
-      title: failed > 0 ? "Restore finished with issues" : "Restore finished",
-      body: results.map((entry) => `${entry.kind.toUpperCase()}: ${entry.status}`).join(" | "),
-      duration: 16000,
-    });
-  }
-
   async function executeSelectedRestore() {
     if (backupRestoring || backupValidating) return;
     backupError = null;
@@ -2611,7 +2350,7 @@
     backupRestoreStatus = null;
 
     if (backupResolvedExecutionBlockedReason) {
-      backupError = backupResolvedExecutionBlockedReason;
+      backupError = operationFailure(null, backupUnifiedPlan?.executionBlockedReason ? "outcomes.dependencies" : "settings_inline_restoreExecutionProfileHint");
       return;
     }
 
@@ -2623,60 +2362,54 @@
     }
 
     if (!backupRestoreHandoffSession && !backupRestoreCurrentProfileConfirmed) {
-      backupError = translate("settings_inline_confirmAdvancedRestoreFirst");
+      backupError = operationFailure(null, "settings_inline_confirmAdvancedRestoreFirst");
       return;
     }
 
     if (backupDependencyConfirmationRequired) {
-      backupError = "Review and confirm the repositories and extensions found in this backup first.";
+      backupError = operationFailure(null, "outcomes.approval");
       return;
     }
 
-    if (backupImportKind === "epigraph") {
-      await applyUnifiedRestore();
-      return;
+    if (!backupSelectedFilePath && !backupSelectedFile) throw Error(translate("settings_inline_chooseBackupFileError"));
+    const runtime = await getStorageRuntime();
+    const file = backupSelectedFilePath
+      ? new File([await runtime.readFileAsArrayBuffer(backupSelectedFilePath)], backupPathLabel(backupSelectedFilePath) ?? "backup.epigraphbk")
+      : backupSelectedFile!;
+    const candidate = createProductionRestoreWorkflow({
+      selection: backupImportKind === "epigraph" ? backupUnifiedSelection : undefined,
+      mangaChoices: backupReviewSelections,
+    });
+    const entries = await candidate.inspectFiles([file]);
+    if (entries.some(entry => entry.status !== "ready")) throw Error(entries[0]?.error ?? "RESTORE_INPUT_INVALID");
+    const key = JSON.stringify([entries.map(entry => entry.key), currentRuntimeProfileId, store.runtimeServerUrl, backupUnifiedSelection, backupReviewSelections]);
+    const workflow = restoreWorkflows.get(key) ?? candidate;
+    restoreWorkflows.set(key, workflow);
+    activeRestoreWorkflow = workflow;
+    restoreCancellationRequested = workflow.snapshot().cancelled;
+    const unsubscribe = workflow.observe(snapshot => {
+      const states = Object.values(snapshot.units);
+      backupRestoreStatus = { state: "RESTORING", mangaProgress: states.filter(status => status === "succeeded").length, totalManga: states.length };
+    });
+    try {
+      await workflow.restoreFiles(entries);
+    } finally {
+      unsubscribe();
+      const warnings = workflow.warnings();
+      backupRestoreResults = Object.entries(workflow.snapshot().units).map(([id, status]) => ({
+        kind: id.slice(id.lastIndexOf(":") + 1),
+        status: status === "succeeded" ? (warnings[id]?.length ? "warning" : "success") : status === "cancelled" ? "skipped" : "failed",
+        outcome: status, warnings: warnings[id] ?? [],
+        summary: status === "succeeded" ? (warnings[id]?.join("; ") || translate("outcomes_succeeded"))
+          : status === "unknown" ? translate("settings_backup_resultUnresolved")
+          : status === "cancelled" ? translate("settings_backup_resultCancelled") : translate("settings_backup_resultFailed"),
+      }));
     }
-
-    if (backupImportKind === "novels-lnreader") {
-      if (!backupSelectedFilePath && !backupSelectedFile) {
-        backupError = translate("settings_inline_chooseBackupFileError");
-        return;
-      }
-      const storageRuntime = await getStorageRuntime();
-      const bytes = backupSelectedFilePath
-        ? await storageRuntime.readFileAsArrayBuffer(backupSelectedFilePath)
-        : await backupSelectedFile!.arrayBuffer();
-      const restored = await applyCurrentProfileNovelsRestore(bytes, "lnreader");
-      backupRestoreResults = [{
-        kind: "novels",
-        status: restored.provisioning.warnings.length > 0 ? "warning" : "success",
-        summary: `${restored.summary.totalEntries} novel entries restored for this profile scope.`,
-        detail: restored.provisioning.warnings.length > 0
-          ? `${restored.provisioning.warnings.length} source warning${restored.provisioning.warnings.length === 1 ? "" : "s"}`
-          : null,
-      }];
-      return;
-    }
-
-    if (!backupSelectedFile && backupSelectedFilePath) {
-      await loadLegacyBackupPath(backupSelectedFilePath);
-    }
-    await ensureMangaRestoreRepositories(
-      backupDependenciesConfirmed ? (backupParsed?.extensionStores ?? []).map((store) => store.indexUrl) : [],
-    );
-    const result = await restoreBackup();
-    backupRestoreResults = [{
-      kind: "manga",
-      status: result.ok ? "success" : "failed",
-      summary: result.ok
-        ? "Manga backup restored into the current profile."
-        : backupError ?? "Manga backup did not finish successfully.",
-      detail: result.finalState,
-    }];
     } catch (error) {
-      backupError = error instanceof Error ? error.message : "Could not restore this backup. Please retry.";
+      backupError = operationFailure(error, "firstRun.backup.restoreError");
     } finally {
       backupRestoring = false;
+      activeRestoreWorkflow = null;
     }
   }
 
@@ -2695,9 +2428,7 @@
   }
 
   function clusterReasonLabel(cluster: ReconciliationClusterResult): string {
-    return cluster.selectedCandidate?.evidenceSummary
-      ?? cluster.candidates[0]?.evidenceSummary
-      ?? "No confident replacement was found automatically.";
+    return translate(cluster.status === "exact_resolved" ? "outcomes.ready" : "restoreDeps.mangaPreserveHint");
   }
 
   function clusterReadinessLabel(cluster: ReconciliationClusterResult): string {
@@ -2715,7 +2446,11 @@
   }
 
   function clusterReadinessDetail(cluster: ReconciliationClusterResult): string | null {
-    return backupReadiness?.items.find((entry) => entry.orphanSourceId === cluster.orphanSourceId)?.detail ?? null;
+    const item = backupReadiness?.items.find((entry) => entry.orphanSourceId === cluster.orphanSourceId);
+    if (!item) return null;
+    const choice = backupReviewSelections[cluster.orphanSourceId];
+    return translate(choice?.mode === "skip" ? "outcomes.skipped" : choice?.mode === "preserve" || item.status === "unresolved" ? "restoreDeps.mangaPreserveHint"
+      : item.status === "ready_now" ? "outcomes.ready" : item.status === "requires_install" ? "outcomes.dependencies" : "outcomes.preservedSources");
   }
 
   function extensionForPkg(pkgName: string | null): AvailableExtensionEntry | null {
@@ -2761,11 +2496,7 @@
   $effect(() => { if (tab === "performance") refreshPerfMetrics(); });
   function fmtAge(ts: number | null): string {
     if (ts === null) return "-";
-    const secs = Math.floor((Date.now() - ts) / 1000);
-    if (secs < 60) return `${secs}s ago`;
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
+    return formatRelativeTime(ts);
   }
   let storageLimitInput = $state(String(store.settings.storageLimitGb ?? ""));
   function applyStorageLimit() {
@@ -2775,18 +2506,24 @@
     if (!isNaN(n) && n > 0) updateSettings({ storageLimitGb: n });
   }
   const BOOKS_TYPE_OPTIONS: { id: BooksLibraryTypeFilter; label: string }[] = [
-    { id: "all", label: "All" },
-    { id: "epub", label: "EPUB" },
-    { id: "pdf", label: "PDF" },
-    { id: "sources", label: "Sources" },
+    { id: "all", label: "library_books_types_all" },
+    { id: "epub", label: "library_books_types_epub" },
+    { id: "pdf", label: "library_books_types_pdf" },
+    { id: "sources", label: "library_books_types_sources" },
   ];
   const LIBRARY_START_OPTIONS: { id: Settings["defaultLibrarySection"]; label: string }[] = [
-    { id: "last-used", label: "Last used" },
-    { id: "comics", label: "Comics" },
-    { id: "books", label: "Books" },
+    { id: "last-used", label: "ui_lastUsed" },
+    { id: "comics", label: "common_comics" },
+    { id: "books", label: "common_books" },
   ];
+  const BOOKS_FILTER_LABEL_KEYS: Record<string, string> = {
+    all: "library_filter_allBooks",
+    unopened: "library_filter_unopened",
+    in_progress: "library_filter_inProgress",
+    finished: "library_filter_finished",
+  };
   let catsLoading:    boolean      = $state(false);
-  let catsError:      string|null  = $state(null);
+  let catsError: OperationFailure | null  = $state(null);
   let categoryDomain: "comics" | "books" = $state("comics");
   let newFolderName   = $state("");
   let editingId: string | number | null = $state(null);
@@ -2833,7 +2570,7 @@
       });
       setCategories([...zeroCat, ...merged]);
     } catch (e: any) {
-      catsError = e?.message ?? "Failed to load folders";
+      catsError = operationFailure(e, "outcomes.failed");
     } finally { catsLoading = false; }
   }
   async function createFolder() {
@@ -2851,7 +2588,7 @@
       const res = await gql<{ createCategory: { category: Category } }>(CREATE_CATEGORY, { name });
       setCategories([...store.categories, res.createCategory.category]);
       newFolderName = "";
-    } catch (e: any) { catsError = e?.message ?? "Failed to create folder"; }
+    } catch (e: any) { catsError = operationFailure(e, "outcomes.failed"); }
   }
   function startEdit(id: string | number, name: string) { editingId = id; editingName = name; }
   async function commitEdit() {
@@ -2870,7 +2607,7 @@
       try {
         await gql(UPDATE_CATEGORY, { id: editingId, name: editingName.trim() });
         setCategories(store.categories.map(c => c.id === editingId ? { ...c, name: editingName.trim() } : c));
-      } catch (e: any) { catsError = e?.message ?? "Failed to rename"; }
+      } catch (e: any) { catsError = operationFailure(e, "outcomes.failed"); }
     }
     editingId = null; editingName = "";
   }
@@ -2893,13 +2630,13 @@
       )));
       addToast({
         kind: "success",
-        title: nextIncludeInUpdate === "EXCLUDE" ? "Folder excluded from updates" : "Folder included in updates",
+        title: nextIncludeInUpdate === "EXCLUDE" ? translate("ui_folderExcludedFromUpdates") : translate("ui_folderIncludedInUpdates"),
         body: nextIncludeInUpdate === "EXCLUDE"
-          ? `${category.name} will be skipped during Library updates.`
-          : `${category.name} will be checked during Library updates.`,
+          ? translate("settings_categories_comicsSkipped", { name: category.name })
+          : translate("settings_categories_comicsChecked", { name: category.name }),
       });
     } catch (e: any) {
-      catsError = e?.message ?? "Failed to update folder rule";
+      catsError = operationFailure(e, "outcomes.failed");
       await loadCategories();
     }
   }
@@ -2910,10 +2647,10 @@
     updateSettings({ booksCategories: nextCategories });
     addToast({
       kind: "success",
-      title: excluded ? "Books folder excluded from updates" : "Books folder included in updates",
+      title: excluded ? translate("ui_booksFolderExcludedFromUpdates") : translate("ui_booksFolderIncludedInUpdates"),
       body: excluded
-        ? `${category.name} will be skipped during Books updates.`
-        : `${category.name} will be checked during Books updates.`,
+        ? translate("settings_categories_booksSkipped", { name: category.name })
+        : translate("settings_categories_booksChecked", { name: category.name }),
     });
   }
   async function deleteFolder(id: string | number) {
@@ -2942,7 +2679,7 @@
     try {
       await gql(DELETE_CATEGORY, { id });
       setCategories(store.categories.filter(c => c.id !== id));
-    } catch (e: any) { catsError = e?.message ?? "Failed to delete folder"; }
+    } catch (e: any) { catsError = operationFailure(e, "outcomes.failed"); }
   }
   async function moveCategory(id: string | number, direction: -1 | 1) {
     if (categoryDomain === "books") {
@@ -2976,7 +2713,7 @@
           }),
       ]);
     } catch (e: any) {
-      catsError = e?.message ?? "Failed to reorder";
+      catsError = operationFailure(e, "outcomes.failed");
       await loadCategories();
     }
   }
@@ -2999,6 +2736,53 @@
   }
   let selectOpen: string | null = $state(null);
   function toggleSelect(id: string) { selectOpen = selectOpen === id ? null : id; }
+  const KEYBIND_LABEL_KEYS: Record<keyof Keybinds, string> = {
+    pageRight: "settings_keybind_pageRight",
+    pageLeft: "settings_keybind_pageLeft",
+    firstPage: "settings_keybind_firstPage",
+    lastPage: "settings_keybind_lastPage",
+    chapterRight: "settings_keybind_chapterRight",
+    chapterLeft: "settings_keybind_chapterLeft",
+    exitReader: "settings_keybind_exitReader",
+    toggleReadingDirection: "settings_keybind_toggleReadingDirection",
+    togglePageStyle: "settings_keybind_togglePageStyle",
+    toggleFullscreen: "settings_keybind_toggleFullscreen",
+    openSettings: "settings_keybind_openSettings",
+    toggleBookmark: "settings_keybind_toggleBookmark",
+  };
+  // Each reader keeps its own options: novels use `proseReader*`, books `bookProseReader*`.
+  type ProseReaderKind = keyof typeof PROSE_READER_SETTING_KEYS;
+  type ProseSettingName = keyof typeof PROSE_READER_SETTING_KEYS.novel;
+  type ProseSettingValue<N extends ProseSettingName> = (typeof store.settings)[(typeof PROSE_READER_SETTING_KEYS.novel)[N]];
+  function proseSetting<N extends ProseSettingName>(kind: ProseReaderKind, name: N): ProseSettingValue<N> {
+    return store.settings[PROSE_READER_SETTING_KEYS[kind][name]] as ProseSettingValue<N>;
+  }
+  function updateProseSettings(kind: ProseReaderKind, patch: { [N in ProseSettingName]?: ProseSettingValue<N> }) {
+    const keys = PROSE_READER_SETTING_KEYS[kind];
+    updateSettings(Object.fromEntries(
+      Object.entries(patch).map(([name, value]) => [keys[name as ProseSettingName], value]),
+    ) as Partial<typeof store.settings>);
+  }
+  const PROSE_THEME_LABEL_KEYS: Record<string, string> = {
+    nocturne: "ui_nocturne", dark: "ui_dark", sepia: "ui_sepia", light: "ui_light", oled: "ui_oled",
+    slate: "settings_reader_themeSlate", forest: "settings_reader_themeForest", nord: "Nord", warm: "settings_reader_themeWarm",
+  };
+  function proseThemeLabel(theme: string) {
+    const key = PROSE_THEME_LABEL_KEYS[theme];
+    return key?.includes("_") ? translate(key) : (key ?? theme);
+  }
+  const PDF_FIT_LABEL_KEYS: Record<string, string> = { width: "ui_width", page: "settings_reader_pdfFitPage", actual: "settings_reader_pdfFitActual" };
+  function readerBrightness(kind: ReaderKind) {
+    return store.settings[READER_BRIGHTNESS_SETTING_KEY[kind]] ?? 1;
+  }
+  function stepReaderBrightness(kind: ReaderKind, delta: number) {
+    const next = Math.round(Math.min(1, Math.max(0.2, readerBrightness(kind) + delta)) * 100) / 100;
+    updateSettings({ [READER_BRIGHTNESS_SETTING_KEY[kind]]: next });
+  }
+  function stepBookReaderZoom(delta: number) {
+    const next = Math.round(Math.min(4, Math.max(0.5, (store.settings.bookReaderZoom ?? 1) + delta)) * 100) / 100;
+    updateSettings({ bookReaderZoom: next });
+  }
   function appLanguageOptionLabel(code: AppLanguageCode, systemLabel: string) {
     return appLanguageLabel(code, resolveAppLocale(store.settings.appLanguage), systemLabel);
   }
@@ -3013,9 +2797,9 @@
   let showAuthPass     = $state(false);
   let showSocksPass    = $state(false);
   let pinInput         = $state(store.settings.appLockPin ?? "");
-  let pinError         = $state("");
+  let pinError = $state<OperationFailure | null>(null);
   let secLoading       = $state(false);
-  let secError         = $state<string | null>(null);
+  let secError         = $state<OperationFailure | null>(null);
   let secSaved         = $state<string | null>(null);
   let authUsername     = $state(store.settings.serverAuthUser ?? "");
   let authPassword     = $state(store.settings.serverAuthPass ?? "");
@@ -3096,7 +2880,7 @@
   });
   async function enableAuth() {
     if (!authUsername.trim() || !authPassword.trim()) {
-      secError = translate("settings_inline_usernamePasswordRequired"); return;
+      secError = operationFailure(null, "settings_inline_usernamePasswordRequired"); return;
     }
     secLoading = true; secError = null;
     updateSettings({ serverAuthEnabled: true, serverAuthUser: authUsername, serverAuthPass: authPassword });
@@ -3105,7 +2889,7 @@
       showSaved("auth");
     } catch (e: any) {
       updateSettings({ serverAuthEnabled: false });
-      secError = e?.message ?? translate("settings_inline_enableAuthFailed");
+      secError = operationFailure(e, "settings_inline_enableAuthFailed");
     } finally { secLoading = false; }
   }
   async function disableAuth() {
@@ -3116,7 +2900,7 @@
       authUsername = ""; authPassword = "";
       showSaved("auth");
     } catch (e: any) {
-      secError = e?.message ?? translate("settings_inline_disableAuthFailed");
+      secError = operationFailure(e, "settings_inline_disableAuthFailed");
     } finally { secLoading = false; }
   }
   async function saveSocksProxy() {
@@ -3142,10 +2926,10 @@
       });
       showSaved("socks");
     } catch (e: any) {
-      secError = e?.message ?? translate("settings_inline_saveSocksFailed");
+      secError = operationFailure(e, "settings_inline_saveSocksFailed");
     } finally { secLoading = false; }
   }
-  async function saveFlareSolverr() {
+  async function saveFlareSolverr(): Promise<boolean> {
     secLoading = true; secError = null;
     try {
       await gql(SET_FLARESOLVERR, {
@@ -3160,8 +2944,10 @@
         flareSolverrLocalAutoStart: flareLocalAutoStart,
       });
       showSaved("flare");
+      return true;
     } catch (e: any) {
-      secError = e?.message ?? translate("settings_inline_saveFlareFailed");
+      secError = operationFailure(e, "settings_inline_saveFlareFailed");
+      return false;
     } finally { secLoading = false; }
   }
   function flareStatusLabel(state = flareTestState) {
@@ -3232,7 +3018,7 @@
     try {
       flareLocalStatus = await invoke<LocalFlareSolverrStatus>("get_flaresolverr_local_status");
     } catch {
-      flareLocalStatus = { installed: false, running: false, path: null, message: "Not installed" };
+      flareLocalStatus = { installed: false, running: false, path: null, message: translate("settings_inline_notInstalled") };
     } finally {
       flareLocalBusy = false;
     }
@@ -3294,7 +3080,7 @@
     try {
       flareDockerStatus = await invoke<DockerFlareSolverrStatus>("get_flaresolverr_docker_status");
     } catch {
-      flareDockerStatus = { installed: false, daemon: false, running: false, version: null, message: "Docker not found" };
+      flareDockerStatus = { installed: false, daemon: false, running: false, version: null, message: translate("settings_inline_dockerNotFound") };
     } finally {
       flareDockerBusy = false;
     }
@@ -3333,17 +3119,17 @@
     const cleaned = pinInput.replace(/\D/g, "").slice(0, 8);
     pinInput = cleaned;
     if (cleaned.length >= 4) {
-      updateSettings({ appLockPin: cleaned }); pinError = "";
+      updateSettings({ appLockPin: cleaned }); pinError = null;
     } else if (cleaned.length > 0) {
-      pinError = "PIN must be at least 4 digits";
+      pinError = operationFailure(null, "settings_inline_pinHint");
     } else {
-      updateSettings({ appLockPin: "" }); pinError = "";
+      updateSettings({ appLockPin: "" }); pinError = null;
     }
   }
   let trackers:        Tracker[]    = $state([]);
   let trackersLoading: boolean      = $state(false);
   let trackersLoadAttempted: boolean = $state(false);
-  let trackersError:   string|null  = $state(null);
+  let trackersError: OperationFailure | null  = $state(null);
   let oauthTrackerId:  number|null  = $state(null);
   let oauthCallbackInput: string    = $state("");
   let oauthSubmitting: boolean      = $state(false);
@@ -3361,7 +3147,7 @@
   }));
   let hardcoverTokenInput = $state("");
   let hardcoverSubmitting = $state(false);
-  let hardcoverError: string | null = $state(null);
+  let hardcoverError: OperationFailure | null = $state(null);
   let hardcoverAuthOpen = $state(false);
   const activeTrackerDetail = $derived.by(
     () => trackers.find((candidate) => candidate.id === oauthTrackerId || candidate.id === credsTrackerId) ?? null,
@@ -3377,7 +3163,7 @@
       trackers = res.trackers.nodes;
       cache.set(CACHE_KEYS.TRACKERS, trackers);
     } catch (e: any) {
-      trackersError = e?.message ?? "Failed to load trackers";
+      trackersError = operationFailure(e, "firstRun.trackers.loadError");
     } finally {
       trackersLoading = false;
     }
@@ -3408,7 +3194,7 @@
       hardcoverAuthOpen = false;
       addToast({ kind: "success", title: translate("ui_hardcoverConnected"), body: hardcoverState.auth.username ?? translate("feedback.novelTrackingReady") });
     } catch (error: any) {
-      hardcoverError = error?.message ?? "Failed to connect Hardcover";
+      hardcoverError = operationFailure(error, "settings_inline_couldNotConnectHardcover");
     } finally {
       hardcoverSubmitting = false;
     }
@@ -3445,8 +3231,10 @@
     oauthCallbackInput = "";
     oauthAutoCapturing = true;
     oauthAutoUnlisten?.();
-    oauthAutoUnlisten = await listen<{ url: string }>("tracker-oauth-callback", async (event) => {
-      if (oauthTrackerId !== tracker.id) return;
+    // Only the login window opened here may complete it; other webviews can emit this event too.
+    const sessionId = crypto.randomUUID();
+    oauthAutoUnlisten = await listen<{ url: string; sessionId?: string }>("tracker-oauth-callback", async (event) => {
+      if (oauthTrackerId !== tracker.id || event.payload?.sessionId !== sessionId) return;
       oauthCallbackInput = event.payload.url;
       await submitOAuth();
       oauthAutoUnlisten?.();
@@ -3455,13 +3243,13 @@
     });
 
     try {
-      await invoke("open_tracker_oauth_window", { url: tracker.authUrl });
+      await invoke("open_tracker_oauth_window", { url: tracker.authUrl, sessionId });
     } catch (error) {
       oauthAutoCapturing = false;
       oauthAutoUnlisten?.();
       oauthAutoUnlisten = null;
       await openUrl(tracker.authUrl);
-      trackersError = "Automatic OAuth capture is unavailable. Paste the redirected callback URL below.";
+      trackersError = operationFailure(null, "firstRun.trackers.automaticUnavailable");
     }
   }
   async function submitOAuth() {
@@ -3471,7 +3259,7 @@
       const tracker = trackers.find((candidate) => candidate.id === oauthTrackerId) ?? null;
       const callbackUrl = normalizeTrackerOAuthInput(tracker, oauthCallbackInput);
       if (!callbackUrl) {
-        trackersError = `Paste the ${trackerOAuthParamName(tracker)} value or the redirected URL first.`;
+        trackersError = operationFailure(null, "settings_inline_callbackUrlHint");
         return;
       }
       await gql(LOGIN_TRACKER_OAUTH, {
@@ -3485,7 +3273,7 @@
       oauthAutoUnlisten?.();
       oauthAutoUnlisten = null;
     } catch (e: any) {
-      trackersError = e?.message ?? translate("settings_inline_loginFailed");
+      trackersError = operationFailure(e, "settings_inline_loginFailed");
     } finally {
       oauthSubmitting = false;
     }
@@ -3522,7 +3310,7 @@
       credsUsername  = "";
       credsPassword  = "";
     } catch (e: any) {
-      trackersError = e?.message ?? translate("settings_inline_loginFailed");
+      trackersError = operationFailure(e, "settings_inline_loginFailed");
     } finally {
       credsSubmitting = false;
     }
@@ -3534,7 +3322,7 @@
       await gql(LOGOUT_TRACKER, { trackerId });
       await loadTrackers();
     } catch (e: any) {
-      trackersError = e?.message ?? "Logout failed";
+      trackersError = operationFailure(e, "firstRun.trackers.disconnectError");
     } finally {
       loggingOut = null;
     }
@@ -3561,12 +3349,12 @@
   let appVersion      = $state("...");
   let releases        = $state<ReleaseInfo[]>([]);
   let releasesLoading = $state(false);
-  let releasesError   = $state<string | null>(null);
+  let releasesError   = $state<OperationFailure | null>(null);
   let updateCheck     = $state<EpigraphUpdateStatus | null>(null);
-  let updateCheckError = $state<string | null>(null);
+  let updateCheckError = $state<OperationFailure | null>(null);
   let expandedTag     = $state<string | null>(null);
   let updatePhase     = $state<UpdatePhase>("idle");
-  let updateError     = $state<string | null>(null);
+  let updateError     = $state<OperationFailure | null>(null);
   let dlBytes         = $state(0);
   let dlTotal         = $state<number | null>(null);
   let targetTag       = $state<string | null>(null); // tag being installed
@@ -3630,16 +3418,16 @@
       if (historyResult.status === "fulfilled") {
         releases = sortEpigraphReleaseHistory(historyResult.value);
       } else {
-        releasesError = historyResult.reason instanceof Error ? historyResult.reason.message : String(historyResult.reason);
+        releasesError = operationFailure(historyResult.reason, "settings_inline_couldNotFetchReleases");
       }
       if (updateResult.status === "fulfilled") {
         updateCheck = updateResult.value;
       } else {
         updateCheck = null;
-        updateCheckError = updateResult.reason instanceof Error ? updateResult.reason.message : String(updateResult.reason);
+        updateCheckError = operationFailure(updateResult.reason, "settings_inline_couldNotFetchReleases");
       }
     } catch (e: any) {
-      releasesError = e instanceof Error ? e.message : String(e);
+      releasesError = operationFailure(e, "settings_inline_couldNotFetchReleases");
       updateCheckError = releasesError;
     } finally {
       releasesLoading = false;
@@ -3656,13 +3444,21 @@
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   }
-  let unlistenProgress: (() => void) | undefined;
   $effect(() => {
-    listen<{ downloaded: number; total: number | null }>("update-progress", (e) => {
+    // The listener registers asynchronously; a teardown that wins the race must still release it.
+    let disposed = false;
+    let unlistenProgress: (() => void) | undefined;
+    void listen<{ downloaded: number; total: number | null }>("update-progress", (e) => {
       dlBytes = e.payload.downloaded;
       dlTotal = e.payload.total ?? null;
-    }).then(fn => { unlistenProgress = fn; });
-    return () => unlistenProgress?.();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenProgress = fn;
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      unlistenProgress?.();
+    };
   });
   async function installUpdate(release: ReleaseInfo) {
     if (updatePhase === "downloading") return;
@@ -3686,7 +3482,7 @@
         targetTag   = null;
       }
     } catch (e: any) {
-      updateError = e instanceof Error ? e.message : String(e);
+      updateError = operationFailure(e, "settings_inline_updateFailed");
       updatePhase = "error";
     }
   }
@@ -3886,7 +3682,7 @@
     </aside>{/if}
 
     <section class="settings-pane-shell">
-      {#if firstRunPane === null}<header class="settings-pane-header">
+      {#if firstRunPane === null}<header class="settings-pane-header" use:enterOnChange={tab}>
         <div>
           <p class="settings-pane-header__eyebrow" id="settingsPaneGroupLabel">{currentGroupLabel}</p>
           <h2 class="settings-pane-header__title" id="settingsPaneTitle">{currentTabMeta.label}</h2>
@@ -3894,7 +3690,7 @@
         </div>
       </header>{/if}
 
-      <div class="settings-pane-body content-body" bind:this={contentBodyEl} onscroll={rememberPaneScroll}>
+      <div class="settings-pane-body content-body" bind:this={contentBodyEl} onscroll={rememberPaneScroll} use:enterOnChange={tab}>
         <section
           class="settings-pane"
           class:is-active={tab === "general"}
@@ -4024,6 +3820,7 @@
                     onclick={() => updateSettings({ discordRpc: !store.settings.discordRpc })}
                   ></button>
                 </div>
+                <div class="settings-subgroup" class:is-disabled={!store.settings.discordRpc} aria-label={$_("settings.general.startup.discord")} role="group">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings.general.startup.discordPrivateMode")}</p>
@@ -4036,6 +3833,7 @@
                     role="switch"
                     aria-checked={store.settings.discordRpcPrivateMode}
                     aria-label={$_("settings.general.startup.discordPrivateMode")}
+                    disabled={!store.settings.discordRpc}
                     onclick={() => updateSettings({ discordRpcPrivateMode: !store.settings.discordRpcPrivateMode })}
                   ></button>
                 </div>
@@ -4051,6 +3849,7 @@
                     role="switch"
                     aria-checked={store.settings.discordRpcShowTitle}
                     aria-label={$_("settings.general.startup.discordShowTitle")}
+                    disabled={!store.settings.discordRpc}
                     onclick={() => updateSettings({ discordRpcShowTitle: !store.settings.discordRpcShowTitle })}
                   ></button>
                 </div>
@@ -4066,6 +3865,7 @@
                     role="switch"
                     aria-checked={store.settings.discordRpcShowCover}
                     aria-label={$_("settings.general.startup.discordShowCover")}
+                    disabled={!store.settings.discordRpc}
                     onclick={() => updateSettings({ discordRpcShowCover: !store.settings.discordRpcShowCover })}
                   ></button>
                 </div>
@@ -4081,6 +3881,7 @@
                     role="switch"
                     aria-checked={store.settings.discordRpcImproveCovers}
                     aria-label={$_("settings.general.startup.discordImproveCovers")}
+                    disabled={!store.settings.discordRpc}
                     onclick={() => updateSettings({ discordRpcImproveCovers: !store.settings.discordRpcImproveCovers })}
                   ></button>
                 </div>
@@ -4096,8 +3897,10 @@
                     role="switch"
                     aria-checked={store.settings.discordRpcShowProgress}
                     aria-label={$_("settings.general.startup.discordShowProgress")}
+                    disabled={!store.settings.discordRpc}
                     onclick={() => updateSettings({ discordRpcShowProgress: !store.settings.discordRpcShowProgress })}
                   ></button>
+                </div>
                 </div>
               </div>
             </div>
@@ -4127,7 +3930,7 @@
                                 selectOpen = null;
                               }}
                             >
-                              {profile.label} :{profile.port}
+                              {profileName(profile.label)} :{profile.port}
                             </button>
                           {/each}
                         </div>
@@ -4243,7 +4046,7 @@
                     </button>
                   </div>
                   {#if profileCreateError}
-                    <p class="settings-mini-row__hint settings-error-text">{profileCreateError}</p>
+                    <p class="settings-mini-row__hint settings-error-text">{presentOperationFailure(profileCreateError, $_)}</p>
                   {/if}
                 </div>
 
@@ -4346,7 +4149,7 @@
                               selectOpen = null;
                             }}
                           >
-                            {theme.label}
+                            {builtinThemeLabel(theme, $_)}
                           </button>
                         {/each}
                         {#each store.settings.customThemes ?? [] as custom}
@@ -4397,33 +4200,17 @@
                     onclick={toggleAmoledTheme}
                   ></button>
                 </div>
-                <!-- Mockup-only control preserved until accent intensity becomes a first-class theme override. -->
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_accentIntensity")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_accentIntensityHint")}</p>
-                  </div>
-                  <input class="settings-range" type="range" min="0" max="100" value="62" aria-disabled="true" data-inert-control="settings-accent-intensity" />
-                </div>
               </div>
             </div>
             <div class="settings-card">
               <p class="settings-card__title">{$_("settings_inline_windowChrome")}</p>
               <div class="settings-card__stack">
-                <!-- Mockup-only controls preserved until shell-level chrome options are implemented. -->
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_compactTopbar")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_compactTopbarHint")}</p>
+                    <p class="settings-mini-row__label">{$_("settings_inline_compactSidebar")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_compactSidebarHint")}</p>
                   </div>
-                  <button class="settings-toggle" type="button" aria-disabled="true" aria-label={$_("settings_inline_compactTopbar")} data-inert-control="settings-compact-topbar"></button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_sidebarGlow")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_sidebarGlowHint")}</p>
-                  </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_sidebarGlow")} data-inert-control="settings-sidebar-glow"></button>
+                  <button role="switch" aria-checked={store.settings.compactSidebar} aria-label={$_("settings_inline_compactSidebar")} class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
                 </div>
               </div>
             </div>
@@ -4441,16 +4228,6 @@
                     <button class="n-inline-segment" class:is-selected={uiDensityMode(store.settings.uiZoom) === "comfort"} type="button" onclick={() => applyUiDensity("comfort")}>{$_("settings_inline_comfort")}</button>
                   </div>
                 </div>
-                <!-- Mockup-only control preserved until card emphasis tuning exists as a first-class setting. -->
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_cardEmphasis")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_cardEmphasisHint")}</p>
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-card-emphasis">
-                    {$_("settings_inline_balanced")}
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -4463,6 +4240,7 @@
           aria-hidden={tab !== "reader"}
         >
           <div class="settings-grid">
+            <h3 class="settings-reader-group">{$_("settings_reader_groupManga")}</h3>
             <div class="settings-card">
               <p class="settings-card__title">{$_("settings_inline_layout")}</p>
               <div class="settings-card__stack">
@@ -4483,8 +4261,8 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_readingDirectionHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "ltr"} type="button" onclick={() => updateSettings({ readingDirection: "ltr" })}>LTR</button>
-                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "rtl"} type="button" onclick={() => updateSettings({ readingDirection: "rtl" })}>RTL</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "ltr"} type="button" onclick={() => updateSettings({ readingDirection: "ltr" })} title={$_("settings_reader_leftToRight")}>{$_("settings_reader_ltrShort")}</button>
+                    <button class="n-inline-segment" class:is-selected={store.settings.readingDirection === "rtl"} type="button" onclick={() => updateSettings({ readingDirection: "rtl" })} title={$_("settings_reader_rightToLeft")}>{$_("settings_reader_rtlShort")}</button>
                   </div>
                 </div>
               </div>
@@ -4546,8 +4324,8 @@
                     </button>
                     {#if selectOpen === "fit-mode"}
                       <div class="select-menu">
-                        {#each [["width","Fit width"],["height","Fit height"],["screen","Fit screen"],["original","Original (1:1)"]] as [v, l]}
-                          <button class="select-option" class:active={(store.settings.fitMode ?? "width") === v} onclick={() => { updateSettings({ fitMode: v as FitMode }); selectOpen = null; }}>{l}</button>
+                        {#each [["width","ui_fitWidth"],["height","ui_fitHeight"],["screen","ui_fitScreen"],["original","ui_original11"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.fitMode ?? "width") === v} onclick={() => { updateSettings({ fitMode: v as FitMode }); selectOpen = null; }}>{$_(l)}</button>
                         {/each}
                       </div>
                     {/if}
@@ -4560,30 +4338,30 @@
                   </div>
                   <div class="settings-zoom-controls">
                     <div class="scale-row">
-                      <input type="range" min={10} max={400} step={5}
-                        value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
+                      <input type="range" min={10} max={100} step={5}
+                        value={Math.round((store.settings.readerZoom ?? 1) * 100)}
                         oninput={(e) => updateSettings({ readerZoom: Number(e.currentTarget.value) / 100 })}
                         class="scale-slider" />
                       <input
-                        type="number" min={10} max={400} step={5}
+                        type="number" min={10} max={100} step={5}
                         class="scale-val-input"
-                        value={Math.round((store.settings.readerZoom ?? 0.5) * 100)}
+                        value={Math.round((store.settings.readerZoom ?? 1) * 100)}
                         oninput={(e) => {
                           const n = parseInt(e.currentTarget.value, 10);
-                          if (!isNaN(n) && n >= 10 && n <= 400) updateSettings({ readerZoom: n / 100 });
+                          if (!isNaN(n) && n >= 10 && n <= 100) updateSettings({ readerZoom: n / 100 });
                         }}
                         onblur={(e) => {
                           const n = parseInt(e.currentTarget.value, 10);
                           if (isNaN(n) || n < 10) { updateSettings({ readerZoom: 0.1 }); e.currentTarget.value = "10"; }
-                          else if (n > 400) { updateSettings({ readerZoom: 4.0 }); e.currentTarget.value = "400"; }
+                          else if (n > 100) { updateSettings({ readerZoom: 1.0 }); e.currentTarget.value = "100"; }
                         }}
                       />
                       <span class="scale-pct">%</span>
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => updateSettings({ readerZoom: 0.5 })} disabled={(store.settings.readerZoom ?? 0.5) === 0.5} title={$_("settings_inline_resetTo100")}>100%</button>
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => updateSettings({ readerZoom: 1.0 })} disabled={(store.settings.readerZoom ?? 1) === 1} title={$_("settings_inline_resetTo100")}>100%</button>
                     </div>
                     <div class="settings-chip-list settings-chip-list--presets">
-                      {#each [50, 75, 100, 125, 150, 200] as v}
-                        <button class="settings-chip" class:is-active={Math.round((store.settings.readerZoom ?? 0.5) * 100) === v} type="button" onclick={() => updateSettings({ readerZoom: v / 100 })}>{v}%</button>
+                      {#each [25, 50, 75, 100] as v}
+                        <button class="settings-chip" class:is-active={Math.round((store.settings.readerZoom ?? 1) * 100) === v} type="button" onclick={() => updateSettings({ readerZoom: v / 100 })}>{v}%</button>
                       {/each}
                     </div>
                   </div>
@@ -4606,136 +4384,162 @@
                     <button class="step-btn" type="button" onclick={() => updateSettings({ preloadPages: Math.min(10, store.settings.preloadPages + 1) })} disabled={store.settings.preloadPages >= 10}>+</button>
                   </div>
                 </div>
+                {@render readerBrightnessRow("manga")}
               </div>
             </div>
+
+            {#snippet readerBrightnessRow(kind: ReaderKind)}
+              <div class="settings-row settings-mini-row">
+                <div class="settings-mini-row__body">
+                  <p class="settings-mini-row__label">{$_("ui_brightness")}</p>
+                  <p class="settings-mini-row__hint">{$_("settings_reader_brightnessHint")}</p>
+                </div>
+                <div class="step-controls">
+                  <button class="step-btn" type="button" aria-label={$_("ui_decreaseBrightness")} onclick={() => stepReaderBrightness(kind, -0.05)} disabled={readerBrightness(kind) <= 0.2}>-</button>
+                  <span class="step-val">{Math.round(readerBrightness(kind) * 100)}%</span>
+                  <button class="step-btn" type="button" aria-label={$_("ui_increaseBrightness")} onclick={() => stepReaderBrightness(kind, 0.05)} disabled={readerBrightness(kind) >= 1}>+</button>
+                </div>
+              </div>
+            {/snippet}
+
+            {#snippet proseDefaultsCard(kind: ProseReaderKind)}
+              <div class="settings-card settings-card--wide" data-reader-settings={kind}>
+                <p class="settings-card__title">{$_(kind === "novel" ? "settings_reader_novelTypography" : "settings_reader_bookTypography")}</p>
+                <div class="settings-card__stack">
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_defaultFontFamily")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontFamilyHint")}</p>
+                    </div>
+                    <div class="select-wrap" id={`prose-font-${kind}`}>
+                      <button class="select-btn" type="button" onclick={() => toggleSelect(`prose-font-${kind}`)}>
+                        <span>{proseSetting(kind, "fontFamily") ? (proseSetting(kind, "fontFamily").split(",")[0].replace(/"/g, "")) : "Georgia"}</span>
+                        <svg class="select-caret" class:open={selectOpen === `prose-font-${kind}`} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                      </button>
+                      {#if selectOpen === `prose-font-${kind}`}
+                        <div class="select-menu">
+                          {#each [["Georgia, serif", "Georgia"], ["Merriweather, Georgia, serif", "Merriweather"], ["'EB Garamond', serif", "EB Garamond"], ["Lora, serif", "Lora"], ["Literata, serif", "Literata"], ["Inter, sans-serif", "Inter"], ["Atkinson Hyperlegible, Inter, sans-serif", "Atkinson"], ['"Segoe UI", sans-serif', "Segoe UI"]] as [v, l]}
+                            <button class="select-option" class:active={(proseSetting(kind, "fontFamily") ?? "Georgia, serif") === v} onclick={() => { updateProseSettings(kind, { fontFamily: v }); selectOpen = null; }}>{l}</button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_defaultFontSize")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontSizeHint")}</p>
+                    </div>
+                    <div class="step-controls">
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { fontSize: Math.max(12, (proseSetting(kind, "fontSize") ?? 18) - 1) })} disabled={(proseSetting(kind, "fontSize") ?? 18) <= 12}>-</button>
+                      <span class="step-val">{proseSetting(kind, "fontSize") ?? 18}px</span>
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { fontSize: Math.min(32, (proseSetting(kind, "fontSize") ?? 18) + 1) })} disabled={(proseSetting(kind, "fontSize") ?? 18) >= 32}>+</button>
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_defaultLineHeight")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_defaultLineHeightHint")}</p>
+                    </div>
+                    <div class="step-controls">
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { lineHeight: Math.round(Math.max(1.2, (proseSetting(kind, "lineHeight") ?? 1.75) - 0.05) * 100) / 100 })} disabled={(proseSetting(kind, "lineHeight") ?? 1.75) <= 1.2}>-</button>
+                      <span class="step-val">{(proseSetting(kind, "lineHeight") ?? 1.75).toFixed(2)}</span>
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { lineHeight: Math.round(Math.min(2.4, (proseSetting(kind, "lineHeight") ?? 1.75) + 0.05) * 100) / 100 })} disabled={(proseSetting(kind, "lineHeight") ?? 1.75) >= 2.4}>+</button>
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_defaultColumnWidth")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_defaultColumnWidthHint")}</p>
+                    </div>
+                    <div class="step-controls">
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { contentWidth: Math.max(520, (proseSetting(kind, "contentWidth") ?? 760) - 40) })} disabled={(proseSetting(kind, "contentWidth") ?? 760) <= 520}>-</button>
+                      <span class="step-val">{proseSetting(kind, "contentWidth") ?? 760}px</span>
+                      <button class="step-btn" type="button" onclick={() => updateProseSettings(kind, { contentWidth: Math.min(1600, (proseSetting(kind, "contentWidth") ?? 760) + 40) })} disabled={(proseSetting(kind, "contentWidth") ?? 760) >= 1600}>+</button>
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_textAlignment")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_textAlignmentHint")}</p>
+                    </div>
+                    <div class="n-inline-segmented">
+                      <button class="n-inline-segment" class:is-selected={(proseSetting(kind, "textAlign") ?? "left") === "left"} type="button" onclick={() => updateProseSettings(kind, { textAlign: "left" })}>{$_("settings_inline_left")}</button>
+                      <button class="n-inline-segment" class:is-selected={(proseSetting(kind, "textAlign") ?? "left") === "justify"} type="button" onclick={() => updateProseSettings(kind, { textAlign: "justify" })}>{$_("settings_inline_justify")}</button>
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_proseReaderTheme")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_proseReaderThemeHint")}</p>
+                    </div>
+                    <div class="select-wrap" id={`prose-theme-${kind}`}>
+                      <button class="select-btn" type="button" onclick={() => toggleSelect(`prose-theme-${kind}`)}>
+                        <span>{proseThemeLabel(proseSetting(kind, "theme") ?? "nocturne")}</span>
+                        <svg class="select-caret" class:open={selectOpen === `prose-theme-${kind}`} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
+                      </button>
+                      {#if selectOpen === `prose-theme-${kind}`}
+                        <div class="select-menu">
+                          {#each [["nocturne","ui_nocturne"], ["dark","ui_dark"], ["sepia","ui_sepia"], ["light","ui_light"], ["oled","ui_oled"], ["slate","settings_reader_themeSlate"], ["forest","settings_reader_themeForest"], ["nord","Nord"], ["warm","settings_reader_themeWarm"]] as [v, l]}
+                            <button class="select-option" class:active={(proseSetting(kind, "theme") ?? "nocturne") === v} onclick={() => { updateProseSettings(kind, { theme: v as any }); selectOpen = null; }}>{l.includes("_") ? $_(l) : l}</button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_customPaletteColors")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_customPaletteColorsHint")}</p>
+                    </div>
+                    <div class="prose-color-pickers">
+                      <input
+                        type="color"
+                        value={proseSetting(kind, "textColor") || DEFAULT_PROSE_READER_TEXT_COLOR}
+                        onchange={(e) => updateProseSettings(kind, { theme: "nocturne", textColor: e.currentTarget.value })}
+                        class="prose-color-picker"
+                        title={$_("settings_inline_customTextColor")}
+                      />
+                      <input
+                        type="color"
+                        value={proseSetting(kind, "backgroundColor") || DEFAULT_PROSE_READER_BACKGROUND_COLOR}
+                        onchange={(e) => updateProseSettings(kind, { theme: "nocturne", backgroundColor: e.currentTarget.value })}
+                        class="prose-color-picker"
+                        title={$_("settings_inline_customPaperColor")}
+                      />
+                    </div>
+                  </div>
+                  {#if kind === "book"}
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_bookReaderFlow")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_bookReaderFlowHint")}</p>
+                    </div>
+                    <div class="n-inline-segmented">
+                      <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "paginated"} type="button" onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("settings_inline_paginated")}</button>
+                      <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "scrolled"} type="button" onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("settings_inline_continuous")}</button>
+                    </div>
+                  </div>
+                  {/if}
+                  <div class="settings-row settings-mini-row">
+                    <div class="settings-mini-row__body">
+                      <p class="settings-mini-row__label">{$_("settings_inline_fullWidthReadingPanel")}</p>
+                      <p class="settings-mini-row__hint">{$_("settings_inline_fullWidthReadingPanelHint")}</p>
+                    </div>
+                    <button role="switch" aria-checked={proseSetting(kind, "fullWidth") ?? false} aria-label={$_("settings_inline_fullWidthReadingPanel")} class="settings-toggle" class:is-on={proseSetting(kind, "fullWidth") ?? false} type="button" onclick={() => updateProseSettings(kind, { fullWidth: !(proseSetting(kind, "fullWidth") ?? false) })}></button>
+                  </div>
+                  {@render readerBrightnessRow(kind)}
+                </div>
+              </div>
+            {/snippet}
+
+            <h3 class="settings-reader-group">{$_("settings_reader_groupNovel")}</h3>
+            {@render proseDefaultsCard("novel")}
+
+            <h3 class="settings-reader-group">{$_("settings_reader_groupBook")}</h3>
+            {@render proseDefaultsCard("book")}
 
             <div class="settings-card settings-card--wide">
-              <p class="settings-card__title">{$_("ui_proseReaderDefaultsEpubNovels")}</p>
-              <div class="settings-card__stack">
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_defaultFontFamily")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontFamilyHint")}</p>
-                  </div>
-                  <div class="select-wrap" id="prose-font">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("prose-font")}>
-                      <span>{store.settings.proseReaderFontFamily ? (store.settings.proseReaderFontFamily.split(",")[0].replace(/"/g, "")) : "Georgia"}</span>
-                      <svg class="select-caret" class:open={selectOpen === "prose-font"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "prose-font"}
-                      <div class="select-menu">
-                        {#each [["Georgia, serif", "Georgia"], ["Merriweather, Georgia, serif", "Merriweather"], ["'EB Garamond', serif", "EB Garamond"], ["Lora, serif", "Lora"], ["Literata, serif", "Literata"], ["Inter, sans-serif", "Inter"], ["Atkinson Hyperlegible, Inter, sans-serif", "Atkinson"], ['"Segoe UI", sans-serif', "Segoe UI"]] as [v, l]}
-                          <button class="select-option" class:active={(store.settings.proseReaderFontFamily ?? "Georgia, serif") === v} onclick={() => { updateSettings({ proseReaderFontFamily: v }); selectOpen = null; }}>{l}</button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_defaultFontSize")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultFontSizeHint")}</p>
-                  </div>
-                  <div class="step-controls">
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderFontSize: Math.max(12, (store.settings.proseReaderFontSize ?? 18) - 1) })} disabled={(store.settings.proseReaderFontSize ?? 18) <= 12}>-</button>
-                    <span class="step-val">{store.settings.proseReaderFontSize ?? 18}px</span>
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderFontSize: Math.min(32, (store.settings.proseReaderFontSize ?? 18) + 1) })} disabled={(store.settings.proseReaderFontSize ?? 18) >= 32}>+</button>
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_defaultLineHeight")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultLineHeightHint")}</p>
-                  </div>
-                  <div class="step-controls">
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderLineHeight: Math.round(Math.max(1.2, (store.settings.proseReaderLineHeight ?? 1.75) - 0.05) * 100) / 100 })} disabled={(store.settings.proseReaderLineHeight ?? 1.75) <= 1.2}>-</button>
-                    <span class="step-val">{(store.settings.proseReaderLineHeight ?? 1.75).toFixed(2)}</span>
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderLineHeight: Math.round(Math.min(2.4, (store.settings.proseReaderLineHeight ?? 1.75) + 0.05) * 100) / 100 })} disabled={(store.settings.proseReaderLineHeight ?? 1.75) >= 2.4}>+</button>
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_defaultColumnWidth")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_defaultColumnWidthHint")}</p>
-                  </div>
-                  <div class="step-controls">
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.max(520, (store.settings.proseReaderContentWidth ?? 760) - 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) <= 520}>-</button>
-                    <span class="step-val">{store.settings.proseReaderContentWidth ?? 760}px</span>
-                    <button class="step-btn" type="button" onclick={() => updateSettings({ proseReaderContentWidth: Math.min(1600, (store.settings.proseReaderContentWidth ?? 760) + 40) })} disabled={(store.settings.proseReaderContentWidth ?? 760) >= 1600}>+</button>
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_textAlignment")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_textAlignmentHint")}</p>
-                  </div>
-                  <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "left"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "left" })}>{$_("settings_inline_left")}</button>
-                    <button class="n-inline-segment" class:is-selected={(store.settings.proseReaderTextAlign ?? "left") === "justify"} type="button" onclick={() => updateSettings({ proseReaderTextAlign: "justify" })}>{$_("settings_inline_justify")}</button>
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_proseReaderTheme")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_proseReaderThemeHint")}</p>
-                  </div>
-                  <div class="select-wrap" id="prose-theme">
-                    <button class="select-btn" type="button" onclick={() => toggleSelect("prose-theme")}>
-                      <span>{(store.settings.proseReaderTheme ?? "nocturne").toUpperCase()}</span>
-                      <svg class="select-caret" class:open={selectOpen === "prose-theme"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
-                    </button>
-                    {#if selectOpen === "prose-theme"}
-                      <div class="select-menu">
-                        {#each [["nocturne","Nocturne"], ["dark","Dark"], ["sepia","Sepia"], ["light","Light"], ["oled","OLED"], ["slate","Slate"], ["forest","Forest"], ["nord","Nord"], ["warm","Warm"]] as [v, l]}
-                          <button class="select-option" class:active={(store.settings.proseReaderTheme ?? "nocturne") === v} onclick={() => { updateSettings({ proseReaderTheme: v as any }); selectOpen = null; }}>{l}</button>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_customPaletteColors")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_customPaletteColorsHint")}</p>
-                  </div>
-                  <div class="prose-color-pickers">
-                    <input
-                      type="color"
-                      value={store.settings.proseReaderTextColor || DEFAULT_PROSE_READER_TEXT_COLOR}
-                      onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderTextColor: e.currentTarget.value })}
-                      class="prose-color-picker"
-                      title={$_("settings_inline_customTextColor")}
-                    />
-                    <input
-                      type="color"
-                      value={store.settings.proseReaderBackgroundColor || DEFAULT_PROSE_READER_BACKGROUND_COLOR}
-                      onchange={(e) => updateSettings({ proseReaderTheme: "nocturne", proseReaderBackgroundColor: e.currentTarget.value })}
-                      class="prose-color-picker"
-                      title={$_("settings_inline_customPaperColor")}
-                    />
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_bookReaderFlow")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_bookReaderFlowHint")}</p>
-                  </div>
-                  <div class="n-inline-segmented">
-                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "paginated"} type="button" onclick={() => updateSettings({ bookReaderFlow: "paginated" })}>{$_("settings_inline_paginated")}</button>
-                    <button class="n-inline-segment" class:is-selected={(store.settings.bookReaderFlow ?? "paginated") === "scrolled"} type="button" onclick={() => updateSettings({ bookReaderFlow: "scrolled" })}>{$_("settings_inline_continuous")}</button>
-                  </div>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_fullWidthReadingPanel")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_fullWidthReadingPanelHint")}</p>
-                  </div>
-                  <button role="switch" aria-checked={store.settings.proseReaderFullWidth ?? false} aria-label={$_("settings_inline_fullWidthReadingPanel")} class="settings-toggle" class:is-on={store.settings.proseReaderFullWidth ?? false} type="button" onclick={() => updateSettings({ proseReaderFullWidth: !(store.settings.proseReaderFullWidth ?? false) })}></button>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-card">
               <p class="settings-card__title">{$_("settings_inline_pdfDefaults")}</p>
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
@@ -4745,13 +4549,13 @@
                   </div>
                   <div class="select-wrap" id="pdf-fit">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("pdf-fit")}>
-                      <span>{store.settings.pdfFitMode || "width"}</span>
+                      <span>{$_(PDF_FIT_LABEL_KEYS[store.settings.pdfFitMode ?? "width"] ?? "ui_width")}</span>
                       <svg class="select-caret" class:open={selectOpen === "pdf-fit"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                     </button>
                     {#if selectOpen === "pdf-fit"}
                       <div class="select-menu">
-                        {#each [["width","Width"], ["page","Page"], ["actual","Actual"]] as [v, l]}
-                          <button class="select-option" class:active={(store.settings.pdfFitMode ?? "width") === v} onclick={() => { updateSettings({ pdfFitMode: v as any }); selectOpen = null; }}>{l}</button>
+                        {#each [["width","ui_width"], ["page","settings_reader_pdfFitPage"], ["actual","settings_reader_pdfFitActual"]] as [v, l]}
+                          <button class="select-option" class:active={(store.settings.pdfFitMode ?? "width") === v} onclick={() => { updateSettings({ pdfFitMode: v as any }); selectOpen = null; }}>{$_(l)}</button>
                         {/each}
                       </div>
                     {/if}
@@ -4763,6 +4567,17 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_pdfDarkModeHint")}</p>
                   </div>
                   <button role="switch" aria-checked={store.settings.pdfDarkMode ?? false} aria-label={$_("settings_inline_pdfDarkMode")} class="settings-toggle" class:is-on={store.settings.pdfDarkMode ?? false} type="button" onclick={() => updateSettings({ pdfDarkMode: !(store.settings.pdfDarkMode ?? false) })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_reader_bookZoom")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings_reader_bookZoomHint")}</p>
+                  </div>
+                  <div class="step-controls">
+                    <button class="step-btn" type="button" onclick={() => stepBookReaderZoom(-0.1)} disabled={(store.settings.bookReaderZoom ?? 1) <= 0.5}>-</button>
+                    <span class="step-val">{Math.round((store.settings.bookReaderZoom ?? 1) * 100)}%</span>
+                    <button class="step-btn" type="button" onclick={() => stepBookReaderZoom(0.1)} disabled={(store.settings.bookReaderZoom ?? 1) >= 4}>+</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4785,8 +4600,8 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_defaultLayoutHint")}</p>
                   </div>
                   <div class="n-inline-segmented">
-                    {#each [["grid", "Grid"], ["compact_grid", "Compact"], ["list", "List"]] as [mode, label]}
-                      <button class="n-inline-segment" class:is-selected={store.settings.libraryViewMode === mode} type="button" onclick={() => updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] })}>{label}</button>
+                    {#each [["grid", "library_display_grid"], ["compact_grid", "library_display_compact"], ["list", "library_display_list"]] as [mode, label]}
+                      <button class="n-inline-segment" class:is-selected={store.settings.libraryViewMode === mode} type="button" onclick={() => updateSettings({ libraryViewMode: mode as Settings["libraryViewMode"] })}>{$_(label)}</button>
                     {/each}
                   </div>
                 </div>
@@ -4837,7 +4652,7 @@
                   </div>
                   <div class="n-inline-segmented">
                     {#each LIBRARY_START_OPTIONS as option}
-                      <button class="n-inline-segment" class:is-selected={store.settings.defaultLibrarySection === option.id} type="button" onclick={() => updateSettings({ defaultLibrarySection: option.id })}>{option.label}</button>
+                      <button class="n-inline-segment" class:is-selected={store.settings.defaultLibrarySection === option.id} type="button" onclick={() => updateSettings({ defaultLibrarySection: option.id })}>{$_(option.label)}</button>
                     {/each}
                   </div>
                 </div>
@@ -4990,7 +4805,7 @@
                   </div>
                   <div class="n-inline-segmented">
                     {#each BOOKS_TYPE_OPTIONS as option}
-                      <button class="n-inline-segment" class:is-selected={store.settings.booksLibraryUi.typeFilter === option.id} type="button" onclick={() => updateSettings({ booksLibraryUi: { ...store.settings.booksLibraryUi, typeFilter: option.id as BooksLibraryTypeFilter } })}>{option.label}</button>
+                      <button class="n-inline-segment" class:is-selected={store.settings.booksLibraryUi.typeFilter === option.id} type="button" onclick={() => updateSettings({ booksLibraryUi: { ...store.settings.booksLibraryUi, typeFilter: option.id as BooksLibraryTypeFilter } })}>{$_(option.label)}</button>
                     {/each}
                   </div>
                 </div>
@@ -5001,7 +4816,7 @@
                   </div>
                   <div class="select-wrap" id="books-status-filter">
                     <button class="select-btn" type="button" onclick={() => toggleSelect("books-status-filter")}>
-                      <span>{BOOKS_FILTER_OPTIONS.find((option) => option.id === store.settings.booksLibraryUi.statusFilter)?.label ?? "All books"}</span>
+                      <span>{$_(BOOKS_FILTER_LABEL_KEYS[store.settings.booksLibraryUi.statusFilter] ?? "library_filter_allBooks")}</span>
                       <svg class="select-caret" class:open={selectOpen === "books-status-filter"} width="10" height="6" viewBox="0 0 10 6"><path d="M0 0l5 6 5-6" fill="currentColor"/></svg>
                     </button>
                     {#if selectOpen === "books-status-filter"}
@@ -5017,7 +4832,7 @@
                               selectOpen = null;
                             }}
                           >
-                            {option.label}
+                            {$_(BOOKS_FILTER_LABEL_KEYS[option.id] ?? option.label)}
                           </button>
                         {/each}
                       </div>
@@ -5033,7 +4848,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_readingHistory")}</p>
-                    <p class="settings-mini-row__hint">{store.history.length} entries saved for quick return.</p>
+                    <p class="settings-mini-row__hint">{$_("settings_inline_historyEntriesHint", { count: store.history.length })}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={clearHistory} disabled={store.history.length === 0}>{$_("settings_inline_clear")}</button>
                 </div>
@@ -5071,7 +4886,7 @@
                     <p class="settings-mini-row__label">{$_("settings_inline_renderLimit")}</p>
                     <p class="settings-mini-row__hint">{$_("settings_inline_renderLimitHint")}</p>
                   </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button">{renderLimitLabel(store.settings.renderLimit)}</button>
+                  <div class="settings-stat-pill"><span>{renderLimitLabel(store.settings.renderLimit)}</span></div>
                 </div>
                 <div class="settings-chip-list settings-chip-list--presets">
                   {#each [12, 24, 48, 96, 200] as v}
@@ -5093,20 +4908,13 @@
               <div class="settings-card__stack">
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_compactSidebar")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_compactSidebarHint")}</p>
-                  </div>
-                  <button role="switch" aria-checked={store.settings.compactSidebar} aria-label={$_("settings_inline_compactSidebar")} class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
-                </div>
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_refreshMetrics")}</p>
                     <p class="settings-mini-row__hint">{$_("settings_inline_refreshMetricsHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={refreshPerfMetrics}>{$_("common_refresh")}</button>
                 </div>
               </div>
-              <div class="settings-card__surface" style="margin-top:16px" data-testid="epigraph-release-history">
+              <div class="settings-card__surface" style="margin-top:16px" data-testid="settings-session-cache">
                 <div class="settings-card__head">
                   <p class="settings-card__title">{$_("settings_inline_sessionCache")}</p>
                 </div>
@@ -5117,7 +4925,7 @@
                       <p class="settings-mini-row__hint">{$_("settings_inline_cacheEntriesHint")}</p>
                     </div>
                     <div class="settings-stat-pill">
-                      <span>{perfSnapshot?.cacheEntries ?? 0} entries</span>
+                      <span>{$_("settings_inline_cacheEntriesCount", { count: perfSnapshot?.cacheEntries ?? 0 })}</span>
                     </div>
                   </div>
                   {#if perfSnapshot && perfSnapshot.cacheEntries > 0}
@@ -5166,12 +4974,12 @@
                   {@const isDefault   = store.settings.keybinds[k] === DEFAULT_KEYBINDS[k]}
                   <div class="settings-row settings-mini-row">
                     <div class="settings-mini-row__body">
-                      <p class="settings-mini-row__label">{KEYBIND_LABELS[k]}</p>
+                      <p class="settings-mini-row__label">{$_(KEYBIND_LABEL_KEYS[k])}</p>
                       <p class="settings-mini-row__hint">{$_("settings_inline_desktopShortcut")}</p>
                     </div>
                     <div class="settings-keybind-actions">
                       <button class="n-btn n-btn--sm n-btn-ghost settings-value-pill" class:listening={isListening} type="button" onclick={() => startListen(k)}>
-                        {isListening ? "Press key..." : store.settings.keybinds[k]}
+                        {isListening ? $_("ui_pressKey") : store.settings.keybinds[k]}
                       </button>
                       <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={() => updateSettings({ keybinds: { ...store.settings.keybinds, [k]: DEFAULT_KEYBINDS[k] } })} disabled={isDefault} title={$_("settings_inline_reset")}>{$_("settings_inline_reset")}</button>
                     </div>
@@ -5202,7 +5010,7 @@
               </div>
               {#if storageError}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.nav.storage")} title={$_("settings.storage.loadError")} body={storageError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.nav.storage")} title={$_("settings.storage.loadError")} body={presentOperationFailure(storageError, $_)} />
                 </div>
               {:else if isExternalServer}
                 <div class="settings-state">
@@ -5362,7 +5170,7 @@
                         </button>
                       </div>
                       {#if pathsFieldError.dl}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.downloadPathAttention")} body={pathsFieldError.dl} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.downloadPathAttention")} body={presentOperationFailure(pathsFieldError.dl, $_)} />
                       {/if}
                     </div>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
@@ -5388,10 +5196,10 @@
                         </button>
                       </div>
                       {#if pathsFieldError.loc}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.localSourcePathAttention")} body={pathsFieldError.loc} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.localSourcePathAttention")} body={presentOperationFailure(pathsFieldError.loc, $_)} />
                       {/if}
                       {#if pathsError}
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.pathSaveError")} body={pathsError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings.storage.path")} title={$_("settings.storage.pathSaveError")} body={presentOperationFailure(pathsError, $_)} />
                       {/if}
                     </div>
                   </div>
@@ -5402,7 +5210,7 @@
                       <p class="settings-card__title">{$_("settings_inline_migration")}</p>
                       <div class="settings-section-actions settings-inline-actions">
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startMigration} disabled={migrating}>
-                          {migrating ? (migrateProgress ? `Moving ${migrateProgress.done}/${migrateProgress.total}` : "Starting...") : "Move files"}
+                          {migrating ? (migrateProgress ? $_("settings_storage_moving", { done: migrateProgress.done, total: migrateProgress.total }) : $_("settings_storage_starting")) : $_("ui_moveFiles")}
                         </button>
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>{$_("settings_inline_skip")}</button>
                       </div>
@@ -5424,7 +5232,7 @@
                     {/if}
                     {#if migrateError}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("settings_inline_pathMigrationFailed")} body={migrateError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("settings_inline_pathMigrationFailed")} body={presentOperationFailure(migrateError, $_)} />
                       </div>
                     {/if}
                   </div>
@@ -5433,7 +5241,7 @@
 <div class="settings-card__footer settings-card__footer--actions" style="margin-top:16px">
                 <span class="settings-card__footer-status">
                 {#if pathsError}
-                  <span class="settings-mini-row__hint" style="color:var(--color-error)">{pathsError}</span>
+                  <span class="settings-mini-row__hint" style="color:var(--color-error)">{presentOperationFailure(pathsError, $_)}</span>
                 {:else if pathsSaved}
                   <span class="settings-mini-row__hint" style="color:var(--accent-fg)">{$_("settings.storage.pathsSaved")}</span>
                 {:else}
@@ -5501,13 +5309,13 @@
               {#if categoriesDetailsPane}
                 <div class="settings-card__surface" style="margin-top:16px">
                 <div class="settings-card__head">
-                  <p class="settings-card__title">Manage {categoriesDetailsPane === "comics" ? "Comics" : "Books"} categories</p>
+                  <p class="settings-card__title">{categoriesDetailsPane === "comics" ? $_("settings_categories_manageComics") : $_("settings_categories_manageBooks")}</p>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={closeCategoryManager}>{$_("common_close")}</button>
                 </div>
                 <div class="n-inline-segmented">
                   {#each [
-                    { id: "comics", label: "Comics" },
-                    { id: "books", label: "Books" },
+                    { id: "comics", label: $_("common_comics") },
+                    { id: "books", label: $_("common_books") },
                   ] as option}
                     <button
                       class="n-inline-segment"
@@ -5521,12 +5329,14 @@
                 </div>
                 <p class="settings-card__intro">
                   {categoryDomain === "comics"
-                    ? "Comics categories stay synced with Suwayomi. Library updates check every title except folders marked as excluded."
-                    : `Books categories are local to Epigraph. Books updates skip every source novel assigned to folders marked as excluded${booksUpdateExcludedCount > 0 ? ` (${booksUpdateExcludedCount} currently skipped)` : ""}.`}
+                    ? $_("settings_categories_comicsIntro")
+                    : booksUpdateExcludedCount > 0
+                      ? $_("settings_categories_booksIntroSkipped", { count: booksUpdateExcludedCount })
+                      : $_("settings_categories_booksIntro")}
                 </p>
                 {#if categoryDomain === "comics" && catsError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_categories")} title={$_("settings_inline_couldNotLoadComicFolders")} body={catsError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_categories")} title={$_("settings_inline_couldNotLoadComicFolders")} body={presentOperationFailure(catsError, $_)} />
                   </div>
                 {/if}
                 <div class="settings-card__footer settings-card__footer--editor">
@@ -5644,7 +5454,7 @@
                     icon="warning"
                     eyebrow={$_("feedback.trackers")}
                     title={$_("settings_inline_couldNotLoadTrackers")}
-                    body={trackersError}
+                    body={presentOperationFailure(trackersError, $_)}
                     actions={[{
                       label: $_("library_error_retry"),
                       icon: "retry",
@@ -5784,7 +5594,7 @@
                     </p>
                     {#if hardcoverError}
                       <div class="settings-state">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title={$_("settings_inline_couldNotConnectHardcover")} body={hardcoverError} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow="Hardcover" title={$_("settings_inline_couldNotConnectHardcover")} body={presentOperationFailure(hardcoverError, $_)} />
                       </div>
                     {/if}
                     <div class="settings-card__stack">
@@ -5820,22 +5630,6 @@
             <div class="settings-card">
               <p class="settings-card__title">{$_("settings_inline_syncBehavior")}</p>
               <div class="settings-card__stack">
-                <!-- Mockup-only control preserved until tracker sync behavior is configurable from desktop settings. -->
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_updateProgressAutomatically")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_updateProgressAutomaticallyHint")}</p>
-                  </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_updateProgressAutomatically")} data-inert-control="settings-tracking-auto-progress"></button>
-                </div>
-                <!-- Mockup-only control preserved until tracker auth preference becomes a first-class setting. -->
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_preferOauthLogin")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_preferOauthLoginHint")}</p>
-                  </div>
-                  <button class="settings-toggle is-on" type="button" aria-disabled="true" aria-label={$_("settings_inline_preferOauthLogin")} data-inert-control="settings-tracking-prefer-oauth"></button>
-                </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_desktopSyncPairing")}</p>
@@ -5869,7 +5663,7 @@
               <div class="settings-card settings-card--wide">
                 <p class="settings-card__title">{$_("settings_inline_securityStatus")}</p>
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_security")} title={$_("settings_inline_securitySettingFailed")} body={secError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_security")} title={$_("settings_inline_securitySettingFailed")} body={presentOperationFailure(secError, $_)} />
                 </div>
               </div>
             {/if}
@@ -5881,7 +5675,7 @@
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_requirePinOnOpen")}</p>
                     <p class="settings-mini-row__hint">
-                      {store.settings.appLockEnabled ? "PIN lock is active for launch and idle resume." : "Protect the shell when reopening the app."}
+                      {store.settings.appLockEnabled ? ((store.settings.appLockPin?.length ?? 0) >= 4 ? $_("settings_security_pinActiveHint") : $_("settings_security_pinMissingHint")) : $_("settings_security_pinInactiveHint")}
                     </p>
                   </div>
                   <button
@@ -5918,9 +5712,12 @@
                     role="switch"
                     aria-checked={flareEnabled}
                     aria-label={$_("settings_inline_enableFlareSolverr")}
-                    onclick={() => {
-                      flareEnabled = !flareEnabled;
-                      securityDetailPane = "flare";
+                    disabled={secLoading}
+                    onclick={async () => {
+                      const next = !flareEnabled;
+                      flareEnabled = next;
+                      if (next) securityDetailPane = "flare";
+                      if (!(await saveFlareSolverr())) flareEnabled = !next;
                     }}
                   ></button>
                 </div>
@@ -5960,7 +5757,7 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_proxyModeHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "flare" ? null : "flare")}>
-                    {flareDockerStatus?.running ? "Docker" : flareLocalStatus?.running ? "Local" : "Custom"}
+                    {flareDockerStatus?.running ? $_("settings_security_flareDocker") : flareLocalStatus?.running ? $_("settings_security_flareLocal") : $_("settings_security_flareCustom")}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">
@@ -6028,7 +5825,7 @@
                           autocomplete="new-password"
                           onkeydown={(event) => event.key === "Enter" && enableAuth()}
                         />
-                        <button class="sec-eye-btn" type="button" onclick={() => (showAuthPass = !showAuthPass)} title={showAuthPass ? "Hide password" : "Show password"}>
+                        <button class="sec-eye-btn" type="button" onclick={() => (showAuthPass = !showAuthPass)} title={showAuthPass ? $_("settings_security_hidePassword") : $_("settings_security_showPassword")} aria-label={showAuthPass ? $_("settings_security_hidePassword") : $_("settings_security_showPassword")}>
                           {#if showAuthPass}
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                           {:else}
@@ -6041,9 +5838,9 @@
                 </div>
                 <div class="settings-card__footer">
                   {#if store.settings.serverAuthEnabled}
-                    <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={disableAuth} disabled={secLoading}>{secLoading ? "Saving..." : "Disable"}</button>
+                    <button class="n-btn n-btn--sm n-btn-ghost n-btn-danger" type="button" onclick={disableAuth} disabled={secLoading}>{secLoading ? $_("common_saving") : $_("sources_actions_disable")}</button>
                   {/if}
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={enableAuth} disabled={secLoading || !authUsername.trim() || !authPassword.trim()}>{secLoading ? "Saving..." : secSaved === "auth" ? "Saved" : store.settings.serverAuthEnabled ? "Update" : "Enable"}</button>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={enableAuth} disabled={secLoading || !authUsername.trim() || !authPassword.trim()}>{secLoading ? $_("common_saving") : secSaved === "auth" ? $_("common_saved") : store.settings.serverAuthEnabled ? $_("settings_inline_update") : $_("sources_actions_enable")}</button>
                 </div>
               </div>
             {/if}
@@ -6079,11 +5876,11 @@
                     </div>
                     <div class="settings-input-line settings-input-line--stack">
                       <div class="settings-input-line">
-                        <input class="settings-text-input sec-pin-input" type="password" inputmode="numeric" maxlength={8} value={pinInput} placeholder="••••" autocomplete="off" oninput={(event) => { pinInput = event.currentTarget.value.replace(/\D/g, "").slice(0, 8); pinError = ""; }} onkeydown={(event) => event.key === "Enter" && commitPin()} />
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? "Saved" : "Save"}</button>
+                        <input class="settings-text-input sec-pin-input" type="password" inputmode="numeric" maxlength={8} value={pinInput} placeholder="••••" autocomplete="off" oninput={(event) => { pinInput = event.currentTarget.value.replace(/\D/g, "").slice(0, 8); pinError = null; }} onkeydown={(event) => event.key === "Enter" && commitPin()} />
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={commitPin} disabled={pinInput.length > 0 && pinInput.length < 4}>{store.settings.appLockPin && pinInput === store.settings.appLockPin ? $_("common_saved") : $_("common_save")}</button>
                       </div>
                       {#if pinError}
-                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_pin")} title={$_("settings_inline_pinNeedsAttention")} body={pinError} />
+                        <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_pin")} title={$_("settings_inline_pinNeedsAttention")} body={presentOperationFailure(pinError, $_)} />
                       {/if}
                     </div>
                   </div>
@@ -6169,7 +5966,7 @@
                       </div>
                     </div>
                     <div class="settings-input-line">
-                      <input class="settings-text-input settings-input-line__grow" bind:value={socksUsername} placeholder="Optional" spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveSocksProxy()} />
+                      <input class="settings-text-input settings-input-line__grow" bind:value={socksUsername} placeholder={$_("common_optional")} spellcheck="false" onkeydown={(event) => event.key === "Enter" && saveSocksProxy()} />
                     </div>
                   </div>
 
@@ -6190,7 +5987,7 @@
                           autocomplete="new-password"
                           onkeydown={(event) => event.key === "Enter" && saveSocksProxy()}
                         />
-                        <button class="sec-eye-btn" type="button" onclick={() => (showSocksPass = !showSocksPass)} title={showSocksPass ? "Hide password" : "Show password"} aria-label={showSocksPass ? "Hide SOCKS proxy password" : "Show SOCKS proxy password"}>
+                        <button class="sec-eye-btn" type="button" onclick={() => (showSocksPass = !showSocksPass)} title={showSocksPass ? $_("settings_security_hidePassword") : $_("settings_security_showPassword")} aria-label={showSocksPass ? $_("settings_security_hideSocksPassword") : $_("settings_security_showSocksPassword")}>
                           {#if showSocksPass}
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                           {:else}
@@ -6203,7 +6000,7 @@
                 </div>
                 <div class="settings-card__footer">
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={saveSocksProxy} disabled={secLoading}>
-                    {secLoading ? "Saving..." : secSaved === "socks" ? "Saved" : "Save proxy"}
+                    {secLoading ? $_("common_saving") : secSaved === "socks" ? $_("common_saved") : $_("settings_security_saveProxy")}
                   </button>
                 </div>
               </div>
@@ -6276,7 +6073,7 @@
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
                         <p class="settings-mini-row__label">{$_("settings_inline_startOnAppLaunch")}</p>
-                        <p class="settings-mini-row__hint">{flareLocalStatus?.path ?? "Install FlareSolverr locally to enable autostart."}</p>
+                        <p class="settings-mini-row__hint">{flareLocalStatus?.path ?? $_("settings_security_flareInstallHint")}</p>
                       </div>
                       <button
                         class="settings-toggle"
@@ -6371,7 +6168,7 @@
                 </div>
                 <div class="settings-card__footer">
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={saveFlareSolverr} disabled={secLoading}>
-                    {secLoading ? "Saving..." : secSaved === "flare" ? "Saved" : "Save FlareSolverr"}
+                    {secLoading ? $_("common_saving") : secSaved === "flare" ? $_("common_saved") : $_("settings_security_saveFlaresolverr")}
                   </button>
                 </div>
               </div>
@@ -6461,7 +6258,7 @@
               {#if contentSourceRulesOpen}
                 <div class="settings-card__surface" style="margin-top:16px">
                   <div class="settings-card__head">
-                    <p class="settings-card__title">{contentSourceRulesMode === "allowed" ? "Allowed sources" : "Blocked sources"}</p>
+                    <p class="settings-card__title">{contentSourceRulesMode === "allowed" ? $_("settings_inline_allowedSources") : $_("settings_inline_blockedSources")}</p>
                     <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (contentSourceRulesOpen = false)}>{$_("common_close")}</button>
                   </div>
                   <p class="settings-card__intro">{$_("settings_inline_sourceRulesHint")}</p>
@@ -6492,14 +6289,14 @@
                               class:content-action-active-allow={isAllowed}
                               type="button"
                               onclick={() => toggleSourceAllowed(ids)}
-                              title={isAllowed ? "Remove allow override" : "Allow this source through regardless of NSFW flag"}
+                              title={isAllowed ? $_("settings_security_removeAllowOverride") : $_("settings_security_allowOverride")}
                             >{$_("settings_inline_allow")}</button>
                             <button
                               class="content-action-btn"
                               class:content-action-active-block={isBlocked}
                               type="button"
                               onclick={() => toggleSourceBlocked(ids)}
-                              title={isBlocked ? "Remove block override" : "Always block this source"}
+                              title={isBlocked ? $_("settings_security_removeBlockOverride") : $_("settings_security_blockOverride")}
                             >{$_("settings_inline_block")}</button>
                           </div>
                         </div>
@@ -6529,7 +6326,7 @@
                     <p class="settings-mini-row__hint">v{appVersion}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { releasesError = null; loadReleases(); }} disabled={releasesLoading}>
-                    {releasesLoading ? "Loading..." : "Check updates"}
+                    {releasesLoading ? $_("ui_loading") : $_("ui_checkUpdates")}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">
@@ -6538,7 +6335,7 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_releaseHistoryHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => { aboutReleasesOpen = !aboutReleasesOpen; if (aboutReleasesOpen) loadReleases(); }}>
-                    {aboutReleasesOpen ? "Hide" : "Browse"}
+                    {aboutReleasesOpen ? $_("settings_about_hide") : $_("common_browse")}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">
@@ -6551,9 +6348,9 @@
               </div>
               {#if availableUpdateRelease && updatePhase === "idle"}
                 <div class="update-ready-row update-ready-row--available" data-testid="epigraph-update-available">
-                  <span class="update-ready-label">{availableUpdateRelease.tag_name} available</span>
+                  <span class="update-ready-label">{$_("settings_about_updateAvailable", { version: availableUpdateRelease.tag_name })}</span>
                   <button class="update-action-btn primary" type="button" onclick={() => installUpdate(availableUpdateRelease)}>
-                    {IS_WINDOWS ? "Install" : $_("settings_inline_openOnGithub")}
+                    {IS_WINDOWS ? $_("settings_inline_install") : $_("settings_inline_openOnGithub")}
                   </button>
                 </div>
               {/if}
@@ -6587,21 +6384,21 @@
               {/if}
               {#if updatePhase === "error"}
                 <div class="settings-state">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings_brand_updates")} title={$_("settings_inline_updateFailed")} body={updateError ?? ""} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("settings_brand_updates")} title={$_("settings_inline_updateFailed")} body={presentOperationFailure(updateError, $_)} />
                 </div>
                 <div class="update-error-row">
                   <button class="n-btn n-btn--sm n-btn-ghost settings-mini-action" type="button" onclick={cancelUpdate}>{$_("settings_inline_dismiss")}</button>
                 </div>
               {/if}
               {#if aboutReleasesOpen}
-              <div class="settings-card__surface" style="margin-top:16px">
+              <div class="settings-card__surface" style="margin-top:16px" data-testid="epigraph-release-history">
                 <div class="settings-card__head">
                   <p class="settings-card__title">{$_("settings_inline_releases")}</p>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (aboutReleasesOpen = false)}>{$_("common_close")}</button>
                 </div>
                 {#if releasesError}
                   <div class="settings-state">
-                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_releases")} title={$_("settings_inline_couldNotFetchReleases")} body={releasesError} />
+                    <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_releases")} title={$_("settings_inline_couldNotFetchReleases")} body={presentOperationFailure(releasesError, $_)} />
                   </div>
                 {:else if releasesLoading}
                   <NocturneState layout="compact" tone="info" icon="retry" eyebrow={$_("ui_releases")} title={$_("settings_inline_fetchingReleases")} />
@@ -6626,7 +6423,7 @@
                             </div>
                             <div class="release-actions">
                               {#if release.body.trim()}
-                                <button class="release-changelog-btn" type="button" onclick={() => expandedTag = isExpanded ? null : release.tag_name}>{isExpanded ? "Hide" : "Changelog"}</button>
+                                <button class="release-changelog-btn" type="button" onclick={() => expandedTag = isExpanded ? null : release.tag_name}>{isExpanded ? $_("settings_about_hide") : $_("settings_about_changelog")}</button>
                               {/if}
                             </div>
                           </div>
@@ -6673,14 +6470,6 @@
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={openAppLogs}>{$_("settings_inline_open")}</button>
                 </div>
-                <!-- Mockup-only control preserved until theme token inspector is promoted into a stable settings action. -->
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_inspectThemeTokens")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_inspectThemeTokensHint")}</p>
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" aria-disabled="true" data-inert-control="settings-inspect-theme-tokens">{$_("settings_inline_inspect")}</button>
-                </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings_inline_buildMode")}</p>
@@ -6722,11 +6511,11 @@
       <div class="storage-backup-panel" onclick={(e) => e.stopPropagation()} bind:this={backupSectionEl}>
         <div class="storage-backup-panel-header">
           <p class="settings-card__title">
-            {backupViewMode === "create" ? "Create Backup" : "Restore Backup"}
+            {backupViewMode === "create" ? $_("settings_backup_createTitle") : $_("settings_backup_restoreTitle")}
           </p>
           {#if firstRunPane !== "backup"}
             <button class="n-btn n-btn--sm n-btn-ghost close-btn" type="button" onclick={closeStorageBackupPanel}>
-              Close
+              {$_("common_close")}
             </button>
           {/if}
         </div>
@@ -6739,11 +6528,11 @@
                 <p class="settings-card__intro">{$_("settings_inline_exportHint")}</p>
                 <div class="settings-chip-list" style="margin-top:14px">
                   {#each [
-                    ["unified", "Unified Epigraph"],
-                    ["manga", "Manga only"],
-                    ["books", "Books only"],
-                    ["novels", "Novels only"],
-                    ["app", "App metadata"],
+                    ["unified", $_("ui_unifiedEpigraph")],
+                    ["manga", $_("ui_mangaOnly")],
+                    ["books", $_("ui_booksOnly")],
+                    ["novels", $_("ui_novelsOnly")],
+                    ["app", $_("settings_inline_appMetadata")],
                   ] as [mode, label]}
                     <button
                       class="settings-chip"
@@ -6866,12 +6655,12 @@
                       <div class="backup-review__mark"><ShieldCheck size={20} weight="duotone" /></div>
                       <div>
                         <p class="settings-card__title">{$_("settings_inline_restoreSummary")}</p>
-                        <p class="settings-card__intro">{backupUnifiedPlan.summary.summaryBody}</p>
+                        <p class="settings-card__intro">{$_("outcomes.summary")}</p>
                       </div>
                     </div>
                     {#if backupUnifiedPlan.executionBlockedReason}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreBlocked")} body={backupUnifiedPlan.executionBlockedReason} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreBlocked")} body={restorePayloadSummary({ status: "blocked", reasons: backupUnifiedPlan.containerIssues, warnings: backupUnifiedPlan.payloads.filter(payload => payload.status === "blocked").flatMap(payload => payload.reasons) }, $_)} />
                       </div>
                     {/if}
                     <div class="backup-payload-list">
@@ -6884,8 +6673,8 @@
                               <strong>{backupPayloadKindLabel(payload.kind)}</strong>
                               <span class:has-warning={payload.status === "warning-only" || payload.status === "blocked"}>{backupPayloadStatusLabel(payload.status)}</span>
                             </div>
-                            <p>{backupPayloadCount(payload) ?? payload.summaryLabel}</p>
-                            {#if backupPayloadCount(payload)}<small>{payload.summaryLabel}</small>{/if}
+                            <p>{backupPayloadCount(payload) ?? restorePayloadSummary(payload, $_)}</p>
+                            {#if backupPayloadCount(payload)}<small>{restorePayloadSummary(payload, $_)}</small>{/if}
                           </div>
                           <div>
                             {#if isPayloadExecutable(payload)}
@@ -6914,9 +6703,9 @@
                     </div>
                     <details class="backup-technical-details">
                       <summary>{$_("settings_inline_info")}</summary>
-                      {#each backupUnifiedPlan.containerIssues as issue}<p>{issue.message}</p>{/each}
+                      {#each backupUnifiedPlan.containerIssues as issue}<p>{restoreNote(issue, $_)}</p>{/each}
                       {#each backupUnifiedPlan.payloads as payload}
-                        {#each [...payload.reasons, ...payload.warnings] as note}<p><strong>{backupPayloadKindLabel(payload.kind)}:</strong> {note.message}</p>{/each}
+                        {#each [...payload.reasons, ...payload.warnings] as note}<p><strong>{backupPayloadKindLabel(payload.kind)}:</strong> {restoreNote(note, $_)}</p>{/each}
                       {/each}
                     </details>
                   </div>
@@ -6930,7 +6719,7 @@
                       <p class="settings-card__intro" data-backup-title-count>{backupParsed.backupManga.length} {$_("ui_titles")}</p>
                     {/if}
                     {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
-                      <p class="settings-card__intro">Epigraph will relaunch into {otherLocalProfileMeta.label}, reopen this backup in Settings > {$_("settings_inline_storageWaitConfirmation")}</p>
+                      <p class="settings-card__intro">{$_("outcomes.restoreHandoff", { profile: profileName(otherLocalProfileMeta.label) })}</p>
                     {:else if backupRestoreTargetMode === "current-profile"}
                       <p class="settings-card__intro">{$_("settings_inline_sourceReconciliationHint")}</p>
                     {/if}
@@ -6952,14 +6741,14 @@
                       <span><strong>{backupDependencyPreview.plugins.length}</strong> {$_("ui_extensions").toLocaleLowerCase()}</span>
                     </div>
                     {#if backupDependencyPreview.repositories.length > 0}
-                      <div class="backup-dependencies__list" aria-label="Repositories found in backup">
+                      <div class="backup-dependencies__list" aria-label={$_("settings_backup_repositoriesFound")}>
                         {#each backupDependencyPreview.repositories as repository}
                           <div><GitBranch size={15} weight="duotone" /><span>{repository.name}</span></div>
                         {/each}
                       </div>
                     {/if}
                     {#if backupDependencyPreview.plugins.length > 0}
-                      <div class="backup-plugin-strip" aria-label="Extensions found in backup">
+                      <div class="backup-plugin-strip" aria-label={$_("settings_backup_extensionsFound")}>
                         {#each backupDependencyPreview.plugins.slice(0, 8) as plugin}
                           <span title={plugin.name}><PuzzlePiece size={15} weight="duotone" />{plugin.name}</span>
                         {/each}
@@ -6988,6 +6777,37 @@
                   </div>
                 {/if}
                 {#if backupImportKind}
+                  {#if backupSelectedFile && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))}
+                    {#key backupSelectedFile}
+                      <RestoreMangaDependencies bind:this={mangaDependencyPanel} file={backupSelectedFile}
+                        format={backupImportKind === "epigraph" ? "epigraph" : "native"} choices={backupReviewSelections}
+                        disabled={backupRestoring || backupValidating || backupDependenciesWorking || backupRestoreTargetMode !== "current-profile"}
+                        onBusy={busy => backupDependenciesWorking = busy}
+                        onChoices={choices => backupReviewSelections = choices}
+                        onChanged={async () => {
+                          if (backupImportKind === "manga") await refreshBackupReadiness();
+                          else if (backupSelectedFile) {
+                            const selection = { ...backupUnifiedSelection };
+                            await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
+                            backupUnifiedSelection = selection;
+                          }
+                        }} />
+                    {/key}
+                  {/if}
+                  {#if backupSelectedFile && (backupImportKind === "novels-lnreader" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "novels"))}
+                    {#key backupSelectedFile}
+                      <RestoreNovelDependencies file={backupSelectedFile} format={backupImportKind === "novels-lnreader" ? "lnreader" : "epigraph"}
+                        disabled={backupRestoring || backupValidating || backupRestoreTargetMode !== "current-profile"}
+                        onBusy={busy => backupDependenciesWorking = busy}
+                        onChanged={async () => {
+                          if (backupImportKind === "epigraph" && backupSelectedFile) {
+                            const selection = { ...backupUnifiedSelection };
+                            await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
+                            backupUnifiedSelection = selection;
+                          }
+                        }} />
+                    {/key}
+                  {/if}
                   <div class="settings-card__surface" style="margin-top:16px">
                     <div class="settings-card__head">
                       <p class="settings-card__title">{$_("settings_inline_restoreTarget")}</p>
@@ -7004,7 +6824,7 @@
                             backupRestoreCurrentProfileConfirmed = false;
                           }}
                         >
-                          {otherLocalProfileMeta ? $_("settings_inline_restoreIntoProfile", { profile: otherLocalProfileMeta.label }) : $_("settings_inline_otherLocalProfile")}
+                          {otherLocalProfileMeta ? $_("settings_inline_restoreIntoProfile", { profile: profileName(otherLocalProfileMeta.label) }) : $_("settings_inline_otherLocalProfile")}
                         </button>
                         <button
                           class="settings-chip"
@@ -7024,7 +6844,7 @@
                       <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
                         <div class="settings-mini-row__body">
                           <p class="settings-mini-row__label">{$_("settings_inline_confirmCurrentProfileRestore")}</p>
-                          <p class="settings-mini-row__hint">{$_("settings_inline_currentProfileRestoreHint", { profile: currentProfileMeta?.label ?? currentSessionProfileLabel })}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_currentProfileRestoreHint", { profile: profileName(currentProfileMeta?.label ?? currentSessionProfileLabel) })}</p>
                         </div>
                         <button
                           role="switch"
@@ -7039,7 +6859,7 @@
                     {/if}
                     {#if backupResolvedExecutionBlockedReason}
                       <div class="settings-state settings-state--spaced">
-                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreTargetNeedsAttention")} body={backupResolvedExecutionBlockedReason} />
+                        <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.restore")} title={$_("settings_inline_restoreTargetNeedsAttention")} body={$_(backupUnifiedPlan?.executionBlockedReason ? "outcomes.dependencies" : "settings_inline_restoreExecutionProfileHint")} />
                       </div>
                     {/if}
                     <div class="settings-row settings-mini-row settings-mini-row--stretch" style="margin-top:14px">
@@ -7057,7 +6877,7 @@
                           {/if}
                         </p>
                         {#if backupRestoreStatus}
-                          <p class="settings-mini-row__hint">{$_("settings_inline_mangaRestoreProgress", { state: backupRestoreStatus.state, progress: backupRestoreStatus.mangaProgress, total: backupRestoreStatus.totalManga || 0 })}</p>
+                          <p class="settings-mini-row__hint">{$_("settings_inline_mangaRestoreProgress", { state: $_("settings_inline_restoring"), progress: backupRestoreStatus.mangaProgress, total: backupRestoreStatus.totalManga || 0 })}</p>
                         {/if}
                       </div>
                       <div class="settings-section-actions settings-inline-actions">
@@ -7089,6 +6909,9 @@
                         · {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga}
                       {/if}
                     </p>
+                    {#if backupRestoring && activeRestoreWorkflow}
+                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" disabled={restoreCancellationRequested} onclick={cancelRestore}>{$_("ui_cancel")}</button>
+                    {/if}
                   </div>
                 {/if}
                 <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
@@ -7132,10 +6955,10 @@
                           <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
                             <button
                               class="n-btn n-btn--sm n-btn-ghost"
-                              onclick={installRequiredRestoreExtensions}
+                              onclick={reviewMangaDependencies}
                               disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
                             >
-                              {$_("ui_installAll")}
+                              {$_("restoreDeps.mangaReview")}
                             </button>
                             <button class="n-btn n-btn--sm n-btn-ghost" onclick={openRestoreRepositories}>
                               {$_("settings_inline_openExtensionsRepos")}
@@ -7180,10 +7003,10 @@
                             {#if cluster.selectedCandidate?.requiresInstall && (cluster.selectedCandidate.sourceId === cluster.orphanSourceId || isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
                                 class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
+                                onclick={reviewMangaDependencies}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
                               >
-                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                                {$_("restoreDeps.mangaReview")}
                               </button>
                             {/if}
                           </div>
@@ -7224,10 +7047,10 @@
                             {#if cluster.selectedCandidate?.requiresInstall && isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
                               <button
                                 class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(extensionForPkg(cluster.selectedCandidate!.extensionPkgName)!)}
+                                onclick={reviewMangaDependencies}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
                               >
-                                {backupInstalling.has(cluster.selectedCandidate.extensionPkgName!) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                                {$_("restoreDeps.mangaReview")}
                               </button>
                             {/if}
                           </div>
@@ -7256,7 +7079,7 @@
                                 <div class="settings-row settings-mini-row settings-mini-row--stretch">
                                   <div class="settings-mini-row__body">
                                     <p class="settings-mini-row__label">{candidate.displayName}</p>
-                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {candidate.evidenceSummary}</p>
+                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {$_("restoreDeps.mangaPreserveHint")}</p>
                                   </div>
                                   <button
                                     class="settings-chip"
@@ -7332,10 +7155,10 @@
                               </div>
                               <button
                                 class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={() => installMissingSourceExtension(suggestion.extension)}
+                                onclick={reviewMangaDependencies}
                                 disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
                               >
-                                {backupInstalling.has(suggestion.extension.pkgName) ? $_("settings_inline_installing") : $_("settings_inline_install")}
+                                {$_("restoreDeps.mangaReview")}
                               </button>
                             </div>
                           {/each}
@@ -7350,7 +7173,7 @@
                       {/if}
                       {#if backupExtensionLookupError}
                         <div class="settings-state settings-state--spaced">
-                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_extensions")} title={$_("settings_inline_couldNotInspectExtensionMatches")} body={backupExtensionLookupError} />
+                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_extensions")} title={$_("settings_inline_couldNotInspectExtensionMatches")} body={presentOperationFailure(backupExtensionLookupError, $_)} />
                         </div>
                       {/if}
                     </div>
@@ -7364,9 +7187,9 @@
                         {#each backupAnalysis.warnings as warning}
                           <div class="settings-row settings-mini-row settings-mini-row--stretch">
                             <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{warning.message}</p>
+                              <p class="settings-mini-row__label">{restoreNote(warning, $_)}</p>
                               {#if warning.details}
-                                <p class="settings-mini-row__hint">{warning.details}</p>
+                                <details><summary>{$_("settings_inline_info")}</summary><p class="settings-mini-row__hint">{warning.details}</p></details>
                               {/if}
                             </div>
                           </div>
@@ -7385,10 +7208,10 @@
                     {#each backupRestoreResults as result}
                       <div class="settings-row settings-mini-row settings-mini-row--stretch">
                         <div class="settings-mini-row__body">
-                          <p class="settings-mini-row__label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.status)}</p>
-                          <p class="settings-mini-row__hint">{result.summary}</p>
+                          <p class="settings-mini-row__label">{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.outcome === "unknown" ? "unknown" : result.status)}</p>
+                          <p class="settings-mini-row__hint">{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}</p>
                           {#if result.detail}
-                            <p class="settings-mini-row__hint">{result.detail}</p>
+                            <p class="settings-mini-row__hint">{restoreNote(result.detail, $_)}</p>
                           {/if}
                         </div>
                       </div>
@@ -7398,7 +7221,7 @@
               {/if}
               {#if backupError}
                 <div class="settings-state settings-state--spaced">
-                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.backup")} title={$_("settings_inline_backupActionFailed")} body={backupError} />
+                  <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.backup")} title={$_("settings_inline_backupActionFailed")} body={presentOperationFailure(backupError, $_)} />
                 </div>
               {/if}
           {/if}
@@ -7417,8 +7240,13 @@
   .step-btn:hover:not(:disabled) { color: var(--component-settings-text-primary); border-color: var(--component-settings-border-strong); background: var(--component-settings-button-bg-hover); }
   .step-btn:active:not(:disabled) { transform: scale(0.97); }
   .step-btn:disabled { opacity: 0.3; cursor: default; }
-  .step-val { font-family: var(--font-ui); font-size: 11px; color: var(--component-settings-text-muted); letter-spacing: 0.08em; min-width: 40px; text-align: center; text-transform: uppercase; }
+  .step-val { font-family: var(--font-ui); font-size: 11px; color: var(--component-settings-text-muted); letter-spacing: 0; min-width: 40px; text-align: center; text-transform: none; }
   .select-wrap { position: relative; flex-shrink: 0; }
+  /* Reader pane: one heading per reader so manga, novel and book options never read as shared. */
+  .settings-reader-group { grid-column: 1 / -1; margin: 10px 0 -4px; padding: 0 2px; font-family: var(--font-ui); font-size: 13px; font-weight: 700; letter-spacing: 0.02em; color: var(--component-settings-text-secondary); }
+  .settings-reader-group:first-child { margin-top: 0; }
+  .settings-subgroup { display: grid; margin-left: 14px; padding-left: 12px; border-left: 2px solid var(--component-settings-border-dim); transition: opacity 120ms ease; }
+  .settings-subgroup.is-disabled { opacity: 0.55; }
 
   .prose-color-pickers {
     display: flex;
@@ -7435,13 +7263,14 @@
     background: var(--component-settings-color-picker-bg);
     cursor: pointer;
   }
-  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-surface-raised); border: 1px solid var(--component-settings-input-border); border-radius: var(--component-settings-select-button-radius); padding: 0 12px; cursor: pointer; min-width: 130px; transition: border-color 140ms ease, background 140ms ease; }
-  .select-btn:hover { border-color: var(--component-settings-border-strong); background: var(--component-settings-surface-overlay); }
+  .select-btn { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; font-size: 12px; font-weight: 600; color: var(--component-settings-text-primary); background: var(--component-settings-input-bg); border: 1px solid var(--component-settings-input-border); border-radius: var(--component-settings-select-button-radius); padding: 0 12px; cursor: pointer; min-width: 130px; transition: background 250ms ease, transform 450ms var(--ui-spring); }
+  .select-btn:hover { background: var(--component-settings-surface-overlay); }
+  .select-btn:active { transform: scale(0.97); }
   .select-btn--wide { min-width: 190px; }
   .select-menu--scroll { max-height: min(320px, calc(var(--visual-vh, 100vh) - 160px)); overflow-y: auto; overscroll-behavior: contain; }
   .select-caret { color: var(--text-faint); transition: transform var(--t-base); flex-shrink: 0; margin-left: auto; }
   .select-caret.open { transform: rotate(180deg); }
-  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--component-settings-select-menu-bg); border: 1px solid var(--component-settings-select-menu-border); border-radius: var(--radius-md); padding: var(--sp-1); z-index: var(--component-settings-select-menu-z-index); box-shadow: var(--component-settings-select-menu-shadow); animation: scaleIn 0.1s ease both; transform-origin: top right; }
+  .select-menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 100%; background: var(--component-settings-select-menu-bg); border: 1px solid var(--component-settings-select-menu-border); border-radius: var(--radius-md); padding: var(--sp-1); z-index: var(--component-settings-select-menu-z-index); box-shadow: var(--component-settings-select-menu-shadow); animation: scaleIn 320ms var(--ui-spring) both; transform-origin: top right; }
   .select-option { display: block; width: 100%; padding: 6px var(--sp-3); border-radius: var(--radius-sm); font-size: var(--text-sm); color: var(--text-secondary); background: none; border: none; cursor: pointer; text-align: left; transition: background var(--t-fast), color var(--t-fast); }
   .select-option:hover { background: var(--bg-overlay); color: var(--text-primary); }
   .select-option.active { color: var(--accent-fg); background: var(--accent-muted); }
@@ -7450,7 +7279,7 @@
   .scale-val-input {
     font-family: var(--font-ui); font-size: var(--text-xs); color: var(--text-secondary);
     width: 42px; text-align: center; padding: 3px 4px;
-    background: var(--bg-raised); border: 1px solid var(--border-dim);
+    background: var(--component-settings-input-bg); border: 1px solid transparent;
     border-radius: var(--radius-sm); outline: none;
     transition: border-color var(--t-base);
     appearance: textfield;
@@ -7634,11 +7463,11 @@
   .tracker-logo { width: 28px; height: 28px; border-radius: var(--radius-sm); object-fit: contain; flex-shrink: 0; }
   .tracker-name-block { display: flex; flex-direction: column; gap: 3px; }
   .tracker-label { font-size: var(--text-sm); color: var(--text-secondary); font-weight: var(--weight-medium); }
-  .tracker-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); width: fit-content; }
-  .tracker-status-pill.pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
+  .tracker-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: 0; text-transform: none; padding: 2px 8px; border-radius: var(--radius-full); border: 0; color: var(--text-faint); background: var(--ui-surface); width: fit-content; }
+  .tracker-status-pill.pill-on { color: var(--accent-fg); background: var(--accent-muted); }
   .tracker-action { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-2); flex: 1; min-width: 0; }
-  .sec-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wider); text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-dim); color: var(--text-faint); background: var(--bg-overlay); flex-shrink: 0; cursor: default; }
-  .sec-pill-on { border-color: var(--accent-dim); color: var(--accent-fg); background: var(--accent-muted); }
+  .sec-status-pill { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: 0; text-transform: none; padding: 2px 8px; border-radius: var(--radius-full); border: 0; color: var(--text-faint); background: var(--ui-surface); flex-shrink: 0; cursor: default; }
+  .sec-pill-on { color: var(--accent-fg); background: var(--accent-muted); }
   .sec-field-wrap { position: relative; flex-shrink: 0; }
   .sec-eye-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: none; color: var(--text-faint); cursor: pointer; transition: color var(--t-base); }
   .sec-eye-btn:hover { color: var(--text-muted); }
@@ -7706,7 +7535,7 @@
     max-height: none;
     padding: 20px 4px;
     border: 0;
-    border-radius: 0;
+    border-radius: inherit;
     box-shadow: none;
     animation: none;
   }
@@ -7758,7 +7587,7 @@
   .backup-payload__copy { min-width: 0; }
   .backup-payload__title { display: flex; align-items: center; gap: 8px; }
   .backup-payload__title strong { color: var(--text-primary); font-size: var(--text-sm); }
-  .backup-payload__title span { color: var(--color-success); font-size: var(--text-2xs); text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+  .backup-payload__title span { color: var(--color-success); font-size: var(--text-2xs); text-transform: none; letter-spacing: 0; }
   .backup-payload__title span.has-warning { color: var(--color-warning); }
   .backup-payload__copy p,
   .backup-payload__copy small { display: block; margin: 2px 0 0; color: var(--text-muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

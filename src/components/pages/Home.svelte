@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { flushSync, onMount } from "svelte";
+  import { staggerIn } from "../../lib/motion/motion";
   import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
@@ -45,17 +46,10 @@
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
   import { detectSetupState, type SetupState } from "../../lib/setupState";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
+  import { formatRelativeTime } from "../../lib/i18n/format";
 
   function timeAgo(ts: number): string {
-    const diff = Date.now() - ts;
-    const m = Math.floor(diff / 60000);
-    if (m < 1) return "Just now";
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    if (d < 7) return `${d}d ago`;
-    return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return formatRelativeTime(ts);
   }
 
   function formatReadTime(mins: number): string {
@@ -492,21 +486,6 @@
         manga: null;
         book: BookEntry;
         progress: BookProgress;
-      }
-    | {
-        kind: "placeholder";
-        ts: number;
-        eyebrow: string;
-        title: string;
-        subtitle: string;
-        metricValue: string;
-        metricLabel: string;
-        coverUrl: "";
-        progressPct: 0;
-        entry: null;
-        manga: null;
-        book: null;
-        progress: null;
       };
 
   const continueCards = $derived((() => {
@@ -564,27 +543,7 @@
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 3);
   })());
-  const continueDisplayCards: HomeContinueDisplayCard[] = $derived.by(() => {
-    const cards = [...continueCards] as HomeContinueDisplayCard[];
-    while (cards.length < 3) {
-      cards.push({
-        kind: "placeholder",
-        ts: 0,
-        eyebrow: "",
-        title: "",
-        subtitle: "",
-        metricValue: "",
-        metricLabel: "",
-        coverUrl: "",
-        progressPct: 0,
-        entry: null,
-        manga: null,
-        book: null,
-        progress: null,
-      } satisfies HomeContinueDisplayCard);
-    }
-    return cards.slice(0, 3) as HomeContinueDisplayCard[];
-  });
+  const continueDisplayCards: HomeContinueDisplayCard[] = $derived(continueCards);
 
   type HomeRecentUpdateRow =
     | {
@@ -731,7 +690,7 @@
 
   function extractMetricValue(entry: HistoryEntry, manga: Manga | null, fallback: string): { value: string; label: string } {
     const numeric = entry.chapterName.match(/(\d+(?:\.\d+)?)/)?.[1] ?? fallback;
-    const total = manga?.chapterCount ? `/ ${manga.chapterCount} chapters` : "/ chapters";
+    const total = manga?.chapterCount ? translate("library.card.ofChapters", { count: manga.chapterCount }) : "";
     return { value: numeric, label: total };
   }
 
@@ -743,8 +702,8 @@
     const mangaRows = completedManga.map((real) => ({
       kind: "manga" as const,
       title: real.title,
-      subtitle: `${real.chapterCount ?? 0} chapters`,
-      meta: "Done",
+      subtitle: translate("home.chapterCount", { count: real.chapterCount ?? 0 }),
+      meta: translate("home.done"),
       coverUrl: resolveMangaCoverUrl(real, {
         context: "home",
         persistence: "persistent",
@@ -764,7 +723,7 @@
           kind: "book" as const,
           title: presented.title,
           subtitle: presented.progressSummary,
-          meta: "Done",
+          meta: translate("home.done"),
           coverUrl: presented.coverSrc ?? "",
           manga: null,
           book,
@@ -866,7 +825,9 @@
   );
   const checkUpdatesSummary = $derived(
     titlesWithUnreadCount + booksInProgressCount > 0
-      ? $_("home.quick.unreadTitles", { values: { count: titlesWithUnreadCount + booksInProgressCount } })
+      ? titlesWithUnreadCount + booksInProgressCount === 1
+        ? $_("home.quick.unreadTitle")
+        : $_("home.quick.unreadTitles", { values: { count: titlesWithUnreadCount + booksInProgressCount } })
       : $_("home.quick.libraryUpToDate"),
   );
   const startedMangaIds = $derived(new Set(store.history.map((entry) => entry.mangaId)));
@@ -878,7 +839,7 @@
   );
   const planToReadSummary = $derived(
     planToReadCount > 0
-      ? $_("home.quick.titlesWaiting", { values: { count: planToReadCount } })
+      ? planToReadCount === 1 ? $_("home.quick.titleWaiting") : $_("home.quick.titlesWaiting", { values: { count: planToReadCount } })
       : $_("home.quick.nothingQueued"),
   );
   const downloadSummary = $derived(
@@ -986,7 +947,7 @@
     {/snippet}
   </AppTopbar>
 
-  <div class="body n-content">
+  <div class="body n-content" data-view-static>
     {#if store.homePanelHint === "history"}
       <div class="home-history-view">
         <div class="home-history-view__header">
@@ -1000,7 +961,7 @@
         </div>
       </div>
     {:else}
-      <div class="home-dashboard">
+      <div class="home-dashboard" use:staggerIn={{ settle: true, baseDelay: 60 }}>
         <section class="home-section">
           <div class="home-section__header">
             <h2 class="home-section__title">{$_("home.continue.title")}</h2>
@@ -1008,16 +969,23 @@
               {$_("home.continue.viewLibrary")}
             </button>
           </div>
+          {#if continueDisplayCards.length === 0}
+            <div class="home-empty" data-enter>
+              <span class="home-empty__icon material-symbols-outlined" aria-hidden="true">auto_stories</span>
+              <div class="home-empty__copy">
+                <strong>{$_("home.continue.emptyTitle")}</strong>
+                <small>{$_("home.continue.emptyBody")}</small>
+              </div>
+              <button class="n-btn n-btn-ghost n-btn--sm" type="button" onclick={() => openSearchSources("browse")}>
+                {$_("home.continue.explore")}
+                <span class="material-symbols-outlined home-empty__arrow" aria-hidden="true">arrow_forward</span>
+              </button>
+            </div>
+          {:else}
           <div class="home-continue-grid">
             {#each continueDisplayCards as item, index (index)}
-              <article class="home-card home-continue-card">
-                {#if item.kind === "placeholder"}
-                  <div class="home-continue-card__cover home-continue-card__cover--blank" aria-hidden="true">
-                    <div class="home-continue-card__progress-track">
-                      <div class="home-continue-card__progress-fill" style="width:0%;"></div>
-                    </div>
-                  </div>
-                {:else if item.coverUrl && (item.manga || item.book)}
+              <article class="home-card home-continue-card" data-enter>
+                {#if item.coverUrl && (item.manga || item.book)}
                   <button
                     class="home-continue-card__cover"
                     type="button"
@@ -1036,15 +1004,11 @@
                   </div>
                 {/if}
                 <div class="home-continue-card__body">
-                  {#if item.kind === "placeholder"}
-                    <div class="home-continue-card__copy home-continue-card__copy--blank" aria-hidden="true"></div>
-                  {:else}
-                    <div class="home-continue-card__copy">
-                      <span class="home-card__eyebrow">{item.eyebrow}</span>
-                      <h3>{item.title}</h3>
-                      <p>{item.subtitle}</p>
-                    </div>
-                  {/if}
+                  <div class="home-continue-card__copy">
+                    <span class="home-card__eyebrow">{item.eyebrow}</span>
+                    <h3>{item.title}</h3>
+                    <p>{item.subtitle}</p>
+                  </div>
                   <div>
                     <div class="home-continue-card__metrics">
                       <span>{item.metricValue}</span>
@@ -1054,7 +1018,6 @@
                       class="n-btn n-btn-primary n-btn--md home-primary-btn home-resume-btn"
                       type="button"
                       onclick={() => openContinueItem(item)}
-                      data-inert-control={item.kind === "placeholder" ? "home-continue-placeholder" : undefined}
                     >
                       <span class="material-symbols-outlined" aria-hidden="true">play_arrow</span>
                       <span>{$_("home.continue.resume")}</span>
@@ -1064,9 +1027,10 @@
               </article>
             {/each}
           </div>
+          {/if}
         </section>
 
-        <section class="home-quick-actions">
+        <section class="home-quick-actions" data-enter>
           <button class="home-quick-action" type="button" onclick={() => openSearchSources("browse")}>
             <span class="material-symbols-outlined" aria-hidden="true">explore</span>
             <div>
@@ -1097,7 +1061,7 @@
           </button>
         </section>
 
-        <div class="home-main-grid">
+        <div class="home-main-grid" data-enter>
           <section class="home-column home-updates">
             <div class="home-column__header">
               <h2 class="home-column__title">
@@ -1122,9 +1086,7 @@
                   </button>
                 {/each}
               {:else}
-                <div class="home-empty-slot home-finished-row--card" aria-hidden="true"></div>
-                <div class="home-empty-slot home-finished-row--card" aria-hidden="true"></div>
-                <div class="home-empty-slot home-finished-row--card" aria-hidden="true"></div>
+                <p class="home-empty-line">{$_("home.updates.empty")}</p>
               {/if}
             </div>
           </section>
@@ -1148,7 +1110,7 @@
                     <small>{$_("home.metrics.readTime")}</small>
                   </div>
                 <div>
-                    <strong>{Math.max(thisWeekSeriesCount, 1)}</strong>
+                    <strong>{thisWeekSeriesCount}</strong>
                     <small>{$_("home.metrics.series")}</small>
                   </div>
                 </div>
@@ -1187,8 +1149,7 @@
                     </button>
                   {/each}
                 {:else}
-                  <div class="home-empty-slot home-finished-row--card" aria-hidden="true"></div>
-                  <div class="home-empty-slot home-finished-row--card" aria-hidden="true"></div>
+                  <p class="home-empty-line">{$_("home.finished.empty")}</p>
                 {/if}
               </div>
             </section>
@@ -1340,8 +1301,8 @@
     color: var(--component-home-accent-fg);
     font-size: calc(12px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     cursor: pointer;
     transition: var(--component-home-link-transition);
   }
@@ -1366,10 +1327,10 @@
     display: block;
     margin-bottom: 8px;
     color: var(--component-home-accent-fg);
-    font-size: calc(10px * var(--component-home-scale));
+    font-size: calc(11.5px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-continue-grid {
@@ -1474,9 +1435,9 @@
 
   .home-continue-card__metrics small {
     color: var(--component-home-subtle-fg);
-    font-size: calc(10px * var(--component-home-scale));
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-size: calc(11.5px * var(--component-home-scale));
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-primary-btn {
@@ -1493,8 +1454,8 @@
     color: var(--component-home-on-accent);
     font-size: calc(12px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     box-shadow: var(--component-home-primary-shadow);
     transition: var(--component-home-primary-transition);
   }
@@ -1577,7 +1538,7 @@
 
   .home-quick-action small {
     color: var(--component-home-meta-fg);
-    font-size: calc(10px * var(--component-home-scale));
+    font-size: calc(11.5px * var(--component-home-scale));
   }
 
   .home-main-grid {
@@ -1677,10 +1638,10 @@
 
   .home-update-row small {
     color: var(--component-home-faint-fg);
-    font-size: calc(9px * var(--component-home-scale));
+    font-size: calc(11px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     flex-shrink: 0;
   }
 
@@ -1701,9 +1662,9 @@
 
   .home-week-card__stats small {
     color: var(--component-home-label-fg);
-    font-size: calc(9px * var(--component-home-scale));
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    font-size: calc(11px * var(--component-home-scale));
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-week-card__bars {
@@ -1738,16 +1699,16 @@
   .home-week-card__bar-slot span {
     color: var(--component-home-chart-label-fg);
     font-size: calc(8px * var(--component-home-scale));
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-finished-row__tag {
     color: var(--component-home-tag-fg);
-    font-size: calc(9px * var(--component-home-scale));
+    font-size: calc(11px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     flex-shrink: 0;
   }
 
@@ -1761,10 +1722,10 @@
   .home-side-card__title {
     margin: 0;
     color: var(--component-home-quiet-fg);
-    font-size: calc(10px * var(--component-home-scale));
+    font-size: calc(11.5px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-side-card__metric strong {
@@ -1780,7 +1741,7 @@
   .home-side-card__body,
   .home-side-card__split small {
     color: var(--component-home-quiet-fg);
-    font-size: calc(10px * var(--component-home-scale));
+    font-size: calc(11.5px * var(--component-home-scale));
     line-height: 1.5;
   }
 
@@ -1809,10 +1770,10 @@
 
   .home-side-card__progress-head small {
     color: var(--component-home-faint-fg);
-    font-size: calc(9px * var(--component-home-scale));
+    font-size: calc(11px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-side-card__progress-track {
@@ -1832,10 +1793,10 @@
     display: block;
     margin: 0 0 calc(8px * var(--component-home-scale));
     color: var(--component-home-label-fg);
-    font-size: calc(9px * var(--component-home-scale));
+    font-size: calc(11px * var(--component-home-scale));
     font-weight: 800;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-source-list,
@@ -1869,26 +1830,70 @@
   .home-tracking-list li small {
     flex-shrink: 0;
     color: var(--component-home-source-meta-fg);
-    font-size: calc(9px * var(--component-home-scale));
+    font-size: calc(11px * var(--component-home-scale));
   }
 
   .home-tracking-list .is-synced {
     color: var(--component-home-tag-fg);
     font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .home-tracking-list .is-muted {
     color: var(--component-home-tracking-muted-fg);
   }
 
-  .home-empty-slot {
-    min-height: calc(80px * var(--component-home-scale));
-    width: 100%;
-    border: 1px solid var(--component-home-border);
+  /* Nothing to continue yet: one calm line with a way forward instead of empty cards. */
+  .home-empty {
+    display: flex;
+    align-items: center;
+    gap: calc(16px * var(--component-home-scale));
+    padding: calc(18px * var(--component-home-scale)) calc(20px * var(--component-home-scale));
+    border-radius: var(--component-home-card-radius);
     background: var(--component-home-panel-bg);
-    border-radius: var(--component-home-control-radius);
+  }
+
+  .home-empty__icon {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: calc(44px * var(--component-home-scale));
+    height: calc(44px * var(--component-home-scale));
+    border-radius: var(--component-home-pill-radius);
+    background: var(--component-home-row-hover-bg);
+    color: var(--component-home-accent-fg);
+    font-size: calc(22px * var(--component-home-scale));
+  }
+
+  .home-empty__copy {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    gap: calc(3px * var(--component-home-scale));
+  }
+
+  .home-empty__copy strong {
+    color: var(--component-home-fg);
+    font-size: calc(15px * var(--component-home-scale));
+    font-weight: 700;
+  }
+
+  .home-empty__copy small {
+    color: var(--component-home-muted-fg);
+    font-size: calc(12.5px * var(--component-home-scale));
+    line-height: 1.45;
+  }
+
+  .home-empty__arrow {
+    font-size: calc(16px * var(--component-home-scale));
+  }
+
+  .home-empty-line {
+    margin: 0;
+    padding: calc(12px * var(--component-home-scale)) calc(4px * var(--component-home-scale));
+    color: var(--component-home-subtle-fg);
+    font-size: calc(13px * var(--component-home-scale));
   }
 
   .home-side-card__blank {
@@ -1926,8 +1931,8 @@
     background: var(--component-home-history-control-bg);
     color: var(--component-home-history-fg);
     font-size: calc(11px * var(--component-home-scale));
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     padding: calc(10px * var(--component-home-scale)) calc(16px * var(--component-home-scale));
     cursor: pointer;
   }

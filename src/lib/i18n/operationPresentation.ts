@@ -43,6 +43,7 @@ register("outcomes.targetChanged", ["RESTORE_CONNECTION_CHANGED"]);
 register("outcomes.failed", ["RESTORE_DOMAIN_FAILED"]);
 register("outcomes.syncDecisionTimeout", ["SYNC_DECISION_TIMEOUT"]);
 register("outcomes.syncRefreshTimeout", ["SYNC_REFRESH_TIMEOUT"]);
+register("outcomes.syncCoreUnavailable", ["SYNC_CORE_UNAVAILABLE"]);
 
 function messageKey(value: unknown, seen = new Set<unknown>()): string | undefined {
   if (typeof value === "string") return Object.hasOwn(messages, value) ? messages[value] : undefined;
@@ -66,6 +67,17 @@ export function restorePayloadSummary(payload: { status: string; kind?: string; 
   if (notes.length) return [...new Set(notes)].join(" ");
   return t(payload.status === "restorable" ? "outcomes.ready" : payload.status === "blocked" ? "outcomes.dependencies"
     : payload.status === "unsupported" ? "outcomes.unsupported" : payload.status === "skipped" ? "outcomes.skipped" : "outcomes.warning");
+}
+
+// The planner's summaryLabel is English diagnostic prose kept for traces; people see the counts.
+export function restorePlanSummary(summary: { recommendedSelection: readonly unknown[]; blockedKinds: readonly unknown[]; unsupportedKinds: readonly unknown[]; warningOnlyKinds: readonly unknown[]; skippedKinds: readonly unknown[] }, t: Translate = translate): string {
+  const parts = [summary.recommendedSelection.length
+    ? t("outcomes.planSelected", { count: summary.recommendedSelection.length })
+    : t("outcomes.planNothingSelected")];
+  const counts: [string, number][] = [["outcomes.planBlocked", summary.blockedKinds.length], ["outcomes.planUnsupported", summary.unsupportedKinds.length],
+    ["outcomes.planWarnings", summary.warningOnlyKinds.length], ["outcomes.planSkipped", summary.skippedKinds.length]];
+  for (const [key, count] of counts) if (count) parts.push(t(key, { count }));
+  return parts.join(" · ");
 }
 
 // UI state retains the cause and catalog key, never a translation captured in a

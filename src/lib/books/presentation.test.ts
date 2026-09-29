@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { presentBookWithCoverSrc } from "./presentation";
 import type { BookEntry, BookProgress } from "./types";
+import { applyAppLanguage } from "../i18n/runtime";
+
+beforeEach(() => {
+  applyAppLanguage("en");
+});
 
 const book: BookEntry = {
   id: "epub-demo",

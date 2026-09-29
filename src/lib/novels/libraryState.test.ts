@@ -17,6 +17,7 @@ import {
   getNovelReadStats,
   getNovelResumeChapter,
   loadNovelLibraryState,
+  reloadNovelLibraryState,
   loadNovelLibraryStateForRestore,
   markNovelChapterRead,
   parseNovelScrollLocator,
@@ -360,5 +361,24 @@ describe("novel library state storage", () => {
   it("accepts legacy chapter-only locators", () => {
     expect(parseNovelScrollLocator("chapter:1", "chapter:1")).toBe(0);
     expect(parseNovelScrollLocator("chapter:2", "chapter:1")).toBeNull();
+  });
+});
+
+
+describe("B4 strict synchronization refresh", () => {
+  it("refuses read failures and corrupt state instead of acknowledging an empty library", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValueOnce(Error("read failed"));
+    await expect(reloadNovelLibraryState(SCOPE, { strict: true })).rejects.toThrow("read failed");
+    invokeMock.mockResolvedValueOnce("{broken");
+    await expect(reloadNovelLibraryState(SCOPE, { strict: true })).rejects.toThrow();
+  });
+  it("hydrates the domain cache after a successful empty remote read", async () => {
+    (globalThis as any).window = { __TAURI_INTERNALS__: {} };
+    invokeMock.mockReset().mockResolvedValue(null);
+    const value = await reloadNovelLibraryState(SCOPE, { strict: true });
+    expect(peekNovelLibraryState(SCOPE)).toEqual(value);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });

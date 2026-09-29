@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "definitions": {
+    "target": {
+      "profileId": "text",
+      "storageScope": "text",
+      "connectionGeneration": "text",
+      "backendGeneration": "?text",
+      "runtimeIdentityDigest": "?digest"
+    },
+    "input": {
+      "digest": "digest",
+      "size": "uint"
+    },
+    "requirement": {
+      "id": "text",
+      "domain": "domain",
+      "kind": "repository|package|source|capability",
+      "provenanceDigest": "?digest",
+      "packageId": "?text",
+      "sourceId": "?text",
+      "capability": "?text",
+      "state": "unresolved|approved|satisfied|rejected",
+      "approvalReference": "?text",
+      "affectedUnits": "[]text"
+    },
+    "reference": {
+      "restoreId": "text",
+      "clientMutationId": "?text",
+      "backendGeneration": "text",
+      "submittedAt": "timestamp",
+      "lastStatus": "?IDLE|SUCCESS|FAILURE|RESTORING_CATEGORIES|RESTORING_MANGA|RESTORING_META|RESTORING_SETTINGS",
+      "lastObservedAt": "?timestamp",
+      "totalManga": "?uint",
+      "mangaProgress": "?uint"
+    },
+    "attempt": {
+      "attemptId": "uuid",
+      "startedAt": "timestamp",
+      "completedAt": "?timestamp",
+      "resultCode": "?text",
+      "errorCode": "?text"
+    },
+    "intent": {
+      "operationId": "uuid",
+      "unitId": "uuid",
+      "attemptId": "uuid",
+      "inputDigest": "digest",
+      "target": "target",
+      "flags": "booleanMap",
+      "clientMutationId": "uuid"
+    },
+    "unit": {
+      "unitId": "uuid",
+      "parentUnitId": "?uuid",
+      "kind": "text",
+      "domain": "domain",
+      "inputDigest": "digest",
+      "identity": "text",
+      "dependsOn": "[]uuid",
+      "status": "pending|running|succeeded|failed|unknown|skipped|cancelled",
+      "attempts": "[]attempt",
+      "startedAt": "?timestamp",
+      "completedAt": "?timestamp",
+      "resultCode": "?text",
+      "errorCode": "?text",
+      "warnings": "[]text",
+      "retryPolicy": "never|proven_not_accepted|reconcile",
+      "idempotencyPolicy": "not_proven|content_verified|revision_checked",
+      "externalOperationReference": "?reference",
+      "beforeDigest": "?digest",
+      "expectedAfterDigest": "?digest",
+      "observedAfterDigest": "?digest",
+      "submissionIntent?": "intent"
+    },
+    "record": {
+      "schemaVersion": "one",
+      "operationId": "uuid",
+      "revision": "uint",
+      "previousRevision": "?uint",
+      "createdAt": "timestamp",
+      "updatedAt": "timestamp",
+      "phase": "inspected|waiting_for_dependencies|ready|running|partially_completed|interrupted|retryable_failure|nonretryable_failure|completed|cancelled",
+      "outcome": "NOT_TESTED|PASS|PARTIAL|FAIL",
+      "target": "target",
+      "inputs": "[]input",
+      "planDigest": "digest",
+      "selections": "[]text",
+      "requirements": "[]requirement",
+      "units": "[]unit",
+      "cancellationRequestedAt": "?timestamp",
+      "recoveryCodes": "[]text"
+    },
+    "envelope": {
+      "checksum": "digest",
+      "payload": "record"
+    }
+  }
+}

@@ -577,6 +577,143 @@ exports.default = new IllusiaLikePlugin();
     expect(details.chapters[0]?.title).toBe("O homem mais confi\u00e1vel da Lua");
   });
 
+  it("allows real content served by Cloudflare with background detection scripts", async () => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => JSON.stringify({ settings: { flareSolverrEnabled: false } })),
+    });
+
+    const html = `
+      <html>
+        <head>
+          <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+          <script>const detector = "turnstile challenge";</script>
+          <style>.cf-turnstile { display: block; }</style>
+          <title>Illusia</title>
+        </head>
+        <body><article class="story"><h2><a href="/story/exodo">Exodo</a></h2></article></body>
+      </html>
+    `;
+    const bytes = new TextEncoder().encode(html);
+    tauriFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ server: "cloudflare", "content-type": "text/html; charset=utf-8" }),
+      text: async () => html,
+      arrayBuffer: async () => bytes.buffer,
+      json: async () => ({}),
+    });
+
+    const popular = await readNovelPluginPopular({
+      pluginId: "illusia",
+      artifactUrl: "https://example.com/illusia.js",
+      pluginSource: `
+Object.defineProperty(exports, "__esModule", { value: true });
+const { fetchApi } = require("@libs/fetch");
+const cheerio = require("cheerio");
+class IllusiaLikePlugin {
+  constructor() { this.id = "illusia"; this.name = "Illusia"; this.site = "https://illusia.com.br"; }
+  async popularNovels() {
+    const html = await fetchApi(this.site).then((response) => response.text());
+    const $ = cheerio.load(html);
+    return $("article.story").map((_index, element) => ({
+      name: $(element).find("h2 a").text().trim(),
+      path: $(element).find("h2 a").attr("href"),
+    })).toArray();
+  }
+}
+exports.default = new IllusiaLikePlugin();
+`,
+      pageNo: 1,
+    });
+
+    expect(popular.results).toMatchObject([{ name: "Exodo", path: "/story/exodo" }]);
+    expect(tauriFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a successful Cloudflare page whose stories mention challenges or access", async () => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    const html = `
+      <html>
+        <head><title>Search Page | Royal Road</title></head>
+        <body>
+          <div class="fiction-list-item"><h2 class="fiction-title"><a href="/fiction/1/the-challenge">The Challenge</a></h2>
+            <p>She must bypass the captcha of fate after access denied at the gate of heaven.</p></div>
+          <div class="fiction-list-item"><h2 class="fiction-title"><a href="/fiction/2/anti-bot">Anti-Bot Protocol</a></h2>
+            <p>A cloudflare engineer checks every request.</p></div>
+        </body>
+      </html>
+    `;
+    tauriFetchMock.mockResolvedValueOnce(new Response(html, {
+      status: 200,
+      headers: { server: "cloudflare", "cf-ray": "1234-GRU", "content-type": "text/html; charset=utf-8" },
+    }));
+
+    const popular = await readNovelPluginPopular({
+      pluginId: "royalroad-like",
+      artifactUrl: "https://example.com/royalroad.js",
+      pluginSource: `
+const { fetchApi } = require("@libs/fetch");
+const cheerio = require("cheerio");
+exports.default = {
+  id: "royalroad-like",
+  async popularNovels() {
+    const $ = cheerio.load(await (await fetchApi("https://novels.example/search")).text());
+    return $(".fiction-title a").map((_index, element) => ({ name: $(element).text(), path: $(element).attr("href") })).toArray();
+  },
+};
+`,
+      pageNo: 1,
+    });
+
+    expect(popular.results).toMatchObject([
+      { name: "The Challenge", path: "/fiction/1/the-challenge" },
+      { name: "Anti-Bot Protocol", path: "/fiction/2/anti-bot" },
+    ]);
+  });
+
+  it("detects a challenge interstitial served with a successful status", async () => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    tauriFetchMock.mockResolvedValueOnce(new Response("<html><head><title>Just a moment...</title></head><body>Verifying</body></html>", {
+      status: 200,
+      headers: { server: "cloudflare", "content-type": "text/html" },
+    }));
+
+    await expect(readNovelPluginChapter({
+      pluginId: "interstitial-challenge",
+      artifactUrl: "https://example.com/plugin.js",
+      pluginSource: `
+const { fetchApi } = require("@libs/fetch");
+exports.default = { parseChapter: async () => (await fetchApi("https://example.com/chapter")).text() };
+`,
+      chapterPath: "/chapter",
+    })).rejects.toThrow("Source challenge requires FlareSolverr recovery");
+  });
+
+  it.each([
+    '<form id="challenge-form">Confirme que você é humano</form>',
+    '<form><div class="cf-turnstile" data-sitekey="test">Confirme que você é humano</div></form>',
+  ])("detects a localized challenge through its markup: %s", async (markup) => {
+    tauriFetchMock.mockReset();
+    vi.stubGlobal("localStorage", { getItem: () => null });
+    tauriFetchMock.mockResolvedValueOnce(new Response(`<html><body>${markup}</body></html>`, {
+      status: 403,
+      headers: { server: "cloudflare", "content-type": "text/html" },
+    }));
+
+    await expect(readNovelPluginChapter({
+      pluginId: "localized-challenge",
+      artifactUrl: "https://example.com/plugin.js",
+      pluginSource: `
+const { fetchApi } = require("@libs/fetch");
+exports.default = { parseChapter: async () => (await fetchApi("https://example.com/chapter")).text() };
+`,
+      chapterPath: "/chapter",
+    })).rejects.toThrow("Source challenge requires FlareSolverr recovery");
+  });
+
   it("recovers an LNReader default cover from standard page metadata", async () => {
     const html = `
       <html>

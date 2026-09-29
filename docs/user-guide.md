@@ -135,6 +135,14 @@ As opções alimentam os padrões compartilhados pelos readers. HUD, zoom, naveg
 
 Fullscreen, TTS e atalhos dependem das permissões e capacidades disponíveis no Windows/WebView2.
 
+### Ler em uma janela separada
+
+1. Com um capítulo de mangá ou de novel, um EPUB ou um PDF aberto, clique em **Abrir em nova janela** na barra superior do leitor, ao lado do botão de configurações.
+2. O leitor passa para uma janela própria e a janela principal volta para a tela anterior, livre para navegar, baixar ou abrir outra obra.
+3. Repita para ler vários capítulos ao mesmo tempo, da mesma obra ou de obras diferentes.
+
+Cada janela tem o próprio fullscreen (Esc sai dele) e salva o progresso normalmente. Fechar a janela principal fecha o Epigraph e todas as janelas de leitura. Os capítulos de novel continuam sendo carregados pela janela principal, então ela precisa ficar aberta.
+
 ## Regras de conteúdo
 
 ### Onde encontrar

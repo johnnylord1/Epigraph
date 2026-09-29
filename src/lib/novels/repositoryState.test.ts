@@ -17,11 +17,15 @@ import {
   addNovelRepositoryToState,
   createEmptyNovelRepositoryState,
   deriveNovelRepositoryUiState,
+  isBuiltinNovelRepository,
   loadNovelRepositoryState,
   refreshNovelRepositoryCatalog,
+  removeNovelRepositoryFromState,
+  withBuiltinNovelRepository,
   saveNovelRepositoryState,
   setNovelRepositoryLanguageFilter,
 } from "./repositoryState";
+import { BUILTIN_LNREADER_REPOSITORY_URL } from "./repositories";
 
 describe("novel repository state", () => {
   beforeEach(() => {
@@ -29,7 +33,7 @@ describe("novel repository state", () => {
     tauriFetchMock.mockReset();
   });
 
-  it("loads an empty profile-scoped state when no persisted file exists", async () => {
+  it("loads a profile-scoped state with only the built-in LNReader feed when no persisted file exists", async () => {
     invokeMock.mockResolvedValueOnce(null);
 
     const state = await loadNovelRepositoryState({ profileId: "test" });
@@ -38,8 +42,30 @@ describe("novel repository state", () => {
       profileId: "test",
       serverUrl: null,
     });
+    expect(invokeMock).not.toHaveBeenCalledWith("write_novel_repository_state", expect.anything());
     expect(state.scopeKey).toBe("profile:test");
-    expect(state.repositories).toHaveLength(0);
+    expect(state.repositories).toHaveLength(1);
+    expect(state.repositories[0]).toMatchObject({
+      url: BUILTIN_LNREADER_REPOSITORY_URL,
+      profileId: "test",
+      recommendedSeed: true,
+      trustState: "trusted",
+      enabled: true,
+    });
+    expect(isBuiltinNovelRepository(state.repositories[0])).toBe(true);
+  });
+
+  it("keeps the built-in feed unique, first and never removable", () => {
+    let state = createEmptyNovelRepositoryState({ profileId: "test" });
+    state = addNovelRepositoryToState(state, { profileId: "test", url: "https://example.com/plugins.min.json" });
+    state = withBuiltinNovelRepository(withBuiltinNovelRepository(state));
+    expect(state.repositories.map((repository) => repository.url)).toEqual([
+      BUILTIN_LNREADER_REPOSITORY_URL,
+      "https://example.com/plugins.min.json",
+    ]);
+    const builtin = state.repositories[0];
+    expect(removeNovelRepositoryFromState(state, builtin.id)).toBe(state);
+    expect(removeNovelRepositoryFromState(state, state.repositories[1].id).repositories).toHaveLength(1);
   });
 
   it("persists repositories and language filters through the Tauri state file", async () => {

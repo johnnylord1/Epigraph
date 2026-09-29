@@ -27,7 +27,7 @@
   let {
     title,
     sourceNovelId,
-    contentLabel = "Novel",
+    contentLabel = translate("ui_novel"),
     onHardcoverLinkChanged,
     onClose,
   }: {
@@ -64,6 +64,12 @@
   const loggedIn = $derived(trackingState.auth.connected && Boolean(trackingState.auth.token));
   const scoreOptions = ["", "0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"];
   const statusOptions = ["Want to Read", "Currently Reading", "Read", "Did Not Finish"];
+  const STATUS_LABEL_KEYS: Record<string, string> = {
+    "Want to Read": "hardcover_statusWantToRead",
+    "Currently Reading": "hardcover_statusCurrentlyReading",
+    Read: "hardcover_statusRead",
+    "Did Not Finish": "hardcover_statusDidNotFinish",
+  };
 
   $effect(() => {
     sourceNovelId;
@@ -114,7 +120,7 @@
       if (searchResults.length === 0) error = translate("browse_source_noResultsFor", { query: query.trim() });
     } catch (err: any) {
       if (requestId !== searchRequestId) return;
-      if (!append) error = err?.message ?? "Hardcover search failed";
+      if (!append) error = err?.message ?? translate("hardcover_searchFailed");
       if (!append) searchResults = [];
     } finally {
       if (requestId === searchRequestId) {
@@ -149,7 +155,7 @@
       activeTab = "records";
       addToast({ kind: "success", title: translate("ui_nowTracking"), body: book.title });
     } catch (err: any) {
-      error = err?.message ?? "Hardcover link failed";
+      error = err?.message ?? translate("hardcover_linkFailed");
     } finally {
       binding = false;
     }
@@ -169,7 +175,7 @@
       });
       trackingState = loadHardcoverState(scopeInput);
     } catch (err: any) {
-      error = err?.message ?? "Hardcover update failed";
+      error = err?.message ?? translate("hardcover_updateFailed");
     } finally {
       updating = false;
     }
@@ -206,11 +212,11 @@
   }
 
   function authorLine(authors: string[]): string {
-    return authors.length > 0 ? authors.slice(0, 3).join(" / ") : "Hardcover book record";
+    return authors.length > 0 ? authors.slice(0, 3).join(" / ") : $_("hardcover_bookRecord");
   }
 
   function ratingLabel(rating: number | null | undefined): string {
-    return rating ? `HC ${rating.toFixed(1)}` : "No rating";
+    return rating ? `HC ${rating.toFixed(1)}` : $_("hardcover_noRating");
   }
 
   function markBrokenCover(id: number) {
@@ -308,7 +314,7 @@
                   onchange={(event) => updateRecord({ status: (event.target as HTMLSelectElement).value })}
                 >
                   {#each statusOptions as option}
-                    <option value={option}>{option}</option>
+                    <option value={option}>{STATUS_LABEL_KEYS[option] ? $_(STATUS_LABEL_KEYS[option]) : option}</option>
                   {/each}
                 </select>
 
@@ -436,12 +442,12 @@
     border-radius: var(--component-tracking-modal-border-radius);
     overflow: hidden;
     box-shadow: var(--component-tracking-modal-box-shadow);
-    animation: scaleIn 0.16s ease both;
+    animation: scaleIn 460ms var(--ui-spring) both;
   }
   .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 0; border-bottom: 0; flex-shrink: 0; }
   .header-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .modal-title { font-size: 13px; font-weight: 800; color: var(--component-tracking-modal-title-color); letter-spacing: 0.02em; }
-  .modal-subtitle { font-family: var(--component-tracking-modal-subtitle-font-family); font-size: 11px; color: var(--component-tracking-modal-subtitle-color); letter-spacing: 0.08em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: uppercase; }
+  .modal-subtitle { font-family: var(--component-tracking-modal-subtitle-font-family); font-size: 11px; color: var(--component-tracking-modal-subtitle-color); letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
   .close-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--component-tracking-close-btn-border-radius); color: var(--component-tracking-close-btn-color); background: var(--component-tracking-close-btn-background); border: var(--component-tracking-close-btn-border); cursor: pointer; transition: color 140ms ease, background 140ms ease, transform 140ms ease; flex-shrink: 0; }
   .close-btn:hover { color: var(--component-tracking-close-btn-color-2); background: var(--component-tracking-close-btn-background-2); }
   .close-btn:active { transform: scale(0.96); }

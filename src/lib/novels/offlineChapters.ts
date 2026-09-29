@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { join } from "@tauri-apps/api/path";
 
 import type { NovelRepositoryScopeInput } from "./repositoryState";
+import { readInstalledNovelChapter } from "./sources";
 
 export interface CachedNovelChapter {
   version: 1;
@@ -95,6 +96,87 @@ export async function loadCachedNovelChapter(
   } catch {
     return null;
   }
+}
+
+/** The key a chapter is saved under; compare with `listCachedNovelChapterKeys` to know what is offline. */
+export function novelChapterCacheKey(chapterPath: string): string {
+  return stableHash(chapterPath);
+}
+
+function scopeArgs(scopeInput: NovelRepositoryScopeInput) {
+  return { profileId: scopeInput.profileId ?? null, serverUrl: scopeInput.serverUrl ?? null };
+}
+
+/** Keys of every chapter of this source saved for offline reading (all its novels share one folder). */
+export async function listCachedNovelChapterKeys(
+  scopeInput: NovelRepositoryScopeInput,
+  sourceId: string,
+): Promise<Set<string>> {
+  if (!canUseDesktopStorage() || !sourceId) return new Set();
+  const keys = await invoke<string[]>("list_novel_cached_chapters", {
+    ...scopeArgs(scopeInput),
+    sourceHash: stableHash(sourceId),
+  });
+  return new Set(keys);
+}
+
+export async function deleteCachedNovelChapters(
+  scopeInput: NovelRepositoryScopeInput,
+  sourceId: string,
+  chapterPaths: string[],
+): Promise<number> {
+  if (!canUseDesktopStorage() || !sourceId || chapterPaths.length === 0) return 0;
+  return invoke<number>("delete_novel_cached_chapters", {
+    ...scopeArgs(scopeInput),
+    sourceHash: stableHash(sourceId),
+    chapterHashes: [...new Set(chapterPaths.map(stableHash))],
+  });
+}
+
+export interface NovelOfflineDownloadChapter {
+  id: string;
+  path: string;
+  title: string | null;
+}
+
+export interface NovelOfflineDownloadResult {
+  saved: string[];
+  failed: string[];
+}
+
+/**
+ * Saves chapters for offline reading, one at a time, skipping the ones already saved.
+ * A chapter that fails does not stop the rest; `onProgress` reports each finished chapter id.
+ */
+export async function downloadNovelChaptersForOffline(
+  scopeInput: NovelRepositoryScopeInput,
+  input: { sourceId: string; novelId: string; chapters: NovelOfflineDownloadChapter[] },
+  onProgress?: (chapterId: string, ok: boolean) => void,
+): Promise<NovelOfflineDownloadResult> {
+  const cached = await listCachedNovelChapterKeys(scopeInput, input.sourceId);
+  const result: NovelOfflineDownloadResult = { saved: [], failed: [] };
+  for (const chapter of input.chapters) {
+    if (cached.has(stableHash(chapter.path))) continue;
+    try {
+      const { content } = await readInstalledNovelChapter(scopeInput, input.sourceId, chapter.path);
+      const saved = await saveCachedNovelChapter(scopeInput, {
+        sourceId: input.sourceId,
+        novelId: input.novelId,
+        chapterId: chapter.id,
+        chapterPath: chapter.path,
+        chapterTitle: chapter.title,
+        content,
+      });
+      if (!saved) throw new Error("empty chapter");
+      cached.add(stableHash(chapter.path));
+      result.saved.push(chapter.id);
+      onProgress?.(chapter.id, true);
+    } catch {
+      result.failed.push(chapter.id);
+      onProgress?.(chapter.id, false);
+    }
+  }
+  return result;
 }
 
 export async function saveCachedNovelChapter(

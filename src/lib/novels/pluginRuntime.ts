@@ -441,9 +441,18 @@ function responseStatusMayBeChallenge(status: number): boolean {
     || status === 524;
 }
 
-function responseTextLooksLikeChallenge(text: string): boolean {
-  return isSourceChallengeMessage(text)
-    || /checking your browser|just a moment|cf-browser-verification|cf-chl|turnstile/i.test(text);
+function responseTextLooksLikeChallenge(text: string, status: number, headers: Headers | undefined): boolean {
+  // Cloudflare injects background detection and analytics scripts into normal
+  // pages too. Their URLs are not evidence that the source content is blocked.
+  const document = cheerio.load(text);
+  const hasChallengeForm = document("#challenge-form, #cf-browser-verification, #cf-challenge-running, .cf-turnstile").length > 0;
+  const interstitialTitle = /^\s*(just a moment|attention required|checking your browser|ddos-guard)/i.test(document("title").first().text());
+  if (hasChallengeForm || interstitialTitle || /_cf_chl_opt/.test(text) || /challenge/i.test(headers?.get?.("cf-mitigated") ?? "")) return true;
+  // A successful page is the source's own content, and titles or synopses routinely
+  // say "challenge", "bypass" or "access denied". Words only count on blocking statuses.
+  if (!responseStatusMayBeChallenge(status)) return false;
+  document("script, style").remove();
+  return isSourceChallengeMessage(document.root().text());
 }
 
 function normalizeFlareSolverrHeaders(headers: unknown): Headers {
@@ -788,7 +797,7 @@ function createFetchShim() {
       || responseHeadersContainChallenge(response.headers)
     ) {
       const text = await readResponseText(response);
-      if (responseTextLooksLikeChallenge(text)) {
+      if (responseTextLooksLikeChallenge(text, response.status, response.headers)) {
         if (!settings.enabled) {
           throw new Error("Source challenge requires FlareSolverr recovery for this LNReader source.");
         }

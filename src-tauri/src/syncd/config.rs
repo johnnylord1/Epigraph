@@ -372,7 +372,8 @@ impl SyncdConfig {
                 std::env::var("EPIGRAPH_SYNCD_BOOTSTRAP_TTL_SECONDS")
                     .ok()
                     .and_then(|raw| raw.parse::<u64>().ok())
-                    .unwrap_or(120),
+                    // Long enough to walk to the other computer and type the PIN.
+                    .unwrap_or(300),
             ),
             token_inactivity_window: Duration::from_secs(30 * 24 * 60 * 60),
             asset_max_upload_bytes: std::env::var("EPIGRAPH_SYNCD_ASSET_MAX_BYTES")

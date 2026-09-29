@@ -644,8 +644,8 @@
       const inCategory = (categoryMangaMap.get(category.id) ?? []).some((entry) => entry.id === manga.id);
       return {
         label: inCategory
-          ? `Remove from ${getCategoryDisplayName(category)}`
-          : `Add to ${getCategoryDisplayName(category)}`,
+          ? translate("library.category.removeFrom", { name: getCategoryDisplayName(category) })
+          : translate("library.category.addTo", { name: getCategoryDisplayName(category) }),
         icon: Folder,
         onClick: () => onToggleCategory(manga, category),
       };
@@ -1201,8 +1201,8 @@
     gap: 5px;
     font-family: var(--font-ui);
     font-size: var(--text-2xs);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
+    letter-spacing: 0;
+    text-transform: none;
     padding: 4px 10px;
     border-radius: var(--radius-sm);
     border: 1px solid var(--border-dim);

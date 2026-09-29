@@ -145,11 +145,11 @@
     margin: 0 calc(7px * var(--component-library-scale, 1));
     padding: 0;
     font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: 11.5px;
     color: var(--component-library-density-label-fg);
-    letter-spacing: 0.055em;
+    letter-spacing: 0;
     font-weight: 600;
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .density-labels span {

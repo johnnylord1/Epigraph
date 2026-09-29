@@ -95,7 +95,7 @@ describe("novel restore dependency provisioning", () => {
       trustState: "unknown", recommendedSeed: false, lastFetchedAtMs: null, lastSuccessAtMs: null, etag: null, lastModified: null, lastError: null }];
     state.catalogEntries = [{ repositoryId: "chosen", pluginId: "example-source", name: "Example", site: "test", lang: "en", version: "1",
       artifactUrl: "https://chosen.test/plugin.js", iconUrl: null, customJsUrl: null, customCssUrl: null, manifestHash: null, fetchedAtMs: 1 }];
-    const trustRepository = vi.fn(current => ({ ...current, repositories: current.repositories.map(repository => ({ ...repository, trustState: "trusted" })) }));
+    const trustRepository = vi.fn((current: PersistedNovelRepositoryState) => ({ ...current, repositories: current.repositories.map(repository => ({ ...repository, trustState: "trusted" as const })) }));
     const installPlugin = vi.fn(async ({ state: current }) => current);
     const result = await provisionEpigraphNovelDependencies({ state, scopeInput: { profileId: "test" },
       restored: { ...restored, entries: [{ ...restored.entries[0], source: { ...restored.entries[0].source, repositoryUrl: null } }], plugins: [{ id: "example-source" }], repositories: [] },

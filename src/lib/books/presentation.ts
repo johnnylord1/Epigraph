@@ -1,3 +1,4 @@
+import { translate } from "../i18n/runtime";
 import { BookAssetResolver } from "./assets";
 import {
   findBookSectionIndex,
@@ -37,15 +38,15 @@ function formatSubtype(subtype: BookSubtype): string {
 }
 
 function formatPageCount(pageCount: number): string {
-  if (pageCount <= 0) return "Unknown length";
-  return `${pageCount} ${pageCount === 1 ? "page" : "pages"}`;
+  if (pageCount <= 0) return translate("books_unknownLength");
+  return pageCount === 1 ? translate("books_pageCountOne") : translate("bookDetail_pageCount", { count: pageCount });
 }
 
 function formatSectionCount(sectionCount: number, subtype: BookSubtype, pageCount: number): string {
   if (sectionCount <= 0) {
-    return subtype === "pdf" && pageCount > 0 ? formatPageCount(pageCount) : "No chapters";
+    return subtype === "pdf" && pageCount > 0 ? formatPageCount(pageCount) : translate("books_noChapters");
   }
-  return `${sectionCount} ${sectionCount === 1 ? "chapter" : "chapters"}`;
+  return sectionCount === 1 ? translate("books_chapterCountOne") : translate("home_chapterCount", { count: sectionCount });
 }
 
 function resolveReadSectionCount(
@@ -100,12 +101,12 @@ export function presentBookWithCoverSrc(
     ? `/ ${formatSectionCount(sectionCount, book.subtype, pageCount)}`
     : usesPageProgress
       ? `/ ${formatPageCount(pageCount)}`
-      : "progress";
+      : translate("books_progress");
 
   return {
     id: book.id,
     title: book.title,
-    authorLabel: book.author?.trim() ? book.author : "Unknown author",
+    authorLabel: book.author?.trim() ? book.author : translate("bookDetail_unknownAuthor"),
     subtype: book.subtype,
     subtypeLabel: formatSubtype(book.subtype),
     coverSrc,
@@ -120,10 +121,10 @@ export function presentBookWithCoverSrc(
     progressTotalLabel,
     progressSummary:
       sectionCount > 0
-        ? `${readSectionCount} / ${sectionCount} read`
+        ? translate("bookDetail_progressRead", { read: readSectionCount, total: sectionCount })
         : usesPageProgress && readSectionCount > 0
-          ? `${readSectionCount} / ${pageCount} pages`
-          : (readPercent > 0 ? `${readPercentLabel} read` : "Unread"),
+          ? translate("books_pagesProgress", { read: readSectionCount, total: pageCount })
+          : (readPercent > 0 ? translate("books_percentRead", { percent: readPercentLabel }) : translate("books_unread")),
     showProgress: sectionCount > 0 || !!progress,
     description: book.description,
   };

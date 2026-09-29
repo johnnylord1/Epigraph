@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { store } from "../../store/state.svelte";
   import splashMarkUrl from "../../assets/epigraph-splash-mark.png";
+  import { flyBrandMark, SPLASH_EXIT_EVENT } from "../../lib/motion/motion";
 
   interface Props {
     mode?: "loading" | "idle";
@@ -87,7 +88,9 @@
     config: T;
   };
 
-  const EXIT_MS = 320;
+  // The exit dissolves the splash while the app arrives beneath it; the splash no longer takes
+  // pointer input once the app is ready, so the longer handoff never blocks interaction.
+  const EXIT_MS = 620;
   const POST_READY_DWELL_MS = 180;
   const PIN_REVEAL_MS = 400;
 
@@ -314,7 +317,10 @@
   function triggerExit(callback?: () => void) {
     if (exitLock) return;
     exitLock = true;
+    // The mark flies to its place in the sidebar (when the app shell is there) as the rest dissolves.
+    flyBrandMark(splashRoot?.querySelector<HTMLElement>(".brand-mark"), document.querySelector<HTMLElement>(".n-sidebar__brand img"));
     exiting = true;
+    window.dispatchEvent(new CustomEvent(SPLASH_EXIT_EVENT));
     window.setTimeout(() => callback?.(), EXIT_MS);
   }
 
@@ -600,6 +606,7 @@
   <button
     type="button"
     class="epigraph-port--splash splash-stage"
+    data-theme="nocturne"
     class:is-exiting={exiting}
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}
@@ -613,6 +620,7 @@
 {:else}
   <div
     class="epigraph-port--splash splash-stage"
+    data-theme="nocturne"
     class:is-exiting={exiting}
     data-state={visualState}
     style:pointer-events={interactive ? "auto" : "none"}

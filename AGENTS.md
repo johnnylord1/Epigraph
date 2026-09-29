@@ -61,6 +61,8 @@
 - Avoid check-then-bind races. Reserve resources when possible or use bounded retry with a newly allocated resource and an actionable terminal error.
 - Write critical manifests and user state atomically. Validate first, write to a temporary sibling, flush when required, replace atomically, and retain or restore the last known-good state on failure.
 - Define typed contracts across Svelte/TypeScript, Tauri commands, Rust services, and persisted schemas. Validate inputs at boundaries and return structured, redacted errors.
+- Application (Tauri) commands are accepted only from the `main` webview. The novel runtime host and external reader/login webviews run untrusted content and must use events or capability-scoped plugins, never new application commands.
+- Every Syncd write that appends to `change_log` must also be broadcast after commit while holding `mutation_gate`; live streams resume by `server_version` and `Last-Event-ID`.
 - Keep external-service states explicit: not configured, connecting, online, offline, unauthorized, incompatible, and failed should not collapse into an indefinite loading state.
 - Prefer cached or last-known-good user data during transient failures, then reconcile in the background without discarding local progress or library state.
 - Keep caches and generated artifacts replaceable and bounded. Keep user data durable, versioned when appropriate, and covered by migration or rollback behavior.

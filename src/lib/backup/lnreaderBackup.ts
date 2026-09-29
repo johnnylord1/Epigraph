@@ -443,7 +443,28 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     throw new Error("LNReader backup does not contain saved library novels.");
   }
 
+  const categories: NonNullable<EpigraphNovelsSnapshot["categories"]> = [];
+  const categoryFile = zip.file(CATEGORY_FILE);
+  if (categoryFile) {
+    const rawCategories: unknown = safeJsonParse(await categoryFile.async("text"), null);
+    if (!Array.isArray(rawCategories)) importIssues.push({ code: "invalid-category", message: "Category section is malformed." });
+    else for (const category of rawCategories) {
+      if (!category || typeof category !== "object" || !normalizeText(category.name)
+        || !["string", "number"].includes(typeof category.id) || !Array.isArray(category.novelIds)) {
+        importIssues.push({ code: "invalid-category", message: "Skipped a malformed category." }); continue;
+      }
+      const novelIds: string[] = [];
+      for (const backupId of category.novelIds) {
+        const matches = novels.filter(novel => novel.entry.externalNovelId === String(backupId));
+        if (matches.length === 1) novelIds.push(matches[0].entry.id);
+        else importIssues.push({ code: "unresolved-category-novel", message: "Preserved destination memberships because a backup Novel reference is unresolved." });
+      }
+      categories.push({ id: String(category.id), name: category.name.trim(), order: Number.isFinite(category.sort) ? category.sort : 0, novelIds: [...new Set(novelIds)] });
+    }
+  }
+
   return normalizeEpigraphNovelsSnapshot({
+    categories,
     importIssues,
     entries: novels.map((item) => item.entry),
     chapters: novels.flatMap((item) => item.chapters),

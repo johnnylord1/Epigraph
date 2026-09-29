@@ -66,6 +66,23 @@ export function getNovelMigrationBlocker(
   return record.notes;
 }
 
+export type NovelMigrationBlockerKind = "pending" | "unverified" | "site" | "limited";
+
+/** Same decision as `getNovelMigrationBlocker`, as a kind the UI can translate. */
+export function getNovelMigrationBlockerKind(
+  pluginId: string,
+  classificationState?: PersistedNovelSourceClassificationState | null,
+): NovelMigrationBlockerKind | null {
+  const persisted = classificationState?.records.find((entry) => entry.pluginId === pluginId) ?? null;
+  if (classificationState && !persisted) return "pending";
+  const record = getNovelMigrationSafetyRecord(pluginId, classificationState);
+  if (!record) return "unverified";
+  if (record.status === "migration-safe") return null;
+  if (record.status === "pending") return "pending";
+  if (record.status === "blocked-by-site") return "site";
+  return "limited";
+}
+
 export function hasMinimumNovelMigrationSafeCohort(
   classificationState?: PersistedNovelSourceClassificationState | null,
 ): boolean {

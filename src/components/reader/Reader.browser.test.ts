@@ -71,6 +71,38 @@ describe("manga reader progress lifecycle", () => {
     expect(store.readLog).toHaveLength(0);
   });
 
+  test("turns pages from keys pressed while the page viewer has focus", async () => {
+    const { container } = render(Reader);
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    const viewer = container.querySelector<HTMLElement>(".viewer")!;
+    viewer.focus();
+    expect(document.activeElement).toBe(viewer);
+    viewer.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await waitFor(() => expect(store.pageNumber).toBe(2));
+  });
+
+  test("records history and bookmarks once per page, not again when settings are re-adopted", async () => {
+    store.settings.autoBookmark = true;
+    const history = vi.spyOn(store, "addHistory");
+    const bookmark = vi.spyOn(store, "addBookmark");
+    try {
+      render(Reader);
+      await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+      key("ArrowRight");
+      await waitFor(() => expect(store.pageNumber).toBe(2));
+      await waitFor(() => expect(bookmark).toHaveBeenCalled());
+      const calls = [history.mock.calls.length, bookmark.mock.calls.length];
+
+      // A detached window replaces its settings whenever another window persists state.
+      store.settings = { ...store.settings };
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect([history.mock.calls.length, bookmark.mock.calls.length]).toEqual(calls);
+    } finally {
+      history.mockRestore();
+      bookmark.mockRestore();
+    }
+  });
+
   test("keeps longstrip images and scroll position stable after saving a page", async () => {
     store.settings.pageStyle = "longstrip";
     store.settings.autoNextChapter = false;
@@ -113,5 +145,18 @@ describe("manga reader progress lifecycle", () => {
     await new Promise((resolve) => setTimeout(resolve, 450));
     expect(writes.filter((entry) => entry.isRead)).toHaveLength(1);
     expect(store.readLog).toHaveLength(1);
+  });
+
+  test("a detached window opens on the page list the main window handed over, once", async () => {
+    const handedOver = Array.from({ length: 3 }, (_, index) => `http://127.0.0.1:0/api/v1/manga/91/chapter/1/page/${index}`);
+    render(Reader, { props: { initialPages: { chapterId: 81, urls: handedOver } } });
+    await waitFor(() => expect(store.pageUrls).toEqual(handedOver));
+    expect(fetchPages).not.toHaveBeenCalled();
+    cleanup();
+
+    store.pageUrls = [];
+    render(Reader, { props: { initialPages: { chapterId: 999, urls: handedOver } } });
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    expect(fetchPages).toHaveBeenCalledTimes(1);
   });
 });

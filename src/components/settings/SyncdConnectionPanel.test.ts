@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 let pairingStatusListener: ((payload: unknown) => void) | null = null;
 let desktopStateListener: ((payload: unknown) => void) | null = null;
+let replicationStateListener: ((payload: unknown) => void) | null = null;
+vi.mock("../../lib/setup/firstRunSyncReadiness", async importOriginal => ({
+  ...await importOriginal<typeof import("../../lib/setup/firstRunSyncReadiness")>(),
+  refreshFirstRunSyncLibrary: vi.fn(async () => {}),
+}));
 
 const hostState = {
   profileId: "main",
@@ -21,7 +26,15 @@ const hostState = {
   error: null,
 };
 
-vi.mock("../../store/state.svelte", () => ({ addToast: vi.fn() }));
+vi.mock("../../store/state.svelte", async () => {
+  const { SvelteMap } = await import("svelte/reactivity");
+  const target = new SvelteMap([["server", "fixture"]]);
+  return { addToast: vi.fn(), store: {
+    get runtimeServerUrl() { return target.get("server") ?? ""; },
+    set runtimeServerUrl(value: string) { target.set("server", value); },
+    runtimeResolvedLocalProfileId: "main", settings: { defaultLocalProfileId: "main" },
+  } };
+});
 
 vi.mock("../../lib/syncdQr", () => ({
   buildSyncdQrDataUrl: vi.fn(async () => "data:image/png;base64,qr"),
@@ -39,7 +52,10 @@ vi.mock("../../lib/syncdDesktop", () => ({
     return () => {};
   }),
   listenSyncdReconnectStatus: vi.fn(async () => () => {}),
-  listenSyncdReplicationState: vi.fn(async () => () => {}),
+  listenSyncdReplicationState: vi.fn(async (listener: (payload: unknown) => void) => {
+    replicationStateListener = listener;
+    return () => {};
+  }),
   syncdConnectWithBootstrap: vi.fn(),
   syncdDisconnectPersistedSession: vi.fn(),
   syncdForceReplicationReconnect: vi.fn(),
@@ -81,21 +97,31 @@ vi.mock("../../lib/syncdDesktop", () => ({
 }));
 
 import SyncdConnectionPanel from "./SyncdConnectionPanel.svelte";
+import { store } from "../../store/state.svelte";
+import { refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
 import {
   listenSyncdDesktopState,
   listenSyncdPairingStatus,
   syncdGetActiveHostPairing,
   syncdGetRuntimeIdentity,
+  syncdGetReplicationState,
+  syncdGetSessionCatalog,
   syncdHostDecidePairing,
   syncdListPairedDevices,
   syncdUpdatePairedDeviceGrantedScopes,
 } from "../../lib/syncdDesktop";
+import type { SyncdReplicationSnapshot } from "../../lib/syncdDesktop";
 
 describe("SyncdConnectionPanel", () => {
   beforeEach(() => {
     pairingStatusListener = null;
     desktopStateListener = null;
     vi.clearAllMocks();
+    store.runtimeServerUrl = "fixture";
+    replicationStateListener = null;
+    vi.mocked(refreshFirstRunSyncLibrary).mockReset().mockResolvedValue(undefined);
+    vi.mocked(syncdGetReplicationState).mockResolvedValue({ localProfileId: "main", activeSessionKey: null, replicationStatus: "idle", paused: false, lastAppliedScopes: [] });
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: null, replication: { localProfileId: "main", activeSessionKey: null, replicationStatus: "idle", paused: false, lastAppliedScopes: [] }, sessions: [] });
     vi.mocked(syncdGetActiveHostPairing).mockResolvedValue(null);
     vi.mocked(syncdGetRuntimeIdentity).mockResolvedValue({ pid: 100, serverId: "server-a", deviceName: "Jhow's desktop" });
     vi.mocked(syncdHostDecidePairing).mockImplementation(async (_sessionId, decision) => ({
@@ -248,7 +274,7 @@ describe("SyncdConnectionPanel", () => {
     expect(within(dialog).getAllByText("Studio PC").length).toBeGreaterThan(0);
   });
 
-  test("embeds in its host and reports real connection readiness", async () => {
+  test("embeds in its host but pairing alone does not complete initial synchronization", async () => {
     const onReadyChange = vi.fn();
     const onClose = vi.fn();
     const host = document.createElement("section");
@@ -280,7 +306,106 @@ describe("SyncdConnectionPanel", () => {
         runtimeIdentity: { pid: 101, serverId: "server-b", deviceName: "Studio PC" },
       });
     });
+    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(false));
+  });
+
+  test.each(["idle", "connecting", "replaying", "paused", "offline", "degraded", "needs_reauth"] as const)("does not finish setup with an active session that is %s", async (replicationStatus) => {
+    const replication = { localProfileId: "main", activeSessionKey: "paired-session", replicationStatus, paused: replicationStatus === "paused", lastAppliedScopes: [] };
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(replication);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "paired-session", replication, sessions: [] });
+    const onReadyChange = vi.fn();
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+    await waitFor(() => expect(syncdGetSessionCatalog).toHaveBeenCalled());
+    await act(async () => {});
+    expect(onReadyChange).toHaveBeenLastCalledWith(false);
+    expect(onReadyChange).not.toHaveBeenCalledWith(true);
+  });
+
+  test("waits for library hydration and ignores detached results", async () => {
+    const onReadyChange = vi.fn();
+    const live: SyncdReplicationSnapshot = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live", remoteBootstrapGeneration: 1, paused: false, lastAppliedScopes: [] };
+    let resolveRefresh!: () => void;
+    vi.mocked(refreshFirstRunSyncLibrary).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+    // Keep follow-up reads consistent with the newest event.
+    let snapshot: SyncdReplicationSnapshot = { ...live, replicationStatus: "replaying" };
+    vi.mocked(syncdGetReplicationState).mockImplementation(async () => snapshot);
+    vi.mocked(syncdGetSessionCatalog).mockImplementation(async () => ({ localProfileId: "main", activeSessionKey: "remote", replication: snapshot, sessions: [] }));
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+    await waitFor(() => expect(replicationStateListener).not.toBeNull());
+    await act(async () => { snapshot = live; replicationStateListener?.(snapshot); });
+    await waitFor(() => expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1));
+    expect(within(screen.getByRole("dialog")).getByTestId("syncd-initial-sync-status").dataset.phase).toBe("loading");
+    expect(onReadyChange).toHaveBeenLastCalledWith(false);
+    // Loss of readiness fences completion from an earlier refresh.
+    await act(async () => { snapshot = { ...live, paused: true }; replicationStateListener?.(snapshot); });
+    await act(async () => resolveRefresh());
+    expect(onReadyChange).not.toHaveBeenCalledWith(true);
+    expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1);
+  });
+
+  test("publishes ready after the mounted hydration attempt resolves", async () => {
+    const onReadyChange = vi.fn();
+    const live = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live" as const, remoteBootstrapGeneration: 1, paused: false, lastAppliedScopes: [] };
+    let resolveRefresh!: () => void;
+    vi.mocked(refreshFirstRunSyncLibrary).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(live);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication: live, sessions: [] });
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await waitFor(() => expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1));
+    expect(within(dialog).getByTestId("syncd-initial-sync-status").dataset.phase).toBe("loading");
+
+    await act(async () => resolveRefresh());
+
     await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+    expect(within(dialog).queryByTestId("syncd-initial-sync-status")).toBeNull();
+  });
+
+  test("keeps the active hydration attempt attached across an unrelated replication update", async () => {
+    const onReadyChange = vi.fn();
+    const live = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live" as const, remoteBootstrapGeneration: 1, paused: false, lastAppliedScopes: [] };
+    let resolveRefresh!: () => void;
+    vi.mocked(refreshFirstRunSyncLibrary).mockImplementationOnce(() => new Promise(resolve => { resolveRefresh = resolve; }));
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(live);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication: live, sessions: [] });
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+    await waitFor(() => expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      replicationStateListener?.({ ...live, novelsScopeCheckpoint: { scopeId: "novels:main", lastAppliedServerVersion: 2 } });
+    });
+    expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveRefresh());
+    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+  });
+
+  test("keeps a failed initial hydration visible until the user retries", async () => {
+    const onReadyChange = vi.fn();
+    const live = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live" as const, remoteBootstrapGeneration: 1, paused: false, lastAppliedScopes: [] };
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(live);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication: live, sessions: [] });
+    vi.mocked(refreshFirstRunSyncLibrary).mockRejectedValue(Error("private diagnostic"));
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+    const error = await screen.findByTestId("syncd-initial-sync-error");
+    expect(error.textContent).not.toContain("private diagnostic");
+    expect(onReadyChange).toHaveBeenLastCalledWith(false);
+    vi.mocked(refreshFirstRunSyncLibrary).mockResolvedValue(undefined);
+    await fireEvent.click(within(error).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onReadyChange).toHaveBeenLastCalledWith(true));
+  });
+
+  test.each([undefined, 0])("does not adopt persisted Live without a current bootstrap generation (%s)", async remoteBootstrapGeneration => {
+    const replication = { localProfileId: "main", activeSessionKey: "remote", replicationStatus: "live" as const, remoteBootstrapGeneration, paused: false, lastAppliedScopes: [] };
+    vi.mocked(syncdGetReplicationState).mockResolvedValue(replication);
+    vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication, sessions: [] });
+    const onReadyChange = vi.fn();
+    render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
+    await waitFor(() => expect(syncdGetSessionCatalog).toHaveBeenCalled());
+    await act(async () => {});
+    expect(onReadyChange).not.toHaveBeenCalledWith(true);
+    expect(refreshFirstRunSyncLibrary).not.toHaveBeenCalled();
   });
 
   test("allows the modal to close while a host decision is pending", async () => {

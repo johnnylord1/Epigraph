@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { applyAppLanguage } from "../i18n/runtime";
 import { buildBooksSectionState } from "./booksSection";
 import type { BookEntry, BookProgress } from "../books/types";
 import type { BooksCategory } from "../../store/state.svelte";
@@ -49,6 +50,10 @@ function booksCategory(overrides: Partial<BooksCategory> = {}): BooksCategory {
 }
 
 describe("buildBooksSectionState", () => {
+  beforeEach(() => {
+    applyAppLanguage("en");
+  });
+
   it("derives Books category rows, type counts, and stable book ids from explicit cover input", () => {
     const alpha = book();
     const beta = book({
@@ -159,7 +164,7 @@ describe("buildBooksSectionState", () => {
     });
 
     expect(state.filteredBooks).toEqual([]);
-    expect(state.vm.emptyMessage).toBe("No source novels in this profile library yet.");
+    expect(state.vm.emptyMessage).toBe("No source novels in this library yet.");
     expect(state.vm.dragDropEnabled).toBe(false);
   });
 

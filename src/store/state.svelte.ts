@@ -7,6 +7,9 @@ import type {
   SearchOpenOptions,
 } from "../lib/search/types";
 import { cache, CACHE_GROUPS, CACHE_KEYS } from "../lib/cache";
+import { isDetachedReaderWindow } from "../lib/reader/detachedChannel";
+import { seedSplitReaderSettings } from "../lib/reader/readerSettingsScope";
+import { createFirstRunState, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../lib/firstRun";
 import { DEFAULT_KEYBINDS, type Keybinds } from "../lib/keybinds";
 import type {
   CustomLocalProfile,
@@ -20,6 +23,7 @@ import { reconcileBookIdentityState } from "../lib/books/identity";
 import {
   canUseDesktopBookStorage,
   loadBookLibraryState,
+  loadBookLibraryStateForRestore,
   peekBookLibraryState,
   saveBookLibraryState,
 } from "../lib/books/libraryState";
@@ -166,6 +170,19 @@ const PROFILE_SCOPED_SETTING_KEYS = [
   "proseReaderTextAlign",
   "bookReaderFlow",
   "proseReaderFullWidth",
+  "bookReaderZoom",
+  "bookProseReaderFontSize",
+  "bookProseReaderFontFamily",
+  "bookProseReaderLineHeight",
+  "bookProseReaderParagraphSpacing",
+  "bookProseReaderContentWidth",
+  "bookProseReaderTextColor",
+  "bookProseReaderBackgroundColor",
+  "bookProseReaderTheme",
+  "bookProseReaderTextAlign",
+  "bookProseReaderFullWidth",
+  "novelReaderBrightness",
+  "bookReaderBrightness",
   "pdfFitMode",
   "pdfDarkMode",
   "pdfReflowMode",
@@ -425,6 +442,22 @@ export interface Settings {
   proseReaderTextAlign:    ProseReaderAlign;
   bookReaderFlow:          "paginated" | "scrolled";
   proseReaderFullWidth:    boolean;
+  /** Book (PDF) zoom; kept apart from the manga `readerZoom` because the ranges differ. */
+  bookReaderZoom:          number;
+  /** EPUB/PDF-reflow typography; the `proseReader*` keys belong to the novel reader. */
+  bookProseReaderFontSize: number;
+  bookProseReaderFontFamily: string;
+  bookProseReaderLineHeight: number;
+  bookProseReaderParagraphSpacing: number;
+  bookProseReaderContentWidth: number;
+  bookProseReaderTextColor: string;
+  bookProseReaderBackgroundColor: string;
+  bookProseReaderTheme:    ProseReaderTheme;
+  bookProseReaderTextAlign: ProseReaderAlign;
+  bookProseReaderFullWidth: boolean;
+  /** `readerBrightness` is the manga reader's; novels and books keep their own. */
+  novelReaderBrightness:   number;
+  bookReaderBrightness:    number;
   pdfFitMode:              PdfFitMode;
   pdfDarkMode:             boolean;
   pdfReflowMode:           boolean;
@@ -564,6 +597,19 @@ export const DEFAULT_SETTINGS: Settings = {
   proseReaderTextAlign:   "left",
   bookReaderFlow:         "paginated",
   proseReaderFullWidth:   false,
+  bookReaderZoom:         1.0,
+  bookProseReaderFontSize: 18,
+  bookProseReaderFontFamily: "Georgia, serif",
+  bookProseReaderLineHeight: 1.75,
+  bookProseReaderParagraphSpacing: 1.1,
+  bookProseReaderContentWidth: 760,
+  bookProseReaderTextColor: DEFAULT_PROSE_READER_TEXT_COLOR,
+  bookProseReaderBackgroundColor: DEFAULT_PROSE_READER_BACKGROUND_COLOR,
+  bookProseReaderTheme:   "nocturne",
+  bookProseReaderTextAlign: "left",
+  bookProseReaderFullWidth: false,
+  novelReaderBrightness:  1.0,
+  bookReaderBrightness:   1.0,
   pdfFitMode:             "width",
   pdfDarkMode:            false,
   pdfReflowMode:          false,
@@ -725,7 +771,7 @@ function normalizeProfileScopedSettings(value: unknown): Record<LocalProfileId, 
       const profileId = normalizeLocalProfileId(rawProfileId);
       if (!profileId || !rawSettings || typeof rawSettings !== "object") return null;
       const scoped: ProfileScopedSettings = {};
-      const record = rawSettings as Record<string, unknown>;
+      const record = seedSplitReaderSettings(rawSettings as Record<string, unknown>);
       for (const key of PROFILE_SCOPED_SETTING_KEYS) {
         if (key in record) {
           (scoped as Record<string, unknown>)[key] = cloneSettingValue(record[key]);
@@ -860,6 +906,7 @@ const STORE_KEY = "epigraph-store";
 const RESET_ON_UPGRADE: (keyof Settings)[] = [
   "serverBinary",
   "readerZoom",
+  "bookReaderZoom",
   "uiZoom",
   "serverUrl",
 ];
@@ -883,6 +930,27 @@ function normalizeSavedCustomThemes(value: unknown): CustomTheme[] {
   return [...valid.values()];
 }
 
+function normalizeAppReadingRestore(snapshot: {
+  history?: HistoryEntry[]; readLog?: ReadLogEntry[]; readingStats?: ReadingStats;
+}) {
+  const history = Array.isArray(snapshot.history)
+      ? snapshot.history
+          .map((entry) => normalizeLoadedHistoryEntry(entry))
+          .filter((entry): entry is HistoryEntry => Boolean(entry))
+          .sort((left, right) => right.readAt - left.readAt)
+          .slice(0, 300)
+      : [];
+  const readLog = Array.isArray(snapshot.readLog)
+      ? snapshot.readLog
+          .map((entry) => normalizeLoadedReadLogEntry(entry))
+          .filter((entry): entry is ReadLogEntry => Boolean(entry))
+          .sort((left, right) => left.readAt - right.readAt)
+          .slice(-5000)
+      : [];
+  const readingStats = mergeStats({ readingStats: snapshot.readingStats ?? DEFAULT_READING_STATS });
+  return { history, readLog, readingStats };
+}
+
 function readPersistedAppReadingSnapshot(): {
   history: HistoryEntry[];
   readLog: ReadLogEntry[];
@@ -900,7 +968,12 @@ function readPersistedAppReadingSnapshot(): {
   };
 }
 
+// A detached reader window borrows the store to render one reader. The main window owns every write, so the
+// detached copy reads localStorage but never writes it; its changes are relayed to the main window instead.
+const DETACHED_READER_WINDOW = isDetachedReaderWindow();
+
 function persist(patch: Record<string, unknown>): boolean {
+  if (DETACHED_READER_WINDOW) return true;
   try {
     const current = loadPersisted() ?? {};
     localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...patch }));
@@ -923,7 +996,7 @@ const saved = (() => {
       storeVersion: STORE_VERSION,
       settings: { ...data.settings, ...resetPatch },
     };
-    try {
+    if (!DETACHED_READER_WINDOW) try {
       localStorage.setItem(STORE_KEY, JSON.stringify(migrated));
     } catch {}
     return migrated;
@@ -932,6 +1005,21 @@ const saved = (() => {
 })();
 
 export const hadPersistedStoreAtStartup = saved !== null;
+
+// Persist enrollment before store effects can write during the startup splash.
+// Otherwise an interrupted first launch looks like a legacy installation on retry.
+if (!hadPersistedStoreAtStartup && !DETACHED_READER_WINDOW) {
+  try {
+    if (localStorage.getItem(FIRST_RUN_STORAGE_KEY) === null) {
+      localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+    }
+  } catch { /* Storage failures must not prevent opening the app. */ }
+}
+
+const firstRunPendingAtStartup = (() => {
+  try { return shouldStartFirstRun(localStorage.getItem(FIRST_RUN_STORAGE_KEY), hadPersistedStoreAtStartup); }
+  catch { return !hadPersistedStoreAtStartup; }
+})();
 
 function mergeSettings(saved: any): Settings {
   const savedBooksLibraryState = peekBookLibraryState();
@@ -942,7 +1030,7 @@ function mergeSettings(saved: any): Settings {
   const savedServerUrl = normalizeServerUrl(saved?.settings?.serverUrl);
   const coercedDefaultProfileId = getLocalProfileMeta(savedDefaultProfileId, customLocalProfiles)?.id ?? DEFAULT_SETTINGS.defaultLocalProfileId;
   const coercedServerUrl = savedServerUrl ?? DEFAULT_SETTINGS.serverUrl;
-  const savedTheme = saved?.settings?.theme;
+  const savedTheme = saved?.settings?.theme ?? (firstRunPendingAtStartup ? "light" : undefined);
   const coercedTheme = normalizeThemeSelection(savedTheme, savedCustomThemes);
   const savedFlareSolverrSessionName = saved?.settings?.flareSolverrSessionName;
   const coercedFlareSolverrSessionName =
@@ -970,7 +1058,7 @@ function mergeSettings(saved: any): Settings {
   );
   const merged: Settings = {
     ...DEFAULT_SETTINGS,
-    ...saved?.settings,
+    ...seedSplitReaderSettings(saved?.settings ?? {}),
     keybinds:     { ...DEFAULT_KEYBINDS, ...saved?.settings?.keybinds },
     heroSlots:    saved?.settings?.heroSlots ?? [null, null, null, null],
     mangaLinks:   saved?.settings?.mangaLinks ?? {},
@@ -1626,7 +1714,7 @@ class Store {
   }
 
   private queuePersistBooksLibraryState() {
-    if (!this.booksStateHydrated) return;
+    if (!this.booksStateHydrated || DETACHED_READER_WINDOW) return;
     this.booksStatePersistQueued = true;
     if (this.booksStatePersistTask) return;
 
@@ -1660,7 +1748,7 @@ class Store {
   }
 
   queueCanonicalBookMigration() {
-    if (this.bookCanonicalMigrationQueued) return;
+    if (this.bookCanonicalMigrationQueued || DETACHED_READER_WINDOW) return;
     this.bookCanonicalMigrationQueued = true;
 
     queueMicrotask(() => {
@@ -1759,6 +1847,25 @@ class Store {
   closeBookReader() {
     this.activeBookReaderId = null;
     this.readerSessionId   += 1;
+  }
+
+  /** A detached reader window closed; Home refreshes as it does when the docked reader closes. */
+  noteDetachedReaderClosed() {
+    this.readerSessionId   += 1;
+  }
+
+  /** Detached reader windows follow the settings and bookmarks the main window persists. */
+  adoptPersistedReaderState() {
+    const data = loadPersisted();
+    if (!data) return;
+    const next = mergeSettings(data);
+    this.settings = {
+      ...next,
+      booksCategories: this.settings.booksCategories,
+      booksCategoryAssignments: this.settings.booksCategoryAssignments,
+      booksLibraryUi: this.settings.booksLibraryUi,
+    };
+    if (Array.isArray(data.bookmarks)) this.bookmarks = data.bookmarks;
   }
 
   /**
@@ -1994,6 +2101,24 @@ class Store {
     return this.flushPersistBooksLibraryState();
   }
 
+  async persistRestoredBooks(): Promise<void> {
+    if (!this.booksStateHydrated || !this.booksLibraryHydrated) throw Error("RESTORE_BOOKS_NOT_HYDRATED");
+    const profile = this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings);
+    if (this.booksStateScopeKey !== null && this.booksStateScopeKey !== profile) throw Error("RESTORE_TARGET_CHANGED");
+    await this.migrateBooksToCanonical();
+    if ((this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings)) !== profile) throw Error("RESTORE_TARGET_CHANGED");
+    await this.flushBookLibraryPersistence();
+  }
+
+  async prepareBooksForRestore(): Promise<void> {
+    if (this.activeBookReaderId) throw Error("RESTORE_BOOK_READER_ACTIVE");
+    const profileId = this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings);
+    await loadBookLibraryStateForRestore({ profileId });
+    if ((this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings)) !== profileId) throw Error("RESTORE_TARGET_CHANGED");
+    await this.persistRestoredBooks();
+    if (this.activeBookReaderId) throw Error("RESTORE_BOOK_READER_ACTIVE");
+  }
+
   addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) {
     const bookmark = createBookBookmark(entry, label);
     this.bookBookmarks = [
@@ -2081,21 +2206,7 @@ class Store {
     readLog?: ReadLogEntry[];
     readingStats?: ReadingStats;
   }) {
-    this.history = Array.isArray(snapshot.history)
-      ? snapshot.history
-          .map((entry) => normalizeLoadedHistoryEntry(entry))
-          .filter((entry): entry is HistoryEntry => Boolean(entry))
-          .sort((left, right) => right.readAt - left.readAt)
-          .slice(0, 300)
-      : [];
-    this.readLog = Array.isArray(snapshot.readLog)
-      ? snapshot.readLog
-          .map((entry) => normalizeLoadedReadLogEntry(entry))
-          .filter((entry): entry is ReadLogEntry => Boolean(entry))
-          .sort((left, right) => left.readAt - right.readAt)
-          .slice(-5000)
-      : [];
-    this.readingStats = mergeStats({ readingStats: snapshot.readingStats ?? DEFAULT_READING_STATS });
+    Object.assign(this, normalizeAppReadingRestore(snapshot));
     bumpContentSetupVersion();
   }
 
@@ -2738,6 +2849,24 @@ export function flushBookLibraryPersistence()                          { return 
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }
 export function removeBookBookmark(bookId: string)                      { store.removeBookBookmark(bookId); }
 export function replaceBooksState(snapshot: BooksRestoreHydrationInput) { store.replaceBooksState(snapshot); }
+/** Restore must observe persistence failure rather than relying on the UI autosave effect. */
+export function persistRestoredAppReadingState(snapshot?: Parameters<typeof normalizeAppReadingRestore>[0]) {
+  const candidate = normalizeAppReadingRestore(snapshot ?? { history: store.history, readLog: store.readLog, readingStats: store.readingStats });
+  let raw: string | null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch { throw Error("RESTORE_APP_PERSISTENCE_FAILED"); }
+  let current: Record<string, unknown> = {};
+  if (raw !== null) {
+    try {
+      current = JSON.parse(raw);
+      if (!current || typeof current !== "object" || Array.isArray(current)) throw Error();
+    } catch { throw Error("RESTORE_APP_DESTINATION_CORRUPT"); }
+  }
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...candidate }));
+  } catch { throw Error("RESTORE_APP_PERSISTENCE_FAILED"); }
+  if (snapshot) store.replaceAppReadingState(candidate);
+}
+
 export function replaceAppReadingState(snapshot: {
   history?: HistoryEntry[];
   readLog?: ReadLogEntry[];
