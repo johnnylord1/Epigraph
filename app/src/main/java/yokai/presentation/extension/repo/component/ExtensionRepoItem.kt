@@ -223,8 +223,8 @@ fun ExtensionRepoInput(
             )
 
             Button(
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
                 enabled = canSubmit,
                 onClick = { onAddClick(trimmedInput) },
             ) {

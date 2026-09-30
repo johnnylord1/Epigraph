@@ -639,6 +639,7 @@ private fun FilterSheetActionBar(
         )
         Spacer(modifier = Modifier.weight(1f))
         Button(
+            shape = MaterialTheme.shapes.small,
             onClick = onApply,
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
             colors = ButtonDefaults.buttonColors(

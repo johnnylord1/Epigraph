@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.ui.migration.manga.process
 
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Bundle
@@ -12,13 +10,13 @@ import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.activity.BackEventCompat
-import androidx.core.animation.doOnEnd
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.vectordrawable.graphics.drawable.VectorDrawableCompat
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.R
+import epigraph.ui.motion.PredictiveBackPreview
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.databinding.MigrationListControllerBinding
 import eu.kanade.tachiyomi.domain.manga.models.Manga
@@ -47,6 +45,7 @@ import eu.kanade.tachiyomi.util.view.activityBinding
 import eu.kanade.tachiyomi.util.view.appBar
 import eu.kanade.tachiyomi.util.view.isControllerVisible
 import eu.kanade.tachiyomi.util.view.liftAppbarWith
+import eu.kanade.tachiyomi.util.view.previousController
 import eu.kanade.tachiyomi.util.view.setPositiveButton
 import eu.kanade.tachiyomi.util.view.setTextColorAlpha
 import eu.kanade.tachiyomi.util.view.setTitle
@@ -450,22 +449,9 @@ class MigrationListController(bundle: Bundle? = null) :
 
     override fun handleBack(): Boolean {
         view?.let { view ->
-            if (view.x != 0f || view.alpha != 1f) {
-                val animatorSet = AnimatorSet()
-                animatorSet.play(ObjectAnimator.ofFloat(view, View.ALPHA, view.alpha, 1f))
-                val tA = ObjectAnimator.ofFloat(view, View.TRANSLATION_X, view.translationX, 0f)
-                tA.addUpdateListener {
-                    activityBinding?.backShadow?.let { backShadow ->
-                        backShadow.x = view.x - backShadow.width
-                    }
-                }
-                animatorSet.duration = 150
-                animatorSet.doOnEnd {
-                    activityBinding?.backShadow?.alpha = 0.25f
-                    activityBinding?.backShadow?.isVisible = false
-                }
-                animatorSet.play(tA)
-                animatorSet.start()
+            if (view.translationX != 0f || view.scaleX != 1f || view.alpha != 1f) {
+                // The gesture previewed a pop that a confirmation dialog may still refuse.
+                PredictiveBackPreview.cancel(view, previousController?.view, activityBinding?.appBar)
             }
         }
         activity?.materialAlertDialog()

@@ -23,6 +23,7 @@ import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.snackbar.Snackbar
+import epigraph.ui.motion.ListEntryAnimation
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.items.IFlexible
 import eu.kanade.tachiyomi.R
@@ -157,6 +158,7 @@ class BrowseController :
     private var sourceRecyclerPool: RecyclerView.RecycledViewPool? = null
     private var submittedLastUsedSignature: Int? = null
     private var hasSubmittedLastUsed = false
+    private var sourcesEntryPlayed = false
 
     var extQuery = ""
         private set
@@ -946,6 +948,11 @@ class BrowseController :
     fun setSources(sources: List<IFlexible<*>>, lastUsed: SourceItem?) {
         adapter?.updateDataSetIfChanged(sources, false)
         setLastUsedSource(lastUsed)
+        // DESIGN.md §9 "Entrada de lista": the first populated list only, not type switches or refreshes.
+        if (!sourcesEntryPlayed && sources.isNotEmpty() && view != null) {
+            sourcesEntryPlayed = true
+            ListEntryAnimation.runOnce(binding.sourceRecycler)
+        }
         if (isControllerVisible) {
             appBar()?.lockYPos = false
         }
@@ -961,10 +968,19 @@ class BrowseController :
         submittedLastUsedSignature = nextSignature
         hasSubmittedLastUsed = true
         adapter?.removeAllScrollableHeaders()
+        // FlexibleAdapter keeps orphan headers, so the old "Last used" header stayed at the top
+        // and the new item landed above it after switching Manga/Novel.
+        adapter?.let { adapter ->
+            val orphanHeader = adapter.getGlobalPositionOf(LangItem(SourcePresenter.LAST_USED_KEY))
+            if (orphanHeader >= 0) adapter.removeItem(orphanHeader)
+        }
         if (item != null) {
             // The item's own LangItem section header already renders "Last used"; adding a
             // second LangItem showed the title twice.
             adapter?.addScrollableHeader(item)
+            // Only updateDataSet shows section headers; without this the switched-to list had no
+            // "Last used" title until the next refresh. The next updateDataSet rebuilds it once.
+            adapter?.addItem(0, item.header)
         }
         // addScrollableHeader inserts at position 0, so the header added last is on top:
         // Discover sits above everything, like the desktop Browse page's recommendations.

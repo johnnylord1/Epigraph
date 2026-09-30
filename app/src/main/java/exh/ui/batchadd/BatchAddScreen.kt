@@ -75,6 +75,7 @@ class BatchAddScreen : Screen() {
                         )
                         Spacer(Modifier.height(8.dp))
                         Button(
+                            shape = MaterialTheme.shapes.small,
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { screenModel.addGalleries(context) },
                         ) {
@@ -140,6 +141,7 @@ class BatchAddScreen : Screen() {
                                 Column {
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Button(
+                                        shape = MaterialTheme.shapes.small,
                                         modifier = Modifier.fillMaxWidth(),
                                         onClick = screenModel::finish,
                                     ) {

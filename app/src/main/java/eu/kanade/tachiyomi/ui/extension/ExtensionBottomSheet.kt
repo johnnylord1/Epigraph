@@ -10,8 +10,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExtensionOff
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.outlined.ExtensionOff
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.core.view.WindowInsetsCompat.Type.systemBars
 import androidx.core.view.isVisible
 import androidx.core.view.updatePaddingRelative
@@ -479,7 +479,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         val frameLayout = migrationFrameLayout ?: return
         if (currentSourceTitle == null && migrationSourcesEmpty) {
             frameLayout.showEmptyState(
-                image = Icons.Filled.SwapHoriz,
+                image = Icons.Outlined.SwapHoriz,
                 message = context.getString(MR.strings.information_empty_migration_sources),
             )
         } else {
@@ -660,7 +660,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
 
         frameLayout.showEmptyState(
-            image = Icons.Filled.ExtensionOff,
+            image = Icons.Outlined.ExtensionOff,
             message = message,
             actions = actions,
         )
@@ -745,7 +745,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
 
         frameLayout.showEmptyState(
-            image = Icons.Filled.ExtensionOff,
+            image = Icons.Outlined.ExtensionOff,
             message = message,
             actions = actions,
         )
