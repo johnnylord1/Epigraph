@@ -11,6 +11,10 @@ object Migrator {
     private var result: Deferred<Boolean>? = null
     val scope = CoroutineScope(Dispatchers.IO + Job())
 
+    /** True when this launch upgraded an existing install, as opposed to a first install. */
+    var isUpgrade: Boolean = false
+        private set
+
     fun initialize(
         old: Int,
         new: Int,
@@ -18,6 +22,7 @@ object Migrator {
         dryRun: Boolean = false,
         onMigrationComplete: () -> Unit
     ) {
+        isUpgrade = old in 1 until new
         val migrationContext = MigrationContext(dryRun)
         val migrationJobFactory = MigrationJobFactory(migrationContext, scope)
         val migrationStrategyFactory = MigrationStrategyFactory(migrationJobFactory, onMigrationComplete)

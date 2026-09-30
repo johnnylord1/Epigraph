@@ -58,11 +58,19 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
         binding = ReaderChaptersSheetBinding.bind(this)
     }
 
+    /**
+     * Opaque reader-theme surface, set by the reader palette. The HUD matches the top bar
+     * instead of letting page content bleed through a translucent app-colored sheet.
+     */
+    var themedSurface: Int? = null
+        set(value) {
+            field = value
+            value?.let { backgroundTintList = ColorStateList.valueOf(it) }
+        }
+
     fun setup(activity: ReaderActivity) {
         viewModel = activity.viewModel
         val fullPrimary = activity.getResourceColor(materialR.attr.colorSurface)
-
-        val primary = ColorUtils.setAlphaComponent(fullPrimary, 200)
 
         val hasLightNav = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1 || activity.isInNightMode()
         val navPrimary = ColorUtils.setAlphaComponent(
@@ -106,8 +114,7 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
                     val navAlpha = (1 - abs(progress)).coerceIn(0f, 1f)
                     activity.binding.readerNav.root.alpha = navAlpha
                     activity.novelActionBarComposeView?.alpha = navAlpha
-                    backgroundTintList =
-                        ColorStateList.valueOf(lerpColor(primary, fullPrimary, trueProgress))
+                    backgroundTintList = ColorStateList.valueOf(themedSurface ?: fullPrimary)
                     binding.chapterRecycler.alpha = trueProgress
                     if (activity.sheetManageNavColor && progress > 0f) {
                         activity.window.navigationBarColor =
@@ -263,13 +270,7 @@ class ReaderChapterSheet @JvmOverloads constructor(context: Context, attrs: Attr
             },
         )
 
-        backgroundTintList = ColorStateList.valueOf(
-            if (!sheetBehavior.isExpanded()) {
-                primary
-            } else {
-                fullPrimary
-            },
-        )
+        backgroundTintList = ColorStateList.valueOf(themedSurface ?: fullPrimary)
 
         binding.chapterRecycler.addOnScrollListener(
             object : RecyclerView.OnScrollListener() {

@@ -17,11 +17,65 @@
         android:paddingTop="0dp"
         android:paddingBottom="16dp">
 
+        <!-- Playback lives in the TTS panel, as on the desktop reader. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tts_previous"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:contentDescription="@string/novel_tts_prev_paragraph"
+                app:icon="@drawable/ic_skip_previous_24"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tts_play_pause"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="2"
+                android:text="@string/novel_tts_read_aloud"
+                app:icon="@drawable/ic_play_arrow_24dp"
+                app:iconGravity="textStart" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tts_stop"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:contentDescription="@string/novel_tts_stop"
+                app:icon="@drawable/ic_stop_24dp"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/tts_next"
+                style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:contentDescription="@string/novel_tts_next_paragraph"
+                app:icon="@drawable/ic_skip_next_24"
+                app:iconGravity="textStart"
+                app:iconPadding="0dp" />
+        </LinearLayout>
+
         <eu.kanade.tachiyomi.widget.MaterialSpinnerView
             android:id="@+id/tts_engine"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="8dp"
             app:title="@string/novel_tts_engine" />
 
         <eu.kanade.tachiyomi.widget.MaterialSpinnerView

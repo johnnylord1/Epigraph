@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Resource name retained internally to avoid a broad theme migration. -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@drawable/ic_epigraph_mark"
-    android:inset="18dp" />
+<!-- The desktop splash mark; the drop fits inside the 160dp circle Android keeps visible. -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:filter="true"
+    android:gravity="fill"
+    android:src="@drawable/epigraph_splash_mark" />

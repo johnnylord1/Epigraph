@@ -1,7 +1,10 @@
 package epigraph.novel.security
 
+import java.net.InetAddress
+import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
@@ -36,6 +39,26 @@ class NovelNetworkPolicyTest {
         }
         assertThrows(NovelNetworkPolicyException::class.java) {
             authorized.validate("http://1.1.1.1/chapter")
+        }
+    }
+
+    @Test
+    fun `connection dns refuses private answers so rebinding cannot bypass validation`() {
+        fun dnsAnswering(vararg literals: String) = policy.publicOnlyDns(
+            Dns { literals.map(InetAddress::getByName) },
+        )
+
+        assertEquals(
+            listOf(InetAddress.getByName("93.184.215.14")),
+            dnsAnswering("93.184.215.14").lookup("example.com"),
+        )
+        listOf("10.0.0.7", "192.168.1.2", "127.0.0.1", "169.254.169.254", "0.1.2.3", "fd00::1", "::1").forEach {
+            assertThrows(NovelNetworkPolicyException::class.java) {
+                dnsAnswering("93.184.215.14", it).lookup("rebind.example")
+            }
+        }
+        assertThrows(NovelNetworkPolicyException::class.java) {
+            dnsAnswering("93.184.215.14").lookup("app.localhost")
         }
     }
 }

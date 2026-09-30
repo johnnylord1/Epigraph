@@ -328,6 +328,25 @@
         <item name="actionBarTintColor">@color/wagashi_on_surface</item>
     </style>
 
+    <!--== Nocturne Theme — desktop default: lunar graphite + lilac ==-->
+    <style name="Theme.Tachiyomi.Nocturne">
+        <item name="colorPrimary">@color/nocturne_primary</item>
+        <item name="colorPrimaryInverse">@color/nocturne_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/nocturne_primary_variant</item>
+        <item name="colorOnPrimary">@color/nocturne_on_primary</item>
+        <item name="colorSecondary">@color/nocturne_secondary</item>
+        <item name="colorOnSecondary">@color/nocturne_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/nocturne_secondary_variant</item>
+        <item name="colorTertiary">@color/nocturne_tertiary</item>
+        <item name="colorOnTertiary">@color/nocturne_on_tertiary</item>
+        <item name="colorControlHighlight">@color/nocturne_highlight</item>
+        <item name="tabBarIconColor">@color/nocturne_tab_bar_icon</item>
+        <item name="background">@color/nocturne_background</item>
+        <item name="colorOnBackground">@color/nocturne_on_background</item>
+        <item name="colorSurface">@color/nocturne_surface</item>
+        <item name="actionBarTintColor">@color/nocturne_on_surface</item>
+    </style>
+
     <!--== Rose Theme — Tailwind rose scale ==-->
     <style name="Theme.Tachiyomi.Rose">
         <item name="colorPrimary">@color/rose_primary</item>
@@ -372,8 +391,8 @@
 
     <!-- Splash -->
     <style name="Theme.Tachiyomi.SplashScreen" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenBackground">@color/epigraph_splash_background</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/epigraph_splash_background</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_epigraph_splash</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_epigraph_splash</item>
         <item name="postSplashScreenTheme">@style/Theme.Tachiyomi</item>

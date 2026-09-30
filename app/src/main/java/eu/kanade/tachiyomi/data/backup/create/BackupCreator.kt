@@ -29,6 +29,8 @@ import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
 import yokai.util.lang.getString
 
+private const val PARTIAL_SUFFIX = ".part"
+
 class BackupCreator(
     val context: Context,
     private val categoriesBackupCreator: CategoriesBackupCreator = CategoriesBackupCreator(),
@@ -51,20 +53,20 @@ class BackupCreator(
     suspend fun createBackup(uri: Uri, options: BackupOptions, isAutoBackup: Boolean): String {
         var file: UniFile? = null
         try {
-            file = if (isAutoBackup) {
-                // Get dir of file and create
-                val dir = UniFile.fromUri(context, uri)
-
-                // Delete older backups
-                val numberOfBackups = backupPreferences.numberOfBackups().get()
-                dir?.listFiles { _, filename -> Backup.filenameRegex.matches(filename) }
+            val directory = if (isAutoBackup) {
+                UniFile.fromUri(context, uri) ?: throw IllegalStateException("Unable to retrieve backup destination")
+            } else {
+                null
+            }
+            val finalName = Backup.getBackupFilename()
+            file = if (directory != null) {
+                // Automatic backups are written under a name the rotation never matches, verified
+                // and only then renamed into place, so a crash cannot leave a truncated backup that
+                // later replaces a good one. Leftovers from an interrupted run are removed first.
+                directory.listFiles { _, filename -> filename.endsWith(PARTIAL_SUFFIX) }
                     .orEmpty()
-                    .sortedByDescending { it.name }
-                    .drop(numberOfBackups - 1)
                     .forEach { it.delete() }
-
-                // Create new file to place backup
-                dir?.createFile(Backup.getBackupFilename())
+                directory.createFile(finalName + PARTIAL_SUFFIX)
             } else {
                 UniFile.fromUri(context, uri)
             } ?: throw IllegalStateException("Unable to retrieve backup destination")
@@ -93,16 +95,35 @@ class BackupCreator(
                 // Force overwrite old file
                 (it as? FileOutputStream)?.channel?.truncate(0)
             }.sink().gzip().buffer().use { it.write(byteArray) }
-            val fileUri = file.uri
 
             // Make sure it's a valid backup file
-            BackupFileValidator().validate(context, fileUri)
+            BackupFileValidator().validate(context, file.uri)
 
-            if (isAutoBackup) {
+            if (directory != null) {
+                directory.findFile(finalName)?.delete()
+                if (!file.renameTo(finalName)) {
+                    throw IllegalStateException("Unable to finalize backup file")
+                }
+                val finalFile = directory.findFile(finalName)
+                    ?: throw IllegalStateException("Unable to finalize backup file")
+                file = finalFile
+
+                // Rotate only after the new backup is in place; a failed cleanup keeps extra files
+                // instead of failing (and deleting) the backup that was just finalized.
+                runCatching {
+                    val numberOfBackups = backupPreferences.numberOfBackups().get().coerceAtLeast(1)
+                    directory.listFiles { _, filename -> Backup.filenameRegex.matches(filename) }
+                        .orEmpty()
+                        .filter { it.name != finalName }
+                        .sortedByDescending { it.name }
+                        .drop(numberOfBackups - 1)
+                        .forEach { it.delete() }
+                }.onFailure { Logger.w(it) { "Unable to rotate old backups" } }
+
                 backupPreferences.lastAutoBackupTimestamp().set(Instant.now().toEpochMilli())
             }
 
-            return fileUri.toString()
+            return file.uri.toString()
         } catch (e: Exception) {
             Logger.e(e) { "Backup failed: ${e.message}" }
             file?.delete()
@@ -129,13 +150,13 @@ class BackupCreator(
     private fun backupAppPreferences(options: BackupOptions): List<BackupPreference> {
         if (!options.appPrefs) return emptyList()
 
-        return preferenceBackupCreator.createApp(includePrivatePreferences = options.includePrivate)
+        return preferenceBackupCreator.createApp()
     }
 
     private fun backupSourcePreferences(options: BackupOptions): List<BackupSourcePreferences> {
         if (!options.sourcePrefs) return emptyList()
 
-        return preferenceBackupCreator.createSource(includePrivatePreferences = options.includePrivate)
+        return preferenceBackupCreator.createSource()
     }
 
     private suspend fun backupLocalBooks(options: BackupOptions): List<eu.kanade.tachiyomi.data.backup.models.BackupLocalBook> {

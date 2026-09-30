@@ -11,6 +11,12 @@ import dev.icerock.moko.resources.compose.stringResource
 
 @Suppress("unused")
 enum class Themes(@field:StyleRes val styleRes: Int, val nightMode: Int, val nameRes: StringResource, altNameRes: StringResource? = null) {
+    NOCTURNE(
+        R.style.Theme_Tachiyomi_Nocturne,
+        AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM,
+        MR.strings.nocturne_light,
+        MR.strings.nocturne,
+    ),
     MONET(
         R.style.Theme_Tachiyomi_Monet,
         AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM,

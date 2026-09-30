@@ -1,7 +1,9 @@
 package epigraph.novel.security
 
+import java.net.Inet6Address
 import java.net.InetAddress
 import java.io.IOException
+import okhttp3.Dns
 import okhttp3.HttpUrl
 
 /**
@@ -38,6 +40,23 @@ class NovelNetworkPolicy(
         }
     }
 
+    /**
+     * Wraps [delegate] so every connection, redirects included, is refused when the host resolves
+     * to a private address. Checking once before the request is not enough: the name can resolve
+     * differently when OkHttp connects (DNS rebinding).
+     */
+    fun publicOnlyDns(delegate: Dns = Dns.SYSTEM): Dns = Dns { hostname ->
+        val host = hostname.lowercase()
+        if (host == "localhost" || host.endsWith(".localhost")) {
+            throw NovelNetworkPolicyException("Local plugin hosts are not allowed")
+        }
+        val addresses = delegate.lookup(host)
+        if (addresses.isEmpty() || addresses.any(::isPrivateAddress)) {
+            throw NovelNetworkPolicyException("Private or local plugin addresses are not allowed")
+        }
+        addresses
+    }
+
     private fun validateSchemeAndHost(rawScheme: String?, rawHost: String) {
         val scheme = rawScheme?.lowercase().orEmpty()
         if (scheme != "https" && !(allowHttp && scheme == "http")) {
@@ -65,7 +84,10 @@ class NovelNetworkPolicy(
             address.isSiteLocalAddress ||
             address.isMulticastAddress ||
             address.hostAddress.orEmpty().startsWith("169.254.") ||
-            address.hostAddress.orEmpty().startsWith("100.64.")
+            address.hostAddress.orEmpty().startsWith("100.64.") ||
+            (address.address.size == 4 && address.address[0] == 0.toByte()) ||
+            // IPv6 unique local addresses (fc00::/7) are the private range isSiteLocal misses.
+            address is Inet6Address && (address.address[0].toInt() and 0xfe) == 0xfc
 }
 
 class NovelNetworkPolicyException(message: String, cause: Throwable? = null) : IOException(message, cause)

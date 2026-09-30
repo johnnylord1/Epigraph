@@ -145,6 +145,7 @@ class LibraryGridHolder(
         setSelected(adapter.isSelected(flexibleAdapterPosition))
 
         // Update the cover.
+        coverOnlyLayout = item.libraryLayout == LibraryItem.LAYOUT_COVER_ONLY_GRID
         setCoverIfChanged(item.manga.manga)
     }
 
@@ -166,6 +167,8 @@ class LibraryGridHolder(
         }
     }
 
+    private var coverOnlyLayout = false
+
     private fun setCoverIfChanged(manga: Manga) {
         val cover = CoverContent(
             mangaId = manga.id,
@@ -184,7 +187,11 @@ class LibraryGridHolder(
                 scale(Scale.FIT)
             }
             listener(
+                onStart = { binding.behindTitle.isVisible = coverOnlyLayout },
+                // Without a cover the card would otherwise be a blank tile.
+                onError = { _, _ -> binding.behindTitle.isVisible = true },
                 onSuccess = { _, _ ->
+                    binding.behindTitle.isVisible = coverOnlyLayout
                     if (!fixedSize && !hasRatio && MangaCoverMetadata.getRatio(manga) != null) {
                         setFreeformCoverRatio(manga)
                     }

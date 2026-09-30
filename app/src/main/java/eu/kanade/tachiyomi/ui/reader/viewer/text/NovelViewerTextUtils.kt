@@ -102,7 +102,8 @@ object NovelViewerTextUtils {
         return try {
             // parseBodyFragment so a chapter HTML snippet isn't wrapped in a synthetic
             // <html><body>; we only need to iterate the elements the user actually sees.
-            val sanitizedHtml = NovelHtmlSanitizer.sanitize(html)
+            // Remote images stay off the WebView's network: they are rewritten for the broker.
+            val sanitizedHtml = NovelHtmlSanitizer.sanitize(html, allowRemoteImages = true)
             val doc = org.jsoup.Jsoup.parseBodyFragment(sanitizedHtml)
             val elements = doc.body().select(PARAGRAPH_SELECTOR)
             val paragraphs = mutableListOf<String>()

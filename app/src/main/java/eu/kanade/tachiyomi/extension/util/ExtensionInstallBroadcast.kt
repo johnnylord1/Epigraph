@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageInstaller.SessionParams
-import android.content.pm.PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -43,14 +42,9 @@ class ExtensionInstallBroadcast : BroadcastReceiver() {
                 SessionParams.MODE_FULL_INSTALL,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val requireUserAction = intent.getBooleanExtra(
-                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
-                    false,
-                )
-                params.setRequireUserAction(
-                    if (requireUserAction) SessionParams.USER_ACTION_REQUIRED
-                    else USER_ACTION_NOT_REQUIRED,
-                )
+                // APK extensions always go through the visible Package Installer prompt, even
+                // for updates of packages this app installed; never request a silent update.
+                params.setRequireUserAction(SessionParams.USER_ACTION_REQUIRED)
             }
             val sessionId = packageInstaller.createSession(params)
             val session = packageInstaller.openSession(sessionId)
@@ -157,14 +151,9 @@ class ExtensionInstallActivity : Activity() {
                 SessionParams.MODE_FULL_INSTALL,
             )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val requireUserAction = intent.getBooleanExtra(
-                    ExtensionInstaller.EXTRA_REQUIRE_USER_ACTION,
-                    false,
-                )
-                params.setRequireUserAction(
-                    if (requireUserAction) SessionParams.USER_ACTION_REQUIRED
-                    else USER_ACTION_NOT_REQUIRED,
-                )
+                // APK extensions always go through the visible Package Installer prompt, even
+                // for updates of packages this app installed; never request a silent update.
+                params.setRequireUserAction(SessionParams.USER_ACTION_REQUIRED)
             }
             val sessionId = packageInstaller.createSession(params)
             val session = packageInstaller.openSession(sessionId)

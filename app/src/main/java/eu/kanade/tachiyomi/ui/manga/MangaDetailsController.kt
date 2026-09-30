@@ -97,6 +97,7 @@ import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.main.FloatingSearchInterface
 import eu.kanade.tachiyomi.ui.main.HingeSupportedController
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewWarmup
 import eu.kanade.tachiyomi.ui.main.SearchActivity
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterActionBarHandlers
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterActionBarState
@@ -136,6 +137,7 @@ import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
 import eu.kanade.tachiyomi.util.system.setCustomTitleAndMessage
+import eu.kanade.tachiyomi.util.system.statusBarTint
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.withUIContext
 import eu.kanade.tachiyomi.util.view.activityBinding
@@ -163,8 +165,10 @@ import java.io.IOException
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import yokai.domain.manga.interactor.FetchInterval
 import yokai.domain.manga.models.cover
 import yokai.i18n.MR
@@ -742,7 +746,7 @@ class MangaDetailsController :
                         animator.animatedValue as Float,
                     ),
                 )
-                activity.window?.statusBarColor = if (toolbarIsColored) {
+                activity.window?.statusBarTint = if (toolbarIsColored) {
                     ColorUtils.blendARGB(
                         topColor,
                         scrollingStatusColor,
@@ -755,7 +759,7 @@ class MangaDetailsController :
             cA.start()
         } else {
             activityBinding?.appBar?.setBackgroundColor(if (toolbarIsColored) scrollingColor else topColor)
-            activity.window?.statusBarColor =
+            activity.window?.statusBarTint =
                 if (toolbarIsColored) scrollingStatusColor else topColor
         }
     }
@@ -774,16 +778,6 @@ class MangaDetailsController :
             .target(
                 onSuccess = { image ->
                     val drawable = image.asDrawable(view.context.resources)
-
-                    val copy = (drawable as? BitmapDrawable)?.let {
-                        BitmapDrawable(
-                            view.context.resources,
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                                it.bitmap.copy(Bitmap.Config.HARDWARE, false)
-                            else
-                                it.bitmap.copy(it.bitmap.config!!, false),
-                        )
-                    } ?: drawable
 
                     // Don't use 'copy', Palette doesn't like its bitmap, could be caused by mutability is disabled,
                     // or perhaps because it's HARDWARE configured, not entirely sure why, the behaviour is not
@@ -819,8 +813,24 @@ class MangaDetailsController :
                             }
                         }
                     }
-                    binding.mangaCoverFull.setImageDrawable(copy)
-                    getHeader()?.updateCover(manga!!)
+                    // Copying the full-size cover to an immutable bitmap took ~100 ms of the
+                    // details push when done here on the main thread.
+                    val resources = view.context.resources
+                    viewScope.launch {
+                        val copy = (drawable as? BitmapDrawable)?.let {
+                            withContext(Dispatchers.Default) {
+                                BitmapDrawable(
+                                    resources,
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                                        it.bitmap.copy(Bitmap.Config.HARDWARE, false)
+                                    else
+                                        it.bitmap.copy(it.bitmap.config!!, false),
+                                )
+                            }
+                        } ?: drawable
+                        binding.mangaCoverFull.setImageDrawable(copy)
+                        getHeader()?.updateCover(manga!!)
+                    }
                 },
                 onError = {
                     val file = presenter.coverCache.getCoverFile(manga!!.thumbnail_url, !manga!!.favorite)
@@ -839,7 +849,7 @@ class MangaDetailsController :
         val scrollingStatusColor =
             ColorUtils.setAlphaComponent(scrollingColor, (0.87f * 255).roundToInt())
         val forceColored = isSelectionMode
-        activity?.window?.statusBarColor = if (forceColored || toolbarIsColored) scrollingStatusColor else topColor
+        activity?.window?.statusBarTint = if (forceColored || toolbarIsColored) scrollingStatusColor else topColor
         activityBinding?.appBar?.setBackgroundColor(
             if (forceColored || toolbarIsColored) scrollingColor else topColor,
         )
@@ -906,7 +916,7 @@ class MangaDetailsController :
                 if (router.backstack.last().controller !is FloatingSearchInterface) {
                     activityBinding?.appBar?.setBackgroundColor(colorSurface)
                 }
-                activity?.window?.statusBarColor = activity?.getResourceColor(
+                activity?.window?.statusBarTint = activity?.getResourceColor(
                     AR.attr.statusBarColor,
                 ) ?: colorSurface
             }
@@ -922,9 +932,15 @@ class MangaDetailsController :
         isPushing = false
         if (type == ControllerChangeType.PUSH_ENTER) {
             binding.swipeRefresh.isRefreshing = presenter.isLoading
+            // Novel chapters open in a WebView; initialise it now rather than on the chapter tap.
+            if (manga?.isNovel() == true) activity?.let { NovelWebViewWarmup.schedule(it) }
         }
         if (!type.isEnter) {
             activityBinding?.root?.clearFocus()
+        }
+        if (type == ControllerChangeType.POP_EXIT) {
+            // The pop is done: prepare a header for the next details screen while nothing animates.
+            (activity as? MainActivity)?.mangaHeaderPrewarm?.schedule(HEADER_PREWARM_AFTER_POP)
         }
     }
     //endregion
@@ -1034,7 +1050,11 @@ class MangaDetailsController :
         // addMangaHeader before setChapters so the header is in place before chapter rows
         // fill in; otherwise the header insert shifts every chapter row down ("jump from
         // their place"). addMangaHeader is a no-op when the header is already present.
+        val phoneHeaderPresent = !isTablet && adapter?.scrollableHeaders?.isNotEmpty() == true
         addMangaHeader()
+        // setChapters skips unchanged chapter lists, so an existing phone header would keep
+        // stale favorite/category state; rebind it in place (no insert, so rows don't shift).
+        if (phoneHeaderPresent) adapter?.notifyItemChanged(0)
         adapter?.setChapters(presenter.chapters)
         refreshReadingActions()
         updateMenuVisibility(activityBinding?.toolbar?.menu)
@@ -2611,6 +2631,7 @@ class MangaDetailsController :
 
     companion object {
         const val UPDATE_EXTRA = "update"
+        private const val HEADER_PREWARM_AFTER_POP = 300L
         const val SMART_SEARCH_CONFIG_EXTRA = "smartSearchConfig"
 
         const val FROM_CATALOGUE_EXTRA = "from_catalogue"

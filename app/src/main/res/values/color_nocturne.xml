@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Nocturne — the desktop's default theme. This light variant follows the desktop "Light"
+  ~ palette (cool off-white, restrained violet); values-night holds the graphite Nocturne tokens.
+-->
+<resources>
+    <color name="nocturne_primary">#6750A4</color>
+    <color name="nocturne_on_primary">#FFFFFF</color>
+    <color name="nocturne_primary_variant">#E7E1F4</color>
+    <color name="nocturne_primary_inverse">#D3C4FF</color>
+    <color name="nocturne_secondary">#4F378B</color>
+    <color name="nocturne_on_secondary">#FFFFFF</color>
+    <color name="nocturne_secondary_variant">#21005D</color>
+    <color name="nocturne_highlight">#1F6750A4</color>
+    <color name="nocturne_tertiary">#6750A4</color>
+    <color name="nocturne_on_tertiary">#FFFFFF</color>
+    <color name="nocturne_tab_bar_icon">#6750A4</color>
+    <color name="nocturne_background">#F3F2F5</color>
+    <color name="nocturne_on_background">#242127</color>
+    <color name="nocturne_surface">#F3F2F5</color>
+    <color name="nocturne_on_surface">#242127</color>
+</resources>

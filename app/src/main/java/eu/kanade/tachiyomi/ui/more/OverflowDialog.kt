@@ -34,6 +34,7 @@ class OverflowDialog(
     activity: MainActivity,
     showUpdateLibrary: Boolean = false,
     onUpdateLibrary: () -> Unit = {},
+    onImportBooks: (() -> Unit)? = null,
 ) : Dialog(activity, R.style.OverflowDialogTheme) {
 
     val binding = TachiOverflowLayoutBinding.inflate(activity.layoutInflater, null, false)
@@ -57,6 +58,14 @@ class OverflowDialog(
             binding.updateLibraryDivider.visibility = View.VISIBLE
             binding.updateLibraryItem.setOnClickListener {
                 onUpdateLibrary()
+                dismiss()
+            }
+        }
+        if (onImportBooks != null) {
+            binding.importBooksItem.visibility = View.VISIBLE
+            binding.updateLibraryDivider.visibility = View.VISIBLE
+            binding.importBooksItem.setOnClickListener {
+                onImportBooks()
                 dismiss()
             }
         }

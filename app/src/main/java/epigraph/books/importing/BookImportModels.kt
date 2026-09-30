@@ -45,6 +45,8 @@ data class EpubArchiveManifest(
     val packagePath: String,
     val spinePaths: List<String>,
     val containerPath: String = "META-INF/container.xml",
+    /** EPUB 3 navigation document or EPUB 2 NCX, when the package declares one. */
+    val navigationPath: String? = null,
 ) {
     init {
         require(packagePath.isNotBlank()) { "An EPUB must identify its package document" }

@@ -105,7 +105,8 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
             val category = (header as LibraryHeaderItem).category
             val categoryId = category.id ?: return@associate 0 to 0
             categoryId to if (categoryId < 0) {
-                mangas.count { it.sectionHeader.catId == categoryId }
+                controller.booksItemCount(categoryId)
+                    ?: mangas.count { it.sectionHeader.catId == categoryId }
             } else {
                 controller.presenter.getItemCountInCategories(categoryId)
             }

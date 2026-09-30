@@ -3,7 +3,9 @@ package eu.kanade.tachiyomi.data.backup.restore.restorers
 import yokai.util.koin.get
 import android.content.Context
 import eu.kanade.tachiyomi.core.preference.AndroidPreferenceStore
+import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.data.backup.BackupSecretPolicy
 import eu.kanade.tachiyomi.core.preference.getEnum
 import eu.kanade.tachiyomi.data.backup.create.BackupCreatorJob
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
@@ -49,6 +51,9 @@ class PreferenceBackupRestorer(
     ) {
         val prefs = preferenceStore.getAll()
         toRestore.forEach { (key, value) ->
+            // A backup file is untrusted input: it must never plant credentials or app state.
+            if (Preference.isAppState(key) || BackupSecretPolicy.isSecret(key)) return@forEach
+
             // j2k fork differences
             if (key == "library_sorting_mode" && value is StringPreferenceValue &&
                 prefs[key] is Int?

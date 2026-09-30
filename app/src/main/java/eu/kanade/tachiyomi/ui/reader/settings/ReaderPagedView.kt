@@ -80,6 +80,8 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
     }
 
     private fun updatePagedGroup(show: Boolean) {
+        // The tab is "Navigation" for every reader; the active viewer mode is a section inside it.
+        binding.modeHeader.text = context.getString(if (show) MR.strings.paged else MR.strings.long_strip)
         listOf(
             binding.scaleType,
             binding.zoomStart,

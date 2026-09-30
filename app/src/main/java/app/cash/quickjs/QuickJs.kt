@@ -89,12 +89,26 @@ class QuickJs private constructor(
         )
     }
 
-    // dokar3 doesn't expose limit/usage knobs. Cash App callers in the wild don't use
-    // these (none in the keiyoushi survey); accept-and-ignore preserves ABI without
-    // pretending we enforce a limit we can't.
-    fun getMemoryLimit(): Long = -1L
-    fun setMemoryLimit(limit: Long) = Unit
-    fun getMemoryUsage(): Long = -1L
+    // Memory knobs map onto dokar3's runtime limits. Cash App defaulted to "no limit"; this
+    // shim starts every engine at DEFAULT_MEMORY_LIMIT_BYTES so a runaway extension script
+    // raises a JS out-of-memory error instead of exhausting the app's native heap. An
+    // extension may still lower or raise the ceiling explicitly. dokar3 has no GC-threshold
+    // setter, so those remain accept-and-ignore to preserve the ABI.
+    fun getMemoryLimit(): Long {
+        checkOpen()
+        return runOnEngine { delegate.memoryLimit }
+    }
+
+    fun setMemoryLimit(limit: Long) {
+        checkOpen()
+        runOnEngine { delegate.memoryLimit = limit }
+    }
+
+    fun getMemoryUsage(): Long {
+        checkOpen()
+        return runOnEngine { delegate.memoryUsage.mallocSize }
+    }
+
     fun getGcThreshold(): Long = -1L
     fun setGcThreshold(gcThreshold: Long) = Unit
 
@@ -121,6 +135,9 @@ class QuickJs private constructor(
     private val dispatcher = executor.asCoroutineDispatcher()
 
     companion object {
+        /** Native heap ceiling per engine; far above what the surveyed extensions allocate. */
+        const val DEFAULT_MEMORY_LIMIT_BYTES: Long = 128L * 1024 * 1024
+
         @JvmStatic
         fun create(): QuickJs {
             val executor = Executors.newSingleThreadExecutor { runnable ->
@@ -129,7 +146,9 @@ class QuickJs private constructor(
             val dispatcher = executor.asCoroutineDispatcher()
             // Create the engine on the dispatcher thread so its native context is owned
             // by the thread we'll use for every subsequent call.
-            val engine = runBlocking(dispatcher) { DokarQuickJs.create(dispatcher) }
+            val engine = runBlocking(dispatcher) {
+                DokarQuickJs.create(dispatcher).apply { memoryLimit = DEFAULT_MEMORY_LIMIT_BYTES }
+            }
             return QuickJs(executor, engine)
         }
     }

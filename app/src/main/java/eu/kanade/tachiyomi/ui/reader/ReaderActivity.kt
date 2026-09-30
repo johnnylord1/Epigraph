@@ -540,13 +540,6 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         config = ReaderConfig()
         initializeMenu()
 
-        // Bind to the TTS service so we can reach `NovelTtsController` directly. The
-        // service is created on first bind; the controller becomes non-null when
-        // `onServiceConnected` fires, and from then on the notification's Pause/Stop
-        // action buttons route into the controller via the service itself — no broadcast
-        // receiver needed on the activity side.
-        bindTtsService()
-
         preferences.incognitoMode()
             .changesIn(lifecycleScope) {
                 SecureActivityDelegate.setSecure(this)
@@ -757,6 +750,40 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         epigraph.novel.reader.service.NovelTtsPlaybackService.stop(this)
     }
 
+    private val novelTtsViewer: eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer?
+        get() = viewer as? eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
+
+    /** True while TTS is speaking (not paused or stopped) in the novel viewer. */
+    internal fun isNovelTtsSpeaking(): Boolean = novelTtsViewer?.isTtsSpeaking() == true
+
+    internal fun isNovelTtsPaused(): Boolean = novelTtsViewer?.isTtsPaused() == true
+
+    /** Play from the chapter top when idle, otherwise pause or resume the current session. */
+    internal fun toggleNovelTts() {
+        val novelWeb = novelTtsViewer ?: return
+        when {
+            novelWeb.isTtsPaused() -> novelWeb.resumeTts()
+            novelWeb.isTtsSpeaking() -> novelWeb.pauseTts()
+            else -> {
+                novelWeb.startTts()
+                startBackgroundTtsIfEnabled()
+            }
+        }
+    }
+
+    internal fun stopNovelTts() {
+        novelTtsViewer?.stopTts()
+        stopBackgroundTtsIfRunning()
+    }
+
+    internal fun previousNovelTtsParagraph() {
+        novelTtsViewer?.previousTtsParagraph()
+    }
+
+    internal fun nextNovelTtsParagraph() {
+        novelTtsViewer?.nextTtsParagraph()
+    }
+
     /**
      * Called when the activity is saving instance state. Current progress is persisted if this
      * activity isn't changing configurations.
@@ -876,13 +903,17 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                         MR.strings.crop_borders
                     },
                 )
+            contentDescription = compatToolTipText
         }
     }
 
     private fun updateBottomShortcuts() {
         val enabledButtons = preferences.readerBottomButtons().get()
+        val isNovel = viewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer
         with(binding.chaptersSheet) {
-            readingMode.isVisible = ReaderBottomButton.ReadingMode.isIn(enabledButtons)
+            // Novels repurpose these two slots for annotations and chapter search, which the
+            // comic bottom-button preference does not describe; keep them on the novel HUD.
+            readingMode.isVisible = isNovel || ReaderBottomButton.ReadingMode.isIn(enabledButtons)
             rotationSheetButton.isVisible =
                 ReaderBottomButton.Rotation.isIn(enabledButtons)
             doublePage.isVisible = viewer is PagerViewer &&
@@ -894,7 +925,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                 else -> ReaderBottomButton.CropBordersWebtoon.isIn(enabledButtons)
             }
             webviewButton.isVisible =
-                ReaderBottomButton.WebView.isIn(enabledButtons)
+                isNovel || ReaderBottomButton.WebView.isIn(enabledButtons)
             chaptersButton.isVisible =
                 ReaderBottomButton.ViewChapters.isIn(enabledButtons)
             shiftPageButton.isVisible =
@@ -2047,13 +2078,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         if (newViewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
             binding.chaptersSheet.webviewButton.apply {
                 setImageResource(R.drawable.ic_search_24dp)
-                contentDescription = "Search in chapter"
-                compatToolTipText = "Search in chapter"
+                contentDescription = getString(MR.strings.novel_search_in_chapter)
+                compatToolTipText = getString(MR.strings.novel_search_in_chapter)
             }
             binding.chaptersSheet.readingMode.apply {
                 setImageResource(R.drawable.ic_format_quote_24dp)
-                contentDescription = "Annotations"
-                compatToolTipText = "Annotations"
+                contentDescription = getString(MR.strings.novel_annotations)
+                compatToolTipText = getString(MR.strings.novel_annotations)
             }
         } else {
             binding.chaptersSheet.webviewButton.apply {
@@ -2080,6 +2111,11 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         // do not mount a second floating action bar over the reader content.
         removeNovelActionBar()
         if (newViewer is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+            // Bind to the TTS service so we can reach `NovelTtsController` directly. Only novels
+            // need it: creating the service cost ~130 ms of the comic reader's first frame. The
+            // controller becomes non-null when `onServiceConnected` fires, and from then on the
+            // notification's Pause/Stop actions route into the controller via the service.
+            bindTtsService()
             // The controller may already be bound from a prior session; re-attach the
             // freshly-created viewer so play/pause issued before bind-completion still
             // routes through this viewer once the controller fires.
@@ -2118,8 +2154,11 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         invalidateOptionsMenu()
         updateCropBordersShortcut()
         updateBottomShortcuts()
-        val viewerMode = ReadingModeType.fromPreference(viewModel.state.value.manga?.readingModeType ?: 0)
-        binding.chaptersSheet.readingMode.setImageResource(viewerMode.iconRes)
+        // The novel HUD reuses this slot for annotations; its icon was set with the viewer.
+        if (newViewer !is eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer) {
+            val viewerMode = ReadingModeType.fromPreference(viewModel.state.value.manga?.readingModeType ?: 0)
+            binding.chaptersSheet.readingMode.setImageResource(viewerMode.iconRes)
+        }
         startPostponedEnterTransition()
     }
 
@@ -3176,12 +3215,12 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     private fun showNovelChapterSearch() {
         val novelViewer = viewer as? eu.kanade.tachiyomi.ui.reader.viewer.text.NovelWebViewViewer ?: return
         val input = EditText(this).apply {
-            hint = "Search in chapter"
+            hint = getString(MR.strings.novel_search_in_chapter)
             isSingleLine = true
             setPadding(24.dpToPx, 8.dpToPx, 24.dpToPx, 8.dpToPx)
         }
         materialAlertDialog()
-            .setTitle("Search in chapter")
+            .setTitle(getString(MR.strings.novel_search_in_chapter))
             .setView(input)
             .setNegativeButton(AR.string.cancel, null)
             .setPositiveButton(AR.string.ok) { _, _ ->

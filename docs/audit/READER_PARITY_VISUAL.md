@@ -54,6 +54,22 @@ EPUB preferences are submitted through Readium's `EpubPreferences` API; no custo
 or ZIP/WebView session remains. PDF spread pages are presented through the same reader chrome as
 single-page mode; only the bitmap surface differs to keep Pdfium access sequential.
 
+### HUD accent and PDF modes
+
+All three reader families derive the HUD accent (seek-bar thumb, active page, selected tabs) from
+the app theme's `colorSecondary` through `ReaderThemeColors.themedAccent`. On paper and sepia
+surfaces the accent is blended toward the text colour until it reaches 3:1 contrast, so it keeps
+its hue instead of collapsing to black. `LocalBookReaderActivity` applies the user's app theme
+before `super.onCreate`, which the EPUB/PDF reader previously skipped (the HUD fell back to the
+default blue).
+
+The PDF reader mirrors the desktop's two modes, page and reflow (`pdfReflowMode`). Page mode adds
+single-page paging (horizontal or vertical swipe) and a two-page spread; the spread takes priority
+over the paging direction. Single-page mode letterboxes with the page colour (white, or black in
+night mode), like the spread, instead of black bands. The settings sheet keeps layout options
+(fit, reflow, paging direction, spread) under Pages and input options (volume keys, vertical bar)
+under Navigation, matching the comic reader where "Paged" is a Navigation choice.
+
 ## Verification status
 
 - Resource merge and Kotlin compilation: `:app:processDevDebugResources` and
@@ -82,5 +98,9 @@ single-page mode; only the bitmap surface differs to keep Pdfium access sequenti
   SIGSEGV or fatal Pdfium signal during either reader run. The PDF activity was also closed from
   the reader; the native teardown returned to Library without a crash after making PdfiumCore the
   sole owner of page/document cleanup.
+- Accent/PDF-mode pass (2026-09-29): `:app:testDevDebugUnitTest`, `:data:testAndroidHostTest`,
+  `:data:verifySqlDelightMigration` and `:app:lintDevDebug` pass (653 tests, 0 failures; lint 0 errors).
+  On the API 36 emulator the PDF opened in spread, single-page vertical paging and sepia reflow, EPUB
+  rendered with the themed HUD, and every settings screen opened without a fatal exception.
 - Current universal debug APK SHA-256: `14FEF7557220DAA4CA5347342CE1CD58F66A86DA5474CE9A97C2534482FA23F8`.
 - This reader change set does not modify desktop, Syncd, Epigraph Core, pairing or theme sources.

@@ -70,7 +70,8 @@ class TabbedReaderSettingsSheet(
 
     override fun getTabTitles(): List<StringResource> = listOf(
         MR.strings.general,
-        if (showWebtoonView) MR.strings.long_strip else MR.strings.paged,
+        // Same tab name as the novel and book readers; Paged/Long strip is a section inside it.
+        MR.strings.navigation,
         MR.strings.custom_filter,
     )
 

@@ -70,6 +70,7 @@ import com.google.android.material.R as materialR
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.util.system.getResourceColor
+import eu.kanade.tachiyomi.util.system.statusBarTint
 import kotlin.math.roundToInt
 import yokai.i18n.MR
 import yokai.presentation.component.ToolTipButton
@@ -115,12 +116,11 @@ fun YokaiScaffold(
     SideEffect {
         val activity = view.context as? Activity ?: return@SideEffect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-                activity.window.statusBarColor = ColorUtils.setAlphaComponent(
-                    appBarSurfaceColor.toArgb(),
-                    (0.87f * 255).roundToInt(),
-                )
-            }
+            // Also resets the Android 15+ scrim a legacy controller may have tinted.
+            activity.window.statusBarTint = ColorUtils.setAlphaComponent(
+                appBarSurfaceColor.toArgb(),
+                (0.87f * 255).roundToInt(),
+            )
             WindowInsetsControllerCompat(activity.window, view).isAppearanceLightStatusBars = useDarkIcons
         }
     }

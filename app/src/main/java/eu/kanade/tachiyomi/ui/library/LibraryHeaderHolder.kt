@@ -16,6 +16,7 @@ import androidx.core.view.isVisible
 import androidx.core.view.marginTop
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
+import androidx.core.view.updatePaddingRelative
 import androidx.swiperefreshlayout.widget.CircularProgressDrawable
 import co.touchlab.kermit.Logger
 import com.github.florent37.viewtooltip.ViewTooltip
@@ -177,6 +178,10 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
 
     @SuppressLint("SetTextI18n")
     fun bind(item: LibraryHeaderItem) {
+        // The list layout drops the grid's 5dp recycler inset; keep the header aligned with the
+        // search bar and rows in both layouts.
+        val listInset = if (adapter.recyclerView?.paddingEnd == 0) 5.dpToPx else 0
+        binding.categoryHeaderLayout.updatePaddingRelative(start = listInset, end = listInset)
         val category = item.category
         val index = adapter.headerItems.indexOf(item)
         val previousIsCollapsed =
@@ -433,15 +438,15 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
                 binding.updateButton.isVisible = false
                 setSelection()
             }
-            category.id == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID -> {
-                // Books has no remote library job, but its section keeps the same refresh affordance
-                // as Comics. The controller handles this synthetic category locally.
-                // Keep the arrow visible: the synthetic Books category is still a real section and
-                // can be collapsed/expanded through the shared header click handler.
-                binding.collapseArrow.isVisible = true
+            category.id == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID ||
+                (category.id ?: 0) <= UnifiedLibraryBooksView.GROUP_ID_BASE -> {
+                // Books & novels: named groups collapse like Comics categories, the lone section
+                // does not. Refresh updates the group's novels; EPUB/PDF have nothing remote.
+                binding.collapseArrow.isVisible = category.id != UnifiedLibraryBooksView.BOOKS_CATEGORY_ID
                 binding.checkbox.isVisible = false
-                setRefreshing(isReloading)
-                binding.updateButton.isVisible = true
+                val canUpdate = adapter.controller?.booksHeaderCanUpdate(category.id) == true
+                binding.updateButton.isVisible = canUpdate
+                setRefreshing(canUpdate && isReloading)
             }
             (category.id ?: -1) < 0 || adapter.libraryListener is FilteredLibraryController -> {
                 binding.collapseArrow.isVisible = false

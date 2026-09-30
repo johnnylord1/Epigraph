@@ -169,7 +169,8 @@ class ReadiumEpubReaderSession(
             ?.substringAfter("aethon-spine:")
             ?.substringBefore(':')
             ?.toIntOrNull()
-        return (legacy ?: (locator.progression * last).toInt()).coerceIn(0, last)
+        return (legacy ?: BookChapterMetrics.epubChapterIndex(locator.progression, readingOrder.size))
+            .coerceIn(0, last)
     }
 
     override suspend fun tableOfContents(): List<ReaderTocEntry<ReaderLocator.Epub>> {

@@ -11,6 +11,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExtensionOff
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.core.view.WindowInsetsCompat.Type.systemBars
 import androidx.core.view.isVisible
 import androidx.core.view.updatePaddingRelative
@@ -106,6 +107,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
     lateinit var controller: BrowseController
     var boundViews = arrayListOf<RecyclerWithScrollerView>()
     private var selectedExtensionTypeTab = EXTENSION_TYPE_MANGA
+    private var migrationSourcesEmpty = false
     private var tabbedSheetAdapter: TabbedSheetAdapter? = null
 
     val extensionFrameLayout: RecyclerWithScrollerView?
@@ -455,6 +457,8 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
         val changed = (migAdapter as SourceAdapter).updateDataSetIfChanged(sources, changingAdapters)
         if (changed) controller.updateTitleAndMenu()
+        migrationSourcesEmpty = sources.isEmpty()
+        updateMigrationEmptyState()
     }
 
     override fun setMigrationManga(title: String, manga: List<MangaItem>?) {
@@ -467,6 +471,20 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
         val changed = (migAdapter as MangaAdapter).updateDataSetIfChanged(manga, changingAdapters)
         if (changed) controller.updateTitleAndMenu()
+        updateMigrationEmptyState()
+    }
+
+    /** The source list used to render as a blank page when nothing in the library can migrate. */
+    private fun updateMigrationEmptyState() {
+        val frameLayout = migrationFrameLayout ?: return
+        if (currentSourceTitle == null && migrationSourcesEmpty) {
+            frameLayout.showEmptyState(
+                image = Icons.Filled.SwapHoriz,
+                message = context.getString(MR.strings.information_empty_migration_sources),
+            )
+        } else {
+            frameLayout.hideEmptyState()
+        }
     }
 
     fun drawExtensions() {
@@ -478,6 +496,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
             extensions
         }
         extAdapter?.updateDataSetIfChanged(displayedExtensions)
+        updateMangaExtensionsEmptyState(displayedExtensions.isEmpty())
         updateExtTitle()
         updateExtUpdateAllButton()
         // NOVEL -->
@@ -608,8 +627,44 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         if (showNovels) {
             updateNovelPluginsEmptyState(novelPluginAdapter?.mainItemCount == 0)
         } else {
-            extensionFrameLayout?.hideEmptyState()
+            updateMangaExtensionsEmptyState(extAdapter?.mainItemCount == 0)
         }
+    }
+
+    private fun updateMangaExtensionsEmptyState(displayedExtensionsEmpty: Boolean) {
+        val frameLayout = extensionFrameLayout ?: return
+        if (!displayedExtensionsEmpty) {
+            frameLayout.hideEmptyState()
+            frameLayout.isVisible = selectedExtensionTypeTab == EXTENSION_TYPE_MANGA
+            return
+        }
+
+        // Same contract as the Novels tab: without a repository the Manga tab used to render
+        // a blank page, which reads as a broken feed. Point the user at the repo screen instead.
+        val actions = if (extensions.isEmpty()) {
+            listOf(
+                EmptyView.Action(MR.strings.action_add_repo) {
+                    controller.router.pushController(
+                        ExtensionRepoController(initialPage = 0).withFadeTransaction(),
+                    )
+                },
+            )
+        } else {
+            emptyList()
+        }
+
+        val message = if (extensions.isEmpty()) {
+            context.getString(MR.strings.information_empty_repos)
+        } else {
+            context.getString(MR.strings.no_results_found)
+        }
+
+        frameLayout.showEmptyState(
+            image = Icons.Filled.ExtensionOff,
+            message = message,
+            actions = actions,
+        )
+        frameLayout.isVisible = selectedExtensionTypeTab == EXTENSION_TYPE_MANGA
     }
 
     fun setNovelPlugins(items: List<NovelPluginItem>) {
@@ -731,6 +786,10 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
                     host.tag = EXTENSION_PAGE_TAG
                     host.addView(createExtensionsPage(host))
                     showExtensionTypeTab(selectedExtensionTypeTab)
+                    // The pager attaches the host after bindView, so the tag lookups above can
+                    // miss both pages: the Manga/Novels visibility and the empty states were
+                    // never applied on first open. Re-apply once the host is in the hierarchy.
+                    host.post { showExtensionTypeTab(selectedExtensionTypeTab) }
                 }
                 else -> {
                     host.tag = MIGRATION_PAGE_TAG
@@ -757,7 +816,7 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
             if (host.childCount != 0) return
             val adapter = migAdapter ?: return
             host.addView(createRecyclerPage(host, MIGRATION_RECYCLER_TAG, adapter))
-            migrationFrameLayout?.hideEmptyState()
+            updateMigrationEmptyState()
             updatedNestedRecyclers()
         }
 

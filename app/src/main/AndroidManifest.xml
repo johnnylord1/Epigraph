@@ -23,9 +23,9 @@
     <!-- For managing extensions -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
-    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
-    <!-- To view extension packages in API 30+ -->
+    <!-- To view extension packages in API 30+. Extensions are discovered by a <meta-data> tag
+         in arbitrary third-party packages, which a <queries> intent filter cannot express. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
@@ -34,8 +34,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:name=".App"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true"
         android:enableOnBackInvokedCallback="true"

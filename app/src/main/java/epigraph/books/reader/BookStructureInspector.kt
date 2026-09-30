@@ -11,9 +11,9 @@ import epigraph.contract.ContentType
  * Reads the stable document counts used by the details chrome without opening a reader session.
  *
  * Progress locators remain the source of truth for resume. This inspector only supplies display
- * metrics: EPUB spine entries are displayed as chapters and PDFs as pages. Password-protected or
- * unavailable files return null so the UI can report that the count is unavailable instead of
- * inventing a percentage.
+ * metrics: EPUB spine entries are displayed as chapters (titled from the book's TOC when it names
+ * them) and PDFs as pages. Password-protected or unavailable files return null so the UI can
+ * report that the count is unavailable instead of inventing a percentage.
  */
 class BookStructureInspector(private val context: Context) {
 
@@ -21,7 +21,9 @@ class BookStructureInspector(private val context: Context) {
         when (document.contentType) {
             ContentType.EPUB -> {
                 val manifest = EpubArchiveValidator.validate(document.file)
+                val tocTitles = EpubTocTitles.read(document.file, manifest.navigationPath)
                 val titles = manifest.spinePaths.mapIndexed { index, path ->
+                    tocTitles[path]?.let { return@mapIndexed it }
                     val fileName = path.substringAfterLast('/').substringBeforeLast('.')
                     fileName
                         .replace(Regex("[_-]+"), " ")
@@ -34,6 +36,7 @@ class BookStructureInspector(private val context: Context) {
                 BookStructure(
                     chapterCount = titles.size.coerceAtLeast(1),
                     chapterTitles = titles,
+                    chapterPaths = manifest.spinePaths,
                 )
             }
 
@@ -72,4 +75,6 @@ data class BookStructure(
     val chapterTitles: List<String> = emptyList(),
     /** Zero-based PDF page anchors matching [chapterTitles]. */
     val chapterStartPages: List<Int> = emptyList(),
+    /** Archive paths of the EPUB spine resources matching [chapterTitles]. */
+    val chapterPaths: List<String> = emptyList(),
 )

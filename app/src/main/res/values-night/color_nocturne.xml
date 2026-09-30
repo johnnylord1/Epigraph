@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Nocturne — lunar graphite with a lilac accent, from the desktop NOCTURNE_THEME_TOKENS
+  ~ (bg-base #131313, accent #d3c4ff, accent-bright #b8a7ea, accent-dim #4f4279).
+-->
+<resources>
+    <color name="nocturne_primary">#B8A7EA</color>
+    <color name="nocturne_on_primary">#08080B</color>
+    <color name="nocturne_primary_variant">#211D2C</color>
+    <color name="nocturne_primary_inverse">#6750A4</color>
+    <color name="nocturne_secondary">#D3C4FF</color>
+    <color name="nocturne_on_secondary">#08080B</color>
+    <color name="nocturne_secondary_variant">#E9E3FF</color>
+    <color name="nocturne_highlight">#1FD3C4FF</color>
+    <color name="nocturne_tertiary">#8F82E6</color>
+    <color name="nocturne_on_tertiary">#08080B</color>
+    <color name="nocturne_tab_bar_icon">#D3C4FF</color>
+    <color name="nocturne_background">#131313</color>
+    <color name="nocturne_on_background">#E5E2E1</color>
+    <color name="nocturne_surface">#131313</color>
+    <color name="nocturne_on_surface">#E5E2E1</color>
+</resources>

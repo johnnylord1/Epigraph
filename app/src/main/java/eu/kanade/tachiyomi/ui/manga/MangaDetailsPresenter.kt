@@ -48,6 +48,7 @@ import eu.kanade.tachiyomi.source.getExtension
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
@@ -97,6 +98,7 @@ import yokai.util.koin.injectLazy
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.chapter.interactor.GetAvailableScanlators
 import yokai.domain.chapter.interactor.GetChapter
+import epigraph.sync.core.SyncedChapterStateWriter
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.history.interactor.GetHistory
 import yokai.domain.library.custom.model.CustomMangaInfo
@@ -127,6 +129,7 @@ class MangaDetailsPresenter(
     private val getChapter: GetChapter by injectLazy()
     private val getManga: GetManga by injectLazy()
     private val updateChapter: UpdateChapter by injectLazy()
+    private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
     private val updateManga: UpdateManga by injectLazy()
     private val deleteTrack: DeleteTrack by injectLazy()
     private val getTrack: GetTrack by injectLazy()
@@ -204,6 +207,10 @@ class MangaDetailsPresenter(
 
     var allChapterScanlators: Set<String> = emptySet()
 
+    /** Extension a Core-bridged comic is waiting for, shown next to the source name. */
+    var coreBridgeWaitingFor: String? = null
+        private set
+
     override val progressJobs: MutableMap<Download, Job> = mutableMapOf()
     override val queueListenerScope get() = presenterScope
 
@@ -230,6 +237,18 @@ class MangaDetailsPresenter(
 
     private fun finalizeOnCreate() {
         syncData()
+
+        if (source is EpigraphCoreSource) {
+            presenterScope.launchIO {
+                val waitingFor = runCatching {
+                    get<EpigraphCoreBridgeLabeler>().waitingExtensionName(mangaId)
+                }.onFailure { Logger.w(it) { "Could not resolve the Core bridge extension" } }.getOrNull()
+                if (waitingFor != coreBridgeWaitingFor) {
+                    coreBridgeWaitingFor = waitingFor
+                    withUIContext { view?.updateHeader() }
+                }
+            }
+        }
 
         downloadStatusJob?.cancel()
         downloadStatusJob = presenterScope.launchUI {
@@ -714,7 +733,7 @@ class MangaDetailsPresenter(
                 it.bookmark = bookmarked
                 it.toProgressUpdate()
             }
-            updateChapter.awaitAll(updates)
+            chapterStateWriter.awaitAll(updates)
             getChapters()
             withUIContext { view?.updateChapters() }
         }
@@ -741,7 +760,7 @@ class MangaDetailsPresenter(
                 }
                 it.toProgressUpdate()
             }
-            updateChapter.awaitAll(updates)
+            chapterStateWriter.awaitAll(updates)
             if (read && deleteNow && preferences.removeAfterMarkedAsRead().get()) {
                 deleteChapters(selectedChapters, false)
             }

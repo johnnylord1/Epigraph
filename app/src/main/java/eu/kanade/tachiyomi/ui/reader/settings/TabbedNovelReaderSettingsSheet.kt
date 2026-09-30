@@ -50,7 +50,7 @@ class TabbedNovelReaderSettingsSheet(
     override fun getTabTitles(): List<StringResource> = listOf(
         MR.strings.reading,
         MR.strings.display,
-        MR.strings.controls,
+        MR.strings.navigation,
         MR.strings.custom_filter,
         MR.strings.novel_translation_tab,
         MR.strings.novel_tts_tab,

@@ -35,6 +35,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterDifference
 import eu.kanade.tachiyomi.util.system.openInBrowserSheet
 import epigraph.reader.selection.showSelectionWebSheet
 import eu.kanade.tachiyomi.util.system.toast
+import epigraph.novel.reader.security.NovelHtmlSanitizer
+import epigraph.novel.reader.security.NovelRemoteImageBroker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -644,6 +646,16 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     request: android.webkit.WebResourceRequest?,
                 ): android.webkit.WebResourceResponse? {
                     val url = request?.url?.toString() ?: return null
+                    if (url.startsWith(NovelHtmlSanitizer.REMOTE_IMAGE_SCHEME + "://", ignoreCase = true)) {
+                        // Runs on a WebView worker thread, so the bounded broker call may block.
+                        if (preferences.novelBlockMedia.get()) return blockedWebResource()
+                        val image = remoteImageBroker.load(url) ?: return blockedWebResource()
+                        return android.webkit.WebResourceResponse(
+                            image.mimeType,
+                            null,
+                            java.io.ByteArrayInputStream(image.bytes),
+                        )
+                    }
                     val imageScheme = when {
                         url.startsWith("epigraph-novel-image://") -> "epigraph-novel-image://"
                         url.startsWith("hayai-novel-image://") -> "hayai-novel-image://"
@@ -751,6 +763,9 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         val maxOffset = (range - extent).coerceAtLeast(1f)
         bar.setProgress((offset / maxOffset).coerceIn(0f, 1f))
     }
+
+    private val remoteImageBrokerLazy = lazy { NovelRemoteImageBroker() }
+    private val remoteImageBroker by remoteImageBrokerLazy
 
     private fun blockedWebResource(): android.webkit.WebResourceResponse =
         android.webkit.WebResourceResponse(
@@ -1786,7 +1801,10 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private fun getThemeColors(theme: String): Pair<Int, Int> =
         NovelViewerTextUtils.getThemeColors(activity, preferences, theme)
 
+    private fun isLeavingReader(): Boolean = isDestroyed || activity.isFinishing
+
     override fun destroy() {
+        if (remoteImageBrokerLazy.isInitialized()) remoteImageBroker.cancelAll()
         // Save progress before destroying — but mark as teardown so the VM's read-gate
         // never flips chapter.read = true on the way out (Phase A #19).
         // ReaderActivity.onPause normally requested the exact DOM locator already. Writing the
@@ -2622,16 +2640,17 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 document.body.insertBefore(contentDiv, insertionPoint);
                 document.body.insertBefore(marker, contentDiv);
 
-                setTimeout(function() {
-                    var newHeight = document.body.scrollHeight;
-                    var diff = newHeight - oldHeight;
-                    if (diff > 0) {
-                        window.scrollTo(0, oldScrollY + diff);
-                    }
-                    if (typeof window.updateChapterBoundaries === 'function') {
-                        window.updateChapterBoundaries();
-                    }
-                }, 10);
+                // Compensate in the same task: a deferred scrollTo left a window where the
+                // scroll handler saw the old offset inside the prepended chapter and reported it
+                // as active, flipping history and progress to that chapter and back.
+                var newHeight = document.body.scrollHeight;
+                var diff = newHeight - oldHeight;
+                if (diff > 0) {
+                    window.scrollTo(0, oldScrollY + diff);
+                }
+                if (typeof window.updateChapterBoundaries === 'function') {
+                    window.updateChapterBoundaries();
+                }
             })();
         """.trimIndent()
 
@@ -3070,6 +3089,13 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                         min-height: 100px;
                         background: rgba(150, 150, 150, 0.2) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" fill="none" stroke="%23888" stroke-width="5" stroke-dasharray="31.4 31.4"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></circle></svg>') no-repeat center center;
                     }
+                    img.epigraph-img-loaded {
+                        min-height: 0;
+                        background: none;
+                    }
+                    img.epigraph-img-failed {
+                        display: none;
+                    }
                     video {
                         max-width: 100%;
                         height: auto;
@@ -3079,6 +3105,17 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 </style>
                 <style id="tsundoku-custom-style">$escapedInitialStyle</style>
                 <script>$chapterMetaScript</script>
+                <script>
+                    // The loading placeholder is an animated background, so it would keep
+                    // spinning behind transparent images. Capture-phase listeners also cover
+                    // chapters appended later by continuous scrolling.
+                    document.addEventListener('load', function(e) {
+                        if (e.target && e.target.tagName === 'IMG') e.target.classList.add('epigraph-img-loaded');
+                    }, true);
+                    document.addEventListener('error', function(e) {
+                        if (e.target && e.target.tagName === 'IMG') e.target.classList.add('epigraph-img-failed');
+                    }, true);
+                </script>
             </head>
             <body>
                 $topCardHtml
@@ -3721,6 +3758,10 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         fun onActiveChapterChanged(chapterIdStr: String, progress: Float) {
             val newChapterId = chapterIdStr.toLongOrNull() ?: return
             activity.runOnUiThread {
+                // Closing the reader resizes the WebView, which fires a scroll that can trigger a
+                // prepend and briefly land in another chapter. Switching then writes history for
+                // a chapter the user never read, so ignore changes once the reader is leaving.
+                if (isLeavingReader()) return@runOnUiThread
                 exactTeardownFlushRequested = false
                 val clamped = progress.coerceIn(0f, 1f)
                 val currentId = currentChapters?.currChapter?.chapter?.id
@@ -3795,6 +3836,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 Logger.d {
                     "NovelWebViewViewer: loadNextChapter triggered, isLoadingNext=$isLoadingNext, loadedCount=${loadedChapterIds.size}"
                 }
+                if (isLeavingReader()) return@runOnUiThread
                 if (!isLoadingNext) {
                     isLoadingNext = true
                     scope.launch {
@@ -3824,6 +3866,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 Logger.d {
                     "NovelWebViewViewer: loadPrevChapter triggered, isLoadingPrev=$isLoadingPrev, loadedCount=${loadedChapterIds.size}"
                 }
+                if (isLeavingReader()) return@runOnUiThread
                 if (isLoadingPrev) {
                     Logger.w { "NovelWebViewViewer: loadPrevChapter ignored (already loading)" }
                     return@runOnUiThread

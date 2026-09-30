@@ -246,6 +246,17 @@ class LocalBooksController(bundle: Bundle? = null) :
     }
 
     private fun deleteBook(book: LocalBook) {
+        val context = activity ?: return
+        // Removing also deletes the private copy of the file, which cannot be undone.
+        AlertDialog.Builder(context)
+            .setTitle("Remove book")
+            .setMessage("Remove ${book.displayName} and delete its file from this device?")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton("Remove") { _, _ -> removeBook(book) }
+            .show()
+    }
+
+    private fun removeBook(book: LocalBook) {
         viewScope.launch {
             runCatching { repository.remove(book.bookId, removeFile = true) }
                 .onFailure { error -> view?.context?.toast(error.message) }

@@ -22,23 +22,29 @@
         android:layout_marginTop="8dp"
         android:visibility="gone" />
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/books_list"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="8dp"
-        android:layout_weight="1"
-        android:clipToPadding="false"
-        android:paddingBottom="16dp" />
+        android:layout_weight="1">
 
-    <TextView
-        android:id="@+id/empty"
-        style="?textAppearanceBodyMedium"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:padding="24dp"
-        android:text="No local books yet. Import an EPUB or PDF to read it offline."
-        android:visibility="gone" />
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/books_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingBottom="16dp" />
+
+        <TextView
+            android:id="@+id/empty"
+            style="?textAppearanceBodyMedium"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="No local books yet. Import an EPUB or PDF to read it offline."
+            android:visibility="gone" />
+    </FrameLayout>
 
 </LinearLayout>

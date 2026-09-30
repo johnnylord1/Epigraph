@@ -148,7 +148,7 @@ abstract class BaseActivity<VB : ViewBinding> : AppCompatActivity() {
      * RecyclerView has populated, so the splash hides exactly when there's something behind it
      * worth showing.
      */
-    fun releaseSplash() {
+    open fun releaseSplash() {
         splashHeld = false
     }
 

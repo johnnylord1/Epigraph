@@ -94,7 +94,10 @@ object SettingsAdvancedScreen : ComposableSettings() {
             add(getNetworkGroup(networkPreferences))
             add(getExtensionGroup(basePreferences))
             add(getLibraryGroup(basePreferences))
-            add(getDeveloperGroup())
+            // The storybook is a component playground with placeholder content, not a user feature.
+            if (BuildConfig.DEBUG) {
+                add(getDeveloperGroup())
+            }
         }.toPersistentList()
     }
 

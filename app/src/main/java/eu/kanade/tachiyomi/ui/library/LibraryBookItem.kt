@@ -178,6 +178,10 @@ private class LibraryBookGridHolder(
         }
         binding.playLayout.isVisible = false
         binding.progress.isVisible = false
+        binding.playLayout.setOnClickListener {
+            adapter.libraryListener?.startReading(flexibleAdapterPosition, binding.playButton)
+        }
+        binding.playLayout.setOnLongClickListener { itemView.performLongClick() }
     }
 
     override fun onSetValues(item: LibraryItem) {
@@ -208,7 +212,8 @@ private class LibraryBookGridHolder(
         titleLayoutTask = layoutTask
         binding.title.post(layoutTask)
         loadCover(binding.coverThumbnail, book)
-        binding.unreadDownloadBadge.badgeView.setChapters(book.chapterCount ?: 1)
+        binding.unreadDownloadBadge.badgeView.setLabel(book.contentType.name)
+        binding.playLayout.isVisible = !item.hideReadingButton
         setSelected(adapter.isSelected(flexibleAdapterPosition))
     }
 
@@ -259,9 +264,6 @@ private class LibraryBookListHolder(
     private var boundSignature: Int? = null
     private var appliedOutline = adapter.showOutline
 
-    init {
-        binding.unreadDownloadBadge.badgeView.setChapters(1)
-    }
 
     override fun onSetValues(item: LibraryItem) {
         if (item !is LibraryBookItem) error("Only LibraryBookItem can use the book list holder")
@@ -283,7 +285,7 @@ private class LibraryBookListHolder(
             itemView.context.getResourceColor(android.R.attr.colorBackground),
         )
         loadCover(binding.coverThumbnail, book)
-        binding.unreadDownloadBadge.badgeView.setChapters(book.chapterCount ?: 1)
+        binding.unreadDownloadBadge.badgeView.setLabel(book.contentType.name)
     }
 
     override fun recycle() {

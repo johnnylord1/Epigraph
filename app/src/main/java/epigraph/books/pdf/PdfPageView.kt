@@ -22,8 +22,10 @@ import kotlin.math.abs
 class PdfPageView(context: Context) : FrameLayout(context) {
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
-        isClickable = true
-        isFocusable = true
+        // Not clickable: a clickable child fills this view and would consume every touch, so
+        // onTouchEvent below (page swipe, pinch zoom, pan, long press) would never run.
+        isClickable = false
+        isFocusable = false
     }
     private var bitmap: Bitmap? = null
     private var scale = 1f
@@ -57,8 +59,11 @@ class PdfPageView(context: Context) : FrameLayout(context) {
             velocityX: Float,
             velocityY: Float,
         ): Boolean {
+            // A fling on a zoomed page pans it; it must not turn the page.
+            if (scale > 1f) return false
             val horizontal = abs(velocityX) >= abs(velocityY)
-            if (horizontal != horizontalPaging) return false
+            // Horizontal page turns work in every mode; vertical flings page only in vertical mode.
+            if (!horizontal && horizontalPaging) return false
             val velocity = if (horizontal) velocityX else velocityY
             if (abs(velocity) < MIN_FLING_VELOCITY) return false
             onPageSwipe?.invoke(if (velocity < 0f) 1 else -1)
@@ -101,6 +106,8 @@ class PdfPageView(context: Context) : FrameLayout(context) {
         } else {
             null
         }
+        // Letterbox with the page colour, as the two-page spread does, instead of black bands.
+        setBackgroundColor(if (nightMode) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
         invalidate()
     }
 

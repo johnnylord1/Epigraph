@@ -3,12 +3,10 @@ package eu.kanade.tachiyomi.extension
 import yokai.util.koin.get
 import android.content.Context
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Parcelable
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.extension.api.ExtensionApi
-import eu.kanade.tachiyomi.extension.installer.ShizukuInstaller
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.extension.model.LoadResult
@@ -557,13 +555,10 @@ class ExtensionManager(
 
     companion object {
         fun canAutoInstallUpdates(checkIfShizukuIsRunning: Boolean = false): Boolean {
-            val prefs = get<BasePreferences>().extensionInstaller().get()
-            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
-                (
-                    prefs == BasePreferences.ExtensionInstaller.SHIZUKU &&
-                        (!checkIfShizukuIsRunning || ShizukuInstaller.isShizukuRunning())
-                    ) ||
-                prefs == BasePreferences.ExtensionInstaller.PRIVATE
+            // Background updates may only replace private extensions, which are loaded from app
+            // storage. APK extensions (session or Shizuku installs) always need the visible
+            // Package Installer prompt, so they are surfaced as update notifications instead.
+            return get<BasePreferences>().extensionInstaller().get() == BasePreferences.ExtensionInstaller.PRIVATE
         }
     }
 }

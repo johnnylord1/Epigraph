@@ -69,7 +69,6 @@ import eu.kanade.tachiyomi.util.system.setToDefault
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import java.security.Security
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import org.conscrypt.Conscrypt
@@ -161,8 +160,12 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
         // one filtered SSE feed per selected Core scope for near-real-time library/progress
         // convergence. The supervisor is read/review-only for extension dependencies; it never
         // approves repositories or launches the Android Package Installer.
-        GlobalContext.get().get<CoreLiveEventSupervisor>().start(scope)
-        GlobalContext.get().get<InstalledExtensionRelinkObserver>().start(scope)
+        // Resolving them builds the whole Core sync graph (database, stores, credentials); off the
+        // main thread so bindApplication cannot hit the startup ANR on slow or memory-starved devices.
+        scope.launchIO {
+            GlobalContext.get().get<CoreLiveEventSupervisor>().start(scope)
+            GlobalContext.get().get<InstalledExtensionRelinkObserver>().start(scope)
+        }
 
         // Source icons otherwise perform PackageManager.loadIcon() Binder calls from the first
         // visible Library/Recents/Browse bind. Resolve the shared extension cache from IO once
@@ -175,8 +178,9 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
         // WebView init transiently rewrites the application context's package identity to
         // the WebView provider (com.android.chrome). Any system-service call from another
         // thread during that window hits checkCallerIsSameApp with a mismatched package
-        // and throws SecurityException. Channels are created before WebView is touched.
-        val channelsJob = scope.launchIO { setupNotificationChannels() }
+        // and throws SecurityException. Channels are created at launch, long before the
+        // novel WebView warm-up (NovelWebViewWarmup) can run.
+        scope.launchIO { setupNotificationChannels() }
 
         // Trigger NovelPluginManager init now so QuickJS metadata extraction happens at
         // app launch, not at first reader-open (where init awaits the source up to 5s).
@@ -188,16 +192,9 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
             }
         }
 
-        // Pre-load WebView native libs so the first novel chapter doesn't pay the
-        // WebView class-init cost (200–500 ms cold) on the UI thread.
-        scope.launch {
-            channelsJob.join()
-            try {
-                WebView(this@App).destroy()
-            } catch (e: Throwable) {
-                Logger.w(e) { "App: pre-warming WebView failed" }
-            }
-        }
+        // No WebView warm-up here: Chromium's first init runs on the main thread (0.3–1.5 s)
+        // and held the splash for that long on every cold start. NovelWebViewWarmup does it
+        // from a novel's details screen instead, the only path that leads to a WebView reader.
 
         // Cover ratio/colour cache: heavy SharedPreferences read on first access; on IO so it
         // can't block the main thread. MangaCoverMetadata.load() merges into the existing

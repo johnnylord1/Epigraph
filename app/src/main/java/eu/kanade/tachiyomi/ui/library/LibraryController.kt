@@ -253,6 +253,19 @@ open class LibraryController(
         }
     }
 
+    /** The toggle names and shows the library it switches to, so it must follow a menu re-inflate. */
+    private fun updateBooksToggleItem() {
+        appBar()?.mainToolbar?.menu?.findItem(R.id.action_books)?.apply {
+            title = view?.context?.getString(
+                if (booksMode) MR.strings.library_switch_to_comics else MR.strings.library_switch_to_books,
+            )
+            setIcon(
+                if (booksMode) R.drawable.ic_library_outline_24dp
+                else R.drawable.ic_book_open_variant_24dp,
+            )
+        }
+    }
+
     private fun refreshDisplayChrome() {
         refreshTabStrip()
         showMiniBar()
@@ -263,7 +276,7 @@ open class LibraryController(
     // restore lives in seedSearchFromState(), called from onSetupLocalChrome.
     private fun setupToolbarMenu() {
         installLocalMenu(R.menu.library)
-        appBar()?.mainToolbar?.menu?.findItem(R.id.action_import_books)?.isVisible = booksMode
+        updateBooksToggleItem()
         if (booksMode) {
             appBar()?.mainToolbar?.menu?.findItem(R.id.action_filter)?.isVisible = true
         }
@@ -581,7 +594,9 @@ open class LibraryController(
 
     override fun getTitle(): String? {
         setSubtitle()
-        return view?.context?.getString(MR.strings.library)
+        return view?.context?.getString(
+            if (booksMode) MR.strings.library_books_and_novels else MR.strings.library_comics,
+        )
     }
 
     override fun getSearchTitle(): String? {
@@ -1226,7 +1241,7 @@ open class LibraryController(
         LibraryUpdateJob.updateFlow.onEach(::onUpdateManga).launchIn(viewScope)
         viewScope.launchUI {
             LibraryUpdateJob.isRunningFlow(view.context).collect {
-                adapter.getHeaderPositions().forEach {
+                (currentLibraryAdapter ?: adapter).getHeaderPositions().forEach {
                     val holder = (binding.libraryGridRecycler.recycler.findViewHolderForAdapterPosition(it) as? LibraryHeaderHolder) ?: return@forEach
                     val category = holder.category ?: return@forEach
                     holder.notifyStatus(LibraryUpdateJob.categoryInQueue(category.id), category)
@@ -1325,7 +1340,9 @@ open class LibraryController(
     private fun setSwipeRefresh() = with(binding.swipeRefresh) {
         setOnRefreshListener {
             isRefreshing = false
-            if (!LibraryUpdateJob.isRunning(context)) {
+            if (booksMode) {
+                updateBooksNovels()
+            } else if (!LibraryUpdateJob.isRunning(context)) {
                 val currentTabCategory = if (isTabbedMode) {
                     pagerAdapter?.categories?.getOrNull(binding.libraryPager.currentItem)
                 } else {
@@ -1370,12 +1387,7 @@ open class LibraryController(
                 FilterBottomSheet.ACTION_FILTER -> onFilterChanged()
                 FilterBottomSheet.ACTION_HIDE_FILTER_TIP -> showFilterTip()
                 FilterBottomSheet.ACTION_DISPLAY -> showDisplayOptions()
-                FilterBottomSheet.ACTION_EXPAND_COLLAPSE_ALL -> if (booksMode) {
-                    unifiedBooksView?.setCategoryHidden(unifiedBooksView?.isCategoryHidden != true)
-                    binding.filterBottomSheet.filterBottomSheet.setExpandText(canCollapseOrExpandCategory())
-                } else {
-                    presenter.toggleAllCategoryVisibility()
-                }
+                FilterBottomSheet.ACTION_EXPAND_COLLAPSE_ALL -> toggleAllCategoryVisibility()
                 FilterBottomSheet.ACTION_GROUP_BY -> if (!booksMode) showGroupOptions()
             }
         }
@@ -1434,11 +1446,8 @@ open class LibraryController(
                 4 -> openRandomManga(false)
                 3 -> showGroupOptions()
                 2 -> showDisplayOptions()
-                1 -> if (booksMode) {
-                    unifiedBooksView?.setCategoryHidden(unifiedBooksView?.isCategoryHidden != true)
-                    binding.filterBottomSheet.filterBottomSheet.setExpandText(canCollapseOrExpandCategory())
-                } else if (canCollapseOrExpandCategory() != null) {
-                    presenter.toggleAllCategoryVisibility()
+                1 -> if (canCollapseOrExpandCategory() != null) {
+                    toggleAllCategoryVisibility()
                 }
                 else -> if (!isSubClass) {
                     searchToolbar()?.menu?.performIdentifierAction(
@@ -1635,6 +1644,29 @@ open class LibraryController(
             binding.categoryHopperFrame
         } else {
             binding.filterBottomSheet.filterBottomSheet
+        }
+    }
+
+    /** Pull-to-refresh in Books & novels updates every library novel, not the Comics library. */
+    private fun updateBooksNovels() {
+        val books = unifiedBooksView ?: return
+        val novels = books.allNovels()
+        if (novels.isEmpty()) {
+            books.refresh()
+            return
+        }
+        val position = (currentLibraryAdapter ?: return).getHeaderPositions().firstOrNull()
+        if (position != null && !books.isGrouped) {
+            // One section: reuse its header so the refresh button spins with the job.
+            updateCategory(position)
+            return
+        }
+        val category = books.category
+        LibraryUpdateJob.startNow(view?.context ?: return, category, mangaToUse = novels)
+        snack?.dismiss()
+        snack = view?.snack(MR.strings.updating_library) {
+            anchorView = anchorView()
+            this.view.elevation = 15f.dpToPx
         }
     }
 
@@ -2484,6 +2516,10 @@ open class LibraryController(
             toggleSelection(position)
             return
         }
+        (activeAdapter.getItem(position) as? LibraryBookItem)?.let {
+            openOrDownloadBook(it.book)
+            return
+        }
         val manga = (activeAdapter.getItem(position) as? LibraryMangaItem)?.manga?.manga ?: return
         val activity = activity ?: return
         viewScope.launch {
@@ -2758,9 +2794,14 @@ open class LibraryController(
     override fun updateCategory(position: Int): Boolean {
         val itemAdapter = currentLibraryAdapter ?: adapter
         val category = (itemAdapter.getItem(position) as? LibraryHeaderItem)?.category ?: return false
-        if (booksMode && category.id == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID) {
-            unifiedBooksView?.refresh()
-            return false
+        val booksNovels = if (booksMode && unifiedBooksView?.isBooksHeader(category.id) == true) {
+            unifiedBooksView?.novelsFor(category.id).orEmpty().ifEmpty {
+                // EPUB/PDF are local files: there is nothing remote to update.
+                unifiedBooksView?.refresh()
+                return false
+            }
+        } else {
+            null
         }
         val inQueue = LibraryUpdateJob.categoryInQueue(category.id)
         snack?.dismiss()
@@ -2771,7 +2812,11 @@ open class LibraryController(
                     LibraryUpdateJob.isRunning(view!!.context) -> MR.strings.adding_category_to_queue
                     else -> MR.strings.updating_
                 },
-                category.name,
+                if (category.id == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID) {
+                    view!!.context.getString(MR.strings.library_books_and_novels)
+                } else {
+                    category.name
+                },
             ),
             Snackbar.LENGTH_LONG,
         ) {
@@ -2791,10 +2836,10 @@ open class LibraryController(
             LibraryUpdateJob.startNow(
                 view!!.context,
                 category,
-                mangaToUse = if (category.isDynamic) {
-                    presenter.getMangaInCategories(category.id)
-                } else {
-                    null
+                mangaToUse = when {
+                    booksNovels != null -> booksNovels
+                    category.isDynamic -> presenter.getMangaInCategories(category.id)
+                    else -> null
                 },
             )
         }
@@ -2803,12 +2848,10 @@ open class LibraryController(
 
     override fun toggleCategoryVisibility(position: Int) {
         if (booksMode) {
-            val itemAdapter = currentLibraryAdapter ?: adapter
-            val categoryId = (itemAdapter.getItem(position) as? LibraryHeaderItem)?.category?.id
-            if (categoryId == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID) {
-                unifiedBooksView?.toggleCategoryVisibility()
-                binding.filterBottomSheet.filterBottomSheet.setExpandText(canCollapseOrExpandCategory())
-            }
+            // Only named category groups collapse; a single section behaves like a lone Comics category.
+            val catId = (currentLibraryAdapter?.getItem(position) as? LibraryHeaderItem)?.category?.id ?: return
+            unifiedBooksView?.toggleGroup(catId)
+            binding.filterBottomSheet.filterBottomSheet.setExpandText(canCollapseOrExpandCategory())
             return
         }
         if (!presenter.showAllCategories) {
@@ -2830,7 +2873,8 @@ open class LibraryController(
      */
     fun canCollapseOrExpandCategory(): Boolean? {
         if (booksMode) {
-            return unifiedBooksView?.isCategoryHidden?.not()
+            // Null while Books & novels is a single section, like a single-category Comics library.
+            return unifiedBooksView?.allGroupsExpanded()
         }
         if (singleCategory || !presenter.showAllCategories || isSubClass) {
             return null
@@ -2838,7 +2882,27 @@ open class LibraryController(
         return presenter.allCategoriesExpanded()
     }
 
+    private fun toggleAllCategoryVisibility() {
+        if (booksMode) {
+            val expanded = unifiedBooksView?.allGroupsExpanded() ?: return
+            unifiedBooksView?.setAllGroupsCollapsed(expanded)
+            binding.filterBottomSheet.filterBottomSheet.setExpandText(canCollapseOrExpandCategory())
+        } else {
+            presenter.toggleAllCategoryVisibility()
+        }
+    }
+
+    /** Header counts for Books & novels, where collapsed groups hold a single placeholder row. */
+    fun booksItemCount(catId: Int): Int? =
+        if (booksMode) unifiedBooksView?.itemCount(catId) ?: 0 else null
+
+    /** Only groups with novels have remote chapters to update. */
+    fun booksHeaderCanUpdate(catId: Int?): Boolean =
+        booksMode && unifiedBooksView?.novelsFor(catId)?.isNotEmpty() == true
+
     override fun manageCategory(position: Int) {
+        // Books & novels headers mirror Comics categories; they are managed from the Comics library.
+        if (booksMode) return
         val category = (adapter.getItem(position) as? LibraryHeaderItem)?.category ?: return
         if (!category.isDynamic) {
             ManageCategoryDialog(category) {
@@ -2848,7 +2912,7 @@ open class LibraryController(
     }
 
     override fun sortCategory(catId: Int, sortBy: Char) {
-        if (booksMode && catId == UnifiedLibraryBooksView.BOOKS_CATEGORY_ID) {
+        if (booksMode && unifiedBooksView?.isBooksHeader(catId) == true) {
             unifiedBooksView?.sortCategory(sortBy)
             return
         }
@@ -2865,16 +2929,18 @@ open class LibraryController(
     }
 
     override fun selectAll(position: Int) {
-        val header = adapter.getSectionHeader(position) ?: return
-        val items = adapter.getSectionItemPositions(header)
+        val activeAdapter = currentLibraryAdapter ?: adapter
+        val header = activeAdapter.getSectionHeader(position) ?: return
+        val items = activeAdapter.getSectionItemPositions(header)
         val allSelected = allSelected(position)
         for (i in items) setSelection(i, !allSelected)
     }
 
     override fun allSelected(position: Int): Boolean {
-        val header = adapter.getSectionHeader(position) ?: return false
-        val items = adapter.getSectionItemPositions(header)
-        return items.all { adapter.isSelected(it) }
+        val activeAdapter = currentLibraryAdapter ?: adapter
+        val header = activeAdapter.getSectionHeader(position) ?: return false
+        val items = activeAdapter.getSectionItemPositions(header)
+        return items.all { activeAdapter.isSelected(it) }
     }
 
     //region sheet methods
@@ -2961,14 +3027,18 @@ open class LibraryController(
                 }
             }.onSuccess { preview ->
                 val context = activity ?: return@onSuccess
-                val duplicateNote = if (preview.alreadyImported) {
-                    "\nThis file is already in the library and will reuse its private copy."
-                } else {
-                    ""
+                val message = buildString {
+                    append(preview.title?.takeIf { it.isNotBlank() } ?: preview.displayName)
+                    preview.author?.takeIf { it.isNotBlank() }?.let { append("\n").append(it) }
+                    append("\n\n${preview.contentType.name} • ")
+                    append(android.text.format.Formatter.formatShortFileSize(context, preview.byteSize))
+                    if (preview.alreadyImported) {
+                        append("\n\nThis file is already in the library and will reuse its private copy.")
+                    }
                 }
                 AlertDialog.Builder(context)
-                    .setTitle("Import book")
-                    .setMessage("${preview.contentType.name}\nSize: ${preview.byteSize} bytes\nSHA-256: ${preview.sha256}$duplicateNote")
+                    .setTitle(context.getString(MR.strings.library_import_book))
+                    .setMessage(message)
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton("Import") { _, _ ->
                         viewScope.launch {
@@ -3004,28 +3074,58 @@ open class LibraryController(
 
     private fun showBookActions(book: epigraph.books.local.LocalBook) {
         val context = activity ?: return
-        val actions = if (book.isAvailable) {
-            arrayOf("Open", "Relink file", "Remove from library")
-        } else {
-            arrayOf("Relink file", "Remove from library")
+        val setCategories = context.getString(MR.strings.move_to_categories)
+        val actions = buildList {
+            if (book.isAvailable) add("Open")
+            add(setCategories)
+            add("Relink file")
+            add("Remove from library")
         }
         AlertDialog.Builder(context)
             .setTitle(book.displayName)
-            .setItems(actions) { _, which ->
-                if (!book.isAvailable) {
-                    when (which) {
-                        0 -> launchBooksRelink(book)
-                        1 -> removeBook(book)
-                    }
-                } else {
-                    when (which) {
-                        0 -> startActivity(LocalBookReaderActivity.intent(context, book.bookId))
-                        1 -> launchBooksRelink(book)
-                        2 -> removeBook(book)
-                    }
+            .setItems(actions.toTypedArray()) { _, which ->
+                when (actions[which]) {
+                    "Open" -> startActivity(LocalBookReaderActivity.intent(context, book.bookId))
+                    setCategories -> showBookCategories(book)
+                    "Relink file" -> launchBooksRelink(book)
+                    else -> removeBook(book)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showBookCategories(book: epigraph.books.local.LocalBook) {
+        val context = activity ?: return
+        val books = unifiedBooksView ?: return
+        val categories = books.assignableCategories
+        if (categories.isEmpty()) {
+            books.showStatus(context.getString(MR.strings.library_books_no_categories))
+            return
+        }
+        val current = books.categoryIdsOf(book.bookId).toSet()
+        val checked = BooleanArray(categories.size) { categories[it].id in current }
+        AlertDialog.Builder(context)
+            .setTitle(MR.strings.move_to_categories)
+            .setMultiChoiceItems(categories.map { it.name }.toTypedArray(), checked) { _, which, isChecked ->
+                checked[which] = isChecked
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                viewScope.launch {
+                    runCatching {
+                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            categories.forEachIndexed { index, category ->
+                                val id = category.id ?: return@forEachIndexed
+                                if (checked[index] != (id in current)) {
+                                    localBookRepository.setCategory(book.bookId, id.toLong(), checked[index])
+                                }
+                            }
+                        }
+                    }.onFailure { books.showStatus(it.message ?: "Categories could not be saved") }
+                    books.reloadCategories()
+                }
+            }
             .show()
     }
 
@@ -3045,18 +3145,15 @@ open class LibraryController(
         // FlexibleAdapter may retain/insert synthetic headers/placeholders when the category has
         // no visible works. Chrome is not content: only actual works suppress the empty state.
         val hasVisibleRows = unifiedBooksView?.libraryAdapter?.currentItems?.any { item ->
-            item is LibraryMangaItem || item is LibraryBookItem
+            item is LibraryMangaItem || item is LibraryBookItem ||
+                // A collapsed group still holds works; only a filtered-empty one is blank.
+                (item is LibraryPlaceholderItem && item.type is LibraryPlaceholderItem.Type.Hidden)
         } == true
         val collectionHasContent = unifiedBooksView?.isCollectionEmpty == false
-        val categoryIsCollapsed = unifiedBooksView?.isCategoryHidden == true
-        // A collapsed Books category still contains content. Showing EmptyView in that state
-        // places its full-screen ScrollView above the RecyclerView and consumes the header tap,
-        // making Default impossible to expand again. EmptyView is for an empty/filtered
-        // collection, never for a deliberately hidden section.
-        val hasBooksContent = collectionHasContent && (hasVisibleRows || categoryIsCollapsed)
-        val showBooksNavigation = hasBooksContent && !preferences.hideHopper().get()
-        binding.categoryHopperFrame.isVisible = showBooksNavigation
-        binding.jumperCategoryText.isVisible = showBooksNavigation
+        val hasBooksContent = collectionHasContent && hasVisibleRows
+        // The category hopper belongs to the Comics presenter; Books headers are few and inline.
+        binding.categoryHopperFrame.isVisible = false
+        binding.jumperCategoryText.isVisible = false
         if (hasBooksContent) {
             binding.emptyView.hide()
             return
@@ -3069,13 +3166,11 @@ open class LibraryController(
             when {
                 hasQuery -> MR.strings.no_results_found
                 filtered -> MR.strings.no_matches_for_filters
-                else -> MR.strings.library_is_empty_add_from_browse
+                else -> MR.strings.library_books_empty
             },
             if (!hasQuery && !filtered) {
                 listOf(
-                    EmptyView.Action(MR.strings.getting_started_guide) {
-                        activity?.openInBrowser("https://mihon.app/docs/guides/getting-started#_2-adding-sources")
-                    },
+                    EmptyView.Action(MR.strings.library_import_book) { launchBooksImport() },
                 )
             } else {
                 emptyList()
@@ -3134,14 +3229,7 @@ open class LibraryController(
         appBar()?.setTitle(getTitle(), true)
         appBar()?.mainToolbar?.menu?.findItem(R.id.action_search)?.isVisible = false
         appBar()?.mainToolbar?.menu?.findItem(R.id.action_filter)?.isVisible = true
-        appBar()?.mainToolbar?.menu?.findItem(R.id.action_import_books)?.isVisible = enabled
-        appBar()?.mainToolbar?.menu?.findItem(R.id.action_books)?.apply {
-            title = if (enabled) "Comics" else "Books"
-            setIcon(
-                if (enabled) R.drawable.ic_library_outline_24dp
-                else R.drawable.ic_book_open_variant_24dp,
-            )
-        }
+        updateBooksToggleItem()
         if (enabled) {
             appBar()?.clearTabs()
             appBar()?.y = 0f
@@ -3228,9 +3316,6 @@ open class LibraryController(
             R.id.action_books -> {
                 setBooksMode(!booksMode)
             }
-            R.id.action_import_books -> {
-                if (booksMode) launchBooksImport()
-            }
             R.id.action_more -> {
                 val activity = activity as? MainActivity
                     ?: return super.onOptionsItemSelected(item)
@@ -3242,6 +3327,9 @@ open class LibraryController(
                             destroyActionModeIfNeeded()
                         }
                     },
+                    // Books mode keeps the same three toolbar actions as Comics; the import entry
+                    // lives in the shared overflow so the toolbar never spills into a native menu.
+                    onImportBooks = if (booksMode) ({ launchBooksImport() }) else null,
                 )
             }
             else -> return super.onOptionsItemSelected(item)

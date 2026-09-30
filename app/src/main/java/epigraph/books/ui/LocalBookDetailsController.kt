@@ -1,6 +1,7 @@
 package epigraph.books.ui
 
 import android.animation.ValueAnimator
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
@@ -54,6 +55,7 @@ import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.ignoredSystemInsets
 import eu.kanade.tachiyomi.util.system.isLandscape
 import eu.kanade.tachiyomi.util.system.isTablet
+import eu.kanade.tachiyomi.util.system.statusBarTint
 import eu.kanade.tachiyomi.util.view.activityBinding
 import eu.kanade.tachiyomi.util.view.compatToolTipText
 import eu.kanade.tachiyomi.util.view.isControllerVisible
@@ -392,7 +394,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                     activityBinding?.appBar?.setBackgroundColor(
                         ColorUtils.blendARGB(topColor, scrollingColor, fraction),
                     )
-                    currentActivity.window?.statusBarColor = if (toolbarIsColored) {
+                    currentActivity.window?.statusBarTint = if (toolbarIsColored) {
                         ColorUtils.blendARGB(topColor, scrollingStatusColor, fraction)
                     } else {
                         Color.TRANSPARENT
@@ -402,7 +404,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             }
         } else {
             activityBinding?.appBar?.setBackgroundColor(if (toolbarIsColored) scrollingColor else topColor)
-            currentActivity.window?.statusBarColor =
+            currentActivity.window?.statusBarTint =
                 if (toolbarIsColored) scrollingStatusColor else topColor
         }
     }
@@ -412,7 +414,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val scrollingColor = headerColor
             ?: currentActivity.getResourceColor(materialR.attr.colorPrimaryVariant)
         val scrollingStatusColor = ColorUtils.setAlphaComponent(scrollingColor, (0.87f * 255).roundToInt())
-        currentActivity.window?.statusBarColor =
+        currentActivity.window?.statusBarTint =
             if (toolbarIsColored) scrollingStatusColor else Color.TRANSPARENT
         activityBinding?.appBar?.setBackgroundColor(
             if (toolbarIsColored) scrollingColor else Color.TRANSPARENT,
@@ -452,10 +454,32 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                 ?: Color.BLACK
             if (router.backstackSize > 0 && router.backstack.lastOrNull()?.controller !is LocalBookDetailsController) {
                 activityBinding?.appBar?.setBackgroundColor(colorSurface)
-                currentActivity?.window?.statusBarColor =
+                currentActivity?.window?.statusBarTint =
                     currentActivity.getResourceColor(AR.attr.statusBarColor)
             }
         }
+    }
+
+    override fun onActivityResumed(activity: Activity) {
+        super.onActivityResumed(activity)
+        // The reader is a separate activity, so returning from it resumes this controller with
+        // its view intact. Reload the saved position or the header keeps the pre-reading page.
+        if (book == null || detailsAdapter == null) return
+        viewScope.launch { refreshProgress() }
+    }
+
+    private suspend fun refreshProgress() {
+        val loaded = book ?: return
+        val currentProgress = withContext(Dispatchers.IO) { repository.getProgress(bookId) }
+        if (currentProgress == progress || detailsAdapter == null) return
+        progress = currentProgress
+        detailsAdapter = createAdapter(loaded)
+        binding.recycler.adapter = detailsAdapter
+        if (isTablet) {
+            tabletDetailsAdapter = createAdapter(loaded)
+            binding.tabletRecycler.adapter = tabletDetailsAdapter
+        }
+        binding.recycler.post { applyHeaderHeight() }
     }
 
     override fun onDestroyView(view: View) {
@@ -633,10 +657,11 @@ private fun bookProgressLabel(
 ): String = when (book.contentType) {
     ContentType.EPUB -> {
         val total = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-        val progression = (locator as? ReaderLocator.Epub)?.progression ?: 0.0
-        val index = (progression.coerceIn(0.0, 1.0) * (total - 1))
-            .toInt()
-            .coerceIn(0, total - 1)
+        val index = BookChapterMetrics.epubChapterIndex(
+            locator as? ReaderLocator.Epub,
+            total,
+            structure?.chapterPaths.orEmpty(),
+        )
         "Chapter ${index + 1} / $total"
     }
 
@@ -1071,8 +1096,11 @@ private class LocalBookDetailsAdapter(
         private fun isCurrent(index: Int): Boolean = when (val current = progress) {
             is ReaderLocator.Epub -> {
                 val total = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                val currentIndex = (current.progression * (total - 1)).toInt().coerceIn(0, total - 1)
-                currentIndex == index
+                BookChapterMetrics.epubChapterIndex(
+                    current,
+                    total,
+                    structure?.chapterPaths.orEmpty(),
+                ) == index
             }
 
             is ReaderLocator.Pdf -> {

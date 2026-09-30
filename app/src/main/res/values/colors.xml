@@ -29,6 +29,8 @@
     <color name="primaryTachiyomi">#54759E</color>
     <color name="onPrimaryTachiyomi">@color/md_white_1000</color>
     <color name="primaryInverseTachiyomi">#78bcff</color>
+    <!-- Nocturne graphite in both modes, like the desktop splash, so the default theme follows seamlessly. -->
+    <color name="epigraph_splash_background">#131313</color>
     <color name="splashBackground">@color/epigraph_background</color>
     <color name="secondaryTachiyomi">@color/md_blue_A400</color>
     <color name="rippleColorTachiyomi">#1F2979FF</color>

@@ -17,6 +17,9 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import epigraph.books.ui.LocalBookReaderActivity
 import epigraph.novel.reader.tts.EpigraphTtsNotification
 import java.util.Locale
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Foreground TTS owner for imported EPUB/PDF documents.
@@ -236,6 +239,11 @@ class BookTtsPlaybackService : Service() {
             paused -> PlaybackStateCompat.STATE_PAUSED
             else -> PlaybackStateCompat.STATE_PLAYING
         }
+        mutablePlaybackState.value = when (state) {
+            PlaybackStateCompat.STATE_STOPPED -> PlaybackState.STOPPED
+            PlaybackStateCompat.STATE_PAUSED -> PlaybackState.PAUSED
+            else -> PlaybackState.PLAYING
+        }
         session.setPlaybackState(
             PlaybackStateCompat.Builder()
                 .setActions(
@@ -275,6 +283,7 @@ class BookTtsPlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        mutablePlaybackState.value = PlaybackState.STOPPED
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         textToSpeech = null
@@ -287,7 +296,14 @@ class BookTtsPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    enum class PlaybackState { STOPPED, PLAYING, PAUSED }
+
     companion object {
+        private val mutablePlaybackState = MutableStateFlow(PlaybackState.STOPPED)
+
+        /** Process-wide playback state, so reader controls can follow notification actions. */
+        val playbackState: StateFlow<PlaybackState> = mutablePlaybackState.asStateFlow()
+
         const val ACTION_START = "epigraph.books.tts.START"
         const val ACTION_TOGGLE_PAUSE = "epigraph.books.tts.TOGGLE_PAUSE"
         const val ACTION_STOP_PLAYBACK = "epigraph.books.tts.STOP"
@@ -331,6 +347,15 @@ class BookTtsPlaybackService : Service() {
                 .putExtra(EXTRA_PITCH, pitch)
             voice?.let { intent.putExtra(EXTRA_VOICE, it.take(256)) }
             runCatching { context.startService(intent) }
+        }
+
+        fun togglePause(context: Context) = sendAction(context, ACTION_TOGGLE_PAUSE)
+
+        fun skip(context: Context, forward: Boolean) = sendAction(context, if (forward) ACTION_NEXT else ACTION_PREVIOUS)
+
+        private fun sendAction(context: Context, action: String) {
+            if (playbackState.value == PlaybackState.STOPPED) return
+            runCatching { context.startService(Intent(context, BookTtsPlaybackService::class.java).setAction(action)) }
         }
 
         fun stop(context: Context) {

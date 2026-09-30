@@ -66,6 +66,9 @@ class NovelJsRuntime(
 
         val qjs = QuickJs.create(jsDispatcher)
         quickJs = qjs
+        // Bound the plugin's native heap: an allocation past this raises a JS out-of-memory
+        // error for this call instead of letting one plugin exhaust the app's native memory.
+        qjs.memoryLimit = limits.maxHeapBytes
 
         try {
             // Step 1: Register the Kotlin bridge as "__bridge" in JS global scope.
@@ -352,6 +355,9 @@ data class NovelRuntimeLimits(
     val chapterTimeoutMs: Long = 30_000,
     val maxPluginCodeBytes: Int = 2 * 1024 * 1024,
     val maxResultBytes: Int = 8 * 1024 * 1024,
+    // Holds the bundled runtime libraries (cheerio, protobufjs, crypto-js...) plus a parsed
+    // chapter DOM with ample headroom.
+    val maxHeapBytes: Long = 128L * 1024 * 1024,
 )
 
 class NovelRuntimeTimeoutException(

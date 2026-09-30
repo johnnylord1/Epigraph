@@ -32,6 +32,7 @@ import eu.kanade.tachiyomi.util.system.notificationManager
 import java.io.File
 import yokai.util.koin.injectLazy
 import yokai.domain.chapter.interactor.GetChapter
+import epigraph.sync.core.SyncedChapterStateWriter
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.manga.interactor.GetManga
 import yokai.presentation.core.Constants
@@ -45,6 +46,7 @@ import eu.kanade.tachiyomi.BuildConfig.APPLICATION_ID as ID
 class NotificationReceiver : BroadcastReceiver() {
     private val getChapter: GetChapter by injectLazy()
     private val updateChapter: UpdateChapter by injectLazy()
+    private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
     private val getManga: GetManga by injectLazy()
 
     /**
@@ -217,7 +219,7 @@ class NotificationReceiver : BroadcastReceiver() {
             val chapters = chapterUrls.map {
                 val chapter = getChapter.awaitByUrlAndMangaId(it, mangaId, false) ?: return@launchIO
                 chapter.read = true
-                updateChapter.await(chapter.toProgressUpdate())
+                chapterStateWriter.await(chapter.toProgressUpdate())
                 if (preferences.removeAfterMarkedAsRead().get()) {
                     val sourceManager: SourceManager = get()
                     val source = sourceManager.get(manga.source) ?: return@launchIO

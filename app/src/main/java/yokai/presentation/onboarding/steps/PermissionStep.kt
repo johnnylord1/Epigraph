@@ -36,7 +36,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import yokai.i18n.MR
-import yokai.presentation.component.Gap
 import yokai.presentation.theme.Size
 
 internal class PermissionStep : OnboardingStep {
@@ -45,8 +44,10 @@ internal class PermissionStep : OnboardingStep {
     private var notificationGranted by mutableStateOf(false)
     private var batteryGranted by mutableStateOf(false)
 
+    // Extension installs go through the visible Package Installer, which asks for the "install
+    // unknown apps" grant on demand, so onboarding never blocks on it.
     override val isComplete: Boolean
-        get() = installGranted
+        get() = true
 
     @Composable
     override fun Content() {
@@ -101,7 +102,7 @@ internal class PermissionStep : OnboardingStep {
         Column(
             modifier = Modifier.padding(vertical = Size.medium),
         ) {
-            SectionHeader(stringResource(MR.strings.onboarding_permission_type_required))
+            SectionHeader(stringResource(MR.strings.onboarding_permission_type_optional))
 
             PermissionItem(
                 title = stringResource(MR.strings.onboarding_permission_install_apps),
@@ -119,10 +120,6 @@ internal class PermissionStep : OnboardingStep {
                     context.startActivity(intent)
                 },
             )
-
-            Gap(Size.medium)
-
-            SectionHeader(stringResource(MR.strings.onboarding_permission_type_optional))
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 val permissionRequester =

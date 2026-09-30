@@ -16,6 +16,16 @@
         android:paddingTop="0dp"
         android:paddingEnd="@dimen/material_component_dialogs_padding_around_content_area">
 
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/mode_header"
+            style="?textAppearanceTitleSmall"
+            android:textSize="15sp"
+            android:layout_width="match_parent"
+            android:textColor="?attr/colorSecondary"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/paged" />
+
         <eu.kanade.tachiyomi.widget.MaterialSpinnerView
             android:id="@+id/pager_nav"
             android:layout_width="match_parent"

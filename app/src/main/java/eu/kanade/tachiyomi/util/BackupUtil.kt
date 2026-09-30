@@ -3,12 +3,13 @@ package eu.kanade.tachiyomi.util
 import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
-import eu.kanade.tachiyomi.data.backup.create.BackupCreator
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
+import kotlinx.serialization.protobuf.ProtoBuf
 
 object BackupUtil {
     /**
@@ -18,17 +19,23 @@ object BackupUtil {
      */
     @SuppressLint("Recycle")
     fun decodeBackup(context: Context, uri: Uri): Backup {
-        val backupCreator = BackupCreator(context)
-
-        val rawBackup = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val rawBackup = context.contentResolver.openInputStream(uri)
+            ?.use { readAtMost(it, MAX_BACKUP_FILE_BYTES, "The backup file is too large") }
             ?: error("Unable to open backup")
+        return decodeBackupBytes(rawBackup)
+    }
+
+    /** Decodes backup bytes, bounding decompression so a small gzip bomb cannot exhaust memory. */
+    internal fun decodeBackupBytes(rawBackup: ByteArray): Backup {
         val backupBytes = when {
             rawBackup.isZipContainer() -> extractMangaPayload(rawBackup)
-            rawBackup.isGzip() -> GZIPInputStream(ByteArrayInputStream(rawBackup)).use { it.readBytes() }
+            rawBackup.isGzip() -> GZIPInputStream(ByteArrayInputStream(rawBackup)).use {
+                readAtMost(it, MAX_MANGA_PAYLOAD_BYTES, "The decompressed backup is too large")
+            }
             else -> rawBackup
         }
 
-        return backupCreator.parser.decodeFromByteArray(Backup.serializer(), backupBytes)
+        return ProtoBuf.decodeFromByteArray(Backup.serializer(), backupBytes)
     }
 
     /**
@@ -44,7 +51,7 @@ object BackupUtil {
                     normalizedName.startsWith("payloads/manga/", ignoreCase = true) &&
                     normalizedName.endsWith(".tachibk", ignoreCase = true)
                 if (isMangaBackup) {
-                    return readEntryAtMost(zip, MAX_MANGA_PAYLOAD_BYTES)
+                    return readAtMost(zip, MAX_MANGA_PAYLOAD_BYTES, "The manga backup payload is too large")
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
@@ -55,7 +62,7 @@ object BackupUtil {
         )
     }
 
-    private fun readEntryAtMost(input: ZipInputStream, maxBytes: Int): ByteArray {
+    internal fun readAtMost(input: InputStream, maxBytes: Int, message: String): ByteArray {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
         var total = 0
@@ -64,7 +71,7 @@ object BackupUtil {
             if (count < 0) break
             total += count
             if (total > maxBytes) {
-                throw IllegalArgumentException("The manga backup payload is too large")
+                throw IllegalArgumentException(message)
             }
             output.write(buffer, 0, count)
         }
@@ -84,4 +91,5 @@ object BackupUtil {
     }
 
     private const val MAX_MANGA_PAYLOAD_BYTES = 256 * 1024 * 1024
+    private const val MAX_BACKUP_FILE_BYTES = 256 * 1024 * 1024
 }

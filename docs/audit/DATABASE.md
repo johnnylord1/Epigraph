@@ -48,9 +48,12 @@ Before a production build upgrades a user database to schema 38, create a normal
 
 - Restore is neither all-or-nothing nor resumable.
 - History matching can use chapter URL without sufficient source/work identity.
-- Backup output is not finalized with a verified `.part` rename.
-- Gzip/protobuf input lacks a strict decompressed-size budget.
-- EPUB/PDF assets, extension/plugin dependencies, and Epigraph identities are not represented.
+- Automatic backups are finalized through a verified `.part` rename; a manual backup goes to a
+  user-chosen SAF document, which is validated in place and deleted on failure.
+- The backup file and its decompressed payload are limited to 256 MiB.
+- Credentials (`__PRIVATE_` keys and credential-named keys) are excluded on create and ignored on
+  restore; the old "include sensitive settings" option is gone.
+- EPUB/PDF bytes, extension/plugin dependencies, and Epigraph identities are not represented.
 
 ## Implemented side tables
 

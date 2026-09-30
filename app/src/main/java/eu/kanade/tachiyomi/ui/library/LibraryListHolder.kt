@@ -1,14 +1,18 @@
 package eu.kanade.tachiyomi.ui.library
 
+import android.content.res.ColorStateList
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import coil3.dispose
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.isNovel
 import eu.kanade.tachiyomi.databinding.MangaListItemBinding
 import eu.kanade.tachiyomi.util.lang.highlightText
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.view.setCards
 import yokai.i18n.MR
 import yokai.util.coil.loadManga
@@ -144,7 +148,20 @@ class LibraryListHolder(
         if (cover != boundCover) {
             boundCover = cover
             binding.coverThumbnail.dispose()
-            binding.coverThumbnail.loadManga(manga)
+            binding.coverThumbnail.scaleType = ImageView.ScaleType.CENTER_CROP
+            binding.coverThumbnail.imageTintList = null
+            binding.coverThumbnail.loadManga(manga) {
+                // Without a cover the row would otherwise show an empty square.
+                listener(onError = { _, _ -> showCoverPlaceholder() })
+            }
+        }
+    }
+
+    private fun showCoverPlaceholder() {
+        with(binding.coverThumbnail) {
+            scaleType = ImageView.ScaleType.CENTER
+            setImageResource(R.drawable.ic_book_24dp)
+            imageTintList = ColorStateList.valueOf(context.getResourceColor(android.R.attr.textColorSecondary))
         }
     }
 

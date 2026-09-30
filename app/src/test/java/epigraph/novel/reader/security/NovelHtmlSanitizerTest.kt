@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.text.NovelViewerTextUtils
 import org.jsoup.Jsoup
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -117,8 +118,46 @@ class NovelHtmlSanitizerTest {
         assertEquals(listOf("First", "Second"), tagged.paragraphs)
         assertEquals("0", body.select("p")[0].attr("data-paragraph-index"))
         assertEquals("1", body.select("p")[1].attr("data-paragraph-index"))
-        assertTrue(body.select("iframe,img").isEmpty())
+        assertTrue(body.select("iframe").isEmpty())
+        // The remote image survives only as a broker reference; the WebView never gets its URL.
+        val image = body.select("img").single()
+        assertTrue(image.attr("src").startsWith(NovelHtmlSanitizer.REMOTE_IMAGE_SCHEME + "://"))
+        assertFalse(tagged.html.contains("src=\"https"))
         assertFalse(tagged.html.contains("onclick"))
-        assertFalse(tagged.html.contains("attacker.example"))
+        assertFalse(tagged.html.contains("attacker.example/frame"))
+    }
+
+    @Test
+    fun `remote https images are routed to the broker only when allowed`() {
+        val html = """
+            <p>Text</p>
+            <img src="https://cdn.example/a.png?x=1&amp;y=2">
+            <img src="//cdn.example/b.jpg">
+            <img src="http://cdn.example/c.png">
+            <img src="https://user:pass@cdn.example/d.png">
+            <img src="/relative.png">
+        """.trimIndent()
+
+        val brokered = Jsoup.parseBodyFragment(NovelHtmlSanitizer.sanitize(html, allowRemoteImages = true))
+            .select("img")
+            .map { it.attr("src") }
+        assertEquals(2, brokered.size)
+        assertEquals(
+            listOf("https://cdn.example/a.png?x=1&y=2", "https://cdn.example/b.jpg"),
+            brokered.map { NovelHtmlSanitizer.decodeRemoteImageUrl(it) },
+        )
+
+        val sealed = NovelHtmlSanitizer.sanitize(html)
+        assertTrue(Jsoup.parseBodyFragment(sealed).select("img").isEmpty())
+    }
+
+    @Test
+    fun `forged broker urls are rejected`() {
+        val forged = NovelHtmlSanitizer.REMOTE_IMAGE_SCHEME + "://" + "http%3A%2F%2F10.0.0.1%2Fx.png"
+        assertNull(NovelHtmlSanitizer.decodeRemoteImageUrl(forged))
+        assertFalse(NovelHtmlSanitizer.isAllowedImageSource(forged, allowRemoteImages = true))
+        val valid = NovelHtmlSanitizer.remoteImageUrl("https://cdn.example/x.png")!!
+        assertFalse(NovelHtmlSanitizer.isAllowedImageSource(valid, allowRemoteImages = false))
+        assertTrue(NovelHtmlSanitizer.isAllowedImageSource(valid, allowRemoteImages = true))
     }
 }

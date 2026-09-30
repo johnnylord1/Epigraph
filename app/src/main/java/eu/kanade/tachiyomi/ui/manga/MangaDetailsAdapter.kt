@@ -2,8 +2,11 @@ package eu.kanade.tachiyomi.ui.manga
 
 import android.view.ActionMode
 import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.recyclerview.widget.ItemTouchHelper
+import androidx.recyclerview.widget.RecyclerView
+import eu.davidea.flexibleadapter.FlexibleAdapter
 import dev.icerock.moko.resources.StringResource
 import eu.davidea.flexibleadapter.items.IFlexible
 import eu.kanade.tachiyomi.R
@@ -12,6 +15,7 @@ import yokai.util.lang.getString
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.database.models.hideChapterTitle
+import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.chapter.BaseChapterAdapter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil
@@ -41,6 +45,19 @@ class MangaDetailsAdapter(
         DecimalFormatSymbols()
             .apply { decimalSeparator = '.' },
     )
+
+    /** Uses the header the activity prepared ahead of time, see [MangaHeaderPrewarm]. */
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        if (viewType == R.layout.manga_header_item) {
+            val item = currentItems.firstOrNull { it is MangaHeaderItem && it.layoutRes == viewType } as? MangaHeaderItem
+            val prepared = item?.let { (controller.activity as? MainActivity)?.mangaHeaderPrewarm?.take(parent) }
+            if (prepared != null) {
+                @Suppress("UNCHECKED_CAST")
+                return item.createViewHolder(prepared, this as FlexibleAdapter<IFlexible<RecyclerView.ViewHolder>>)
+            }
+        }
+        return super.onCreateViewHolder(parent, viewType)
+    }
 
     fun setChapters(items: List<ChapterItem>?) {
         this.items = items ?: emptyList()
@@ -94,6 +111,7 @@ class MangaDetailsAdapter(
                 controller.bookmarkChapter(position)
             }
         }
+        releaseSwipedRow()
     }
 
     override fun onCreateBubbleText(position: Int): String {

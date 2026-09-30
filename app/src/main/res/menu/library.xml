@@ -26,13 +26,6 @@
         app:showAsAction="always" />
 
     <item
-        android:id="@+id/action_import_books"
-        android:icon="@drawable/ic_file_open_24dp"
-        android:title="@string/epigraph_import_books"
-        android:visible="false"
-        app:showAsAction="ifRoom" />
-
-    <item
         android:id="@+id/action_more"
         android:icon="@drawable/ic_more_vert_24dp"
         android:title="@string/more"

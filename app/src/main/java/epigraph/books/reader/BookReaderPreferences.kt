@@ -114,6 +114,20 @@ class BookReaderPreferences(private val store: PreferenceStore) {
     }
 }
 
+/**
+ * Readium page-margin factor for the "Content width" setting, which every settings surface edits
+ * as a 0-100 percentage of the screen used by the text column.
+ *
+ * `0` (the default) keeps Readium's own margins. Values above 100 come from an older pixel-based
+ * setting and are treated as automatic as well, instead of being read as a percentage.
+ */
+fun epubPageMarginsForContentWidth(contentWidthPercent: Int): Double? {
+    if (contentWidthPercent !in 1..100) return null
+    // 100% uses the full width, 75% matches Readium's default factor (1.0), narrower columns grow
+    // the margins up to the 3.0 cap.
+    return ((100 - contentWidthPercent) / 25.0).coerceIn(0.0, 3.0)
+}
+
 interface LegacyBookReaderPreferences {
     fun float(key: String): Float?
     fun int(key: String): Int?

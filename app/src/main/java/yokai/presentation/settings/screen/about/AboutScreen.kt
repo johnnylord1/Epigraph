@@ -132,7 +132,7 @@ class AboutScreen : Screen() {
                             contentAlignment = Alignment.Center,
                         ) {
                             Image(
-                                painter = painterResource(R.drawable.ic_epigraph_mark),
+                                painter = painterResource(R.drawable.epigraph_splash_mark),
                                 contentDescription = stringResource(MR.strings.app_name),
                                 modifier = Modifier.size(88.dp),
                             )

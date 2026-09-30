@@ -47,6 +47,14 @@
 -keep,allowoptimization class eu.kanade.tachiyomi.network.RequestsKt { public protected *; }
 -keep,allowoptimization class eu.kanade.tachiyomi.AppInfo { public protected *; }
 
+# Coil view targets: R8 merges GenericViewTarget into ImageViewTarget and then
+# resolves our subclasses' `super.onStart/onSuccess/onError` calls to the empty
+# `Target` interface defaults, dropping them. CoverViewTarget never set the
+# drawable (blank covers in Browse) and GifViewTarget lost its image. Keeping
+# the hierarchy unmerged preserves the invoke-super chain.
+-keep,allowobfuscation class coil3.target.GenericViewTarget { *; }
+-keep,allowobfuscation class coil3.target.ImageViewTarget { *; }
+
 -keep class com.hippo.image.** { *; }
 -keep interface com.hippo.image.** { *; }
 -dontwarn nucleus.view.NucleusActionBarActivity

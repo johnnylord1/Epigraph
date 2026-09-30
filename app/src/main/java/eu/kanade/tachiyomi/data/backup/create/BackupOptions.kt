@@ -14,7 +14,6 @@ data class BackupOptions(
     val sourcePrefs: Boolean = true,
     val customInfo: Boolean = true,
     val readManga: Boolean = true,
-    val includePrivate: Boolean = false,
 ) {
     fun asBooleanArray() = booleanArrayOf(
         libraryEntries,
@@ -26,7 +25,6 @@ data class BackupOptions(
         sourcePrefs,
         customInfo,
         readManga,
-        includePrivate,
     )
 
     companion object {
@@ -40,7 +38,6 @@ data class BackupOptions(
             MR.strings.source_settings,
             MR.strings.custom_manga_info,
             MR.strings.all_read_manga,
-            MR.strings.backup_private_pref,
         )
 
         fun getEntries() = persistentListOf(
@@ -94,25 +91,27 @@ data class BackupOptions(
                 getter = BackupOptions::sourcePrefs,
                 setter = { options, enabled -> options.copy(sourcePrefs = enabled) },
             ),
-            Entry(
-                label = MR.strings.backup_private_pref,
-                getter = BackupOptions::includePrivate,
-                setter = { options, enabled -> options.copy(includePrivate = enabled) },
-            ),
         )
 
-        fun fromBooleanArray(array: BooleanArray): BackupOptions = BackupOptions(
-            array[0],
-            array[1],
-            array[2],
-            array[3],
-            array[4],
-            array[5],
-            array[6],
-            array[7],
-            array[8],
-            array[9],
-        )
+        /**
+         * Older builds appended an "include private preferences" flag at index 9. Pending
+         * WorkManager requests may still carry it; it is ignored because secrets never enter a
+         * backup (see [eu.kanade.tachiyomi.data.backup.BackupSecretPolicy]).
+         */
+        fun fromBooleanArray(array: BooleanArray): BackupOptions {
+            val defaults = BackupOptions()
+            return BackupOptions(
+                array.getOrElse(0) { defaults.libraryEntries },
+                array.getOrElse(1) { defaults.categories },
+                array.getOrElse(2) { defaults.chapters },
+                array.getOrElse(3) { defaults.tracking },
+                array.getOrElse(4) { defaults.history },
+                array.getOrElse(5) { defaults.appPrefs },
+                array.getOrElse(6) { defaults.sourcePrefs },
+                array.getOrElse(7) { defaults.customInfo },
+                array.getOrElse(8) { defaults.readManga },
+            )
+        }
     }
 
     data class Entry(

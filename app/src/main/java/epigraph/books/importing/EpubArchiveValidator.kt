@@ -7,13 +7,11 @@ import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.text.Normalizer
-import java.util.Locale
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
 import javax.xml.XMLConstants
-import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.parsers.ParserConfigurationException
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -175,13 +173,14 @@ object EpubArchiveValidator {
         val packageEntry = fileEntries[packagePath]
             ?: fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB package document does not exist: $packagePath")
         val packageBytes = readMetadataEntry(archive, packageEntry, limits)
-        val spinePaths = parsePackage(packageBytes, packagePath, fileEntries.keys)
+        val packageDocument = parsePackage(packageBytes, packagePath, fileEntries.keys)
 
         return EpubArchiveManifest(
             entries = entries,
             totalUncompressedBytes = totalBytes,
             packagePath = packagePath,
-            spinePaths = spinePaths,
+            spinePaths = packageDocument.spinePaths,
+            navigationPath = packageDocument.navigationPath,
         )
     }
 
@@ -221,7 +220,7 @@ object EpubArchiveValidator {
         bytes: ByteArray,
         packagePath: String,
         archiveFiles: Set<String>,
-    ): List<String> {
+    ): PackageDocument {
         val document = parseXml(bytes, packagePath)
         val root = document.documentElement
         if (root.localName != "package" || root.namespaceURI != OPF_NAMESPACE) {
@@ -254,7 +253,8 @@ object EpubArchiveValidator {
             if (resourcePath !in archiveFiles) {
                 fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB manifest resource does not exist: $resourcePath")
             }
-            itemsById[id] = PackageItem(resourcePath, mediaType)
+            val properties = item.getAttribute("properties").split(' ').filter(String::isNotBlank)
+            itemsById[id] = PackageItem(resourcePath, mediaType, "nav" in properties)
         }
         if (itemsById.isEmpty()) {
             fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB manifest cannot be empty")
@@ -272,7 +272,12 @@ object EpubArchiveValidator {
         if (spinePaths.isEmpty()) {
             fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB spine cannot be empty")
         }
-        return spinePaths
+        // Display-only: a missing or unusual TOC never rejects the import.
+        val navigationPath = itemsById.values.firstOrNull { it.isNavigation }?.path
+            ?: itemsById[spine.getAttribute("toc").trim()]
+                ?.takeIf { it.mediaType == NCX_MEDIA_TYPE }
+                ?.path
+        return PackageDocument(spinePaths, navigationPath)
     }
 
     private fun readMetadataEntry(
@@ -300,31 +305,11 @@ object EpubArchiveValidator {
     }
 
     private fun parseXml(bytes: ByteArray, path: String): Document {
-        if (containsForbiddenDeclaration(bytes)) {
+        if (SafeXml.containsForbiddenDeclaration(bytes)) {
             fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB metadata cannot contain DTD or entity declarations: $path")
         }
         try {
-            val factory = DocumentBuilderFactory.newInstance().apply {
-                isNamespaceAware = true
-                disableXIncludeIfSupported()
-                isExpandEntityReferences = false
-                // Android's XML provider does not expose the JAXP secure-processing
-                // feature consistently across API levels. The input is still kept
-                // fail-closed by rejecting DTD/entity declarations before parsing,
-                // disabling external entities when supported, and installing an
-                // EntityResolver that rejects any external lookup.
-                setFeatureIfSupported(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-                setFeatureIfSupported("http://apache.org/xml/features/disallow-doctype-decl", true)
-                setFeatureIfSupported("http://xml.org/sax/features/external-general-entities", false)
-                setFeatureIfSupported("http://xml.org/sax/features/external-parameter-entities", false)
-                setFeatureIfSupported("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-                setAttributeIfSupported(ACCESS_EXTERNAL_DTD, "")
-                setAttributeIfSupported(ACCESS_EXTERNAL_SCHEMA, "")
-            }
-            val builder = factory.newDocumentBuilder().apply {
-                setEntityResolver { _, _ -> throw SAXException("External XML entities are disabled") }
-            }
-            return builder.parse(InputSource(ByteArrayInputStream(bytes)))
+            return SafeXml.newDocumentBuilder().parse(InputSource(ByteArrayInputStream(bytes)))
         } catch (failure: BookImportValidationException) {
             throw failure
         } catch (failure: ParserConfigurationException) {
@@ -334,35 +319,6 @@ object EpubArchiveValidator {
         } catch (failure: IOException) {
             fail(BookImportFailure.INVALID_EPUB_STRUCTURE, "EPUB metadata XML could not be read: $path", failure)
         }
-    }
-
-    private fun DocumentBuilderFactory.setFeatureIfSupported(name: String, value: Boolean) {
-        try {
-            setFeature(name, value)
-        } catch (_: ParserConfigurationException) {
-            // The declaration pre-scan and rejecting EntityResolver keep unsupported parsers fail-closed.
-        }
-    }
-
-    private fun DocumentBuilderFactory.disableXIncludeIfSupported() {
-        try {
-            isXIncludeAware = false
-        } catch (_: UnsupportedOperationException) {
-            // False is the default; some Android XML providers do not implement this setter.
-        }
-    }
-
-    private fun DocumentBuilderFactory.setAttributeIfSupported(name: String, value: String) {
-        try {
-            setAttribute(name, value)
-        } catch (_: IllegalArgumentException) {
-            // Older Android XML providers do not expose these JAXP properties.
-        }
-    }
-
-    private fun containsForbiddenDeclaration(bytes: ByteArray): Boolean {
-        val ascii = bytes.toString(Charsets.ISO_8859_1).uppercase(Locale.ROOT)
-        return "<!DOCTYPE" in ascii || "<!ENTITY" in ascii
     }
 
     private fun validateRootfilePath(rawPath: String): String {
@@ -532,13 +488,19 @@ object EpubArchiveValidator {
     ): Nothing = throw BookImportValidationException(failure, message, cause)
 
     private val DRIVE_PATH = Regex("^[A-Za-z]:.*")
-    private const val ACCESS_EXTERNAL_DTD = "http://javax.xml.XMLConstants/property/accessExternalDTD"
-    private const val ACCESS_EXTERNAL_SCHEMA = "http://javax.xml.XMLConstants/property/accessExternalSchema"
 
     private data class PackageItem(
         val path: String,
         val mediaType: String,
+        val isNavigation: Boolean = false,
     )
+
+    private data class PackageDocument(
+        val spinePaths: List<String>,
+        val navigationPath: String?,
+    )
+
+    private const val NCX_MEDIA_TYPE = "application/x-dtbncx+xml"
 
     private val SPINE_MEDIA_TYPES = setOf("application/xhtml+xml", "image/svg+xml")
 }

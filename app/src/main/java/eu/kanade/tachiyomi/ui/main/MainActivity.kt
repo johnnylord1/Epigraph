@@ -92,6 +92,7 @@ import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.library.compose.LibraryComposeController
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
+import eu.kanade.tachiyomi.ui.manga.MangaHeaderPrewarm
 import eu.kanade.tachiyomi.ui.more.AboutController
 import eu.kanade.tachiyomi.ui.more.OverflowDialog
 import eu.kanade.tachiyomi.ui.more.stats.StatsController
@@ -120,6 +121,8 @@ import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import eu.kanade.tachiyomi.util.system.prepareSideNavContext
 import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
+import eu.kanade.tachiyomi.util.system.registerStatusBarScrim
+import eu.kanade.tachiyomi.util.system.statusBarTint
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.tryTakePersistableUriPermission
 import eu.kanade.tachiyomi.util.system.withUIContext
@@ -484,7 +487,8 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
             lifecycleScope.launchUI {
                 val didMigration = Migrator.await()
                 Migrator.release()
-                if (didMigration && !BuildConfig.DEBUG) {
+                // A first install also runs the "always" migrations; it is not an update.
+                if (didMigration && Migrator.isUpgrade && !BuildConfig.DEBUG) {
                     content.post {
                         whatsNewSheet().show()
                     }
@@ -506,9 +510,13 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
         setNavBarColor(content.rootWindowInsetsCompat)
         nav.isVisible = false
+        window.registerStatusBarScrim(binding.statusBarScrim)
         content.doOnApplyWindowInsetsCompat { v, insets, _ ->
             setNavBarColor(insets)
             val systemInsets = insets.ignoredSystemInsets
+            binding.statusBarScrim.updateLayoutParams<ViewGroup.LayoutParams> {
+                height = systemInsets.top
+            }
             val contextView = window?.decorView?.findViewById<View>(appcompatR.id.action_mode_bar)
             contextView?.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 leftMargin = systemInsets.left
@@ -790,6 +798,11 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         }
     }
 
+    private var awaitingOnboardingDecision = false
+    private var splashReleaseDeferred = false
+
+    val mangaHeaderPrewarm by lazy { MangaHeaderPrewarm(this) }
+
     /**
      * Resolves first-run onboarding without holding the main thread behind a database read.
      *
@@ -798,23 +811,47 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
      * returned. The query now runs on IO and only the small navigation decision returns to Main.
      */
     private fun resolveInitialOnboarding() {
+        // Keep the splash up until we know whether onboarding covers the first tab; otherwise the
+        // empty first tab flashes between the splash and the onboarding fade-in.
+        awaitingOnboardingDecision = true
         lifecycleScope.launchIO {
             val hasLibraryManga = getLibraryManga.await().isNotEmpty()
             withUIContext {
-                if (isFinishing || isDestroyed || basePreferences.hasShownOnboarding().get()) {
-                    return@withUIContext
-                }
-                if (hasLibraryManga) {
-                    basePreferences.hasShownOnboarding().set(true)
-                    return@withUIContext
-                }
-                if (topRouter.backstack.none { it.controller is OnboardingController }) {
-                    // Push onto topRouter (not router which forwards to the active child router)
-                    // so onboarding occludes every tab and cannot be bypassed by switching tabs.
-                    topRouter.pushController(OnboardingController().withFadeInTransaction())
+                try {
+                    if (isFinishing || isDestroyed || basePreferences.hasShownOnboarding().get()) {
+                        return@withUIContext
+                    }
+                    if (hasLibraryManga) {
+                        basePreferences.hasShownOnboarding().set(true)
+                        return@withUIContext
+                    }
+                    if (topRouter.backstack.none { it.controller is OnboardingController }) {
+                        // Push onto topRouter (not router which forwards to the active child router)
+                        // so onboarding occludes every tab and cannot be bypassed by switching tabs.
+                        // The splash is still covering the screen, so swap in without a fade.
+                        topRouter.pushController(
+                            OnboardingController().withFadeInTransaction()
+                                .pushChangeHandler(SimpleSwapChangeHandler(false)),
+                        )
+                        splashReleaseDeferred = true
+                    }
+                } finally {
+                    awaitingOnboardingDecision = false
+                    // Release now if onboarding covers the tab or the tab already asked to.
+                    if (splashReleaseDeferred) releaseSplash()
                 }
             }
         }
+    }
+
+    override fun releaseSplash() {
+        if (awaitingOnboardingDecision) {
+            splashReleaseDeferred = true
+            return
+        }
+        super.releaseSplash()
+        // Once the first screen is up, prepare the details header so the first open doesn't pay for it.
+        mangaHeaderPrewarm.schedule(HEADER_PREWARM_DELAY)
     }
 
     fun reEnableBackPressedCallBack() {
@@ -1015,7 +1052,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
     }
 
     override fun startSupportActionMode(callback: ActionMode.Callback): ActionMode? {
-        window?.statusBarColor = getResourceColor(materialR.attr.colorPrimaryVariant)
+        window?.statusBarTint = getResourceColor(materialR.attr.colorPrimaryVariant)
         actionMode = super.startSupportActionMode(callback)
         reEnableBackPressedCallBack()
         return actionMode
@@ -1033,8 +1070,8 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
             val duration = resources.getInteger(AR.integer.config_mediumAnimTime) * scale
             delay(duration.toLong())
             delay(100)
-            if (Color.alpha(window?.statusBarColor ?: Color.BLACK) >= 255) {
-                window?.statusBarColor =
+            if (Color.alpha(window?.statusBarTint ?: Color.BLACK) >= 255) {
+                window?.statusBarTint =
                     getResourceColor(
                         AR.attr.statusBarColor,
                     )
@@ -1044,11 +1081,11 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
     }
 
     fun setStatusBarColorTransparent(show: Boolean) {
-        window?.statusBarColor = if (show) {
-            ColorUtils.setAlphaComponent(window?.statusBarColor ?: Color.TRANSPARENT, 0)
+        window?.statusBarTint = if (show) {
+            ColorUtils.setAlphaComponent(window?.statusBarTint ?: Color.TRANSPARENT, 0)
         } else {
             val color = getResourceColor(AR.attr.statusBarColor)
-            ColorUtils.setAlphaComponent(window?.statusBarColor ?: color, Color.alpha(color))
+            ColorUtils.setAlphaComponent(window?.statusBarTint ?: color, Color.alpha(color))
         }
     }
 
@@ -1378,6 +1415,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mangaHeaderPrewarm.clear()
         overflowDialog?.dismissSafely()
         overflowDialog = null
         if (isBindingInitialized) {
@@ -1915,9 +1953,10 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
     fun showOverflowDialog(
         showUpdateLibrary: Boolean = false,
         onUpdateLibrary: () -> Unit = {},
+        onImportBooks: (() -> Unit)? = null,
     ) {
         if (overflowDialog != null) return
-        val dialog = OverflowDialog(this, showUpdateLibrary, onUpdateLibrary)
+        val dialog = OverflowDialog(this, showUpdateLibrary, onUpdateLibrary, onImportBooks)
         this.overflowDialog = dialog
         dialog.setOnDismissListener { this.overflowDialog = null }
         dialog.show()
@@ -2014,7 +2053,9 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 ++navAnimationGeneration
                 nav.animate().cancel()
                 nav.isVisible = true
-                if (ReducedMotion.isEnabled()) {
+                // Popping back to a screen that shows the nav snaps it in: fading it over the
+                // revealed root let the library's peeking filter sheet show through for a frame.
+                if (ReducedMotion.isEnabled() || (!isPush && !hideBottomNav)) {
                     nav.alpha = targetAlpha
                     nav.isVisible = !hideBottomNav
                     binding.bottomView?.visibility =
@@ -2168,6 +2209,9 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
         private const val SWIPE_THRESHOLD = 100
         private const val SWIPE_VELOCITY_THRESHOLD = 100
+
+        /** Leaves the splash exit and first frames alone before preparing the details header. */
+        const val HEADER_PREWARM_DELAY = 1000L
 
         // Shortcut actions
         const val SHORTCUT_LIBRARY = "eu.kanade.tachiyomi.SHOW_LIBRARY"

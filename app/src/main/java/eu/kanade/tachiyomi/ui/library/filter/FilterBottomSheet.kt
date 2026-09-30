@@ -260,6 +260,8 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             onBooksTypeFilterChanged(null)
             controller?.viewScope?.launch { setFilterStates() }
         }
+        // Grouping only applies to the Comics library.
+        binding.groupBy.isVisible = !enabled
         reorderFilters()
         if (enabled) restoreBooksFilterStates()
         reSortViews()

@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.source
 
+import epigraph.recommendations.DiscoverMode
+import epigraph.recommendations.ui.DiscoverController
 import android.app.Activity
 import android.os.Build
 import android.os.Parcelable
@@ -953,15 +955,25 @@ class BrowseController :
      * Called to set the last used catalogue at the top of the view.
      */
     fun setLastUsedSource(item: SourceItem?) {
-        val nextSignature = item?.bindingContentSignature()
+        val type = presenter.currentType
+        val nextSignature = 31 * type.ordinal + (item?.bindingContentSignature() ?: 0)
         if (hasSubmittedLastUsed && nextSignature == submittedLastUsedSignature) return
         submittedLastUsedSignature = nextSignature
         hasSubmittedLastUsed = true
         adapter?.removeAllScrollableHeaders()
         if (item != null) {
+            // The item's own LangItem section header already renders "Last used"; adding a
+            // second LangItem showed the title twice.
             adapter?.addScrollableHeader(item)
-            adapter?.addScrollableHeader(LangItem(SourcePresenter.LAST_USED_KEY))
         }
+        // addScrollableHeader inserts at position 0, so the header added last is on top:
+        // Discover sits above everything, like the desktop Browse page's recommendations.
+        adapter?.addScrollableHeader(DiscoverEntryItem(type, ::openDiscover))
+    }
+
+    private fun openDiscover(type: BrowseSourceType) {
+        val mode = if (type == BrowseSourceType.Novel) DiscoverMode.NOVELS else DiscoverMode.COMICS
+        router.pushController(DiscoverController(mode).withFadeTransaction())
     }
 
     @Parcelize

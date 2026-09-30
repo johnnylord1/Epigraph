@@ -175,11 +175,13 @@ class RecentMangaAdapter(val delegate: RecentsInterface) :
         super.onItemSwiped(position, direction)
         // Suppress swipe-to-mark while the user is in multi-select; the
         // gesture is still hooked by the action mode toolbar.
-        if (isInSelectionMode) return
-        when (direction) {
-            ItemTouchHelper.LEFT -> delegate.markAsRead(position)
-            ItemTouchHelper.RIGHT -> delegate.markAsRead(position)
+        if (!isInSelectionMode) {
+            when (direction) {
+                ItemTouchHelper.LEFT -> delegate.markAsRead(position)
+                ItemTouchHelper.RIGHT -> delegate.markAsRead(position)
+            }
         }
+        releaseSwipedRow()
     }
 
     enum class ShowRecentsDLs {

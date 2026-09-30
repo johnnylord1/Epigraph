@@ -75,6 +75,7 @@ import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.ignoredSystemInsets
 import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
+import eu.kanade.tachiyomi.util.system.statusBarTint
 import eu.kanade.tachiyomi.util.system.toInt
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.widget.StatefulNestedScrollView
@@ -897,8 +898,8 @@ fun Controller.setAppBarBG(value: Float, includeTabView: Boolean = false) {
         }
         if (!appBar.isInvisible) {
             activity?.window?.let { window ->
-                if (window.statusBarColor != appBar.themedStatusBarColor) {
-                    window.statusBarColor = appBar.themedStatusBarColor
+                if (window.statusBarTint != appBar.themedStatusBarColor) {
+                    window.statusBarTint = appBar.themedStatusBarColor
                 }
             }
         }
@@ -912,7 +913,7 @@ fun Controller.setAppBarBG(value: Float, includeTabView: Boolean = false) {
         if (!appBar.isInvisible) {
             val statusColor = ColorUtils.setAlphaComponent(color, (0.87f * 255).roundToInt())
             activity?.window?.let { window ->
-                if (window.statusBarColor != statusColor) window.statusBarColor = statusColor
+                if (window.statusBarTint != statusColor) window.statusBarTint = statusColor
             }
         }
         if ((this as? FloatingSearchInterface)?.showFloatingBar() == true) {

@@ -1,6 +1,7 @@
 package epigraph.books.ui
 
 import epigraph.books.reader.BookReaderPreferences
+import epigraph.books.tts.BookTtsPlaybackService
 import epigraph.contract.ContentType
 import android.content.Context
 import android.content.pm.ActivityInfo
@@ -25,6 +26,10 @@ import eu.kanade.tachiyomi.widget.TabbedBottomSheetDialog
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
 import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import yokai.i18n.MR
 import yokai.util.lang.getString
@@ -62,6 +67,20 @@ class LocalBookReaderSettingsSheet(
         }
         binding.tabs.tabMode = TabLayout.MODE_SCROLLABLE
         binding.tabs.tabGravity = TabLayout.GRAVITY_START
+        binding.tabs.compactTabs()
+    }
+}
+
+/**
+ * The shared tab style pads each tab by 20dp; beside the reset and settings actions that pushes
+ * the last reader tab off a phone-width row. Tighter padding keeps every tab label visible.
+ */
+private fun TabLayout.compactTabs() {
+    val strip = getChildAt(0) as? ViewGroup ?: return
+    for (index in 0 until strip.childCount) {
+        val tab = strip.getChildAt(index)
+        tab.minimumWidth = 0
+        tab.setPaddingRelative(12.dpToPx, tab.paddingTop, 12.dpToPx, tab.paddingBottom)
     }
 }
 
@@ -123,6 +142,7 @@ class LocalBookReaderSettingsPanel(
         binding.tabs.setupWithViewPager(binding.pager)
         binding.tabs.tabMode = TabLayout.MODE_SCROLLABLE
         binding.tabs.tabGravity = TabLayout.GRAVITY_START
+        binding.tabs.compactTabs()
         binding.menu.isVisible = true
         binding.menu.setImageResource(R.drawable.ic_outline_settings_24dp)
         binding.menu.setOnClickListener {
@@ -151,6 +171,16 @@ class LocalBookReaderSettingsPanel(
             },
         )
     }
+
+    /** The open tab, kept when a PDF mode change rebuilds the reader surface. */
+    var selectedTab: Int
+        get() = binding.pager.currentItem
+        set(value) {
+            val position = value.coerceIn(0, (content.views.size - 1).coerceAtLeast(0))
+            binding.pager.setCurrentItem(position, false)
+            binding.pager.currentPageView = content.views.getOrNull(position)
+            setNestedScrollState(position)
+        }
 
     private fun setNestedScrollState(position: Int) {
         content.views.forEachIndexed { index, view ->
@@ -185,7 +215,7 @@ private class LocalBookReaderSettingsContent(
         val formatView = inflatePage()
         val navigationView = inflatePage()
         val filterView = inflatePage()
-        val ttsView = if (contentType == ContentType.EPUB) inflatePage() else null
+        val ttsView = inflatePage()
 
         generalView.bind(
             page = LocalBookReaderSettingsView.Page.GENERAL,
@@ -223,7 +253,7 @@ private class LocalBookReaderSettingsContent(
             commonPreferences = commonPreferences,
             onChanged = onChanged,
         )
-        ttsView?.bind(
+        ttsView.bind(
             page = LocalBookReaderSettingsView.Page.TTS,
             contentType = contentType,
             activity = activity,
@@ -237,7 +267,7 @@ private class LocalBookReaderSettingsContent(
             add(formatView)
             add(navigationView)
             add(filterView)
-            ttsView?.let(::add)
+            add(ttsView)
         }
         titles = buildList {
             add(MR.strings.general)
@@ -246,7 +276,7 @@ private class LocalBookReaderSettingsContent(
             add(if (contentType == ContentType.EPUB) MR.strings.novel_text else MR.strings.reader_pages)
             add(MR.strings.navigation)
             add(MR.strings.custom_filter)
-            if (contentType == ContentType.EPUB) add(MR.strings.text_to_speech)
+            add(MR.strings.text_to_speech)
         }
     }
 }
@@ -301,29 +331,20 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
                 showPosition.bindToPreference(bookPreferences.showPageNumber) { onChanged() }
             }
 
-            Page.EPUB -> {
-                bindSpinner(fontFamily, listOf("Serif", "Sans serif", "Monospace"), listOf("serif", "sans-serif", "monospace"), bookPreferences.epubFontFamily.get(), bookPreferences.epubFontFamily::set, onChanged)
-                bindSpinner(textAlignment, listOf("Left", "Justified", "Center"), listOf("left", "justified", "center"), bookPreferences.epubTextAlign.get(), bookPreferences.epubTextAlign::set, onChanged)
-                bindSpinner(epubTheme, listOf("System", "Light", "Dark", "Sepia", "OLED"), listOf("system", "light", "dark", "sepia", "oled"), bookPreferences.epubTheme.get(), bookPreferences.epubTheme::set, onChanged)
-                bindSlider(fontSize, context.getString(R.string.epigraph_reader_font_size), bookPreferences.epubFontScale.get() * 100f, 75f, 200f, 5f, "%") {
-                    bookPreferences.epubFontScale.set(it / 100f); onChanged()
-                }
-                bindSlider(lineSpacing, context.getString(R.string.epigraph_reader_line_spacing), bookPreferences.epubLineHeight.get() * 100f, 110f, 300f, 5f, "%") {
-                    bookPreferences.epubLineHeight.set(it / 100f); onChanged()
-                }
-                bindSlider(paragraphSpacing, context.getString(R.string.epigraph_reader_paragraph_spacing), bookPreferences.epubParagraphSpacing.get() * 100f, 0f, 300f, 10f, "%") {
-                    bookPreferences.epubParagraphSpacing.set(it / 100f); onChanged()
-                }
-                bindSlider(contentWidth, context.getString(R.string.epigraph_reader_content_width), bookPreferences.epubContentWidth.get().toFloat(), 0f, 100f, 5f, "%") {
-                    bookPreferences.epubContentWidth.set(it.roundToInt()); onChanged()
-                }
-            }
+            Page.EPUB -> bindTextSettings(bookPreferences, onChanged)
 
             Page.PDF -> {
                 bindSpinner(pdfFitMode, listOf("Width", "Height", "Both", "Actual size"), listOf("width", "height", "both", "actual"), bookPreferences.pdfFitMode.get(), bookPreferences.pdfFitMode::set, onChanged)
                 pdfReflow.bindToPreference(bookPreferences.pdfReflow) { onChanged() }
                 pdfHorizontal.bindToPreference(bookPreferences.pdfHorizontal) { onChanged() }
                 pdfTwoPage.bindToPreference(bookPreferences.pdfTwoPage) { onChanged() }
+                // Page layout does not apply to reflowed text; its typography does.
+                val reflow = bookPreferences.pdfReflow.get()
+                epubGroup.isVisible = reflow
+                pdfFitMode.isVisible = !reflow
+                pdfHorizontal.isVisible = !reflow
+                pdfTwoPage.isVisible = !reflow
+                if (reflow) bindTextSettings(bookPreferences, onChanged)
             }
 
             Page.NAVIGATION -> {
@@ -429,7 +450,58 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
                 val labels = listOf(systemDefault) + voices
                 val values = listOf("") + voices
                 bindSpinner(ttsVoice, labels, values, bookPreferences.ttsVoice.get(), bookPreferences.ttsVoice::set, onChanged)
+                bindTtsPlayback(activity)
             }
+        }
+    }
+
+    private var playbackScope: CoroutineScope? = null
+
+    private fun bindTtsPlayback(activity: LocalBookReaderActivity) = with(binding) {
+        ttsPlayPause.setOnClickListener { activity.toggleBookTts() }
+        ttsStop.setOnClickListener { activity.stopBookTts() }
+        ttsPrevious.setOnClickListener { activity.skipBookTts(forward = false) }
+        ttsNext.setOnClickListener { activity.skipBookTts(forward = true) }
+        playbackScope?.cancel()
+        playbackScope = MainScope().also { scope ->
+            scope.launch {
+                BookTtsPlaybackService.playbackState.collect { state ->
+                    val playing = state == BookTtsPlaybackService.PlaybackState.PLAYING
+                    ttsPlayPause.setIconResource(if (playing) R.drawable.ic_pause_24dp else R.drawable.ic_play_arrow_24dp)
+                    ttsPlayPause.text = context.getString(
+                        when (state) {
+                            BookTtsPlaybackService.PlaybackState.PLAYING -> MR.strings.pause
+                            BookTtsPlaybackService.PlaybackState.PAUSED -> MR.strings.resume
+                            BookTtsPlaybackService.PlaybackState.STOPPED -> MR.strings.novel_tts_read_aloud
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        playbackScope?.cancel()
+        playbackScope = null
+    }
+
+    /** Typography shared by EPUB and reflowed PDF text, as on the desktop. */
+    private fun bindTextSettings(bookPreferences: BookReaderPreferences, onChanged: () -> Unit) = with(binding) {
+        bindSpinner(fontFamily, listOf("Serif", "Sans serif", "Monospace"), listOf("serif", "sans-serif", "monospace"), bookPreferences.epubFontFamily.get(), bookPreferences.epubFontFamily::set, onChanged)
+        bindSpinner(textAlignment, listOf("Left", "Justified", "Center"), listOf("left", "justified", "center"), bookPreferences.epubTextAlign.get(), bookPreferences.epubTextAlign::set, onChanged)
+        bindSpinner(epubTheme, listOf("System", "Light", "Dark", "Sepia", "OLED"), listOf("system", "light", "dark", "sepia", "oled"), bookPreferences.epubTheme.get(), bookPreferences.epubTheme::set, onChanged)
+        bindSlider(fontSize, context.getString(R.string.epigraph_reader_font_size), bookPreferences.epubFontScale.get() * 100f, 75f, 200f, 5f, "%") {
+            bookPreferences.epubFontScale.set(it / 100f); onChanged()
+        }
+        bindSlider(lineSpacing, context.getString(R.string.epigraph_reader_line_spacing), bookPreferences.epubLineHeight.get() * 100f, 110f, 300f, 5f, "%") {
+            bookPreferences.epubLineHeight.set(it / 100f); onChanged()
+        }
+        bindSlider(paragraphSpacing, context.getString(R.string.epigraph_reader_paragraph_spacing), bookPreferences.epubParagraphSpacing.get() * 100f, 0f, 300f, 10f, "%") {
+            bookPreferences.epubParagraphSpacing.set(it / 100f); onChanged()
+        }
+        bindSlider(contentWidth, context.getString(R.string.epigraph_reader_content_width), bookPreferences.epubContentWidth.get().toFloat(), 0f, 100f, 5f, "%") {
+            bookPreferences.epubContentWidth.set(it.roundToInt()); onChanged()
         }
     }
 

@@ -133,7 +133,10 @@ abstract class SettingsLegacyController : PreferenceController(), SettingsContro
         if (type.isEnter && isControllerVisible) {
             setTitle()
         }
-        // super.onChangeStarted handles setHasOptionsMenu + alpha gating for off-screen entries.
+        // The Android 14+ cross-fade keeps a pushed-over controller attached, so it would keep
+        // adding its items (e.g. the settings search/help) to the pushed screen's toolbar.
+        // Mirror BaseController: only the visible controller takes part in menu dispatch.
+        setHasOptionsMenu(type.isEnter && isControllerVisible)
         super.onChangeStarted(handler, type)
     }
 

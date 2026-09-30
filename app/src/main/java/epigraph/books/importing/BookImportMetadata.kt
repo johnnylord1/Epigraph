@@ -1,12 +1,10 @@
 package epigraph.books.importing
 
 import epigraph.contract.ContentType
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipFile
-import javax.xml.parsers.DocumentBuilderFactory
 import org.jsoup.Jsoup
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -158,16 +156,7 @@ object BookImportMetadataExtractor {
         .trim()
         .take(MAX_TEXT_LENGTH)
 
-    private fun secureXml(bytes: ByteArray): Document? = runCatching {
-        DocumentBuilderFactory.newInstance().apply {
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-            isExpandEntityReferences = false
-            isNamespaceAware = true
-        }.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
-    }.getOrNull()
+    private fun secureXml(bytes: ByteArray): org.w3c.dom.Document? = SafeXml.parseOrNull(bytes)
 
     private fun elements(document: Document, localName: String): List<Element> =
         elements(document.getElementsByTagNameNS("*", localName)) +

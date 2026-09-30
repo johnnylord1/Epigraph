@@ -78,6 +78,7 @@ import yokai.util.koin.injectLazy
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.chapter.interactor.GetChapter
 import yokai.domain.chapter.interactor.InsertChapter
+import epigraph.sync.core.SyncedChapterStateWriter
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.chapter.models.ChapterUpdate
 import yokai.domain.download.DownloadPreferences
@@ -123,6 +124,7 @@ class ReaderViewModel(
     // Lazy because we only need it for novel-specific paths (orientation default, etc.).
     private val readerPreferences: yokai.domain.ui.settings.ReaderPreferences by injectLazy()
     private val epigraphProgressRouter: EpigraphReaderProgressRouter by injectLazy()
+    private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
@@ -620,6 +622,8 @@ class ReaderViewModel(
                         pagesLeft = chapter.pages_left.toLong(),
                     ).emitted
                 }
+            } catch (_: epigraph.sync.core.credentials.CoreProfileNotPairedException) {
+                false
             } catch (error: Exception) {
                 Logger.w(error) { "Unable to persist Epigraph reader progress atomically" }
                 false
@@ -858,6 +862,9 @@ class ReaderViewModel(
             }
         }
         sessionReachedThreshold.remove(previousChapterId)
+        // The session so far belongs to the chapter being left; the new chapter gets its own row
+        // when it is left or the reader pauses.
+        state.value.viewerChapters?.currChapter?.let { flushReadTimer(activeChapter = it) }
         chapterId = newChapterId
 
         val newChapters = ViewerChapters(
@@ -870,7 +877,6 @@ class ReaderViewModel(
             state.viewerChapters?.unref()
             state.copy(viewerChapters = newChapters)
         }
-        flushReadTimer(activeChapter = readerChapter)
         restartReadTimer()
 
         eventChannel.trySend(Event.NovelVisibleChapterChanged(readerChapter))
@@ -1167,7 +1173,7 @@ class ReaderViewModel(
                     null
                 }
             }
-        updateChapter.awaitAll(duplicateUnreadChapters)
+        chapterStateWriter.awaitAll(duplicateUnreadChapters)
     }
 
     /**
@@ -1222,25 +1228,27 @@ class ReaderViewModel(
             ?: state.value.viewerChapters?.currChapter?.takeIf { source?.isNovelSource() == true }
             ?: getCurrentChapter()
             ?: return
+        // Close the session synchronously: callers restart the timer right after this returns,
+        // so measuring inside the IO coroutine would record ~0 ms and then clear the new session.
+        val endTime = Date().time
+        val sessionReadDuration = readSessionDuration(chapterReadStartTime, endTime)
+        chapterReadStartTime = null
         viewModelScope.launchNonCancellableIO {
-            saveChapterHistory(chapter)
+            saveChapterHistory(chapter, endTime, sessionReadDuration)
         }
     }
 
     /**
      * Saves this [readerChapter] last read history.
      */
-    private suspend fun saveChapterHistory(readerChapter: ReaderChapter) {
+    private suspend fun saveChapterHistory(readerChapter: ReaderChapter, endTime: Long, sessionReadDuration: Long) {
         if (preferences.incognitoMode().get()) return
 
-        val endTime = Date().time
-        val sessionReadDuration = chapterReadStartTime?.let { endTime - it } ?: 0
         val history = History.create(readerChapter.chapter).apply {
             last_read = endTime
             time_read = sessionReadDuration
         }
         upsertHistory.await(history)
-        chapterReadStartTime = null
     }
 
     /**
@@ -1680,3 +1688,7 @@ private const val NOVEL_TRANSITION_READ_GUARD_PERCENT = 70
 // because this is the only auto signal available for the very last chapter — users
 // who want it sooner can mark manually from the chapter list.
 private const val NOVEL_LAST_CHAPTER_READ_THRESHOLD_PERCENT = 100
+
+/** Milliseconds read in the session started at [startTime], or 0 when no session is running. */
+internal fun readSessionDuration(startTime: Long?, endTime: Long): Long =
+    startTime?.let { (endTime - it).coerceAtLeast(0) } ?: 0

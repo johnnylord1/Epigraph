@@ -41,6 +41,7 @@ import yokai.util.search.FuzzyMatcher
 import yokai.util.koin.injectLazy
 import yokai.data.DatabaseHandler
 import yokai.domain.chapter.interactor.GetChapter
+import epigraph.sync.core.SyncedChapterStateWriter
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.history.interactor.GetHistory
 import yokai.domain.history.interactor.UpsertHistory
@@ -65,6 +66,7 @@ class RecentsPresenter(
     private val getChapter: GetChapter by injectLazy()
     private val getRecents: GetRecents by injectLazy()
     private val updateChapter: UpdateChapter by injectLazy()
+    private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
     private val getHistory: GetHistory by injectLazy()
     private val upsertHistory: UpsertHistory by injectLazy()
 
@@ -771,7 +773,7 @@ class RecentsPresenter(
                     pages_left = pagesLeft ?: 0
                 }
             }
-            updateChapter.await(chapter.toProgressUpdate())
+            chapterStateWriter.await(chapter.toProgressUpdate())
             getRecents()
         }
     }
@@ -909,7 +911,7 @@ class RecentsPresenter(
                     chapter.last_page_read = 0
                     chapter.pages_left = 0
                 }
-                updateChapter.await(chapter.toProgressUpdate())
+                chapterStateWriter.await(chapter.toProgressUpdate())
             }
             getRecents()
         }
@@ -926,7 +928,7 @@ class RecentsPresenter(
                 chapter.read = snap.wasRead
                 chapter.last_page_read = snap.lastPageRead
                 chapter.pages_left = snap.pagesLeft
-                updateChapter.await(chapter.toProgressUpdate())
+                chapterStateWriter.await(chapter.toProgressUpdate())
             }
             getRecents()
         }

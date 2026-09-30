@@ -34,7 +34,6 @@ class NovelRepoIndexValidatorImpl(
         return try {
             // Network I/O must run off the main thread (NetworkOnMainThreadException otherwise).
             withIOContext {
-                android.util.Log.w("LNREPO-DIAG", "fetching $indexUrl on ${Thread.currentThread().name}")
                 val request = Request.Builder()
                     .url(indexUrl)
                     .addHeader("pragma", "no-cache")
@@ -42,7 +41,6 @@ class NovelRepoIndexValidatorImpl(
                     .build()
 
                 val response = networkHelper.client.newCall(request).execute()
-                android.util.Log.w("LNREPO-DIAG", "response ${response.code}")
                 if (!response.isSuccessful) {
                     response.close()
                     RepoState.Invalid
@@ -65,7 +63,6 @@ class NovelRepoIndexValidatorImpl(
                 }
             }
         } catch (error: Exception) {
-            android.util.Log.e("LNREPO-DIAG", "fetch failed for $indexUrl", error)
             co.touchlab.kermit.Logger.w(error) { "NovelRepoIndexValidator fetch failed for $indexUrl" }
             RepoState.Invalid
         }

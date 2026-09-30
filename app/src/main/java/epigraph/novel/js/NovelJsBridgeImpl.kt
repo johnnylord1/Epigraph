@@ -186,6 +186,7 @@ class NovelJsBridgeImpl(
             val response = client.newBuilder()
                 .followRedirects(false)
                 .followSslRedirects(false)
+                .dns(networkPolicy.publicOnlyDns(client.dns))
                 .build()
                 .newCall(request)
                 .execute()

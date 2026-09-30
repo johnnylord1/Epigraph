@@ -43,6 +43,30 @@ data class ReaderThemeColors(
             return ColorUtils.blendARGB(foreground, target, 0.22f)
         }
 
+        /**
+         * The app accent (lilac in Nocturne), as the desktop HUD uses for its progress rail.
+         * Falls back to the neutral rail when the accent would not read on this reader surface.
+         */
+        @ColorInt
+        private fun themedAccent(activity: Activity, @ColorInt background: Int, @ColorInt foreground: Int): Int {
+            val accent = ColorUtils.setAlphaComponent(activity.getResourceColor(MaterialR.attr.colorSecondary), 255)
+            val opaqueBackground = ColorUtils.setAlphaComponent(background, 255)
+            // On paper and sepia surfaces the pale accent is pulled toward the text colour, keeping its hue.
+            val towards = ColorUtils.setAlphaComponent(foreground, 255)
+            var step = 0
+            while (step <= ACCENT_BLEND_STEPS) {
+                val candidate = ColorUtils.blendARGB(accent, towards, step / ACCENT_BLEND_STEPS.toFloat() * MAX_ACCENT_BLEND)
+                if (ColorUtils.calculateContrast(candidate, opaqueBackground) >= MIN_ACCENT_CONTRAST) return candidate
+                step++
+            }
+            return accentFor(background, foreground)
+        }
+
+        private const val ACCENT_BLEND_STEPS = 12
+        private const val MAX_ACCENT_BLEND = 0.6f
+
+        private const val MIN_ACCENT_CONTRAST = 3.0
+
         fun comic(preference: Int): ReaderThemeColors {
             val background = when (preference) {
                 0 -> Color.WHITE
@@ -65,7 +89,7 @@ data class ReaderThemeColors(
                 else -> appSurface
             }
             val foreground = readableForeground(background)
-            return ReaderThemeColors(background, foreground, accentFor(background, foreground))
+            return ReaderThemeColors(background, foreground, themedAccent(activity, background, foreground))
         }
 
         fun novel(
@@ -94,7 +118,7 @@ data class ReaderThemeColors(
                 "custom" -> customForeground.takeIf { it != 0 } ?: Color.BLACK
                 else -> Color.WHITE
             }
-            return ReaderThemeColors(background, foreground, accentFor(background, foreground))
+            return ReaderThemeColors(background, foreground, themedAccent(activity, background, foreground))
         }
 
         fun book(activity: Activity, theme: String): ReaderThemeColors {
@@ -115,7 +139,7 @@ data class ReaderThemeColors(
                 "dark" -> Color.rgb(224, 224, 224)
                 else -> Color.WHITE
             }
-            return ReaderThemeColors(background, foreground, accentFor(background, foreground))
+            return ReaderThemeColors(background, foreground, themedAccent(activity, background, foreground))
         }
     }
 }
@@ -124,7 +148,7 @@ data class ReaderThemeColors(
 fun ReaderActivityBinding.applyReaderTheme(colors: ReaderThemeColors) {
     appBar.setBackgroundColor(colors.surface)
     readerNav.root.backgroundTintList = ColorStateList.valueOf(colors.surface)
-    chaptersSheet.root.backgroundTintList = ColorStateList.valueOf(colors.surface)
+    chaptersSheet.root.themedSurface = colors.surface
 
     toolbar.setTitleTextColor(colors.foreground)
     toolbar.setSubtitleTextColor(colors.mutedForeground)
@@ -146,6 +170,8 @@ fun ReaderActivityBinding.applyReaderTheme(colors: ReaderThemeColors) {
     readerNav.leftPageText.setTextColor(colors.foreground)
     readerNav.rightPageText.setTextColor(colors.foreground)
     pageNumber.setTextColor(colors.foreground)
+    // The indicator's pill follows the reader surface so it stays readable over any page.
+    pageNumber.backgroundTintList = ColorStateList.valueOf(colors.surface)
     readerNav.pageSeekbar.apply {
         thumbTintList = ColorStateList.valueOf(colors.accent)
         trackActiveTintList = ColorStateList.valueOf(colors.accent)

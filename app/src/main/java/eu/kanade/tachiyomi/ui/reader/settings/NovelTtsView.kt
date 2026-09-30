@@ -1,12 +1,19 @@
 package eu.kanade.tachiyomi.ui.reader.settings
 
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.util.AttributeSet
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.ReaderNovelTtsBinding
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.bindToPreference
 import eu.kanade.tachiyomi.widget.BaseReaderSettingsView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import yokai.i18n.MR
 import yokai.util.lang.getString
 
@@ -48,6 +55,18 @@ class NovelTtsView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 readerPreferences.novelTtsHighlightStyle.set(styleEntries[idx].first)
             }
 
+            ttsPlayPause.setOnClickListener {
+                reader?.toggleNovelTts()
+                // The service binds lazily on first play; start observing once it exists.
+                postDelayed(::observePlaybackState, PLAYBACK_REFRESH_DELAY_MS)
+            }
+            ttsStop.setOnClickListener {
+                reader?.stopNovelTts()
+                refreshPlaybackButton()
+            }
+            ttsPrevious.setOnClickListener { reader?.previousNovelTtsParagraph() }
+            ttsNext.setOnClickListener { reader?.nextNovelTtsParagraph() }
+
             openTtsSettings.setOnClickListener {
                 runCatching {
                     context.startActivity(Intent("com.android.settings.TTS_SETTINGS").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -57,6 +76,44 @@ class NovelTtsView @JvmOverloads constructor(context: Context, attrs: AttributeS
             // Engine probe — populate engine + voice entries asynchronously.
             populateEngineAndVoiceEntries()
         }
+    }
+
+    /** Settings pages are inflated with the reader as their context, before [activity] is set. */
+    private val reader: ReaderActivity?
+        get() = generateSequence(context) { (it as? ContextWrapper)?.baseContext }
+            .firstNotNullOfOrNull { it as? ReaderActivity }
+
+    private fun refreshPlaybackButton() {
+        val speaking = reader?.isNovelTtsSpeaking() == true
+        val label = when {
+            speaking -> MR.strings.pause
+            reader?.isNovelTtsPaused() == true -> MR.strings.resume
+            else -> MR.strings.novel_tts_read_aloud
+        }
+        binding.ttsPlayPause.setIconResource(if (speaking) R.drawable.ic_pause_24dp else R.drawable.ic_play_arrow_24dp)
+        binding.ttsPlayPause.text = context.getString(label)
+    }
+
+    private var playbackScope: CoroutineScope? = null
+
+    /** Engine failures and chapter ends stop playback on their own, so follow the controller. */
+    private fun observePlaybackState() {
+        if (!isAttachedToWindow) return
+        val controller = reader?.ttsController
+        playbackScope?.cancel()
+        playbackScope = null
+        if (controller == null) {
+            refreshPlaybackButton()
+            return
+        }
+        playbackScope = MainScope().also { scope ->
+            scope.launch { controller.state.collect { refreshPlaybackButton() } }
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        observePlaybackState()
     }
 
     private fun populateEngineAndVoiceEntries() {
@@ -116,7 +173,13 @@ class NovelTtsView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        playbackScope?.cancel()
+        playbackScope = null
         probeTts?.shutdown()
         probeTts = null
+    }
+
+    private companion object {
+        const val PLAYBACK_REFRESH_DELAY_MS = 600L
     }
 }

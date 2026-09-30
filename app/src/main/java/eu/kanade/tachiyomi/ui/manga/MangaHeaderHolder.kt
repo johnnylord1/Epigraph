@@ -3,11 +3,9 @@ package eu.kanade.tachiyomi.ui.manga
 import android.animation.AnimatorInflater
 import android.annotation.SuppressLint
 import android.content.res.ColorStateList
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
-import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import android.text.format.DateUtils
 import android.view.MotionEvent
@@ -16,7 +14,6 @@ import android.widget.TextView
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
-import androidx.core.graphics.drawable.toDrawable
 import androidx.core.text.buildSpannedString
 import androidx.core.text.scale
 import androidx.core.view.isInvisible
@@ -32,6 +29,7 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.error
 import coil3.request.placeholder
+import coil3.request.transformations
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.R as materialR
 import dev.icerock.moko.resources.compose.stringResource
@@ -102,6 +100,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import yokai.i18n.MR
 import yokai.presentation.theme.ReducedMotion
+import yokai.util.coil.CropBottomTransformation
 import yokai.util.coil.loadManga
 import yokai.util.lang.getString
 import eu.kanade.tachiyomi.source.PagePreviewSource
@@ -589,7 +588,12 @@ class MangaHeaderHolder(
             val enabledLanguages = presenter.preferences.enabledLanguages().get()
 
             text = buildSpannedString {
-                append(presenter.source.nameBasedOnEnabledLanguages(enabledLanguages))
+                val waitingFor = presenter.coreBridgeWaitingFor
+                if (waitingFor != null) {
+                    append(context.getString(MR.strings.epigraph_core_bridge_waiting_for, waitingFor))
+                } else {
+                    append(presenter.source.nameBasedOnEnabledLanguages(enabledLanguages))
+                }
                 if (presenter.source is SourceManager.StubSource &&
                     presenter.source.name != presenter.source.id.toString()
                 ) {
@@ -1055,20 +1059,12 @@ class MangaHeaderHolder(
             .placeholder(placeholder)
             .error(placeholder)
             .diskCachePolicy(CachePolicy.READ_ONLY)
+            // Crop while decoding: cropping the (hardware) result here read it back from the GPU
+            // and re-uploaded it on the main thread during the details push.
+            .transformations(CropBottomTransformation(BACKDROP_CROP_FRACTION))
             .target(
                 onSuccess = {
-                    val result = it.asDrawable(itemView.resources)
-                    val bitmap = (result as? BitmapDrawable)?.bitmap
-                    if (bitmap == null) {
-                        binding.backdrop.setImageDrawable(result)
-                        return@target
-                    }
-                    val yOffset = (bitmap.height / 2 * 0.33).toInt()
-
-                    binding.backdrop.setImageDrawable(
-                        Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height - yOffset)
-                            .toDrawable(itemView.resources),
-                    )
+                    binding.backdrop.setImageDrawable(it.asDrawable(itemView.resources))
                     applyBlur()
                 },
             )
@@ -1978,3 +1974,6 @@ private fun NamespaceGenreTagsSection(
         }
     }
 }
+
+/** Share of the cover's height hidden below the header backdrop. */
+private const val BACKDROP_CROP_FRACTION = 0.165f

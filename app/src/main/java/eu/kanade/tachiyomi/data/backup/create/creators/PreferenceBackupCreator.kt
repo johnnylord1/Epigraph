@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.backup.create.creators
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.data.backup.BackupSecretPolicy
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
@@ -22,26 +23,24 @@ class PreferenceBackupCreator(
     private val sourceManager: SourceManager = get(),
     private val preferenceStore: PreferenceStore = get(),
 ) {
-    fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
+    fun createApp(): List<BackupPreference> {
         return preferenceStore.getAll().toBackupPreferences()
-            .withPrivatePreferences(includePrivatePreferences)
     }
 
-    fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+    fun createSource(): List<BackupSourcePreferences> {
         return sourceManager.getOnlineSources()
             .filterIsInstance<ConfigurableSource>()
             .map {
                 BackupSourcePreferences(
                     it.preferenceKey(),
-                    it.sourcePreferences().all.toBackupPreferences()
-                        .withPrivatePreferences(includePrivatePreferences),
+                    it.sourcePreferences().all.toBackupPreferences(),
                 )
             }
     }
 
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> {
-        return this.filterKeys { !Preference.isAppState(it) }
+        return this.filterKeys { !Preference.isAppState(it) && !BackupSecretPolicy.isSecret(it) }
             .mapNotNull { (key, value) ->
                 // j2k fork differences
                 if (key == "library_sorting_mode" && value is Int) {
@@ -62,11 +61,4 @@ class PreferenceBackupCreator(
                 }
             }
     }
-
-    private fun List<BackupPreference>.withPrivatePreferences(include: Boolean) =
-        if (include) {
-            this
-        } else {
-            this.filter { !Preference.isPrivate(it.key) }
-        }
 }

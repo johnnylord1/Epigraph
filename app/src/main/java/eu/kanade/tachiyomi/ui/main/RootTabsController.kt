@@ -9,8 +9,11 @@ import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
 import android.widget.FrameLayout
 import androidx.core.view.isVisible
+import androidx.interpolator.view.animation.FastOutLinearInInterpolator
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import com.bluelinelabs.conductor.Controller
+import com.bluelinelabs.conductor.ControllerChangeHandler
+import com.bluelinelabs.conductor.ControllerChangeType
 import com.bluelinelabs.conductor.Router
 import com.bluelinelabs.conductor.RouterTransaction
 import com.bluelinelabs.conductor.changehandler.SimpleSwapChangeHandler
@@ -117,6 +120,24 @@ class RootTabsController : Controller() {
         outState.putInt(KEY_CURRENT_TAB, currentTabId)
     }
 
+    /**
+     * Conductor does not forward change events to child routers, so a controller pushed over the
+     * whole tab host (onboarding) would leave the visible tab believing it is still active while
+     * covered, and never re-activated once it pops. The host view may even be recreated on pop,
+     * which resets the tab's activation state; re-activate it explicitly. This runs when the
+     * change starts so a deferred library update is drawn before the covering screen fades out.
+     */
+    override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
+        super.onChangeStarted(handler, type)
+        val current = currentTabId.takeIf { it != -1 } ?: return
+        val top = childRouterFor(current)?.backstack?.lastOrNull()?.controller as? RootTabContent
+        when (type) {
+            ControllerChangeType.POP_ENTER -> top?.onTabActivated()
+            ControllerChangeType.PUSH_EXIT -> top?.onTabDeactivated()
+            else -> Unit
+        }
+    }
+
     override fun onDestroyView(view: View) {
         cancelSwapAnimations()
         containers.clear()
@@ -215,18 +236,24 @@ class RootTabsController : Controller() {
         activeOutgoing = outgoing
         activeIncoming = incoming
 
-        // Keep the outgoing tree stable behind the incoming one. Animating alpha + translation
-        // on both full-screen containers promoted two RecyclerView/Compose hierarchies to large
-        // hardware layers at once. A one-way fade/slide has the same spatial continuity while
-        // cutting the transition's full-screen animation and layer work in half.
+        // Material "fade through": the containers have transparent backgrounds, so fading the
+        // incoming tab over an opaque outgoing one superimposed both app bars, titles and lists
+        // for the whole transition. The outgoing tab now fades out first and the incoming tab
+        // fades/slides in after it, so the two screens are never drawn on top of each other.
         outgoing.alpha = 1f
         outgoing.translationX = 0f
-        outgoingAnimator = null
+        outgoingAnimator = outgoing.animate()
+            .alpha(0f)
+            .setStartDelay(0L)
+            .setDuration(TAB_SWAP_FADE_OUT_MS)
+            .setInterpolator(tabSwapFadeOutInterpolator)
+            .withLayer()
 
         incomingAnimator = incoming.animate()
             .alpha(1f)
             .translationX(0f)
-            .setDuration(TAB_SWAP_DURATION_MS)
+            .setStartDelay(TAB_SWAP_FADE_OUT_MS)
+            .setDuration(TAB_SWAP_DURATION_MS - TAB_SWAP_FADE_OUT_MS)
             .setInterpolator(tabSwapInterpolator)
             .withLayer()
             .setListener(object : AnimatorListenerAdapter() {
@@ -257,7 +284,7 @@ class RootTabsController : Controller() {
     private fun settleSwap() {
         containers.forEach { (tabId, container) ->
             val selected = tabId == currentTabId
-            container.animate().setListener(null).cancel()
+            container.animate().setListener(null).setStartDelay(0L).cancel()
             container.alpha = if (selected) 1f else 0f
             container.translationX = 0f
             container.isVisible = selected
@@ -275,6 +302,7 @@ class RootTabsController : Controller() {
     private var activeOutgoing: FrameLayout? = null
     private var activeIncoming: FrameLayout? = null
     private val tabSwapInterpolator = FastOutSlowInInterpolator()
+    private val tabSwapFadeOutInterpolator = FastOutLinearInInterpolator()
 
     private fun childRouterFor(tabId: Int): Router? {
         val container = containers[tabId] ?: return null
@@ -347,6 +375,7 @@ class RootTabsController : Controller() {
          * [ReducedMotion] (snap-to-end) — see [animateSwap].
          */
         private const val TAB_SWAP_DURATION_MS = 250L
+        private const val TAB_SWAP_FADE_OUT_MS = 90L
         private const val TAB_SWAP_TRANSLATION_DP = 12f
         private const val KEY_CURRENT_TAB = "RootTabsController.currentTabId"
         // Stable container ids so Conductor's child router restores into the same FrameLayout

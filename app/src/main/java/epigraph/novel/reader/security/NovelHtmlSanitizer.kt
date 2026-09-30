@@ -5,6 +5,7 @@ import org.jsoup.safety.Cleaner
 import org.jsoup.safety.Safelist
 import java.net.URI
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 /**
@@ -13,11 +14,17 @@ import java.nio.charset.StandardCharsets
  * Chapter HTML is data, never executable application code. The allowlist intentionally drops
  * author CSS, forms, embedded documents and active media. Images are limited to bytes already
  * owned by the reader (the private image scheme or a small raster data URI), so parsing a chapter
- * cannot make the WebView contact a source-controlled host.
+ * cannot make the WebView contact a source-controlled host. Callers that opt in with
+ * `allowRemoteImages` get absolute HTTPS images rewritten to [REMOTE_IMAGE_SCHEME], which only
+ * [NovelRemoteImageBroker] serves.
  */
 object NovelHtmlSanitizer {
 
     private const val MAX_INLINE_IMAGE_URI_CHARS = 5 * 1024 * 1024
+    private const val MAX_REMOTE_IMAGE_URL_CHARS = 4096
+
+    const val REMOTE_IMAGE_SCHEME = "epigraph-novel-remote-image"
+    private const val REMOTE_IMAGE_PREFIX = "$REMOTE_IMAGE_SCHEME://"
 
     private val removableElements = listOf(
         "script",
@@ -71,14 +78,19 @@ object NovelHtmlSanitizer {
         .addAttributes("th", "colspan", "rowspan", "headers", "scope")
         .addAttributes("td", "colspan", "rowspan", "headers")
         .addProtocols("a", "href", "https")
-        .addProtocols("img", "src", "data", "epigraph-novel-image", "hayai-novel-image")
+        .addProtocols("img", "src", "data", "epigraph-novel-image", "hayai-novel-image", REMOTE_IMAGE_SCHEME)
         .addEnforcedAttribute("a", "rel", "nofollow noopener noreferrer")
         .preserveRelativeLinks(true)
 
     /** Returns an HTML body fragment that is safe to place under the app-owned document shell. */
-    fun sanitize(html: String): String {
+    fun sanitize(html: String, allowRemoteImages: Boolean = false): String {
         val untrusted = Jsoup.parseBodyFragment(html, "")
         untrusted.outputSettings().prettyPrint(false)
+        if (allowRemoteImages) {
+            untrusted.select("img[src]").forEach { image ->
+                remoteImageUrl(image.attr("src"))?.let { image.attr("src", it) }
+            }
+        }
 
         // Cleaner unwraps unknown elements to preserve their text. Active containers are removed
         // first because even preserving their child text would expose script/CSS source to TTS.
@@ -94,7 +106,7 @@ object NovelHtmlSanitizer {
             }
         }
         clean.select("img").forEach { image ->
-            if (!isAllowedImageSource(image.attr("src"))) {
+            if (!isAllowedImageSource(image.attr("src"), allowRemoteImages)) {
                 image.remove()
             }
         }
@@ -113,9 +125,12 @@ object NovelHtmlSanitizer {
         }.getOrDefault(false)
     }
 
-    internal fun isAllowedImageSource(value: String): Boolean {
+    internal fun isAllowedImageSource(value: String, allowRemoteImages: Boolean = false): Boolean {
         val candidate = value.trim()
         if (candidate.isEmpty() || candidate.any(Char::isISOControl)) return false
+        if (candidate.startsWith(REMOTE_IMAGE_PREFIX, ignoreCase = true)) {
+            return allowRemoteImages && decodeRemoteImageUrl(candidate) != null
+        }
 
         val imageScheme = when {
             candidate.startsWith("epigraph-novel-image://", ignoreCase = true) -> "epigraph-novel-image://"
@@ -135,6 +150,29 @@ object NovelHtmlSanitizer {
 
         if (candidate.length > MAX_INLINE_IMAGE_URI_CHARS) return false
         return SAFE_RASTER_DATA_URI.matches(candidate)
+    }
+
+    /** Broker URL for an absolute (or protocol-relative) HTTPS image, else null. */
+    internal fun remoteImageUrl(value: String): String? {
+        val candidate = value.trim().let { if (it.startsWith("//")) "https:$it" else it }
+        if (candidate.length > MAX_REMOTE_IMAGE_URL_CHARS || candidate.any(Char::isISOControl)) return null
+        val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null) {
+            return null
+        }
+        return REMOTE_IMAGE_PREFIX + URLEncoder.encode(uri.toASCIIString(), StandardCharsets.UTF_8.name())
+    }
+
+    /** The HTTPS URL carried by a broker URL, or null when it is not a well-formed one. */
+    fun decodeRemoteImageUrl(brokerUrl: String): String? {
+        if (!brokerUrl.startsWith(REMOTE_IMAGE_PREFIX, ignoreCase = true)) return null
+        val decoded = runCatching {
+            URLDecoder.decode(brokerUrl.substring(REMOTE_IMAGE_PREFIX.length), StandardCharsets.UTF_8.name())
+        }.getOrNull() ?: return null
+        if (decoded.length > MAX_REMOTE_IMAGE_URL_CHARS || decoded.any(Char::isISOControl)) return null
+        val uri = runCatching { URI(decoded) }.getOrNull() ?: return null
+        val valid = uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
+        return decoded.takeIf { valid }
     }
 
     private val SAFE_RASTER_DATA_URI = Regex(

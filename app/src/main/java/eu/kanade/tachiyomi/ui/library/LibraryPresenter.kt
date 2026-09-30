@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.data.database.models.LibraryManga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.database.models.removeCover
 import eu.kanade.tachiyomi.data.database.models.seriesType
+import eu.kanade.tachiyomi.data.database.models.isNovel
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.preference.DelayedLibrarySuggestionsJob
@@ -73,6 +74,7 @@ import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.category.interactor.UpdateCategories
 import yokai.domain.category.models.CategoryUpdate
 import yokai.domain.chapter.interactor.GetChapter
+import epigraph.sync.core.SyncedChapterStateWriter
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.chapter.models.ChapterUpdate
 import yokai.domain.history.interactor.GetHistory
@@ -108,6 +110,7 @@ class LibraryPresenter(
     private val getLibraryManga: GetLibraryManga by injectLazy()
     private val getChapter: GetChapter by injectLazy()
     private val updateChapter: UpdateChapter by injectLazy()
+    private val chapterStateWriter: SyncedChapterStateWriter by injectLazy()
     private val updateManga: UpdateManga by injectLazy()
     private val getTrack: GetTrack by injectLazy()
     private val getHistory: GetHistory by injectLazy()
@@ -939,8 +942,14 @@ class LibraryPresenter(
             getLibraryManga.subscribe().retry(1) { e -> e is NullPointerException },
             getPreferencesFlow(),
             forceUpdateEvent,
-        ) { dbCategories, libraryMangaList, prefs, _ ->
+            // Novel plugins load lazily; re-partition once their sources resolve.
+            sourceManager.catalogueSources,
+        ) { dbCategories, allLibraryManga, prefs, _, _ ->
             groupType = prefs.groupType
+            // Novels live in the Books & Novels library, so Comics must not list them twice.
+            val libraryMangaList = allLibraryManga.filterNot {
+                runCatching { it.manga.isNovel(sourceManager) }.getOrDefault(false)
+            }
 
             val defaultCategory = createDefaultCategory()
 
@@ -1599,7 +1608,7 @@ class LibraryPresenter(
                     if (it.id == null) return@mapNotNull null
                     ChapterUpdate(it.id!!, read = markRead, lastPageRead = 0)
                 }
-                updateChapter.awaitAll(updates)
+                chapterStateWriter.awaitAll(updates)
 
                 mapMangaChapters[manga] = chapters
             }
@@ -1618,7 +1627,7 @@ class LibraryPresenter(
                     ChapterUpdate(it.id!!, read = it.read, lastPageRead = it.last_page_read.toLong())
                 }
             }.flatten()
-            updateChapter.awaitAll(updates)
+            chapterStateWriter.awaitAll(updates)
             updateLibrary()
         }
     }

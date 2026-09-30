@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.data.preference
 
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
-import com.google.android.material.color.DynamicColors
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
@@ -67,13 +66,13 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
 
     fun hasDeniedA11FilePermission() = preferenceStore.getBoolean(Keys.deniedA11FilePermission, false)
 
-    fun nightMode() = preferenceStore.getInt(Keys.nightMode, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+    // Dark Nocturne by default, matching the desktop's default theme.
+    fun nightMode() = preferenceStore.getInt(Keys.nightMode, AppCompatDelegate.MODE_NIGHT_YES)
 
     fun themeDarkAmoled() = preferenceStore.getBoolean(Keys.themeDarkAmoled, false)
 
-    private val supportsDynamic = DynamicColors.isDynamicColorAvailable()
-    fun lightTheme() = preferenceStore.getEnum(Keys.lightTheme, if (supportsDynamic) Themes.MONET else Themes.DEFAULT)
-    fun darkTheme() = preferenceStore.getEnum(Keys.darkTheme, if (supportsDynamic) Themes.MONET else Themes.DEFAULT)
+    fun lightTheme() = preferenceStore.getEnum(Keys.lightTheme, Themes.NOCTURNE)
+    fun darkTheme() = preferenceStore.getEnum(Keys.darkTheme, Themes.NOCTURNE)
 
     fun pageTransitions() = preferenceStore.getBoolean(Keys.enableTransitions, true)
 
@@ -343,6 +342,9 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
     fun collapsedCategories() = preferenceStore.getStringSet("collapsed_categories", mutableSetOf())
 
     fun collapsedDynamicCategories() = preferenceStore.getStringSet("collapsed_dynamic_categories", mutableSetOf())
+
+    /** Real category ids collapsed in the Books & novels library, kept apart from Comics. */
+    fun collapsedBooksCategories() = preferenceStore.getStringSet("epigraph_books_collapsed_categories", mutableSetOf())
 
     fun collapsedDynamicAtBottom() = preferenceStore.getBoolean("collapsed_dynamic_at_bottom", false)
 

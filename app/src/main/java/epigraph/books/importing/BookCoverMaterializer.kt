@@ -6,12 +6,10 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipFile
-import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Element
 import org.w3c.dom.NodeList
 
@@ -220,16 +218,7 @@ class BookCoverMaterializer(
         }
     }
 
-    private fun secureXml(bytes: ByteArray): org.w3c.dom.Document? = runCatching {
-        DocumentBuilderFactory.newInstance().apply {
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-            isExpandEntityReferences = false
-            isNamespaceAware = true
-        }.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
-    }.getOrNull()
+    private fun secureXml(bytes: ByteArray): org.w3c.dom.Document? = SafeXml.parseOrNull(bytes)
 
     private fun resolveZipPath(base: String, href: String): String? {
         val cleanHref = href.substringBefore('#').substringBefore('?').replace('\\', '/')

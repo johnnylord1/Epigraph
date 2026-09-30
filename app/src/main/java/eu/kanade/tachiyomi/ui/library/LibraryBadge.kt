@@ -183,6 +183,27 @@ class LibraryBadge @JvmOverloads constructor(context: Context, attrs: AttributeS
         setUnreadDownload(chapters ?: 0, 0, chapters != null, null, true)
     }
 
+    /** Shows a single neutral label, e.g. the EPUB/PDF format of a local book. */
+    fun setLabel(label: String?) {
+        unreadDownloadContent = null
+        isVisible = !label.isNullOrBlank()
+        if (label.isNullOrBlank()) return
+        binding.unreadAngle.isVisible = false
+        binding.downloadAngle.isVisible = false
+        binding.unreadText.isVisible = false
+        binding.langImage.isVisible = false
+        shapeAppearanceModel = shapeAppearanceModel.withCornerSize(radius)
+        with(binding.downloadText) {
+            isVisible = true
+            text = label
+            updatePaddingRelative(start = 5.dpToPx, end = 5.dpToPx)
+            setTextColor(context.getResourceColor(R.attr.colorOnTertiary))
+            background = MaterialShapeDrawable(makeShapeCorners(radius, radius)).apply {
+                fillColor = ColorStateList.valueOf(context.getResourceColor(R.attr.colorTertiary))
+            }
+        }
+    }
+
     fun setInLibrary(inLibrary: Boolean) {
         unreadDownloadContent = null
         this.isVisible = inLibrary

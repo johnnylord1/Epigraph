@@ -198,7 +198,8 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                         .filter { it.manga.id in savedMangasList }
                         .distinctBy { it.manga.id }
                 val categoryId = inputData.getInt(KEY_CATEGORY, -1)
-                if (categoryId > -1) categoryIds.add(categoryId)
+                // Books & novels headers use negative ids; -1 alone means "no category".
+                if (categoryId != -1) categoryIds.add(categoryId)
                 mangas
             } else {
                 getMangaToUpdate()

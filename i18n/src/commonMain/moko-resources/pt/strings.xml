@@ -1043,7 +1043,7 @@
     <string name="action_add_repo">Adicionar</string>
     <string name="invalid_repo_url">URL de Repositório inválida</string>
     <string name="repo_already_exists">Repositório já existente!</string>
-    <string name="information_empty_repos">Aidna não tem repositórios definidos.</string>
+    <string name="information_empty_repos">Ainda não tem repositórios definidos.</string>
     <string name="confirm_delete_repo_title">Apagar repositório?</string>
     <string name="confirm_delete_repo">Tem certeza que deseja apagar o repositório \"%s\"?</string>
     <string name="action_replace_repo">Substituir</string>
