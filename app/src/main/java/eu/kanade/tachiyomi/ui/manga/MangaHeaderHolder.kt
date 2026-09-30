@@ -61,7 +61,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -81,7 +80,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.remember
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -758,9 +757,9 @@ class MangaHeaderHolder(
                     if (adapter.delegate.accentColor() != null) accentArray[0] else bgArray[0],
                     bgArray[1],
                     when {
-                        amoled && dark -> 0.1f
-                        dark -> 0.225f
-                        else -> 0.85f
+                        amoled && dark -> 0.08f
+                        dark -> 0.14f
+                        else -> 0.9f
                     },
                 ),
             ),
@@ -817,7 +816,7 @@ class MangaHeaderHolder(
                 ColorUtils.blendARGB(
                     adapter.delegate.accentColor() ?: context.getResourceColor(materialR.attr.colorSecondary),
                     context.getResourceColor(android.R.attr.colorBackground),
-                    0.706f,
+                    0.88f,
                 ),
             )
             strokeColor = ColorStateList.valueOf(Color.TRANSPARENT)
@@ -1270,29 +1269,24 @@ private fun SeriesEnrichmentSection(
         onClick: (() -> Unit)? = null,
         prominent: Boolean = false,
     ) {
+        // Nocturne: flat, borderless tags on a faint neutral wash; lilac only marks the prominent one.
         val containerColor = when {
-            prominent -> MaterialTheme.colorScheme.primaryContainer
-            onClick != null -> MaterialTheme.colorScheme.secondaryContainer
-            else -> MaterialTheme.colorScheme.surfaceVariant
+            prominent -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f)
+            onClick != null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+            else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
         }
         val contentColor = when {
-            prominent -> MaterialTheme.colorScheme.onPrimaryContainer
-            onClick != null -> MaterialTheme.colorScheme.onSecondaryContainer
+            prominent -> MaterialTheme.colorScheme.secondary
+            onClick != null -> MaterialTheme.colorScheme.onSurface
             else -> MaterialTheme.colorScheme.onSurfaceVariant
-        }
-        val borderColor = when {
-            prominent -> MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-            onClick != null -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.32f)
-            else -> MaterialTheme.colorScheme.outlineVariant
         }
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
             Surface(
                 modifier = Modifier
                     .padding(vertical = 3.dp)
                     .then(if (onClick != null) Modifier.combinedClickable(onClick = onClick) else Modifier),
-                shape = CircleShape,
+                shape = RoundedCornerShape(6.dp),
                 color = containerColor,
-                border = BorderStroke(1.dp, borderColor),
             ) {
                 Text(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -1388,8 +1382,7 @@ private fun SeriesEnrichmentSection(
                     },
                 ),
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
             tonalElevation = 0.dp,
         ) {
             Row(
@@ -1468,8 +1461,7 @@ private fun SeriesEnrichmentSection(
                 .height(92.dp)
                 .combinedClickable(onClick = onClick),
             shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.28f)),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f),
         ) {
             Box(
                 modifier = Modifier.padding(12.dp),
@@ -1478,7 +1470,7 @@ private fun SeriesEnrichmentSection(
                 Text(
                     text = text,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    color = MaterialTheme.colorScheme.secondary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1515,7 +1507,6 @@ private fun SeriesEnrichmentSection(
                 Surface(
                     shape = MaterialTheme.shapes.small,
                     color = MaterialTheme.colorScheme.surfaceVariant,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                 ) {
                     AsyncImage(
                         modifier = Modifier
@@ -1859,9 +1850,8 @@ private fun GenreTagsSection(
                         onClick = { onTagClick(genre) },
                         onLongClick = { onTagLongClick(genre) },
                     ),
-                shape = CircleShape,
+                shape = RoundedCornerShape(6.dp),
                 color = containerColor,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Text(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -1924,13 +1914,8 @@ private fun NamespaceGenreTagsSection(
                         onClick = { if (!isLabel) onTagClick(searchQuery) },
                         onLongClick = { if (!isLabel) onTagLongClick(text) },
                     ),
-                shape = CircleShape,
+                shape = RoundedCornerShape(6.dp),
                 color = if (isLabel) ComposeColor.Transparent else containerColor,
-                border = if (isLabel) {
-                    BorderStroke(1.dp, labelColor.copy(alpha = 0.5f))
-                } else {
-                    BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                },
             ) {
                 Text(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

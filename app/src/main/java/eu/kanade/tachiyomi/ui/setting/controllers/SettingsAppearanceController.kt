@@ -175,7 +175,7 @@ class SettingsAppearanceController : SettingsLegacyController() {
                 key = Keys.themeMangaDetails
                 titleRes = MR.strings.color_details_from_cover
                 summaryRes = MR.strings.color_details_from_cover_summary
-                defaultValue = true
+                defaultValue = false
             }
         }
 

@@ -1000,7 +1000,7 @@ private class LocalBookDetailsAdapter(
             val actionBackground = ColorUtils.blendARGB(
                 accentColor,
                 context.getResourceColor(android.R.attr.colorBackground),
-                0.706f,
+                0.88f,
             )
             binding.favoriteButton.backgroundTintList = ColorStateList.valueOf(actionBackground)
             binding.favoriteButton.setTextColor(

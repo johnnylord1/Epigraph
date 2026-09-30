@@ -215,17 +215,20 @@
         <item name="tabTextAppearance">@style/TextAppearance.Widget.Tab</item>
     </style>
 
+    <!-- Segment tabs (Recents, Browse, Extensions). Selection is text + a short accent
+         underline, like the desktop Nocturne tabs, instead of a filled pill. -->
     <style name="Theme.Widget.Tabs.Highlight" parent="Theme.Widget.Tabs">
         <item name="android:background">@android:color/transparent</item>
-        <item name="tabIndicatorGravity">center</item>
+        <item name="tabIndicatorGravity">bottom</item>
         <item name="tabTextColor">@color/tabs_selector_alt</item>
         <item name="tabRippleColor">@android:color/transparent</item>
-        <item name="tabIndicator">@drawable/tab_highlight_indicator</item>
-        <item name="tabIndicatorColor">?tabHighlightBackground</item>
+        <item name="tabIndicator">@drawable/tab_indicator</item>
+        <item name="tabIndicatorColor">?attr/colorSecondary</item>
+        <item name="tabIndicatorHeight">2dp</item>
         <item name="tabMaxWidth">0dp</item>
         <item name="tabMode">fixed</item>
         <item name="tabIndicatorAnimationMode">elastic</item>
-        <item name="tabIndicatorFullWidth">true</item>
+        <item name="tabIndicatorFullWidth">false</item>
     </style>
 
     <style name="Widget.Tachiyomi.Slider" parent="Widget.Material3.Slider">
@@ -293,9 +296,15 @@
         <item name="itemRippleColor">@color/ripple_nav</item>
         <item name="itemTextColor">@color/bottom_nav_text_selector</item>
         <item name="labelVisibilityMode">labeled</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
         <item name="android:background">?colorPrimaryVariant</item>
         <item name="tabBarIconColor">?tabBarIconColor</item>
         <item name="tabRippleColor">?colorControlHighlight</item>
+    </style>
+
+    <!-- No pill behind the selected destination: the accent icon and label carry the state. -->
+    <style name="Widget.Tachiyomi.NavActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">@android:color/transparent</item>
     </style>
 
     <style name="Widget.Tachiyomi.NavigationRail" parent="Widget.Material3.NavigationRailView">
@@ -304,6 +313,7 @@
         <item name="itemRippleColor">@color/ripple_nav</item>
         <item name="itemTextColor">@color/bottom_nav_text_selector</item>
         <item name="labelVisibilityMode">labeled</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
         <item name="android:background">?colorPrimaryVariant</item>
         <item name="tabBarIconColor">?tabBarIconColor</item>
         <item name="tabRippleColor">?colorControlHighlight</item>
@@ -319,7 +329,7 @@
         <item name="rippleColor">?colorControlHighlight</item>
         <item name="android:stateListAnimator">@animator/icon_btn_state_list_anim</item>
         <item name="android:textColor">?attr/colorOnBackground</item>
-        <item name="cornerRadius">20dp</item>
+        <item name="cornerRadius">10dp</item>
     </style>
 
     <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3Expressive.MaterialButtonGroup.Connected" />
@@ -342,6 +352,8 @@
         <item name="backgroundTint">@color/ext_bg_selector</item>
         <item name="android:textColor">@color/ext_button_text_selector</item>
         <item name="rippleColor">?colorControlHighlight</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="cornerRadius">10dp</item>
     </style>
 
     <style name="Widget.Tachiyomi.Button.Primary" parent="Widget.Material3.Button">

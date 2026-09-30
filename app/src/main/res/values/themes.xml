@@ -79,6 +79,7 @@
         <item name="android:navigationBarColor">#B3000000</item>
         <item name="android:colorEdgeEffect">?attr/colorSecondary</item>
         <item name="tabHighlightBackground">@color/secondary_alpha</item>
+        <item name="searchFieldSurface">?colorPrimaryVariant</item>
         <item name="mainActionBarSize">56dp</item>
 
         <item name="android:windowLightStatusBar">@bool/isLightMode</item>
@@ -341,6 +342,9 @@
         <item name="colorOnTertiary">@color/nocturne_on_tertiary</item>
         <item name="colorControlHighlight">@color/nocturne_highlight</item>
         <item name="tabBarIconColor">@color/nocturne_tab_bar_icon</item>
+        <item name="tabBarIconInactive">@color/nocturne_tab_bar_inactive</item>
+        <item name="searchFieldSurface">@color/nocturne_field_surface</item>
+        <item name="colorError">@color/nocturne_error</item>
         <item name="background">@color/nocturne_background</item>
         <item name="colorOnBackground">@color/nocturne_on_background</item>
         <item name="colorSurface">@color/nocturne_surface</item>

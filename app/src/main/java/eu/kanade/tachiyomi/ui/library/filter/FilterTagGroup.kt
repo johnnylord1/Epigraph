@@ -8,7 +8,6 @@ import android.widget.LinearLayout
 import androidx.core.view.isVisible
 import dev.icerock.moko.resources.StringResource
 import com.google.android.material.R as materialR
-import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.databinding.FilterTagGroupBinding
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -132,7 +131,7 @@ class FilterTagGroup@JvmOverloads constructor(context: Context, attrs: Attribute
             binding.firstButton.setTextColor(
                 context.getResourceColor(
                     if (binding.firstButton.isActivated) {
-                        R.attr.colorOnSecondary
+                        materialR.attr.colorSecondary
                     } else {
                         materialR.attr.colorOnBackground
                     },
@@ -167,7 +166,7 @@ class FilterTagGroup@JvmOverloads constructor(context: Context, attrs: Attribute
         mainButton.setTextColor(
             context.getResourceColor(
                 if (mainButton.isActivated) {
-                    R.attr.colorOnSecondary
+                    materialR.attr.colorSecondary
                 } else {
                     materialR.attr.colorOnBackground
                 },

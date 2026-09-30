@@ -88,8 +88,8 @@
             android:layout_marginTop="4dp"
             android:layout_marginEnd="10dp"
             android:layout_marginBottom="4dp"
-            app:cardBackgroundColor="?colorPrimaryVariant"
-            app:cardCornerRadius="24dp"
+            app:cardBackgroundColor="?searchFieldSurface"
+            app:cardCornerRadius="12dp"
             app:strokeWidth="0dp">
 
             <eu.kanade.tachiyomi.ui.base.FloatingToolbar

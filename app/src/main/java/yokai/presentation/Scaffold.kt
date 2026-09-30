@@ -18,11 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,7 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults.topAppBarColors
 import androidx.compose.runtime.Composable
@@ -50,6 +46,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.lerp
@@ -314,9 +314,7 @@ fun YokaiAppBarTabs(
 
     val selectedTextColor = rememberThemeColor(materialR.attr.colorSecondaryVariant)
     val unselectedTextColor = rememberThemeColor(R.attr.actionBarTintColor).copy(alpha = 0.60f)
-    val highlightColor = rememberThemeColor(R.attr.tabHighlightBackground)
-    val badgeColor = rememberThemeColor(materialR.attr.colorSecondary)
-    val badgeContentColor = MaterialTheme.colorScheme.onPrimary
+    val indicatorColor = rememberThemeColor(materialR.attr.colorSecondary)
 
     Row(
         modifier = modifier
@@ -331,11 +329,21 @@ fun YokaiAppBarTabs(
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(36.dp)
-                    .background(
-                        color = if (selected) highlightColor else Color.Transparent,
-                        shape = RoundedCornerShape(18.dp),
-                    )
+                    .height(48.dp)
+                    // Nocturne marks the selected tab with text + a short accent underline,
+                    // not a filled pill.
+                    .drawBehind {
+                        if (selected) {
+                            val barWidth = 28.dp.toPx()
+                            val barHeight = 2.dp.toPx()
+                            drawRoundRect(
+                                color = indicatorColor,
+                                topLeft = Offset((size.width - barWidth) / 2f, size.height - barHeight),
+                                size = Size(barWidth, barHeight),
+                                cornerRadius = CornerRadius(barHeight, barHeight),
+                            )
+                        }
+                    }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -359,26 +367,13 @@ fun YokaiAppBarTabs(
                     )
                     counts.getOrNull(index)?.let { count ->
                         Spacer(Modifier.width(6.dp))
-                        Surface(
-                            color = badgeColor,
-                            contentColor = badgeContentColor,
-                            shape = CircleShape,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .height(22.dp)
-                                    .sizeIn(minWidth = 22.dp)
-                                    .padding(horizontal = 6.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = count.toString(),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                        Text(
+                            text = count.toString(),
+                            color = indicatorColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
                     }
                 }
             }

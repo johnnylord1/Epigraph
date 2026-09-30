@@ -1,6 +1,5 @@
 package yokai.presentation.extension.repo
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -372,17 +371,11 @@ class ExtensionRepoScreen(
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            ) {
-                Text(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    text = stringResource(MR.strings.repository_count, count),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+            Text(
+                text = stringResource(MR.strings.repository_count, count),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
@@ -392,9 +385,8 @@ class ExtensionRepoScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 28.dp),
@@ -403,8 +395,8 @@ class ExtensionRepoScreen(
             ) {
                 Surface(
                     modifier = Modifier.size(48.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 ) {
                     Box(contentAlignment = Alignment.Center) {

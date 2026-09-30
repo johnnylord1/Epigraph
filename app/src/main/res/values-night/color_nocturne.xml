@@ -1,22 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ~ Nocturne — lunar graphite with a lilac accent, from the desktop NOCTURNE_THEME_TOKENS
-  ~ (bg-base #131313, accent #d3c4ff, accent-bright #b8a7ea, accent-dim #4f4279).
+  ~ Nocturne — lunar graphite with a lilac accent, from the desktop builtin Nocturne palette
+  ~ (bg-base #131313, accent #d3c4ff, accent-interactive #c9b5ff, on-accent-strong #352660,
+  ~ text-tab-active #f0edf8, search field #24212b @ 80%, danger #cf8aa0). Surfaces stay neutral
+  ~ graphite; lilac is reserved for state (selection, accent text, progress).
 -->
 <resources>
-    <color name="nocturne_primary">#B8A7EA</color>
-    <color name="nocturne_on_primary">#08080B</color>
-    <color name="nocturne_primary_variant">#211D2C</color>
+    <color name="nocturne_primary">#C9B5FF</color>
+    <color name="nocturne_on_primary">#352660</color>
+    <color name="nocturne_primary_variant">#17161C</color>
     <color name="nocturne_primary_inverse">#6750A4</color>
     <color name="nocturne_secondary">#D3C4FF</color>
-    <color name="nocturne_on_secondary">#08080B</color>
-    <color name="nocturne_secondary_variant">#E9E3FF</color>
-    <color name="nocturne_highlight">#1FD3C4FF</color>
-    <color name="nocturne_tertiary">#8F82E6</color>
-    <color name="nocturne_on_tertiary">#08080B</color>
+    <color name="nocturne_on_secondary">#352660</color>
+    <color name="nocturne_secondary_variant">#F0EDF8</color>
+    <color name="nocturne_highlight">#1FC9B5FF</color>
+    <color name="nocturne_tertiary">#8F7EE0</color>
+    <color name="nocturne_on_tertiary">#0C0B10</color>
     <color name="nocturne_tab_bar_icon">#D3C4FF</color>
+    <color name="nocturne_tab_bar_inactive">#8CE5E2E1</color>
     <color name="nocturne_background">#131313</color>
     <color name="nocturne_on_background">#E5E2E1</color>
     <color name="nocturne_surface">#131313</color>
     <color name="nocturne_on_surface">#E5E2E1</color>
+    <color name="nocturne_field_surface">#1D1C22</color>
+    <color name="nocturne_error">#CF8AA0</color>
 </resources>

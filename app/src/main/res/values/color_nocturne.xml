@@ -15,8 +15,11 @@
     <color name="nocturne_tertiary">#6750A4</color>
     <color name="nocturne_on_tertiary">#FFFFFF</color>
     <color name="nocturne_tab_bar_icon">#6750A4</color>
+    <color name="nocturne_tab_bar_inactive">#99242127</color>
     <color name="nocturne_background">#F3F2F5</color>
     <color name="nocturne_on_background">#242127</color>
     <color name="nocturne_surface">#F3F2F5</color>
     <color name="nocturne_on_surface">#242127</color>
+    <color name="nocturne_field_surface">#E9E6EF</color>
+    <color name="nocturne_error">#B3261E</color>
 </resources>

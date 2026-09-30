@@ -201,7 +201,7 @@
                     android:tooltipText="@string/reset_chapter_history"
                     app:layout_constraintHorizontal_chainStyle="spread"
                     app:srcCompat="@drawable/ic_eye_remove_outline_24dp"
-                    app:tint="@color/holo_red" />
+                    app:tint="?attr/colorError" />
                 <include
                     android:id="@+id/download_button"
                     layout="@layout/download_button"

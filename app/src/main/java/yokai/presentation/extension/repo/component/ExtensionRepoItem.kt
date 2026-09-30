@@ -1,7 +1,6 @@
 package yokai.presentation.extension.repo.component
 
 import android.content.res.Configuration
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,9 +50,8 @@ fun ExtensionRepoItem(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 5.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
     ) {
         Row(
             modifier = Modifier
@@ -64,9 +62,9 @@ fun ExtensionRepoItem(
         ) {
             Surface(
                 modifier = Modifier.size(42.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -138,9 +136,8 @@ fun ExtensionRepoInput(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 14.dp),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
     ) {
         Column(
             modifier = Modifier.padding(18.dp),
@@ -152,9 +149,9 @@ fun ExtensionRepoInput(
             ) {
                 Surface(
                     modifier = Modifier.size(44.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                    contentColor = MaterialTheme.colorScheme.secondary,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -227,6 +224,7 @@ fun ExtensionRepoInput(
 
             Button(
                 modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
                 enabled = canSubmit,
                 onClick = { onAddClick(trimmedInput) },
             ) {
