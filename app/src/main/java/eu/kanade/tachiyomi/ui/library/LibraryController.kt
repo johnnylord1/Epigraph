@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.library
 
+import yokai.presentation.theme.ReducedMotion
 import yokai.util.koin.get
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -54,6 +55,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
+import com.bluelinelabs.conductor.RouterTransaction
 import com.github.florent37.viewtooltip.ViewTooltip
 import com.google.android.material.snackbar.BaseTransientBottomBar
 import com.google.android.material.snackbar.Snackbar
@@ -78,6 +80,7 @@ import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.ui.base.MaterialMenuSheet
 import eu.kanade.tachiyomi.ui.base.MiniSearchView
 import eu.kanade.tachiyomi.ui.base.controller.BaseCoroutineController
+import eu.kanade.tachiyomi.ui.base.controller.CoverExpandChangeHandler
 import eu.kanade.tachiyomi.ui.category.CategoryController
 import eu.kanade.tachiyomi.ui.category.ManageCategoryDialog
 import eu.kanade.tachiyomi.ui.library.LibraryGroup.BY_AUTHOR
@@ -108,6 +111,8 @@ import epigraph.books.ui.LocalBookReaderActivity
 import epigraph.books.ui.LocalBookDetailsController
 import epigraph.books.ui.UnifiedLibraryBooksView
 import epigraph.sync.core.assets.BookAssetCoordinator
+import epigraph.ui.motion.CoverReturnChangeHandler
+import epigraph.ui.motion.ListEntryAnimation
 import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.moveCategories
 import eu.kanade.tachiyomi.util.system.contextCompatDrawable
@@ -148,6 +153,7 @@ import eu.kanade.tachiyomi.util.view.setTitle
 import eu.kanade.tachiyomi.util.view.smoothScrollToTop
 import eu.kanade.tachiyomi.util.view.snack
 import eu.kanade.tachiyomi.util.view.text
+import eu.kanade.tachiyomi.util.view.fadeTransactionHandler
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.widget.EmptyView
 import java.util.Locale
@@ -261,7 +267,7 @@ open class LibraryController(
             )
             setIcon(
                 if (booksMode) R.drawable.ic_library_outline_24dp
-                else R.drawable.ic_book_open_variant_24dp,
+                else R.drawable.ic_book_open_outline_24dp,
             )
         }
     }
@@ -458,6 +464,20 @@ open class LibraryController(
     }
 
     /** Apply the controller-wide selection set/mode onto a freshly bound page adapter. Called from LibraryPagerAdapter.bindCategoryItems. */
+    /** The staggered cover entry plays on the first non-empty load only, never on refresh or rotation. */
+    private var libraryEntryPlayed = false
+
+    /**
+     * Plays the first-load entry (DESIGN.md §9 "Entrada de lista") on [recycler]; in tabbed mode only
+     * the visible tab's page ([pagePosition]) animates.
+     */
+    fun playLibraryEntryOnce(recycler: RecyclerView, pagePosition: Int? = null) {
+        if (libraryEntryPlayed || !isBindingInitialized) return
+        if (pagePosition != null && binding.libraryPager.currentItem != pagePosition) return
+        libraryEntryPlayed = true
+        ListEntryAnimation.runOnce(recycler)
+    }
+
     fun applySelectionStateTo(adapter: LibraryCategoryAdapter) {
         val targetMode = if (selectedMangas.isNotEmpty()) {
             SelectableAdapter.Mode.MULTI
@@ -2047,6 +2067,9 @@ open class LibraryController(
         // populating + showing the continuous recycler in tabbed mode — that was the lib-flash.
         // targetDisplaySurface already folds in single-category, flatten-on-search, and sub-class.
         adapter.setItems(if (targetDisplaySurface == DisplaySurface.TABBED) emptyList() else mangaMap)
+        if (mangaMap.isNotEmpty() && !booksMode && targetDisplaySurface != DisplaySurface.TABBED) {
+            playLibraryEntryOnce(binding.libraryGridRecycler.recycler)
+        }
         if (binding.libraryGridRecycler.recycler.translationX != 0f) {
             val time = binding.root.resources.getInteger(
                 AR.integer.config_shortAnimTime,
@@ -2571,7 +2594,7 @@ open class LibraryController(
             toggleSelection(position)
             false
         } else {
-            openManga(item.manga.manga)
+            openManga(item.manga.manga, view?.findViewById(R.id.card))
             false
         }
     }
@@ -2582,8 +2605,42 @@ open class LibraryController(
         }
     }
 
-    private fun openManga(manga: Manga) {
-        router.pushController(MangaDetailsController(manga).withFadeTransaction())
+    private fun openManga(manga: Manga, cover: View? = null) {
+        val controller = MangaDetailsController(manga)
+        // Grid covers get the signature cover-expand push; reduced motion and list rows keep the fade.
+        if (cover == null || ReducedMotion.isEnabled()) {
+            router.pushController(controller.withFadeTransaction())
+            return
+        }
+        router.pushController(
+            RouterTransaction.with(controller)
+                .pushChangeHandler(
+                    CoverExpandChangeHandler(
+                        cover,
+                        target = { controller.coverTransitionTarget() },
+                        hideTarget = controller::hideCoverForTransition,
+                    ),
+                )
+                .popChangeHandler(
+                    CoverReturnChangeHandler(
+                        headerCover = controller::coverTransitionSource,
+                        gridCard = { gridCardFor(manga.id) },
+                    ),
+                ),
+        )
+    }
+
+    /** The on-screen grid card currently showing [mangaId], where the cover lands on the way back. */
+    private fun gridCardFor(mangaId: Long?): View? {
+        if (mangaId == null || !isBindingInitialized || booksMode) return null
+        val recycler = currentLibraryRecycler
+        val adapter = currentLibraryAdapter ?: return null
+        for (i in 0 until recycler.childCount) {
+            val holder = recycler.getChildViewHolder(recycler.getChildAt(i)) as? LibraryGridHolder ?: continue
+            val item = adapter.getItem(holder.flexibleAdapterPosition) as? LibraryMangaItem ?: continue
+            if (item.manga.manga.id == mangaId) return holder.itemView.findViewById(R.id.card)
+        }
+        return null
     }
 
     private fun openOrDownloadBook(book: LocalBook) {

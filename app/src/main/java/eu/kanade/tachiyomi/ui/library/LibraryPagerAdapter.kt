@@ -125,6 +125,7 @@ class LibraryPagerAdapter(
         val query = controller.currentQuery
         adapter.setFilter(query.takeIf { it.isNotEmpty() })
         adapter.setItems(items)
+        if (items.isNotEmpty()) pageRecyclers[position]?.let { controller.playLibraryEntryOnce(it, position) }
         updateSearchGloballyHeader(position, adapter, query)
         controller.applySelectionStateTo(adapter)
     }

@@ -21,7 +21,7 @@
 
     <item
         android:id="@+id/action_books"
-        android:icon="@drawable/ic_book_open_variant_24dp"
+        android:icon="@drawable/ic_book_open_outline_24dp"
         android:title="@string/epigraph_books"
         app:showAsAction="always" />
 

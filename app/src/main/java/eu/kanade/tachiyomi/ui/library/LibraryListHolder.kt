@@ -7,6 +7,7 @@ import android.widget.ImageView
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import coil3.dispose
+import com.google.android.material.R as materialR
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.isNovel
 import eu.kanade.tachiyomi.databinding.MangaListItemBinding
@@ -83,6 +84,8 @@ class LibraryListHolder(
                 }
             }
             binding.title.textAlignment = View.TEXT_ALIGNMENT_CENTER
+            // Empty-category note is secondary copy (DESIGN.md §10), not a row title.
+            binding.title.setTextColor(itemView.context.getResourceColor(android.R.attr.textColorSecondary))
             binding.card.isVisible = false
             binding.unreadDownloadBadge.badgeView.isVisible = false
             binding.padding.isVisible = false
@@ -100,6 +103,7 @@ class LibraryListHolder(
         binding.padding.isVisible = true
         binding.card.isVisible = true
         binding.title.textAlignment = View.TEXT_ALIGNMENT_TEXT_START
+        binding.title.setTextColor(itemView.context.getResourceColor(materialR.attr.colorOnBackground))
 
         // Update the binding.title of the manga.
         binding.title.text = item.manga.manga.title.highlightText(item.filter, color)

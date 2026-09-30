@@ -4,6 +4,8 @@ import yokai.util.koin.get
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Color
+import android.text.style.ForegroundColorSpan
+import android.text.style.TextAppearanceSpan
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.MotionEvent
@@ -12,6 +14,8 @@ import epigraph.books.ui.UnifiedLibraryBooksView
 import androidx.annotation.DrawableRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
+import androidx.core.text.buildSpannedString
+import androidx.core.text.inSpans
 import androidx.core.view.isVisible
 import androidx.core.view.marginTop
 import androidx.core.view.updateLayoutParams
@@ -227,9 +231,10 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
         binding.categoryTitle.updateLayoutParams<ConstraintLayout.LayoutParams> {
             topMargin = (
                 when {
-                    shorterMargin -> 2
-                    previousIsCollapsed -> 5
-                    else -> 32
+                    shorterMargin -> 8
+                    previousIsCollapsed -> 8
+                    // space-3: the title alone separates categories, no extra air needed.
+                    else -> 24
                 }
                 ).dpToPx
         }
@@ -240,15 +245,23 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
             category.name
         }
 
-        binding.categoryTitle.text = categoryName +
+        // DESIGN.md §10: the count drops to caption size and carries the accent, so each shelf
+        // is marked without a second colour.
+        binding.categoryTitle.text = buildSpannedString {
+            append(categoryName)
             if (adapter.showNumber) {
-                var countText = if (searchText.isNullOrBlank()) {
-                    " ($totalCount)"
+                val countText = if (searchText.isNullOrBlank()) {
+                    "$totalCount"
                 } else {
-                    " ($filteredCount/$totalCount)"
+                    "$filteredCount/$totalCount"
                 }
-                countText
-            } else { "" }
+                if (categoryName.isNotEmpty()) append("  ")
+                inSpans(
+                    TextAppearanceSpan(itemView.context, R.style.TextAppearance_Epigraph_Caption),
+                    ForegroundColorSpan(itemView.context.getResourceColor(android.R.attr.colorPrimary)),
+                ) { append(countText) }
+            }
+        }
         if (category.sourceId != null) {
             val icon = adapter.sourceManager.get(category.sourceId!!)?.icon()
             icon?.setBounds(0, 0, 32.dpToPx, 32.dpToPx)

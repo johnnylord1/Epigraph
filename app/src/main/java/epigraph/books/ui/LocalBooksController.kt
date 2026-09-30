@@ -1,26 +1,39 @@
 package epigraph.books.ui
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.text.SpannableStringBuilder
+import android.text.format.Formatter
+import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.LinearLayout
-import android.widget.TextView
+import android.widget.ImageView
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Book
+import androidx.core.text.inSpans
 import androidx.core.view.updatePadding
 import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.button.MaterialButton
+import coil3.dispose
+import coil3.load
+import coil3.request.error
+import coil3.request.placeholder
+import epigraph.ui.moment.MomentOverlay
+import epigraph.ui.moment.MomentSpec
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.EpigraphBooksControllerBinding
+import eu.kanade.tachiyomi.databinding.EpigraphLocalBookItemBinding
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
+import eu.kanade.tachiyomi.util.system.getResourceColor
+import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.appBar
 import eu.kanade.tachiyomi.util.view.fullAppBarHeight
@@ -30,11 +43,14 @@ import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.local.ImportPreview
 import epigraph.sync.core.assets.BookAssetCoordinator
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.core.component.inject
+import yokai.i18n.MR
+import yokai.util.lang.getString
 
 /** Functional entry point for EPUB/PDF files kept in the app-private store. */
 class LocalBooksController(bundle: Bundle? = null) :
@@ -46,7 +62,7 @@ class LocalBooksController(bundle: Bundle? = null) :
     private lateinit var adapter: LocalBooksAdapter
     private var relinkBookId: String? = null
 
-    override fun getTitle(): String = "Books"
+    override fun getTitle(): String? = view?.context?.getString(MR.strings.local_books_title)
 
     override fun createBinding(inflater: LayoutInflater): EpigraphBooksControllerBinding =
         EpigraphBooksControllerBinding.inflate(inflater)
@@ -73,7 +89,11 @@ class LocalBooksController(bundle: Bundle? = null) :
         viewScope.launch {
             repository.observeBooks().collectLatest { books ->
                 adapter.submitList(books)
-                binding.empty.isVisible = books.isEmpty()
+                if (books.isEmpty()) {
+                    binding.empty.show(Icons.Outlined.Book, MR.strings.local_books_empty)
+                } else {
+                    binding.empty.hide()
+                }
             }
         }
     }
@@ -91,7 +111,8 @@ class LocalBooksController(bundle: Bundle? = null) :
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != Activity.RESULT_OK) return
         val uri = data?.data ?: return
-        val name = displayName(uri).ifBlank { "Imported book" }
+        val context = view?.context ?: return
+        val name = displayName(uri).ifBlank { context.getString(MR.strings.local_books_fallback_name) }
         if (requestCode == REQUEST_RELINK) {
             val targetId = relinkBookId ?: return
             relinkBookId = null
@@ -100,14 +121,14 @@ class LocalBooksController(bundle: Bundle? = null) :
         }
         if (requestCode != REQUEST_IMPORT) return
         binding.status.isVisible = true
-        binding.status.text = "Inspecting $name…"
+        binding.status.text = context.getString(MR.strings.local_books_inspecting, name)
         viewScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { importService.inspect(uri, name) }
             }.onSuccess { preview ->
                 showImportConfirmation(uri, name, preview)
             }.onFailure { error ->
-                binding.status.text = error.message ?: "The book could not be imported"
+                binding.status.text = error.message ?: context.getString(MR.strings.local_books_import_failed)
                 view?.context?.toast(error.message)
             }
         }
@@ -130,11 +151,11 @@ class LocalBooksController(bundle: Bundle? = null) :
     private fun prepareRelink(uri: Uri, name: String, targetId: String) {
         val context = activity ?: return
         binding.status.isVisible = true
-        binding.status.text = "Checking replacement file…"
+        binding.status.text = context.getString(MR.strings.local_books_checking_replacement)
         viewScope.launch {
             val target = withContext(Dispatchers.IO) { repository.find(targetId) }
             if (target == null) {
-                binding.status.text = "The missing book is no longer in the library"
+                binding.status.text = context.getString(MR.strings.local_books_missing_target)
                 return@launch
             }
             runCatching {
@@ -143,33 +164,36 @@ class LocalBooksController(bundle: Bundle? = null) :
                 }
             }.onSuccess { preview ->
                 if (preview.sha256 != target.sha256) {
-                    binding.status.text = "The selected file has a different SHA-256"
-                    view?.context?.toast("Choose the original file for this book")
+                    binding.status.text = context.getString(MR.strings.local_books_hash_mismatch)
+                    context.toast(MR.strings.local_books_choose_original)
                 } else {
-                    AlertDialog.Builder(context)
-                        .setTitle("Relink book")
-                        .setMessage("The file matches ${target.displayName}. Copy it into private storage?")
+                    context.materialAlertDialog()
+                        .setTitle(context.getString(MR.strings.local_books_relink_title))
+                        .setMessage(context.getString(MR.strings.local_books_relink_message, target.displayName))
                         .setNegativeButton(android.R.string.cancel) { _, _ -> binding.status.isVisible = false }
-                        .setPositiveButton("Relink") { _, _ -> relinkBook(uri, target) }
+                        .setPositiveButton(context.getString(MR.strings.local_books_relink)) { _, _ ->
+                            relinkBook(uri, target)
+                        }
                         .show()
                 }
             }.onFailure { error ->
-                binding.status.text = error.message ?: "The replacement file could not be inspected"
+                binding.status.text = error.message ?: context.getString(MR.strings.local_books_inspect_failed)
                 view?.context?.toast(error.message)
             }
         }
     }
 
     private fun relinkBook(uri: Uri, target: LocalBook) {
+        val context = view?.context ?: return
         binding.status.isVisible = true
-        binding.status.text = "Relinking ${target.displayName}…"
+        binding.status.text = context.getString(MR.strings.local_books_relinking, target.displayName)
         viewScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { importService.relink(uri, target) }
             }.onSuccess { book ->
-                binding.status.text = "Relinked ${book.displayName}"
+                binding.status.text = context.getString(MR.strings.local_books_relinked, book.displayName)
             }.onFailure { error ->
-                binding.status.text = error.message ?: "The book could not be relinked"
+                binding.status.text = error.message ?: context.getString(MR.strings.local_books_relink_failed)
                 view?.context?.toast(error.message)
             }
         }
@@ -177,38 +201,54 @@ class LocalBooksController(bundle: Bundle? = null) :
 
     private fun showImportConfirmation(uri: Uri, name: String, preview: ImportPreview) {
         val context = activity ?: return
-        val duplicateNote = if (preview.alreadyImported) {
-            "\nThis file is already in the library; importing it again will reuse the existing copy."
-        } else {
-            ""
+        val message = buildString {
+            appendLine(preview.contentType.name)
+            val title = preview.title?.takeIf(String::isNotBlank) ?: preview.displayName
+            appendLine("${context.getString(MR.strings.title)}: $title")
+            preview.author?.takeIf(String::isNotBlank)?.let {
+                appendLine("${context.getString(MR.strings.author)}: $it")
+            }
+            val size = Formatter.formatShortFileSize(context, preview.byteSize)
+            appendLine("${context.getString(MR.strings.local_books_size)}: $size")
+            append("SHA-256: ${preview.sha256}")
+            if (preview.alreadyImported) {
+                append("\n\n")
+                append(context.getString(MR.strings.local_books_duplicate_note))
+            }
         }
-        AlertDialog.Builder(context)
-            .setTitle("Import book")
-            .setMessage(
-                "${preview.contentType.name}\n" +
-                    "Title: ${preview.title?.takeIf(String::isNotBlank) ?: preview.displayName}\n" +
-                    preview.author?.takeIf(String::isNotBlank)?.let { "Author: $it\n" }.orEmpty() +
-                    "Size: ${preview.byteSize} bytes\n" +
-                    "SHA-256: ${preview.sha256}$duplicateNote",
-            )
+        context.materialAlertDialog()
+            .setTitle(context.getString(MR.strings.local_books_import_title))
+            .setMessage(message)
             .setNegativeButton(android.R.string.cancel) { _, _ ->
                 binding.status.isVisible = false
             }
-            .setPositiveButton("Import") { _, _ -> importBook(uri, name) }
+            .setPositiveButton(context.getString(MR.strings.local_books_import)) { _, _ -> importBook(uri, name) }
             .setOnCancelListener { binding.status.isVisible = false }
             .show()
     }
 
     private fun importBook(uri: Uri, name: String) {
+        val context = view?.context ?: return
         binding.status.isVisible = true
-        binding.status.text = "Importing $name…"
+        binding.status.text = context.getString(MR.strings.local_books_importing, name)
         viewScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { importService.import(uri, name) }
             }.onSuccess { book ->
-                binding.status.text = "Imported ${book.displayName}"
+                binding.status.text = context.getString(MR.strings.local_books_imported, book.displayName)
+                // DESIGN.md §9: "import done" is this flow's one memorable moment.
+                activity?.let {
+                    MomentOverlay.show(
+                        it,
+                        MomentSpec(
+                            icon = R.drawable.ic_book_open_variant_24dp,
+                            title = it.getString(MR.strings.moment_import_done),
+                            detail = book.displayName,
+                        ),
+                    )
+                }
             }.onFailure { error ->
-                binding.status.text = error.message ?: "The book could not be imported"
+                binding.status.text = error.message ?: context.getString(MR.strings.local_books_import_failed)
                 view?.context?.toast(error.message)
             }
         }
@@ -224,22 +264,23 @@ class LocalBooksController(bundle: Bundle? = null) :
     }
 
     private fun downloadOrRelink(book: LocalBook) {
+        val context = view?.context ?: return
         binding.status.isVisible = true
-        binding.status.text = "Downloading ${book.displayName}..."
+        binding.status.text = context.getString(MR.strings.local_books_downloading, book.displayName)
         viewScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { bookAssets.ensurePublicationAvailable(book.bookId) }
             }.onSuccess {
-                binding.status.text = "Downloaded ${book.displayName}"
+                binding.status.text = context.getString(MR.strings.local_books_downloaded, book.displayName)
                 repository.find(book.bookId)?.let(::openBook)
             }.onFailure { error ->
-                binding.status.text = error.message ?: "The book could not be downloaded"
-                val context = activity ?: return@onFailure
-                AlertDialog.Builder(context)
-                    .setTitle("Book file unavailable")
-                    .setMessage("The synchronized copy could not be downloaded. You can choose the original file instead.")
+                binding.status.text = error.message ?: context.getString(MR.strings.local_books_download_failed)
+                val activity = activity ?: return@onFailure
+                activity.materialAlertDialog()
+                    .setTitle(activity.getString(MR.strings.local_books_unavailable_title))
+                    .setMessage(activity.getString(MR.strings.local_books_unavailable_message))
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("Relink") { _, _ -> launchRelink(book) }
+                    .setPositiveButton(activity.getString(MR.strings.local_books_relink)) { _, _ -> launchRelink(book) }
                     .show()
             }
         }
@@ -248,11 +289,11 @@ class LocalBooksController(bundle: Bundle? = null) :
     private fun deleteBook(book: LocalBook) {
         val context = activity ?: return
         // Removing also deletes the private copy of the file, which cannot be undone.
-        AlertDialog.Builder(context)
-            .setTitle("Remove book")
-            .setMessage("Remove ${book.displayName} and delete its file from this device?")
+        context.materialAlertDialog()
+            .setTitle(context.getString(MR.strings.local_books_remove_title))
+            .setMessage(context.getString(MR.strings.local_books_remove_message, book.displayName))
             .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Remove") { _, _ -> removeBook(book) }
+            .setPositiveButton(context.getString(MR.strings.remove)) { _, _ -> removeBook(book) }
             .show()
     }
 
@@ -272,84 +313,62 @@ class LocalBooksController(bundle: Bundle? = null) :
 private fun Cursor.readDisplayName(): String? =
     if (moveToFirst()) getString(getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME)) else null
 
+/** DESIGN.md §10 "Item de lista": cover, title, meta; recover and remove as 48dp icon actions. */
 private class LocalBooksAdapter(
     private val onOpen: (LocalBook) -> Unit,
     private val onDelete: (LocalBook) -> Unit,
     private val onRecover: (LocalBook) -> Unit,
 ) : ListAdapter<LocalBook, LocalBooksAdapter.BookHolder>(DIFF) {
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BookHolder {
-        val context = parent.context
-        val row = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(8, 12, 8, 12)
-            isClickable = true
-            isFocusable = true
-        }
-        val title = TextView(context).apply { textSize = 16f }
-        val subtitle = TextView(context).apply { textSize = 13f }
-        val delete = MaterialButton(context).apply {
-            text = "Remove"
-            minHeight = 0
-            minimumHeight = 0
-        }
-        val relink = MaterialButton(context).apply {
-            text = "Download"
-            minHeight = 0
-            minimumHeight = 0
-        }
-        val actions = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(relink, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-            addView(delete, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ))
-        }
-        row.addView(title, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-        row.addView(subtitle, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-        row.addView(actions, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ))
-        return BookHolder(row, title, subtitle, relink, delete)
-    }
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BookHolder =
+        BookHolder(EpigraphLocalBookItemBinding.inflate(LayoutInflater.from(parent.context), parent, false))
 
     override fun onBindViewHolder(holder: BookHolder, position: Int) {
         holder.bind(getItem(position))
     }
 
-    inner class BookHolder(
-        view: View,
-        private val title: TextView,
-        private val subtitle: TextView,
-        private val relink: MaterialButton,
-        private val delete: MaterialButton,
-    ) : RecyclerView.ViewHolder(view) {
-        fun bind(book: LocalBook) {
-            title.text = book.displayName
-            subtitle.text = "${book.contentType.name} · ${formatBytes(book.byteSize)}"
-            if (!book.isAvailable) subtitle.append(" - File missing")
-            itemView.setOnClickListener { if (book.isAvailable) onOpen(book) else onRecover(book) }
-            relink.isVisible = !book.isAvailable
-            relink.setOnClickListener { onRecover(book) }
-            delete.setOnClickListener { onDelete(book) }
-        }
+    override fun onViewRecycled(holder: BookHolder) {
+        holder.binding.cover.dispose()
     }
 
-    private fun formatBytes(bytes: Long): String = when {
-        bytes < 1024L -> "$bytes B"
-        bytes < 1024L * 1024L -> "%.1f KiB".format(bytes / 1024.0)
-        else -> "%.1f MiB".format(bytes / (1024.0 * 1024.0))
+    inner class BookHolder(val binding: EpigraphLocalBookItemBinding) : RecyclerView.ViewHolder(binding.root) {
+        fun bind(book: LocalBook) = with(binding) {
+            val context = root.context
+            title.text = book.displayName
+            meta.text = SpannableStringBuilder().apply {
+                book.author?.takeIf(String::isNotBlank)?.let { append(it).append(" · ") }
+                append(book.contentType.name)
+                append(" · ")
+                append(Formatter.formatShortFileSize(context, book.byteSize))
+                if (!book.isAvailable) {
+                    append(" · ")
+                    inSpans(ForegroundColorSpan(context.getResourceColor(androidx.appcompat.R.attr.colorError))) {
+                        append(context.getString(MR.strings.local_books_file_missing))
+                    }
+                }
+            }
+            val placeholder = if (book.contentType.name == "PDF") {
+                R.drawable.ic_file_open_24dp
+            } else {
+                R.drawable.ic_book_open_variant_24dp
+            }
+            val coverFile = book.coverPath?.let(::File)?.takeIf(File::isFile)
+            cover.dispose()
+            if (coverFile != null) {
+                cover.scaleType = ImageView.ScaleType.CENTER_CROP
+                cover.load(coverFile) {
+                    placeholder(placeholder)
+                    error(placeholder)
+                }
+            } else {
+                cover.scaleType = ImageView.ScaleType.CENTER_INSIDE
+                cover.setImageResource(placeholder)
+            }
+            root.setOnClickListener { if (book.isAvailable) onOpen(book) else onRecover(book) }
+            recover.isVisible = !book.isAvailable
+            recover.setOnClickListener { onRecover(book) }
+            remove.setOnClickListener { onDelete(book) }
+        }
     }
 
     private companion object {

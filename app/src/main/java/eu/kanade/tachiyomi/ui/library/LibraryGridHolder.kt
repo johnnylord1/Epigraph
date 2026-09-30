@@ -9,7 +9,11 @@ import android.widget.FrameLayout
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.isVisible
 import androidx.core.view.marginBottom
+import androidx.core.view.marginStart
+import androidx.core.view.marginTop
 import androidx.core.view.updateLayoutParams
+import androidx.dynamicanimation.animation.DynamicAnimation
+import androidx.dynamicanimation.animation.SpringAnimation
 import coil3.dispose
 import coil3.size.Scale
 import com.google.android.material.R as materialR
@@ -26,6 +30,8 @@ import eu.kanade.tachiyomi.util.view.backgroundColor
 import eu.kanade.tachiyomi.util.view.setCards
 import eu.kanade.tachiyomi.widget.AutofitRecyclerView
 import yokai.i18n.MR
+import yokai.presentation.theme.Motion
+import yokai.presentation.theme.ReducedMotion
 import yokai.util.coil.loadManga
 import yokai.util.lang.getString
 
@@ -45,6 +51,14 @@ class LibraryGridHolder(
 ) : LibraryHolder(view, adapter) {
 
     private val binding = MangaGridItemBinding.bind(view)
+
+    // Selecting a cover settles it slightly inward on `spring-snappy` (DESIGN.md §10 "Capa em grade").
+    private val selectScaleX = SpringAnimation(binding.card, DynamicAnimation.SCALE_X).apply {
+        spring = Motion.Spring.Snappy.force(1f)
+    }
+    private val selectScaleY = SpringAnimation(binding.card, DynamicAnimation.SCALE_Y).apply {
+        spring = Motion.Spring.Snappy.force(1f)
+    }
     private var titleLayoutTask: Runnable? = null
     private var boundSignature: Int? = null
     private var boundCover: CoverContent? = null
@@ -151,13 +165,24 @@ class LibraryGridHolder(
 
     override fun toggleActivation() {
         super.toggleActivation()
-        setSelected(adapter.isSelected(flexibleAdapterPosition))
+        setSelected(adapter.isSelected(flexibleAdapterPosition), animate = true)
     }
 
-    fun setSelected(isSelected: Boolean) {
+    /** [animate] only for a change the user sees happen; binds snap so recycled cells never spring. */
+    fun setSelected(isSelected: Boolean, animate: Boolean = false) {
+        val scale = if (isSelected) SELECTED_SCALE else 1f
+        if (animate && !ReducedMotion.isEnabled()) {
+            selectScaleX.animateToFinalPosition(scale)
+            selectScaleY.animateToFinalPosition(scale)
+        } else {
+            selectScaleX.cancel()
+            selectScaleY.cancel()
+            binding.card.scaleX = scale
+            binding.card.scaleY = scale
+        }
         with(binding) {
             card.strokeWidth = when {
-                isSelected -> 3.dpToPx
+                isSelected -> 2.dpToPx
                 adapter.showOutline -> 1.dpToPx
                 else -> 0
             }
@@ -211,6 +236,8 @@ class LibraryGridHolder(
     }
 
     override fun recycle() {
+        selectScaleX.cancel()
+        selectScaleY.cancel()
         titleLayoutTask?.let(binding.title::removeCallbacks)
         titleLayoutTask = null
         binding.coverThumbnail.dispose()
@@ -235,6 +262,11 @@ class LibraryGridHolder(
         super.onItemReleased(position)
         binding.card.isDragged = false
         binding.unreadDownloadBadge.badgeView.isDragged = false
+    }
+
+    private companion object {
+        /** Selected covers sit this much smaller, inside their accent outline. */
+        const val SELECTED_SCALE = 0.94f
     }
 }
 
@@ -274,15 +306,11 @@ fun MangaGridItemBinding.setBGAndFG(libraryLayout: Int) {
         } else {
             card.marginBottom - 2.dpToPx
         }
-    val others =
-        if (libraryLayout == LibraryItem.LAYOUT_COMPACT_GRID) {
-            4.dpToPx
-        } else {
-            5.dpToPx
-        }
+    // Ripple hugs the card: its sides match the card's 4dp margin, its top the 8dp row gap.
+    val others = card.marginStart
     (constraintLayout.background as? RippleDrawable)?.apply {
         for (i in 0 until numberOfLayers) {
-            setLayerInset(i, others, others, others, bottom)
+            setLayerInset(i, others, card.marginTop, others, bottom)
         }
     }
     (constraintLayout.foreground as? RippleDrawable)?.apply {
@@ -290,7 +318,7 @@ fun MangaGridItemBinding.setBGAndFG(libraryLayout: Int) {
             setLayerSize(1, 0, 0)
         }
         for (i in 0 until numberOfLayers) {
-            setLayerInset(i, others, others, others, bottom)
+            setLayerInset(i, others, card.marginTop, others, bottom)
         }
     }
 }

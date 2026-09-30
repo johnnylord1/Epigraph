@@ -2,7 +2,6 @@ package epigraph.books.ui
 
 import android.animation.ValueAnimator
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -12,6 +11,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.text.format.Formatter
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuInflater
@@ -21,6 +21,7 @@ import android.view.ViewGroup
 import androidx.annotation.FloatRange
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
+import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePaddingRelative
@@ -41,12 +42,14 @@ import coil3.request.allowHardware
 import coil3.request.error
 import coil3.request.placeholder
 import com.google.android.material.R as materialR
+import epigraph.ui.color.CoverPalette
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.ChaptersItemBinding
 import eu.kanade.tachiyomi.databinding.MangaDetailsControllerBinding
 import eu.kanade.tachiyomi.databinding.MangaHeaderItemBinding
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsDivider
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -80,6 +83,7 @@ import org.koin.core.component.inject
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
+import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import yokai.i18n.MR
 import yokai.util.lang.getString
 import android.R as AR
@@ -105,6 +109,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private val repository: LocalBookRepository by inject()
     private val bookAssets: BookAssetCoordinator by inject()
+    private val preferences: PreferencesHelper by inject()
     private lateinit var structureInspector: BookStructureInspector
     private var book: LocalBook? = null
     private var progress: ReaderLocator? = null
@@ -117,7 +122,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     private var detailsAdapter: LocalBookDetailsAdapter? = null
     private var tabletDetailsAdapter: LocalBookDetailsAdapter? = null
 
-    override fun getTitle(): String = book?.displayName ?: "Book"
+    override fun getTitle(): String? = book?.displayName ?: view?.context?.getString(MR.strings.local_book_fallback_title)
 
     override fun createBinding(inflater: LayoutInflater): MangaDetailsControllerBinding =
         MangaDetailsControllerBinding.inflate(inflater)
@@ -287,7 +292,8 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         onBookmarks = ::showBookmarks,
         onHighlights = ::showHighlights,
         onFileInfo = ::showFileInfo,
-        onPalette = ::applyCoverPalette,
+        // DESIGN.md §2: the global `themeMangaDetails` toggle decides (a book has no per-title override).
+        onPalette = if (preferences.themeMangaDetails().get()) ::applyCoverPalette else null,
     )
 
     /**
@@ -501,9 +507,9 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                 runCatching {
                     withContext(Dispatchers.IO) { bookAssets.ensurePublicationAvailable(bookId) }
                 }.onFailure { failure ->
-                    AlertDialog.Builder(context)
-                        .setTitle("Book file unavailable")
-                        .setMessage(failure.message ?: "The synchronized book could not be downloaded.")
+                    context.materialAlertDialog()
+                        .setTitle(context.getString(MR.strings.local_books_unavailable_title))
+                        .setMessage(failure.message ?: context.getString(MR.strings.local_book_download_failed_message))
                         .setPositiveButton(android.R.string.ok, null)
                         .show()
                     return@launch
@@ -552,17 +558,17 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         viewScope.launch {
             val bookmarks = withContext(Dispatchers.IO) { repository.getBookmarks(bookId) }
             if (bookmarks.isEmpty()) {
-                AlertDialog.Builder(context)
-                    .setTitle("Bookmarks")
-                    .setMessage("No bookmarks saved for this book yet.")
+                context.materialAlertDialog()
+                    .setTitle(context.getString(MR.strings.local_book_bookmarks))
+                    .setMessage(context.getString(MR.strings.local_book_no_bookmarks))
                     .setPositiveButton(android.R.string.ok, null)
                     .show()
                 return@launch
             }
-            AlertDialog.Builder(context)
-                .setTitle("Bookmarks")
+            context.materialAlertDialog()
+                .setTitle(context.getString(MR.strings.local_book_bookmarks))
                 .setItems(bookmarks.map { bookmark ->
-                    bookmark.label?.takeIf(String::isNotBlank) ?: "Saved position"
+                    bookmark.label?.takeIf(String::isNotBlank) ?: context.getString(MR.strings.local_book_saved_position)
                 }.toTypedArray()) { _, index -> openReader(bookmarks[index].locator) }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
@@ -574,15 +580,15 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         viewScope.launch {
             val highlights = withContext(Dispatchers.IO) { repository.getHighlights(bookId) }
             if (highlights.isEmpty()) {
-                AlertDialog.Builder(context)
-                    .setTitle("Highlights")
-                    .setMessage("No highlights saved for this book yet.")
+                context.materialAlertDialog()
+                    .setTitle(context.getString(MR.strings.local_book_highlights))
+                    .setMessage(context.getString(MR.strings.local_book_no_highlights))
                     .setPositiveButton(android.R.string.ok, null)
                     .show()
                 return@launch
             }
-            AlertDialog.Builder(context)
-                .setTitle("Highlights")
+            context.materialAlertDialog()
+                .setTitle(context.getString(MR.strings.local_book_highlights))
                 .setItems(highlights.map { highlight ->
                     highlight.selectedText.replace(Regex("\\s+"), " ").trim().take(120)
                 }.toTypedArray()) { _, index -> openReader(highlights[index].start) }
@@ -594,25 +600,24 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
     private fun showFileInfo() {
         val context = activity ?: return
         val loaded = book ?: return
-        val positionLabel = bookProgressLabel(loaded, progress, structure)
-        AlertDialog.Builder(context)
-            .setTitle("File information")
+        val positionLabel = bookProgressLabel(context, loaded, progress, structure)
+        val availability = context.getString(
+            if (loaded.isAvailable) MR.strings.local_book_available_offline else MR.strings.local_book_file_unavailable,
+        )
+        context.materialAlertDialog()
+            .setTitle(context.getString(MR.strings.local_book_file_info))
             .setMessage(
-                "Type: ${loaded.contentType}\n" +
-                    "Size: ${formatBytes(loaded.byteSize)}\n" +
+                "${context.getString(MR.strings.type)}: ${loaded.contentType}\n" +
+                    "${context.getString(MR.strings.local_books_size)}: " +
+                    "${Formatter.formatShortFileSize(context, loaded.byteSize)}\n" +
                     "SHA-256: ${loaded.sha256}\n" +
-                    "Position: $positionLabel\n" +
-                    "Status: ${if (loaded.isAvailable) "Available offline" else "File unavailable"}",
+                    "${context.getString(MR.strings.local_book_position)}: $positionLabel\n" +
+                    "${context.getString(MR.strings.status)}: $availability",
             )
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
 
-    private fun formatBytes(bytes: Long): String = when {
-        bytes < 1024L -> "$bytes B"
-        bytes < 1024L * 1024L -> "%.1f KiB".format(bytes / 1024.0)
-        else -> "%.1f MiB".format(bytes / (1024.0 * 1024.0))
-    }
 
     private companion object {
         const val BOOK_ID_KEY = "epigraph.book.id"
@@ -629,14 +634,18 @@ private fun readerAccentForTheme(context: android.content.Context, color: Int): 
         android.content.res.Configuration.UI_MODE_NIGHT_MASK !=
         android.content.res.Configuration.UI_MODE_NIGHT_NO
     val needsBlend = if (night) luminance <= 0.6f else luminance > 0.4f
-    if (!needsBlend) return color
-    val amount = if (night) -(luminance - 1f) else luminance
-    val factor = amount * if (night) 0.22f else 0.35f
-    return ColorUtils.blendARGB(
-        color,
-        context.contextCompatColor(R.color.colorOnDownloadBadgeDayNight),
-        factor,
-    )
+    val blended = if (!needsBlend) {
+        color
+    } else {
+        val amount = if (night) -(luminance - 1f) else luminance
+        val factor = amount * if (night) 0.22f else 0.35f
+        ColorUtils.blendARGB(
+            color,
+            context.contextCompatColor(R.color.colorOnDownloadBadgeDayNight),
+            factor,
+        )
+    }
+    return CoverPalette.accentFor(blended, context.getResourceColor(android.R.attr.colorBackground))
 }
 
 private fun readerReadableForeground(context: android.content.Context, background: Int): Int {
@@ -651,6 +660,7 @@ private fun readerReadableForeground(context: android.content.Context, backgroun
 }
 
 private fun bookProgressLabel(
+    context: android.content.Context,
     book: LocalBook,
     locator: ReaderLocator?,
     structure: BookStructure?,
@@ -662,14 +672,14 @@ private fun bookProgressLabel(
             total,
             structure?.chapterPaths.orEmpty(),
         )
-        "Chapter ${index + 1} / $total"
+        context.getString(MR.strings.local_book_chapter_progress, index + 1, total)
     }
 
     ContentType.PDF -> {
         val pdf = locator as? ReaderLocator.Pdf
         val total = (structure?.pageCount ?: book.pageCount ?: pdf?.totalPages)?.coerceAtLeast(1)
         val chapters = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-        if (total == null) "Chapter 1 / $chapters" else {
+        if (total == null) context.getString(MR.strings.local_book_chapter_progress, 1, chapters) else {
             BookChapterMetrics.pdfLabel(
                 pdf?.pageIndex ?: 0,
                 total,
@@ -679,7 +689,7 @@ private fun bookProgressLabel(
         }
     }
 
-    else -> "Count unavailable"
+    else -> context.getString(MR.strings.local_book_count_unavailable)
 }
 
 private class LocalBookDetailsAdapter(
@@ -691,7 +701,7 @@ private class LocalBookDetailsAdapter(
     private val onBookmarks: () -> Unit,
     private val onHighlights: () -> Unit,
     private val onFileInfo: () -> Unit,
-    private val onPalette: (Int) -> Unit,
+    private val onPalette: ((Int) -> Unit)?,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val catalogTitles: List<String> = structure?.chapterTitles.orEmpty().ifEmpty {
@@ -754,7 +764,7 @@ private class LocalBookDetailsAdapter(
         private val onBookmarks: () -> Unit,
         private val onHighlights: () -> Unit,
         private val onFileInfo: () -> Unit,
-        private val onPalette: (Int) -> Unit,
+        private val onPalette: ((Int) -> Unit)?,
     ) : RecyclerView.ViewHolder(binding.root) {
 
         val backdropView: View
@@ -829,11 +839,12 @@ private class LocalBookDetailsAdapter(
                             } else {
                                 bitmap
                             }
+                            val paletteCallback = onPalette ?: return@target
                             Palette.from(paletteBitmap).generate { palette ->
                                 palette?.getBestColor()?.let { color ->
                                     root.post {
                                         applyPalette(color, coverBackdropColor(color))
-                                        onPalette(color)
+                                        paletteCallback(color)
                                     }
                                 }
                             }
@@ -853,20 +864,22 @@ private class LocalBookDetailsAdapter(
             // MangaHeaderHolder keeps the author row in the header even when a source has no
             // author. Do the same for local publications so status/source and the action row
             // occupy the same vertical rhythm as Comics details.
-            mangaAuthor.text = book.author?.takeIf(String::isNotBlank) ?: "Unknown author"
+            mangaAuthor.text = book.author?.takeIf(String::isNotBlank) ?: context.getString(MR.strings.local_book_unknown_author)
             mangaAuthor.isVisible = true
             mangaStatus.text = buildString {
                 append(book.contentType.name)
                 append(" • ")
-                append(bookProgressLabel(book, progress, structure))
+                append(bookProgressLabel(context, book, progress, structure))
             }
-            mangaSource.text = if (book.isAvailable) "Local file" else "File unavailable"
+            mangaSource.text = context.getString(
+                if (book.isAvailable) MR.strings.local_book_local_file else MR.strings.local_book_file_unavailable,
+            )
             mangaSummaryLabel.text = context.getString(
                 MR.strings.about_this_,
                 book.contentType.name,
             )
             val description = book.description?.takeIf(String::isNotBlank)
-                ?: "Imported ${book.contentType.name} publication"
+                ?: context.getString(MR.strings.local_book_imported_publication, book.contentType.name)
             mangaSummary.text = description
             mangaSummary.setTextIsSelectable(true)
             mangaSummary.maxLines = 3
@@ -908,22 +921,22 @@ private class LocalBookDetailsAdapter(
             webviewButton.apply {
                 isVisible = true
                 setImageResource(R.drawable.ic_bookmark_24dp)
-                contentDescription = "Bookmarks"
-                compatToolTipText = "Bookmarks"
+                contentDescription = context.getString(MR.strings.local_book_bookmarks)
+                compatToolTipText = contentDescription
                 setOnClickListener { onBookmarks() }
             }
             shareButton.apply {
                 isVisible = true
                 setImageResource(R.drawable.ic_format_quote_24dp)
-                contentDescription = "Highlights"
-                compatToolTipText = "Highlights"
+                contentDescription = context.getString(MR.strings.local_book_highlights)
+                compatToolTipText = contentDescription
                 setOnClickListener { onHighlights() }
             }
             recsButton.apply {
                 isVisible = true
                 setImageResource(R.drawable.ic_info_outline_24dp)
-                contentDescription = "File information"
-                compatToolTipText = "File information"
+                contentDescription = context.getString(MR.strings.local_book_file_info)
+                compatToolTipText = contentDescription
                 setOnClickListener { onFileInfo() }
             }
             metadataCompose.isVisible = false
@@ -938,7 +951,9 @@ private class LocalBookDetailsAdapter(
                 catalogTitles.size,
                 catalogTitles.size,
             )
-            filtersText.isVisible = false
+            // INVISIBLE, not GONE: the title/filters chain would otherwise center the count label.
+            filtersText.text = null
+            filtersText.isInvisible = true
             filterButton.isVisible = false
             chapterLayout.setOnClickListener(null)
         }
