@@ -4,15 +4,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Upstream workflow on a Blacksmith runner, which this repository does not have; PR checks run
+# in android_ci.yml. Kept for manual runs only.
 on:
-  pull_request:
-    paths:
-      - '**'
-      - '!**.md'
-      - '!i18n/src/commonMain/moko-resources/**/strings.xml'
-      - '!i18n/src/commonMain/moko-resources/**/plurals.xml'
-      - 'i18n/src/commonMain/moko-resources/base/strings.xml'
-      - 'i18n/src/commonMain/moko-resources/base/plurals.xml'
+  workflow_dispatch:
 
 jobs:
   build:

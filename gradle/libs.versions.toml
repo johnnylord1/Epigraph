@@ -1,7 +1,7 @@
 [versions]
 aboutlibraries = "14.2.1"
 chucker = "4.3.1"
-flexible-adapter = "c8013533"
+flexible-adapter = "3268efe423" # c8013533 is no longer served by JitPack; 3268efe423 has identical sources
 fast_adapter = "5.7.0"
 fuzzywuzzy = "1.4.0"
 moko = "0.26.4"
