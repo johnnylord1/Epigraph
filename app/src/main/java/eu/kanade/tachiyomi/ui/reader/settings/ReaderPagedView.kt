@@ -34,6 +34,8 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
             zoomStart.bindToPreference(preferences.zoomStart(), 1)
             cropBorders.bindToPreference(preferences.cropBorders())
             pageTransitions.bindToPreference(preferences.pageTransitions())
+            pageTurnStyle.bindToPreference(readerPreferences.pageTransitionStyle())
+            pageTurnSpeed.bindToPreference(readerPreferences.pageTransitionSpeed())
             pagerNav.bindToPreference(preferences.navigationModePager())
             pagerInvert.bindToPreference(preferences.pagerNavInverted())
             extendPastCutout.bindToPreference(readerPreferences.pagerCutoutBehavior())
@@ -87,6 +89,8 @@ class ReaderPagedView @JvmOverloads constructor(context: Context, attrs: Attribu
             binding.zoomStart,
             binding.cropBorders,
             binding.pageTransitions,
+            binding.pageTurnStyle,
+            binding.pageTurnSpeed,
             binding.pagerNav,
             binding.pagerInvert,
             binding.pageLayout,

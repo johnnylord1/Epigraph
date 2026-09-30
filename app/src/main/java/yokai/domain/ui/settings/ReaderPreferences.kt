@@ -47,6 +47,12 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun landscapeCutoutBehavior() = preferenceStore.getEnum("landscape_cutout_behavior", LandscapeCutoutBehaviour.HIDE)
 
+    /** Paged reader page-turn style, an index of [epigraph.reader.PageTransitions] styles (slide by default). */
+    fun pageTransitionStyle() = preferenceStore.getInt("epigraph_page_transition_style", 0)
+
+    /** Paged reader page-turn speed: 0 slow, 1 normal, 2 fast. */
+    fun pageTransitionSpeed() = preferenceStore.getInt("epigraph_page_transition_speed", 1)
+
     enum class CutoutBehaviour(val titleResId: StringResource) {
         HIDE(MR.strings.pad_cutout_areas),  // Similar to CUTOUT_MODE_NEVER / J2K's pad
         SHOW(MR.strings.start_past_cutout), // Similar to CUTOUT_MODE_SHORT_EDGES / J2K's start past

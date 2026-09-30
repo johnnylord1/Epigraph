@@ -71,6 +71,19 @@
         <item>25</item>
     </string-array>
 
+    <!-- Index order is the stored value of epigraph_page_transition_style / _speed. -->
+    <string-array name="page_turn_styles">
+        <item>@string/page_turn_slide</item>
+        <item>@string/page_turn_depth</item>
+        <item>@string/page_turn_fade</item>
+    </string-array>
+
+    <string-array name="page_turn_speeds">
+        <item>@string/page_turn_slow</item>
+        <item>@string/page_turn_normal</item>
+        <item>@string/page_turn_fast</item>
+    </string-array>
+
     <string-array name="zoom_start">
         <item>@string/automatic</item>
         <item>@string/left</item>

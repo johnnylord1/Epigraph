@@ -226,6 +226,22 @@ fun SettingsLegacyController.populateMangaReaderPreferences(screen: PreferenceSc
         preferenceCategory {
             titleRes = MR.strings.paged
 
+            // Same keys as the reader's Paged tab (DESIGN.md §9 "Página do leitor").
+            intListPreference(activity) {
+                key = readerPreferences.pageTransitionStyle().key()
+                titleRes = MR.strings.page_turn_style
+                entriesRes = arrayOf(MR.strings.page_turn_slide, MR.strings.page_turn_depth, MR.strings.page_turn_fade)
+                entryRange = 0..2
+                defaultValue = 0
+            }
+            intListPreference(activity) {
+                key = readerPreferences.pageTransitionSpeed().key()
+                titleRes = MR.strings.page_turn_speed
+                entriesRes = arrayOf(MR.strings.page_turn_slow, MR.strings.page_turn_normal, MR.strings.page_turn_fast)
+                entryRange = 0..2
+                defaultValue = 1
+            }
+
             intListPreference(activity) {
                 key = Keys.navigationModePager
                 titleRes = MR.strings.tap_zones

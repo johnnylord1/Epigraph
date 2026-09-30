@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md §6: reader HUD surfaces use r-m, never a stadium. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <corners android:radius="50dp" />
+    <corners android:radius="@dimen/radius_m" />
     <solid android:color="?attr/colorSurface"/>
 </shape>

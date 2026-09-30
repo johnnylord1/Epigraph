@@ -89,6 +89,9 @@ import epigraph.reader.settings.ReaderSettingsHost
 import epigraph.reader.settings.ReaderThemeColors
 import epigraph.reader.settings.applyReaderTheme
 import com.google.android.material.R as materialR
+import epigraph.ui.moment.MomentOverlay
+import epigraph.ui.moment.MomentSpec
+import epigraph.ui.motion.HudSpring
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.core.preference.toggle
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -221,6 +224,9 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     var menuVisible = false
         private set
 
+    /** Top HUD bar on springs (DESIGN.md §9); retargets from its current position on every tap. */
+    private val appBarHud by lazy { HudSpring(binding.appBar) }
+
     /**
      * Whether the menu should stay visible.
      */
@@ -336,6 +342,8 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
             readerPreferences.resetNovelReaderSettingsToDefaults()
         } else {
             preferences.resetReaderSettingsToDefaults()
+            readerPreferences.pageTransitionStyle().delete()
+            readerPreferences.pageTransitionSpeed().delete()
             // A reset should also release this series' explicit overrides so it follows the
             // restored global defaults. Reading progress and bookmarks remain untouched.
             viewModel.setMangaReadingMode(0)
@@ -600,6 +608,19 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                     }
                     is ReaderViewModel.Event.SourceNotReady -> {
                         showSourceNotReadyOverlay(event.sourceId)
+                    }
+                    is ReaderViewModel.Event.ReadingMoment -> {
+                        MomentOverlay.show(
+                            this,
+                            MomentSpec(
+                                icon = if (event.finished) R.drawable.ic_done_all_24dp else R.drawable.ic_book_open_variant_24dp,
+                                title = getString(
+                                    if (event.finished) MR.strings.moment_work_finished else MR.strings.moment_reading_milestone,
+                                ),
+                                count = event.chapters,
+                                detail = getString(MR.strings.moment_chapters_of, event.title),
+                            ),
+                        )
                     }
                 }
             }
@@ -1744,16 +1765,12 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
             }
             if (animate && oldVisibility != menuVisible) {
                 if (!menuTemporarilyVisible) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
                     if (ReducedMotion.isEnabled()) {
-                        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+                        appBarHud.snap(visible = true)
                         delayTitleScroll()
                     } else {
-                        val toolbarAnimation = AnimationUtils.loadAnimation(this, R.anim.enter_from_top)
-                        toolbarAnimation.doOnStart {
-                            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-                        }
-                        toolbarAnimation.doOnEnd { delayTitleScroll() }
-                        binding.appBar.startAnimation(toolbarAnimation)
+                        appBarHud.show { delayTitleScroll() }
                     }
                 } else {
                     delayTitleScroll()
@@ -1768,20 +1785,15 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
 
             if (animate && binding.appBar.isVisible) {
                 if (ReducedMotion.isEnabled()) {
-                    binding.appBar.isVisible = false
+                    appBarHud.snap(visible = false)
                     stopTitleScroll()
                 } else {
-                    val toolbarAnimation = AnimationUtils.loadAnimation(this, R.anim.exit_to_top)
-                    toolbarAnimation.doOnEnd {
-                        binding.appBar.isVisible = false
-                        stopTitleScroll()
-                    }
-                    binding.appBar.startAnimation(toolbarAnimation)
+                    appBarHud.hide { stopTitleScroll() }
                 }
                 binding.chaptersSheet.chaptersBottomSheet.sheetBehavior?.isHideable = true
                 binding.chaptersSheet.chaptersBottomSheet.sheetBehavior?.hide()
             } else if (!animate) {
-                binding.appBar.isVisible = false
+                appBarHud.snap(visible = false)
                 stopTitleScroll()
             }
         }
@@ -3102,16 +3114,8 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                         },
                     )
             }
-            binding.appBar.isVisible = true
-            if (ReducedMotion.isEnabled()) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-            } else {
-                val toolbarAnimation = AnimationUtils.loadAnimation(this, R.anim.enter_from_top)
-                toolbarAnimation.doOnStart {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-                }
-                binding.appBar.startAnimation(toolbarAnimation)
-            }
+            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+            if (ReducedMotion.isEnabled()) appBarHud.snap(visible = true) else appBarHud.show()
         } else if (!visible && (menuTemporarilyVisible || menuVisible)) {
             if (menuTemporarilyVisible && !menuVisible) {
                 setMenuVisibility(false)

@@ -32,6 +32,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
@@ -1135,7 +1136,24 @@ class ReaderViewModel(
                 },
                 emitReadState = !readBefore && readerChapter.chapter.read,
             )
+            if (!readBefore && readerChapter.chapter.read) sendReadingMomentIfAny(readerChapter)
         }
+    }
+
+    /**
+     * The reader's memorable moment (DESIGN.md §9), checked once per chapter as it flips to read:
+     * every chapter of a finished work read, else a per-work milestone ([READING_MILESTONES]).
+     * UI only; sent from its own coroutine so a backgrounded reader never stalls progress saving.
+     */
+    private fun sendReadingMomentIfAny(readerChapter: ReaderChapter) {
+        val manga = manga ?: return
+        if (!this::chapterList.isInitialized) return
+        val chapters = chapterList
+        val readCount = chapters.count { it.chapter.read || it.chapter.id == readerChapter.chapter.id }
+        val finished = readCount == chapters.size &&
+            (manga.status == SManga.COMPLETED || manga.status == SManga.PUBLISHING_FINISHED)
+        if (!finished && readCount !in READING_MILESTONES) return
+        viewModelScope.launch { eventChannel.send(Event.ReadingMoment(finished, readCount, manga.title)) }
     }
 
     /** Resolves an exact synced novel anchor. Null deliberately means percentage fallback. */
@@ -1654,6 +1672,7 @@ class ReaderViewModel(
         data class SavedImage(val result: SaveImageResult) : Event()
         data class ShareImage(val file: UniFile, val page: ReaderPage, val extraPage: ReaderPage? = null) : Event()
         data class ShareTrackingError(val errors: List<Pair<TrackService, String?>>) : Event()
+        data class ReadingMoment(val finished: Boolean, val chapters: Int, val title: String) : Event()
     }
 
     companion object {
@@ -1666,6 +1685,9 @@ class ReaderViewModel(
          */
         private const val SOURCE_AWAIT_TIMEOUT_MS = 5_000L
         private const val INITIAL_CHAPTER_LOAD_TIMEOUT_MS = 45_000L
+
+        /** Chapters read in one work that earn a reading-milestone moment. */
+        private val READING_MILESTONES = setOf(50, 100, 250, 500, 1000, 2000)
     }
 }
 

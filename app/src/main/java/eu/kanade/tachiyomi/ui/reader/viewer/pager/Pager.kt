@@ -6,6 +6,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.viewpager.widget.DirectionalViewPager
+import epigraph.reader.PageTransitions
 import eu.kanade.tachiyomi.ui.reader.viewer.GestureDetectorWithLongTap
 
 /**
@@ -17,6 +18,14 @@ open class Pager(
     context: Context,
     isHorizontal: Boolean = true,
 ) : DirectionalViewPager(context, isHorizontal) {
+
+    /** Whether pages move along the X axis; the page-turn styles follow it. */
+    val horizontal = isHorizontal
+
+    init {
+        // Before any scroll: page-turn speed (DESIGN.md §9) scales this scroller's durations.
+        PageTransitions.installPacedScroller(this)
+    }
 
     /**
      * Tap listener function to execute when a tap is detected.

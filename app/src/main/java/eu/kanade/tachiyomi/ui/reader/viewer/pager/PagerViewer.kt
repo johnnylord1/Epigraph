@@ -10,6 +10,7 @@ import androidx.core.view.children
 import androidx.core.view.isVisible
 import androidx.viewpager.widget.ViewPager
 import co.touchlab.kermit.Logger
+import epigraph.reader.PageTransitions
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -23,6 +24,7 @@ import eu.kanade.tachiyomi.ui.reader.viewer.BaseViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import yokai.presentation.theme.ReducedMotion
 import yokai.util.koin.injectLazy
 
 /**
@@ -160,6 +162,19 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
         }
         config.navigationModeInvertedListener = { activity.binding.navigationOverlay.showNavigationAgain() }
+        config.pageTransitionChangedListener = { applyPageTransition() }
+        applyPageTransition()
+    }
+
+    /** Page-turn style and speed from the reader settings (DESIGN.md §9). */
+    private fun applyPageTransition() {
+        PageTransitions.apply(
+            pager,
+            style = config.pageTransitionStyle,
+            speed = config.pageTransitionSpeed,
+            horizontal = pager.horizontal,
+            reducedMotion = ReducedMotion.isEnabled(),
+        )
     }
 
     /**
