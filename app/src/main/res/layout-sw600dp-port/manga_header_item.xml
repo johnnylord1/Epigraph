@@ -57,6 +57,7 @@
 
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cover_card"
+        app:cardCornerRadius="@dimen/radius_m"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         app:strokeWidth="0dp"

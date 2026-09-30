@@ -128,6 +128,7 @@ import yokai.domain.series.model.TranslationMode
 import yokai.domain.series.model.sourceMetadataValues
 import yokai.presentation.theme.motionAwareCrossfadeMillis
 import yokai.util.koin.injectLazy
+import kotlin.math.roundToInt
 import android.R as AR
 
 @SuppressLint("ClickableViewAccessibility")
@@ -297,15 +298,44 @@ class MangaHeaderHolder(
     }
 
     private fun applyBlur() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            binding?.backdrop?.alpha = 0.2f
-            binding?.backdrop?.setRenderEffect(
-                RenderEffect.createBlurEffect(
-                    20f,
-                    20f,
-                    Shader.TileMode.MIRROR,
-                ),
-            )
+        val backdrop = binding?.backdrop ?: return
+        // cover-veil: 20% alpha, 24dp blur on API 31+; without RenderEffect only the alpha applies.
+        backdrop.alpha = VEIL_ALPHA
+        appliedVeilStep = -1
+        onVeilScrolled(veilScrolled)
+    }
+
+    /** Blur steps from [VEIL_BLUR_DP] to [VEIL_BLUR_MAX_DP], built once so scrolling never allocates. */
+    private val veilEffects: Array<RenderEffect>? by lazy {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@lazy null
+        val density = itemView.resources.displayMetrics.density
+        Array(VEIL_BLUR_STEPS + 1) { step ->
+            val radius = (VEIL_BLUR_DP + (VEIL_BLUR_MAX_DP - VEIL_BLUR_DP) * step / VEIL_BLUR_STEPS) * density
+            RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+        }
+    }
+    private var appliedVeilStep = -1
+    private var veilScrolled = 0
+
+    /**
+     * Scroll-reactive veil (DESIGN.md §6): [scrolled] is how far the header has moved up. The veil
+     * trails the content at 0.25× and its blur deepens up to 32dp; below API 31 its alpha fades instead.
+     */
+    fun onVeilScrolled(scrolled: Int) {
+        veilScrolled = scrolled
+        val backdrop = binding?.backdrop ?: return
+        val height = backdrop.height
+        val progress = if (height > 0) (scrolled / height.toFloat()).coerceIn(0f, 1f) else 0f
+        backdrop.translationY = if (ReducedMotion.isEnabled()) 0f else scrolled * (1f - VEIL_PARALLAX)
+        val effects = veilEffects
+        if (effects == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            backdrop.alpha = VEIL_ALPHA * (1f - progress)
+            return
+        }
+        val step = (progress * VEIL_BLUR_STEPS).roundToInt()
+        if (step != appliedVeilStep) {
+            appliedVeilStep = step
+            backdrop.setRenderEffect(effects[step])
         }
     }
 
@@ -722,6 +752,7 @@ class MangaHeaderHolder(
         binding ?: return
         binding.title.isVisible = showTitleSection
         binding.coverCard.isVisible = showCoverSection
+        // cover-veil (DESIGN.md §2): the cover itself, not a UI colour, so it shows in every theme.
         binding.backdrop.isVisible = showCoverSection
         binding.mangaAuthor.isVisible = showAuthorSection
         binding.mangaSummaryLabel.isVisible = showDescriptionSection
@@ -949,7 +980,9 @@ class MangaHeaderHolder(
     private fun bindReadingButton(item: MangaHeaderItem) {
         val presenter = adapter.delegate.mangaPresenter()
         val readingState = presenter.getReadingButtonState()
-        val showButtons = presenter.allChapters.isNotEmpty() && !item.isLocked
+        // Phones get the persistent continue-reading FAB instead; the inline copy is tablet-only
+        // so the two never show at once.
+        val showButtons = presenter.allChapters.isNotEmpty() && !item.isLocked && isTablet
         showReadingButton = showButtons
         val readEnabled = readingState != null
         val readText = readingState?.let {
@@ -1959,6 +1992,17 @@ private fun NamespaceGenreTagsSection(
         }
     }
 }
+
+/** cover-veil tokens (DESIGN.md §2). */
+private const val VEIL_ALPHA = 0.2f
+private const val VEIL_BLUR_DP = 24f
+private const val VEIL_BLUR_MAX_DP = 32f
+
+/** Blur changes in 2dp steps between the resting and the fully scrolled veil. */
+private const val VEIL_BLUR_STEPS = 4
+
+/** The veil moves at this share of the content's scroll speed. */
+private const val VEIL_PARALLAX = 0.25f
 
 /** Share of the cover's height hidden below the header backdrop. */
 private const val BACKDROP_CROP_FRACTION = 0.165f

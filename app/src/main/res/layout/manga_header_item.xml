@@ -61,6 +61,7 @@
         android:id="@+id/cover_card"
         android:layout_width="100dp"
         android:layout_height="wrap_content"
+        app:cardCornerRadius="@dimen/radius_m"
         app:strokeWidth="0dp"
         app:cardElevation="2dp"
         android:layout_marginStart="16dp"

@@ -93,6 +93,7 @@ fun RecommendationSearchBottomSheetDialog(
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = includeSources || includeTrackers,
                 onClick = { onSearchRequest(flags) },

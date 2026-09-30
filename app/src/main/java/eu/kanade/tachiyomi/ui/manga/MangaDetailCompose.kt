@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
@@ -64,7 +63,10 @@ fun MangaContinueReadingButton(
         MaterialTheme.colorScheme.primary
     }
     val contentColor = if (accentColorInt != null) {
-        if (ColorUtils.calculateLuminance(accentColorInt) > 0.5) Color.Black else Color.White
+        // Pick whichever ink reads better; a fixed 0.5 luminance cut put white on mid greens (~2.4:1).
+        val onWhite = ColorUtils.calculateContrast(android.graphics.Color.WHITE, accentColorInt or 0xFF000000.toInt())
+        val onBlack = ColorUtils.calculateContrast(android.graphics.Color.BLACK, accentColorInt or 0xFF000000.toInt())
+        if (onBlack > onWhite) Color.Black else Color.White
     } else {
         MaterialTheme.colorScheme.onPrimary
     }
@@ -75,7 +77,7 @@ fun MangaContinueReadingButton(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = contentColor,

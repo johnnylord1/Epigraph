@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.isVisible
 import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat
+import androidx.appcompat.R as appcompatR
 import com.google.android.material.R as materialR
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.model.Download
@@ -35,7 +36,7 @@ class DownloadButton @JvmOverloads constructor(context: Context, attrs: Attribut
         ContextCompat.getColor(context, materialR.color.material_on_surface_disabled)
     }
     private val downloadedTextColor = context.getResourceColor(android.R.attr.colorBackground)
-    private val errorColor by lazy { ContextCompat.getColor(context, R.color.md_red_500) }
+    private val errorColor by lazy { context.getResourceColor(appcompatR.attr.colorError) }
     private val filledCircle by lazy {
         ContextCompat.getDrawable(context, R.drawable.filled_circle)?.mutate()
     }

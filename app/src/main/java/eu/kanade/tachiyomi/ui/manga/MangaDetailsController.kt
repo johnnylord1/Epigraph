@@ -71,6 +71,7 @@ import dev.icerock.moko.resources.StringResource
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.SelectableAdapter
 import com.google.android.material.R as materialR
+import epigraph.ui.color.CoverPalette
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.data.database.models.Category
@@ -122,7 +123,6 @@ import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.moveCategories
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.addCheckBoxPrompt
-import eu.kanade.tachiyomi.util.system.contextCompatColor
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.e
 import eu.kanade.tachiyomi.util.system.getResourceColor
@@ -173,6 +173,7 @@ import yokai.domain.manga.interactor.FetchInterval
 import yokai.domain.manga.models.cover
 import yokai.i18n.MR
 import yokai.presentation.core.Constants
+import yokai.presentation.theme.ReducedMotion
 import yokai.util.lang.getString
 import android.R as AR
 
@@ -360,6 +361,7 @@ class MangaDetailsController :
     }
 
     override fun useCoverColorTheming(): Boolean {
+        // DESIGN.md §2: the per-title / global `themeMangaDetails` toggle alone decides, Nocturne included.
         val mangaId = manga?.id ?: if (presenter.isMangaLateInitInitialized()) presenter.manga.id else null
         return presenter.preferences.themeMangaDetailsFor(mangaId)
     }
@@ -369,21 +371,8 @@ class MangaDetailsController :
         setCoverColorValue(colorToUse)
         accentColor = if (useCoverColorTheming()) {
             (colorToUse ?: manga?.vibrantCoverColor)?.let {
-                val luminance = ColorUtils.calculateLuminance(it).toFloat()
-                // Softer blend than before (0.5/0.33 → 0.35/0.22): the previous factors pulled
-                // the accent too far toward the contrast text color, washing out covers that
-                // were already close to legible. Keeps the original luminance gates so out-of-
-                // theme accents still get corrected, just less aggressively.
-                if (if (!context.isInNightMode()) luminance > 0.4 else luminance <= 0.6) {
-                    ColorUtils.blendARGB(
-                        it,
-                        context.contextCompatColor(R.color.colorOnDownloadBadgeDayNight),
-                        (if (!context.isInNightMode()) luminance else -(luminance - 1)) *
-                            if (context.isInNightMode()) 0.22f else 0.35f,
-                    )
-                } else {
-                    it
-                }
+                // cover-accent: the cover's vibrant hue, lightness moved until it reads ≥4.5:1 on bg.
+                CoverPalette.accentFor(it, context.getResourceColor(android.R.attr.colorBackground))
             }
         } else {
             null
@@ -498,7 +487,7 @@ class MangaDetailsController :
         binding.fab.backgroundTintList = ColorStateList(states, colors)
         val textColors = intArrayOf(
             ColorUtils.setAlphaComponent(context.getResourceColor(materialR.attr.colorOnSurface), 97),
-            context.getResourceColor(AR.attr.textColorPrimaryInverse),
+            CoverPalette.onAccent(backgroundColor),
         )
         binding.fab.setTextColor(ColorStateList(states, textColors))
         binding.fab.iconTint = ColorStateList(states, textColors)
@@ -658,17 +647,13 @@ class MangaDetailsController :
                     super.onScrolled(recyclerView, dx, dy)
                     if (!isTablet) {
                         updateToolbarTitleAlpha(isScrollingDown = dy > 0 && !binding.root.context.isTablet())
-                        val atTop = !recyclerView.canScrollVertically(-1)
-                        val tY = getHeader()?.binding?.backdrop?.translationY ?: 0f
-                        getHeader()?.binding?.backdrop?.translationY = max(0f, tY + dy * 0.25f)
-                        if (atTop) getHeader()?.binding?.backdrop?.translationY = 0f
+                        updateVeil(recyclerView)
                     }
                 }
 
                 override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
-                    val atTop = !recyclerView.canScrollVertically(-1)
                     updateToolbarTitleAlpha()
-                    if (atTop) getHeader()?.binding?.backdrop?.translationY = 0f
+                    if (!isTablet) updateVeil(recyclerView)
                 }
             },
         )
@@ -905,6 +890,8 @@ class MangaDetailsController :
                 return
             }
             colorAnimator?.cancel()
+            // The shared toolbar title must leave at rest for the next screen.
+            activityBinding?.toolbar?.toolbarTitle?.translationY = 0f
 
             getHeader()?.clearDescFocus()
             val colorSurface = activity?.getResourceColor(
@@ -1034,6 +1021,12 @@ class MangaDetailsController :
         return binding.recycler.findViewHolderForItemId(chapter.id!!) as? ChapterHolder
     }
 
+    /** Feeds the header's absolute scroll offset to its veil; derived each time, so it never drifts. */
+    private fun updateVeil(recyclerView: RecyclerView) {
+        val header = getHeader() ?: return
+        header.onVeilScrolled(max(0, recyclerView.paddingTop - header.itemView.top))
+    }
+
     private fun getHeader(): MangaHeaderHolder? {
         if (!isBindingInitialized) return null
 
@@ -1042,6 +1035,40 @@ class MangaDetailsController :
         } else {
             binding.recycler.findViewHolderForAdapterPosition(0) as? MangaHeaderHolder
         }
+    }
+
+    /**
+     * Window-space rect of the header cover, for the library's cover-expand push. The header is
+     * usually not bound yet when the push starts, so fall back to where manga_header_item places
+     * it (top_view = headerHeight, then 12dp); height 0 means "keep the source aspect ratio".
+     */
+    fun coverTransitionTarget(): Rect? {
+        val root = view ?: return null
+        if (!isBindingInitialized || isTablet) return null
+        getHeader()?.binding?.coverCard?.takeIf { it.isLaidOut && it.width > 0 }?.let { card ->
+            val loc = IntArray(2).also(card::getLocationInWindow)
+            return Rect(loc[0], loc[1], loc[0] + card.width, loc[1] + card.height)
+        }
+        val top = headerHeight.takeIf { it > 0 }
+            ?: ((activityBinding?.appBar?.attrToolbarHeight ?: 0) +
+                (ViewCompat.getRootWindowInsets(root)?.getInsets(systemBars())?.top ?: 0))
+        val loc = IntArray(2).also(root::getLocationInWindow)
+        val width = 100.dpToPx
+        val start = if (root.layoutDirection == View.LAYOUT_DIRECTION_RTL) root.width - 16.dpToPx - width else 16.dpToPx
+        val y = loc[1] + top + 12.dpToPx
+        return Rect(loc[0] + start, y, loc[0] + start + width, y)
+    }
+
+    /** The header cover card the pop flies back from, when it is bound (phones only). */
+    fun coverTransitionSource(): View? {
+        if (!isBindingInitialized || isTablet) return null
+        return getHeader()?.binding?.coverCard
+    }
+
+    /** Lets [CoverExpandChangeHandler] hide the header cover while its ghost is travelling. */
+    fun hideCoverForTransition(hidden: Boolean) {
+        if (!isBindingInitialized) return
+        getHeader()?.binding?.coverCard?.alpha = if (hidden) 0f else 1f
     }
 
     fun updateHeader() {
@@ -1758,6 +1785,7 @@ class MangaDetailsController :
         val toolbarTextView = activityBinding?.toolbar?.toolbarTitle ?: return
         if (isSelectionMode) {
             toolbarTextView.setTextColorAlpha(255)
+            toolbarTextView.translationY = 0f
             return
         }
         val tbAlpha = when {
@@ -1774,6 +1802,9 @@ class MangaDetailsController :
                 .coerceIn(0, 255) / 255f
         }
         toolbarTextView.setTextColorAlpha((tbAlpha * 255).roundToInt())
+        // The title rises into the bar as the header's title scrolls under it (DESIGN.md §9).
+        toolbarTextView.translationY =
+            if (isTablet || ReducedMotion.isEnabled()) 0f else (1f - tbAlpha) * TITLE_RISE_DP.dpToPx
     }
 
     private fun downloadChapters(choice: Int) {
@@ -2632,6 +2663,9 @@ class MangaDetailsController :
     companion object {
         const val UPDATE_EXTRA = "update"
         private const val HEADER_PREWARM_AFTER_POP = 300L
+
+        /** How far below its place the toolbar title starts while the header title is still in view. */
+        private const val TITLE_RISE_DP = 8
         const val SMART_SEARCH_CONFIG_EXTRA = "smartSearchConfig"
 
         const val FROM_CATALOGUE_EXTRA = "from_catalogue"
