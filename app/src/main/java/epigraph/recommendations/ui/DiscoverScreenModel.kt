@@ -39,8 +39,6 @@ class DiscoverScreenModel(
         val error: String? = null,
     )
 
-    /** Results are kept per mode so switching tabs back and forth does not refetch. */
-    private val cache = mutableMapOf<DiscoverMode, DiscoverResult>()
     private var loadJob: Job? = null
 
     init {
@@ -55,7 +53,7 @@ class DiscoverScreenModel(
 
     fun load(force: Boolean) {
         val mode = state.value.mode
-        val cached = cache[mode]
+        val cached = cached(mode)
         if (!force && cached != null) {
             mutableState.update { it.copy(loading = false, result = cached, error = null) }
             return
@@ -65,7 +63,7 @@ class DiscoverScreenModel(
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
                 val result = loader.load(mode)
-                cache[mode] = result
+                cache[mode] = CachedResult(result, System.currentTimeMillis())
                 mutableState.update { if (it.mode == mode) it.copy(loading = false, result = result) else it }
             } catch (e: CancellationException) {
                 throw e
@@ -95,5 +93,19 @@ class DiscoverScreenModel(
             return@withContext manga
         }
         null
+    }
+
+    private class CachedResult(val result: DiscoverResult, val loadedAt: Long)
+
+    companion object {
+        /**
+         * Results are kept per mode for the whole process, so switching modes or reopening For you
+         * from Recents or Browse does not hit every source again; refresh forces a new load.
+         */
+        private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedResult>()
+        private const val CACHE_TTL_MS = 30 * 60 * 1000L
+
+        private fun cached(mode: DiscoverMode): DiscoverResult? =
+            cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.result
     }
 }

@@ -11,7 +11,7 @@
         android:id="@+id/end_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/md_green_800"
+        android:background="?attr/colorSurfaceVariant"
         android:layout_gravity="top"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
@@ -24,10 +24,10 @@
             android:layout_width="24dp"
             android:layout_height="24dp"
             android:layout_gravity="end|center"
-            android:layout_marginEnd="21dp"
+            android:layout_marginEnd="@dimen/space_3"
             android:contentDescription="@string/read"
             android:src="@drawable/ic_eye_24dp"
-            app:tint="@color/md_white_1000" />
+            app:tint="?attr/colorOnSurface" />
     </FrameLayout>
 
     <androidx.appcompat.widget.LinearLayoutCompat
@@ -54,9 +54,9 @@
                 android:id="@+id/card_layout"
                 android:layout_width="60dp"
                 android:layout_height="80dp"
-                android:layout_marginStart="12dp"
-                android:layout_marginTop="6dp"
-                android:layout_marginBottom="6dp"
+                android:layout_marginStart="@dimen/space_2"
+                android:layout_marginTop="@dimen/space_1"
+                android:layout_marginBottom="@dimen/space_1"
                 app:layout_constrainedHeight="true"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -66,14 +66,18 @@
                     android:id="@+id/card"
                     android:layout_width="wrap_content"
                     android:layout_height="match_parent"
-                    android:layout_gravity="center">
+                    android:layout_gravity="center"
+                    app:cardCornerRadius="@dimen/radius_s"
+                    app:cardElevation="0dp"
+                    app:strokeColor="?attr/colorOutlineVariant"
+                    app:strokeWidth="@dimen/line_width">
 
                     <ImageView
                         android:id="@+id/cover_thumbnail"
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
                         android:adjustViewBounds="true"
-                        android:background="?attr/background"
+                        android:background="?attr/colorSurfaceVariant"
                         android:foreground="?android:attr/selectableItemBackground"
                         android:maxHeight="60dp"
                         app:layout_constraintBottom_toBottomOf="parent"
@@ -91,7 +95,7 @@
                 style="?textAppearanceTitleMedium"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
+                android:layout_marginStart="@dimen/space_2"
                 android:layout_marginTop="2dp"
                 android:layout_marginEnd="16dp"
                 android:ellipsize="end"
@@ -113,7 +117,7 @@
                 style="?textAppearanceBodyMedium"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="16dp"
+                android:layout_marginEnd="@dimen/space_2"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:singleLine="true"
@@ -131,6 +135,7 @@
                 style="@style/TextAppearance.BodyMedium.ReducedSpace"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_half"
                 android:layout_marginEnd="6dp"
                 android:ellipsize="end"
                 android:maxLines="2"
@@ -158,7 +163,7 @@
                 android:layout_gravity="bottom"
                 android:layout_marginTop="4dp"
                 android:layout_marginEnd="6dp"
-                android:background="#66000000"
+                android:background="?attr/colorOutlineVariant"
                 android:indeterminate="false"
                 android:progress="10"
                 android:progressTint="?attr/colorSecondary"
@@ -172,13 +177,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="0dp"
                 android:layout_marginEnd="8dp"
-                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintBottom_toBottomOf="@id/card_layout"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/subtitle">
 
                 <ImageButton
                     android:id="@+id/show_more_chapters"
-                    android:layout_width="45dp"
+                    android:layout_width="@dimen/touch_target"
                     android:layout_height="match_parent"
                     android:background="?selectableItemBackgroundBorderless"
                     android:contentDescription="@string/show_more_chapters"
@@ -193,7 +198,7 @@
 
                 <ImageButton
                     android:id="@+id/remove_history"
-                    android:layout_width="45dp"
+                    android:layout_width="@dimen/touch_target"
                     android:layout_height="match_parent"
                     android:background="?selectableItemBackgroundBorderless"
                     android:contentDescription="@string/reset_chapter_history"
@@ -201,11 +206,11 @@
                     android:tooltipText="@string/reset_chapter_history"
                     app:layout_constraintHorizontal_chainStyle="spread"
                     app:srcCompat="@drawable/ic_eye_remove_outline_24dp"
-                    app:tint="?attr/colorError" />
+                    app:tint="?android:attr/textColorSecondary" />
                 <include
                     android:id="@+id/download_button"
                     layout="@layout/download_button"
-                    android:layout_width="45dp"
+                    android:layout_width="@dimen/touch_target"
                     android:layout_height="match_parent" />
             </LinearLayout>
 

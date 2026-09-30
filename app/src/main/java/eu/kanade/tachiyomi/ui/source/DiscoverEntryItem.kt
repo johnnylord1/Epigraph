@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.source
 
+import android.graphics.drawable.GradientDrawable
 import android.view.View
 import androidx.recyclerview.widget.RecyclerView
 import eu.davidea.flexibleadapter.FlexibleAdapter
@@ -8,10 +9,12 @@ import eu.davidea.flexibleadapter.items.IFlexible
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.databinding.BrowseDiscoverItemBinding
 import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
+import eu.kanade.tachiyomi.util.system.getResourceColor
 import yokai.i18n.MR
 import yokai.util.lang.getString
+import com.google.android.material.R as materialR
 
-/** Scrollable Browse header that opens the library-based Discover recommendations. */
+/** Scrollable header (Browse and Recents) that opens the library-based Discover recommendations. */
 class DiscoverEntryItem(
     val type: BrowseSourceType,
     private val onClick: (BrowseSourceType) -> Unit,
@@ -47,5 +50,14 @@ class DiscoverEntryItem(
     class Holder(view: View, adapter: FlexibleAdapter<IFlexible<RecyclerView.ViewHolder>>) :
         BaseFlexibleViewHolder(view, adapter) {
         val binding = BrowseDiscoverItemBinding.bind(view)
+
+        init {
+            val context = view.context
+            // The card itself is `surface` (XML); the icon sits in an `accent-soft` well (DESIGN.md §2).
+            binding.discoverIconWell.background = GradientDrawable().apply {
+                cornerRadius = context.resources.getDimension(R.dimen.radius_s)
+                setColor(context.getResourceColor(materialR.attr.colorSecondaryContainer))
+            }
+        }
     }
 }

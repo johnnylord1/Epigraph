@@ -39,10 +39,10 @@ import eu.kanade.tachiyomi.util.view.setCards
 import java.util.Date
 import java.util.concurrent.TimeUnit
 import yokai.i18n.MR
+import yokai.presentation.theme.Motion
 import yokai.presentation.theme.ReducedMotion
 import yokai.util.coil.loadManga
 import yokai.util.lang.getString
-import android.R as AR
 
 class RecentMangaHolder(
     view: View,
@@ -86,7 +86,9 @@ class RecentMangaHolder(
                     .addTransition(androidx.transition.ChangeBounds())
                     .addTransition(androidx.transition.Fade())
                     .apply {
-                        duration = itemView.resources.getInteger(AR.integer.config_shortAnimTime).toLong()
+                        // DESIGN.md §9: expanding a section is dur-standard on the standard curve.
+                        duration = Motion.DurStandard.toLong()
+                        interpolator = Motion.Interpolators.Standard
                     }
                 TransitionManager.beginDelayedTransition(itemView as ViewGroup, transition)
             }
@@ -174,7 +176,7 @@ class RecentMangaHolder(
                 } else {
                     topToTop = -1
                     topToBottom = R.id.subtitle
-                    bottomToBottom = R.id.main_view
+                    bottomToBottom = R.id.card_layout
                     topMargin = 0
                 }
             }
