@@ -9,10 +9,8 @@ import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
 import androidx.compose.runtime.Composable
-import cafe.adriel.voyager.navigator.CurrentScreen
 import cafe.adriel.voyager.navigator.Navigator
-import cafe.adriel.voyager.transitions.CrossfadeTransition
-import yokai.presentation.theme.LocalReducedMotion
+import epigraph.ui.motion.EpigraphScreenTransition
 import eu.kanade.tachiyomi.data.updater.AppDownloadInstallJob
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
@@ -35,8 +33,7 @@ class AboutController : BaseComposeController() {
             screen = AboutScreen(),
             content = { navigator ->
                 this.navigator = navigator
-                if (LocalReducedMotion.current) CurrentScreen()
-                else CrossfadeTransition(navigator = navigator)
+                EpigraphScreenTransition(navigator = navigator)
             },
         )
     }

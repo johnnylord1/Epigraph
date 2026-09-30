@@ -1,10 +1,8 @@
 package eu.kanade.tachiyomi.ui.setting
 
 import androidx.compose.runtime.Composable
-import cafe.adriel.voyager.navigator.CurrentScreen
 import cafe.adriel.voyager.navigator.Navigator
-import cafe.adriel.voyager.transitions.CrossfadeTransition
-import yokai.presentation.theme.LocalReducedMotion
+import epigraph.ui.motion.EpigraphScreenTransition
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
 import yokai.presentation.settings.ComposableSettings
 
@@ -26,8 +24,7 @@ abstract class SettingsComposeController: BaseComposeController(), SettingsContr
             screen = getComposableSettings(),
             content = { navigator ->
                 this.navigator = navigator
-                if (LocalReducedMotion.current) CurrentScreen()
-                else CrossfadeTransition(navigator = navigator)
+                EpigraphScreenTransition(navigator = navigator)
             },
         )
     }

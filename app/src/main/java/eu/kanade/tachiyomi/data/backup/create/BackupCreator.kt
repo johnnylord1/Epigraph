@@ -44,6 +44,10 @@ class BackupCreator(
     val parser = ProtoBuf
     private val backupPreferences: BackupPreferences = get()
 
+    /** Library entries written by the last successful [createBackup]; UI only (the moment's count). */
+    var lastEntryCount = 0
+        private set
+
     /**
      * Create backup Json file from database
      *
@@ -98,6 +102,7 @@ class BackupCreator(
 
             // Make sure it's a valid backup file
             BackupFileValidator().validate(context, file.uri)
+            lastEntryCount = backup.backupManga.size + backup.backupLocalBooks.size
 
             if (directory != null) {
                 directory.findFile(finalName)?.delete()

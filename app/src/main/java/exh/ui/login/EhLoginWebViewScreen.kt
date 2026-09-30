@@ -134,10 +134,14 @@ fun EhLoginWebViewScreen(
                         .align(Alignment.BottomCenter),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Button(onClick = onUp, Modifier.weight(0.5F)) {
+                    Button(onClick = onUp, Modifier.weight(0.5F), shape = MaterialTheme.shapes.small) {
                         Text(text = stringResource(MR.strings.action_cancel))
                     }
-                    Button(onClick = { showAdvancedOptions = true }, Modifier.weight(0.5F)) {
+                    Button(
+                        onClick = { showAdvancedOptions = true },
+                        modifier = Modifier.weight(0.5F),
+                        shape = MaterialTheme.shapes.small,
+                    ) {
                         Text(text = stringResource(MR.strings.advanced))
                     }
                 }
@@ -155,6 +159,7 @@ fun EhLoginWebViewScreen(
                         }
                         Column(Modifier.fillMaxWidth(0.8F)) {
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = {
                                     onClickRecheckLoginStatus(::loadUrl)
                                     showAdvancedOptions = false
@@ -164,6 +169,7 @@ fun EhLoginWebViewScreen(
                                 Text(text = stringResource(MR.strings.recheck_login_status))
                             }
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = {
                                     onClickAlternateLoginPage(::loadUrl)
                                     showAdvancedOptions = false
@@ -173,6 +179,7 @@ fun EhLoginWebViewScreen(
                                 Text(text = stringResource(MR.strings.alternative_login_page))
                             }
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = {
                                     onClickSkipPageRestyling(::loadUrl)
                                     showAdvancedOptions = false
@@ -182,6 +189,7 @@ fun EhLoginWebViewScreen(
                                 Text(text = stringResource(MR.strings.skip_page_restyling))
                             }
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = {
                                     onClickCustomIgneousCookie()
                                     showAdvancedOptions = false
@@ -191,6 +199,7 @@ fun EhLoginWebViewScreen(
                                 Text(text = stringResource(MR.strings.custom_igneous_cookie))
                             }
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = {
                                     onClickRefreshIgneousCookie()
                                     showAdvancedOptions = false
@@ -200,8 +209,9 @@ fun EhLoginWebViewScreen(
                                 Text(text = stringResource(MR.strings.refresh_igneous_cookie))
                             }
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 onClick = { showAdvancedOptions = false },
-                                Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(text = stringResource(MR.strings.action_cancel))
                             }

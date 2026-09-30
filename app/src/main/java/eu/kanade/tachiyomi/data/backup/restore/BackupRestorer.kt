@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.backup.restore
 
 import android.content.Context
 import android.net.Uri
+import epigraph.ui.moment.MomentEvents
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.LocalBookBackupRestorer
@@ -48,6 +49,8 @@ class BackupRestorer(
         val logFile = writeErrorLog()
 
         notifier.showRestoreComplete(time, errors.size, logFile.parent, logFile.name)
+        // A restore with errors is reported by the notification and its log, not celebrated.
+        if (errors.isEmpty()) MomentEvents.post(MomentEvents.Event.RestoreDone(restoreAmount - 3))
     }
 
     private suspend fun performRestore(uri: Uri) {

@@ -217,6 +217,7 @@ private fun LnReaderDependencyContent(
                     trailingContent = if (canInstall) {
                         {
                             Button(
+                                shape = MaterialTheme.shapes.small,
                                 enabled = busyKey == null,
                                 onClick = {
                                     busyKey = "plugin:${item.requirement.pluginId}"

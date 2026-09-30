@@ -60,6 +60,7 @@ internal class StorageStep : OnboardingStep, KoinComponent {
             )
 
             Button(
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     try {
@@ -79,6 +80,7 @@ internal class StorageStep : OnboardingStep, KoinComponent {
 
             Text(stringResource(MR.strings.onboarding_storage_help_info))
             Button(
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     handler.openUri(

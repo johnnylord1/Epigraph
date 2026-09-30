@@ -188,6 +188,7 @@ internal class PermissionStep : OnboardingStep {
                     )
                 } else {
                     OutlinedButton(
+                        shape = MaterialTheme.shapes.small,
                         onClick = onButtonClick,
                     ) {
                         Text(stringResource(MR.strings.onboarding_permission_action_grant))

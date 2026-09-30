@@ -19,6 +19,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import co.touchlab.kermit.Logger
 import com.hippo.unifile.UniFile
+import epigraph.ui.moment.MomentEvents
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.notification.Notifications
@@ -51,8 +52,12 @@ class BackupCreatorJob(private val context: Context, workerParams: WorkerParamet
             ?: BackupOptions()
 
         return try {
-            val location = BackupCreator(context).createBackup(uri, options, isAutoBackup)
-            if (!isAutoBackup) notifier.showBackupComplete(UniFile.fromUri(context, location.toUri())!!)
+            val creator = BackupCreator(context)
+            val location = creator.createBackup(uri, options, isAutoBackup)
+            if (!isAutoBackup) {
+                notifier.showBackupComplete(UniFile.fromUri(context, location.toUri())!!)
+                MomentEvents.post(MomentEvents.Event.BackupDone(creator.lastEntryCount))
+            }
             Result.success()
         } catch (e: Exception) {
             Logger.e(e) { "Unable to create backup" }

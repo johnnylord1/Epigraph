@@ -111,6 +111,7 @@ fun InfoScreen(
                     ),
             ) {
                 Button(
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = canAccept,
                     colors = ButtonDefaults.buttonColors(containerColor = tint),
@@ -120,6 +121,7 @@ fun InfoScreen(
                 }
                 if (rejectText != null && onRejectClick != null) {
                     OutlinedButton(
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
                         border =
                             BorderStroke(
@@ -133,6 +135,7 @@ fun InfoScreen(
                 }
                 if (tertiaryText != null && onTertiaryClick != null) {
                     OutlinedButton(
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
                         border =
                             BorderStroke(

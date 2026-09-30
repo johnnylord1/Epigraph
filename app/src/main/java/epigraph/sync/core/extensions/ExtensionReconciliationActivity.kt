@@ -128,6 +128,7 @@ private fun ExtensionReconciliationContent(
             },
             confirmButton = {
                 Button(
+                    shape = MaterialTheme.shapes.small,
                     onClick = {
                         scope.launch {
                             coordinator.approveRepository(indexUrl)
@@ -201,6 +202,7 @@ private fun ExtensionReconciliationContent(
                     }
                     if (pendingRepositoryIndexUrls.isNotEmpty()) {
                         Button(
+                            shape = MaterialTheme.shapes.small,
                             onClick = { scope.launch { coordinator.approveAllRecommendedRepositories() } },
                             enabled = !installing && !repositoryApprovalBusy,
                         ) {
@@ -208,6 +210,7 @@ private fun ExtensionReconciliationContent(
                         }
                     }
                     Button(
+                        shape = MaterialTheme.shapes.small,
                         onClick = { scope.launch { coordinator.installAllMissing() } },
                         // Repository approval is a separate explicit step. Do not start a batch
                         // while an inventory still needs trust, even if another package is already
