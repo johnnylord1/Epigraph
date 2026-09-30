@@ -29,11 +29,15 @@ sealed interface CorePairingUiState {
         val serverId: String,
         val profileId: String,
         val expiresAtMs: Long,
+        /** Must match the four digits the desktop shows; derived from the pinned certificate. */
+        val verificationCode: String,
+        val desktopName: String? = null,
     ) : CorePairingUiState
 
     data class Pairing(
         val stage: PairingStage,
         val expiresAtMs: Long? = null,
+        val verificationCode: String? = null,
     ) : CorePairingUiState
 
     data class Paired(
@@ -51,6 +55,12 @@ sealed interface CorePairingUiState {
     data class CredentialFailed(val failure: CoreCredentialFailure) : CorePairingUiState
 }
 
+sealed interface CoreHostDiscoveryState {
+    data object Idle : CoreHostDiscoveryState
+    data object Searching : CoreHostDiscoveryState
+    data class Found(val hosts: List<DiscoveredCoreHost>) : CoreHostDiscoveryState
+}
+
 enum class PairingStage {
     VALIDATING,
     CLAIMING,
@@ -60,6 +70,11 @@ enum class PairingStage {
 }
 
 /** Lifecycle-independent state holder used by the Settings screen and later QR deep links. */
+/** Called when the pairing that produced negotiated state no longer exists (unpair or re-pair). */
+fun interface CorePairingEndedListener {
+    suspend fun onPairingEnded()
+}
+
 class EpigraphCorePairingController(
     private val activation: EpigraphCorePairingActivation,
     private val credentials: CoreCredentialStore,
@@ -68,6 +83,9 @@ class EpigraphCorePairingController(
     private val selections: DeviceSyncSelectionStore,
     private val endpoints: CoreEndpointResolver,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val hostDiscovery: CoreHostDiscovery = CoreHostDiscovery { emptyList() },
+    private val pinResolver: PairingPinResolver? = null,
+    private val pairingEndedListeners: List<CorePairingEndedListener> = emptyList(),
 ) {
     private val lifetimeScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val operation = Mutex()
@@ -76,6 +94,9 @@ class EpigraphCorePairingController(
     private val mutableSelection = MutableStateFlow<DeviceSyncSelectionV1?>(null)
     val selection: StateFlow<DeviceSyncSelectionV1?> = mutableSelection.asStateFlow()
     private var pendingBootstrapBundle: String? = null
+    private var activeVerificationCode: String? = null
+    private val mutableDiscovery = MutableStateFlow<CoreHostDiscoveryState>(CoreHostDiscoveryState.Idle)
+    val discovery: StateFlow<CoreHostDiscoveryState> = mutableDiscovery.asStateFlow()
 
     suspend fun refresh() = operation.withLock {
         mutableState.value = readPersistedState()
@@ -85,6 +106,48 @@ class EpigraphCorePairingController(
     /** Pairing survives navigation and configuration changes for the lifetime of this singleton. */
     fun startPairing(rawBootstrapBundle: String) {
         lifetimeScope.launch { preparePairing(rawBootstrapBundle) }
+    }
+
+    /** Browses the LAN for desktops showing a pairing PIN. */
+    fun discoverHosts() {
+        if (mutableDiscovery.value == CoreHostDiscoveryState.Searching) return
+        mutableDiscovery.value = CoreHostDiscoveryState.Searching
+        lifetimeScope.launch {
+            val hosts = try {
+                hostDiscovery.discover()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+            mutableDiscovery.value = CoreHostDiscoveryState.Found(hosts)
+        }
+    }
+
+    /**
+     * Exchanges the PIN shown by [host] for its bootstrap bundle, then continues exactly like a
+     * scanned QR: sync selection, claim, and approval on the desktop.
+     */
+    fun startPinPairing(host: DiscoveredCoreHost, pin: String) {
+        lifetimeScope.launch { resolvePinAndPrepare(host, pin) }
+    }
+
+    internal suspend fun resolvePinAndPrepare(host: DiscoveredCoreHost, pin: String) {
+        val resolver = pinResolver ?: run {
+            mutableState.value = CorePairingUiState.PairingFailed(PairingErrorCode.HOST_NOT_FOUND)
+            return
+        }
+        mutableState.value = CorePairingUiState.Pairing(
+            PairingStage.VALIDATING,
+            verificationCode = host.verificationCode,
+        )
+        val bundle = try {
+            withContext(ioDispatcher) { resolver.resolve(host, pin) }
+        } catch (failure: PairingTransportException) {
+            mutableState.value = CorePairingUiState.PairingFailed(failure.error.code)
+            return
+        }
+        preparePairing(bundle)
     }
 
     fun confirmPairing(selection: PairingSyncSelection) {
@@ -102,6 +165,7 @@ class EpigraphCorePairingController(
         lifetimeScope.launch {
             operation.withLock {
                 pendingBootstrapBundle = null
+                activeVerificationCode = null
                 mutableState.value = readPersistedState()
             }
         }
@@ -139,6 +203,7 @@ class EpigraphCorePairingController(
             withContext(ioDispatcher) { activation.inspectBootstrap(rawBootstrapBundle) }
         } catch (failure: PairingBundleValidationException) {
             pendingBootstrapBundle = null
+            activeVerificationCode = null
             mutableState.value = CorePairingUiState.PairingFailed(
                 PairingErrorCode.INVALID_BUNDLE,
                 failure.failure,
@@ -146,10 +211,14 @@ class EpigraphCorePairingController(
             return@withLock
         }
         pendingBootstrapBundle = rawBootstrapBundle
+        val verificationCode = pairingVerificationCode(bundle.tlsCertSha256)
+        activeVerificationCode = verificationCode
         mutableState.value = CorePairingUiState.Selecting(
             serverId = bundle.serverId,
             profileId = bundle.profileId,
             expiresAtMs = bundle.expiresAtMs,
+            verificationCode = verificationCode,
+            desktopName = bundle.deviceName,
         )
     }
 
@@ -157,7 +226,12 @@ class EpigraphCorePairingController(
         rawBootstrapBundle: String,
         selection: PairingSyncSelection = PairingSyncSelection.defaults(),
     ) = operation.withLock {
-        mutableState.value = CorePairingUiState.Pairing(PairingStage.VALIDATING)
+        activeVerificationCode = try {
+            pairingVerificationCode(activation.inspectBootstrap(rawBootstrapBundle).tlsCertSha256)
+        } catch (_: PairingBundleValidationException) {
+            null
+        }
+        mutableState.value = CorePairingUiState.Pairing(PairingStage.VALIDATING, verificationCode = activeVerificationCode)
         try {
             val result = withContext(ioDispatcher) {
                 activation.pairAndPersist(
@@ -170,6 +244,8 @@ class EpigraphCorePairingController(
             mutableState.value = when (result) {
                 is PairingActivationResult.Activated -> {
                     mutableSelection.value = result.selection
+                    // State negotiated with a previously paired Core must not leak into this one.
+                    notifyPairingEnded()
                     syncScheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
                     CorePairingUiState.Paired(
                         origin = result.origin,
@@ -202,9 +278,23 @@ class EpigraphCorePairingController(
         pendingBootstrapBundle = null
         mutableState.value = try {
             withContext(ioDispatcher) { credentials.delete() }
+            notifyPairingEnded()
             CorePairingUiState.Unpaired
         } catch (failure: CoreCredentialException) {
             CorePairingUiState.CredentialFailed(failure.failure)
+        }
+    }
+
+    private suspend fun notifyPairingEnded() {
+        pairingEndedListeners.forEach { listener ->
+            try {
+                withContext(ioDispatcher) { listener.onPairingEnded() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Best effort: the credential is already gone, and listeners hold no data a later
+                // pairing can reach without their own revision checks.
+            }
         }
     }
 
@@ -237,17 +327,19 @@ class EpigraphCorePairingController(
     }
 
     private fun PairingState.toUiState(): CorePairingUiState = when (this) {
-        PairingState.ValidatingBundle -> CorePairingUiState.Pairing(PairingStage.VALIDATING)
-        is PairingState.Claiming -> CorePairingUiState.Pairing(PairingStage.CLAIMING)
-        is PairingState.AwaitingDesktopApproval ->
-            CorePairingUiState.Pairing(PairingStage.WAITING_FOR_DESKTOP, expiresAtMs)
+        PairingState.ValidatingBundle -> pairingStage(PairingStage.VALIDATING)
+        is PairingState.Claiming -> pairingStage(PairingStage.CLAIMING)
+        is PairingState.AwaitingDesktopApproval -> pairingStage(PairingStage.WAITING_FOR_DESKTOP, expiresAtMs)
         is PairingState.ApprovalObserved,
         is PairingState.ExchangingToken,
-        -> CorePairingUiState.Pairing(PairingStage.EXCHANGING_TOKEN)
-        is PairingState.Paired -> CorePairingUiState.Pairing(PairingStage.SAVING_CREDENTIAL)
+        -> pairingStage(PairingStage.EXCHANGING_TOKEN)
+        is PairingState.Paired -> pairingStage(PairingStage.SAVING_CREDENTIAL)
         is PairingState.Rejected -> CorePairingUiState.PairingFailed(PairingErrorCode.REJECTED)
         is PairingState.Expired -> CorePairingUiState.PairingFailed(PairingErrorCode.EXPIRED)
         is PairingState.Failed -> CorePairingUiState.PairingFailed(error.code)
         PairingState.Cancelled -> CorePairingUiState.Unpaired
     }
+
+    private fun pairingStage(stage: PairingStage, expiresAtMs: Long? = null) =
+        CorePairingUiState.Pairing(stage, expiresAtMs, activeVerificationCode)
 }

@@ -897,6 +897,16 @@ deleteMangaCategoryAssignment:
 DELETE FROM mangas_categories
 WHERE manga_id = :mangaId AND category_id = :categoryId;
 
+selectMangaIdsByCategory:
+SELECT DISTINCT manga_id FROM mangas_categories
+WHERE category_id = :categoryId
+ORDER BY manga_id;
+
+selectBookIdsByCategory:
+SELECT DISTINCT book_id FROM local_books_categories
+WHERE category_id = :categoryId
+ORDER BY book_id;
+
 insertMangaCategoryAssignment:
 INSERT INTO mangas_categories(manga_id, category_id)
 SELECT :mangaId, :categoryId
@@ -1049,6 +1059,17 @@ SELECT
     (SELECT COUNT(*) FROM aethon_sync_outbox WHERE scope_id IN :scopeIds) +
     (SELECT COUNT(*) FROM aethon_sync_replica_wait WHERE scope_id IN :scopeIds);
 
+blockedMutationCount:
+SELECT COUNT(*) FROM aethon_sync_outbox
+WHERE status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+releaseMutationBackoff:
+UPDATE aethon_sync_outbox
+SET next_attempt_at = :now
+WHERE status = 'ERROR'
+  AND next_attempt_at > :now
+  AND (last_error IS NULL OR last_error NOT LIKE 'blocked:%');
+
 hasUnsettledMutationForEntity:
 SELECT EXISTS(
     SELECT 1 FROM aethon_sync_outbox
@@ -1149,6 +1170,31 @@ WHERE scope_id = :scopeId
   AND entity_type = :entityType
   AND (entity_id = :entityId OR canonical_entity_id = :entityId)
   AND required_server_version <= :observedServerVersion;
+
+-- The replica may apply the change (live event or pull) before the POST acknowledgement is
+-- stored; that apply reconciled nothing, so the new wait must be settled against it here.
+reconcileReplicaWaitWithApplied:
+DELETE FROM aethon_sync_replica_wait
+WHERE device_id = :deviceId
+  AND client_mutation_id = :clientMutationId
+  AND (
+    EXISTS(
+        SELECT 1 FROM aethon_core_replica_record AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+    OR EXISTS(
+        SELECT 1 FROM aethon_core_replica_tombstone AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+  );
 
 upsertCheckpoint:
 INSERT INTO aethon_sync_checkpoint(scope_id, cursor, schema_version, snapshot_at, updated_at)
@@ -1367,6 +1413,14 @@ selectCoreReplicaRecordsByScope:
 SELECT * FROM aethon_core_replica_record
 WHERE scope_id = :scopeId
 ORDER BY entity_type, entity_id;
+
+selectCoreReplicaRecordsByType:
+SELECT entity_id, record_json FROM aethon_core_replica_record
+WHERE entity_type = :entityType
+ORDER BY entity_id;
+
+countCoreReplicaCheckpoints:
+SELECT count(*) FROM aethon_core_replica_checkpoint;
 
 selectCoreReplicaTombstonesByScope:
 SELECT * FROM aethon_core_replica_tombstone

@@ -20,6 +20,8 @@ import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncEntityType
 import epigraph.contract.SyncScopeId
+import epigraph.contract.TrackingField
+import epigraph.contract.TrackingFieldPatch
 import epigraph.contract.operationWireName
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.CoreCapabilities
@@ -823,6 +825,97 @@ class CoreV1OutboxAdapterTest {
         )
         assertEquals(CoreOutboxBlockReason.INVALID_SCOPE, malformedBook.reason)
     }
+
+    @Test
+    fun `projects full state tracker patch only when the core advertises tracking`() {
+        val trackingId = EpigraphEntityId("novel.tracking::novel:abc::novelupdates")
+        val command = SyncCommand.PatchTracking(trackingId, "novelupdates", trackingFields())
+        val record = record(EpigraphCoreEntityType.NOVEL_TRACKING, NOVEL_SCOPE, command)
+
+        val blocked = assertInstanceOf(
+            CoreOutboxAdaptation.Blocked::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.NOVEL_ENTRY)), 1),
+        )
+        assertEquals(CoreOutboxBlockReason.ENTITY_CAPABILITY_NOT_ADVERTISED, blocked.reason)
+
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(record, DEVICE_ID, capabilities(setOf(EpigraphCoreEntityType.NOVEL_TRACKING)), 2),
+        )
+        val patch = ready.mutation.patch!!
+        assertEquals(trackingId.value, ready.mutation.entityId)
+        assertEquals(CoreMutationOperation.MERGE, ready.mutation.op)
+        assertEquals("novel:abc", patch["novelId"]?.jsonPrimitive?.content)
+        assertEquals("novelupdates", patch["trackerKey"]?.jsonPrimitive?.content)
+        assertEquals("4242", patch["remoteId"]?.jsonPrimitive?.content)
+        assertEquals("null", patch["libraryId"].toString())
+        assertEquals("12.5", patch["progress"]?.jsonPrimitive?.content)
+        assertEquals("1234", patch["updatedAtMs"]?.jsonPrimitive?.content)
+        val serialized = patch.toString()
+        listOf("token", "password", "Bearer", "fields", "operation").forEach {
+            assertFalse(serialized.contains(it, ignoreCase = true), it)
+        }
+    }
+
+    @Test
+    fun `tracker patches and tombstones fail closed on partial or mismatched records`() {
+        val caps = capabilities(setOf(EpigraphCoreEntityType.COMIC_TRACKING, EpigraphCoreEntityType.NOVEL_TRACKING))
+        val partial = SyncCommand.PatchTracking(
+            EpigraphEntityId("novel.tracking::novel:abc::anilist"),
+            "anilist",
+            trackingFields().filterNot { it.field == TrackingField.SCORE },
+        )
+        val wrongTracker = SyncCommand.PatchTracking(
+            EpigraphEntityId("novel.tracking::novel:abc::anilist"),
+            "kitsu",
+            trackingFields(),
+        )
+        val legacyComic = SyncCommand.PatchTracking(
+            EpigraphEntityId("comic.tracking::suwayomi:core:manga:1::anilist"),
+            "anilist",
+            trackingFields(),
+        )
+        listOf(
+            record(EpigraphCoreEntityType.NOVEL_TRACKING, NOVEL_SCOPE, partial),
+            record(EpigraphCoreEntityType.NOVEL_TRACKING, NOVEL_SCOPE, wrongTracker),
+            record(EpigraphCoreEntityType.COMIC_TRACKING, COMIC_SCOPE, legacyComic),
+        ).forEach { record ->
+            val blocked = assertInstanceOf(
+                CoreOutboxAdaptation.Blocked::class.java,
+                adapter.adapt(record, DEVICE_ID, caps, 1),
+            )
+            assertEquals(CoreOutboxBlockReason.UNSAFE_OR_INCOMPLETE_PROJECTION, blocked.reason)
+        }
+
+        val tombstone = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record(
+                    EpigraphCoreEntityType.COMIC_TRACKING,
+                    COMIC_SCOPE,
+                    SyncCommand.DeleteEntity(EpigraphEntityId("comic.tracking::comic:xyz::anilist")),
+                ),
+                DEVICE_ID,
+                caps,
+                1,
+            ),
+        )
+        assertEquals(CoreMutationOperation.DELETE, tombstone.mutation.op)
+        assertNull(tombstone.mutation.patch)
+    }
+
+    private fun trackingFields() = listOf(
+        TrackingFieldPatch(TrackingField.REMOTE_ID, "4242"),
+        TrackingFieldPatch(TrackingField.LIBRARY_ID, null),
+        TrackingFieldPatch(TrackingField.TITLE, "Shadow Slave"),
+        TrackingFieldPatch(TrackingField.REMOTE_URL, "https://tracker.example/4242"),
+        TrackingFieldPatch(TrackingField.STATUS, "1"),
+        TrackingFieldPatch(TrackingField.PROGRESS, "12.5"),
+        TrackingFieldPatch(TrackingField.TOTAL_CHAPTERS, "100"),
+        TrackingFieldPatch(TrackingField.SCORE, "8.0"),
+        TrackingFieldPatch(TrackingField.STARTED_AT, "1700000000000"),
+        TrackingFieldPatch(TrackingField.FINISHED_AT, "0"),
+    )
 
     private fun record(
         entityType: String,

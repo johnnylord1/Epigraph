@@ -75,6 +75,20 @@ enum class TrackingField {
 
     @SerialName("private")
     PRIVATE,
+
+    // Additive (tracker sync v1). Only emitted once syncd advertises the tracking entity types;
+    // see docs/audit/TRACKER_SYNC_CONTRACT.md.
+    @SerialName("library_id")
+    LIBRARY_ID,
+
+    @SerialName("title")
+    TITLE,
+
+    @SerialName("remote_url")
+    REMOTE_URL,
+
+    @SerialName("total_chapters")
+    TOTAL_CHAPTERS,
 }
 
 /**

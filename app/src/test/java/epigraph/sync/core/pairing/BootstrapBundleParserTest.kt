@@ -64,6 +64,42 @@ class BootstrapBundleParserTest {
     }
 
     @Test
+    fun `accepts the desktop host QR bundle with deviceName`() {
+        // Byte shape of serde_json::to_string_pretty(SyncdBootstrapBundle) in syncd_desktop.rs.
+        val raw = """
+            {
+              "pairingSessionId": "$SESSION_ID",
+              "pairingCode": "019F777E758B",
+              "deviceName": "  DESKTOP-EPIGRAPH\u0007  ",
+              "syncdBaseUrl": "https://192.168.1.20:4777",
+              "profileId": "main",
+              "expiresAtMs": ${now + 60_000},
+              "tlsCertSha256": "$FINGERPRINT"
+            }
+        """.trimIndent()
+
+        val parsed = parser.parse(raw)
+
+        assertEquals("DESKTOP-EPIGRAPH", parsed.bundle.deviceName)
+        assertEquals("https://192.168.1.20:4777", parsed.endpoint.origin)
+    }
+
+    @Test
+    fun `deviceName is optional display metadata on every bundle shape`() {
+        val withClaim = bundle()
+            .replace(
+                "\"profileId\":\"main\",",
+                "\"claimUrl\":\"https://192.168.1.20:4777/v1/pairing/claim\",\"deviceName\":\"\",\"profileId\":\"main\",",
+            )
+
+        val parsed = parser.parse(withClaim)
+
+        assertEquals(null, parsed.bundle.deviceName)
+        assertEquals(null, parser.parse(bundle()).bundle.deviceName)
+        assertEquals("x".repeat(128), BootstrapBundleParser.sanitizeDeviceName("x".repeat(300)))
+    }
+
+    @Test
     fun `rejects a claim url outside the pinned Core origin`() {
         val raw = bundle(origin = "https://192.168.1.20:4777")
             .replace(

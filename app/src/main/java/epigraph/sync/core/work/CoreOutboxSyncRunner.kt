@@ -23,6 +23,7 @@ import epigraph.sync.core.pairing.AndroidPairingDeviceProvider
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.protocol.CoreCompatibility
+import epigraph.sync.core.protocol.CoreSyncStatus
 import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.replica.CoreReplicaApplier
@@ -31,6 +32,9 @@ import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
 import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
+import epigraph.sync.core.protocol.CoreTrackerCredentialDelete
+import epigraph.sync.core.protocol.CoreTrackerCredentialWrite
+import epigraph.sync.core.trackers.TrackerCredentialChannel
 import epigraph.sync.EpigraphMutationCoordinator
 import android.util.Log
 import co.touchlab.kermit.Logger
@@ -150,6 +154,17 @@ interface CoreOutboxSyncConnection {
         capabilities: CoreCapabilities,
         nowEpochMillis: Long,
     ): CoreOutboxDrainReport
+
+    /** Tracker credential endpoints on this paired session; null when the connection has none. */
+    fun trackerCredentials(): TrackerCredentialChannel? = null
+}
+
+/**
+ * Runs after a sync connection negotiated compatible capabilities. Hooks are best effort: a
+ * failure never fails the outbox or replica run.
+ */
+fun interface CoreNegotiatedSessionHook {
+    suspend fun onNegotiated(capabilities: CoreCapabilities, connection: CoreOutboxSyncConnection)
 }
 
 fun interface CoreOutboxSyncConnectionFactory {
@@ -199,6 +214,18 @@ class PinnedCoreOutboxSyncConnectionFactory(
                 capabilities: CoreCapabilities,
                 nowEpochMillis: Long,
             ): CoreOutboxDrainReport = drainer.drain(authorization, capabilities, nowEpochMillis)
+
+            override fun trackerCredentials(): TrackerCredentialChannel = object : TrackerCredentialChannel {
+                override suspend fun list() = credentials.withAccessTokenString(http::trackerCredentials)
+
+                override suspend fun put(trackerKey: String, write: CoreTrackerCredentialWrite) =
+                    credentials.withAccessTokenString { token -> http.putTrackerCredential(token, trackerKey, write) }
+
+                override suspend fun delete(trackerKey: String, delete: CoreTrackerCredentialDelete) =
+                    credentials.withAccessTokenString { token ->
+                        http.deleteTrackerCredential(token, trackerKey, delete)
+                    }
+            }
         }
     }
 }
@@ -518,6 +545,9 @@ enum class CoreOutboxRetryReason {
     CAPABILITIES,
     OUTBOX_PENDING,
     REPLICA,
+
+    /** Only comic (Suwayomi) rows failed transiently; book/novel rows and assets were drained. */
+    SUWAYOMI,
 }
 
 enum class CorePairingRequirement {
@@ -532,6 +562,19 @@ enum class CoreUserActionReason {
     CAPABILITIES_REJECTED,
     AUTHORIZATION_REQUIRED,
     REPLICA_REJECTED,
+
+    /** Desktop `/v1/sync/status` reports only blocked Suwayomi projections (nothing pending). */
+    REMOTE_PROJECTION_BLOCKED,
+}
+
+internal enum class CoreRemoteProjectionState { READY, IN_PROGRESS, BLOCKED }
+
+/** Mirrors syncd `routes/status.rs`: `ready = pending == 0 && blocked == 0 && inFlight == 0`. */
+internal fun CoreSyncStatus.remoteProjectionState(): CoreRemoteProjectionState = when {
+    ready -> CoreRemoteProjectionState.READY
+    suwayomiProjectionPending > 0 || suwayomiProjectionInFlight > 0 -> CoreRemoteProjectionState.IN_PROGRESS
+    suwayomiProjectionBlocked > 0 -> CoreRemoteProjectionState.BLOCKED
+    else -> CoreRemoteProjectionState.IN_PROGRESS
 }
 
 /**
@@ -547,6 +590,7 @@ class CoreOutboxSyncRunner(
     private val pendingOutbox: CorePendingOutbox,
     private val replica: CoreReplicaSyncPort,
     private val policies: SyncPolicyResolver,
+    private val negotiatedHooks: List<CoreNegotiatedSessionHook> = emptyList(),
 ) {
     suspend fun run(
         nowEpochMillis: Long,
@@ -679,6 +723,15 @@ class CoreOutboxSyncRunner(
                     CoreUserActionReason.CORE_INCOMPATIBLE,
                 )
             }
+            negotiatedHooks.forEach { hook ->
+                try {
+                    hook.onNegotiated(capabilities, connection)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    reportCoreSyncFailure("negotiated.hook", failure)
+                }
+            }
 
             val policy = try {
                 policies.resolve(
@@ -767,14 +820,14 @@ class CoreOutboxSyncRunner(
                 CoreReplicaSyncOutcome.DEFERRED
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
-            val remoteProjectionReady = if (
+            val remoteProjection = if (
                 EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities) &&
                     policy.syncComics
             ) {
                 val scopeId = "comics:profile:${session.profileId}"
                 try {
                     when (val status = connection.syncStatus(scopeId)) {
-                        null -> true
+                        null -> CoreRemoteProjectionState.READY
                         is CoreHttpResult.Success -> {
                             if (status.value.comicAuthorityMode != "suwayomi-confirmed-v1") {
                                 return CoreOutboxSyncOutcome.NeedsUserAction(
@@ -782,7 +835,7 @@ class CoreOutboxSyncRunner(
                                     CoreUserActionReason.CAPABILITIES_REJECTED,
                                 )
                             }
-                            status.value.ready
+                            status.value.remoteProjectionState()
                         }
                         is CoreHttpResult.Failure -> {
                             if (status.statusCode.isTransientHttpStatus()) {
@@ -807,19 +860,35 @@ class CoreOutboxSyncRunner(
                     )
                 }
             } else {
-                true
+                CoreRemoteProjectionState.READY
             }
-            if (!remoteProjectionReady) {
+            when (remoteProjection) {
+                CoreRemoteProjectionState.READY -> Unit
                 // The local mutation receipt may already be settled, but the authoritative
                 // Suwayomi projection is not. Keep the worker in a retryable state so UI layers
                 // cannot display a fully synchronized badge prematurely.
-                return CoreOutboxSyncOutcome.Retry(
+                CoreRemoteProjectionState.IN_PROGRESS -> return CoreOutboxSyncOutcome.Retry(
                     unsettledAfter,
                     CoreOutboxRetryReason.OUTBOX_PENDING,
                 )
+                // Nothing is queued or in flight on the desktop, only rows Suwayomi refused.
+                // Retrying from the phone cannot unblock them; surface it instead of looping.
+                CoreRemoteProjectionState.BLOCKED -> return CoreOutboxSyncOutcome.NeedsUserAction(
+                    unsettledAfter,
+                    CoreUserActionReason.REMOTE_PROJECTION_BLOCKED,
+                )
             }
             if (drain.transientFailure && drain.pendingCount > 0) {
-                return CoreOutboxSyncOutcome.Retry(unsettledAfter, CoreOutboxRetryReason.CONNECTION)
+                // Comic rows failing alone means the desktop's Suwayomi side is degraded (e.g.
+                // 503 SUWAYOMI_CATALOG_UNAVAILABLE), not that Core is unreachable.
+                return CoreOutboxSyncOutcome.Retry(
+                    unsettledAfter,
+                    if (drain.coreTransientFailure) {
+                        CoreOutboxRetryReason.CONNECTION
+                    } else {
+                        CoreOutboxRetryReason.SUWAYOMI
+                    },
+                )
             }
             return when (replicaOutcome) {
                 CoreReplicaSyncOutcome.RETRY ->
@@ -859,6 +928,8 @@ internal data class CoreDrainLoopResult(
     val report: CoreOutboxDrainReport,
     val pendingCount: Long,
     val transientFailure: Boolean,
+    /** Book assets or Core rows failed transiently; comic (Suwayomi) rows alone leave this false. */
+    val coreTransientFailure: Boolean,
 )
 
 /** Drains every currently-ready batch; delayed rows remain durable without forcing WorkManager backoff. */
@@ -868,15 +939,16 @@ internal suspend fun drainCoreBacklog(
 ): CoreDrainLoopResult {
     var aggregate = CoreOutboxDrainReport(0, 0, 0, 0, 0)
     var transientFailure = false
+    var coreTransientFailure = false
     while (true) {
         val batch = drainBatch()
         aggregate += batch.core
-        transientFailure = transientFailure ||
-            batch.assets.retryScheduled > 0 ||
-            batch.suwayomi.retryScheduled > 0 || batch.core.retryScheduled > 0
+        coreTransientFailure = coreTransientFailure ||
+            batch.assets.retryScheduled > 0 || batch.core.retryScheduled > 0
+        transientFailure = coreTransientFailure || transientFailure || batch.suwayomi.retryScheduled > 0
 
         val pending = countPending().also { require(it >= 0) }
-        if (pending == 0L) return CoreDrainLoopResult(aggregate, 0, transientFailure)
+        if (pending == 0L) return CoreDrainLoopResult(aggregate, 0, transientFailure, coreTransientFailure)
 
         // A blocked asset remains unsettled until the user relinks the immutable file or a later
         // wake succeeds. Counting it as progress would spin this loop and could publish metadata
@@ -885,7 +957,7 @@ internal suspend fun drainCoreBacklog(
             batch.suwayomi.succeeded + batch.suwayomi.blocked +
             batch.core.acknowledged + batch.core.blocked
         if (settled == 0) {
-            return CoreDrainLoopResult(aggregate, pending, transientFailure)
+            return CoreDrainLoopResult(aggregate, pending, transientFailure, coreTransientFailure)
         }
     }
 }

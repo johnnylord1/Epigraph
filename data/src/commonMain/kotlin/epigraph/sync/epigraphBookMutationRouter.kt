@@ -365,21 +365,24 @@ class EpigraphBookMutationRouter(
                 local_booksQueries.deleteCategory(bookId, categoryId)
             }
             val requested = local_booksQueries.findCategoryIds(bookId).executeAsList().distinct().sorted()
-            val categories = categoriesQueries.findAll().executeAsList().associateBy { it._id }
+            val allCategories = categoriesQueries.findAll().executeAsList()
+            val categories = allCategories.associateBy { it._id }
+            val positions = allCategories.syncPositions()
             val categoryCommands = requested.map { localId ->
                 val local = categories[localId] ?: error("Unknown category: $localId")
                 val identity = aethon_syncQueries.selectCategoryIdentityByLocalId(localId).executeAsOneOrNull()
                 val entityId = identity?.entity_id ?: "book-category-local-$localId"
+                val position = positions[localId] ?: 0L
                 aethon_syncQueries.upsertCategoryScope(localId, "BOOK")
                 aethon_syncQueries.upsertCategoryIdentity(
                     entityId = entityId,
                     localCategoryId = localId,
                     contentScope = "BOOK",
                     name = local.name,
-                    sortOrder = local.sort,
+                    sortOrder = position,
                     updatedAt = now,
                 )
-                SyncCommand.UpsertCategory(EpigraphEntityId(entityId), local.name, CategoryScope.BOOK, local.sort)
+                SyncCommand.UpsertCategory(EpigraphEntityId(entityId), local.name, CategoryScope.BOOK, position)
             }
             val assignment = SyncCommand.SetBookCategoryAssignments(
                 EpigraphEntityId(bookId),

@@ -25,6 +25,13 @@ class TrackPreferences(
 
     fun trackToken(sync: TrackService) = preferenceStore.getString(trackToken(sync.id), "")
 
+    /** Raw login fields by tracker ID, used only by the paired Core tracker credential sync. */
+    fun usernamePreference(syncId: Long) = preferenceStore.getString(trackUsername(syncId), "")
+
+    fun passwordPreference(syncId: Long) = preferenceStore.getString(trackPassword(syncId), "")
+
+    fun tokenPreference(syncId: Long) = preferenceStore.getString(trackToken(syncId), "")
+
     fun anilistScoreType() = preferenceStore.getString("anilist_score_type", Anilist.POINT_10)
 
     fun autoUpdateTrack() = preferenceStore.getBoolean("pref_auto_update_manga_sync_key", true)

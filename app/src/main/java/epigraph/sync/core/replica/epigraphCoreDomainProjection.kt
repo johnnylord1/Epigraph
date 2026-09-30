@@ -13,6 +13,7 @@ import epigraph.contract.PortableWorkRef
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableWorkBindingRecord
 import epigraph.sync.portable.SqlDelightPortableBindingStore
+import epigraph.sync.TrackerSyncKeys
 import epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
@@ -136,6 +137,7 @@ class EpigraphCoreDomainProjection(
             "book.highlight" -> projectBookHighlight(database, record.key.entityId, obj)
             "book.category" -> projectCategory(database, record.key.entityId, obj, "BOOK")
             "book.category_assignment" -> projectBookCategoryAssignment(database, obj, true)
+            "comic.tracking", "novel.tracking" -> projectTracking(database, record.key, obj)
         }
     }
 
@@ -262,6 +264,7 @@ class EpigraphCoreDomainProjection(
             "novel.chapter" -> {
                 database.aethon_syncQueries.deleteChapterBindingByEntityId(tombstone.key.entityId)
             }
+            "comic.tracking", "novel.tracking" -> removeTracking(database, tombstone.key, previous)
         }
     }
 
@@ -270,6 +273,7 @@ class EpigraphCoreDomainProjection(
         "comic.chapter_state", "novel.chapter" -> 1
         "comic.category_assignment", "novel.category_assignment", "book.category_assignment" -> 2
         "comic.history", "comic.page_bookmark", "novel.progress", "novel.bookmark", "book.progress", "book.bookmark", "book.highlight" -> 3
+        "comic.tracking", "novel.tracking" -> 3
         else -> 4
     }
 
@@ -301,7 +305,70 @@ class EpigraphCoreDomainProjection(
             "book.bookmark" -> database.local_booksQueries.deleteBookmark(stale.entityId)
             "book.highlight" -> database.local_booksQueries.deleteHighlight(stale.entityId)
             "novel.bookmark" -> previous?.let { projectNovelBookmark(database, it, bookmarked = false) }
+            "comic.tracking", "novel.tracking" -> removeTracking(database, stale, previous)
         }
+    }
+
+    /**
+     * Applies one non-secret tracker binding to `manga_sync`. The insert replaces the
+     * `(manga_id, sync_id)` row, so replaying the same record is idempotent. Records whose work is
+     * not on this device, whose tracker is unknown to this build, or whose fields are malformed are
+     * skipped without failing the rest of the snapshot; unknown extra fields are ignored.
+     */
+    private fun projectTracking(database: Database, key: CoreReplicaKey, record: JsonObject) {
+        val target = trackingTarget(database, key, record) ?: return
+        val remoteId = record.long("remoteId") ?: return
+        val title = record.string("title") ?: return
+        val remoteUrl = record.string("remoteUrl") ?: return
+        val status = record.long("status") ?: return
+        val progress = record.double("progress")?.takeIf(Double::isFinite) ?: return
+        val totalChapters = record.long("totalChapters") ?: return
+        val score = record.double("score")?.takeIf(Double::isFinite) ?: return
+        database.manga_syncQueries.insert(
+            mangaId = target.first,
+            syncId = target.second,
+            remoteId = remoteId,
+            libraryId = record.long("libraryId"),
+            title = title,
+            lastChapterRead = progress,
+            totalChapters = totalChapters,
+            status = status,
+            score = score,
+            remoteUrl = remoteUrl,
+            startDate = record.long("startedAtMs") ?: 0L,
+            finishDate = record.long("finishedAtMs") ?: 0L,
+        )
+    }
+
+    private fun removeTracking(database: Database, key: CoreReplicaKey, previous: JsonObject?) {
+        val (mangaId, syncId) = trackingTarget(database, key, previous) ?: return
+        database.manga_syncQueries.deleteForManga(mangaId, syncId)
+    }
+
+    /** Resolves `<entityType>::<workId>::<trackerKey>` to the local `(manga_id, sync_id)`. */
+    private fun trackingTarget(
+        database: Database,
+        key: CoreReplicaKey,
+        record: JsonObject?,
+    ): Pair<Long, Long>? {
+        val trackerKey = record?.string("trackerKey") ?: key.entityId.substringAfterLast("::")
+        val syncId = TrackerSyncKeys.syncIdFor(trackerKey) ?: return null
+        val prefix = "${key.entityType}::"
+        val suffix = "::$trackerKey"
+        if (!key.entityId.startsWith(prefix) || !key.entityId.endsWith(suffix)) return null
+        val workId = key.entityId.substring(prefix.length, key.entityId.length - suffix.length)
+        if (workId.isBlank()) return null
+        val recordWorkId = record?.string(if (key.entityType == "comic.tracking") "comicId" else "novelId")
+        if (recordWorkId != null && recordWorkId != workId) return null
+
+        val portableLocalId = SqlDelightPortableBindingStore(database).work(workId)
+            ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
+            ?.localReference?.toLongOrNull()?.takeIf { it > 0 }
+        val mangaId = portableLocalId
+            ?: if (key.entityType == "novel.tracking") localMangaId(database, workId) else null
+        mangaId ?: return null
+        database.mangasQueries.findById(mangaId).executeAsOneOrNull() ?: return null
+        return mangaId to syncId
     }
 
     /** Projects a Core comic entry into the existing local manga/library row. */

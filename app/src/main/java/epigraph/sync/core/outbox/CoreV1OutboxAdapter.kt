@@ -8,6 +8,7 @@ import epigraph.contract.PortableWorkRef
 import epigraph.contract.ReaderLocator
 import epigraph.contract.SyncCommand
 import epigraph.contract.SyncCommandEnvelope
+import epigraph.contract.TrackingField
 import epigraph.contract.NovelEntrySnapshot
 import epigraph.contract.operationWireName
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
@@ -234,6 +235,7 @@ class CoreV1OutboxAdapter(
             ?: projectNovelProgress(record, command, capabilities)
             ?: projectBookProgress(record, command)
         is SyncCommand.AppendHistory -> projectBookHistory(record, command)
+        is SyncCommand.PatchTracking -> projectTracking(record, command)
         else -> null
     }
 
@@ -454,6 +456,64 @@ class CoreV1OutboxAdapter(
     private fun projectDelete(record: CoreOutboxRecord): Projection? {
         if (record.entityType !in CORE_V1_DELETABLE_ENTITY_TYPES) return null
         return Projection(record.entityId, CoreMutationOperation.DELETE, null)
+    }
+
+    /**
+     * Tracker bindings are full-state, non-secret records keyed by
+     * `<entityType>::<workId>::<trackerKey>`. The work ID is the same Core ID used by the entry
+     * record, so the Core resolves the work without a separate portable reference. Every field the
+     * local router emits is required; a partial patch would let an older device erase data.
+     */
+    private fun projectTracking(
+        record: CoreOutboxRecord,
+        command: SyncCommand.PatchTracking,
+    ): Projection? {
+        val workKey = when (record.entityType) {
+            EpigraphCoreEntityType.NOVEL_TRACKING -> "novelId"
+            EpigraphCoreEntityType.COMIC_TRACKING -> "comicId"
+            else -> return null
+        }
+        val prefix = "${record.entityType}::"
+        val suffix = "::${command.trackerId}"
+        if (!record.entityId.startsWith(prefix) || !record.entityId.endsWith(suffix)) return null
+        val workId = record.entityId.substring(prefix.length, record.entityId.length - suffix.length)
+        if (workId.isBlank() || workId != workId.trim()) return null
+        // Comic tracking is portable-only; novels may still use their pre-portable identity.
+        if (workKey == "comicId" && !workId.startsWith("comic:")) return null
+
+        val fields = command.fields.associate { it.field to it.value }
+        if (!fields.keys.containsAll(REQUIRED_TRACKING_FIELDS)) return null
+        val remoteId = fields[TrackingField.REMOTE_ID]?.toLongOrNull() ?: return null
+        val libraryId = fields[TrackingField.LIBRARY_ID]?.let { it.toLongOrNull() ?: return null }
+        val title = fields[TrackingField.TITLE] ?: return null
+        val remoteUrl = fields[TrackingField.REMOTE_URL] ?: return null
+        val status = fields[TrackingField.STATUS]?.toLongOrNull() ?: return null
+        val progress = fields[TrackingField.PROGRESS]?.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+        val totalChapters = fields[TrackingField.TOTAL_CHAPTERS]?.toLongOrNull() ?: return null
+        val score = fields[TrackingField.SCORE]?.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+        val startedAt = fields[TrackingField.STARTED_AT]?.toLongOrNull() ?: return null
+        val finishedAt = fields[TrackingField.FINISHED_AT]?.toLongOrNull() ?: return null
+
+        return Projection(
+            entityId = record.entityId,
+            operation = CoreMutationOperation.MERGE,
+            patch = buildJsonObject {
+                put("trackingId", record.entityId)
+                put(workKey, workId)
+                put("trackerKey", command.trackerId)
+                put("remoteId", remoteId)
+                put("libraryId", libraryId?.let(::JsonPrimitive) ?: JsonNull)
+                put("title", title)
+                put("remoteUrl", remoteUrl)
+                put("status", status)
+                put("progress", progress)
+                put("totalChapters", totalChapters)
+                put("score", score)
+                put("startedAtMs", startedAt)
+                put("finishedAtMs", finishedAt)
+                put("updatedAtMs", record.createdAtEpochMillis)
+            },
+        )
     }
 
     private fun projectCategory(
@@ -772,6 +832,21 @@ class CoreV1OutboxAdapter(
             EpigraphCoreEntityType.COMIC_CHAPTER_STATE,
             EpigraphCoreEntityType.COMIC_HISTORY,
             EpigraphCoreEntityType.COMIC_PAGE_BOOKMARK,
+            EpigraphCoreEntityType.COMIC_TRACKING,
+            EpigraphCoreEntityType.NOVEL_TRACKING,
+        )
+
+        val REQUIRED_TRACKING_FIELDS = setOf(
+            TrackingField.REMOTE_ID,
+            TrackingField.LIBRARY_ID,
+            TrackingField.TITLE,
+            TrackingField.REMOTE_URL,
+            TrackingField.STATUS,
+            TrackingField.PROGRESS,
+            TrackingField.TOTAL_CHAPTERS,
+            TrackingField.SCORE,
+            TrackingField.STARTED_AT,
+            TrackingField.FINISHED_AT,
         )
 
         val CORE_V1_DELETABLE_ENTITY_TYPES = CORE_V1_ENTITY_TYPES - setOf(

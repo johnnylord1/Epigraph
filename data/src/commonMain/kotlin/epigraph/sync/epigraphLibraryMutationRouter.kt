@@ -150,7 +150,9 @@ class EpigraphLibraryMutationRouter(
         val syncEntityId = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId) ?: workEntityId
 
         val requestedCategoryIds = if (mutation.inLibrary) mutation.categoryIds else emptySet()
-        val availableCategories = categoriesQueries.findAll().executeAsList().associateBy { it._id }
+        val categoryList = categoriesQueries.findAll().executeAsList()
+        val availableCategories = categoryList.associateBy { it._id }
+        val categoryPositions = categoryList.syncPositions()
         val unknownCategories = requestedCategoryIds - availableCategories.keys
         require(unknownCategories.isEmpty()) {
             "unknown local categories: ${unknownCategories.sorted().joinToString()}"
@@ -178,7 +180,7 @@ class EpigraphLibraryMutationRouter(
                         localCategoryId = categoryId,
                         contentScope = "NOVEL",
                         name = category.name,
-                        sortOrder = category.sort,
+                        sortOrder = categoryPositions[categoryId] ?: 0L,
                         updatedAt = createdAtEpochMillis,
                     )
                 }
@@ -204,7 +206,7 @@ class EpigraphLibraryMutationRouter(
                         localCategoryId = categoryId,
                         contentScope = "NOVEL",
                         name = category.name,
-                        sortOrder = category.sort,
+                        sortOrder = categoryPositions[categoryId] ?: 0L,
                         updatedAt = createdAtEpochMillis,
                     )
                     categoryId to stableId
@@ -229,7 +231,7 @@ class EpigraphLibraryMutationRouter(
                     entityId = EpigraphEntityId(categoryEntity.entity_id),
                     name = category.name,
                     scope = CategoryScope.NOVEL,
-                    position = category.sort,
+                    position = categoryPositions[categoryId] ?: 0L,
                 )
             }
         } else {

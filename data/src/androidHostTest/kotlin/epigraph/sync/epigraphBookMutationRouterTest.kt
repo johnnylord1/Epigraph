@@ -108,6 +108,21 @@ class EpigraphBookMutationRouterTest {
     }
 
     @Test
+    fun `categories with negative local sort publish their non-negative rank`() = runTest {
+        router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
+        insertCategory("First", -1)
+        val second = insertCategory("Second", 0)
+
+        router.setCategory(BOOK_ID.value, second, enabled = true)
+
+        val commands = database.aethon_syncQueries.selectReadyMutations(2_000, 20).executeAsList()
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        val category = commands.filterIsInstance<SyncCommand.UpsertCategory>().single()
+        assertEquals(1L, category.position)
+        assertEquals(1L, database.aethon_syncQueries.selectCategoryIdentityByLocalId(second).executeAsOne().sort_order)
+    }
+
+    @Test
     fun `PDF progress without document progression changes neither state nor outbox`() = runTest {
         val pdfHash = "b".repeat(64)
         val pdfId = EpigraphEntityId("pdf:sha256:$pdfHash")

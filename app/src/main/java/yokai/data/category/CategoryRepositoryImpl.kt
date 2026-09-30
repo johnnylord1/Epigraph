@@ -1,13 +1,18 @@
 package yokai.data.category
 
 import co.touchlab.kermit.Logger
+import epigraph.sync.EpigraphCategoryMutationRouter
 import eu.kanade.tachiyomi.data.database.models.Category
 import kotlinx.coroutines.flow.Flow
 import yokai.data.DatabaseHandler
 import yokai.domain.category.CategoryRepository
 import yokai.domain.category.models.CategoryUpdate
 
-class CategoryRepositoryImpl(private val handler: DatabaseHandler) : CategoryRepository {
+class CategoryRepositoryImpl(
+    private val handler: DatabaseHandler,
+    /** Publishes rename/reorder/delete to Epigraph Core in the same transaction as the local write. */
+    private val syncRouter: EpigraphCategoryMutationRouter? = null,
+) : CategoryRepository {
     override suspend fun getAll(): List<Category> =
         handler.awaitList { categoriesQueries.findAll(Category::mapper) }
 
@@ -61,7 +66,7 @@ class CategoryRepositoryImpl(private val handler: DatabaseHandler) : CategoryRep
     }
 
     private suspend fun partialUpdate(vararg updates: CategoryUpdate) {
-        handler.await(inTransaction = true) {
+        val apply: suspend yokai.data.Database.() -> Unit = {
             updates.forEach { update ->
                 categoriesQueries.update(
                     id = update.id,
@@ -72,9 +77,21 @@ class CategoryRepositoryImpl(private val handler: DatabaseHandler) : CategoryRep
                 )
             }
         }
+        val router = syncRouter
+        val touched = updates.filter { it.name != null || it.order != null }.mapTo(mutableSetOf()) { it.id }
+        if (router == null || touched.isEmpty()) {
+            handler.await(inTransaction = true) { apply() }
+        } else {
+            router.updateCategories(touched, apply)
+        }
     }
 
     override suspend fun delete(id: Long) {
-        handler.await { categoriesQueries.delete(id) }
+        val router = syncRouter
+        if (router == null) {
+            handler.await { categoriesQueries.delete(id) }
+        } else {
+            router.deleteCategory(id) { categoriesQueries.delete(id) }
+        }
     }
 }

@@ -13,10 +13,14 @@ class CoreCredentialScopeProvider(
 ) : EpigraphSyncScopeProvider {
     override suspend fun current(): EpigraphSyncScopes = withContext(ioDispatcher) {
         val profileId = credentials.load()?.use { it.profileId }
-            ?: error("A paired Epigraph Core profile is required for synchronized mutations")
+            ?: throw CoreProfileNotPairedException()
         EpigraphSyncScopes(
             novels = SyncScopeId("novels:profile:$profileId"),
             comics = SyncScopeId("comics:profile:$profileId"),
         )
     }
 }
+
+/** Expected on devices that were never paired; callers fall back to local-only writes. */
+class CoreProfileNotPairedException :
+    IllegalStateException("A paired Epigraph Core profile is required for synchronized mutations")

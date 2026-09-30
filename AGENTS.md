@@ -31,7 +31,8 @@
 - Local IDs are preserved; Epigraph identity is added through side tables.
 - Manga and novel chapters are not copied between devices by default. EPUB/PDF assets use immutable SHA-256 identities and download on demand.
 - Android APK extensions always require the visible Package Installer flow.
-- Cookies, tracker tokens, sessions, passwords, and other secrets never enter backup or sync.
+- Cookies, sessions, passwords, and other secrets never enter backup or sync.
+- Exception (tracker sync v1, user-approved): tracker logins/tokens may travel only as `tracker.credential` over the paired, certificate-pinned Core session, and only when the Core advertises `supportsTrackerCredentialsV1`. They are sealed with the Android Keystore in `noBackupFilesDir`, never enter backup, snapshots, change feeds, or logs, and are wiped on unpair. See `docs/audit/TRACKER_SYNC_CONTRACT.md`.
 - The UI must never report `synced` while the outbox has pending commands.
 
 ## Security

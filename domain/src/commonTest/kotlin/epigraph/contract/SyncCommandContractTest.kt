@@ -231,6 +231,41 @@ class SyncCommandContractTest {
     }
 
     @Test
+    fun `tracking field wire names are stable and round trip`() {
+        val expected = linkedMapOf(
+            TrackingField.REMOTE_ID to "remote_id",
+            TrackingField.STATUS to "status",
+            TrackingField.PROGRESS to "progress",
+            TrackingField.SCORE to "score",
+            TrackingField.STARTED_AT to "started_at",
+            TrackingField.FINISHED_AT to "finished_at",
+            TrackingField.REPEAT_COUNT to "repeat_count",
+            TrackingField.PRIVATE to "private",
+            TrackingField.LIBRARY_ID to "library_id",
+            TrackingField.TITLE to "title",
+            TrackingField.REMOTE_URL to "remote_url",
+            TrackingField.TOTAL_CHAPTERS to "total_chapters",
+        )
+
+        TrackingField.entries.toList() shouldContainExactly expected.keys.toList()
+        expected.forEach { (field, wireName) ->
+            val encoded = Json.encodeToString(TrackingField.serializer(), field)
+            encoded shouldBe "\"$wireName\""
+            Json.decodeFromString(TrackingField.serializer(), encoded) shouldBe field
+        }
+
+        val command = SyncCommand.PatchTracking(
+            entityId,
+            trackerId = "novelupdates",
+            fields = expected.keys.map { TrackingFieldPatch(it, "1") },
+        )
+        Json.decodeFromString(
+            SyncCommand.serializer(),
+            Json.encodeToString(SyncCommand.serializer(), command),
+        ) shouldBe command
+    }
+
+    @Test
     fun `artifact identities require immutable lowercase hashes`() {
         shouldThrow<IllegalArgumentException> {
             AssetDescriptor("AB".repeat(32), sizeBytes = 10, mediaType = "application/pdf")

@@ -83,6 +83,7 @@ class BootstrapBundleParser(
                 tlsCertSha256 = bundle.tlsCertSha256.trim().lowercase(),
                 mdnsServiceName = bundle.mdnsServiceName?.trim(),
                 claimUrl = bundle.claimUrl?.trim(),
+                deviceName = sanitizeDeviceName(bundle.deviceName),
             ),
             endpoint = SyncdEndpoint(normalizedOrigin),
         )
@@ -132,11 +133,17 @@ class BootstrapBundleParser(
         private val REQUIRED_FIELDS_WITH_CLAIM_URL = REQUIRED_FIELDS + "claimUrl"
         private val V2_FIELDS = REQUIRED_FIELDS_WITH_CLAIM_URL +
             setOf("schemaVersion", "serverId", "mdnsServiceName")
-        private val ALLOWED_FIELD_SETS = setOf(
+        private val BASE_FIELD_SETS = listOf(
             REQUIRED_FIELDS,
             REQUIRED_FIELDS_WITH_CLAIM_URL,
             V2_FIELDS,
         )
+
+        // The desktop host QR (`syncd_desktop.rs` SyncdBootstrapBundle) adds an optional
+        // display-only deviceName to any of the base shapes.
+        private val ALLOWED_FIELD_SETS = BASE_FIELD_SETS.toSet() +
+            BASE_FIELD_SETS.map { it + "deviceName" }
+        private const val MAX_DEVICE_NAME_CHARS = 128
         private val SESSION_ID = Regex("bootstrap-[0-9a-fA-F-]{32,48}")
         private val PAIRING_CODE = Regex("[0-9A-F]{12}")
         private val PROFILE_ID = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -320,6 +327,19 @@ class BootstrapBundleParser(
             }
             if (inString || depth != 0) throw IllegalArgumentException("unterminated JSON")
             return keys
+        }
+
+        /**
+         * deviceName is display metadata only; it never gates pairing. Control characters are
+         * stripped and the value is bounded so a hostile QR cannot inject layout-breaking text.
+         */
+        internal fun sanitizeDeviceName(raw: String?): String? {
+            val cleaned = raw
+                ?.filterNot { Character.isISOControl(it) }
+                ?.trim()
+                ?.take(MAX_DEVICE_NAME_CHARS)
+                ?.trim()
+            return cleaned?.takeIf { it.isNotEmpty() }
         }
 
         private fun fail(failure: PairingBundleFailure): Nothing =

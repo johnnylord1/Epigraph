@@ -83,5 +83,22 @@ class CoreDrainLoopTest {
 
         assertEquals(1, result.pendingCount)
         assertTrue(result.transientFailure)
+        assertFalse(result.coreTransientFailure)
+    }
+
+    @Test
+    fun `core row transient failure is not mistaken for a comic-only failure`() = runTest {
+        val result = drainCoreBacklog(
+            countPending = { 2 },
+            drainBatch = {
+                CoreDrainBatch(
+                    suwayomi = SuwayomiMutationDrainReport(1, 0, 1, 0, 1),
+                    core = CoreOutboxDrainReport(1, 1, 0, 1, 0),
+                )
+            },
+        )
+
+        assertTrue(result.transientFailure)
+        assertTrue(result.coreTransientFailure)
     }
 }

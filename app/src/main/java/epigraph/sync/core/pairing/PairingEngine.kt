@@ -38,6 +38,18 @@ interface PairingTransport {
     ): Flow<PairingStatusEvent>
 }
 
+/**
+ * `POST /v1/pairing/pin/resolve`: exchanges the six-digit PIN shown by a discovered host for the
+ * same bootstrap payload its QR carries. Must be pinned to the fingerprint the host advertised.
+ */
+fun interface PairingPinTransport {
+    suspend fun resolvePin(
+        endpoint: SyncdEndpoint,
+        tlsCertSha256: String,
+        pin: String,
+    ): BootstrapPayloadResponse
+}
+
 enum class PairingErrorCode {
     INVALID_BUNDLE,
     EXPIRED,
@@ -52,6 +64,18 @@ enum class PairingErrorCode {
     TLS_MISMATCH,
     NETWORK,
     INVALID_RESPONSE,
+
+    /** No open pairing on the host matches the typed PIN. */
+    PIN_NOT_FOUND,
+
+    /** The host locked PIN pairing after repeated wrong guesses; reopen "Add device" there. */
+    PIN_LOCKED,
+
+    /** The typed PIN is not six digits. */
+    PIN_INVALID,
+
+    /** No Epigraph desktop answered on the local network. */
+    HOST_NOT_FOUND,
 }
 
 data class PairingError(
@@ -78,6 +102,8 @@ object PairingTransportErrorMapper {
             "PAIRING_SESSION_INVALID_STATUS" -> PairingErrorCode.INVALID_SESSION_STATUS
             "PROTOCOL_VERSION_MISMATCH" -> PairingErrorCode.PROTOCOL_MISMATCH
             "CLIENT_VERSION_TOO_OLD" -> PairingErrorCode.CLIENT_UPGRADE_REQUIRED
+            "PAIRING_PIN_NOT_FOUND" -> PairingErrorCode.PIN_NOT_FOUND
+            "PAIRING_PIN_LOCKED" -> PairingErrorCode.PIN_LOCKED
             else -> when (httpStatus) {
                 401 -> PairingErrorCode.UNAUTHORIZED
                 403 -> PairingErrorCode.REJECTED

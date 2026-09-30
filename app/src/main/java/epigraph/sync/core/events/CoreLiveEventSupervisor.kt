@@ -23,7 +23,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import co.touchlab.kermit.Logger
 
@@ -54,6 +53,7 @@ class CoreLiveEventSupervisor(
     private val connectivity = context.applicationContext
         .getSystemService(ConnectivityManager::class.java)
     private val started = AtomicBoolean(false)
+    private val rejectedCredentials = RejectedCoreCredentialGate(REJECTED_CREDENTIAL_RECHECK_MS)
 
     /** Starts at most one process-lifetime supervisor. Cancellation is owned by [scope]. */
     fun start(scope: CoroutineScope) {
@@ -72,11 +72,26 @@ class CoreLiveEventSupervisor(
                 delay(NO_SESSION_RETRY_MS)
                 continue
             }
+            if (!rejectedCredentials.allows(liveCredentialKey(session))) {
+                // Core rejected exactly this credential. Wait for re-pairing or for the worker to
+                // store refreshed scopes instead of hammering the desktop with a revoked token.
+                session.close()
+                delay(NO_SESSION_RETRY_MS)
+                continue
+            }
 
             try {
                 runAuthenticatedSession(session)
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: CoreLiveSessionChanged) {
+                logger.i { "live Core feed restarting: credential or sync selection changed" }
+            } catch (needsUserAction: CoreLiveEventNeedsUserAction) {
+                logger.w { needsUserAction.message.orEmpty() }
+                if (rejectedCredentials.reject(liveCredentialKey(session))) {
+                    // One worker run turns the rejection into a visible re-pair/authorization state.
+                    scheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
+                }
             } catch (failure: Throwable) {
                 logger.w {
                     "live Core feed stopped: ${failure::class.simpleName ?: "UnknownFailure"}"
@@ -96,7 +111,12 @@ class CoreLiveEventSupervisor(
         val sessionTransports = transports.create(credentials, endpoint.origin)
         val capabilities = when (val response = sessionTransports.http.capabilities()) {
             is CoreHttpResult.Success -> response.value
-            is CoreHttpResult.Failure -> error("Core capabilities failed: ${response.statusCode}")
+            is CoreHttpResult.Failure -> {
+                if (response.statusCode.isAuthorizationFailure()) {
+                    throw CoreLiveEventNeedsUserAction(response.statusCode)
+                }
+                error("Core capabilities failed: ${response.statusCode}")
+            }
         }
         val policy = policyResolver.resolve(
             credentials = credentials,
@@ -112,7 +132,7 @@ class CoreLiveEventSupervisor(
         // regular scope so the parent reloads the encrypted credential instead of leaving other
         // streams attached to a session that Core has rejected.
         coroutineScope {
-            policy.selectedScopes.map { scopeId ->
+            policy.selectedScopes.forEach { scopeId ->
                 launch(CoroutineName("epigraph-core-events-$scopeId")) {
                     runScope(
                         credentials = credentials,
@@ -121,7 +141,39 @@ class CoreLiveEventSupervisor(
                         sessionTransports = sessionTransports,
                     )
                 }
-            }.joinAll()
+            }
+            launch(CoroutineName("epigraph-core-events-watch")) {
+                watchSession(credentials, capabilities, policy.selectedScopes)
+            }
+        }
+    }
+
+    /**
+     * Streams are opened for the scopes granted when the session started. The worker refreshes
+     * scopes through `/v1/session`, the user may change the sync selection or disconnect, and a
+     * new pairing rotates the token; any of these restarts the feed with the stored credential.
+     */
+    private suspend fun watchSession(
+        credentials: CoreCredentialSession,
+        capabilities: CoreCapabilities,
+        selectedScopes: Set<String>,
+    ) {
+        while (currentCoroutineContext().isActive) {
+            delay(SESSION_WATCH_MS)
+            val latest = try {
+                credentialsStore.load()
+            } catch (_: Exception) {
+                continue
+            } ?: throw CoreLiveSessionChanged()
+            val changed = latest.use { stored ->
+                val latestScopes = try {
+                    policyResolver.resolve(stored, capabilities, devices.currentDeviceId()).selectedScopes
+                } catch (_: Exception) {
+                    return@use false
+                }
+                liveSessionChanged(credentials, selectedScopes, stored, latestScopes)
+            }
+            if (changed) throw CoreLiveSessionChanged()
         }
     }
 
@@ -167,9 +219,8 @@ class CoreLiveEventSupervisor(
                 )
                 when (val result = orchestrator.run(initial)) {
                     is CoreEventLoopResult.NeedsUserAction -> {
-                        // A 401/403 must make the parent reload the encrypted credential. Do not
+                        // A 401/403 parks this credential in the parent until it changes. Do not
                         // spin on a revoked token and do not expose the token in logs.
-                        scheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING)
                         throw CoreLiveEventNeedsUserAction(result.statusCode)
                     }
                 }
@@ -217,6 +268,9 @@ class CoreLiveEventSupervisor(
                 )
             }
             is CoreHttpResult.Failure -> {
+                if (response.statusCode.isAuthorizationFailure()) {
+                    throw CoreLiveEventNeedsUserAction(response.statusCode)
+                }
                 error("Core snapshot failed for $scopeId: ${response.statusCode}")
             }
         }
@@ -245,6 +299,10 @@ class CoreLiveEventSupervisor(
     private class CoreLiveEventNeedsUserAction(statusCode: Int) :
         IllegalStateException("Core event stream requires user action ($statusCode)")
 
+    private class CoreLiveSessionChanged : IllegalStateException("Core live session changed")
+
+    private fun Int.isAuthorizationFailure() = this == 401 || this == 403
+
     private companion object {
         const val LOG_TAG = "EpigraphCoreLiveEvents"
         const val NETWORK_POLL_MS = 2_000L
@@ -252,6 +310,55 @@ class CoreLiveEventSupervisor(
         const val NO_SELECTED_SCOPE_RETRY_MS = 15_000L
         const val SCOPE_RETRY_MS = 5_000L
         const val SESSION_RETRY_MS = 10_000L
+        const val SESSION_WATCH_MS = 30_000L
+        const val REJECTED_CREDENTIAL_RECHECK_MS = 15 * 60_000L
         const val MAX_RECONNECT_DELAY_MS = 30_000L
+    }
+}
+
+/** Identity of a stored credential as far as the live feed is concerned; never includes the token. */
+internal fun liveCredentialKey(session: CoreCredentialSession): String =
+    listOf(session.serverId, session.profileId, session.tokenId, session.scopes.sorted().joinToString(","))
+        .joinToString("|")
+
+internal fun liveSessionChanged(
+    running: CoreCredentialSession,
+    runningScopes: Set<String>,
+    stored: CoreCredentialSession,
+    storedScopes: Set<String>,
+): Boolean = running.tokenId != stored.tokenId ||
+    running.serverId != stored.serverId ||
+    running.profileId != stored.profileId ||
+    runningScopes != storedScopes
+
+/**
+ * Remembers the credential Core answered with 401/403. The same credential is not retried until it
+ * changes (re-pairing, refreshed scopes) or [recheckMs] passes, so a revoked token costs one worker
+ * run instead of a request every few seconds.
+ */
+internal class RejectedCoreCredentialGate(
+    private val recheckMs: Long,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
+    private var rejectedKey: String? = null
+    private var rejectedAtMs: Long = 0
+
+    @Synchronized
+    fun allows(key: String): Boolean {
+        val rejected = rejectedKey ?: return true
+        if (rejected != key || nowMs() - rejectedAtMs >= recheckMs) {
+            rejectedKey = null
+            return true
+        }
+        return false
+    }
+
+    /** Returns true only the first time [key] is rejected in a row. */
+    @Synchronized
+    fun reject(key: String): Boolean {
+        val first = rejectedKey != key
+        rejectedKey = key
+        rejectedAtMs = nowMs()
+        return first
     }
 }

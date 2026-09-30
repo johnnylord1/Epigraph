@@ -1,23 +1,32 @@
 package yokai.presentation.settings.screen
 
+import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.extensions.ExtensionReconciliationActivity
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActivity
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyInventory
+import epigraph.sync.core.pairing.CoreHostDiscoveryState
 import epigraph.sync.core.pairing.CorePairingUiState
+import epigraph.sync.core.pairing.DiscoveredCoreHost
 import epigraph.sync.core.pairing.PairingBundleFailure
 import epigraph.sync.core.pairing.PairingErrorCode
+import epigraph.sync.core.pairing.PairingPin
 import epigraph.sync.core.pairing.PairingStage
 import epigraph.sync.core.pairing.PairingSyncSelection
 import epigraph.sync.core.policy.SyncDomain
 import epigraph.sync.core.policy.DependencyInventoryMode
+import epigraph.sync.core.work.CoreSyncStatus
+import epigraph.sync.core.work.CoreSyncStatusMonitor
+import epigraph.sync.core.work.CoreUserActionReason
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.Column
@@ -27,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,16 +44,21 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.stringResource
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toPersistentList
+import kotlinx.coroutines.launch
 import org.koin.core.context.GlobalContext
 import yokai.i18n.MR
 import yokai.presentation.component.preference.Preference
@@ -64,11 +79,25 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         val novelDependencies = remember {
             GlobalContext.get().get<LnReaderDependencyActionCoordinator>()
         }
+        val syncMonitor = remember { GlobalContext.get().get<CoreSyncStatusMonitor>() }
+        val syncStatus by remember(syncMonitor) { syncMonitor.status() }
+            .collectAsState(initial = null)
+        val novelCoverageCheck = remember { GlobalContext.get().get<NovelChapterCoverageCheck>() }
+        var novelsWithoutChapters by remember { mutableStateOf<List<String>>(emptyList()) }
+        LaunchedEffect(syncStatus) {
+            novelsWithoutChapters = runCatching { novelCoverageCheck.novelsWithoutChapters() }
+                .getOrDefault(emptyList())
+        }
+        val coroutineScope = rememberCoroutineScope()
         val state by controller.state.collectAsState()
         val persistedSelection by controller.selection.collectAsState()
         val extensionState by extensionReconciliation.state.collectAsState()
         val context = LocalContext.current
         var showPasteDialog by remember { mutableStateOf(false) }
+        var showPinDialog by remember { mutableStateOf(false) }
+        var pinText by remember { mutableStateOf("") }
+        var selectedHost by remember { mutableStateOf<DiscoveredCoreHost?>(null) }
+        val discoveryState by controller.discovery.collectAsState()
         var bundleText by remember { mutableStateOf("") }
         var syncComics by remember { mutableStateOf(true) }
         var syncNovels by remember { mutableStateOf(true) }
@@ -138,6 +167,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 title = { Text(stringResource(MR.strings.epigraph_core_sync_selection_title)) },
                 text = {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        (state as? CorePairingUiState.Selecting)?.let { selecting ->
+                            VerificationCodeHeader(selecting.verificationCode, selecting.desktopName)
+                        }
                         Text(
                             stringResource(MR.strings.epigraph_core_sync_selection_summary),
                             style = MaterialTheme.typography.bodyMedium,
@@ -270,6 +302,98 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             )
         }
 
+        if (showPinDialog) {
+            val hosts = (discoveryState as? CoreHostDiscoveryState.Found)?.hosts.orEmpty()
+            LaunchedEffect(hosts) {
+                if (selectedHost !in hosts) selectedHost = hosts.singleOrNull()
+            }
+            val normalizedPin = PairingPin.normalize(pinText)
+            val closePinDialog = {
+                pinText = ""
+                selectedHost = null
+                showPinDialog = false
+            }
+            AlertDialog(
+                onDismissRequest = { if (!busy) closePinDialog() },
+                title = { Text(stringResource(MR.strings.epigraph_core_pin_pair)) },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        when (discoveryState) {
+                            CoreHostDiscoveryState.Idle,
+                            CoreHostDiscoveryState.Searching,
+                            -> Text(
+                                stringResource(MR.strings.epigraph_core_pin_searching),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            is CoreHostDiscoveryState.Found -> if (hosts.isEmpty()) {
+                                Text(
+                                    stringResource(MR.strings.epigraph_core_pin_no_hosts),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            } else {
+                                hosts.forEach { host ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        RadioButton(
+                                            selected = host == selectedHost,
+                                            onClick = { selectedHost = host },
+                                        )
+                                        Text(
+                                            stringResource(
+                                                MR.strings.epigraph_core_pin_host,
+                                                host.instanceName,
+                                                host.verificationCode,
+                                            ),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = pinText,
+                            onValueChange = { value ->
+                                pinText = value.filter { it.isDigit() || it == ' ' || it == '-' }.take(12)
+                            },
+                            enabled = !busy,
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            label = { Text(stringResource(MR.strings.epigraph_core_pin_label)) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp),
+                        )
+                    }
+                },
+                confirmButton = {
+                    if (discoveryState is CoreHostDiscoveryState.Found && hosts.isEmpty()) {
+                        TextButton(onClick = { controller.discoverHosts() }) {
+                            Text(stringResource(MR.strings.epigraph_core_pin_search_again))
+                        }
+                    } else {
+                        TextButton(
+                            enabled = !busy && normalizedPin != null && selectedHost != null,
+                            onClick = {
+                                val host = selectedHost
+                                val pin = normalizedPin
+                                if (host != null && pin != null) {
+                                    closePinDialog()
+                                    controller.startPinPairing(host, pin)
+                                }
+                            },
+                        ) { Text(stringResource(MR.strings.epigraph_core_pair)) }
+                    }
+                },
+                dismissButton = {
+                    TextButton(enabled = !busy, onClick = { closePinDialog() }) {
+                        Text(stringResource(MR.strings.action_cancel))
+                    }
+                },
+            )
+        }
+
         return persistentListOf(
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.epigraph_core),
@@ -291,6 +415,17 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                     .setBarcodeImageEnabled(false)
                                     .setOrientationLocked(false),
                             )
+                        },
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.epigraph_core_pin_pair),
+                        subtitle = stringResource(MR.strings.epigraph_core_pin_pair_summary),
+                        enabled = !busy,
+                        onClick = {
+                            pinText = ""
+                            selectedHost = null
+                            showPinDialog = true
+                            controller.discoverHosts()
                         },
                     ),
                     Preference.PreferenceItem.TextPreference(
@@ -350,7 +485,76 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                     ),
                 ),
             ),
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.epigraph_core_sync_group),
+                preferenceItems = listOfNotNull(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.epigraph_core_sync_status_title),
+                        subtitle = syncStatus?.let { syncStatusText(it) }
+                            ?: stringResource(MR.strings.epigraph_core_loading),
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.epigraph_core_sync_now),
+                        subtitle = stringResource(MR.strings.epigraph_core_sync_now_summary),
+                        enabled = state is CorePairingUiState.Paired && syncStatus !is CoreSyncStatus.Syncing,
+                        onClick = {
+                            coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
+                        },
+                    ),
+                    novelsWithoutChapters.takeIf { it.isNotEmpty() }?.let { titles ->
+                        Preference.PreferenceItem.TextPreference(
+                            title = stringResource(MR.strings.epigraph_core_novels_without_chapters_title),
+                            subtitle = stringResource(
+                                MR.strings.epigraph_core_novels_without_chapters_summary,
+                                titles.size,
+                                titles.take(3).joinToString(", ") + if (titles.size > 3) ", …" else "",
+                            ),
+                        )
+                    },
+                ).toPersistentList(),
+            ),
         )
+    }
+
+    /** Never reports synced while anything is unsettled; [CoreSyncStatus.Synced] has no counts. */
+    @Composable
+    private fun syncStatusText(status: CoreSyncStatus): String = when (status) {
+        CoreSyncStatus.NotPaired -> stringResource(MR.strings.epigraph_core_sync_status_not_paired)
+        is CoreSyncStatus.Syncing ->
+            stringResource(MR.strings.epigraph_core_sync_status_syncing, status.counts.unsettled)
+        is CoreSyncStatus.Queued ->
+            stringResource(MR.strings.epigraph_core_sync_status_queued, status.counts.unsettled)
+        is CoreSyncStatus.Retrying ->
+            stringResource(MR.strings.epigraph_core_sync_status_retrying, status.counts.unsettled)
+        is CoreSyncStatus.NeedsPairing ->
+            stringResource(MR.strings.epigraph_core_sync_status_needs_pairing, status.counts.unsettled)
+        is CoreSyncStatus.NeedsUserAction -> when (status.reason) {
+            CoreUserActionReason.REMOTE_PROJECTION_BLOCKED -> stringResource(
+                MR.strings.epigraph_core_sync_status_projection_blocked,
+                status.counts.unsettled,
+            )
+            CoreUserActionReason.AUTHORIZATION_REQUIRED ->
+                stringResource(MR.strings.epigraph_core_sync_status_authorization)
+            CoreUserActionReason.CORE_INCOMPATIBLE ->
+                stringResource(MR.strings.epigraph_core_sync_status_incompatible)
+            else -> stringResource(MR.strings.epigraph_core_sync_status_rejected, status.counts.unsettled)
+        }
+        is CoreSyncStatus.Blocked -> stringResource(
+            MR.strings.epigraph_core_sync_status_blocked,
+            status.counts.blocked,
+            status.counts.unsettled,
+        )
+        is CoreSyncStatus.Pending ->
+            stringResource(MR.strings.epigraph_core_sync_status_pending, status.counts.unsettled)
+        is CoreSyncStatus.Synced -> stringResource(
+            MR.strings.epigraph_core_sync_status_synced,
+            DateUtils.getRelativeTimeSpanString(
+                status.lastSyncAtMs,
+                System.currentTimeMillis(),
+                DateUtils.MINUTE_IN_MILLIS,
+            ).toString(),
+        )
+        CoreSyncStatus.Idle -> stringResource(MR.strings.epigraph_core_sync_status_idle)
     }
 
     @Composable
@@ -389,7 +593,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         is CorePairingUiState.Pairing -> when (state.stage) {
             PairingStage.VALIDATING -> stringResource(MR.strings.epigraph_core_pairing_validating)
             PairingStage.CLAIMING -> stringResource(MR.strings.epigraph_core_pairing_claiming)
-            PairingStage.WAITING_FOR_DESKTOP -> stringResource(MR.strings.epigraph_core_pairing_waiting)
+            PairingStage.WAITING_FOR_DESKTOP -> state.verificationCode?.let { code ->
+                stringResource(MR.strings.epigraph_core_pairing_waiting_code, code)
+            } ?: stringResource(MR.strings.epigraph_core_pairing_waiting)
             PairingStage.EXCHANGING_TOKEN -> stringResource(MR.strings.epigraph_core_pairing_exchanging)
             PairingStage.SAVING_CREDENTIAL -> stringResource(MR.strings.epigraph_core_pairing_saving)
         }
@@ -479,5 +685,31 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         PairingErrorCode.INVALID_SESSION_STATUS,
         PairingErrorCode.INVALID_RESPONSE,
         -> stringResource(MR.strings.epigraph_core_error_generic)
+        PairingErrorCode.PIN_NOT_FOUND -> stringResource(MR.strings.epigraph_core_error_pin_not_found)
+        PairingErrorCode.PIN_LOCKED -> stringResource(MR.strings.epigraph_core_error_pin_locked)
+        PairingErrorCode.PIN_INVALID -> stringResource(MR.strings.epigraph_core_error_pin_invalid)
+        PairingErrorCode.HOST_NOT_FOUND -> stringResource(MR.strings.epigraph_core_error_host_not_found)
+    }
+
+    @Composable
+    private fun VerificationCodeHeader(code: String, desktopName: String?) {
+        Column(modifier = Modifier.padding(bottom = 12.dp)) {
+            desktopName?.let { name ->
+                Text(
+                    stringResource(MR.strings.epigraph_core_selection_desktop, name),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            Text(
+                stringResource(MR.strings.epigraph_core_verification_code, code),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                stringResource(MR.strings.epigraph_core_verification_code_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }

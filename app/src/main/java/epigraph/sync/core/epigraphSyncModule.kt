@@ -8,6 +8,9 @@ import epigraph.contract.SyncScopeId
 import epigraph.sync.EpigraphReaderProgressRouter
 import epigraph.sync.EpigraphLibraryMutationRouter
 import epigraph.sync.EpigraphBookMutationRouter
+import epigraph.sync.EpigraphCategoryMutationRouter
+import epigraph.sync.EpigraphTrackingMutationRouter
+import epigraph.sync.TrackingSyncGate
 import epigraph.sync.ClientMutationIdFactory
 import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.core.credentials.CoreCredentialStore
@@ -27,6 +30,7 @@ import epigraph.sync.core.extensions.SqlDelightCoreSourceRelinkStore
 import epigraph.sync.core.extensions.CoreSourceRelinkStore
 import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
+import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.outbox.EpigraphCoordinatorOutboxStore
 import epigraph.sync.core.outbox.CoreLamportSource
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
@@ -76,6 +80,16 @@ import epigraph.sync.core.pairing.EpigraphCorePairingEngine
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.pairing.AndroidPairingDeviceProvider
 import epigraph.sync.core.pairing.PairingTransport
+import epigraph.sync.core.pairing.PairingPinTransport
+import epigraph.sync.core.pairing.PairingPinResolver
+import epigraph.sync.core.pairing.CorePairingEndedListener
+import epigraph.sync.core.trackers.CoreTrackingCapabilityCache
+import epigraph.sync.core.trackers.TrackManagerCredentialSource
+import epigraph.sync.core.trackers.TrackerCredentialSyncer
+import epigraph.sync.core.trackers.TrackerCredentialVault
+import epigraph.sync.core.trackers.TrackerSyncSessionHook
+import epigraph.sync.core.pairing.CoreHostDiscovery
+import epigraph.sync.core.pairing.AndroidCoreHostDiscovery
 import epigraph.sync.core.pairing.transport.OkHttpPairingTransport
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
 import epigraph.sync.core.replica.SqlDelightCoreLamportSource
@@ -84,6 +98,7 @@ import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
 import epigraph.sync.core.replica.CoreReplicaRecordReader
 import epigraph.sync.core.replica.CoreReplicaStore
+import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.replica.SqlDelightCoreReplicaStore
 import epigraph.sync.core.replica.EpigraphCoreDomainProjection
 import epigraph.sync.core.replica.CoreReplicaProjection
@@ -115,6 +130,8 @@ import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.PinnedCoreOutboxSyncConnectionFactory
 import epigraph.sync.core.work.SnapshotCoreReplicaSync
 import epigraph.sync.core.work.SqlDelightCoreSyncWakeStore
+import epigraph.sync.core.work.CoreSyncRunStore
+import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.WorkManagerCoreBackgroundSyncScheduler
 import eu.kanade.tachiyomi.BuildConfig
 import java.util.concurrent.TimeUnit
@@ -135,9 +152,11 @@ fun epigraphSyncModule(app: Application) = module {
             .build()
     }
     single { EpigraphCoreTlsClientFactory(get(named(PAIRING_HTTP_CLIENT))) }
-    single<PairingTransport> {
-        OkHttpPairingTransport(get<OkHttpClient>(named(PAIRING_HTTP_CLIENT)))
-    }
+    single { OkHttpPairingTransport(get<OkHttpClient>(named(PAIRING_HTTP_CLIENT))) }
+    single<PairingTransport> { get<OkHttpPairingTransport>() }
+    single<PairingPinTransport> { get<OkHttpPairingTransport>() }
+    single { PairingPinResolver(get()) }
+    single<CoreHostDiscovery> { AndroidCoreHostDiscovery(app) }
     single { EpigraphCorePairingEngine(get()) }
 
     single { EncryptedCoreCredentialStore.create(app) }
@@ -148,8 +167,25 @@ fun epigraphSyncModule(app: Application) = module {
     single { EpigraphCorePairingActivation(get(), get(), get(), get()) }
     single { AndroidPairingDeviceProvider(app) }
     single<CoreBackgroundSyncScheduler> { WorkManagerCoreBackgroundSyncScheduler(app) }
+    single { CoreSyncRunStore(app) }
+    single { CoreSyncStatusMonitor(app, get(), get(), get(), get()) }
     single { PortableDependencyTrustCoordinator(get(), get()) }
-    single { EpigraphCorePairingController(get(), get(), get(), get(), get(), get()) }
+    single {
+        EpigraphCorePairingController(
+            activation = get(),
+            credentials = get(),
+            deviceProvider = get(),
+            syncScheduler = get(),
+            selections = get(),
+            endpoints = get(),
+            hostDiscovery = get(),
+            pinResolver = get(),
+            pairingEndedListeners = listOf(
+                get<CoreTrackingCapabilityCache>(),
+                CorePairingEndedListener { get<TrackerCredentialSyncer>().wipe() },
+            ),
+        )
+    }
     single { CoreSessionTransportFactory(get(), BuildConfig.VERSION_NAME) }
     single<CoreEndpointResolver> {
         AndroidCoreEndpointResolver(app, get(), BuildConfig.VERSION_NAME)
@@ -183,6 +219,7 @@ fun epigraphSyncModule(app: Application) = module {
     single { EpigraphCoreSource(get<AuthenticatedEpigraphCoreSourceGateway>()) }
     single { SqlDelightCoreIdentityInventoryStore(get()) }
     single { ExtensionReconciliationStore(get()) }
+    single { EpigraphCoreBridgeLabeler(get(), get()) }
     single { ExtensionReconciliationNotifier(app) }
     single<CoreSourceRelinkStore> { SqlDelightCoreSourceRelinkStore(get()) }
     single<CoreSourceRegistry> { InstalledCoreSourceRegistry(get(), get()) }
@@ -239,6 +276,24 @@ fun epigraphSyncModule(app: Application) = module {
         )
     }
     single { LocalNovelLibraryOutboxRepair(get(), get(), get(), get()) }
+    single { SyncedChapterStateWriter(get(), get()) }
+    single {
+        EpigraphCategoryMutationRouter(
+            coordinator = get(),
+            deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
+            mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
+            scopeProvider = get(),
+        )
+    }
+    single {
+        EpigraphTrackingMutationRouter(
+            coordinator = get(),
+            deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
+            mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
+            scopeProvider = get(),
+            gate = get(),
+        )
+    }
     single {
         EpigraphBookMutationRouter(
             coordinator = get(),
@@ -266,6 +321,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaCheckpointReader> { get<SqlDelightCoreReplicaStore>() }
     single<CoreReplicaCheckpointResetter> { get<SqlDelightCoreReplicaStore>() }
     single<CoreReplicaRecordReader> { get<SqlDelightCoreReplicaStore>() }
+    single { NovelChapterCoverageCheck(get()) }
     single { CoreReplicaApplier(get()) }
     single {
         CoreLiveEventSupervisor(
@@ -321,7 +377,27 @@ fun epigraphSyncModule(app: Application) = module {
             get(named(PORTABLE_NOVEL_MANIFEST_REPLICA)),
         )
     }
-    single { CoreOutboxSyncRunner(get(), get(), get(), get(), get(), get()) }
+    single { CoreTrackingCapabilityCache.create(app) }
+    single<TrackingSyncGate> { get<CoreTrackingCapabilityCache>() }
+    single { TrackerCredentialVault.create(app) }
+    single {
+        TrackerCredentialSyncer(
+            vault = get(),
+            source = TrackManagerCredentialSource(get(), get()),
+            deviceId = { get<CoreDeviceIdentityProvider>().currentDeviceId() },
+        )
+    }
+    single {
+        CoreOutboxSyncRunner(
+            get(),
+            get(),
+            get(),
+            get(),
+            get(),
+            get(),
+            negotiatedHooks = listOf(TrackerSyncSessionHook(get<CoreTrackingCapabilityCache>(), get())),
+        )
+    }
 }
 
 private const val CORE_COVER_QUEUE_PREFERENCES = "aethon_core_cover_queue_v1"

@@ -60,6 +60,11 @@ data class CoreCapabilities(
     val supportsConfirmedSuwayomiCommandsV1: Boolean = false,
     /** Aggregate readiness is opt-in; older Cores must not be treated as fully synced. */
     val supportsSyncStatusV1: Boolean = false,
+    /**
+     * Tracker credentials may be exchanged over this paired session. Older Cores never receive or
+     * return credentials; see docs/audit/TRACKER_SYNC_CONTRACT.md.
+     */
+    val supportsTrackerCredentialsV1: Boolean = false,
 )
 
 @Serializable

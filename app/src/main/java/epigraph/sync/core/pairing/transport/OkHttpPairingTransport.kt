@@ -1,9 +1,12 @@
 package epigraph.sync.core.pairing.transport
 
+import epigraph.sync.core.pairing.BootstrapPayloadResponse
 import epigraph.sync.core.pairing.PairingClaimRequest
 import epigraph.sync.core.pairing.PairingClaimResponse
 import epigraph.sync.core.pairing.PairingError
 import epigraph.sync.core.pairing.PairingErrorCode
+import epigraph.sync.core.pairing.PairingPinResolveRequest
+import epigraph.sync.core.pairing.PairingPinTransport
 import epigraph.sync.core.pairing.PairingStatusEvent
 import epigraph.sync.core.pairing.PairingStatusSubscription
 import epigraph.sync.core.pairing.PairingTransport
@@ -36,7 +39,7 @@ class OkHttpPairingTransport internal constructor(
     private val pinnedClient: (String) -> OkHttpClient,
     private val webSocketConnector: PairingWebSocketConnector = PairingWebSocketConnector.DEFAULT,
     private val json: Json = DEFAULT_JSON,
-) : PairingTransport {
+) : PairingTransport, PairingPinTransport {
     constructor(baseClient: OkHttpClient) : this(
         pinnedClient = PinnedPairingClientFactory(baseClient)::create,
         webSocketConnector = PairingWebSocketConnector.DEFAULT,
@@ -64,6 +67,45 @@ class OkHttpPairingTransport internal constructor(
                 }
                 try {
                     json.decodeFromString(PairingClaimResponse.serializer(), responseBody)
+                } catch (_: SerializationException) {
+                    throw invalidResponse()
+                } catch (_: IllegalArgumentException) {
+                    throw invalidResponse()
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: PairingTransportException) {
+            throw error
+        } catch (error: Throwable) {
+            throw transportFailure(error)
+        }
+    }
+
+    override suspend fun resolvePin(
+        endpoint: SyncdEndpoint,
+        tlsCertSha256: String,
+        pin: String,
+    ): BootstrapPayloadResponse {
+        val body = json.encodeToString(PairingPinResolveRequest.serializer(), PairingPinResolveRequest(pin))
+            .toRequestBody(JSON_MEDIA_TYPE)
+        val httpRequest = Request.Builder()
+            .url(endpointUrl(endpoint, endpoint.pinResolvePath))
+            .post(body)
+            .header("Accept", "application/json")
+            .build()
+
+        try {
+            return pinnedClient(tlsCertSha256).newCall(httpRequest).await().use { response ->
+                val responseBody = response.readBoundedBody()
+                if (!response.isSuccessful) {
+                    if (response.code == 400) {
+                        throw PairingTransportException(PairingError(PairingErrorCode.PIN_INVALID))
+                    }
+                    throw mappedCoreFailure(response.code, responseBody)
+                }
+                try {
+                    json.decodeFromString(BootstrapPayloadResponse.serializer(), responseBody)
                 } catch (_: SerializationException) {
                     throw invalidResponse()
                 } catch (_: IllegalArgumentException) {

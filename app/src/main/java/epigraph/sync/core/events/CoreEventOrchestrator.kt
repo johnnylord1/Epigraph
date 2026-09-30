@@ -27,6 +27,9 @@ enum class CoreBackgroundSyncReason {
     CONNECTIVITY_RESTORED,
     PERIODIC_RECONCILIATION,
     OUTBOX_PENDING,
+
+    /** "Sync now" in Settings: replaces any queued wake and runs as soon as network allows. */
+    MANUAL,
 }
 
 /**

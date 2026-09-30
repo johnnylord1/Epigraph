@@ -13,6 +13,10 @@ import epigraph.sync.core.protocol.CoreMutationsResponse
 import epigraph.sync.core.protocol.CoreSnapshot
 import epigraph.sync.core.protocol.CoreSessionResponse
 import epigraph.sync.core.protocol.CoreSyncStatus
+import epigraph.sync.core.protocol.CoreTrackerCredential
+import epigraph.sync.core.protocol.CoreTrackerCredentialDelete
+import epigraph.sync.core.protocol.CoreTrackerCredentialList
+import epigraph.sync.core.protocol.CoreTrackerCredentialWrite
 import epigraph.sync.core.protocol.SuwayomiGraphqlRequest
 import epigraph.sync.core.protocol.SuwayomiGraphqlResponse
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
@@ -174,6 +178,49 @@ class EpigraphCoreHttpClient internal constructor(
                 .get()
                 .build(),
         )
+    }
+
+    /** Tracker logins; only called when the Core advertises `supportsTrackerCredentialsV1`. */
+    suspend fun trackerCredentials(accessToken: String): CoreHttpResult<CoreTrackerCredentialList> =
+        execute(
+            protectedRequestBuilder(endpoint("v1/tracker-credentials"), accessToken)
+                .get()
+                .build(),
+        )
+
+    suspend fun putTrackerCredential(
+        accessToken: String,
+        trackerKey: String,
+        write: CoreTrackerCredentialWrite,
+    ): CoreHttpResult<CoreTrackerCredential> {
+        val body = json.encodeToString(CoreTrackerCredentialWrite.serializer(), write)
+            .toRequestBody(JSON_MEDIA_TYPE)
+        return execute(
+            protectedRequestBuilder(trackerCredentialEndpoint(trackerKey), accessToken)
+                .put(body)
+                .build(),
+        )
+    }
+
+    suspend fun deleteTrackerCredential(
+        accessToken: String,
+        trackerKey: String,
+        delete: CoreTrackerCredentialDelete,
+    ): CoreHttpResult<CoreTrackerCredential> {
+        val body = json.encodeToString(CoreTrackerCredentialDelete.serializer(), delete)
+            .toRequestBody(JSON_MEDIA_TYPE)
+        return execute(
+            protectedRequestBuilder(trackerCredentialEndpoint(trackerKey), accessToken)
+                .delete(body)
+                .build(),
+        )
+    }
+
+    private fun trackerCredentialEndpoint(trackerKey: String): HttpUrl {
+        require(TRACKER_KEY.matches(trackerKey)) { "trackerKey is invalid" }
+        return endpoint("v1/tracker-credentials").newBuilder()
+            .addPathSegment(trackerKey)
+            .build()
     }
 
     suspend fun mutations(
@@ -569,6 +616,7 @@ class EpigraphCoreHttpClient internal constructor(
 
     private companion object {
         const val CLIENT_RESPONSE_UNSUPPORTED = "CLIENT_RESPONSE_UNSUPPORTED"
+        val TRACKER_KEY = Regex("^[a-z][a-z0-9_]{0,63}$")
         const val DEFAULT_CATALOG_PAGE_SIZE = 100L
         const val MAX_CATALOG_PAGE_SIZE = 250L
         const val MAX_THUMBNAIL_BYTES = 16 * 1024 * 1024

@@ -74,7 +74,7 @@ import yokai.domain.track.interactor.InsertTrack
 fun domainModule() = module {
     factory { TrustExtension(get(), get()) }
 
-    single<CategoryRepository> { CategoryRepositoryImpl(get()) }
+    single<CategoryRepository> { CategoryRepositoryImpl(get(), getOrNull()) }
     factory { DeleteCategories(get()) }
     factory { GetCategories(get()) }
     factory { InsertCategories(get()) }
@@ -133,7 +133,7 @@ fun domainModule() = module {
 
     single<SeriesKnowledgeRepository> { SeriesKnowledgeRepositoryImpl(get()) }
 
-    single<TrackRepository> { TrackRepositoryImpl(get()) }
+    single<TrackRepository> { TrackRepositoryImpl(get(), getOrNull()) }
     factory { DeleteTrack(get()) }
     factory { GetTrack(get()) }
     factory { InsertTrack(get()) }

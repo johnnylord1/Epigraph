@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.decodeFromString
@@ -1187,6 +1188,160 @@ class EpigraphCoreDomainProjectionTest {
         }
         assertEquals(0.4, database.local_booksQueries.findProgress(BOOK_ID).executeAsOne().progression)
         assertEquals(0, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+    }
+
+    @Test
+    fun `comic tracking applies idempotently to the exact bound work and tombstones remove it`() = runTest {
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/Manga/Tracked"))
+        val workId = PortableIdentityV3.workId(work)
+        val localMangaId = insertTrackingManga(42, "/Manga/Tracked")
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = localMangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Tracked",
+                providerLabelHint = "Fixture",
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+        val record = trackingRecord(COMIC_SCOPE_ID, "comic.tracking", "comicId", workId, "anilist")
+
+        projection.upsert(database, record)
+        projection.upsert(database, record)
+
+        val stored = database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().single()
+        assertEquals(2L, stored.sync_id)
+        assertEquals(4242L, stored.remote_id)
+        assertNull(stored.library_id)
+        assertEquals("Tracked title", stored.title)
+        assertEquals(12.5, stored.last_chapter_read)
+        assertEquals(100L, stored.total_chapters)
+        assertEquals(8.0, stored.score)
+        assertEquals(1_700_000_000_000L, stored.start_date)
+
+        projection.upsert(
+            database,
+            trackingRecord(COMIC_SCOPE_ID, "comic.tracking", "comicId", "comic:missing", "anilist"),
+        )
+        projection.upsert(
+            database,
+            trackingRecord(COMIC_SCOPE_ID, "comic.tracking", "comicId", workId, "future-tracker"),
+        )
+        assertEquals(1, database.manga_syncQueries.getAll().executeAsList().size)
+
+        projection.delete(
+            database,
+            CoreConfirmedTombstone(
+                key = record.key,
+                serverVersion = 8,
+                lamport = 8,
+                deletedAtMs = 800,
+                reasonCode = "removed",
+            ),
+            record,
+        )
+        assertTrue(database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().isEmpty())
+    }
+
+    @Test
+    fun `novel tracking resolves the novel identity and skips malformed records`() = runTest {
+        val localMangaId = insertTrackingManga(10002, "/novel/tracked")
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "novel:tracked",
+            contentType = "NOVEL",
+            localReference = localMangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        val record = trackingRecord(SCOPE_ID, "novel.tracking", "novelId", "novel:tracked", "novelupdates")
+        val malformed = CoreConfirmedRecord(
+            key = CoreReplicaKey(SCOPE_ID, "novel.tracking", "novel.tracking::novel:tracked::hardcover"),
+            serverVersion = 7,
+            lamport = 7,
+            record = buildJsonObject {
+                put("novelId", "novel:tracked")
+                put("trackerKey", "hardcover")
+                put("remoteId", "not-a-number")
+            },
+        )
+
+        projection.upsert(database, malformed)
+        projection.upsert(database, record)
+
+        val stored = database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().single()
+        assertEquals(10L, stored.sync_id)
+        projection.delete(
+            database,
+            CoreConfirmedTombstone(
+                key = record.key,
+                serverVersion = 9,
+                lamport = 9,
+                deletedAtMs = 900,
+                reasonCode = "removed",
+            ),
+            null,
+        )
+        assertTrue(database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().isEmpty())
+    }
+
+    private fun trackingRecord(
+        scopeId: String,
+        entityType: String,
+        workKey: String,
+        workId: String,
+        trackerKey: String,
+    ) = CoreConfirmedRecord(
+        key = CoreReplicaKey(scopeId, entityType, "$entityType::$workId::$trackerKey"),
+        serverVersion = 7,
+        lamport = 7,
+        record = buildJsonObject {
+            put("trackingId", "$entityType::$workId::$trackerKey")
+            put(workKey, workId)
+            put("trackerKey", trackerKey)
+            put("remoteId", "4242")
+            put("libraryId", JsonNull)
+            put("title", "Tracked title")
+            put("remoteUrl", "https://tracker.example/4242")
+            put("status", "1")
+            put("progress", "12.5")
+            put("totalChapters", "100")
+            put("score", "8.0")
+            put("startedAtMs", "1700000000000")
+            put("finishedAtMs", "0")
+            put("updatedAtMs", 700)
+            put("futureField", "ignored")
+        },
+    )
+
+    private fun insertTrackingManga(source: Long, url: String): Long {
+        database.mangasQueries.insert(
+            source = source,
+            url = url,
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Tracked",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        return database.mangasQueries.selectLastInsertedRowId().executeAsOne()
     }
 
     private fun comicEntryRecord() = CoreConfirmedRecord(

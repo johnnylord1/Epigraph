@@ -24,7 +24,16 @@ data class SyncdBootstrapBundle(
      * wire compatibility while the parser still validates it when present.
      */
     val claimUrl: String? = null,
+    /** Display name of the desktop host; emitted by the desktop QR, never used for authority. */
+    val deviceName: String? = null,
 )
+
+@Serializable
+data class PairingPinResolveRequest(
+    val pin: String,
+) {
+    override fun toString(): String = "PairingPinResolveRequest(pin=<redacted>)"
+}
 
 @Serializable
 data class BootstrapSessionCreateRequest(
@@ -50,6 +59,7 @@ data class BootstrapPayloadResponse(
     val tlsCertSha256: String,
     val mdnsServiceName: String? = null,
     val suwayomiHint: BootstrapSuwayomiHint? = null,
+    val deviceName: String? = null,
 )
 
 @Serializable
@@ -200,6 +210,7 @@ data class PairingStatusSubscription(
 /** A normalized HTTPS origin. Paths are supplied separately by [PairingTransport]. */
 class SyncdEndpoint internal constructor(val origin: String) {
     val claimPath: String = "/v1/pairing/claim"
+    val pinResolvePath: String = "/v1/pairing/pin/resolve"
     val webSocketOrigin: String = "wss://${origin.removePrefix("https://")}"
 
     fun liveStatusPath(sessionId: String): String =

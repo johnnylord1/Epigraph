@@ -185,6 +185,50 @@ class EpigraphMutationCoordinatorTest {
     }
 
     @Test
+    fun `ack arriving after the replica already applied its version settles immediately`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        val scope = SyncScopeId("books:global")
+        // The live event for v7 was projected before the POST response was stored.
+        database.aethon_syncQueries.upsertCoreReplicaRecord(
+            scopeId = scope.value,
+            entityType = "book.progress",
+            entityId = "book:raced",
+            serverVersion = 7,
+            lamport = 3,
+            recordJson = "{}",
+            payloadSha256 = "a".repeat(64),
+        )
+        suspend fun ack(mutationId: String, entityId: String, requiredServerVersion: Long) {
+            coordinator.mutateLocal(envelope(deviceId, ClientMutationId(mutationId)), 100) { Unit }
+            coordinator.acknowledge(
+                EpigraphMutationAcknowledgement(
+                    deviceId = deviceId,
+                    clientMutationId = ClientMutationId(mutationId),
+                    scopeId = scope,
+                    entityType = "book.progress",
+                    entityId = EpigraphEntityId(entityId),
+                    canonicalEntityId = null,
+                    resultStatus = "APPLIED",
+                    requiredServerVersion = requiredServerVersion,
+                    appliedLamport = 3,
+                    eventClockJson = null,
+                    canonicalRecordSha256 = null,
+                    receivedAtEpochMillis = 200,
+                ),
+            )
+        }
+
+        ack("raced", "book:raced", requiredServerVersion = 7)
+        assertEquals(0, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+
+        // A version the replica has not reached yet (or another entity) still waits.
+        ack("ahead", "book:raced", requiredServerVersion = 8)
+        ack("other", "book:other", requiredServerVersion = 7)
+        assertEquals(2, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+        assertEquals(2, coordinator.unsettledCount())
+    }
+
+    @Test
     fun `capability failure keeps mutation pending and records a non-secret code`() = runTest {
         val deviceId = DeviceId("phone-a")
         val mutationId = ClientMutationId("blocked")
@@ -220,6 +264,28 @@ class EpigraphMutationCoordinatorTest {
 
         assertEquals(1, coordinator.pendingCount())
         assertEquals(0, coordinator.claimReady(Long.MAX_VALUE - 1, 1, 10).size)
+    }
+
+    @Test
+    fun `manual sync releases transient backoff but keeps blocked rows parked`() = runTest {
+        val deviceId = DeviceId("phone-a")
+        val transient = ClientMutationId("transient")
+        val blocked = ClientMutationId("blocked")
+        coordinator.mutateLocal(envelope(deviceId, transient), 100) { Unit }
+        coordinator.mutateLocal(envelope(deviceId, blocked), 100) { Unit }
+        coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10)
+        coordinator.markFailed(deviceId, transient, "outbox_retry", nextAttemptAtEpochMillis = 60_000)
+        coordinator.markFailed(deviceId, blocked, "blocked:unsupported_entity", Long.MAX_VALUE)
+
+        assertEquals(1, coordinator.blockedCount())
+        assertEquals(0, coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10).size)
+
+        coordinator.releaseRetryBackoff(200)
+
+        val ready = coordinator.claimReady(200, leaseDurationMillis = 1_000, limit = 10)
+        assertEquals(listOf(transient.value), ready.map { it.client_mutation_id })
+        assertEquals(1, coordinator.blockedCount())
+        assertEquals(2, coordinator.pendingCount())
     }
 
     @Test

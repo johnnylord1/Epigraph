@@ -198,6 +198,42 @@ class OkHttpPairingTransportTest {
         assertEquals(0, pinned.certificatePinner.pins.size)
     }
 
+    @Test
+    fun `pin resolve posts exact route and maps desktop PIN errors`() = runTest {
+        val interceptor = RecordingInterceptor { request ->
+            val body = Buffer().also { request.body!!.writeTo(it) }.readUtf8()
+            assertEquals("POST", request.method)
+            assertEquals("/v1/pairing/pin/resolve", request.url.encodedPath)
+            assertEquals("""{"pin":"377299"}""", body)
+            response(request, 200, PIN_PAYLOAD)
+        }
+
+        val payload = transportWith(interceptor).resolvePin(ENDPOINT, FINGERPRINT, "377299")
+
+        assertEquals("DESKTOP-EPIGRAPH", payload.deviceName)
+        assertEquals("server-a", payload.serverId)
+        assertEquals(2, payload.schemaVersion)
+        assertEquals("https://192.168.1.20:9443/v1/pairing/claim", payload.claimUrl)
+
+        suspend fun failureFor(status: Int, body: String): PairingErrorCode = try {
+            transportWith(RecordingInterceptor { request -> response(request, status, body) })
+                .resolvePin(ENDPOINT, FINGERPRINT, "000000")
+            error("PIN resolve should fail")
+        } catch (failure: PairingTransportException) {
+            failure.error.code
+        }
+        assertEquals(
+            PairingErrorCode.PIN_NOT_FOUND,
+            failureFor(404, """{"error":{"code":"PAIRING_PIN_NOT_FOUND","message":"x","retryable":false}}"""),
+        )
+        assertEquals(
+            PairingErrorCode.PIN_LOCKED,
+            failureFor(409, """{"error":{"code":"PAIRING_PIN_LOCKED","message":"x","retryable":true}}"""),
+        )
+        assertEquals(PairingErrorCode.PIN_INVALID, failureFor(400, """{"error":{"code":"BAD_REQUEST"}}"""))
+        assertEquals(PairingErrorCode.INVALID_RESPONSE, failureFor(200, "{}"))
+    }
+
     private fun transportWith(interceptor: Interceptor) = OkHttpPairingTransport(
         pinnedClient = { OkHttpClient.Builder().addInterceptor(interceptor).build() },
     )
@@ -318,6 +354,23 @@ class OkHttpPairingTransportTest {
                 "inactivityExpiresAtMs":199999,
                 "grantedVia":"qr"
               }
+            }
+        """.trimIndent()
+
+        // serde camelCase shape of syncd `models.rs` BootstrapPayloadResponse.
+        val PIN_PAYLOAD = """
+            {
+              "schemaVersion":2,
+              "serverId":"server-a",
+              "deviceName":"DESKTOP-EPIGRAPH",
+              "pairingSessionId":"bootstrap-12345678-1234-1234-1234-123456789abc",
+              "pairingCode":"0192A7C4E5F1",
+              "syncdBaseUrl":"https://192.168.1.20:9443",
+              "claimUrl":"https://192.168.1.20:9443/v1/pairing/claim",
+              "profileId":"main",
+              "expiresAtMs":99999,
+              "tlsCertSha256":"$FINGERPRINT",
+              "mdnsServiceName":"epigraph-syncd-server-a._epigraph-sync._tcp.local."
             }
         """.trimIndent()
 

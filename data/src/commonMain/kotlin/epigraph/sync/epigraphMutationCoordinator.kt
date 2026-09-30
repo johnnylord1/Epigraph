@@ -161,6 +161,10 @@ class EpigraphMutationCoordinator(
                 canonicalRecordSha256 = acknowledgement.canonicalRecordSha256,
                 receivedAt = acknowledgement.receivedAtEpochMillis,
             )
+            aethon_syncQueries.reconcileReplicaWaitWithApplied(
+                acknowledgement.deviceId.value,
+                acknowledgement.clientMutationId.value,
+            )
             aethon_syncQueries.deleteAcknowledgedMutation(
                 acknowledgement.deviceId.value,
                 acknowledgement.clientMutationId.value,
@@ -206,6 +210,20 @@ class EpigraphMutationCoordinator(
 
     suspend fun unsettledCount(): Long = databaseHandler.await {
         aethon_syncQueries.unsettledMutationCount().executeAsOne()
+    }
+
+    /** Rows the drainer parked for a desktop/user decision; they are never retried automatically. */
+    suspend fun blockedCount(): Long = databaseHandler.await {
+        aethon_syncQueries.blockedMutationCount().executeAsOne()
+    }
+
+    /**
+     * A manual "sync now" must not wait out transient exponential backoff. Blocked rows keep their
+     * parked schedule because retrying them cannot succeed without a change elsewhere.
+     */
+    suspend fun releaseRetryBackoff(nowEpochMillis: Long) {
+        require(nowEpochMillis >= 0) { "release timestamp must be epoch milliseconds" }
+        databaseHandler.await { aethon_syncQueries.releaseMutationBackoff(nowEpochMillis) }
     }
 
     suspend fun unsettledCount(scopeIds: Set<String>): Long {

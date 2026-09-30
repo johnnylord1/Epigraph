@@ -270,6 +270,167 @@ class EpigraphReaderProgressRouterTest {
         assertEquals(result.chapterEntityId, locator?.chapterId)
     }
 
+    @Test
+    fun `chapter states outside the reader publish only changed comic fields`() = runTest {
+        val mangaId = insertManga()
+        val chapterId = insertChapter(mangaId)
+        database.chaptersQueries.update(
+            chapterId = chapterId, mangaId = null, url = null, name = null, scanlator = null,
+            read = null, bookmark = null, lastPageRead = 5, pagesLeft = 5, chapterNumber = null,
+            sourceOrder = null, dateFetch = null, dateUpload = null, memo = null,
+        )
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "suwayomi:profile:secondary:manga:8",
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = "suwayomi:profile:secondary:chapter:901",
+            workEntityId = "suwayomi:profile:secondary:manga:8",
+            localChapterId = chapterId,
+            normalizedUrl = "https://source.test/chapter/901",
+            ordinal = 4.0,
+            updatedAt = 1,
+        )
+        var mutationNumber = 0
+        val router = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            comicScopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("state-${++mutationNumber}") },
+            clock = { 3_000 },
+        )
+
+        // Detail screens resend the whole row; the unchanged bookmark must not be republished.
+        val read = router.setChapterStates(
+            listOf(ChapterStateChange(chapterId, read = true, bookmarked = false, lastPageRead = 5, pagesLeft = 5)),
+        )
+        assertEquals(1, read.emittedCommandCount)
+        val first = queuedMutations().single()
+        assertEquals("comic.chapter_state", first.entity_type)
+        assertEquals("comics:profile:secondary", first.scope_id)
+        val firstState = commandOf(first)["state"]!!.jsonObject
+        assertEquals("true", firstState["read"]!!.jsonPrimitive.content)
+        assertEquals("null", firstState["bookmarked"].toString())
+        assertEquals("null", firstState["lastPageRead"].toString())
+        assertEquals("suwayomi:profile:secondary:chapter:901", firstState["chapterId"]!!.jsonPrimitive.content)
+        assertTrue(database.chaptersQueries.getChaptersById(chapterId).executeAsOne().read)
+
+        // Marking unread rewinds the page: that is an explicit reset, not a stale regression.
+        router.setChapterStates(listOf(ChapterStateChange(chapterId, read = false, lastPageRead = 0, pagesLeft = 0)))
+        val second = queuedMutations().last()
+        val secondState = commandOf(second)["state"]!!.jsonObject
+        assertEquals("false", secondState["read"]!!.jsonPrimitive.content)
+        assertEquals("0", secondState["lastPageRead"]!!.jsonPrimitive.content)
+        assertEquals("true", secondState["explicitProgressReset"]!!.jsonPrimitive.content)
+        val chapter = database.chaptersQueries.getChaptersById(chapterId).executeAsOne()
+        assertEquals(false, chapter.read)
+        assertEquals(0, chapter.last_page_read)
+
+        val unchanged = router.setChapterStates(listOf(ChapterStateChange(chapterId, read = false, lastPageRead = 0)))
+        assertEquals(0, unchanged.emittedCommandCount)
+        assertEquals(2, queuedMutations().size)
+    }
+
+    @Test
+    fun `novel read and bookmark outside the reader share one atomic batch`() = runTest {
+        val mangaId = insertManga()
+        val chapterId = insertChapter(mangaId)
+        val portableWork = PortableWorkRef.Novel("lnreader.plugin", ProviderOwnedKey("/novel/Details"))
+        val portableWorkId = PortableIdentityV3.workId(portableWork)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = portableWorkId,
+                ref = portableWork,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Details",
+                providerLabelHint = "Fixture",
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        var mutationNumber = 0
+        val router = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("novel-details-${++mutationNumber}") },
+            clock = { 4_000 },
+        )
+        router.setNovelProgress(mangaId, chapterId, progression = 0.5, blockIndex = 9, textOffset = 12)
+        val progressRows = queuedMutations().size
+
+        val result = router.setChapterStates(listOf(ChapterStateChange(chapterId, read = true, bookmarked = true)))
+
+        assertEquals(2, result.emittedCommandCount)
+        val queued = queuedMutations().drop(progressRows)
+        assertEquals(listOf("novel.chapter", "novel.bookmark"), queued.map { it.entity_type })
+        assertTrue(queued.all { it.scope_id == "novels:profile:main" })
+        assertEquals("false", commandOf(queued[0])["unread"]!!.jsonPrimitive.content)
+        val bookmark = commandOf(queued[1])
+        assertEquals("true", bookmark["bookmarked"]!!.jsonPrimitive.content)
+        // The exact reader anchor is reused instead of a chapter-start guess.
+        assertEquals("9", bookmark["locator"]!!.jsonObject["blockIndex"]!!.jsonPrimitive.content)
+        val chapter = database.chaptersQueries.getChaptersById(chapterId).executeAsOne()
+        assertTrue(chapter.read)
+        assertTrue(chapter.bookmark)
+    }
+
+    @Test
+    fun `chapter states stay local when unpaired or unbound`() = runTest {
+        val boundManga = insertManga()
+        val boundChapter = insertChapter(boundManga)
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "suwayomi:profile:main:manga:8",
+            contentType = "MANGA",
+            localReference = boundManga.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = "suwayomi:profile:main:chapter:901",
+            workEntityId = "suwayomi:profile:main:manga:8",
+            localChapterId = boundChapter,
+            normalizedUrl = "https://source.test/chapter/901",
+            ordinal = 1.0,
+            updatedAt = 1,
+        )
+        val unboundChapter = insertChapter(insertManga())
+        val unpaired = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("unpaired-${System.nanoTime()}") },
+            scopeProvider = EpigraphSyncScopeProvider { error("not paired") },
+        )
+
+        val offline = unpaired.setChapterStates(listOf(ChapterStateChange(boundChapter, read = true)))
+
+        assertEquals(0, offline.emittedCommandCount)
+        assertTrue(database.chaptersQueries.getChaptersById(boundChapter).executeAsOne().read)
+        val paired = EpigraphReaderProgressRouter(
+            coordinator = coordinator,
+            deviceId = DeviceId("phone"),
+            scopeId = SyncScopeId("novels:profile:main"),
+            mutationIds = ClientMutationIdFactory { ClientMutationId("paired-${System.nanoTime()}") },
+        )
+        val local = paired.setChapterStates(listOf(ChapterStateChange(unboundChapter, bookmarked = true)))
+        assertEquals(0, local.emittedCommandCount)
+        assertTrue(database.chaptersQueries.getChaptersById(unboundChapter).executeAsOne().bookmark)
+        assertTrue(queuedMutations().isEmpty())
+    }
+
+    private fun queuedMutations() = database.aethon_syncQueries
+        .selectReadyMutations(Long.MAX_VALUE - 1, 50)
+        .executeAsList()
+
+    private fun commandOf(row: tachiyomi.data.Aethon_sync_outbox) =
+        Json.parseToJsonElement(row.payload_json).jsonObject["command"]!!.jsonObject
+
     private fun insertManga(): Long {
         database.mangasQueries.insert(
             source = 1,
