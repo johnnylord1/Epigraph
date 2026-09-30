@@ -1,15 +1,11 @@
 package epigraph.books.ui
 
+import android.animation.AnimatorInflater
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.res.ColorStateList
-import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.ColorDrawable
-import android.os.Build
 import android.os.Bundle
 import android.text.format.Formatter
 import android.view.LayoutInflater
@@ -29,11 +25,11 @@ import androidx.core.widget.TextViewCompat
 import androidx.palette.graphics.Palette
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.SearchView
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
 import coil3.asDrawable
-import coil3.asImage
 import coil3.dispose
 import coil3.imageLoader
 import coil3.load
@@ -41,6 +37,8 @@ import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.request.error
 import coil3.request.placeholder
+import coil3.request.transformations
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.R as materialR
 import epigraph.ui.color.CoverPalette
 import eu.kanade.tachiyomi.R
@@ -50,6 +48,8 @@ import eu.kanade.tachiyomi.databinding.MangaHeaderItemBinding
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.ui.manga.CoverVeil
+import eu.kanade.tachiyomi.ui.manga.DetailsCoverPlaceholder
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsDivider
 import eu.kanade.tachiyomi.data.coil.getBestColor
 import eu.kanade.tachiyomi.util.system.dpToPx
@@ -59,13 +59,13 @@ import eu.kanade.tachiyomi.util.system.ignoredSystemInsets
 import eu.kanade.tachiyomi.util.system.isLandscape
 import eu.kanade.tachiyomi.util.system.isTablet
 import eu.kanade.tachiyomi.util.system.statusBarTint
+import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.activityBinding
 import eu.kanade.tachiyomi.util.view.compatToolTipText
 import eu.kanade.tachiyomi.util.view.isControllerVisible
 import eu.kanade.tachiyomi.util.view.scrollViewWith
 import eu.kanade.tachiyomi.util.view.setTextColorAlpha
 import eu.kanade.tachiyomi.util.view.toolbarHeight
-import eu.kanade.tachiyomi.util.view.resetStrokeColor
 import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.widget.LinearLayoutManagerAccurateOffset
 import epigraph.books.local.LocalBook
@@ -85,6 +85,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import yokai.i18n.MR
+import yokai.presentation.theme.ReducedMotion
+import yokai.util.coil.CropBottomTransformation
 import yokai.util.lang.getString
 import android.R as AR
 
@@ -167,6 +169,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             binding.recycler.post { applyHeaderHeight() }
             binding.fab.isVisible = true
             binding.fab.setOnClickListener { openReader() }
+            updateFab()
             activity?.invalidateOptionsMenu()
             setTitle()
         }
@@ -178,8 +181,9 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val searchView = searchItem.actionView as? SearchView
         searchView?.queryHint = activity?.getString(MR.strings.search_chapters)
         setOnQueryTextChangeListener(searchView) { query ->
-            detailsAdapter?.setFilter(query.orEmpty())
-            tabletDetailsAdapter?.setFilter(query.orEmpty())
+            val context = view?.context ?: return@setOnQueryTextChangeListener true
+            detailsAdapter?.setFilter(context, query.orEmpty())
+            tabletDetailsAdapter?.setFilter(context, query.orEmpty())
             true
         }
         searchItem.fixExpand(onExpand = {
@@ -247,20 +251,12 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                     super.onScrolled(recyclerView, dx, dy)
                     if (isTablet) return
                     updateToolbarTitleAlpha(isScrollingDown = dy > 0 && !view.context.isTablet())
-                    val atTop = !recyclerView.canScrollVertically(-1)
-                    val holder = recyclerView.findViewHolderForAdapterPosition(0)
-                        as? LocalBookDetailsAdapter.Holder
-                    val currentTranslation = holder?.backdropView?.translationY ?: 0f
-                    holder?.backdropView?.translationY = max(0f, currentTranslation + dy * 0.25f)
-                    if (atTop) holder?.backdropView?.translationY = 0f
+                    updateVeil(recyclerView)
                 }
 
                 override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                     updateToolbarTitleAlpha()
-                    if (!recyclerView.canScrollVertically(-1)) {
-                        (recyclerView.findViewHolderForAdapterPosition(0)
-                            as? LocalBookDetailsAdapter.Holder)?.backdropView?.translationY = 0f
-                    }
+                    if (!isTablet) updateVeil(recyclerView)
                 }
             },
         )
@@ -287,7 +283,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         book = loaded,
         progress = progress,
         structure = structure,
-        onRead = ::openReader,
+        onLibrary = ::showLibraryPopup,
         onChapter = ::openReader,
         onBookmarks = ::showBookmarks,
         onHighlights = ::showHighlights,
@@ -427,6 +423,12 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         )
     }
 
+    /** Feeds the header's absolute scroll offset to its veil, exactly as Comics does. */
+    private fun updateVeil(recyclerView: RecyclerView) {
+        val header = recyclerView.findViewHolderForAdapterPosition(0) as? LocalBookDetailsAdapter.Holder ?: return
+        header.onVeilScrolled(max(0, recyclerView.paddingTop - header.itemView.top))
+    }
+
     private fun updateToolbarTitleAlpha(
         @FloatRange(from = 0.0, to = 1.0) alpha: Float? = null,
         isScrollingDown: Boolean = false,
@@ -435,6 +437,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val toolbarTextView = activityBinding?.toolbar?.toolbarTitle ?: return
         if (isTablet) {
             toolbarTextView.setTextColorAlpha(0)
+            toolbarTextView.translationY = 0f
             return
         }
         val layoutManager = binding.recycler.layoutManager as? LinearLayoutManager ?: return
@@ -446,6 +449,9 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                 .coerceIn(0, 255) / 255f
         }
         toolbarTextView.setTextColorAlpha((titleAlpha * 255).roundToInt())
+        // The title rises into the bar as the header's title scrolls under it (DESIGN.md §9).
+        toolbarTextView.translationY =
+            if (ReducedMotion.isEnabled()) 0f else (1f - titleAlpha) * TITLE_RISE_DP.dpToPx
     }
 
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
@@ -455,6 +461,8 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             setStatusBarAndToolbar()
         } else if (!type.isEnter) {
             colorAnimator?.cancel()
+            // The shared toolbar title must leave at rest for the next screen.
+            activityBinding?.toolbar?.toolbarTitle?.translationY = 0f
             val currentActivity = activity
             val colorSurface = currentActivity?.getResourceColor(materialR.attr.colorSurface)
                 ?: Color.BLACK
@@ -486,6 +494,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             binding.tabletRecycler.adapter = tabletDetailsAdapter
         }
         binding.recycler.post { applyHeaderHeight() }
+        updateFab()
     }
 
     override fun onDestroyView(view: View) {
@@ -550,7 +559,58 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             binding.tabletRecycler.adapter = tabletDetailsAdapter
         }
         binding.recycler.post { applyHeaderHeight() }
+        updateFab()
         setTitle()
+    }
+
+    /** Same labels as the Comics FAB: start, or continue at the chapter the saved position is in. */
+    private fun updateFab() {
+        val context = view?.context ?: return
+        val loaded = book ?: return
+        val current = progress?.takeUnless { it.isAtStart() }
+        val chapter = current?.let { currentChapterIndex(loaded, structure, it) }
+        val singleChapter = (structure?.chapterCount ?: loaded.chapterCount ?: 1) <= 1
+        binding.fab.text = when {
+            current == null && singleChapter -> context.getString(MR.strings.start_reading)
+            current == null -> context.getString(MR.strings.start_reading_chapter_, "1")
+            chapter == null || singleChapter -> context.getString(MR.strings.continue_reading)
+            else -> context.getString(MR.strings.continue_reading_chapter_, (chapter + 1).toString())
+        }
+    }
+
+    /**
+     * An imported book is always in the library, so the primary header action reads "In library"
+     * like Comics and opens the same removal popup.
+     */
+    private fun showLibraryPopup(anchor: View) {
+        val context = activity ?: return
+        val loaded = book ?: return
+        PopupMenu(context, anchor).apply {
+            menu.add(context.getString(MR.strings.remove_from_library))
+            setOnMenuItemClickListener {
+                confirmRemove(loaded)
+                true
+            }
+        }.show()
+    }
+
+    private fun confirmRemove(loaded: LocalBook) {
+        val context = activity ?: return
+        // Removing also deletes the private copy of the file, which cannot be undone.
+        context.materialAlertDialog()
+            .setTitle(context.getString(MR.strings.local_books_remove_title))
+            .setMessage(context.getString(MR.strings.local_books_remove_message, loaded.displayName))
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(context.getString(MR.strings.remove)) { _, _ ->
+                viewScope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) { repository.remove(loaded.bookId, removeFile = true) }
+                    }
+                        .onSuccess { router.popController(this@LocalBookDetailsController) }
+                        .onFailure { error -> view?.context?.toast(error.message) }
+                }
+            }
+            .show()
     }
 
     private fun showBookmarks() {
@@ -621,6 +681,9 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private companion object {
         const val BOOK_ID_KEY = "epigraph.book.id"
+
+        /** Matches MangaDetailsController.TITLE_RISE_DP. */
+        const val TITLE_RISE_DP = 8
     }
 }
 
@@ -692,11 +755,48 @@ private fun bookProgressLabel(
     else -> context.getString(MR.strings.local_book_count_unavailable)
 }
 
+/**
+ * A position still on the first page is where a fresh book opens, so like an unstarted comic it
+ * offers "Start reading" and marks nothing as read.
+ */
+private fun ReaderLocator.isAtStart(): Boolean = when (this) {
+    is ReaderLocator.Epub -> (progression * 100).roundToInt() == 0
+    is ReaderLocator.Pdf -> pageIndex == 0
+    else -> false
+}
+
+/**
+ * The chapter the saved position falls in, resolved exactly as the reader does, so the FAB label,
+ * the dimmed rows and the resume note agree with where the reader will open.
+ */
+private fun currentChapterIndex(book: LocalBook, structure: BookStructure?, progress: ReaderLocator): Int? {
+    val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
+    return when (progress) {
+        is ReaderLocator.Epub -> BookChapterMetrics.epubChapterIndex(
+            progress,
+            chapterCount,
+            structure?.chapterPaths.orEmpty(),
+        )
+
+        is ReaderLocator.Pdf -> {
+            val totalPages = (structure?.pageCount ?: book.pageCount ?: progress.totalPages ?: 1).coerceAtLeast(1)
+            BookChapterMetrics.chapterIndexForPage(
+                progress.pageIndex,
+                totalPages,
+                chapterCount,
+                structure?.chapterStartPages.orEmpty(),
+            )
+        }
+
+        else -> null
+    }
+}
+
 private class LocalBookDetailsAdapter(
     private val book: LocalBook,
     private val progress: ReaderLocator?,
     private val structure: BookStructure?,
-    private val onRead: () -> Unit,
+    private val onLibrary: (View) -> Unit,
     private val onChapter: (ReaderLocator) -> Unit,
     private val onBookmarks: () -> Unit,
     private val onHighlights: () -> Unit,
@@ -704,16 +804,21 @@ private class LocalBookDetailsAdapter(
     private val onPalette: ((Int) -> Unit)?,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    private val catalogTitles: List<String> = structure?.chapterTitles.orEmpty().ifEmpty {
+    private val currentIndex: Int? = progress
+        ?.takeUnless { it.isAtStart() }
+        ?.let { currentChapterIndex(book, structure, it) }
+
+    /** Catalog titles, or null entries for chapters without one (labelled per locale on bind). */
+    private val catalogTitles: List<String?> = structure?.chapterTitles.orEmpty().ifEmpty {
         val count = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-        List(count) { index -> "Chapter ${index + 1}" }
+        List(count) { null }
     }
     private var visibleChapterIndexes: List<Int> = catalogTitles.indices.toList()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder = when (viewType) {
         VIEW_TYPE_HEADER -> Holder(
             MangaHeaderItemBinding.inflate(LayoutInflater.from(parent.context), parent, false),
-            onRead,
+            onLibrary,
             onBookmarks,
             onHighlights,
             onFileInfo,
@@ -725,34 +830,38 @@ private class LocalBookDetailsAdapter(
             book = book,
             structure = structure,
             progress = progress,
+            currentIndex = currentIndex,
             onChapter = onChapter,
         )
     }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         if (position == 0) {
-            (holder as Holder).bind(book, progress, structure, catalogTitles)
+            (holder as Holder).bind(book, progress, structure, catalogTitles.size)
         } else {
             val chapterIndex = visibleChapterIndexes[position - 1]
             (holder as ChapterHolder).bind(
                 index = chapterIndex,
-                title = catalogTitles[chapterIndex],
+                title = titleFor(holder.itemView.context, chapterIndex),
             )
         }
     }
+
+    private fun titleFor(context: android.content.Context, index: Int): String =
+        catalogTitles[index] ?: context.getString(MR.strings.chapter_, (index + 1).toString())
 
     override fun getItemViewType(position: Int): Int =
         if (position == 0) VIEW_TYPE_HEADER else VIEW_TYPE_CHAPTER
 
     override fun getItemCount(): Int = visibleChapterIndexes.size + 1
 
-    fun setFilter(query: String) {
+    fun setFilter(context: android.content.Context, query: String) {
         val normalized = query.trim()
         visibleChapterIndexes = if (normalized.isEmpty()) {
             catalogTitles.indices.toList()
         } else {
             catalogTitles.indices.filter { index ->
-                catalogTitles[index].contains(normalized, ignoreCase = true)
+                titleFor(context, index).contains(normalized, ignoreCase = true)
             }
         }
         notifyDataSetChanged()
@@ -760,15 +869,18 @@ private class LocalBookDetailsAdapter(
 
     class Holder(
         private val binding: MangaHeaderItemBinding,
-        private val onRead: () -> Unit,
+        private val onLibrary: (View) -> Unit,
         private val onBookmarks: () -> Unit,
         private val onHighlights: () -> Unit,
         private val onFileInfo: () -> Unit,
         private val onPalette: ((Int) -> Unit)?,
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        val backdropView: View
-            get() = binding.backdrop
+        /** The same veil Comics and Novels use (DESIGN.md §6). */
+        private val veil = CoverVeil(binding.backdrop)
+        private var accentColor: Int? = null
+
+        fun onVeilScrolled(scrolled: Int) = veil.onScrolled(scrolled)
 
         fun setTopHeight(height: Int) {
             binding.topView.updateLayoutParams<androidx.constraintlayout.widget.ConstraintLayout.LayoutParams> {
@@ -780,67 +892,37 @@ private class LocalBookDetailsAdapter(
             book: LocalBook,
             progress: ReaderLocator?,
             structure: BookStructure?,
-            catalogTitles: List<String>,
+            chapterCount: Int,
         ) = with(binding) {
             val context = root.context
             val cover = book.coverPath?.let(::File)?.takeIf(File::isFile)
-            val placeholder = ContextCompat.getDrawable(
+            val fallback = DetailsCoverPlaceholder.create(
                 context,
-                if (book.contentType.name == "PDF") R.drawable.ic_file_open_24dp else R.drawable.ic_book_open_variant_24dp,
-            )?.asImage()
+                if (book.contentType == ContentType.PDF) R.drawable.ic_file_open_24dp else R.drawable.ic_book_open_variant_24dp,
+            )
 
             mangaCover.dispose()
             backdrop.dispose()
-            val background = ColorDrawable(context.getResourceColor(android.R.attr.colorBackground))
-            mangaCover.background = background
-            backdrop.background = background
             resetCoverTreatment()
             if (cover != null) {
                 mangaCover.load(cover) {
-                    placeholder?.let(::placeholder)
-                    placeholder?.let(::error)
+                    placeholder(fallback)
+                    error(fallback)
                 }
-                // Use the same cropped/blurred backdrop treatment as MangaHeaderHolder rather
-                // than showing a second, sharp copy of the cover behind the header. The palette
-                // is extracted from the decoded bitmap once and then applied to the shared
-                // details chrome.
+                // The backdrop gets the header's crop and veil; its software bitmap also feeds
+                // Palette, which cannot read hardware bitmaps.
                 val request = ImageRequest.Builder(context)
                     .data(cover)
                     .allowHardware(false)
-                    .placeholder(placeholder)
-                    .error(placeholder)
+                    .transformations(CropBottomTransformation(CoverVeil.CROP_FRACTION))
                     .target(
-                        onSuccess = { drawable ->
-                            val image = drawable.asDrawable(context.resources)
-                            val bitmap = (image as? BitmapDrawable)?.bitmap
-                            if (bitmap == null) {
-                                backdrop.setImageDrawable(image)
-                                applyBackdropTreatment()
-                                return@target
-                            }
-                            val crop = (bitmap.height * 0.33f).roundToInt()
-                                .coerceIn(0, (bitmap.height - 1).coerceAtLeast(0))
-                            val cropped = if (crop > 0 && bitmap.height - crop > 0) {
-                                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height - crop)
-                            } else {
-                                bitmap
-                            }
-                            backdrop.setImageDrawable(BitmapDrawable(context.resources, cropped))
-                            applyBackdropTreatment()
-                            // Coil may decode the displayed drawable as a hardware bitmap on
-                            // newer Android releases. Palette needs CPU-readable pixels, so use
-                            // a software copy only for color extraction and keep the displayed
-                            // image untouched.
-                            val paletteBitmap = if (
-                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                                bitmap.config == Bitmap.Config.HARDWARE
-                            ) {
-                                bitmap.copy(Bitmap.Config.ARGB_8888, false)
-                            } else {
-                                bitmap
-                            }
+                        onSuccess = { image ->
+                            val drawable = image.asDrawable(context.resources)
+                            backdrop.setImageDrawable(drawable)
+                            veil.apply()
+                            val bitmap = (drawable as? BitmapDrawable)?.bitmap ?: return@target
                             val paletteCallback = onPalette ?: return@target
-                            Palette.from(paletteBitmap).generate { palette ->
+                            Palette.from(bitmap).generate { palette ->
                                 palette?.getBestColor()?.let { color ->
                                     root.post {
                                         applyPalette(color, coverBackdropColor(color))
@@ -853,17 +935,12 @@ private class LocalBookDetailsAdapter(
                     .build()
                 context.imageLoader.enqueue(request)
             } else {
-                placeholder?.let {
-                    mangaCover.setImageDrawable(it.asDrawable(context.resources))
-                    backdrop.setImageDrawable(it.asDrawable(context.resources))
-                }
-                applyBackdropTreatment()
+                // Like a comic without artwork: the placeholder card, and no veil over nothing.
+                mangaCover.setImageDrawable(fallback)
+                backdrop.setImageDrawable(null)
             }
 
             title.text = book.displayName
-            // MangaHeaderHolder keeps the author row in the header even when a source has no
-            // author. Do the same for local publications so status/source and the action row
-            // occupy the same vertical rhythm as Comics details.
             mangaAuthor.text = book.author?.takeIf(String::isNotBlank) ?: context.getString(MR.strings.local_book_unknown_author)
             mangaAuthor.isVisible = true
             mangaStatus.text = buildString {
@@ -901,21 +978,13 @@ private class LocalBookDetailsAdapter(
                 moreButtonGroup.isVisible = mangaSummary.lineCount > 3
             }
 
-            // Keep the exact action-row geometry used by Comics: one primary MaterialButton and
-            // three compact image actions. The labels/operations are book-specific, but changing
-            // the view types here would make the details page visibly drift from the canonical
-            // MangaHeaderItem chrome.
+            // An imported book is in the library by definition, so the primary action is the
+            // Comics "In library" button, with the same removal popup; reading is the FAB's job.
             favoriteButton.isVisible = true
-            favoriteButton.text = context.getString(MR.strings.read)
-            favoriteButton.setIconResource(R.drawable.ic_play_arrow_24dp)
-            // Comics' primary action occupies the 111dp slot before the compact icon actions.
-            // Keep that slot stable even though the shorter "Read" label would otherwise shrink
-            // the book row and shift every following action to the left.
-            favoriteButton.minimumWidth = 111.dpToPx
-            favoriteButton.updateLayoutParams<ViewGroup.LayoutParams> {
-                width = 111.dpToPx
-            }
-            favoriteButton.setOnClickListener { onRead() }
+            favoriteButton.icon = ContextCompat.getDrawable(context, R.drawable.ic_heart_24dp)
+            favoriteButton.text = context.getString(MR.strings.in_library)
+            favoriteButton.checked()
+            favoriteButton.setOnClickListener { onLibrary(it) }
             trackButton.isVisible = false
             predictedUpdateButton?.isVisible = false
             webviewButton.apply {
@@ -941,15 +1010,13 @@ private class LocalBookDetailsAdapter(
             }
             metadataCompose.isVisible = false
             mangaGenresTags.isVisible = false
-            lessButton.isVisible = false
-            moreButtonGroup.isVisible = false
             buttonGroupCompose.isVisible = false
             pagePreviewCompose.isVisible = false
-            chapterLayout.isVisible = catalogTitles.isNotEmpty()
+            chapterLayout.isVisible = chapterCount > 0
             chaptersTitle.text = context.getString(
                 MR.plurals.chapters_plural,
-                catalogTitles.size,
-                catalogTitles.size,
+                chapterCount,
+                chapterCount,
             )
             // INVISIBLE, not GONE: the title/filters chain would otherwise center the count label.
             filtersText.text = null
@@ -958,35 +1025,34 @@ private class LocalBookDetailsAdapter(
             chapterLayout.setOnClickListener(null)
         }
 
-        /** Keep backdrop opacity/blur identical to MangaHeaderHolder on every API level. */
-        private fun applyBackdropTreatment() {
-            binding.backdrop.alpha = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 0.2f else 0.1f
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                binding.backdrop.setRenderEffect(
-                    RenderEffect.createBlurEffect(20f, 20f, Shader.TileMode.MIRROR),
-                )
-            }
+        /** MangaHeaderHolder's checked favorite: a tonal fill from the accent and no outline. */
+        private fun MaterialButton.checked() {
+            stateListAnimator = AnimatorInflater.loadStateListAnimator(context, R.animator.icon_btn_state_list_anim)
+            backgroundTintList = ColorStateList.valueOf(
+                ColorUtils.blendARGB(
+                    accentColor ?: context.getResourceColor(materialR.attr.colorSecondary),
+                    context.getResourceColor(android.R.attr.colorBackground),
+                    0.88f,
+                ),
+            )
+            strokeColor = ColorStateList.valueOf(Color.TRANSPARENT)
         }
 
         private fun resetCoverTreatment() {
-            binding.backdrop.alpha = 0.1f
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                binding.backdrop.setRenderEffect(null)
-            }
-            binding.trueBackdrop.setBackgroundColor(
-                binding.root.context.getResourceColor(android.R.attr.colorBackground),
-            )
-            val defaultTint = ColorStateList.valueOf(
-                binding.root.context.getResourceColor(materialR.attr.colorSecondary),
-            )
+            veil.reset()
+            accentColor = null
+            val context = binding.root.context
+            binding.trueBackdrop.setBackgroundColor(context.getResourceColor(android.R.attr.colorBackground))
+            val defaultTint = ColorStateList.valueOf(context.getResourceColor(materialR.attr.colorSecondary))
             binding.webviewButton.imageTintList = defaultTint
             binding.shareButton.imageTintList = defaultTint
             binding.recsButton.imageTintList = defaultTint
             binding.favoriteButton.iconTint = defaultTint
-            binding.favoriteButton.resetStrokeColor()
-            binding.favoriteButton.backgroundTintList = ColorStateList.valueOf(
-                binding.root.context.getResourceColor(android.R.attr.colorBackground),
-            )
+            binding.favoriteButton.checked()
+            TextViewCompat.setCompoundDrawableTintList(binding.moreButton, defaultTint)
+            binding.moreButton.setTextColor(defaultTint)
+            TextViewCompat.setCompoundDrawableTintList(binding.lessButton, defaultTint)
+            binding.lessButton.setTextColor(defaultTint)
         }
 
         private fun coverBackdropColor(color: Int): Int {
@@ -1003,31 +1069,19 @@ private class LocalBookDetailsAdapter(
         fun applyPalette(color: Int, backdropColor: Int = coverBackdropColor(color)) {
             val context = binding.root.context
             val accentColor = readerAccentForTheme(context, color)
+            this.accentColor = accentColor
             val accent = ColorStateList.valueOf(accentColor)
             binding.trueBackdrop.setBackgroundColor(backdropColor)
             binding.webviewButton.imageTintList = accent
             binding.shareButton.imageTintList = accent
             binding.recsButton.imageTintList = accent
             binding.favoriteButton.iconTint = accent
-            // Imported books are already in the local library, so the primary action uses the
-            // same checked/filled treatment as Comics' "In library" button while retaining its
-            // book-specific Read label and play icon.
-            val actionBackground = ColorUtils.blendARGB(
-                accentColor,
-                context.getResourceColor(android.R.attr.colorBackground),
-                0.88f,
-            )
-            binding.favoriteButton.backgroundTintList = ColorStateList.valueOf(actionBackground)
-            binding.favoriteButton.setTextColor(
-                ColorStateList.valueOf(readerReadableForeground(context, actionBackground)),
-            )
-            binding.favoriteButton.strokeColor = ColorStateList.valueOf(Color.TRANSPARENT)
+            binding.favoriteButton.checked()
             TextViewCompat.setCompoundDrawableTintList(binding.moreButton, accent)
             binding.moreButton.setTextColor(accentColor)
             TextViewCompat.setCompoundDrawableTintList(binding.lessButton, accent)
             binding.lessButton.setTextColor(accentColor)
         }
-
     }
 
     private class ChapterHolder(
@@ -1035,48 +1089,71 @@ private class LocalBookDetailsAdapter(
         private val book: LocalBook,
         private val structure: BookStructure?,
         private val progress: ReaderLocator?,
+        private val currentIndex: Int?,
         private val onChapter: (ReaderLocator) -> Unit,
     ) : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(index: Int, title: String) = with(binding) {
+            val context = root.context
+            // Comics dims read chapters; a book has one position, so everything before the
+            // chapter it sits in reads as read, and that chapter carries the resume note.
+            val read = currentIndex != null && index < currentIndex
+            val readColor = context.contextCompatColor(R.color.read_chapter)
+            val unreadColor = context.getResourceColor(materialR.attr.colorOnSurface)
             chapterTitle.text = title
-            chapterScanlator.text = when (book.contentType) {
-                ContentType.PDF -> {
-                    val totalPages = (structure?.pageCount ?: book.pageCount)?.coerceAtLeast(1)
-                    val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                    if (totalPages == null) {
-                        "PDF chapter"
-                    } else if (chapterCount == 1) {
-                        "$totalPages pages"
-                    } else {
-                        val anchors = structure?.chapterStartPages.orEmpty()
-                        val firstPage = BookChapterMetrics.pageIndexForChapter(
-                            index,
-                            totalPages,
-                            chapterCount,
-                            anchors,
-                        ) + 1
-                        val nextPage = if (index + 1 < chapterCount) {
-                            BookChapterMetrics.pageIndexForChapter(
-                                index + 1,
-                                totalPages,
-                                chapterCount,
-                                anchors,
-                            )
-                        } else {
-                            totalPages
-                        }
-                        "Pages $firstPage–${nextPage.coerceAtLeast(firstPage)} of $totalPages"
-                    }
-                }
-
-                else -> "Chapter ${index + 1} of ${(structure?.chapterCount ?: book.chapterCount ?: (index + 1))}"
-            }
+            chapterTitle.setTextColor(if (read) readColor else unreadColor)
+            chapterScanlator.setTextColor(if (read) readColor else ColorUtils.setAlphaComponent(unreadColor, 198))
+            val statuses = listOfNotNull(
+                chapterSummary(context, index),
+                resumeNote(context).takeIf { index == currentIndex },
+            )
+            chapterScanlator.text = statuses.joinToString(" • ")
             translationButton.isVisible = false
             downloadButton.root.isVisible = false
             root.contentDescription = title
             root.setOnClickListener { onChapter(locatorFor(index)) }
-            root.isActivated = isCurrent(index)
+            root.isActivated = false
+        }
+
+        private fun chapterSummary(context: android.content.Context, index: Int): String {
+            val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
+            if (book.contentType != ContentType.PDF) {
+                return context.getString(MR.strings.chapter_x_of_y, index + 1, chapterCount)
+            }
+            val totalPages = (structure?.pageCount ?: book.pageCount)?.coerceAtLeast(1)
+                ?: return context.getString(MR.strings.chapter_x_of_y, index + 1, chapterCount)
+            if (chapterCount == 1) return context.getString(MR.plurals.pages_plural, totalPages, totalPages)
+            val anchors = structure?.chapterStartPages.orEmpty()
+            val firstPage = BookChapterMetrics.pageIndexForChapter(index, totalPages, chapterCount, anchors) + 1
+            val nextPage = if (index + 1 < chapterCount) {
+                BookChapterMetrics.pageIndexForChapter(index + 1, totalPages, chapterCount, anchors)
+            } else {
+                totalPages
+            }
+            return context.getString(
+                MR.strings.local_book_page_range,
+                firstPage,
+                nextPage.coerceAtLeast(firstPage),
+                totalPages,
+            )
+        }
+
+        /**
+         * Comics' in-progress note: the page for a PDF, and for an EPUB the share of the whole
+         * book, the only progress its locator records.
+         */
+        private fun resumeNote(context: android.content.Context): String? = when (val current = progress) {
+            is ReaderLocator.Pdf -> {
+                val totalPages = (structure?.pageCount ?: book.pageCount ?: current.totalPages)?.coerceAtLeast(1)
+                totalPages?.let { context.getString(MR.strings.page_x_of_y, current.pageIndex + 1, it) }
+            }
+
+            is ReaderLocator.Epub -> context.getString(
+                MR.strings.local_book_progress_percent,
+                (current.progression * 100).roundToInt().coerceIn(0, 100),
+            )
+
+            else -> null
         }
 
         private fun locatorFor(index: Int): ReaderLocator = when (book.contentType) {
@@ -1106,29 +1183,6 @@ private class LocalBookDetailsAdapter(
             }
 
             else -> error("Unsupported local chapter content")
-        }
-
-        private fun isCurrent(index: Int): Boolean = when (val current = progress) {
-            is ReaderLocator.Epub -> {
-                val total = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                BookChapterMetrics.epubChapterIndex(
-                    current,
-                    total,
-                    structure?.chapterPaths.orEmpty(),
-                ) == index
-            }
-
-            is ReaderLocator.Pdf -> {
-                val totalPages = (structure?.pageCount ?: book.pageCount ?: current.totalPages ?: 1).coerceAtLeast(1)
-                val chapterCount = (structure?.chapterCount ?: book.chapterCount ?: 1).coerceAtLeast(1)
-                BookChapterMetrics.chapterIndexForPage(
-                    current.pageIndex,
-                    totalPages,
-                    chapterCount,
-                    structure?.chapterStartPages.orEmpty(),
-                ) == index
-            }
-            else -> false
         }
     }
 

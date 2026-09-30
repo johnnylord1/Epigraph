@@ -14,7 +14,7 @@
     <item
         android:id="@+id/action_file_info"
         android:icon="@drawable/ic_info_outline_24dp"
-        android:title="File information"
+        android:title="@string/local_book_file_info"
         app:showAsAction="never" />
 
 </menu>

@@ -316,7 +316,7 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
             Page.GENERAL -> {
                 bindSpinner(
                     orientation,
-                    listOf("Automatic", "Portrait", "Landscape"),
+                    listOf(context.getString(MR.strings.automatic), context.getString(MR.strings.portrait), context.getString(MR.strings.landscape)),
                     listOf(
                         ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
                         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT,
@@ -334,7 +334,7 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
             Page.EPUB -> bindTextSettings(bookPreferences, onChanged)
 
             Page.PDF -> {
-                bindSpinner(pdfFitMode, listOf("Width", "Height", "Both", "Actual size"), listOf("width", "height", "both", "actual"), bookPreferences.pdfFitMode.get(), bookPreferences.pdfFitMode::set, onChanged)
+                bindSpinner(pdfFitMode, listOf(context.getString(MR.strings.book_reader_fit_width), context.getString(MR.strings.book_reader_fit_height), context.getString(MR.strings.book_reader_fit_both), context.getString(MR.strings.book_reader_fit_actual)), listOf("width", "height", "both", "actual"), bookPreferences.pdfFitMode.get(), bookPreferences.pdfFitMode::set, onChanged)
                 pdfReflow.bindToPreference(bookPreferences.pdfReflow) { onChanged() }
                 pdfHorizontal.bindToPreference(bookPreferences.pdfHorizontal) { onChanged() }
                 pdfTwoPage.bindToPreference(bookPreferences.pdfTwoPage) { onChanged() }
@@ -351,7 +351,7 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
                 epubFlow.isVisible = contentType == ContentType.EPUB
                 animateTransitions.isVisible = contentType == ContentType.EPUB
                 if (contentType == ContentType.EPUB) {
-                    bindSpinner(epubFlow, listOf("Scroll", "Paginated"), listOf("scroll", "paginated"), bookPreferences.epubFlow.get(), bookPreferences.epubFlow::set, onChanged)
+                    bindSpinner(epubFlow, listOf(context.getString(MR.strings.book_reader_flow_scroll), context.getString(MR.strings.book_reader_flow_paginated)), listOf("scroll", "paginated"), bookPreferences.epubFlow.get(), bookPreferences.epubFlow::set, onChanged)
                     animateTransitions.bindToPreference(bookPreferences.epubAnimateTransitions) { onChanged() }
                 }
                 volumeKeys.bindToPreference(bookPreferences.volumeKeys) { onChanged() }
@@ -488,9 +488,9 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
 
     /** Typography shared by EPUB and reflowed PDF text, as on the desktop. */
     private fun bindTextSettings(bookPreferences: BookReaderPreferences, onChanged: () -> Unit) = with(binding) {
-        bindSpinner(fontFamily, listOf("Serif", "Sans serif", "Monospace"), listOf("serif", "sans-serif", "monospace"), bookPreferences.epubFontFamily.get(), bookPreferences.epubFontFamily::set, onChanged)
-        bindSpinner(textAlignment, listOf("Left", "Justified", "Center"), listOf("left", "justified", "center"), bookPreferences.epubTextAlign.get(), bookPreferences.epubTextAlign::set, onChanged)
-        bindSpinner(epubTheme, listOf("System", "Light", "Dark", "Sepia", "OLED"), listOf("system", "light", "dark", "sepia", "oled"), bookPreferences.epubTheme.get(), bookPreferences.epubTheme::set, onChanged)
+        bindSpinner(fontFamily, listOf(context.getString(MR.strings.book_reader_font_serif), context.getString(MR.strings.book_reader_font_sans), context.getString(MR.strings.book_reader_font_mono)), listOf("serif", "sans-serif", "monospace"), bookPreferences.epubFontFamily.get(), bookPreferences.epubFontFamily::set, onChanged)
+        bindSpinner(textAlignment, listOf(context.getString(MR.strings.left), context.getString(MR.strings.book_reader_align_justified), context.getString(MR.strings.center)), listOf("left", "justified", "center"), bookPreferences.epubTextAlign.get(), bookPreferences.epubTextAlign::set, onChanged)
+        bindSpinner(epubTheme, listOf(context.getString(MR.strings.book_reader_theme_system), context.getString(MR.strings.book_reader_theme_light), context.getString(MR.strings.dark), context.getString(MR.strings.book_reader_theme_sepia), context.getString(MR.strings.book_reader_theme_oled)), listOf("system", "light", "dark", "sepia", "oled"), bookPreferences.epubTheme.get(), bookPreferences.epubTheme::set, onChanged)
         bindSlider(fontSize, context.getString(R.string.epigraph_reader_font_size), bookPreferences.epubFontScale.get() * 100f, 75f, 200f, 5f, "%") {
             bookPreferences.epubFontScale.set(it / 100f); onChanged()
         }

@@ -4,9 +4,6 @@ import android.animation.AnimatorInflater
 import android.annotation.SuppressLint
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.RenderEffect
-import android.graphics.Shader
-import android.os.Build
 import android.text.format.DateUtils
 import android.view.MotionEvent
 import android.view.View
@@ -128,7 +125,6 @@ import yokai.domain.series.model.TranslationMode
 import yokai.domain.series.model.sourceMetadataValues
 import yokai.presentation.theme.motionAwareCrossfadeMillis
 import yokai.util.koin.injectLazy
-import kotlin.math.roundToInt
 import android.R as AR
 
 @SuppressLint("ClickableViewAccessibility")
@@ -297,46 +293,16 @@ class MangaHeaderHolder(
         }
     }
 
+    /** The shared details veil (DESIGN.md §6); books use the same [CoverVeil]. */
+    private val veil: CoverVeil? by lazy { binding?.backdrop?.let(::CoverVeil) }
+
     private fun applyBlur() {
-        val backdrop = binding?.backdrop ?: return
-        // cover-veil: 20% alpha, 24dp blur on API 31+; without RenderEffect only the alpha applies.
-        backdrop.alpha = VEIL_ALPHA
-        appliedVeilStep = -1
-        onVeilScrolled(veilScrolled)
+        veil?.apply()
     }
 
-    /** Blur steps from [VEIL_BLUR_DP] to [VEIL_BLUR_MAX_DP], built once so scrolling never allocates. */
-    private val veilEffects: Array<RenderEffect>? by lazy {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return@lazy null
-        val density = itemView.resources.displayMetrics.density
-        Array(VEIL_BLUR_STEPS + 1) { step ->
-            val radius = (VEIL_BLUR_DP + (VEIL_BLUR_MAX_DP - VEIL_BLUR_DP) * step / VEIL_BLUR_STEPS) * density
-            RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
-        }
-    }
-    private var appliedVeilStep = -1
-    private var veilScrolled = 0
-
-    /**
-     * Scroll-reactive veil (DESIGN.md §6): [scrolled] is how far the header has moved up. The veil
-     * trails the content at 0.25× and its blur deepens up to 32dp; below API 31 its alpha fades instead.
-     */
+    /** [scrolled] is how far the header has moved up; see [CoverVeil.onScrolled]. */
     fun onVeilScrolled(scrolled: Int) {
-        veilScrolled = scrolled
-        val backdrop = binding?.backdrop ?: return
-        val height = backdrop.height
-        val progress = if (height > 0) (scrolled / height.toFloat()).coerceIn(0f, 1f) else 0f
-        backdrop.translationY = if (ReducedMotion.isEnabled()) 0f else scrolled * (1f - VEIL_PARALLAX)
-        val effects = veilEffects
-        if (effects == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            backdrop.alpha = VEIL_ALPHA * (1f - progress)
-            return
-        }
-        val step = (progress * VEIL_BLUR_STEPS).roundToInt()
-        if (step != appliedVeilStep) {
-            appliedVeilStep = step
-            backdrop.setRenderEffect(effects[step])
-        }
+        veil?.onScrolled(scrolled)
     }
 
     private fun expandDesc(animated: Boolean = false) {
@@ -1067,9 +1033,11 @@ class MangaHeaderHolder(
                 .build()
             itemView.context.imageLoader.enqueue(request)
         } else {
+            // A title without artwork keeps a 2:3 card instead of collapsing to an empty one.
+            val fallback = drawable ?: DetailsCoverPlaceholder.create(itemView.context)
             binding.mangaCover.loadManga(manga) {
-                placeholder(drawable)
-                error(drawable)
+                placeholder(fallback)
+                error(fallback)
                 if (manga.favorite) networkCachePolicy(CachePolicy.READ_ONLY)
                 diskCachePolicy(CachePolicy.READ_ONLY)
             }
@@ -1093,7 +1061,7 @@ class MangaHeaderHolder(
             .diskCachePolicy(CachePolicy.READ_ONLY)
             // Crop while decoding: cropping the (hardware) result here read it back from the GPU
             // and re-uploaded it on the main thread during the details push.
-            .transformations(CropBottomTransformation(BACKDROP_CROP_FRACTION))
+            .transformations(CropBottomTransformation(CoverVeil.CROP_FRACTION))
             .target(
                 onSuccess = {
                     binding.backdrop.setImageDrawable(it.asDrawable(itemView.resources))
@@ -1993,16 +1961,3 @@ private fun NamespaceGenreTagsSection(
     }
 }
 
-/** cover-veil tokens (DESIGN.md §2). */
-private const val VEIL_ALPHA = 0.2f
-private const val VEIL_BLUR_DP = 24f
-private const val VEIL_BLUR_MAX_DP = 32f
-
-/** Blur changes in 2dp steps between the resting and the fully scrolled veil. */
-private const val VEIL_BLUR_STEPS = 4
-
-/** The veil moves at this share of the content's scroll speed. */
-private const val VEIL_PARALLAX = 0.25f
-
-/** Share of the cover's height hidden below the header backdrop. */
-private const val BACKDROP_CROP_FRACTION = 0.165f

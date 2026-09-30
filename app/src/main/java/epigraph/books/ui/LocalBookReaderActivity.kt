@@ -117,6 +117,8 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.coroutines.resume
+import yokai.i18n.MR
+import yokai.util.lang.getString
 
 /**
  * Functional host for local publications. The rendering engines remain domain-specific, while
@@ -305,11 +307,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 }
             }
         })
-        title = "Books"
+        title = getString(MR.strings.local_books_title)
         setContentView(FrameLayout(this).apply { addView(ProgressBar(context)) })
         val bookId = intent.getStringExtra(EXTRA_BOOK_ID)
         if (bookId.isNullOrBlank()) {
-            finishWithError("The selected book is unavailable")
+            finishWithError(getString(MR.strings.book_reader_unavailable))
             return
         }
         requestedLocator = intent.getStringExtra(EXTRA_INITIAL_LOCATOR_JSON)
@@ -321,7 +323,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         lifecycleScope.launch {
             val loaded = withContext(Dispatchers.IO) { repository.find(bookId) }
             if (loaded == null) {
-                finishWithError("The selected book is unavailable")
+                finishWithError(getString(MR.strings.book_reader_unavailable))
                 return@launch
             }
             book = loaded
@@ -329,7 +331,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 runCatching {
                     withContext(Dispatchers.IO) { bookAssets.ensurePublicationAvailable(loaded.bookId) }
                 }.onFailure { failure ->
-                    finishWithError(failure.message ?: "The synchronized book could not be downloaded")
+                    finishWithError(failure.message ?: getString(MR.strings.book_reader_download_failed))
                     return@launch
                 }
             }
@@ -416,7 +418,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 }
             }
         } catch (error: Throwable) {
-            finishWithError(error.message ?: "The book could not be opened")
+            finishWithError(error.message ?: getString(MR.strings.book_reader_open_failed))
         }
     }
 
@@ -469,7 +471,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = pdfCurrentPage,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Page ${pdfCurrentPage + 1} / $readerProgressPageCount",
+            label = getString(MR.strings.book_reader_page_label, pdfCurrentPage + 1, readerProgressPageCount),
         )
     }
 
@@ -545,7 +547,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = pdfCurrentPage,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Pages ${pdfCurrentPage + 1}-${(pdfCurrentPage + 2).coerceAtMost(readerProgressPageCount)} / $readerProgressPageCount",
+            label = getString(MR.strings.book_reader_pages_label, pdfCurrentPage + 1, (pdfCurrentPage + 2).coerceAtMost(readerProgressPageCount), readerProgressPageCount),
         )
     }
 
@@ -702,7 +704,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = pdfCurrentPage,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Page ${pdfCurrentPage + 1} / $readerProgressPageCount",
+            label = getString(MR.strings.book_reader_page_label, pdfCurrentPage + 1, readerProgressPageCount),
         )
         renderPdfReflowPage(reader, pdfCurrentPage)
     }
@@ -717,7 +719,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             val paragraphs = PdfTextReflow.paragraphs(text)
             if (paragraphs.isEmpty()) {
                 textView.text =
-                    "This page does not contain readable text. Switch off text reflow to view the scanned page."
+                    getString(MR.strings.book_reader_reflow_no_text)
                 return@launch
             }
             val reflowed = paragraphs.joinToString(PDF_REFLOW_PARAGRAPH_BREAK)
@@ -801,13 +803,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     ) {
         textView.customSelectionActionModeCallback = object : ActionMode.Callback {
             override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
-                menu.add(Menu.NONE, MENU_HIGHLIGHT_SELECTION, Menu.NONE, "Highlight")
+                menu.add(Menu.NONE, MENU_HIGHLIGHT_SELECTION, Menu.NONE, getString(MR.strings.book_reader_highlight))
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-                menu.add(Menu.NONE, MENU_DEFINE_SELECTION, Menu.NONE, "Define")
+                menu.add(Menu.NONE, MENU_DEFINE_SELECTION, Menu.NONE, getString(MR.strings.book_reader_define))
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-                menu.add(Menu.NONE, MENU_TRANSLATE_SELECTION, Menu.NONE, "Translate")
+                menu.add(Menu.NONE, MENU_TRANSLATE_SELECTION, Menu.NONE, getString(MR.strings.book_reader_translate))
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
-                menu.add(Menu.NONE, MENU_SEARCH_SELECTION, Menu.NONE, "Search web")
+                menu.add(Menu.NONE, MENU_SEARCH_SELECTION, Menu.NONE, getString(MR.strings.book_reader_search_web))
                     .setShowAsAction(MenuItem.SHOW_AS_ACTION_NEVER)
                 return true
             }
@@ -819,7 +821,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 val end = max(textView.selectionStart, textView.selectionEnd)
                 val value = textView.text?.toString().orEmpty()
                 if (start < 0 || end <= start || end > value.length) {
-                    showMessage("Select text first")
+                    showMessage(getString(MR.strings.book_reader_select_text_first))
                     return false
                 }
                 val selectedText = value.substring(start, end)
@@ -841,7 +843,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
     private fun showSelectionLookup(kind: String, selectedText: String) {
         val query = selectedText.replace(Regex("\\s+"), " ").trim().take(MAX_SELECTION_QUERY)
         if (query.isBlank()) {
-            showMessage("Select text first")
+            showMessage(getString(MR.strings.book_reader_select_text_first))
             return
         }
         val encoded = Uri.encode(query)
@@ -858,7 +860,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val normalized = selectedText.replace(Regex("\\s+"), " ").trim()
             .take(MAX_HIGHLIGHT_TEXT)
         if (normalized.isBlank() || end <= start) {
-            showMessage("Select text first")
+            showMessage(getString(MR.strings.book_reader_select_text_first))
             return
         }
         val length = selectedText.length.coerceAtLeast(1)
@@ -896,8 +898,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 if (pdfReflow) {
                     (opened as? OpenedBookReader.Pdf)?.let { renderPdfReflowPage(it, page) }
                 }
-            }.onSuccess { showMessage("Highlight saved") }
-                .onFailure { showMessage(it.message ?: "Highlight could not be saved") }
+            }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
+                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
         }
     }
 
@@ -938,7 +940,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             initialPreferences = readiumPreferences(session),
             listener = object : EpubNavigatorFragment.Listener {
                 override fun onExternalLinkActivated(url: AbsoluteUrl) {
-                    showMessage("External links are disabled in local EPUBs")
+                    showMessage(getString(MR.strings.book_reader_external_links_disabled))
                 }
             },
             paginationListener = object : EpubNavigatorFragment.PaginationListener {
@@ -1119,7 +1121,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                         value.roundToInt(),
                         slider.valueTo.roundToInt(),
                         if (readerProgressIsPdf) {
-                            "PDF | Page ${value.roundToInt() + 1} / ${readerProgressPageCount.coerceAtLeast(1)}"
+                            "PDF | " + getString(MR.strings.book_reader_page_label, value.roundToInt() + 1, readerProgressPageCount.coerceAtLeast(1))
                         } else {
                             "EPUB | ${epubChapterLabel(epubChapterIndexForProgress((value / READER_PROGRESS_MAX).toDouble()))}"
                         },
@@ -1256,7 +1258,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         chrome.chaptersSheet.root.binding.chapterRecycler.isClickable = false
         chrome.chaptersSheet.root.binding.chapterRecycler.isFocusable = false
         sheet.chaptersButton.apply {
-            contentDescription = "Contents"
+            contentDescription = getString(MR.strings.book_reader_contents)
             setOnClickListener { showContentsDialog() }
         }
         // The initial rail contains the actions used most often while reading. TTS playback and
@@ -1265,15 +1267,15 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         sheet.webviewButton.apply {
             isVisible = true
             setImageResource(R.drawable.ic_search_24dp)
-            contentDescription = "Search in chapter"
-            compatToolTipText = "Search in chapter"
+            contentDescription = getString(MR.strings.book_reader_search_in_chapter)
+            compatToolTipText = getString(MR.strings.book_reader_search_in_chapter)
             setOnClickListener { showSearchDialog() }
         }
         sheet.readingMode.apply {
             isVisible = true
             setImageResource(R.drawable.ic_format_quote_24dp)
-            contentDescription = "Annotations"
-            compatToolTipText = "Annotations"
+            contentDescription = getString(MR.strings.book_reader_annotations)
+            compatToolTipText = getString(MR.strings.book_reader_annotations)
             setOnClickListener { showAnnotationOptionsMenu() }
         }
         sheet.rotationSheetButton.isVisible = false
@@ -1283,40 +1285,40 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         sheet.displayOptions.apply {
             isVisible = true
             setImageResource(R.drawable.ic_outline_settings_24dp)
-            contentDescription = "Reader settings"
-            compatToolTipText = "Reader settings"
+            contentDescription = getString(MR.strings.reader_settings)
+            compatToolTipText = getString(MR.strings.reader_settings)
             setOnClickListener { showReaderSettings() }
         }
     }
 
     private fun showTtsOptionsMenu() {
         showBookSubmenu(
-            title = "Text-to-speech",
+            title = getString(MR.strings.book_reader_text_to_speech),
             items = listOf(
                 MaterialMenuSheet.MenuSheetItem(
                     TTS_OPTION_READ,
                     R.drawable.ic_play_arrow_24dp,
-                    text = "Read from current position",
+                    text = getString(MR.strings.book_reader_tts_read_from_here),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     TTS_OPTION_CONTROLS,
                     R.drawable.ic_settings_24dp,
-                    text = "Playback and voice settings",
+                    text = getString(MR.strings.book_reader_tts_settings),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     TTS_OPTION_PREVIOUS,
                     R.drawable.ic_skip_previous_24,
-                    text = "Previous paragraph",
+                    text = getString(MR.strings.book_reader_tts_previous),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     TTS_OPTION_NEXT,
                     R.drawable.ic_skip_next_24,
-                    text = "Next paragraph",
+                    text = getString(MR.strings.book_reader_tts_next),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     TTS_OPTION_STOP,
                     R.drawable.ic_close_24dp,
-                    text = "Stop reading",
+                    text = getString(MR.strings.book_reader_tts_stop),
                 ),
             ),
         ) { itemId ->
@@ -1332,22 +1334,22 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
     private fun showAnnotationOptionsMenu() {
         showBookSubmenu(
-            title = "Annotations",
+            title = getString(MR.strings.book_reader_annotations),
             items = listOf(
                 MaterialMenuSheet.MenuSheetItem(
                     ANNOTATION_OPTION_VIEW,
                     R.drawable.ic_format_quote_24dp,
-                    text = "View saved annotations",
+                    text = getString(MR.strings.book_reader_view_annotations),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     ANNOTATION_OPTION_BOOKMARK,
                     R.drawable.ic_bookmark_24dp,
-                    text = "Save bookmark",
+                    text = getString(MR.strings.book_reader_save_bookmark),
                 ),
                 MaterialMenuSheet.MenuSheetItem(
                     ANNOTATION_OPTION_HIGHLIGHT,
                     R.drawable.ic_format_quote_24dp,
-                    text = "Highlight selected text",
+                    text = getString(MR.strings.book_reader_highlight_selected_text),
                 ),
             ),
         ) { itemId ->
@@ -1581,7 +1583,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = target,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Pages ${target + 1}-${(target + 2).coerceAtMost(readerProgressPageCount)} / $readerProgressPageCount",
+            label = getString(MR.strings.book_reader_pages_label, target + 1, (target + 2).coerceAtMost(readerProgressPageCount), readerProgressPageCount),
         )
     }
 
@@ -1589,7 +1591,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         when {
             pdfReflowTextView != null -> showPdfTextSelectionDialog()
             epubNavigator != null -> captureEpubSelectionAndSave()
-            else -> showMessage("Text selection is not available for this page")
+            else -> showMessage(getString(MR.strings.book_reader_selection_unavailable))
         }
     }
 
@@ -1613,7 +1615,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 extractPdfText(reader, page)
             }
             if (text.isBlank()) {
-                showMessage("This PDF page has no readable text or OCR could not recognize it")
+                showMessage(getString(MR.strings.book_reader_pdf_no_text))
                 return@launch
             }
             val selection = TextView(this@LocalBookReaderActivity).apply {
@@ -1625,16 +1627,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 }
             }
             this@LocalBookReaderActivity.materialAlertDialog()
-                .setTitle("Select text (OCR when needed)")
+                .setTitle(getString(MR.strings.book_reader_select_text_title))
                 .setView(selection)
                 .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton("Highlight selection") { _, _ ->
+                .setPositiveButton(getString(MR.strings.book_reader_highlight_selection)) { _, _ ->
                     val start = min(selection.selectionStart, selection.selectionEnd)
                     val end = max(selection.selectionStart, selection.selectionEnd)
                     if (start >= 0 && end > start) {
                         savePdfHighlight(page, start, end, text.substring(start, end))
                     } else {
-                        showMessage("Select text first")
+                        showMessage(getString(MR.strings.book_reader_select_text_first))
                     }
                 }
                 .show()
@@ -1663,14 +1665,14 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
     private fun showSearchDialog() {
         val input = EditText(this).apply {
-            hint = "Search in this book"
+            hint = getString(MR.strings.book_reader_search_hint)
             setSingleLine(true)
         }
         materialAlertDialog()
-            .setTitle("Search")
+            .setTitle(getString(MR.strings.search))
             .setView(input)
             .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Search") { _, _ ->
+            .setPositiveButton(getString(MR.strings.search)) { _, _ ->
                 performSearch(input.text.toString())
             }
             .show()
@@ -1684,12 +1686,12 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 is OpenedBookReader.Pdf -> {
                     val results = withContext(Dispatchers.IO) { current.session.search(normalized) }
                     if (results.isEmpty()) {
-                        showMessage("No results")
+                        showMessage(getString(MR.strings.book_reader_no_results))
                     } else {
                         showReaderChoices(
-                            title = "Search results",
+                            title = getString(MR.strings.book_reader_search_results),
                             labels = results.take(MAX_DIALOG_RESULTS).map { result ->
-                                "Page ${result.locator.pageIndex + 1}: ${result.excerpt}"
+                                getString(MR.strings.book_reader_search_result_page, result.locator.pageIndex + 1, result.excerpt)
                             },
                         ) { index ->
                             results.getOrNull(index)?.let { result ->
@@ -1706,10 +1708,10 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 is OpenedBookReader.Epub -> {
                     val results = withContext(Dispatchers.IO) { current.session.search(normalized) }
                     if (results.isEmpty()) {
-                        showMessage("No results")
+                        showMessage(getString(MR.strings.book_reader_no_results))
                     } else {
                         showReaderChoices(
-                            title = "Search results",
+                            title = getString(MR.strings.book_reader_search_results),
                             labels = results.take(MAX_DIALOG_RESULTS).map { result -> result.excerpt },
                         ) { index ->
                             results.getOrNull(index)?.let { result ->
@@ -1732,9 +1734,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val flattened = mutableListOf<Pair<String, ReaderLocator.Pdf>>()
                     flattenPdfToc(entries, 0, flattened)
                     if (flattened.isEmpty()) {
-                        showMessage("This PDF has no table of contents")
+                        showMessage(getString(MR.strings.book_reader_pdf_no_toc))
                     } else {
-                        showReaderChoices("Contents", flattened.map { it.first }) { index ->
+                        showReaderChoices(getString(MR.strings.book_reader_contents), flattened.map { it.first }) { index ->
                             flattened.getOrNull(index)?.second?.let { locator ->
                                 if (pdfView != null) {
                                     navigatePdfTo(locator.pageIndex)
@@ -1751,9 +1753,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val flattened = mutableListOf<Pair<String, ReaderLocator.Epub>>()
                     flattenEpubToc(entries, 0, flattened)
                     if (flattened.isEmpty()) {
-                        showMessage("This EPUB has no table of contents")
+                        showMessage(getString(MR.strings.book_reader_epub_no_toc))
                     } else {
-                        showReaderChoices("Contents", flattened.map { it.first }) { index ->
+                        showReaderChoices(getString(MR.strings.book_reader_contents), flattened.map { it.first }) { index ->
                             flattened.getOrNull(index)?.second?.let { locator ->
                                 navigateEpubTo(locator)
                             }
@@ -1808,7 +1810,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 repository.getBookmarks(localBook.bookId) to repository.getHighlights(localBook.bookId)
             }
             if (bookmarks.isEmpty() && highlights.isEmpty()) {
-                showMessage("No bookmarks or highlights yet")
+                showMessage(getString(MR.strings.book_reader_no_annotations))
                 return@launch
             }
 
@@ -1817,16 +1819,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val targets = buildList<Pair<String, ReaderLocator.Pdf>> {
                         bookmarks.forEach { bookmark ->
                             (bookmark.locator as? ReaderLocator.Pdf)?.let { locator ->
-                                add("Bookmark: ${bookmark.label ?: "Page ${locator.pageIndex + 1}"}" to locator)
+                                add(getString(MR.strings.book_reader_bookmark_entry, bookmark.label ?: getString(MR.strings.book_reader_page_n, locator.pageIndex + 1)) to locator)
                             }
                         }
                         highlights.forEach { highlight ->
                             (highlight.start as? ReaderLocator.Pdf)?.let { locator ->
-                                add("Highlight: ${highlight.selectedText.take(MAX_ANNOTATION_TEXT)}" to locator)
+                                add(getString(MR.strings.book_reader_highlight_entry, highlight.selectedText.take(MAX_ANNOTATION_TEXT)) to locator)
                             }
                         }
                     }
-                    showReaderChoices("Annotations", targets.map { it.first }) { index ->
+                    showReaderChoices(getString(MR.strings.book_reader_annotations), targets.map { it.first }) { index ->
                         targets.getOrNull(index)?.second?.let { locator ->
                             if (pdfView != null) {
                                 navigatePdfTo(locator.pageIndex)
@@ -1841,16 +1843,16 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     val targets = buildList<Pair<String, ReaderLocator.Epub>> {
                         bookmarks.forEach { bookmark ->
                             (bookmark.locator as? ReaderLocator.Epub)?.let { locator ->
-                                add("Bookmark: ${bookmark.label ?: "Position"}" to locator)
+                                add(getString(MR.strings.book_reader_bookmark_entry, bookmark.label ?: getString(MR.strings.book_reader_position)) to locator)
                             }
                         }
                         highlights.forEach { highlight ->
                             (highlight.start as? ReaderLocator.Epub)?.let { locator ->
-                                add("Highlight: ${highlight.selectedText.take(MAX_ANNOTATION_TEXT)}" to locator)
+                                add(getString(MR.strings.book_reader_highlight_entry, highlight.selectedText.take(MAX_ANNOTATION_TEXT)) to locator)
                             }
                         }
                     }
-                    showReaderChoices("Annotations", targets.map { it.first }) { index ->
+                    showReaderChoices(getString(MR.strings.book_reader_annotations), targets.map { it.first }) { index ->
                         targets.getOrNull(index)?.second?.let { locator ->
                             navigateEpubTo(locator)
                         }
@@ -1920,8 +1922,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                         ),
                     )
                 }
-            }.onSuccess { showMessage("Bookmark saved") }
-                .onFailure { showMessage(it.message ?: "Bookmark could not be saved") }
+            }.onSuccess { showMessage(getString(MR.strings.book_reader_bookmark_saved)) }
+                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_bookmark_failed)) }
         }
     }
 
@@ -1938,7 +1940,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 ?.take(MAX_HIGHLIGHT_TEXT)
                 .orEmpty()
             if (readiumLocator == null || text.isBlank()) {
-                showMessage("Select text first")
+                showMessage(getString(MR.strings.book_reader_select_text_first))
                 return@launch
             }
             val appLocator = session.toReaderLocator(readiumLocator)
@@ -1961,8 +1963,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     opened?.let { renderPersistedHighlights(it, activeHighlights) }
                 }
                 applyEpubHighlights()
-            }.onSuccess { showMessage("Highlight saved") }
-                .onFailure { showMessage(it.message ?: "Highlight could not be saved") }
+            }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
+                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
         }
     }
 
@@ -2010,7 +2012,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             val selectedText = snapshot.second.replace(Regex("\\s+"), " ").trim()
                 .take(MAX_HIGHLIGHT_TEXT)
             if (selectedText.isBlank()) {
-                showMessage("No text is available at this position")
+                showMessage(getString(MR.strings.book_reader_no_text_here))
                 return@launch
             }
             val now = System.currentTimeMillis()
@@ -2031,8 +2033,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                     activeHighlights = repository.getHighlights(localBook.bookId)
                     renderPersistedHighlights(current, activeHighlights)
                 }
-            }.onSuccess { showMessage("Highlight saved") }
-                .onFailure { showMessage(it.message ?: "Highlight could not be saved") }
+            }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
+                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
         }
     }
 
@@ -2060,7 +2062,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 }
             }.getOrDefault("").trim()
             if (text.isEmpty()) {
-                showMessage("No readable text is available at this position")
+                showMessage(getString(MR.strings.book_reader_no_readable_text_here))
             } else {
                 currentSpeechText = text
                 speechSegments = text
@@ -2094,11 +2096,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 runOnUiThread {
                     textToSpeechReady = status == TextToSpeech.SUCCESS
                     if (textToSpeechReady) speakPendingText()
-                    else showMessage("Text-to-speech is unavailable")
+                    else showMessage(getString(MR.strings.book_reader_tts_unavailable))
                 }
             }
         }.onFailure {
-            showMessage("Text-to-speech is unavailable")
+            showMessage(getString(MR.strings.book_reader_tts_unavailable))
         }
     }
 
@@ -2160,14 +2162,14 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             setPadding(24.dpToPx, 8.dpToPx, 24.dpToPx, 0)
         }
         val rates = floatArrayOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f)
-        addTtsSettingRow(container, "Rate", "${speechRate}x", rates.map { "${it}x" }) { label ->
+        addTtsSettingRow(container, getString(MR.strings.book_reader_tts_rate), "${speechRate}x", rates.map { "${it}x" }) { label ->
             speechRate = label.removeSuffix("x").toFloatOrNull() ?: speechRate
             readerPreferences().edit().putFloat(KEY_TTS_RATE, speechRate).apply()
             textToSpeech?.setSpeechRate(speechRate)
             BookTtsPlaybackService.updateSettings(this, speechRate, speechPitch, speechVoiceName)
         }
         val pitches = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f)
-        addTtsSettingRow(container, "Pitch", formatDecimal(speechPitch), pitches.map { formatDecimal(it) }) { label ->
+        addTtsSettingRow(container, getString(MR.strings.book_reader_tts_pitch), formatDecimal(speechPitch), pitches.map { formatDecimal(it) }) { label ->
             speechPitch = label.toFloatOrNull() ?: speechPitch
             readerPreferences().edit().putFloat(KEY_TTS_PITCH, speechPitch).apply()
             textToSpeech?.setPitch(speechPitch)
@@ -2185,37 +2187,37 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         if (availableVoices.isNotEmpty()) {
             addTtsSettingRow(
                 container,
-                "Voice",
-                speechVoiceName ?: "System default",
-                listOf("System default") + availableVoices,
+                getString(MR.strings.book_reader_tts_voice),
+                speechVoiceName ?: getString(MR.strings.system_default),
+                listOf(getString(MR.strings.system_default)) + availableVoices,
             ) { label ->
-                speechVoiceName = label.takeUnless { it == "System default" }
+                speechVoiceName = label.takeUnless { it == getString(MR.strings.system_default) }
                 readerPreferences().edit().putString(KEY_TTS_VOICE, speechVoiceName).apply()
                 textToSpeech?.voices?.firstOrNull { it.name == speechVoiceName }?.let { textToSpeech?.voice = it }
                 BookTtsPlaybackService.updateSettings(this, speechRate, speechPitch, speechVoiceName)
             }
         } else {
-            container.addView(TextView(this).apply { text = "Voice list will be available after TTS initializes" })
+            container.addView(TextView(this).apply { text = getString(MR.strings.book_reader_tts_voices_pending) })
         }
         val segmentRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
         segmentRow.addView(MaterialButton(this).apply {
-            text = "Previous paragraph"
+            text = getString(MR.strings.book_reader_tts_previous)
             setOnClickListener { speakSegment(speechSegmentIndex - 1) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         segmentRow.addView(MaterialButton(this).apply {
-            text = "Next paragraph"
+            text = getString(MR.strings.book_reader_tts_next)
             setOnClickListener { speakSegment(speechSegmentIndex + 1) }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         container.addView(segmentRow)
         materialAlertDialog()
-            .setTitle("Text-to-speech")
+            .setTitle(getString(MR.strings.book_reader_text_to_speech))
             .setView(container)
-            .setNegativeButton("Stop") { _, _ ->
+            .setNegativeButton(getString(MR.strings.stop)) { _, _ ->
                 stopTtsPlayback()
             }
-            .setPositiveButton("Read current position") { _, _ -> speakCurrent() }
+            .setPositiveButton(getString(MR.strings.book_reader_tts_read_current)) { _, _ -> speakCurrent() }
             .setNeutralButton(android.R.string.ok, null)
             .show()
     }
@@ -2460,7 +2462,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = currentPage,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Page ${currentPage + 1} / $readerProgressPageCount",
+            label = getString(MR.strings.book_reader_page_label, currentPage + 1, readerProgressPageCount),
         )
     }
 
@@ -2639,7 +2641,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         BookChapterMetrics.epubChapterIndex(progress, epubChapterCount.coerceAtLeast(1))
 
     private fun epubChapterLabel(index: Int = epubChapterIndex): String =
-        "Chapter ${index.coerceIn(0, (epubChapterCount - 1).coerceAtLeast(0)) + 1} / ${epubChapterCount.coerceAtLeast(1)}"
+        getString(MR.strings.local_book_chapter_progress, index.coerceIn(0, (epubChapterCount - 1).coerceAtLeast(0)) + 1, epubChapterCount.coerceAtLeast(1))
 
     private fun applyEpubHighlights() {
         val navigator = epubNavigator ?: return
@@ -2713,11 +2715,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
             val input = EditText(this).apply {
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-                hint = "PDF password"
+                hint = getString(MR.strings.book_reader_pdf_password)
             }
             val dialog = materialAlertDialog()
-                .setTitle("Password required")
-                .setMessage("Attempt $attempt")
+                .setTitle(getString(MR.strings.book_reader_password_required))
+                .setMessage(getString(MR.strings.book_reader_password_attempt, attempt))
                 .setView(input)
                 .setNegativeButton(android.R.string.cancel) { _, _ -> continuation.resume(null) }
                 .setPositiveButton(android.R.string.ok, null)
