@@ -75,7 +75,7 @@ import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.withIOContext
 import eu.kanade.tachiyomi.util.system.withUIContext
 import eu.kanade.tachiyomi.widget.TriStateCheckBox
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream

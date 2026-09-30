@@ -117,6 +117,6 @@ object RootTabWarmup {
         "eu.kanade.tachiyomi.ui.source.SourcePresenter",
         "eu.kanade.tachiyomi.ui.migration.SourceAdapter",
         "eu.kanade.tachiyomi.ui.migration.MangaAdapter",
-        "hayai.novel.ui.NovelPluginAdapter",
+        "epigraph.novel.ui.NovelPluginAdapter",
     )
 }

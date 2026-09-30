@@ -12,7 +12,7 @@ import yokai.util.lang.getString
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.LocalSource
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 import yokai.domain.ui.UiPreferences
 
 /**

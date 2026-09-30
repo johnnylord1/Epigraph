@@ -11,8 +11,8 @@ import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 // NOVEL -->
-import hayai.novel.reader.NovelDownloadPageLoader
-import hayai.novel.reader.NovelPageLoader
+import epigraph.novel.reader.NovelDownloadPageLoader
+import epigraph.novel.reader.NovelPageLoader
 // NOVEL <--
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.util.system.withIOContext

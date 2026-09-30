@@ -59,11 +59,11 @@ import yokai.i18n.MR
 import yokai.util.lang.getString
 import android.R as AR
 // NOVEL -->
-import hayai.novel.plugin.NovelPluginManager
-import hayai.novel.plugin.model.NovelPluginIndex
-import hayai.novel.ui.NovelPluginAdapter
-import hayai.novel.ui.NovelPluginGroupItem
-import hayai.novel.ui.NovelPluginItem
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.ui.NovelPluginAdapter
+import epigraph.novel.ui.NovelPluginGroupItem
+import epigraph.novel.ui.NovelPluginItem
 // NOVEL <--
 import yokai.presentation.extension.repo.ExtensionRepoController
 

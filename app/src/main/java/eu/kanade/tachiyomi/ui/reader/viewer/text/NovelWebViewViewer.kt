@@ -69,7 +69,7 @@ import yokai.util.lang.getString
  */
 class NovelWebViewViewer(val activity: ReaderActivity) :
     BaseViewer,
-    hayai.novel.reader.tts.TtsSource {
+    epigraph.novel.reader.tts.TtsSource {
 
     private val container = FrameLayout(activity)
     private lateinit var webView: WebView
@@ -77,7 +77,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     // Compose `LoadingIndicator` overlay shown on top of the WebView while a chapter loads.
     private var loadingComposeOverlay: androidx.compose.ui.platform.ComposeView? = null
     private var loadingTimeoutJob: Job? = null
-    private var overlayScrollbar: hayai.novel.reader.ui.NovelOverlayScrollbar? = null
+    private var overlayScrollbar: epigraph.novel.reader.ui.NovelOverlayScrollbar? = null
     private var webViewScrollOffset: Int = 0
     private var webViewScrollRange: Int = 0
     private var webViewScrollExtent: Int = 0
@@ -253,10 +253,10 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             // (chapter nav, scroll, auto-scroll, TTS, define) from the in-reader settings.
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (isEditingMode) return false
-                val action = hayai.novel.reader.NovelTapAction.fromOrdinal(
+                val action = epigraph.novel.reader.NovelTapAction.fromOrdinal(
                     preferences.novelDoubleTapAction.get(),
                 )
-                if (action == hayai.novel.reader.NovelTapAction.NONE) return false
+                if (action == epigraph.novel.reader.NovelTapAction.NONE) return false
                 dispatchTapAction(action)
                 return true
             }
@@ -266,10 +266,10 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
             // WebView so its native text-selection behaviour continues to work as before.
             override fun onLongPress(e: MotionEvent) {
                 if (isEditingMode) return
-                val action = hayai.novel.reader.NovelTapAction.fromOrdinal(
+                val action = epigraph.novel.reader.NovelTapAction.fromOrdinal(
                     preferences.novelLongTapAction.get(),
                 )
-                if (action == hayai.novel.reader.NovelTapAction.NONE) return
+                if (action == epigraph.novel.reader.NovelTapAction.NONE) return
                 // If text selection is active, let the WebView keep its existing selection
                 // toolbar — checked asynchronously via evaluateJavascript. The action only
                 // fires when there's no selection.
@@ -303,7 +303,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
      * paragraph 5 correctly highlights A's paragraph 5 even with chapter B also loaded
      * in the infinite-scroll viewport.
      *
-     * Implements [hayai.novel.reader.tts.TtsSource.paintHighlight].
+     * Implements [epigraph.novel.reader.tts.TtsSource.paintHighlight].
      */
     override fun paintHighlight(chapterId: Long, paragraphIndex: Int) {
         if (!preferences.novelTtsEnableHighlight.get()) return
@@ -360,7 +360,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         evaluateJavascriptSafe(jsCode)
     }
 
-    /** Implements [hayai.novel.reader.tts.TtsSource.clearHighlight]. */
+    /** Implements [epigraph.novel.reader.tts.TtsSource.clearHighlight]. */
     override fun clearHighlight() {
         evaluateJavascriptSafe(
             """
@@ -725,7 +725,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
         // Mount the custom scrollbar overlay on top of the WebView. Driven by
         // applyOverlayScrollbarConfig + the WebView's scroll change listener below.
-        val bar = hayai.novel.reader.ui.NovelOverlayScrollbar(activity)
+        val bar = epigraph.novel.reader.ui.NovelOverlayScrollbar(activity)
         overlayScrollbar = bar
         container.addView(
             bar,
@@ -780,7 +780,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                 reloadCurrentChaptersFromScratch()
             },
             onTtsSettingsChanged = {
-                activity.ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.ReapplySettings)
+                activity.ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.ReapplySettings)
             },
             onKeepScreenOnChanged = { activity.runOnUiThread { applyNovelKeepScreenOn() } },
             onBrightnessChanged = { activity.runOnUiThread { applyNovelCustomBrightness() } },
@@ -824,7 +824,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         // binding when the engine identity changes).
         scope.launch {
             preferences.novelTtsEngine.changes().drop(1).collect {
-                activity.ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Stop)
+                activity.ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Stop)
             }
         }
 
@@ -891,14 +891,14 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         bar.visibility = if (visible) View.VISIBLE else View.GONE
         if (!visible) return
         val side = if (preferences.novelVerticalScrollbarPosition.get() == "left") {
-            hayai.novel.reader.ui.NovelOverlayScrollbar.Side.LEFT
+            epigraph.novel.reader.ui.NovelOverlayScrollbar.Side.LEFT
         } else {
-            hayai.novel.reader.ui.NovelOverlayScrollbar.Side.RIGHT
+            epigraph.novel.reader.ui.NovelOverlayScrollbar.Side.RIGHT
         }
         val track = if (preferences.novelVerticalProgressSliderSize.get() == "half") {
-            hayai.novel.reader.ui.NovelOverlayScrollbar.Track.HALF
+            epigraph.novel.reader.ui.NovelOverlayScrollbar.Track.HALF
         } else {
-            hayai.novel.reader.ui.NovelOverlayScrollbar.Track.FULL
+            epigraph.novel.reader.ui.NovelOverlayScrollbar.Track.FULL
         }
         // Tint the thumb to contrast with the chosen page color.
         val theme = preferences.novelTheme.get()
@@ -1796,7 +1796,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         // Stop any active TTS playback through the controller — the engine instance now
         // lives in the service, so the viewer no longer owns shutdown; the activity's
         // `unbindTtsService` (and the service's own `onDestroy`) does the engine teardown.
-        activity.ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Stop)
+        activity.ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Stop)
 
         // Stop the auto-scroll JS loop before tearing the WebView down (Phase B #6 — the
         // loop now lives in the WebView itself; the setter no-ops on a destroyed view via
@@ -1825,22 +1825,22 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
      * double-tap and long-press paths in the gesture detector so both preferences share
      * the exact same action surface.
      */
-    private fun dispatchTapAction(action: hayai.novel.reader.NovelTapAction) {
+    private fun dispatchTapAction(action: epigraph.novel.reader.NovelTapAction) {
         when (action) {
-            hayai.novel.reader.NovelTapAction.NONE -> Unit
-            hayai.novel.reader.NovelTapAction.TOGGLE_MENU -> activity.toggleMenu()
-            hayai.novel.reader.NovelTapAction.NEXT_CHAPTER -> activity.loadNextChapter()
-            hayai.novel.reader.NovelTapAction.PREVIOUS_CHAPTER -> activity.loadPreviousChapter()
-            hayai.novel.reader.NovelTapAction.SCROLL_DOWN -> {
+            epigraph.novel.reader.NovelTapAction.NONE -> Unit
+            epigraph.novel.reader.NovelTapAction.TOGGLE_MENU -> activity.toggleMenu()
+            epigraph.novel.reader.NovelTapAction.NEXT_CHAPTER -> activity.loadNextChapter()
+            epigraph.novel.reader.NovelTapAction.PREVIOUS_CHAPTER -> activity.loadPreviousChapter()
+            epigraph.novel.reader.NovelTapAction.SCROLL_DOWN -> {
                 webView.evaluateJavascript("window.scrollBy(0, ${(container.height * 0.8).toInt()});", null)
             }
-            hayai.novel.reader.NovelTapAction.SCROLL_UP -> {
+            epigraph.novel.reader.NovelTapAction.SCROLL_UP -> {
                 webView.evaluateJavascript("window.scrollBy(0, -${(container.height * 0.8).toInt()});", null)
             }
-            hayai.novel.reader.NovelTapAction.TOGGLE_AUTO_SCROLL -> toggleAutoScroll()
-            hayai.novel.reader.NovelTapAction.START_TTS -> startTts()
-            hayai.novel.reader.NovelTapAction.STOP_TTS -> stopTts()
-            hayai.novel.reader.NovelTapAction.DEFINE_SELECTED -> triggerDefineFromSelection()
+            epigraph.novel.reader.NovelTapAction.TOGGLE_AUTO_SCROLL -> toggleAutoScroll()
+            epigraph.novel.reader.NovelTapAction.START_TTS -> startTts()
+            epigraph.novel.reader.NovelTapAction.STOP_TTS -> stopTts()
+            epigraph.novel.reader.NovelTapAction.DEFINE_SELECTED -> triggerDefineFromSelection()
         }
     }
 
@@ -2228,8 +2228,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
         // re-issues the appropriate `StartAt` once the new chapter is Ready; any
         // user-initiated chapter change goes through here and silences playback.
         val ttsState = activity.ttsController?.state?.value
-        if (ttsState != null && ttsState != hayai.novel.reader.tts.TtsState.AdvancingChapter) {
-            activity.ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Stop)
+        if (ttsState != null && ttsState != epigraph.novel.reader.tts.TtsState.AdvancingChapter) {
+            activity.ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Stop)
         }
         // Phase B #6: tear the auto-scroll loop down whenever a fresh chapter renders.
         // The next document's installAutoScrollScript() call will set up a fresh loop;
@@ -3352,7 +3352,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
         // Mount the M3 Expressive loader on top of the WebView until the chapter renders.
         if (loadingComposeOverlay == null) {
-            val overlay = hayai.novel.reader.ui.buildNovelLoadingComposeView(
+            val overlay = epigraph.novel.reader.ui.buildNovelLoadingComposeView(
                 context = activity,
                 backgroundArgb = finalBgColor,
             )
@@ -3781,7 +3781,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     "NovelWebViewViewer: startTtsAtParagraph(chapterId=$chapterId, paragraph=$paragraphIndex)"
                 }
                 activity.ttsController?.dispatch(
-                    hayai.novel.reader.tts.TtsCommand.StartAt(
+                    epigraph.novel.reader.tts.TtsCommand.StartAt(
                         chapterId = chapterId,
                         paragraphIndex = paragraphIndex.coerceAtLeast(0),
                     ),
@@ -4276,8 +4276,8 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
     // -------------------------------------------------------------------- TTS public API
     //
-    // Every method below is a thin delegate onto [hayai.novel.reader.tts.NovelTtsController],
-    // owned by [hayai.novel.reader.service.NovelTtsPlaybackService] and bound to this
+    // Every method below is a thin delegate onto [epigraph.novel.reader.tts.NovelTtsController],
+    // owned by [epigraph.novel.reader.service.NovelTtsPlaybackService] and bound to this
     // activity via `ReaderActivity.ttsController`. The controller owns the TextToSpeech
     // instance, the utterance queue, audio focus, paragraph progress persistence — every
     // piece of state the old in-viewer engine kept volatile-but-unsynchronised. The viewer
@@ -4288,52 +4288,52 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
     private val ttsState get() = activity.ttsController?.state?.value
 
     fun startTts() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Play)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Play)
         refreshSentenceTapToTtsState()
     }
 
     fun stopTts() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Stop)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Stop)
         clearHighlight()
         refreshSentenceTapToTtsState()
     }
 
     fun pauseTts() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Pause)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Pause)
         refreshSentenceTapToTtsState()
     }
 
     /** Jump TTS one paragraph forward within the current chapter. */
     fun nextTtsParagraph() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.SkipParagraph)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.SkipParagraph)
     }
 
     /** Jump TTS one paragraph backward within the current chapter. */
     fun previousTtsParagraph() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.PreviousParagraph)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.PreviousParagraph)
     }
 
     fun resumeTts() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Resume)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Resume)
         refreshSentenceTapToTtsState()
     }
 
-    fun isTtsPaused(): Boolean = ttsState is hayai.novel.reader.tts.TtsState.Paused
+    fun isTtsPaused(): Boolean = ttsState is epigraph.novel.reader.tts.TtsState.Paused
 
-    fun isTtsSpeaking(): Boolean = ttsState is hayai.novel.reader.tts.TtsState.Speaking
+    fun isTtsSpeaking(): Boolean = ttsState is epigraph.novel.reader.tts.TtsState.Speaking
 
     /** TTS is bootstrapping but not yet emitting audio. */
     fun isTtsStarting(): Boolean {
         val s = ttsState
-        return s is hayai.novel.reader.tts.TtsState.Preparing ||
-            s is hayai.novel.reader.tts.TtsState.AdvancingChapter
+        return s is epigraph.novel.reader.tts.TtsState.Preparing ||
+            s is epigraph.novel.reader.tts.TtsState.AdvancingChapter
     }
 
     fun getTtsProgressPercent(): Int {
         val s = ttsState ?: return 0
         val (idx, total) = when (s) {
-            is hayai.novel.reader.tts.TtsState.Speaking -> s.paragraphIndex to s.totalParagraphs
-            is hayai.novel.reader.tts.TtsState.Paused -> s.paragraphIndex to s.totalParagraphs
+            is epigraph.novel.reader.tts.TtsState.Speaking -> s.paragraphIndex to s.totalParagraphs
+            is epigraph.novel.reader.tts.TtsState.Paused -> s.paragraphIndex to s.totalParagraphs
             else -> return 0
         }
         if (total <= 0) return 0
@@ -4342,14 +4342,14 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
 
     /** Starts TTS from the first visible paragraph in the viewport. */
     fun startTtsFromViewport() {
-        ttsController?.dispatch(hayai.novel.reader.tts.TtsCommand.Play)
+        ttsController?.dispatch(epigraph.novel.reader.tts.TtsCommand.Play)
         refreshSentenceTapToTtsState()
     }
 
     /** Starts TTS at exactly `paragraphIndex` within `chapterId`. */
     fun startTtsFromChapterParagraph(chapterId: Long, paragraphIndex: Int) {
         ttsController?.dispatch(
-            hayai.novel.reader.tts.TtsCommand.StartAt(
+            epigraph.novel.reader.tts.TtsCommand.StartAt(
                 chapterId = chapterId,
                 paragraphIndex = paragraphIndex.coerceAtLeast(0),
             ),
@@ -4577,7 +4577,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                     val chapterName = getCurrentChapterName()
                     if (novelId != null && chapterName != null) {
                         val quoteText = payload.quoteTextForSelection(selectedText)
-                        val quote = hayai.novel.reader.quote.Quote.create(
+                        val quote = epigraph.novel.reader.quote.Quote.create(
                             novelName = manga.title,
                             chapterName = chapterName,
                             content = quoteText.displayedContent,
@@ -4586,7 +4586,7 @@ class NovelWebViewViewer(val activity: ReaderActivity) :
                             language = quoteText.language,
                         )
                         scope.launch {
-                            hayai.novel.reader.quote.QuoteManager(activity).addQuote(novelId, quote)
+                            epigraph.novel.reader.quote.QuoteManager(activity).addQuote(novelId, quote)
                             activity.toast(activity.getString(MR.strings.novel_quote_saved))
                         }
                     }

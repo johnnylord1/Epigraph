@@ -110,8 +110,8 @@ import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import hayai.novel.reader.tts.NovelTtsController
-import hayai.novel.reader.tts.TtsCommand
+import epigraph.novel.reader.tts.NovelTtsController
+import epigraph.novel.reader.tts.TtsCommand
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.ui.reader.settings.PageLayout
@@ -267,9 +267,9 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     private val novelActionBarTickState = androidx.compose.runtime.mutableStateOf(0)
 
     /**
-     * Bound-service connection to [hayai.novel.reader.service.NovelTtsPlaybackService]. When
+     * Bound-service connection to [epigraph.novel.reader.service.NovelTtsPlaybackService]. When
      * the binder lands, [ttsController] is set and the active novel viewer is attached as
-     * the controller's [hayai.novel.reader.tts.TtsSource].
+     * the controller's [epigraph.novel.reader.tts.TtsSource].
      */
     private var ttsServiceConnection: ServiceConnection? = null
 
@@ -675,7 +675,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     }
 
     /**
-     * Bind to [hayai.novel.reader.service.NovelTtsPlaybackService]. The service is created
+     * Bind to [epigraph.novel.reader.service.NovelTtsPlaybackService]. The service is created
      * on first bind (`BIND_AUTO_CREATE`) and stays alive as long as either this activity
      * holds the binding OR the user has background-playback enabled and the service is
      * also started in the foreground.
@@ -684,7 +684,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         if (ttsServiceConnection != null) return
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-                val binder = service as? hayai.novel.reader.service.NovelTtsPlaybackService.LocalBinder
+                val binder = service as? epigraph.novel.reader.service.NovelTtsPlaybackService.LocalBinder
                 ttsController = binder?.service?.controller
                 attachNovelViewerToTtsController()
                 observeTtsControllerState()
@@ -695,7 +695,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
         }
         ttsServiceConnection = connection
         bindService(
-            Intent(this, hayai.novel.reader.service.NovelTtsPlaybackService::class.java),
+            Intent(this, epigraph.novel.reader.service.NovelTtsPlaybackService::class.java),
             connection,
             Context.BIND_AUTO_CREATE,
         )
@@ -731,7 +731,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
     }
 
     /**
-     * Wires the current novel viewer as the [hayai.novel.reader.tts.TtsSource] the
+     * Wires the current novel viewer as the [epigraph.novel.reader.tts.TtsSource] the
      * controller calls back into. Safe to call repeatedly — `attachSource` overwrites the
      * previous reference, and the controller only ever has one viewer at a time.
      */
@@ -749,12 +749,12 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      */
     private fun startBackgroundTtsIfEnabled() {
         if (readerPreferences.novelTtsBackgroundPlayback.get()) {
-            hayai.novel.reader.service.NovelTtsPlaybackService.start(this)
+            epigraph.novel.reader.service.NovelTtsPlaybackService.start(this)
         }
     }
 
     private fun stopBackgroundTtsIfRunning() {
-        hayai.novel.reader.service.NovelTtsPlaybackService.stop(this)
+        epigraph.novel.reader.service.NovelTtsPlaybackService.stop(this)
     }
 
     /**
@@ -1781,7 +1781,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                     val ttsActive = novelWeb?.isTtsSpeaking() == true || novelWeb?.isTtsPaused() == true
                     val ttsPaused = novelWeb?.isTtsPaused() == true
                     val autoScrolling = novelWeb?.isAutoScrollActive() == true
-                    hayai.novel.reader.bars.NovelReaderActionBar(
+                    epigraph.novel.reader.bars.NovelReaderActionBar(
                         visible = visible,
                         isTtsActive = ttsActive,
                         isTtsPaused = ttsPaused,
@@ -1829,13 +1829,13 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                             novelWeb?.scrollToTop()
                         },
                         onClickFindReplace = {
-                            hayai.novel.reader.settings.showNovelFindReplaceSheet(this@ReaderActivity)
+                            epigraph.novel.reader.settings.showNovelFindReplaceSheet(this@ReaderActivity)
                         },
                         onClickQuotes = {
                             val manga = viewModel.manga ?: return@NovelReaderActionBar
                             val novelId = manga.id ?: return@NovelReaderActionBar
                             val chapter = viewModel.state.value.viewerChapters?.currChapter?.chapter
-                            hayai.novel.reader.quote.showQuotesSheet(
+                            epigraph.novel.reader.quote.showQuotesSheet(
                                 activity = this@ReaderActivity,
                                 novelId = novelId,
                                 novelName = manga.title,
@@ -3196,7 +3196,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
             val manga = viewModel.manga ?: return
             val novelId = manga.id ?: return
             val chapter = viewModel.state.value.viewerChapters?.currChapter?.chapter
-            hayai.novel.reader.quote.showQuotesSheet(
+            epigraph.novel.reader.quote.showQuotesSheet(
                 activity = this,
                 novelId = novelId,
                 novelName = manga.title,

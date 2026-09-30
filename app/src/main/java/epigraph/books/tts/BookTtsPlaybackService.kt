@@ -15,7 +15,7 @@ import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.data.notification.Notifications
 import epigraph.books.ui.LocalBookReaderActivity
-import hayai.novel.reader.tts.EpigraphTtsNotification
+import epigraph.novel.reader.tts.EpigraphTtsNotification
 import java.util.Locale
 
 /**

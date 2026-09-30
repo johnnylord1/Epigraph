@@ -1,12 +1,12 @@
 package epigraph.sync.core.novels
 
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
-import hayai.novel.plugin.NovelPluginManager
-import hayai.novel.plugin.model.NovelPluginIndex
-import hayai.novel.repo.NovelRepoRepository
-import hayai.novel.repo.interactor.NovelRepoIndexValidation
-import hayai.novel.repo.interactor.NovelRepoIndexValidator
-import hayai.novel.repo.model.NovelRepo
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.repo.NovelRepoRepository
+import epigraph.novel.repo.interactor.NovelRepoIndexValidation
+import epigraph.novel.repo.interactor.NovelRepoIndexValidator
+import epigraph.novel.repo.model.NovelRepo
 import kotlinx.coroutines.CancellationException
 
 sealed interface LnReaderRepositoryApprovalResult {

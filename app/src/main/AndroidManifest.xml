@@ -492,7 +492,7 @@
             tools:node="merge" />
 
         <service
-            android:name="hayai.novel.reader.service.NovelTtsPlaybackService"
+            android:name="epigraph.novel.reader.service.NovelTtsPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 

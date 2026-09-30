@@ -85,7 +85,7 @@ import org.koin.core.logger.Level
 import exh.di.exhModule
 // EXH <--
 // NOVEL -->
-import hayai.novel.di.novelModule
+import epigraph.novel.di.novelModule
 // NOVEL <--
 import yokai.core.di.appModule
 import yokai.core.di.domainModule
@@ -182,7 +182,7 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
         // app launch, not at first reader-open (where init awaits the source up to 5s).
         scope.launchIO {
             try {
-                GlobalContext.get().get<hayai.novel.plugin.NovelPluginManager>()
+                GlobalContext.get().get<epigraph.novel.plugin.NovelPluginManager>()
             } catch (e: Throwable) {
                 Logger.w(e) { "App: pre-warming NovelPluginManager failed" }
             }

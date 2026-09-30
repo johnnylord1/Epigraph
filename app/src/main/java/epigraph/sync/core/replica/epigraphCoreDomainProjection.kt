@@ -33,7 +33,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import yokai.data.Database
 
 /**
- * Projects the Core's confirmed records into the existing Hayai tables.
+ * Projects the Core's confirmed records into the existing local library tables.
  *
  * Core records remain the source of truth. This class only applies records that have already been
  * authenticated and durably written by [SqlDelightCoreReplicaStore], and therefore never emits a
@@ -304,7 +304,7 @@ class EpigraphCoreDomainProjection(
         }
     }
 
-    /** Projects a Core comic entry into Hayai's existing manga/library row. */
+    /** Projects a Core comic entry into the existing local manga/library row. */
     private fun projectComicEntry(database: Database, entityId: String, record: JsonObject) {
         val comicId = record.string("comicId") ?: record.string("mangaId") ?: entityId
         val coreReference = verifiedCoreMangaReference(entityId, record)
@@ -606,7 +606,7 @@ class EpigraphCoreDomainProjection(
 
     /**
      * Projects the future Core comic chapter-state entity. The payload deliberately accepts both
-     * the protocol names and Hayai's legacy names so a bridge can evolve without a client-only
+     * the protocol names and the legacy local names so a bridge can evolve without a client-only
      * migration.
      */
     private fun projectComicChapterState(database: Database, record: CoreConfirmedRecord) {

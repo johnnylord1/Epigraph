@@ -4,8 +4,8 @@ import android.content.Context
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.database.models.MangaImpl
 import eu.kanade.tachiyomi.data.library.CustomMangaManager
-import hayai.novel.reader.quote.Quote
-import hayai.novel.reader.quote.QuoteManager
+import epigraph.novel.reader.quote.Quote
+import epigraph.novel.reader.quote.QuoteManager
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest

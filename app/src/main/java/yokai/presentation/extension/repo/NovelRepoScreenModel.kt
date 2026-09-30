@@ -5,10 +5,10 @@ import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.util.system.launchIO
-import hayai.novel.repo.interactor.CreateNovelRepo
-import hayai.novel.repo.interactor.DeleteNovelRepo
-import hayai.novel.repo.interactor.GetNovelRepo
-import hayai.novel.repo.model.NovelRepo
+import epigraph.novel.repo.interactor.CreateNovelRepo
+import epigraph.novel.repo.interactor.DeleteNovelRepo
+import epigraph.novel.repo.interactor.GetNovelRepo
+import epigraph.novel.repo.model.NovelRepo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.MutableSharedFlow

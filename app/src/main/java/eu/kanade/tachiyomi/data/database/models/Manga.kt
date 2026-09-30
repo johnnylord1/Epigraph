@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
 import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
 import eu.kanade.tachiyomi.util.system.withIOContext
-import hayai.novel.source.TextSource
+import epigraph.novel.source.TextSource
 import java.util.Locale
 import yokai.util.koin.injectLazy
 import yokai.data.updateStrategyAdapter

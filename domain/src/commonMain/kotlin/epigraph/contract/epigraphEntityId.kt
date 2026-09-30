@@ -60,7 +60,7 @@ value class SyncEntityType(val value: String) {
     override fun toString(): String = value
 }
 
-/** Explicit mapping which leaves the Hayai/J2K local ID untouched. */
+/** Explicit mapping which leaves the legacy J2K local ID untouched. */
 @Serializable
 data class LocalEntityBinding(
     val localId: String,

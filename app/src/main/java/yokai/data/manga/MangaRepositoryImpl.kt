@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.data.database.models.mapper
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import kotlinx.coroutines.flow.Flow
 import eu.kanade.tachiyomi.source.SourceManager
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 import yokai.data.DatabaseHandler
 import yokai.data.memoColumnAdapter
 import yokai.data.updateStrategyAdapter

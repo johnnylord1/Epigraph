@@ -2,7 +2,7 @@ package yokai.presentation.stats.novel
 
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
-import hayai.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.NovelPluginManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch

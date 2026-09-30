@@ -330,7 +330,7 @@ class ExtensionReconciliationCoordinator(
         when (outcome) {
             InstallOutcome.INSTALLED -> {
                 // Android occasionally installs the APK but drops the terminal installer
-                // callback. Feed the observed package state back through Hayai's canonical
+                // callback. Feed the observed package state back through Epigraph's canonical
                 // installer flow so its producer releases the download/session and the batch
                 // can advance to the next user-confirmed APK.
                 if (!terminal.isCompleted) {

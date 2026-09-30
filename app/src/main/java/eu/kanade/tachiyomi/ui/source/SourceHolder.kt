@@ -20,7 +20,7 @@ import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.view.compatToolTipText
 // NOVEL -->
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 // NOVEL <--
 import android.R as AR
 

@@ -34,7 +34,7 @@ import exh.source.TSUMINO_SOURCE_ID
 import exh.source.handleSourceLibrary
 // EXH <--
 // NOVEL -->
-import hayai.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.NovelPluginManager
 // NOVEL <--
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass

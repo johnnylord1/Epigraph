@@ -100,11 +100,11 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     // text-selection behaviour is preserved out of the box.
     val novelDoubleTapAction: Preference<Int> = preferenceStore.getInt(
         "pref_novel_double_tap_action",
-        hayai.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal,
+        epigraph.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal,
     )
     val novelLongTapAction: Preference<Int> = preferenceStore.getInt(
         "pref_novel_long_tap_action",
-        hayai.novel.reader.NovelTapAction.NONE.ordinal,
+        epigraph.novel.reader.NovelTapAction.NONE.ordinal,
     )
     val novelTextSelectable: Preference<Boolean> = preferenceStore.getBoolean("pref_novel_text_selectable", true)
 
@@ -298,8 +298,8 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
         novelAutoScrollSpeed.set(15)
         novelVolumeKeysScroll.set(false)
         novelTapToScroll.set(false)
-        novelDoubleTapAction.set(hayai.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal)
-        novelLongTapAction.set(hayai.novel.reader.NovelTapAction.NONE.ordinal)
+        novelDoubleTapAction.set(epigraph.novel.reader.NovelTapAction.TOGGLE_MENU.ordinal)
+        novelLongTapAction.set(epigraph.novel.reader.NovelTapAction.NONE.ordinal)
         novelTextSelectable.set(true)
         novelBlockMedia.set(false)
         novelFontColor.set(0)

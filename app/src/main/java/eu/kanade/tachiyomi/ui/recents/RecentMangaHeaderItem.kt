@@ -19,7 +19,7 @@ import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.icon
 import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
 import eu.kanade.tachiyomi.util.view.setText
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 import yokai.i18n.MR
 import yokai.util.lang.getString
 

@@ -14,8 +14,8 @@ import epigraph.contract.WorkResolution
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
-import hayai.novel.plugin.NovelPluginManager
-import hayai.novel.source.NovelSource
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.source.NovelSource
 import yokai.domain.chapter.ChapterRepository
 import yokai.domain.manga.MangaRepository
 

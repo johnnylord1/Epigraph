@@ -30,7 +30,7 @@ import yokai.i18n.MR
 import yokai.util.lang.getString
 
 /**
- * EPUB/PDF settings use the same Hayai contract as the manga and novel sheets:
+ * EPUB/PDF settings use the same Epigraph contract as the manga and novel sheets:
  * XML-inflated tab views inside [TabbedBottomSheetDialog], backed directly by typed
  * preferences. Engines remain separate, but the chrome and interaction model are shared.
  */

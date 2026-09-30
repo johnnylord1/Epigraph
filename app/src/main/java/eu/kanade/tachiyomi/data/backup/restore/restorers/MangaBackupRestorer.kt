@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.restore.restorers
 
 import android.content.Context
-import hayai.novel.reader.quote.QuoteManager
+import epigraph.novel.reader.quote.QuoteManager
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupHistory

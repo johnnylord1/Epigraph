@@ -35,7 +35,7 @@ import eu.kanade.tachiyomi.util.view.searchToolbar
 import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.widget.preference.SwitchPreferenceCategory
 // NOVEL -->
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 // NOVEL <--
 import java.util.TreeMap
 import kotlin.math.roundToInt

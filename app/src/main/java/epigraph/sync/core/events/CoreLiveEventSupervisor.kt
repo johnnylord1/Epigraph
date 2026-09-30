@@ -58,7 +58,7 @@ class CoreLiveEventSupervisor(
     /** Starts at most one process-lifetime supervisor. Cancellation is owned by [scope]. */
     fun start(scope: CoroutineScope) {
         if (!started.compareAndSet(false, true)) return
-        scope.launch(Dispatchers.IO + CoroutineName("aethon-core-live-events")) {
+        scope.launch(Dispatchers.IO + CoroutineName("epigraph-core-live-events")) {
             runSupervisor()
         }
     }
@@ -113,7 +113,7 @@ class CoreLiveEventSupervisor(
         // streams attached to a session that Core has rejected.
         coroutineScope {
             policy.selectedScopes.map { scopeId ->
-                launch(CoroutineName("aethon-core-events-$scopeId")) {
+                launch(CoroutineName("epigraph-core-events-$scopeId")) {
                     runScope(
                         credentials = credentials,
                         capabilities = capabilities,

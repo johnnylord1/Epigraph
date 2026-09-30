@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.models
 
-import hayai.novel.reader.quote.Quote
+import epigraph.novel.reader.quote.Quote
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
 import yokai.domain.series.model.SeriesDisplayOption

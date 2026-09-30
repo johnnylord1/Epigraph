@@ -8,10 +8,10 @@ import epigraph.sync.core.replica.CoreConfirmedRecord
 import epigraph.sync.core.replica.CoreReplicaRecordReader
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
-import hayai.novel.plugin.NovelPluginManager
-import hayai.novel.plugin.model.NovelPluginIndex
-import hayai.novel.repo.NovelRepoRepository
-import hayai.novel.repo.interactor.NovelRepoIndexValidator
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.repo.NovelRepoRepository
+import epigraph.novel.repo.interactor.NovelRepoIndexValidator
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject

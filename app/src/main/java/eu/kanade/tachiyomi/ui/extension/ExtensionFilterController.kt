@@ -11,7 +11,7 @@ import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.titleMRes
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 // NOVEL -->
-import hayai.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.NovelPluginManager
 // NOVEL <--
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop

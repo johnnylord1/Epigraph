@@ -7,7 +7,7 @@ import epigraph.sync.core.replica.CoreReplicaKey
 import epigraph.sync.core.replica.CoreReplicaRecordReader
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.portable.canonicalRepositoryUrl
-import hayai.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.plugin.model.NovelPluginIndex
 import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.buildJsonObject

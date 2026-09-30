@@ -1,6 +1,6 @@
 package epigraph.sync.core.novels
 
-import hayai.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.plugin.model.NovelPluginIndex
 import java.security.MessageDigest
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals

@@ -17,7 +17,7 @@ import eu.kanade.tachiyomi.util.lang.withColor
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import eu.kanade.tachiyomi.util.system.getResourceColor
 // NOVEL -->
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 // NOVEL <--
 import java.util.Locale
 

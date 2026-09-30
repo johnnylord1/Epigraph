@@ -107,7 +107,7 @@ import yokai.util.lang.getString
 import eu.kanade.tachiyomi.source.PagePreviewSource
 import eu.kanade.tachiyomi.source.online.NamespaceSource
 import exh.source.getMainSource
-import hayai.novel.reader.quote.quoteManager
+import epigraph.novel.reader.quote.quoteManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch

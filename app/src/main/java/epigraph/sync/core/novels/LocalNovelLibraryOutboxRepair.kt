@@ -7,7 +7,7 @@ import epigraph.sync.EpigraphMutationOrigin
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.LibraryMembershipMutation
 import co.touchlab.kermit.Logger
-import hayai.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.NovelPluginManager
 import kotlinx.coroutines.CancellationException
 import yokai.data.Database
 import yokai.data.DatabaseHandler
@@ -27,7 +27,7 @@ class LocalNovelLibraryOutboxRepair(
     private val scopes: EpigraphSyncScopeProvider,
 ) {
     suspend fun repair(): Int {
-        // Before pairing there is nowhere safe to address an outbox mutation. Keep the Hayai row
+        // Before pairing there is nowhere safe to address an outbox mutation. Keep the library row
         // local and retry on the next app-start/connectivity worker after pairing.
         runCatching { scopes.current() }.getOrElse { return 0 }
         plugins.ensureInstalledPluginsLoaded()

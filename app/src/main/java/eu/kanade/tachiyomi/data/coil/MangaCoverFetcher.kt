@@ -21,7 +21,7 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 import java.io.File
 import java.net.HttpURLConnection
 import java.util.Date

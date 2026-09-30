@@ -12,7 +12,7 @@ import yokai.domain.manga.models.MangaUpdate
 
 // Verbatim port of mihon FetchInterval
 // (domain/src/main/java/tachiyomi/domain/manga/interactor/FetchInterval.kt). Field accessors
-// adapted to Hayai's snake_case Chapter/Manga model; algorithm unchanged.
+// adapted to the local snake_case Chapter/Manga model; algorithm unchanged.
 class FetchInterval(
     private val getChapter: GetChapter,
 ) {

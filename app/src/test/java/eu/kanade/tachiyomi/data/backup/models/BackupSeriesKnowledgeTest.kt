@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.models
 
-import hayai.novel.reader.quote.Quote
+import epigraph.novel.reader.quote.Quote
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test

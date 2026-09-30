@@ -9,8 +9,8 @@ import epigraph.sync.core.assets.CoreAssetFailure
 import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.session.CoreSessionTransportFactory
-import hayai.novel.plugin.NovelPluginManager
-import hayai.novel.plugin.model.NovelPluginIndex
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.model.NovelPluginIndex
 import java.io.File
 import kotlinx.coroutines.CancellationException
 

@@ -250,7 +250,7 @@ class EpigraphLibraryMutationRouterTest {
 
     @Test
     fun `first local novel favorite atomically provisions portable identity and publishes entry`() = runTest {
-        // This mirrors the repair pass: Hayai already persisted the favorite, but the previous
+        // This mirrors the repair pass: the library already persisted the favorite, but the previous
         // build never created an Epigraph identity or outbox row.
         val mangaId = insertManga(favorite = true)
         val novel = PortableWorkRef.Novel(

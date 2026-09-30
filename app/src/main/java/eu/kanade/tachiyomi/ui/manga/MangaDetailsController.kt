@@ -157,7 +157,7 @@ import eu.kanade.tachiyomi.util.view.snack
 import eu.kanade.tachiyomi.util.view.toolbarHeight
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.widget.LinearLayoutManagerAccurateOffset
-import hayai.novel.reader.quote.showQuotesSheet
+import epigraph.novel.reader.quote.showQuotesSheet
 import java.io.File
 import java.io.IOException
 import java.util.Locale

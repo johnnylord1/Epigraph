@@ -10,7 +10,7 @@ import eu.kanade.tachiyomi.source.icon
 import eu.kanade.tachiyomi.source.nameBasedOnEnabledLanguages
 import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
 // NOVEL -->
-import hayai.novel.source.NovelSource
+import epigraph.novel.source.NovelSource
 // NOVEL <--
 
 class MigrationSourceHolder(view: View, val adapter: MigrationSourceAdapter) :

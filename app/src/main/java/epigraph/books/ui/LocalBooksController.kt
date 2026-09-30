@@ -64,7 +64,7 @@ class LocalBooksController(bundle: Bundle? = null) :
 
         // The activity owns an expanded app bar which is layered above controller views.
         // Reserve the same measured height used by other legacy controllers so the import
-        // action is not occluded while preserving the existing Hayai chrome.
+        // action is not occluded while preserving the existing Epigraph chrome.
         view.post {
             val measuredAppBar = appBar()?.height ?: 0
             binding.root.updatePadding(top = maxOf(fullAppBarHeight ?: 0, measuredAppBar))

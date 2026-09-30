@@ -4,7 +4,7 @@ import android.content.Context
 import epigraph.books.importing.EpubArchiveValidator
 import epigraph.books.model.LocalBookDocument
 import epigraph.contract.ReaderLocator
-import hayai.novel.reader.security.NovelHtmlSanitizer
+import epigraph.novel.reader.security.NovelHtmlSanitizer
 import java.io.File
 import org.jsoup.Jsoup
 import org.json.JSONObject

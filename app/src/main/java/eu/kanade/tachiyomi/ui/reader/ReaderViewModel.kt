@@ -934,7 +934,7 @@ class ReaderViewModel(
 
     /**
      * Edit-mode hook from Tsundoku's WebView novel viewer. Edit mode is out of scope for
-     * the initial Hayai port; this is a no-op stub so the viewer compiles unchanged.
+     * the initial novel-reader port; this is a no-op stub so the viewer compiles unchanged.
      */
     fun setHasUnsavedChanges(unsaved: Boolean) {
         // No-op — chapter editing is a Tsundoku-only feature, unimplemented here.
@@ -942,7 +942,7 @@ class ReaderViewModel(
 
     /**
      * Edit-mode hook from Tsundoku's WebView novel viewer. Edit mode is out of scope for
-     * the initial Hayai port; this is a no-op stub so the viewer compiles unchanged.
+     * the initial novel-reader port; this is a no-op stub so the viewer compiles unchanged.
      */
     fun saveEditedChapterContent(json: String) {
         // No-op — chapter editing is a Tsundoku-only feature, unimplemented here.
@@ -950,10 +950,10 @@ class ReaderViewModel(
 
     /**
      * Reload-from-source hook used by Tsundoku's WebView edit mode.
-     * Edit mode is out of scope for the initial Hayai port; this no-ops.
+     * Edit mode is out of scope for the initial novel-reader port; this no-ops.
      */
     fun reloadChapter(fromSource: Boolean) {
-        // No-op — full chapter-reload reuses [setChapters] in Hayai's flow.
+        // No-op — full chapter-reload reuses [setChapters] in the reader's flow.
     }
 
     private fun downloadNextChapters() {

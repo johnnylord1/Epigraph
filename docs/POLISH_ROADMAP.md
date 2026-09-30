@@ -119,7 +119,7 @@ These three all edit `NovelWebViewViewer.kt` (+ adjacent reader/viewmodel files)
 
 #### `tts-stop` — In-reader TTS Stop affordance  (PROCEED · M · med)
 **What/why:** Stop exists at controller/service/notification/lockscreen (all functional), but the in-reader UI collapsed to ONE icon whose only stop affordance is an undiscoverable long-press. `controller.toggle()` has no Speaking→Stop arm. User: "no way to stop." Discoverability gap, high confidence.
-**Key files:** `hayai/novel/reader/bars/NovelReaderActionBar.kt:145-167,169-171`; `ReaderActivity.kt:1481-1497`; `NovelTtsController.kt:94-101` (`toggle()`).
+**Key files:** `epigraph/novel/reader/bars/NovelReaderActionBar.kt:145-167,169-171`; `ReaderActivity.kt:1481-1497`; `NovelTtsController.kt:94-101` (`toggle()`).
 **Approach (preferred, matches tsundoku):** Expand `NovelReaderActionBar` to render an inline TTS controls row when active — `[prev-para, play/pause, stop, next-para, read-from-here]` — modeled on tsundoku `NovelReaderAppBars.kt` `NovelTtsControlsOverlay` (`:611-657`). Wire stop → `novelWeb.stopTts()` + `stopBackgroundTtsIfRunning()`. Add a `Speaking→Stop` variant (or `toggleStop()`) to the controller. Keep notification/lockscreen stop as-is. Build the row from Epigraph's own Compose components + M3 Expressive (not tsundoku primitives).
 **Verify:** during playback an explicit Stop button is one tap away and stops the engine + clears highlight.
 
@@ -260,7 +260,7 @@ Each adds one pref to `ReaderPreferences.kt` (verbatim tsundoku key names) + wir
 
 ### `sheet-adaptive` — Port AdaptiveSheet, unify sheet stack  (PROCEED · XL · med)
 **What/why:** Two fully parallel sheet paradigms — legacy XML `E2EBottomSheetDialog`/`TabbedBottomSheet`/`MaterialMenuSheet` vs Compose `ModalBottomSheet` (~20 distinct sources) — plus 3 dialog stacks. No shared primitive. mihon/tsundoku solved this with ONE `AdaptiveSheet`.
-**Key files:** `widget/E2EBottomSheetDialog.kt`, `widget/TabbedBottomSheet.kt`, `ui/base/MaterialMenuSheet.kt`, `hayai/novel/reader/settings/NovelReaderSettingsSheet.kt:114,898`, `ComposeSourceFilterSheet.kt`, `yokai/presentation/component/`; mihon `presentation-core/.../components/AdaptiveSheet.kt` + app-level `eu.kanade.presentation.components.AdaptiveSheet.kt`.
+**Key files:** `widget/E2EBottomSheetDialog.kt`, `widget/TabbedBottomSheet.kt`, `ui/base/MaterialMenuSheet.kt`, `epigraph/novel/reader/settings/NovelReaderSettingsSheet.kt:114,898`, `ComposeSourceFilterSheet.kt`, `yokai/presentation/component/`; mihon `presentation-core/.../components/AdaptiveSheet.kt` + app-level `eu.kanade.presentation.components.AdaptiveSheet.kt`.
 **Approach (incremental — per MEMORY, NOT big-bang):** Port mihon's `AdaptiveSheet.kt` **verbatim** into `yokai.presentation.component` + the app-level `isTabletUi` wrapper (feeds from `LocalConfiguration`). Migrate Compose `ModalBottomSheet` call sites first (novel reader settings/quotes/find-replace, source filter — cheap). Then incrementally replace legacy `E2EBottomSheetDialog`/`TabbedBottomSheet`/`MaterialMenuSheet` usages per-screen with `AdaptiveSheet` + Expressive content. Standardize on one dialog primitive (Compose `AlertDialog` via a shared wrapper) over time. **Do this incrementally across commits** — the migration appetite (big-bang vs incremental) is settled as incremental by the MEMORY rule; only the *worst-offender "sheets-in-sheets" naming* defers (see questions).
 **Deps:** `theme-expressive`. **Verify:** migrated sheets adapt phone↔tablet; no visual regression on the first batch.
 

@@ -36,7 +36,7 @@ import okhttp3.ResponseBody
 import okio.Buffer
 
 /**
- * Result of an HTTP exchange with aethon-syncd.
+ * Result of an HTTP exchange with epigraph-syncd.
  *
  * A HTTP 200 mutation response remains [Success] even when individual mutation results are
  * rejected. Callers must inspect [CoreMutationsResponse.results] and acknowledge only entries
@@ -58,7 +58,7 @@ sealed interface CoreHttpResult<out T> {
 }
 
 /**
- * Small authenticated client for the stable JSON portion of the aethon-syncd v1 API.
+ * Small authenticated client for the stable JSON portion of the epigraph-syncd v1 API.
  *
  * TLS pinning and OkHttp policy are configured by the caller. This class accepts only an HTTPS
  * origin, adds the exact syncd negotiation headers, and receives the bearer token per protected

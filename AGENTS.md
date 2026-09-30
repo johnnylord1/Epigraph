@@ -5,7 +5,7 @@
 - This repository contains the Android application only.
 - Do not modify the separate desktop workspace from this Android workspace.
 - Do not reintroduce Sorayomi code or artifacts.
-- Preserve the Hayai/J2K interaction model. Product-facing identity is Epigraph; internal legacy package names may remain when changing them has no user benefit.
+- Preserve the J2K-lineage interaction model. The product identity is Epigraph Mobile: first-party Kotlin code lives under `epigraph.*` (including `epigraph.novel.*`, formerly `hayai.novel.*`). Upstream packages (`eu.kanade.tachiyomi`, `yokai`, `exh`) stay because extensions and upstream merges depend on them. Legacy `hayai`/`aethon` names remain only where they are compatibility contracts (tables, keys, wire identifiers, URL schemes, OAuth client IDs) or lineage/licensing attribution.
 - The Android product is installed as `app.epigraph.mobile`, alongside (not over) the previous package. Android private app sandboxes are isolated: users must export a backup from the previous installation and import it in Epigraph, or explicitly select a shared storage directory. Do not claim that an APK update can read the previous private sandbox automatically.
 - New backups use `.epigraphbk`; restore/import must continue accepting supported legacy containers, `.tachibk`, `.proto.gz`, and the existing JSON formats. Persisted SQLDelight table names, migration filenames, preference keys, and wire identifiers are compatibility contracts.
 

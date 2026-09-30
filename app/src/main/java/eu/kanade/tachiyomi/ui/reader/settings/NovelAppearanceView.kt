@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.databinding.ReaderNovelAppearanceBinding
 import eu.kanade.tachiyomi.util.bindToPreference
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.widget.BaseReaderSettingsView
-import hayai.novel.reader.settings.NovelStylePresetSection
+import epigraph.novel.reader.settings.NovelStylePresetSection
 import yokai.i18n.MR
 import yokai.presentation.theme.YokaiTheme
 import yokai.util.lang.getString
