@@ -87,12 +87,13 @@ internal class ThemeStep : OnboardingStep, KoinComponent {
             }
         }
 
+        // Theme rows scroll edge to edge; the 16dp margin travels with the content.
         Column(
-            modifier = Modifier.padding(Size.medium),
+            modifier = Modifier.padding(vertical = Size.medium),
             verticalArrangement = Arrangement.spacedBy(Size.medium),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Size.medium),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -119,7 +120,9 @@ internal class ThemeStep : OnboardingStep, KoinComponent {
             }
 
             Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = Size.medium),
                 horizontalArrangement = Arrangement.spacedBy(Size.medium)
             ) {
                 lightThemes.forEach { theme ->
@@ -144,7 +147,9 @@ internal class ThemeStep : OnboardingStep, KoinComponent {
                 }
             }
             Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = Size.medium),
                 horizontalArrangement = Arrangement.spacedBy(Size.medium)
             ) {
                 darkThemes.forEach { theme ->

@@ -5,9 +5,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.RocketLaunch
@@ -19,7 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import eu.kanade.tachiyomi.R
 import yokai.i18n.MR
@@ -74,12 +72,21 @@ fun OnboardingScreen(
             }
         },
     ) {
+        // Steps sit on the page itself (one layer, no box around their own cards) and span the full
+        // width, so theme rows scroll edge to edge; each step keeps the 16dp margin for its text.
         Box(
             modifier = Modifier
                 .padding(vertical = Size.small)
-                .clip(MaterialTheme.shapes.small)
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                .layout { measurable, constraints ->
+                    val bleed = Size.medium.roundToPx()
+                    val placeable = measurable.measure(
+                        constraints.copy(
+                            minWidth = constraints.minWidth + bleed * 2,
+                            maxWidth = constraints.maxWidth + bleed * 2,
+                        ),
+                    )
+                    layout(constraints.maxWidth, placeable.height) { placeable.place(-bleed, 0) }
+                },
         ) {
             val reducedMotion = isReducedMotion
             AnimatedContent(

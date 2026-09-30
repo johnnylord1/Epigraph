@@ -10,10 +10,12 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -160,10 +163,12 @@ internal class PermissionStep : OnboardingStep {
         text: String,
         modifier: Modifier = Modifier,
     ) {
+        // Section header (DESIGN.md §10): label in accent at the 16dp margin, 8dp above the rows.
         Text(
             text = text,
-            style = MaterialTheme.typography.titleLarge,
-            modifier = modifier.padding(horizontal = Size.medium),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = modifier.padding(start = Size.medium, end = Size.medium, bottom = Size.small),
         )
     }
 
@@ -189,6 +194,10 @@ internal class PermissionStep : OnboardingStep {
                 } else {
                     OutlinedButton(
                         shape = MaterialTheme.shapes.small,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
                         onClick = onButtonClick,
                     ) {
                         Text(stringResource(MR.strings.onboarding_permission_action_grant))

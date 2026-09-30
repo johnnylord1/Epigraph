@@ -119,15 +119,18 @@ fun InfoScreen(
                 ) {
                     Text(text = acceptText)
                 }
+                // Secondary buttons (DESIGN.md §10): 1dp line-strong outline, text color; only the
+                // accept button carries the accent.
+                val secondaryBorder = BorderStroke(Size.extraExtraTiny, MaterialTheme.colorScheme.outline)
+                val secondaryColors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                )
                 if (rejectText != null && onRejectClick != null) {
                     OutlinedButton(
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
-                        border =
-                            BorderStroke(
-                                width = Size.extraExtraTiny,
-                                color = tint,
-                            ),
+                        border = secondaryBorder,
+                        colors = secondaryColors,
                         onClick = onRejectClick,
                     ) {
                         Text(text = rejectText)
@@ -137,11 +140,8 @@ fun InfoScreen(
                     OutlinedButton(
                         shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
-                        border =
-                            BorderStroke(
-                                width = Size.extraExtraTiny,
-                                color = tint,
-                            ),
+                        border = secondaryBorder,
+                        colors = secondaryColors,
                         onClick = onTertiaryClick,
                     ) {
                         Text(text = tertiaryText)

@@ -308,6 +308,7 @@ Componentes existentes que o redesign reaproveita — estilizados pelos tokens a
 | Erro | `EmptyView` + `Banners.kt` | Tela: ícone + mensagem + "Tentar de novo". Parcial: banner `surface-high` com barra 4dp `danger` à esquerda. |
 | Preferência | `yokai/presentation/component/preference/*` | Linha 56/72dp, título `body`, resumo `body-s text-2`. |
 | HUD do leitor | `layout/reader_nav.xml` (`drawable/chapter_nav`), `reader_activity.xml` `page_number` | Barra de páginas `surface` `r-m` (não pílula), trilho `line`, ativo `accent`. Indicador de página preto `r-xs`, texto branco `caption` bold, padding 8×2dp. |
+| Onboarding / tela informativa | `yokai/presentation/onboarding/*` (`InfoScreen` também serve a `CrashActivity`) | Passos direto sobre `bg`, uma camada só: nada de caixa em volta dos cards de opção. Texto na margem de 16dp; as linhas de tema rolam de borda a borda. Um botão cheio por tela ("Próximo" no rodapé); a ação do passo cai para secundária quando já está satisfeita (pasta escolhida) e link externo é botão de texto. Divisor `line`. Cards de opção `surface` `r-m`, contorno `line`; selecionado 2dp `accent` + check. Passos trocam em shared axis X. |
 | Scroll rápido | `LibraryFastScroll` | Trilho invisível, thumb `accent` 4×48dp `r-xs`, bolha `surface-high` `title-m`. |
 
 ---

@@ -195,7 +195,7 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 ## F7 — Outras superfícies
 | Superfície | Arquivo | Tec | De onde | Tipo | Status |
 |---|---|---|---|---|---|
-| Onboarding | `yokai/presentation/onboarding/*` | C | primeira execução | tela | feito — não verificado (exige primeira execução) |
+| Onboarding | `yokai/presentation/onboarding/*` | C | primeira execução | tela | feito (frames `f7-onboarding-*`; sem caixa dupla, um botão cheio por passo; ao concluir, a biblioteca volta só com a própria app bar) |
 | Novidades (what's new) | `MainActivity.kt:2130` | V | após atualização | sheet | feito* |
 | Aviso inicial | `MainActivity.kt:273` | V | abertura | dialog | feito* |
 | Crash | `ui/crash/CrashActivity.kt` | V | falha | tela | feito* |

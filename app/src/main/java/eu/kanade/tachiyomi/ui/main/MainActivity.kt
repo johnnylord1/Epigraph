@@ -1785,7 +1785,11 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
     private var lastGlobalAppBarController: Controller? = null
     private var lastGlobalAppBarVisibility: Boolean? = null
 
-    fun syncActivityAppBarVisibility(active: Controller?) {
+    fun syncActivityAppBarVisibility(changed: Controller?) {
+        // RootTabsController only hosts the tabs; the chrome belongs to the visible tab. It
+        // arrives here as `to` when an overlay (onboarding) pops off the top router, and would
+        // otherwise bring the global app bar back over the tab's own one.
+        val active = if (changed is RootTabsController) activeRootController ?: changed else changed
         val hostsOwn = (active as? BaseController)?.hostsOwnAppBar == true
         val composeRoute = active is eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
         val shouldShowGlobalAppBar = !(hostsOwn || composeRoute)
