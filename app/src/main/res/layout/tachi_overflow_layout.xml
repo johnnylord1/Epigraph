@@ -21,13 +21,13 @@
         android:layout_height="wrap_content"
         app:layout_constrainedHeight="true"
         app:layout_constrainedWidth="true"
-        app:strokeWidth="0dp"
-        android:layout_marginStart="24dp"
-        android:layout_marginEnd="14dp"
-        android:background="?colorBackgroundFloating"
-        app:cardBackgroundColor="?colorBackgroundFloating"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="0dp"
+        app:strokeWidth="@dimen/line_width"
+        app:strokeColor="?colorOutlineVariant"
+        android:layout_marginStart="@dimen/space_3"
+        android:layout_marginEnd="@dimen/space_1"
+        app:cardBackgroundColor="?colorSurfaceContainer"
+        app:cardCornerRadius="@dimen/radius_m"
+        app:cardElevation="@dimen/elevation_level_2"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="1.0"
         app:layout_constraintStart_toStartOf="parent"
@@ -89,7 +89,7 @@
                     app:layout_constraintBottom_toTopOf="@id/incognito_mode_item"
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
-                    android:background="@color/divider"
+                    android:background="?colorOutlineVariant"
                     tools:visibility="visible" />
 
                 <eu.kanade.tachiyomi.widget.MenuSheetItemView
@@ -125,7 +125,7 @@
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     android:layout_height="1dp"
-                    android:background="@color/divider" />
+                    android:background="?colorOutlineVariant" />
 
                 <eu.kanade.tachiyomi.widget.MenuSheetItemView
                     android:id="@+id/settings_item"

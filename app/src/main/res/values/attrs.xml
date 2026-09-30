@@ -18,6 +18,9 @@
     <attr name="tabHighlightBackground" format="color"/>
     <!-- Background of the floating search field in the big app bar. -->
     <attr name="searchFieldSurface" format="color"/>
+    <!-- "Total chapters" library badge; Nocturne keeps it neutral so the accent stays single-use. -->
+    <attr name="totalBadgeColor" format="color"/>
+    <attr name="totalBadgeTextColor" format="color"/>
 
     <declare-styleable name="MaterialSpinnerView">
         <attr name="title" format="reference|string"/>

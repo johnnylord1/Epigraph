@@ -2,18 +2,15 @@ package eu.kanade.tachiyomi.ui.more
 
 import android.app.Dialog
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.view.View
 import android.view.ViewGroup
-import androidx.core.graphics.ColorUtils
 import androidx.core.text.buildSpannedString
 import androidx.core.text.color
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updateLayoutParams
 import androidx.vectordrawable.graphics.drawable.AnimatedVectorDrawableCompat
 import eu.kanade.tachiyomi.BuildConfig
-import com.google.android.material.R as materialR
 import eu.kanade.tachiyomi.R
 import yokai.i18n.MR
 import yokai.util.lang.getString
@@ -43,13 +40,6 @@ class OverflowDialog(
     init {
         setContentView(binding.root)
 
-        binding.overflowCardView.backgroundTintList = ColorStateList.valueOf(
-            ColorUtils.blendARGB(
-                activity.getResourceColor(android.R.attr.colorBackground),
-                activity.getResourceColor(materialR.attr.colorSecondary),
-                0.075f,
-            ),
-        )
         binding.touchOutside.setOnClickListener {
             cancel()
         }

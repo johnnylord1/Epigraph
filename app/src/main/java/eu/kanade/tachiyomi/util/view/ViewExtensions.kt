@@ -415,22 +415,19 @@ inline fun View.popupMenu(
     }
 
     if (selectedItemId != null) {
-        val blendedAccent = ColorUtils.blendARGB(
-            context.getResourceColor(materialR.attr.colorSecondary),
-            context.getResourceColor(materialR.attr.colorOnBackground),
-            0.5f,
-        )
+        // DESIGN.md §2: accent marks selected state, unblended.
+        val selectedTint = context.getResourceColor(materialR.attr.colorSecondary)
         (popup.menu as? MenuBuilder)?.setOptionalIconsVisible(true)
         val emptyIcon = ContextCompat.getDrawable(context, R.drawable.ic_blank_24dp)
         popup.menu.forEach { item ->
             item.icon = when (item.itemId) {
                 selectedItemId -> ContextCompat.getDrawable(context, R.drawable.ic_check_24dp)?.mutate()?.apply {
-                    setTint(blendedAccent)
+                    setTint(selectedTint)
                 }
                 else -> emptyIcon
             }
             if (item.itemId == selectedItemId) {
-                item.title = item.title?.tintText(blendedAccent)
+                item.title = item.title?.tintText(selectedTint)
             }
         }
     }

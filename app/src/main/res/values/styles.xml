@@ -35,6 +35,91 @@
         <item name="android:textSize">16sp</item>
     </style>
 
+    <!-- DESIGN.md §3 type scale. Outfit weights resolve through textFontWeight (API 28+). -->
+    <style name="TextAppearance.Epigraph.Display" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">600</item>
+        <item name="android:textSize">32sp</item>
+        <item name="lineHeight">40sp</item>
+        <item name="android:letterSpacing">-0.008</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.TitleL" parent="TextAppearance.Material3.TitleLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">600</item>
+        <item name="android:textSize">22sp</item>
+        <item name="lineHeight">28sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.TitleM" parent="TextAppearance.Material3.TitleMedium">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">16sp</item>
+        <item name="lineHeight">24sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Body" parent="TextAppearance.Material3.BodyLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">400</item>
+        <item name="android:textSize">16sp</item>
+        <item name="lineHeight">24sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.BodyS" parent="TextAppearance.Material3.BodyMedium">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">400</item>
+        <item name="android:textSize">14sp</item>
+        <item name="lineHeight">20sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Label" parent="TextAppearance.Material3.LabelLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">14sp</item>
+        <item name="lineHeight">20sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Caption" parent="TextAppearance.Material3.LabelSmall">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">12sp</item>
+        <item name="lineHeight">16sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <!-- DESIGN.md §5 radius scale for XML components. -->
+    <style name="ShapeAppearance.Epigraph.XS" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_xs</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.S" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_s</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.M" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_m</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.L" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_l</item>
+    </style>
+
     <style name="TextAppearance.Widget.Tab" parent="TextAppearance.MaterialComponents.Button">
         <item name="android:textAllCaps">false</item>
         <item name="android:letterSpacing">0</item>
@@ -150,6 +235,7 @@
 
     <style name="BottomSheetDialogTheme" parent="@style/ThemeOverlay.Material3.BottomSheetDialog">
         <item name="bottomSheetStyle">@style/BottomSheet.Modal</item>
+        <item name="android:backgroundDimAmount">@dimen/scrim_alpha</item>
         <item name="android:windowSoftInputMode">adjustPan</item>
     </style>
 
@@ -162,8 +248,8 @@
     <style name="OverflowDialogTheme" parent="BottomSheetDialogTheme">
         <item name="android:windowAnimationStyle">@style/Theme.Widget.Animation.DropFromAbove</item>
         <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBlurBehindEnabled" tools:targetApi="31">true</item>
-        <item name="android:windowBlurBehindRadius" tools:targetApi="31">10dp</item>
+        <!-- A menu, not a modal: no blur or dim behind it (DESIGN.md §6, no glow/blur effects). -->
+        <item name="android:backgroundDimEnabled">false</item>
     </style>
 
     <style name="Theme.Widget.Animation.DropFromAbove" parent="android:Animation">
@@ -187,14 +273,49 @@
         <item name="android:textColorHint">@color/material_on_background_disabled</item>
     </style>
 
+    <!-- DESIGN.md §10 Diálogo: layer 3 (surface over scrim), r-l, title-l, r-s text buttons, token window motion. -->
     <style name="Theme.Widget.Epigraph.AlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
         <item name="alertDialogStyle">@style/Widget.Epigraph.AlertDialog</item>
-        <item name="elevationOverlayEnabled">true</item>
-        <item name="elevationOverlayColor">?colorSecondary</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Epigraph.Modal</item>
+        <item name="android:backgroundDimAmount">@dimen/scrim_alpha</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/MaterialAlertDialog.Epigraph.Title.Text</item>
+        <item name="materialAlertDialogBodyTextStyle">@style/MaterialAlertDialog.Epigraph.Body.Text</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
     </style>
 
     <style name="Widget.Epigraph.AlertDialog" parent="MaterialAlertDialog.Material3">
-        <item name="backgroundTint">?attr/colorSurface</item>
+        <item name="backgroundTint">?attr/colorSurfaceContainerLow</item>
+    </style>
+
+    <style name="MaterialAlertDialog.Epigraph.Title.Text" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.TitleL</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+
+    <style name="MaterialAlertDialog.Epigraph.Body.Text" parent="MaterialAlertDialog.Material3.Body.Text">
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Body</item>
+        <item name="android:textColor">?android:attr/textColorSecondary</item>
+    </style>
+
+    <style name="Widget.Epigraph.Button.Dialog" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
+        <item name="android:letterSpacing">0.0</item>
+    </style>
+
+    <style name="Animation.Epigraph.Modal" parent="android:Animation">
+        <item name="android:windowEnterAnimation">@anim/epigraph_modal_enter</item>
+        <item name="android:windowExitAnimation">@anim/epigraph_modal_exit</item>
+    </style>
+
+    <!-- DESIGN.md §10 Popup menu: layer 2. The platform enter transition already reveals from the anchor. -->
+    <style name="Widget.Epigraph.PopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/epigraph_popup_background</item>
+        <item name="android:popupElevation">@dimen/elevation_level_2</item>
     </style>
 
     <!--=================-->
@@ -289,22 +410,25 @@
     </style>
 
     <style name="Widget.Tachiyomi.BottomNavigationView" parent="Widget.Material3.BottomNavigationView">
-        <item name="itemPaddingBottom">10dp</item>
-        <item name="itemPaddingTop">10dp</item>
-        <item name="android:minHeight">68dp</item>
+        <item name="itemPaddingBottom">@dimen/space_1</item>
+        <item name="itemPaddingTop">@dimen/space_1</item>
+        <item name="android:minHeight">64dp</item>
+        <item name="itemTextAppearanceActive">@style/TextAppearance.Epigraph.Label</item>
+        <item name="itemTextAppearanceInactive">@style/TextAppearance.Epigraph.Label</item>
         <item name="itemIconTint">@color/bottom_nav_item_selector</item>
         <item name="itemRippleColor">@color/ripple_nav</item>
         <item name="itemTextColor">@color/bottom_nav_text_selector</item>
         <item name="labelVisibilityMode">labeled</item>
         <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
-        <item name="android:background">?colorPrimaryVariant</item>
+        <item name="android:background">?colorSurfaceContainer</item>
         <item name="tabBarIconColor">?tabBarIconColor</item>
         <item name="tabRippleColor">?colorControlHighlight</item>
     </style>
 
-    <!-- No pill behind the selected destination: the accent icon and label carry the state. -->
+    <!-- DESIGN.md §10: accent-soft indicator with r-s corners; never a pill. -->
     <style name="Widget.Tachiyomi.NavActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
-        <item name="android:color">@android:color/transparent</item>
+        <item name="android:color">?attr/colorSecondaryContainer</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
     </style>
 
     <style name="Widget.Tachiyomi.NavigationRail" parent="Widget.Material3.NavigationRailView">
@@ -314,7 +438,7 @@
         <item name="itemTextColor">@color/bottom_nav_text_selector</item>
         <item name="labelVisibilityMode">labeled</item>
         <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
-        <item name="android:background">?colorPrimaryVariant</item>
+        <item name="android:background">?colorSurfaceContainer</item>
         <item name="tabBarIconColor">?tabBarIconColor</item>
         <item name="tabRippleColor">?colorControlHighlight</item>
     </style>
@@ -329,7 +453,20 @@
         <item name="rippleColor">?colorControlHighlight</item>
         <item name="android:stateListAnimator">@animator/icon_btn_state_list_anim</item>
         <item name="android:textColor">?attr/colorOnBackground</item>
-        <item name="cornerRadius">10dp</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+    </style>
+
+    <!-- DESIGN.md §10 Botão secundário: r-s, 1dp line-strong outline, text colour. Never a pill. -->
+    <style name="Widget.Epigraph.Button.Secondary" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
+        <item name="android:letterSpacing">0.0</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+        <item name="strokeColor">?attr/colorOutline</item>
+        <item name="iconTint">?attr/colorSecondary</item>
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
     </style>
 
     <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3Expressive.MaterialButtonGroup.Connected" />
@@ -341,7 +478,7 @@
         <item name="android:textAllCaps">false</item>
         <item name="android:layout_height">40dp</item>
         <item name="android:minHeight">40dp</item>
-        <item name="cornerRadius">12dp</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
         <item name="strokeColor">?attr/colorOutlineVariant</item>
         <item name="iconTint">?attr/colorSecondary</item>
         <item name="android:textColor">?attr/colorOnBackground</item>
@@ -353,18 +490,25 @@
         <item name="android:textColor">@color/ext_button_text_selector</item>
         <item name="rippleColor">?colorControlHighlight</item>
         <item name="strokeWidth">0dp</item>
-        <item name="cornerRadius">10dp</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
     </style>
 
     <style name="Widget.Tachiyomi.Button.Primary" parent="Widget.Material3.Button">
         <item name="android:textAllCaps">false</item>
-        <item name="backgroundTint">@color/mtrl_btn_bg_selector</item>
-        <item name="android:textColor">@color/primary_button_text_color_selector</item>
+        <item name="backgroundTint">@color/epigraph_primary_button_bg</item>
+        <item name="android:textColor">@color/epigraph_primary_button_text</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
         <item name="android:letterSpacing">0.0</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+        <item name="android:stateListAnimator">@animator/epigraph_press_scale</item>
     </style>
 
     <style name="Theme.Widget.Button.TextButton" parent="Widget.Material3.Button.TextButton">
         <item name="android:textColor">?attr/colorSecondary</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
     </style>
 
     <style name="Theme.Widget.ImageBorderless" parent="Widget.AppCompat.ImageButton">

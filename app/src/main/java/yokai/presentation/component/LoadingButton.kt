@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +59,7 @@ fun LoadingButton(
         label = "button's content padding",
     )
     Button(
+        shape = MaterialTheme.shapes.small,
         onClick = onClick,
         modifier = Modifier.defaultMinSize(minWidth = 1.dp),
         contentPadding = PaddingValues(

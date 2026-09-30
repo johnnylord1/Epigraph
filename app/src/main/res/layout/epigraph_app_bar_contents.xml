@@ -23,7 +23,6 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="?actionBarTintColor"
-            android:textSize="20sp"
             tools:text="Title Text" />
     </eu.kanade.tachiyomi.ui.base.CenteredToolbar>
 
@@ -84,12 +83,12 @@
             android:id="@+id/card_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_marginStart="10dp"
+            android:layout_marginStart="@dimen/space_2"
             android:layout_marginTop="4dp"
-            android:layout_marginEnd="10dp"
+            android:layout_marginEnd="@dimen/space_2"
             android:layout_marginBottom="4dp"
             app:cardBackgroundColor="?searchFieldSurface"
-            app:cardCornerRadius="12dp"
+            app:cardCornerRadius="@dimen/radius_s"
             app:strokeWidth="0dp">
 
             <eu.kanade.tachiyomi.ui.base.FloatingToolbar
@@ -135,7 +134,7 @@
 
                         <com.google.android.material.textview.MaterialTextView
                             android:id="@+id/card_title"
-                            style="?textAppearanceTitleLarge"
+                            style="?textAppearanceTitleMedium"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_gravity="center"
@@ -143,21 +142,19 @@
                             android:ellipsize="end"
                             android:maxLines="1"
                             android:textColor="?actionBarTintColor"
-                            android:textSize="20sp"
                             tools:drawableStart="@drawable/ic_blank_24dp"
                             tools:drawableEnd="@drawable/ic_arrow_drop_down_24dp"
                             tools:text="Title Text" />
 
                         <com.google.android.material.textview.MaterialTextView
                             android:id="@+id/card_subtitle"
-                            style="?textAppearanceTitleLarge"
+                            style="?textAppearanceLabelSmall"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_gravity="start|center"
                             android:ellipsize="end"
                             android:maxLines="1"
                             android:textColor="?actionBarTintColor"
-                            android:textSize="12sp"
                             tools:text="Title Text" />
                     </LinearLayout>
                 </LinearLayout>

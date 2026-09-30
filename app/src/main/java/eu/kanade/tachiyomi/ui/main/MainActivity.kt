@@ -72,6 +72,10 @@ import eu.kanade.tachiyomi.BuildConfig
 import com.google.android.material.R as materialR
 import androidx.appcompat.R as appcompatR
 import eu.kanade.tachiyomi.R
+import epigraph.ui.moment.MomentEvents
+import epigraph.ui.moment.MomentOverlay
+import epigraph.ui.motion.PredictiveBackPreview
+import epigraph.ui.motion.SharedAxisChangeHandler
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -777,6 +781,12 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 }
             }
         setFloatingToolbar(canShowFloatingToolbar(router.backstack.lastOrNull()?.controller), changeBG = false)
+
+        lifecycleScope.launchUI {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                MomentEvents.flow.collect { MomentOverlay.show(this@MainActivity, MomentEvents.spec(this@MainActivity, it)) }
+            }
+        }
 
         lifecycleScope.launchUI {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -1612,8 +1622,10 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 // Hold the collapse-suppression flag up for the whole change (see field doc).
                 controllerChangeInProgress = true
                 binding.root.removeCallbacks(clearControllerChangeFlag)
-                // Per-controller view tweak — scoped to its own view, safe across tabs.
-                to?.view?.alpha = 1f
+                // Per-controller view tweak — scoped to its own view, safe across tabs. The shared
+                // axis handler fades the incoming view itself (and may continue a back gesture).
+                if (handler !is SharedAxisChangeHandler) to?.view?.alpha = 1f
+                if (!isPush) PredictiveBackPreview.releaseChrome(binding.appBar)
                 if (to is RootTabsController) {
                     restoreRootTabsAlphas()
                 }

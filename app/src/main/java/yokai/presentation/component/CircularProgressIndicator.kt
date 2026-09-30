@@ -69,6 +69,7 @@ private fun CombinedCircularProgressIndicatorPreview() {
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Button(
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
                         onClick = {
                             progress = when (progress) {
@@ -84,6 +85,7 @@ private fun CombinedCircularProgressIndicatorPreview() {
                         Text("Progress")
                     }
                     Button(
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth(),
                         onClick = { isInverted = !isInverted },
                     ) {

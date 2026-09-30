@@ -60,6 +60,25 @@
         <item name="navigationRailStyle">@style/Widget.Tachiyomi.NavigationRail</item>
         <item name="elevationOverlayEnabled">false</item>
 
+        <!-- DESIGN.md §3 type scale -->
+        <item name="textAppearanceHeadlineLarge">@style/TextAppearance.Epigraph.Display</item>
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.Epigraph.TitleL</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.Epigraph.TitleM</item>
+        <item name="textAppearanceTitleSmall">@style/TextAppearance.Epigraph.Label</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.Epigraph.Body</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.Epigraph.BodyS</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.Epigraph.Caption</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.Epigraph.Label</item>
+        <item name="textAppearanceLabelMedium">@style/TextAppearance.Epigraph.Caption</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.Epigraph.Caption</item>
+
+        <!-- DESIGN.md §5 radius scale; nothing maps to a full/pill corner. -->
+        <item name="shapeAppearanceCornerExtraSmall">@style/ShapeAppearance.Epigraph.XS</item>
+        <item name="shapeAppearanceCornerSmall">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="shapeAppearanceCornerMedium">@style/ShapeAppearance.Epigraph.M</item>
+        <item name="shapeAppearanceCornerLarge">@style/ShapeAppearance.Epigraph.L</item>
+        <item name="shapeAppearanceCornerExtraLarge">@style/ShapeAppearance.Epigraph.L</item>
+
         <!-- Handles RTL Text -->
         <item name="android:textAlignment">gravity</item>
         <item name="android:textDirection">locale</item>
@@ -70,6 +89,8 @@
         <item name="actionBarTheme">@style/Theme.ActionBar.DayNight</item>
         <item name="preferenceTheme">@style/Tachiyomi.PreferenceTheme</item>
         <item name="materialAlertDialogTheme">@style/Theme.Widget.Epigraph.AlertDialog</item>
+        <item name="popupMenuStyle">@style/Widget.Epigraph.PopupMenu</item>
+        <item name="android:popupMenuStyle">@style/Widget.Epigraph.PopupMenu</item>
 
         <!-- Custom Attributes-->
         <item name="actionBarTintColor">?attr/colorOnBackground</item>
@@ -79,6 +100,8 @@
         <item name="android:navigationBarColor">#B3000000</item>
         <item name="android:colorEdgeEffect">?attr/colorSecondary</item>
         <item name="tabHighlightBackground">@color/secondary_alpha</item>
+        <item name="totalBadgeColor">@color/total_badge</item>
+        <item name="totalBadgeTextColor">@color/total_badge_text</item>
         <item name="searchFieldSurface">?colorPrimaryVariant</item>
         <item name="mainActionBarSize">56dp</item>
 
@@ -93,6 +116,25 @@
         <item name="colorPrimaryVariant">@color/md_black_1000</item>
         <item name="background">@color/md_black_1000</item>
         <item name="readerBackground">@color/md_black_1000</item>
+    </style>
+
+    <!-- DESIGN.md §2 AMOLED column: black page, but surfaces keep a tone step so sheets,
+         fields and the navigation bar stay distinguishable. Applied on top of the overlay above. -->
+    <style name="ThemeOverlay.Tachiyomi.Amoled.Nocturne" parent="">
+        <item name="colorSurfaceContainer">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerLowest">@color/md_black_1000</item>
+        <item name="colorSurfaceContainerLow">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerHighest">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceBright">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceDim">@color/md_black_1000</item>
+        <item name="colorPrimaryVariant">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceVariant">@color/nocturne_amoled_surface_high</item>
+        <item name="searchFieldSurface">@color/nocturne_amoled_surface_high</item>
+        <item name="colorTertiary">@color/nocturne_amoled_surface_high</item>
+        <item name="colorOutlineVariant">@color/nocturne_amoled_line</item>
+        <item name="colorPrimaryContainer">@color/nocturne_amoled_accent_soft</item>
+        <item name="colorSecondaryContainer">@color/nocturne_amoled_accent_soft</item>
     </style>
 
     <style name="Theme.Tachiyomi.FlatLime">
@@ -330,6 +372,7 @@
     </style>
 
     <!--== Nocturne Theme — desktop default: lunar graphite + lilac ==-->
+    <!-- Default theme. Every attribute below is a DESIGN.md §2 token (see its mapping table). -->
     <style name="Theme.Tachiyomi.Nocturne">
         <item name="colorPrimary">@color/nocturne_primary</item>
         <item name="colorPrimaryInverse">@color/nocturne_primary_inverse</item>
@@ -338,6 +381,10 @@
         <item name="colorSecondary">@color/nocturne_secondary</item>
         <item name="colorOnSecondary">@color/nocturne_on_secondary</item>
         <item name="colorSecondaryVariant">@color/nocturne_secondary_variant</item>
+        <item name="colorPrimaryContainer">@color/nocturne_accent_soft</item>
+        <item name="colorOnPrimaryContainer">@color/nocturne_primary</item>
+        <item name="colorSecondaryContainer">@color/nocturne_accent_soft</item>
+        <item name="colorOnSecondaryContainer">@color/nocturne_primary</item>
         <item name="colorTertiary">@color/nocturne_tertiary</item>
         <item name="colorOnTertiary">@color/nocturne_on_tertiary</item>
         <item name="colorControlHighlight">@color/nocturne_highlight</item>
@@ -347,8 +394,28 @@
         <item name="colorError">@color/nocturne_error</item>
         <item name="background">@color/nocturne_background</item>
         <item name="colorOnBackground">@color/nocturne_on_background</item>
-        <item name="colorSurface">@color/nocturne_surface</item>
+        <!-- The app paints pages and the app bar with colorSurface, so it carries bg; the DS
+             surface token lives on colorSurfaceContainer (navigation, sheets, hopper). -->
+        <item name="colorSurface">@color/nocturne_background</item>
+        <item name="colorSurfaceContainer">@color/nocturne_surface</item>
+        <!-- Every M3 surface role maps onto the three DS tones; left unset, menus, dialogs and
+             sheets fell back to Material's baseline violet greys and looked off-theme. -->
+        <item name="colorSurfaceContainerLowest">@color/nocturne_background</item>
+        <item name="colorSurfaceContainerLow">@color/nocturne_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/nocturne_surface</item>
+        <item name="colorSurfaceContainerHighest">@color/nocturne_primary_variant</item>
+        <item name="colorSurfaceBright">@color/nocturne_primary_variant</item>
+        <item name="colorSurfaceDim">@color/nocturne_background</item>
+        <item name="colorSurfaceVariant">@color/nocturne_primary_variant</item>
+        <item name="colorOnSurface">@color/nocturne_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/nocturne_text_2</item>
+        <item name="colorOutline">@color/nocturne_line_strong</item>
+        <item name="colorOutlineVariant">@color/nocturne_line</item>
+        <item name="android:textColorSecondary">@color/nocturne_text_2</item>
+        <item name="android:textColorHint">@color/nocturne_text_3</item>
         <item name="actionBarTintColor">@color/nocturne_on_surface</item>
+        <item name="totalBadgeColor">?attr/colorTertiary</item>
+        <item name="totalBadgeTextColor">@color/nocturne_text_2</item>
     </style>
 
     <!--== Rose Theme — Tailwind rose scale ==-->

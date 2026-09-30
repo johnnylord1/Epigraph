@@ -37,7 +37,6 @@ import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePaddingRelative
 import androidx.core.widget.NestedScrollView
-import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -61,7 +60,6 @@ import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
 import eu.kanade.tachiyomi.ui.base.controller.BaseController
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
-import eu.kanade.tachiyomi.ui.base.controller.CrossFadeChangeHandler
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import eu.kanade.tachiyomi.ui.base.controller.FadeChangeHandler
 import eu.kanade.tachiyomi.ui.base.controller.OneWayFadeChangeHandler
@@ -79,8 +77,11 @@ import eu.kanade.tachiyomi.util.system.statusBarTint
 import eu.kanade.tachiyomi.util.system.toInt
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.widget.StatefulNestedScrollView
+import epigraph.ui.motion.PredictiveBackPreview
+import epigraph.ui.motion.SharedAxisChangeHandler
 import yokai.util.koin.injectLazy
 import yokai.i18n.MR
+import yokai.presentation.theme.Motion
 import yokai.presentation.theme.ReducedMotion
 import yokai.util.lang.getString
 import kotlin.math.abs
@@ -937,33 +938,31 @@ fun Controller.withFadeTransaction(): RouterTransaction {
         .popChangeHandler(fadeTransactionHandler())
 }
 
+/**
+ * Default push/pop between screens: shared axis X (DESIGN.md §9). Reduced motion gets a
+ * `dur-quick` fade. On API 34+ the covered screen stays attached so predictive back can show it.
+ */
 fun Controller.fadeTransactionHandler(): ControllerChangeHandler {
-    // Reduce-motion: skip the animator pipeline entirely.
-    if (yokai.presentation.theme.ReducedMotion.isEnabled()) {
-        return SimpleSwapChangeHandler(false)
-    }
     val isLowRam = activity?.getSystemService<ActivityManager>()?.isLowRamDevice == true
-    return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || isLowRam) {
-        FadeChangeHandler(isLowRam)
-    } else {
-        CrossFadeChangeHandler(false)
+    if (ReducedMotion.isEnabled()) {
+        return FadeChangeHandler(Motion.DurQuick.toLong(), true)
     }
+    return SharedAxisChangeHandler(
+        removesFromViewOnPush = Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE || isLowRam,
+    )
 }
 
+/** Root destinations (Library/Recents/Browse replaced from the nav): a `dur-quick` fade. */
 fun Controller.withFadeInTransaction(): RouterTransaction {
-    if (yokai.presentation.theme.ReducedMotion.isEnabled()) {
+    if (ReducedMotion.isEnabled()) {
         return RouterTransaction.with(this)
             .pushChangeHandler(SimpleSwapChangeHandler(false))
             .popChangeHandler(SimpleSwapChangeHandler(false))
     }
-    // Conductor's AnimatorChangeHandler default is 300ms — perceptibly slow on root nav
-    // (Library/Recents/Browse). 150ms reads as "snappy" without losing the fade entirely.
     return RouterTransaction.with(this)
-        .pushChangeHandler(FadeChangeHandler(ROOT_NAV_FADE_MS))
-        .popChangeHandler(OneWayFadeChangeHandler(ROOT_NAV_FADE_MS))
+        .pushChangeHandler(FadeChangeHandler(Motion.DurQuick.toLong()))
+        .popChangeHandler(OneWayFadeChangeHandler(Motion.DurQuick.toLong()))
 }
-
-private const val ROOT_NAV_FADE_MS = 150L
 
 fun Controller.openInBrowser(url: String?) {
     if (url == null) {
@@ -1087,43 +1086,24 @@ interface BackHandlerControllerInterface {
         if (this !is Controller) return
         view?.animate()?.cancel()
         router.backstack.getOrNull(router.backstackSize - 2)?.controller?.view?.animate()?.cancel()
-        activityBinding?.backShadow?.animate()?.cancel()
+        PredictiveBackPreview.start(router.backstack.getOrNull(router.backstackSize - 2)?.controller?.view)
     }
 
+    /** DESIGN.md §9: the screen shrinks, rounds and follows the finger; see [PredictiveBackPreview]. */
     @CallSuper
     fun handleOnBackProgressed(backEvent: BackEventCompat) {
         if (this !is Controller) return
+        if (ReducedMotion.isEnabled()) return
         if (router.backstackSize > 1 && isControllerVisible) {
-            val progress = ((backEvent.progress.takeIf { it > 0.001f } ?: 0f) * 0.5f).pow(0.6f)
-            val edgeDirection = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
-            view?.let { view ->
-                view.alpha = 1f - progress
-                view.translationX = edgeDirection * progress * view.width * 0.15f
-
-                activityBinding?.let { activityBinding ->
-                    val container = activityBinding.controllerContainer
-                    val backShadow = activityBinding.backShadow
-                    if (container.indexOfChild(backShadow) != container.indexOfChild(view) - 1) {
-                        container.removeView(backShadow)
-                        container.addView(backShadow, container.indexOfChild(view))
-                    }
-                    if (!backShadow.isVisible) {
-                        backShadow.isVisible = true
-                    }
-                    backShadow.scaleX = edgeDirection
-                    backShadow.x = if (edgeDirection > 0f) {
-                        view.x - backShadow.width
-                    } else {
-                        view.x + view.width
-                    }
-                    backShadow.alpha = 0.33f * view.alpha
-                }
-
-                router.backstack[router.backstackSize - 2].controller.view?.let { view2 ->
-                    view2.alpha = progress
-                    view2.translationX = view.translationX - edgeDirection * view.width * 0.2f
-                }
-            }
+            val view = view ?: return
+            val edge = if (backEvent.swipeEdge == BackEventCompat.EDGE_RIGHT) -1f else 1f
+            PredictiveBackPreview.progress(
+                current = view,
+                previous = router.backstack[router.backstackSize - 2].controller.view,
+                chrome = activityBinding?.appBar,
+                edge = edge,
+                rawProgress = backEvent.progress,
+            )
         }
     }
 
@@ -1131,44 +1111,10 @@ interface BackHandlerControllerInterface {
     fun handleOnBackCancelled() {
         if (this !is Controller) return
         val previous = router.backstack.getOrNull(router.backstackSize - 2)?.controller?.view
-        val backShadow = activityBinding?.backShadow
         if (ReducedMotion.isEnabled()) {
-            view?.alpha = 1f
-            view?.translationX = 0f
-            previous?.alpha = 0f
-            previous?.translationX = 0f
-            backShadow?.isVisible = false
-            backShadow?.alpha = 0.25f
-            backShadow?.scaleX = 1f
-            return
+            PredictiveBackPreview.reset(view, previous, activityBinding?.appBar)
+        } else {
+            PredictiveBackPreview.cancel(view, previous, activityBinding?.appBar)
         }
-
-        val interpolator = FastOutSlowInInterpolator()
-        view?.animate()
-            ?.alpha(1f)
-            ?.translationX(0f)
-            ?.setDuration(PREDICTIVE_BACK_CANCEL_DURATION_MS)
-            ?.setInterpolator(interpolator)
-            ?.start()
-        previous?.animate()
-            ?.alpha(0f)
-            ?.translationX(0f)
-            ?.setDuration(PREDICTIVE_BACK_CANCEL_DURATION_MS)
-            ?.setInterpolator(interpolator)
-            ?.start()
-        backShadow?.animate()
-            ?.alpha(0f)
-            ?.setDuration(PREDICTIVE_BACK_CANCEL_DURATION_MS)
-            ?.setInterpolator(interpolator)
-            ?.withEndAction {
-                backShadow.isVisible = false
-                backShadow.alpha = 0.25f
-                backShadow.scaleX = 1f
-            }
-            ?.start()
-    }
-
-    companion object {
-        private const val PREDICTIVE_BACK_CANCEL_DURATION_MS = 140L
     }
 }

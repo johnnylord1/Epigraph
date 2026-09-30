@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md §10, primary button: settles to 0.98 while held; no overshoot on release. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="true" android:state_pressed="true">
+        <set>
+            <objectAnimator
+                android:duration="@integer/dur_instant"
+                android:interpolator="@interpolator/ease_standard"
+                android:propertyName="scaleX"
+                android:valueTo="0.98"
+                android:valueType="floatType" />
+            <objectAnimator
+                android:duration="@integer/dur_instant"
+                android:interpolator="@interpolator/ease_standard"
+                android:propertyName="scaleY"
+                android:valueTo="0.98"
+                android:valueType="floatType" />
+        </set>
+    </item>
+    <item>
+        <set>
+            <objectAnimator
+                android:duration="@integer/dur_instant"
+                android:interpolator="@interpolator/ease_standard"
+                android:propertyName="scaleX"
+                android:valueTo="1"
+                android:valueType="floatType" />
+            <objectAnimator
+                android:duration="@integer/dur_instant"
+                android:interpolator="@interpolator/ease_standard"
+                android:propertyName="scaleY"
+                android:valueTo="1"
+                android:valueType="floatType" />
+        </set>
+    </item>
+</selector>

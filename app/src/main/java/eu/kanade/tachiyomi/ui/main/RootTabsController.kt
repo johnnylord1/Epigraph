@@ -9,8 +9,6 @@ import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
 import android.widget.FrameLayout
 import androidx.core.view.isVisible
-import androidx.interpolator.view.animation.FastOutLinearInInterpolator
-import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import com.bluelinelabs.conductor.Controller
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
@@ -24,6 +22,7 @@ import eu.kanade.tachiyomi.ui.recents.RecentsController
 import eu.kanade.tachiyomi.ui.source.BrowseController
 import yokai.util.koin.injectLazy
 import yokai.domain.base.BasePreferences
+import yokai.presentation.theme.Motion
 import yokai.presentation.theme.ReducedMotion
 
 /**
@@ -184,11 +183,11 @@ class RootTabsController : Controller() {
         (incoming as? RootTabContent)?.onTabActivated()
 
         (activity as? MainActivity)?.onActiveTabChanged(prev, tabId)
-        animateSwap(prev, outgoingContainer, target)
+        animateSwap(outgoingContainer, target)
     }
 
     /**
-     * Fade/slide the incoming tab over a stable outgoing tab, then mark the outgoing tab GONE
+     * Fade through (DESIGN.md §9) from the outgoing tab to the incoming one, then mark the outgoing tab GONE
      * so its view tree drops out of measure/layout passes.
      *
      * Honors [ReducedMotion.isEnabled] — snaps to the end state without an animator when
@@ -196,7 +195,7 @@ class RootTabsController : Controller() {
      *
      * Cancels any prior in-flight swap so rapid taps don't stack animators.
      */
-    private fun animateSwap(previousTabId: Int, outgoing: FrameLayout?, incoming: FrameLayout) {
+    private fun animateSwap(outgoing: FrameLayout?, incoming: FrameLayout) {
         cancelSwapAnimations()
 
         if (ReducedMotion.isEnabled() || outgoing == null) {
@@ -209,7 +208,7 @@ class RootTabsController : Controller() {
             if (container !== outgoing && container !== incoming) {
                 container.isVisible = false
                 container.alpha = 0f
-                container.translationX = 0f
+                resetTransform(container)
             }
         }
 
@@ -220,17 +219,13 @@ class RootTabsController : Controller() {
         // Animate render properties through ViewPropertyAnimator so the RenderThread can
         // drive the transition. The previous ValueAnimator ran a Kotlin callback on the UI
         // thread every frame and invalidated two complete RecyclerView/Compose trees.
-        val direction = rootTabTransitionDirection(
-            previousIndex = TAB_IDS.indexOf(previousTabId),
-            currentIndex = TAB_IDS.indexOf(currentTabId),
-            isRtl = incoming.layoutDirection == View.LAYOUT_DIRECTION_RTL,
-        )
-        val travel = TAB_SWAP_TRANSLATION_DP * incoming.resources.displayMetrics.density
         // Always establish a fresh start state. A rapid retap can make the destination one of
-        // the two containers from the cancelled transition; reusing its partial alpha/translation
+        // the two containers from the cancelled transition; reusing its partial alpha/scale
         // made the next motion start halfway through or appear to snap.
         incoming.alpha = 0f
-        incoming.translationX = direction * travel
+        incoming.translationX = 0f
+        incoming.scaleX = Motion.FadeThroughScale
+        incoming.scaleY = Motion.FadeThroughScale
 
         val generation = ++swapGeneration
         activeOutgoing = outgoing
@@ -240,21 +235,23 @@ class RootTabsController : Controller() {
         // incoming tab over an opaque outgoing one superimposed both app bars, titles and lists
         // for the whole transition. The outgoing tab now fades out first and the incoming tab
         // fades/slides in after it, so the two screens are never drawn on top of each other.
+        // DESIGN.md §9: out in dur-instant, in with alpha + scale 0.94→1 for the rest of dur-standard.
         outgoing.alpha = 1f
-        outgoing.translationX = 0f
+        resetTransform(outgoing)
         outgoingAnimator = outgoing.animate()
             .alpha(0f)
             .setStartDelay(0L)
-            .setDuration(TAB_SWAP_FADE_OUT_MS)
-            .setInterpolator(tabSwapFadeOutInterpolator)
+            .setDuration(Motion.DurInstant.toLong())
+            .setInterpolator(Motion.Interpolators.Exit)
             .withLayer()
 
         incomingAnimator = incoming.animate()
             .alpha(1f)
-            .translationX(0f)
-            .setStartDelay(TAB_SWAP_FADE_OUT_MS)
-            .setDuration(TAB_SWAP_DURATION_MS - TAB_SWAP_FADE_OUT_MS)
-            .setInterpolator(tabSwapInterpolator)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setStartDelay(Motion.DurInstant.toLong())
+            .setDuration((Motion.DurStandard - Motion.DurInstant).toLong())
+            .setInterpolator(Motion.Interpolators.Enter)
             .withLayer()
             .setListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
@@ -267,14 +264,20 @@ class RootTabsController : Controller() {
         incomingAnimator?.start()
     }
 
+    private fun resetTransform(container: View) {
+        container.translationX = 0f
+        container.scaleX = 1f
+        container.scaleY = 1f
+    }
+
     private fun cancelSwapAnimations() {
         ++swapGeneration
         outgoingAnimator?.setListener(null)?.cancel()
         incomingAnimator?.setListener(null)?.cancel()
         activeOutgoing?.alpha = 1f
         activeIncoming?.alpha = 1f
-        activeOutgoing?.translationX = 0f
-        activeIncoming?.translationX = 0f
+        activeOutgoing?.let(::resetTransform)
+        activeIncoming?.let(::resetTransform)
         outgoingAnimator = null
         incomingAnimator = null
         activeOutgoing = null
@@ -286,7 +289,7 @@ class RootTabsController : Controller() {
             val selected = tabId == currentTabId
             container.animate().setListener(null).setStartDelay(0L).cancel()
             container.alpha = if (selected) 1f else 0f
-            container.translationX = 0f
+            resetTransform(container)
             container.isVisible = selected
         }
         outgoingAnimator = null
@@ -301,8 +304,6 @@ class RootTabsController : Controller() {
     private var incomingAnimator: ViewPropertyAnimator? = null
     private var activeOutgoing: FrameLayout? = null
     private var activeIncoming: FrameLayout? = null
-    private val tabSwapInterpolator = FastOutSlowInInterpolator()
-    private val tabSwapFadeOutInterpolator = FastOutLinearInInterpolator()
 
     private fun childRouterFor(tabId: Int): Router? {
         val container = containers[tabId] ?: return null
@@ -368,15 +369,6 @@ class RootTabsController : Controller() {
     }
 
     companion object {
-        /**
-         * Duration of the cross-fade between tab containers. Tuned so the transition is
-         * actually perceptible — Material's "between screens" guideline lands around
-         * 300ms; 250ms feels intentional without dragging on rapid taps. Honors
-         * [ReducedMotion] (snap-to-end) — see [animateSwap].
-         */
-        private const val TAB_SWAP_DURATION_MS = 250L
-        private const val TAB_SWAP_FADE_OUT_MS = 90L
-        private const val TAB_SWAP_TRANSLATION_DP = 12f
         private const val KEY_CURRENT_TAB = "RootTabsController.currentTabId"
         // Stable container ids so Conductor's child router restores into the same FrameLayout
         // across config changes. Picked from the 0x7E_xx_xxxx custom-id range to avoid R clash.
@@ -385,13 +377,4 @@ class RootTabsController : Controller() {
         private const val CONTAINER_ID_BROWSE = 0x7E001003
         private val TAB_IDS = listOf(R.id.nav_library, R.id.nav_recents, R.id.nav_browse)
     }
-}
-
-internal fun rootTabTransitionDirection(
-    previousIndex: Int,
-    currentIndex: Int,
-    isRtl: Boolean,
-): Float {
-    val logicalDirection = if (currentIndex >= previousIndex) 1f else -1f
-    return if (isRtl) -logicalDirection else logicalDirection
 }

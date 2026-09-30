@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Motion, radius and spacing tokens from DESIGN.md (§4, §5, §9). Reference these, not literals.
+     Kotlin mirror: yokai/presentation/theme/Motion.kt. -->
+<resources>
+    <integer name="dur_instant">90</integer>
+    <integer name="dur_quick">150</integer>
+    <integer name="dur_standard">250</integer>
+    <integer name="dur_medium">300</integer>
+    <integer name="dur_emphasized">400</integer>
+    <integer name="dur_long">600</integer>
+    <!-- Shared axis split of dur_medium: outgoing fades in the first 35%, incoming in the rest. -->
+    <integer name="dur_medium_out">105</integer>
+    <integer name="dur_medium_in">195</integer>
+
+    <dimen name="motion_slide_distance">30dp</dimen>
+    <dimen name="motion_list_offset">8dp</dimen>
+
+    <dimen name="radius_xs">4dp</dimen>
+    <dimen name="radius_s">8dp</dimen>
+    <dimen name="radius_m">12dp</dimen>
+    <dimen name="radius_l">16dp</dimen>
+
+    <dimen name="space_half">4dp</dimen>
+    <dimen name="space_1">8dp</dimen>
+    <dimen name="space_2">16dp</dimen>
+    <dimen name="space_3">24dp</dimen>
+    <dimen name="space_4">32dp</dimen>
+    <dimen name="space_6">48dp</dimen>
+
+    <dimen name="touch_target">48dp</dimen>
+    <dimen name="badge_height">20dp</dimen>
+    <dimen name="elevation_level_2">3dp</dimen>
+    <dimen name="line_width">1dp</dimen>
+
+    <!-- scrim token as a window dim amount (light 40%, dark 60%; values-night overrides). -->
+    <item name="scrim_alpha" format="float" type="dimen">0.4</item>
+</resources>

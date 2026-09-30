@@ -7,6 +7,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import eu.kanade.tachiyomi.R
 
 val Outfit = FontFamily(
@@ -17,24 +19,32 @@ val Outfit = FontFamily(
     Font(R.font.outfit_bold, FontWeight.Bold),
 )
 
-// Default M3 typography re-pointed to Outfit; every other style attr stays at its M3 default.
+// DESIGN.md §3 type scale. Roles not named by the DS keep their M3 size, re-pointed to Outfit.
+private fun TextStyle.ds(size: Int, line: Int, weight: FontWeight, spacing: Float = 0f) = copy(
+    fontFamily = Outfit,
+    fontSize = size.sp,
+    lineHeight = line.sp,
+    fontWeight = weight,
+    letterSpacing = spacing.em,
+)
+
 val AppTypography: Typography = Typography().run {
     copy(
         displayLarge = displayLarge.copy(fontFamily = Outfit),
         displayMedium = displayMedium.copy(fontFamily = Outfit),
         displaySmall = displaySmall.copy(fontFamily = Outfit),
-        headlineLarge = headlineLarge.copy(fontFamily = Outfit),
+        headlineLarge = headlineLarge.ds(32, 40, FontWeight.SemiBold, -0.008f),
         headlineMedium = headlineMedium.copy(fontFamily = Outfit),
         headlineSmall = headlineSmall.copy(fontFamily = Outfit),
-        titleLarge = titleLarge.copy(fontFamily = Outfit),
-        titleMedium = titleMedium.copy(fontFamily = Outfit),
-        titleSmall = titleSmall.copy(fontFamily = Outfit),
-        bodyLarge = bodyLarge.copy(fontFamily = Outfit),
-        bodyMedium = bodyMedium.copy(fontFamily = Outfit),
-        bodySmall = bodySmall.copy(fontFamily = Outfit),
-        labelLarge = labelLarge.copy(fontFamily = Outfit),
-        labelMedium = labelMedium.copy(fontFamily = Outfit),
-        labelSmall = labelSmall.copy(fontFamily = Outfit),
+        titleLarge = titleLarge.ds(22, 28, FontWeight.SemiBold),
+        titleMedium = titleMedium.ds(16, 24, FontWeight.Medium),
+        titleSmall = titleSmall.ds(14, 20, FontWeight.Medium),
+        bodyLarge = bodyLarge.ds(16, 24, FontWeight.Normal),
+        bodyMedium = bodyMedium.ds(14, 20, FontWeight.Normal),
+        bodySmall = bodySmall.ds(12, 16, FontWeight.Medium),
+        labelLarge = labelLarge.ds(14, 20, FontWeight.Medium),
+        labelMedium = labelMedium.ds(12, 16, FontWeight.Medium),
+        labelSmall = labelSmall.ds(12, 16, FontWeight.Medium),
     )
 }
 

@@ -87,6 +87,10 @@ fun AppCompatActivity.getThemeWithExtras(theme: Resources.Theme, preferences: Pr
     }
     if (useAmoled) {
         theme.applyStyle(R.style.ThemeOverlay_Tachiyomi_Amoled, true)
+        // Nocturne keeps tonal surfaces on black (DESIGN.md §2) instead of flattening everything.
+        if (getPrefTheme(preferences) == Themes.NOCTURNE) {
+            theme.applyStyle(R.style.ThemeOverlay_Tachiyomi_Amoled_Nocturne, true)
+        }
     }
     return theme
 }
