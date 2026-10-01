@@ -972,7 +972,11 @@ class EpigraphCoreDomainProjection(
             val pagesLeft = pageCount?.let { count ->
                 (count - (lastPageRead ?: 0L)).coerceAtLeast(0L)
             }
-            val read = record.boolean("read") ?: (progression >= 1.0)
+            // Page indexes count from zero: reaching the last page finishes the chapter, as in the
+            // reader and in Suwayomi. History alone never marks a finished chapter unread again.
+            val finished = progression >= 1.0 ||
+                (pageIndex != null && pageCount != null && pageCount > 0 && pageIndex >= pageCount - 1)
+            val read = record.boolean("read") ?: true.takeIf { finished }
             val bookmark = record.boolean("bookmark") ?: record.boolean("bookmarked")
             database.chaptersQueries.update(
                 chapterId = chapterId,

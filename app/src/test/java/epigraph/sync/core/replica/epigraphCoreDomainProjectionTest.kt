@@ -359,6 +359,25 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `comic history on the last page marks the chapter read and later history keeps it read`() = runTest {
+        projection.upsert(database, comicEntryRecord())
+        projection.upsert(database, comicChapterStateRecord())
+        val localChapterId = database.aethon_syncQueries
+            .selectChapterBindingByEntityId(CHAPTER_ID)
+            .executeAsOne()
+            .local_chapter_id
+        fun chapter() = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+
+        // Page indexes count from zero, so index 9 of 10 pages is the last page at 90 percent.
+        projection.upsert(database, comicHistoryRecord(pageIndex = 9, progressPercent = 0.9))
+        assertTrue(chapter().read)
+
+        projection.upsert(database, comicHistoryRecord(pageIndex = 2, progressPercent = 0.2, serverVersion = 4))
+        assertTrue(chapter().read)
+        assertEquals(2L, chapter().last_page_read)
+    }
+
+    @Test
     fun `comic history tombstone removes only remote progress`() = runTest {
         val entry = comicEntryRecord()
         projection.upsert(database, entry)
@@ -1538,18 +1557,22 @@ class EpigraphCoreDomainProjectionTest {
         },
     )
 
-    private fun comicHistoryRecord() = CoreConfirmedRecord(
+    private fun comicHistoryRecord(
+        pageIndex: Int = 4,
+        progressPercent: Double = 0.5,
+        serverVersion: Long = 3,
+    ) = CoreConfirmedRecord(
         key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.history", HISTORY_ID),
-        serverVersion = 3,
-        lamport = 3,
+        serverVersion = serverVersion,
+        lamport = serverVersion,
         record = buildJsonObject {
             put("historyId", HISTORY_ID)
             put("comicId", COMIC_ID)
             put("chapterId", CHAPTER_ID)
-            put("pageIndex", 4)
+            put("pageIndex", pageIndex)
             put("pageCount", 10)
-            put("progressPercent", 0.5)
-            put("readAtMs", 300)
+            put("progressPercent", progressPercent)
+            put("readAtMs", 100 * serverVersion)
         },
     )
 

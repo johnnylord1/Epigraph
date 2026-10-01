@@ -31,6 +31,7 @@ First Android pre-release of Epigraph Mobile (`app.epigraph.mobile`), for Androi
 - Progress for a novel removed on another device no longer stops the novel library from syncing.
 - Marking a comic chapter read or bookmarked on the phone reaches Epigraph desktop again. The Core rejected these changes and they stayed pending as blocked; the update sends them again.
 - Comics from Epigraph desktop list their chapters newest first, so an unread series starts at chapter 1 instead of its latest chapter.
+- A comic chapter finished on Epigraph desktop shows as read on the phone, and reading an older page again on the desktop no longer marks a finished chapter unread.
 - Novels synced from the desktop or restored from a backup stay in Books & novels when their plugin is not installed on the phone, instead of appearing under Comics. Backups now record which sources serve novels.
 - The Epigraph Core screen says "1 repository" instead of "1 repositories".
 - Novel plugins that only your desktop has now say that Install copies them from the desktop, instead of calling them unavailable next to an Install button.
