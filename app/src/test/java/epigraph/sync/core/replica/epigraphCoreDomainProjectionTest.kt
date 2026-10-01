@@ -43,7 +43,11 @@ class EpigraphCoreDomainProjectionTest {
     @TempDir
     lateinit var tempDirectory: File
 
-    private val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY).also {
+    // The app opens its database with foreign keys enforced; projection tests must too.
+    private val driver = JdbcSqliteDriver(
+        JdbcSqliteDriver.IN_MEMORY,
+        java.util.Properties().apply { put("foreign_keys", "true") },
+    ).also {
         Database.Schema.create(it)
     }
     private val database = Database(driver, Chapters.Adapter(memoColumnAdapter), Mangas.Adapter(memoColumnAdapter))
@@ -310,6 +314,13 @@ class EpigraphCoreDomainProjectionTest {
             memo = JsonObject(emptyMap()),
         )
         val syntheticChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "suwayomi:server:desktop:profile:main:manga:3",
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
         database.aethon_syncQueries.upsertChapterBinding(
             chapterEntityId = legacyEntityId,
             workEntityId = "suwayomi:server:desktop:profile:main:manga:3",
@@ -381,6 +392,13 @@ class EpigraphCoreDomainProjectionTest {
     @Test
     fun `authoritative comic snapshot removes orphaned legacy profile progress`() = runTest {
         val staleComicId = "suwayomi:profile:main:manga:999"
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = staleComicId,
+            contentType = "MANGA",
+            localReference = staleComicId,
+            createdAt = 800,
+            updatedAt = 800,
+        )
         database.aethon_syncQueries.upsertRemoteReaderProgress(
             entityId = staleComicId,
             chapterEntityId = null,
@@ -1038,6 +1056,113 @@ class EpigraphCoreDomainProjectionTest {
         val highlight = database.local_booksQueries.findHighlights(BOOK_ID).executeAsList().single()
         assertEquals("Selected text", highlight.selected_text)
         assertEquals("Highlight note", highlight.note)
+    }
+
+    @Test
+    fun `novel progress that outlives its entry never fails the novel snapshot`() = runTest {
+        // Desktop keeps the reading position of a novel removed from its library.
+        val removedEntry = CoreConfirmedTombstone(
+            key = CoreReplicaKey(SCOPE_ID, "novel.entry", CANONICAL_NOVEL_ID),
+            serverVersion = 2,
+            lamport = 2,
+            deletedAtMs = 200,
+            reasonCode = "novel_deleted",
+        )
+
+        projection.replaceScope(
+            database = database,
+            scopeId = SCOPE_ID,
+            previousRecords = emptyList(),
+            previousTombstones = emptyList(),
+            records = listOf(progressRecord()),
+            tombstones = listOf(removedEntry),
+        )
+
+        assertEquals(
+            0.5,
+            database.aethon_syncQueries.selectReaderProgress(CANONICAL_NOVEL_ID).executeAsOne().progression,
+        )
+
+        // Adding the novel again binds the placeholder identity to a real local row.
+        projection.upsert(database, novelEntryRecord())
+
+        val identity = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID).executeAsOne()
+        assertNotNull(identity.local_reference.toLongOrNull())
+        assertNotNull(database.aethon_syncQueries.selectReaderProgress(CANONICAL_NOVEL_ID).executeAsOneOrNull())
+        // Its source counts as a novel source even when the plugin is not installed here.
+        val localNovel = database.mangasQueries.findById(identity.local_reference.toLong()).executeAsOne()
+        assertEquals(
+            listOf(localNovel.source),
+            database.aethon_syncQueries.selectNovelSourceIds().executeAsList(),
+        )
+    }
+
+    @Test
+    fun `desktop PDF page numbers count from one and never fail the book snapshot`() = runTest {
+        val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
+        val pdfEntry = CoreConfirmedRecord(
+            key = CoreReplicaKey(BOOK_SCOPE_ID, "book.entry", BOOK_ID),
+            serverVersion = 1,
+            lamport = 1,
+            record = buildJsonObject {
+                put("assetFingerprint", BOOK_SHA)
+                put("title", "Epigraph PDF")
+                put("subtype", "pdf")
+                put("mimeType", "application/pdf")
+                put("byteSize", 1234)
+                put("pageCount", 5)
+                put("createdAtMs", 100)
+                put("bookUpdatedAtMs", 200)
+            },
+        )
+        // Shape written by the desktop PDF reader on the last page: page 5 of 5.
+        val lastPage = CoreConfirmedRecord(
+            key = CoreReplicaKey(BOOK_SCOPE_ID, "book.progress", BOOK_ID),
+            serverVersion = 2,
+            lamport = 2,
+            record = buildJsonObject {
+                put("bookId", BOOK_ID)
+                put("renderer", "pdf")
+                put("pageIndex", 5)
+                put("totalPages", 5)
+                put("progressPercent", 1.0)
+                put("lastReadAtMs", 400)
+            },
+        )
+        val bookmark = CoreConfirmedRecord(
+            key = CoreReplicaKey(BOOK_SCOPE_ID, "book.bookmark", BOOKMARK_ID),
+            serverVersion = 3,
+            lamport = 3,
+            record = buildJsonObject {
+                put("bookId", BOOK_ID)
+                put("pageIndex", 3)
+                put("progressPercent", 0.5)
+                put("savedAtMs", 500)
+            },
+        )
+
+        bookProjection.replaceScope(
+            database = database,
+            scopeId = BOOK_SCOPE_ID,
+            previousRecords = emptyList(),
+            previousTombstones = emptyList(),
+            records = listOf(pdfEntry, lastPage, bookmark),
+            tombstones = emptyList(),
+        )
+
+        val progress = database.local_booksQueries.findProgress(BOOK_ID).executeAsOne()
+        val locator = kotlinx.serialization.json.Json.decodeFromString(
+            ReaderLocator.serializer(),
+            progress.locator_json,
+        ) as ReaderLocator.Pdf
+        assertEquals(4, locator.pageIndex)
+        assertEquals(5, locator.totalPages)
+        val savedBookmark = database.local_booksQueries.findBookmarks(BOOK_ID).executeAsList().single()
+        val bookmarkLocator = kotlinx.serialization.json.Json.decodeFromString(
+            ReaderLocator.serializer(),
+            savedBookmark.locator_json,
+        ) as ReaderLocator.Pdf
+        assertEquals(2, bookmarkLocator.pageIndex)
     }
 
     @Test

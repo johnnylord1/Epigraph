@@ -1539,6 +1539,20 @@ class EpigraphCoreDomainProjection(
             portableWork = portableWork,
             portableChapter = portableChapter,
         )
+        val updatedAt = record.long("updatedAtMs") ?: now(record)
+        // Reader progress is keyed by the work identity. Progress can outlive its entry (a novel
+        // removed on another device keeps its position) and a pending portable novel has no local
+        // row yet, so make sure the identity exists; local_reference falls back to the novel id
+        // until an entry projection binds a real local manga id.
+        if (database.aethon_syncQueries.selectIdentityByEntityId(novelId).executeAsOneOrNull() == null) {
+            database.aethon_syncQueries.upsertIdentity(
+                entityId = novelId,
+                contentType = "NOVEL",
+                localReference = novelId,
+                createdAt = updatedAt,
+                updatedAt = updatedAt,
+            )
+        }
         database.aethon_syncQueries.upsertRemoteReaderProgress(
             entityId = novelId,
             chapterEntityId = binding?.chapter_entity_id,
@@ -1546,7 +1560,7 @@ class EpigraphCoreDomainProjection(
             chapterOrdinal = record.double("chapterOrderKey"),
             progression = progression,
             serverRevision = recordKey.serverVersion,
-            updatedAt = record.long("updatedAtMs") ?: now(record),
+            updatedAt = updatedAt,
         )
         val localChapterId = binding?.local_chapter_id ?: portableChapterBinding?.localReference?.toLongOrNull()
         localChapterId?.let { chapterLocalId ->
@@ -1619,19 +1633,26 @@ class EpigraphCoreDomainProjection(
         val book = database.local_booksQueries.findById(localBookId).executeAsOneOrNull() ?: return
         val contentType = if (record.string("renderer")?.equals("pdf", true) == true) ContentType.PDF else ContentType.EPUB
         val progression = (record.double("progressPercent") ?: 0.0).coerceIn(0.0, 1.0)
-        val locator = when (contentType) {
-            ContentType.PDF -> ReaderLocator.Pdf(
-                entityId = EpigraphEntityId(localBookId),
-                pageIndex = (record.long("pageIndex") ?: 0).coerceAtLeast(0).toInt(),
-                totalPages = record.long("totalPages")?.takeIf { it > 0 }?.toInt(),
-                documentProgression = progression,
-            )
-            else -> ReaderLocator.Epub(
-                entityId = EpigraphEntityId(localBookId),
-                cfi = record.string("location") ?: record.string("href"),
-                progression = progression,
-            )
-        }
+        // A malformed position is skipped like other unusable records instead of failing the
+        // whole snapshot, which would stop every other book from syncing.
+        val locator = runCatching {
+            when (contentType) {
+                ContentType.PDF -> {
+                    val totalPages = record.long("totalPages")?.takeIf { it in 1..Int.MAX_VALUE }?.toInt()
+                    ReaderLocator.Pdf(
+                        entityId = EpigraphEntityId(localBookId),
+                        pageIndex = record.pdfPageIndex(totalPages),
+                        totalPages = totalPages,
+                        documentProgression = progression,
+                    )
+                }
+                else -> ReaderLocator.Epub(
+                    entityId = EpigraphEntityId(localBookId),
+                    cfi = record.bookLocation(),
+                    progression = progression,
+                )
+            }
+        }.getOrNull() ?: return
         database.aethon_syncQueries.upsertIdentity(
             entityId = remoteBookId,
             contentType = contentType.name,
@@ -1661,19 +1682,21 @@ class EpigraphCoreDomainProjection(
         val localBookId = localBookId(database, remoteBookId) ?: return
         val book = database.local_booksQueries.findById(localBookId).executeAsOneOrNull() ?: return
         val progression = (record.double("progressPercent") ?: 0.0).coerceIn(0.0, 1.0)
-        val locator = if (book.content_type == ContentType.PDF.name) {
-            ReaderLocator.Pdf(
-                entityId = EpigraphEntityId(localBookId),
-                pageIndex = (record.long("pageIndex") ?: 0).coerceAtLeast(0).toInt(),
-                documentProgression = progression,
-            )
-        } else {
-            ReaderLocator.Epub(
-                entityId = EpigraphEntityId(localBookId),
-                cfi = record.string("location") ?: record.string("href"),
-                progression = progression,
-            )
-        }
+        val locator = runCatching {
+            if (book.content_type == ContentType.PDF.name) {
+                ReaderLocator.Pdf(
+                    entityId = EpigraphEntityId(localBookId),
+                    pageIndex = record.pdfPageIndex(book.page_count?.takeIf { it in 1..Int.MAX_VALUE }?.toInt()),
+                    documentProgression = progression,
+                )
+            } else {
+                ReaderLocator.Epub(
+                    entityId = EpigraphEntityId(localBookId),
+                    cfi = record.bookLocation(),
+                    progression = progression,
+                )
+            }
+        }.getOrNull() ?: return
         val savedAt = record.long("savedAtMs") ?: now(record)
         database.local_booksQueries.upsertBookmark(
             bookmarkId = entityId,
@@ -1711,6 +1734,18 @@ class EpigraphCoreDomainProjection(
             updatedAt = record.long("updatedAtMs") ?: createdAt,
         )
     }
+
+    /**
+     * Core `book.*` records carry the 1-based PDF page number that Epigraph desktop reads and
+     * writes; the Android reader counts from zero. Clamp to the last page when the count is known.
+     */
+    private fun JsonObject.pdfPageIndex(totalPages: Int?): Int {
+        val index = ((long("pageIndex") ?: 1L) - 1L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        return totalPages?.let { index.coerceAtMost(it - 1) } ?: index
+    }
+
+    private fun JsonObject.bookLocation(): String? =
+        sequenceOf(string("location"), string("href")).firstOrNull { !it.isNullOrBlank() }
 
     private fun ReaderLocator.forBook(bookId: String): ReaderLocator = when (this) {
         is ReaderLocator.Epub -> copy(entityId = EpigraphEntityId(bookId))

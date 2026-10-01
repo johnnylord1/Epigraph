@@ -453,6 +453,11 @@ selectIdentityByLocalReference:
 SELECT * FROM aethon_content_identity
 WHERE content_type = :contentType AND local_reference = :localReference;
 
+selectNovelSourceIds:
+SELECT DISTINCT mangas.source FROM aethon_content_identity AS identity
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE identity.content_type = 'NOVEL';
+
 deleteIdentityByEntityId:
 DELETE FROM aethon_content_identity WHERE entity_id = :entityId;
 

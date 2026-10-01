@@ -762,7 +762,9 @@ class CoreV1OutboxAdapter(
         is ReaderLocator.Epub -> BookLocation("epub", cfi, null, null, progression)
         is ReaderLocator.Pdf -> {
             val overallProgress = documentProgression ?: return null
-            BookLocation("pdf", null, pageIndex, totalPages, overallProgress)
+            // Core `book.*` records carry the 1-based PDF page number that Epigraph desktop reads
+            // and writes; the Android reader counts pages from zero.
+            BookLocation("pdf", null, pageIndex + 1, totalPages, overallProgress)
         }
         else -> null
     }

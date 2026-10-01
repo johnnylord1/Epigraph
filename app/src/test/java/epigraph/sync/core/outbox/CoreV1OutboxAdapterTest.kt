@@ -378,7 +378,8 @@ class CoreV1OutboxAdapterTest {
             ),
         )
         assertEquals("pdf", ready.mutation.patch?.get("renderer")?.jsonPrimitive?.content)
-        assertEquals("4", ready.mutation.patch?.get("pageIndex")?.jsonPrimitive?.content)
+        // The wire carries the desktop's 1-based page number.
+        assertEquals("5", ready.mutation.patch?.get("pageIndex")?.jsonPrimitive?.content)
         assertEquals("20", ready.mutation.patch?.get("totalPages")?.jsonPrimitive?.content)
         assertEquals("0.25", ready.mutation.patch?.get("progressPercent")?.jsonPrimitive?.content)
     }
