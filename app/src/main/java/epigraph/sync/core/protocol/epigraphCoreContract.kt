@@ -65,6 +65,10 @@ data class CoreCapabilities(
      * return credentials; see docs/audit/TRACKER_SYNC_CONTRACT.md.
      */
     val supportsTrackerCredentialsV1: Boolean = false,
+    /** The Core can project comic deletions without a local record. */
+    val supportsComicDeleteProjectionWithoutRecord: Boolean = false,
+    /** The Core accepts CreateCategory commands for phone-created comic categories. */
+    val supportsSuwayomiCategoryCreate: Boolean = false,
 )
 
 @Serializable

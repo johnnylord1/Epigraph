@@ -205,6 +205,7 @@ class SuwayomiMutationQueueDrainerTest {
                 epigraph.sync.core.protocol.SuwayomiMutationOperation.UPDATE_CATEGORY -> "UpdateCategory"
                 epigraph.sync.core.protocol.SuwayomiMutationOperation.DELETE_CATEGORY -> "DeleteCategory"
                 epigraph.sync.core.protocol.SuwayomiMutationOperation.UPDATE_CATEGORY_ORDER -> "UpdateCategoryOrder"
+                epigraph.sync.core.protocol.SuwayomiMutationOperation.CREATE_CATEGORY -> "CreateCategory"
             }
             if (request.operation == epigraph.sync.core.protocol.SuwayomiMutationOperation.UPDATE_CHAPTERS_PROGRESS) {
                 lastMutationVariables = request.variables

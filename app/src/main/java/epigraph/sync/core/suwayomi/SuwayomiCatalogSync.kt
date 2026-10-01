@@ -85,12 +85,19 @@ class SuwayomiCatalogSync(
             reportCatalogFailure(SuwayomiCatalogOperation.LIBRARY, failure)
             return failure.outcome()
         }
-        val categories = try {
+        val remoteCategories = try {
             fetchAll(credentials, SuwayomiCatalogOperation.CATEGORIES)
         } catch (failure: CatalogSyncFailure) {
             reportCatalogFailure(SuwayomiCatalogOperation.CATEGORIES, failure)
             return failure.outcome()
         }.filterNot { node -> node.long("id") == SUWAYOMI_DEFAULT_CATEGORY_ID }
+        val categories = if (SuwayomiCategoryCreateHook.isEnabled(capabilities)) {
+            database.await(inTransaction = true) {
+                withoutCategoriesAwaitingBind(this, credentials, remoteCategories)
+            }
+        } else {
+            remoteCategories
+        }
 
         val mangaEntityIds = database.await(inTransaction = false) {
             library.mapNotNull { node ->
@@ -410,11 +417,7 @@ class SuwayomiCatalogSync(
             }
 
         fun serverCategoryEntityId(credentials: CoreCredentialSession, categoryId: Long): String =
-            if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) {
-                "suwayomi:profile:${credentials.profileId}:category:$categoryId"
-            } else {
-                "suwayomi:server:${credentials.serverId}:profile:${credentials.profileId}:category:$categoryId"
-            }
+            suwayomiServerCategoryEntityId(credentials.serverId, credentials.profileId, categoryId)
 
         fun thumbnailReference(credentials: CoreCredentialSession, mangaId: Long): String =
             if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) {
@@ -559,6 +562,31 @@ class SuwayomiCatalogSync(
             )
         }
 
+        /**
+         * Drops unbound remote categories whose exact name matches a phone category that
+         * [SuwayomiCategoryCreateHook] will bind to them. Materializing them first would leave two
+         * local categories with the same name, and the hook then refuses the bind for good.
+         */
+        fun withoutCategoriesAwaitingBind(
+            database: yokai.data.Database,
+            credentials: CoreCredentialSession,
+            categories: List<JsonObject>,
+        ): List<JsonObject> {
+            val awaitingNames = database.aethon_syncQueries.selectUnpublishedComicCategories()
+                .executeAsList()
+                .map { it.name }
+                .filterTo(HashSet(), SuwayomiCategoryCreateHook::isPublishableName)
+            if (awaitingNames.isEmpty()) return categories
+            return categories.filterNot { node ->
+                val categoryId = node.long("id") ?: return@filterNot false
+                val name = node.string("name") ?: return@filterNot false
+                name in awaitingNames &&
+                    database.aethon_syncQueries
+                        .selectCategoryIdentityByEntityId(resolveCategoryEntityId(database, credentials, categoryId))
+                        .executeAsOneOrNull() == null
+            }
+        }
+
         fun resolveCategoryEntityId(
             database: yokai.data.Database,
             credentials: CoreCredentialSession,
@@ -610,6 +638,13 @@ class SuwayomiCatalogSync(
 
     }
 }
+
+internal fun suwayomiServerCategoryEntityId(serverId: String, profileId: String, categoryId: Long): String =
+    if (serverId == LEGACY_UNBOUND_SERVER_ID) {
+        "suwayomi:profile:$profileId:category:$categoryId"
+    } else {
+        "suwayomi:server:$serverId:profile:$profileId:category:$categoryId"
+    }
 
 private fun CoreConfirmedRecord.comicId(): String? =
     (record as? JsonObject)?.get("comicId")?.jsonPrimitive?.contentOrNull

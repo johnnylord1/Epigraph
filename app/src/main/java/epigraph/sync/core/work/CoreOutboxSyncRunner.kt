@@ -24,6 +24,8 @@ import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.protocol.CoreCompatibility
 import epigraph.sync.core.protocol.CoreSyncStatus
+import epigraph.sync.core.protocol.SuwayomiCommandRequest
+import epigraph.sync.core.protocol.SuwayomiCommandResponse
 import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.replica.CoreReplicaApplier
@@ -157,6 +159,16 @@ interface CoreOutboxSyncConnection {
 
     /** Tracker credential endpoints on this paired session; null when the connection has none. */
     fun trackerCredentials(): TrackerCredentialChannel? = null
+
+    /** Direct Suwayomi commands on this paired session; null when the connection has none. */
+    fun suwayomiCommands(): SuwayomiCommandChannel? = null
+}
+
+/** Direct Suwayomi mutation commands on a paired Core session. */
+interface SuwayomiCommandChannel {
+    val serverId: String
+    val profileId: String
+    suspend fun command(request: SuwayomiCommandRequest): CoreHttpResult<SuwayomiCommandResponse>
 }
 
 /**
@@ -225,6 +237,17 @@ class PinnedCoreOutboxSyncConnectionFactory(
                     credentials.withAccessTokenString { token ->
                         http.deleteTrackerCredential(token, trackerKey, delete)
                     }
+            }
+
+            override fun suwayomiCommands(): SuwayomiCommandChannel? {
+                val scopeId = "comics:profile:${credentials.profileId}"
+                if (scopeId !in credentials.scopes) return null
+                return object : SuwayomiCommandChannel {
+                    override val serverId: String = credentials.serverId
+                    override val profileId: String = credentials.profileId
+                    override suspend fun command(request: SuwayomiCommandRequest) =
+                        transport.suwayomi.command(credentials, request)
+                }
             }
         }
     }

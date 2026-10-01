@@ -275,6 +275,149 @@ class EpigraphCategoryMutationRouterTest {
         assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
     }
 
+    @Test
+    fun `created comic category binds identity and publishes legacy assignments`() = runTest {
+        val category = insertCategory("Reading", sort = 0)
+        val first = insertManga()
+        bindWork(first, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        val second = insertManga()
+        bindWork(second, "suwayomi:server:desk:profile:main:manga:8", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(first, category)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(second, category)
+
+        val result = router().bindCreatedComicCategory(
+            category, "Reading", "suwayomi:server:desk:profile:main:category:42", 5,
+        )
+
+        assertEquals(2, result.emittedCommandCount)
+        val identity = identity(category)
+        assertEquals("suwayomi:server:desk:profile:main:category:42", identity.entity_id)
+        assertEquals("MANGA", identity.content_scope)
+        assertEquals("Reading", identity.name)
+        assertEquals(5, identity.sort_order)
+        val envelopes = queued()
+        assertEquals(2, envelopes.size)
+        assertTrue(envelopes.all { it.scopeId.value == "comics:profile:main" })
+        val assignments = envelopes.map {
+            assertEquals("comic.category_assignment", it.entityType.value)
+            it.command as SyncCommand.SetCategoryAssignment
+        }
+        assertTrue(assignments.all { it.assigned })
+        assertTrue(assignments.all { it.categoryId.value == "suwayomi:server:desk:profile:main:category:42" })
+        assertEquals(
+            setOf(
+                "suwayomi:server:desk:profile:main:manga:7",
+                "suwayomi:server:desk:profile:main:manga:8",
+            ),
+            assignments.map { it.entityId.value }.toSet(),
+        )
+    }
+
+    @Test
+    fun `created comic category skips comics of another profile and non-comics`() = runTest {
+        val category = insertCategory("Reading", sort = 0)
+        val otherProfile = insertManga()
+        bindWork(otherProfile, "suwayomi:server:desk:profile:other:manga:9", "MANGA")
+        val novel = insertManga()
+        bindWork(novel, "novel:source:1", "NOVEL")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(otherProfile, category)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(novel, category)
+
+        val result = router().bindCreatedComicCategory(
+            category, "Reading", "suwayomi:server:desk:profile:main:category:42", 5,
+        )
+
+        assertEquals(0, result.emittedCommandCount)
+        assertTrue(queued().isEmpty())
+        assertEquals("suwayomi:server:desk:profile:main:category:42", identity(category).entity_id)
+    }
+
+    @Test
+    fun `created comic category publishes portable comics with their portable id`() = runTest {
+        val category = insertCategory("Reading", sort = 0)
+        val portable = insertManga()
+        bindWork(portable, "suwayomi:server:desk:profile:main:manga:8", "MANGA")
+        val work = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/manga/8"))
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = PortableIdentityV3.workId(work),
+                ref = work,
+                localReference = portable.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Example",
+                providerLabelHint = null,
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        database.aethon_syncQueries.insertMangaCategoryAssignment(portable, category)
+
+        val result = router().bindCreatedComicCategory(
+            category, "Reading", "suwayomi:server:desk:profile:main:category:42", 5,
+        )
+
+        assertEquals(1, result.emittedCommandCount)
+        val assignment = queued().single().command as SyncCommand.SetCategoryAssignment
+        assertEquals(PortableIdentityV3.workId(work), assignment.entityId.value)
+        assertEquals(work, assignment.portableWorkRef)
+        assertTrue(assignment.assigned)
+    }
+
+    @Test
+    fun `created comic category is ignored after a rename`() = runTest {
+        val category = insertCategory("New", sort = 0)
+        val manga = insertManga()
+        bindWork(manga, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, category)
+
+        val result = router().bindCreatedComicCategory(
+            category, "Old", "suwayomi:server:desk:profile:main:category:42", 5,
+        )
+
+        assertEquals(0, result.emittedCommandCount)
+        assertTrue(queued().isEmpty())
+        assertNull(database.aethon_syncQueries.selectCategoryIdentityByLocalId(category).executeAsOneOrNull())
+    }
+
+    @Test
+    fun `created comic category is ignored when the entity is already bound elsewhere`() = runTest {
+        val other = insertCategory("Other", sort = 0)
+        bindCategory(other, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Other", 1)
+        val category = insertCategory("Reading", sort = 1)
+        val manga = insertManga()
+        bindWork(manga, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, category)
+
+        val result = router().bindCreatedComicCategory(
+            category, "Reading", "suwayomi:server:desk:profile:main:category:42", 5,
+        )
+
+        assertEquals(0, result.emittedCommandCount)
+        assertTrue(queued().isEmpty())
+        assertNull(database.aethon_syncQueries.selectCategoryIdentityByLocalId(category).executeAsOneOrNull())
+        assertEquals("suwayomi:server:desk:profile:main:category:42", identity(other).entity_id)
+    }
+
+    @Test
+    fun `unpublished comic category query lists only unbound categories with comics`() {
+        val listed = insertCategory("Listed", sort = 0)
+        val bound = insertCategory("Bound", sort = 1)
+        val empty = insertCategory("Empty", sort = 2)
+        val novelScoped = insertCategory("Novels", sort = 3)
+        bindCategory(bound, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Bound", 1)
+        database.aethon_syncQueries.upsertCategoryScope(categoryId = novelScoped, contentScope = "NOVEL")
+        val manga = insertManga()
+        bindWork(manga, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, listed)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, bound)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, novelScoped)
+
+        val rows = database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList()
+
+        assertEquals(listOf(listed), rows.map { it._id })
+        assertEquals("Listed", rows.single().name)
+    }
+
     private fun router(
         scopes: EpigraphSyncScopeProvider = EpigraphSyncScopeProvider {
             EpigraphSyncScopes(SyncScopeId("novels:profile:main"), SyncScopeId("comics:profile:main"))

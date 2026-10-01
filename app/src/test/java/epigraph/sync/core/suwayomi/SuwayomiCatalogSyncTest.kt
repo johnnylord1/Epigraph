@@ -1059,7 +1059,69 @@ class SuwayomiCatalogSyncTest {
         assertTrue(assignments.isEmpty())
     }
 
-    private fun capabilities() = CoreCapabilities(
+    @Test
+    fun `remote category waits while a same-named phone category awaits its bind`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        suspend fun sync(pages: FixturePages, capabilities: CoreCapabilities, now: Long) = SuwayomiCatalogSync(
+            pages = pages,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities, now)
+        sync(FixturePages(includeCategoryAssignment = false, categoryId = 0), capabilities(), 1000)
+        val manga = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        database.categoriesQueries.insert("Remote Favorites", 1, 0, "a")
+        val localCategoryId = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga._id, localCategoryId)
+        assertEquals(
+            listOf(localCategoryId),
+            database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it._id },
+        )
+        val remoteEntityId = "suwayomi:server:$SERVER:profile:$PROFILE:category:55"
+
+        // The create hook will bind the phone category to Suwayomi id 55; materializing it first
+        // would leave two "Remote Favorites" folders and make the hook refuse the bind.
+        val held = sync(FixturePages(), capabilities(categoryCreate = true), 2000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, held)
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAll().executeAsList().filter { it.name == "Remote Favorites" }.map { it._id },
+        )
+        assertNull(database.aethon_syncQueries.selectCategoryIdentityByEntityId(remoteEntityId).executeAsOneOrNull())
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAllByMangaId(manga._id).executeAsList().map { it._id },
+        )
+
+        // Without the create capability no bind is coming, so the remote category is materialized.
+        val materialized = sync(FixturePages(), capabilities(), 3000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, materialized)
+        assertTrue(
+            database.aethon_syncQueries.selectCategoryIdentityByEntityId(remoteEntityId).executeAsOneOrNull() != null,
+        )
+    }
+
+    @Test
+    fun `remote category is materialized when no phone category of that name awaits a bind`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities(categoryCreate = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        val manga = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        assertEquals(
+            listOf("Remote Favorites"),
+            database.categoriesQueries.findAllByMangaId(manga._id).executeAsList().map { it.name },
+        )
+    }
+
+    private fun capabilities(categoryCreate: Boolean = false) = CoreCapabilities(
         serverProtocolVersion = 1,
         minClientVersion = "0.1.0",
         supportedScopes = listOf("comics:profile:$PROFILE", "books:global"),
@@ -1075,11 +1137,17 @@ class SuwayomiCatalogSyncTest {
         supportsSuwayomiWebsocketProxy = false,
         suwayomiProxyPathTemplate = "/v1/suwayomi/{path}",
         snapshotSchemaVersion = 1,
-        snapshotEntityTypes = emptySet(),
         tlsCertSha256 = "a".repeat(64),
         mdnsServiceName = "_epigraph-syncd._tcp.local.",
         currentServerVersion = 1,
         minReplayableServerVersion = 0,
+        supportsCausalMutationsV3 = categoryCreate,
+        snapshotEntityTypes = if (categoryCreate) {
+            setOf("comic.entry", "comic.category", "comic.category_assignment", "comic.chapter_state", "comic.history")
+        } else {
+            emptySet()
+        },
+        supportsSuwayomiCategoryCreate = categoryCreate,
     )
 
     private fun session(serverId: String) = CoreCredentialSession(

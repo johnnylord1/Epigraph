@@ -31,6 +31,10 @@ import epigraph.sync.core.extensions.CoreSourceRelinkStore
 import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
+import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
+import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
+import epigraph.sync.core.suwayomi.UnpublishedComicCategory
+import epigraph.sync.core.suwayomi.CreatedComicCategoryBinder
 import epigraph.sync.core.outbox.EpigraphCoordinatorOutboxStore
 import epigraph.sync.core.outbox.CoreLamportSource
 import epigraph.sync.core.outbox.CoreOutboxRetryPlanner
@@ -141,6 +145,7 @@ import java.io.File
 import okhttp3.OkHttpClient
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import yokai.data.DatabaseHandler
 
 /** Product wiring for the security-sensitive Epigraph Core pairing boundary. */
 fun epigraphSyncModule(app: Application) = module {
@@ -390,6 +395,8 @@ fun epigraphSyncModule(app: Application) = module {
         )
     }
     single {
+        val database = get<DatabaseHandler>()
+        val categoryRouter = get<EpigraphCategoryMutationRouter>()
         CoreOutboxSyncRunner(
             get(),
             get(),
@@ -397,7 +404,18 @@ fun epigraphSyncModule(app: Application) = module {
             get(),
             get(),
             get(),
-            negotiatedHooks = listOf(TrackerSyncSessionHook(get<CoreTrackingCapabilityCache>(), get())),
+            negotiatedHooks = listOf(
+                TrackerSyncSessionHook(get<CoreTrackingCapabilityCache>(), get()),
+                SuwayomiCategoryCreateHook(
+                    categories = UnpublishedComicCategorySource {
+                        database.awaitList { aethon_syncQueries.selectUnpublishedComicCategories() }
+                            .map { UnpublishedComicCategory(localCategoryId = it._id, name = it.name) }
+                    },
+                    binder = CreatedComicCategoryBinder { localCategoryId, expectedName, categoryEntityId, suwayomiOrder ->
+                        categoryRouter.bindCreatedComicCategory(localCategoryId, expectedName, categoryEntityId, suwayomiOrder)
+                    },
+                ),
+            ),
         )
     }
 }

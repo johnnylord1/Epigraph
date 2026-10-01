@@ -122,6 +122,77 @@ class EpigraphCategoryMutationRouter(
         }
     }
 
+    /**
+     * Binds [localCategoryId] to the Suwayomi category the Core just created ([categoryEntityId]) and
+     * publishes the comic assignments the category already holds. Returns 0 and changes nothing when
+     * the category was deleted, renamed away from [expectedName], already bound, or when
+     * [categoryEntityId] already belongs to another local category.
+     */
+    suspend fun bindCreatedComicCategory(
+        localCategoryId: Long,
+        expectedName: String,
+        categoryEntityId: String,
+        suwayomiOrder: Long,
+    ): CategoryMutationResult {
+        val scopes = pairedScopes()
+        val now = timestamp()
+        return coordinator.mutateLocalBatch(now) {
+            if (scopes == null) return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
+            require(suwayomiCategoryIdForEntity(categoryEntityId) != null) {
+                "created category entity is not a Suwayomi category: $categoryEntityId"
+            }
+            val category = categoriesQueries.findAll().executeAsList()
+                .firstOrNull { it._id == localCategoryId }
+                ?: return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
+            if (category.name != expectedName) {
+                return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
+            }
+            if (aethon_syncQueries.selectCategoryIdentityByLocalId(localCategoryId).executeAsOneOrNull() != null) {
+                return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
+            }
+            if (aethon_syncQueries.selectCategoryIdentityByEntityId(categoryEntityId).executeAsOneOrNull() != null) {
+                return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
+            }
+            val scopeId = suwayomiComicScopeForCategory(categoryEntityId, scopes.comics)
+            val portableStore = SqlDelightPortableBindingStore(this)
+            val envelopes = aethon_syncQueries.selectMangaIdsByCategory(localCategoryId).executeAsList().mapNotNull { mangaId ->
+                val identity = aethon_syncQueries
+                    .selectIdentityByLocalReference("MANGA", mangaId.toString())
+                    .executeAsOneOrNull()
+                    ?: return@mapNotNull null
+                val portableWork = portableStore
+                    .workByLocalReference(mangaId.toString())
+                    ?.takeIf { it.resolution.state.name == "BOUND" }
+                    ?.ref
+                if (portableWork !is PortableWorkRef.Comic &&
+                    !isLegacySuwayomiAssignment(identity.entity_id, categoryEntityId)
+                ) {
+                    return@mapNotNull null
+                }
+                val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
+                    ?: EpigraphEntityId(identity.entity_id)
+                SyncCommandEnvelope(
+                    protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                    deviceId = deviceId,
+                    clientMutationId = mutationIds.next(),
+                    scopeId = scopeId,
+                    entityType = COMIC_CATEGORY_ASSIGNMENT,
+                    command = SyncCommand.SetCategoryAssignment(workEntity, EpigraphEntityId(categoryEntityId), true, portableWork),
+                )
+            }
+            aethon_syncQueries.upsertCategoryScope(categoryId = localCategoryId, contentScope = "MANGA")
+            aethon_syncQueries.upsertCategoryIdentity(
+                entityId = categoryEntityId,
+                localCategoryId = localCategoryId,
+                contentScope = "MANGA",
+                name = expectedName,
+                sortOrder = suwayomiOrder,
+                updatedAt = now,
+            )
+            LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
+        }
+    }
+
     private fun Database.assignmentTombstones(
         localCategoryId: Long,
         categoryEntity: EpigraphEntityId,

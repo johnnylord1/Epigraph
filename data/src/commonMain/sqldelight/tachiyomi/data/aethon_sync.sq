@@ -1522,3 +1522,21 @@ DELETE FROM aethon_device_sync_selection
 WHERE server_id = :serverId
     AND profile_id = :profileId
     AND device_id = :deviceId;
+
+-- Local comic categories that hold at least one comic but have no Epigraph identity yet. They can only
+-- reach Suwayomi through CreateCategory.
+selectUnpublishedComicCategories:
+SELECT c._id, c.name
+FROM categories c
+WHERE c._id > 0
+  AND NOT EXISTS (SELECT 1 FROM aethon_category_identity i WHERE i.local_category_id = c._id)
+  AND COALESCE(
+      (SELECT s.content_scope FROM aethon_category_scope s WHERE s.category_id = c._id), 'ALL'
+  ) IN ('ALL', 'MANGA')
+  AND EXISTS (
+      SELECT 1 FROM mangas_categories mc
+      JOIN aethon_content_identity e
+        ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+      WHERE mc.category_id = c._id
+  )
+ORDER BY c.sort, c._id;

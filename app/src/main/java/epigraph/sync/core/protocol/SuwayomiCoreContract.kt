@@ -75,6 +75,9 @@ enum class SuwayomiMutationOperation {
 
     @kotlinx.serialization.SerialName("UpdateCategoryOrder")
     UPDATE_CATEGORY_ORDER,
+
+    @kotlinx.serialization.SerialName("CreateCategory")
+    CREATE_CATEGORY,
 }
 
 @Serializable
