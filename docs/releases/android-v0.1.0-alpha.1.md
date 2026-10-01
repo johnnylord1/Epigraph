@@ -23,11 +23,11 @@ This is an alpha. Create a backup before you update, and report anything that br
 ### File checksums (SHA-256)
 
 ```
-b87667b0bf0a2080b2b9b8f4b80b3e4cfe825913816c663ddb80c2da007773bf  app-standard-arm64-v8a-release.apk
-b28bfc28d3094fbb6af653c3b246b45d9d61e0817d7b7eb2923faa221dd1e289  app-standard-armeabi-v7a-release.apk
-dee08f9277fa8462946923bed714b1a5cdff5f7c65fa886673e03de543a7aea3  app-standard-universal-release.apk
-005ad3f9d0b1b97b60cd4846e220444c440ea6b3a15b7270b5552704bb4d85a6  app-standard-x86-release.apk
-9da0217c2ddd5d74131f4a993eedd337f8c23e54fa1d0b85f7ffa239f4ed7c82  app-standard-x86_64-release.apk
+3019720b4d338d87ff4ab6857979439e5c725d0062698f78081caf70b1b20605  app-standard-arm64-v8a-release.apk
+faa987b1be5cd54d4332d6bd3ccb32287ac3fb79bf2236a769826fc6afff0a64  app-standard-armeabi-v7a-release.apk
+089c5c7bc347524e789429b8364917d78973564fe5859f68594199a7d83fef72  app-standard-universal-release.apk
+a284de0f536d05a9c4706a5b6de465e2ac2386f91c308afa2eb8bc7cafade5f7  app-standard-x86-release.apk
+9d8f0e0eb78f4bd3eda804d994956bf9b53cbf748a3063cad99fbb0abd01b378  app-standard-x86_64-release.apk
 ```
 
 ## Highlights
