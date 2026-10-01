@@ -2,6 +2,8 @@ package epigraph.sync.core.suwayomi
 
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.CoreCapabilities
+import epigraph.sync.core.protocol.CoreSyncStatus
+import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
 import epigraph.sync.core.protocol.SuwayomiCatalogResponse
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
@@ -13,8 +15,10 @@ import epigraph.sync.core.replica.CoreConfirmedRecord
 import epigraph.sync.core.replica.CoreReplicaKey
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.CoreEndpointResolver
+import epigraph.sync.core.work.CoreRemoteProjectionState
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
+import epigraph.sync.core.work.remoteProjectionState
 import android.util.Log
 import eu.kanade.tachiyomi.BuildConfig
 import kotlinx.serialization.json.JsonArray
@@ -42,6 +46,7 @@ class SuwayomiCatalogSync(
     private val projection: EpigraphCoreDomainProjection,
     private val covers: CoreCatalogCoverSink = DeferredCoreCatalogCoverSink,
     private val pageSize: Long = DEFAULT_PAGE_SIZE,
+    private val projectionStatus: SuwayomiProjectionStatusSource = UnavailableSuwayomiProjectionStatusSource,
 ) : CoreReplicaSyncPort {
     init {
         require(pageSize in 1..MAX_PAGE_SIZE) { "pageSize is outside the Core catalog limit" }
@@ -59,6 +64,20 @@ class SuwayomiCatalogSync(
 
         val scopeId = "comics:profile:${credentials.profileId}"
         if (scopeId !in credentials.scopes) return CoreReplicaSyncOutcome.DEFERRED
+
+        // Mutations drained in this run reach Suwayomi asynchronously. Until the desktop reports
+        // its projection queue empty, a catalog read may predate them and would undo the user's
+        // own favorite or category change, so retry instead of reconciling against it.
+        if (EpigraphCoreCompatibilityEvaluator.supportsSyncStatus(capabilities)) {
+            when (val status = projectionStatus.status(credentials, scopeId)) {
+                null -> Unit
+                is CoreHttpResult.Success ->
+                    if (status.value.remoteProjectionState() == CoreRemoteProjectionState.IN_PROGRESS) {
+                        return CoreReplicaSyncOutcome.RETRY
+                    }
+                is CoreHttpResult.Failure -> return CoreReplicaSyncOutcome.RETRY
+            }
+        }
 
         val library = try {
             fetchAll(credentials, SuwayomiCatalogOperation.LIBRARY)
@@ -138,14 +157,25 @@ class SuwayomiCatalogSync(
         // Reconciliation is intentionally limited to the authoritative library bit; local
         // metadata, chapters, progress and assets remain recoverable after an un-favorite.
         database.await(inTransaction = true) {
-            (mangaRecords + categoryRecords + assignmentRecords).forEach { record ->
-                projection.upsert(this, record)
-            }
+            // Titles with local work still in flight keep their local library bit and category
+            // links; the next catalog read after that work settles reconciles them.
+            val protectedEntityIds = aethon_syncQueries
+                .selectUnsettledSuwayomiComicEntityIds(scopeId, credentials.profileId)
+                .executeAsList()
+                .toHashSet()
+            mangaRecords
+                .filterNot { it.key.entityId in protectedEntityIds }
+                .forEach { record -> projection.upsert(this, record) }
+            categoryRecords.forEach { record -> projection.upsert(this, record) }
+            assignmentRecords
+                .filterNot { record -> record.comicId() in protectedEntityIds }
+                .forEach { record -> projection.upsert(this, record) }
             projection.reconcileSuwayomiLibrary(
                 database = this,
                 serverId = credentials.serverId,
                 profileId = credentials.profileId,
                 observedEntityIds = mangaRecords.mapTo(mutableSetOf()) { it.key.entityId },
+                protectedEntityIds = protectedEntityIds,
             )
             projection.reconcileSuwayomiCategoryAssignments(
                 database = this,
@@ -157,6 +187,7 @@ class SuwayomiCatalogSync(
                     payload.getValue("comicId").jsonPrimitive.content to
                         payload.getValue("categoryId").jsonPrimitive.content
                 },
+                protectedEntityIds = protectedEntityIds,
             )
         }
 
@@ -577,6 +608,32 @@ class SuwayomiCatalogSync(
 
         fun JsonElement?.asJsonArray(): JsonArray? = this as? JsonArray
 
+    }
+}
+
+private fun CoreConfirmedRecord.comicId(): String? =
+    (record as? JsonObject)?.get("comicId")?.jsonPrimitive?.contentOrNull
+
+/** Desktop Suwayomi projection readiness for a comics scope; null when the Core cannot report it. */
+fun interface SuwayomiProjectionStatusSource {
+    suspend fun status(session: CoreCredentialSession, scopeId: String): CoreHttpResult<CoreSyncStatus>?
+}
+
+object UnavailableSuwayomiProjectionStatusSource : SuwayomiProjectionStatusSource {
+    override suspend fun status(session: CoreCredentialSession, scopeId: String): CoreHttpResult<CoreSyncStatus>? =
+        null
+}
+
+class CoreSuwayomiProjectionStatusSource(
+    private val transports: CoreSessionTransportFactory,
+    private val endpoints: CoreEndpointResolver,
+) : SuwayomiProjectionStatusSource {
+    override suspend fun status(session: CoreCredentialSession, scopeId: String): CoreHttpResult<CoreSyncStatus> {
+        val endpoint = runCatching { endpoints.resolve(session).origin }.getOrElse {
+            return CoreHttpResult.Failure(503, null)
+        }
+        val http = transports.create(session, endpoint).http
+        return session.withAccessTokenString { token -> http.syncStatus(token, scopeId) }
     }
 }
 

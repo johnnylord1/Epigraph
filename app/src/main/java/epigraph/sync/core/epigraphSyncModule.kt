@@ -106,6 +106,7 @@ import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.session.AndroidCoreEndpointResolver
 import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.suwayomi.CoreSuwayomiCatalogPageSource
+import epigraph.sync.core.suwayomi.CoreSuwayomiProjectionStatusSource
 import epigraph.sync.core.suwayomi.SuwayomiCatalogPageSource
 import epigraph.sync.core.suwayomi.SuwayomiCatalogSync
 import epigraph.sync.core.suwayomi.EpigraphCoreCoverClient
@@ -250,6 +251,7 @@ fun epigraphSyncModule(app: Application) = module {
         LnReaderPluginReplicaSync(get(), get(), get(), get())
     }
     single<SuwayomiCatalogPageSource> { CoreSuwayomiCatalogPageSource(get(), get()) }
+    single { CoreSuwayomiProjectionStatusSource(get(), get()) }
 
     single {
         EpigraphMutationCoordinator(get()) {
@@ -338,7 +340,7 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single { SnapshotCoreReplicaSync(get(), get(), get(), get()) }
     single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
-        SuwayomiCatalogSync(get(), get(), get(), get())
+        SuwayomiCatalogSync(get(), get(), get(), get(), projectionStatus = get<CoreSuwayomiProjectionStatusSource>())
     }
     single<CoreReplicaSyncPort>(named(PORTABLE_MANIFEST_REPLICA)) {
         PortableManifestSync(get(), get(), get(), get())

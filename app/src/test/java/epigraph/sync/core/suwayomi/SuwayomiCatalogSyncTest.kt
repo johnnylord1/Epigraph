@@ -6,6 +6,7 @@ import yokai.data.memoColumnAdapter
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.protocol.CoreCapabilities
+import epigraph.sync.core.protocol.CoreSyncStatus
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
 import epigraph.sync.core.protocol.SuwayomiCatalogPage
 import epigraph.sync.core.protocol.SuwayomiCatalogResponse
@@ -626,6 +627,438 @@ class SuwayomiCatalogSyncTest {
         assertEquals(0, chapterRequests)
     }
 
+    @Test
+    fun `catalog retries without reading pages while desktop projection is pending`() = runTest {
+        var pageReads = 0
+        val countingPages = object : SuwayomiCatalogPageSource {
+            override suspend fun read(
+                session: CoreCredentialSession,
+                operation: SuwayomiCatalogOperation,
+                pageSize: Long,
+                offset: Long,
+                mangaId: Long?,
+            ): CoreHttpResult<SuwayomiCatalogResponse> {
+                pageReads++
+                return FixturePages().read(session, operation, pageSize, offset, mangaId)
+            }
+        }
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val status = FixtureStatus(
+            CoreHttpResult.Success(
+                CoreSyncStatus(
+                    scopeId = "comics:profile:$PROFILE",
+                    currentServerVersion = 1,
+                    minReplayableServerVersion = 0,
+                    comicAuthorityMode = "suwayomi-confirmed-v1",
+                    suwayomiProjectionPending = 1,
+                    suwayomiProjectionBlocked = 0,
+                    suwayomiProjectionInFlight = 0,
+                    ready = false,
+                ),
+            ),
+        )
+        val outcome = SuwayomiCatalogSync(
+            pages = countingPages,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = status,
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.RETRY, outcome)
+        assertEquals(0, pageReads)
+        assertEquals(0, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    @Test
+    fun `catalog retries while a desktop projection is in flight`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Success(
+                    CoreSyncStatus(
+                        scopeId = "comics:profile:$PROFILE",
+                        currentServerVersion = 1,
+                        minReplayableServerVersion = 0,
+                        comicAuthorityMode = "suwayomi-confirmed-v1",
+                        suwayomiProjectionPending = 0,
+                        suwayomiProjectionBlocked = 0,
+                        suwayomiProjectionInFlight = 1,
+                        ready = false,
+                    ),
+                ),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.RETRY, outcome)
+    }
+
+    @Test
+    fun `catalog applies once desktop projection is ready`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Success(
+                    CoreSyncStatus(
+                        scopeId = "comics:profile:$PROFILE",
+                        currentServerVersion = 1,
+                        minReplayableServerVersion = 0,
+                        comicAuthorityMode = "suwayomi-confirmed-v1",
+                        suwayomiProjectionPending = 0,
+                        suwayomiProjectionBlocked = 0,
+                        suwayomiProjectionInFlight = 0,
+                        ready = true,
+                    ),
+                ),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(2, database.mangasQueries.findFavorites().executeAsList().size)
+    }
+
+    @Test
+    fun `catalog applies when only blocked projections remain`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Success(
+                    CoreSyncStatus(
+                        scopeId = "comics:profile:$PROFILE",
+                        currentServerVersion = 1,
+                        minReplayableServerVersion = 0,
+                        comicAuthorityMode = "suwayomi-confirmed-v1",
+                        suwayomiProjectionPending = 0,
+                        suwayomiProjectionBlocked = 1,
+                        suwayomiProjectionInFlight = 0,
+                        ready = false,
+                    ),
+                ),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+    }
+
+    @Test
+    fun `catalog retries when the projection status request fails`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = FixtureStatus(
+                CoreHttpResult.Failure(503, null),
+            ),
+        ).synchronize(session, capabilities().copy(supportsSyncStatusV1 = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.RETRY, outcome)
+    }
+
+    @Test
+    fun `catalog ignores projection status when the Core does not advertise it`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+            projectionStatus = object : SuwayomiProjectionStatusSource {
+                override suspend fun status(
+                    session: CoreCredentialSession,
+                    scopeId: String,
+                ): CoreHttpResult<CoreSyncStatus>? {
+                    throw AssertionError("projection status must not be queried when Core does not advertise it")
+                }
+            },
+        ).synchronize(session, capabilities(), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+    }
+
+    @Test
+    fun `pending local favorite survives a stale catalog without the title`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val entityId8 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:8"
+        database.aethon_syncQueries.enqueueMutation(
+            clientMutationId = "m1",
+            deviceId = "phone",
+            scopeId = "comics:profile:$PROFILE",
+            entityType = "comic.entry",
+            entityId = entityId8,
+            operation = "set_library_membership",
+            payloadJson = "{}",
+            createdAt = 1500,
+            nextAttemptAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(includeSecondManga = false),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val favorites = database.mangasQueries.findFavorites().executeAsList()
+        assertEquals(2, favorites.size)
+        val titles = favorites.map { it.title }.toSet()
+        assertTrue("Suwayomi One" in titles)
+        assertTrue("Suwayomi Two" in titles)
+    }
+
+    @Test
+    fun `pending legacy queue row protects the title from demotion`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val entityId8 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:8"
+        database.aethon_suwayomi_mutation_queueQueries.enqueue(
+            operationId = "op1",
+            profileId = PROFILE,
+            operationName = "UpdateManga",
+            variablesJson = "{}",
+            entityId = entityId8,
+            createdAt = 1500,
+            nextAttemptAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(includeSecondManga = false),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val favorites = database.mangasQueries.findFavorites().executeAsList()
+        assertEquals(2, favorites.size)
+        val titles = favorites.map { it.title }.toSet()
+        assertTrue("Suwayomi Two" in titles)
+    }
+
+    @Test
+    fun `pending local unfavorite is not re-favorited by a stale catalog`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val manga8 = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi Two" }
+        database.mangasQueries.markNotFavorite(manga8._id)
+
+        // The Core acknowledged the unfavorite (replica wait below the catalog's synthetic
+        // version), but the desktop has not projected it to Suwayomi yet.
+        val entityId8 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:8"
+        database.aethon_syncQueries.upsertReplicaWait(
+            deviceId = "phone",
+            clientMutationId = "m1",
+            scopeId = "comics:profile:$PROFILE",
+            entityType = "comic.entry",
+            entityId = entityId8,
+            canonicalEntityId = entityId8,
+            resultStatus = "APPLIED",
+            requiredServerVersion = 1500,
+            appliedLamport = null,
+            eventClockJson = null,
+            canonicalRecordSha256 = null,
+            receivedAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val manga8After = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi Two" }
+        assertEquals(false, manga8After.favorite)
+    }
+
+    @Test
+    fun `pending local category removal is not restored by a stale catalog`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val manga7 = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        val categoryId = database.categoriesQueries.findAll().executeAsList().single { it.name == "Remote Favorites" }._id
+        database.aethon_syncQueries.deleteMangaCategoryAssignment(manga7._id, categoryId)
+
+        val entityId7 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:7"
+        database.aethon_syncQueries.enqueueMutation(
+            clientMutationId = "m1",
+            deviceId = "phone",
+            scopeId = "comics:profile:$PROFILE",
+            entityType = "comic.category_assignment",
+            entityId = entityId7,
+            operation = "set_category_assignment",
+            payloadJson = "{}",
+            createdAt = 1500,
+            nextAttemptAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val assignments = database.categoriesQueries.findAllByMangaId(manga7._id).executeAsList()
+        assertTrue(assignments.isEmpty())
+    }
+
+    @Test
+    fun `pending local category assignment survives a stale catalog`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(includeCategoryAssignment = false),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val manga7 = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        val remoteCategoryId = database.categoriesQueries.findAll().executeAsList()
+            .single { it.name == "Remote Favorites" }._id
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga7._id, remoteCategoryId)
+
+        val entityId7 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:7"
+        database.aethon_syncQueries.enqueueMutation(
+            clientMutationId = "m1",
+            deviceId = "phone",
+            scopeId = "comics:profile:$PROFILE",
+            entityType = "comic.category_assignment",
+            entityId = entityId7,
+            operation = "set_category_assignment",
+            payloadJson = "{}",
+            createdAt = 1500,
+            nextAttemptAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(includeCategoryAssignment = false),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val assignments = database.categoriesQueries.findAllByMangaId(manga7._id).executeAsList()
+        assertTrue(assignments.any { it.name == "Remote Favorites" })
+    }
+
+    @Test
+    fun `settled titles are still reconciled when another title is protected`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val projection = EpigraphCoreDomainProjection()
+
+        val first = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 1000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, first)
+
+        val entityId8 = "suwayomi:server:$SERVER:profile:$PROFILE:manga:8"
+        database.aethon_syncQueries.enqueueMutation(
+            clientMutationId = "m1",
+            deviceId = "phone",
+            scopeId = "comics:profile:$PROFILE",
+            entityType = "comic.entry",
+            entityId = entityId8,
+            operation = "set_library_membership",
+            payloadJson = "{}",
+            createdAt = 1500,
+            nextAttemptAt = 1500,
+        )
+
+        val second = SuwayomiCatalogSync(
+            pages = FixturePages(includeSecondManga = false, includeCategoryAssignment = false),
+            database = handler,
+            projection = projection,
+            covers = CoreCatalogCoverSink { },
+            pageSize = 1,
+        ).synchronize(session, capabilities(), 2000)
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, second)
+
+        val favorites = database.mangasQueries.findFavorites().executeAsList()
+        assertTrue(favorites.any { it.title == "Suwayomi Two" })
+
+        val manga7 = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        val assignments = database.categoriesQueries.findAllByMangaId(manga7._id).executeAsList()
+        assertTrue(assignments.isEmpty())
+    }
+
     private fun capabilities() = CoreCapabilities(
         serverProtocolVersion = 1,
         minClientVersion = "0.1.0",
@@ -746,6 +1179,21 @@ class SuwayomiCatalogSyncTest {
             put("lastPageRead", 3)
             put("realUrl", "https://source.test/chapter/900")
             put("uploadDate", 900)
+        }
+    }
+
+    private class FixtureStatus(
+        private val result: CoreHttpResult<CoreSyncStatus>?,
+    ) : SuwayomiProjectionStatusSource {
+        var calls = 0
+            private set
+
+        override suspend fun status(
+            session: CoreCredentialSession,
+            scopeId: String,
+        ): CoreHttpResult<CoreSyncStatus>? {
+            calls++
+            return result
         }
     }
 

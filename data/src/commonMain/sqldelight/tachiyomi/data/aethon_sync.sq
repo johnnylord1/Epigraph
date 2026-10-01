@@ -1088,6 +1088,21 @@ SELECT EXISTS(
       AND (entity_id = :entityId OR canonical_entity_id = :entityId)
 );
 
+-- Comic ids whose library bit or category links still have local work in flight. A catalog
+-- read cannot prove these are stale, so the Suwayomi reconcile leaves them untouched.
+selectUnsettledSuwayomiComicEntityIds:
+SELECT entity_id FROM aethon_sync_outbox
+WHERE scope_id = :scopeId
+  AND entity_type IN ('comic.entry', 'comic.category_assignment')
+UNION
+SELECT entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId
+  AND entity_type IN ('comic.entry', 'comic.category_assignment')
+UNION
+SELECT entity_id FROM aethon_suwayomi_mutation_queue
+WHERE profile_id = :profileId
+  AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
 hasBlockingMutationForObservedVersion:
 SELECT EXISTS(
     SELECT 1 FROM aethon_sync_outbox

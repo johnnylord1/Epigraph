@@ -151,6 +151,7 @@ class EpigraphCoreDomainProjection(
         serverId: String,
         profileId: String,
         observedEntityIds: Set<String>,
+        protectedEntityIds: Set<String> = emptySet(),
     ) {
         require(serverId.isNotBlank()) { "Core server id must not be blank" }
         require(profileId.isNotBlank()) { "Suwayomi profile must not be blank" }
@@ -164,6 +165,7 @@ class EpigraphCoreDomainProjection(
             .executeAsList()
             .asSequence()
             .filterNot(observedEntityIds::contains)
+            .filterNot(protectedEntityIds::contains)
             .forEach { entityId ->
                 val localId = localMangaId(database, entityId) ?: return@forEach
                 database.mangasQueries.markNotFavorite(localId)
@@ -181,6 +183,7 @@ class EpigraphCoreDomainProjection(
         profileId: String,
         observedCategoryEntityIds: Set<String>,
         observedAssignments: Set<Pair<String, String>>,
+        protectedEntityIds: Set<String> = emptySet(),
     ) {
         require(serverId.isNotBlank()) { "Core server id must not be blank" }
         require(profileId.isNotBlank()) { "Suwayomi profile must not be blank" }
@@ -195,6 +198,7 @@ class EpigraphCoreDomainProjection(
             .selectCoreRemoteIdentitiesByScopeAndType(serverId, profileId, "SUWAYOMI_MANGA")
             .executeAsList()
             .forEach remoteLoop@{ remote ->
+                if (remote.entity_id in protectedEntityIds) return@remoteLoop
                 val mangaId = localMangaId(database, remote.entity_id) ?: return@remoteLoop
                 database.categoriesQueries.findAllByMangaId(mangaId).executeAsList()
                     .forEach categoryLoop@{ category ->
