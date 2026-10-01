@@ -32,4 +32,17 @@ class ActiveWorkTrackerTest {
         assertTrue(tracker.finish(first))
         assertFalse(tracker.isActive)
     }
+
+    @Test
+    fun `worker id parsed from storage releases ownership`() {
+        val tracker = ActiveWorkTracker()
+        val requestId = UUID.randomUUID()
+        // WorkManager hands the worker an equal id, not the instance the request was built with.
+        val workerId = UUID.fromString(requestId.toString())
+
+        tracker.replace(requestId)
+
+        assertTrue(tracker.finish(workerId))
+        assertFalse(tracker.isActive)
+    }
 }
