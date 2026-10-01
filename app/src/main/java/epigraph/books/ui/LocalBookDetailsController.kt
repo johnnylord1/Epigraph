@@ -3,6 +3,7 @@ package epigraph.books.ui
 import android.animation.AnimatorInflater
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.BitmapDrawable
@@ -69,6 +70,7 @@ import eu.kanade.tachiyomi.util.view.toolbarHeight
 import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.widget.LinearLayoutManagerAccurateOffset
 import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.reader.BookChapterMetrics
 import epigraph.books.reader.BookStructure
@@ -83,6 +85,7 @@ import org.koin.core.component.inject
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
+import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import yokai.i18n.MR
 import yokai.presentation.theme.ReducedMotion
@@ -111,6 +114,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private val repository: LocalBookRepository by inject()
     private val bookAssets: BookAssetCoordinator by inject()
+    private val importService: LocalBookImportService by inject()
     private val preferences: PreferencesHelper by inject()
     private lateinit var structureInspector: BookStructureInspector
     private var book: LocalBook? = null
@@ -516,10 +520,16 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
                 runCatching {
                     withContext(Dispatchers.IO) { bookAssets.ensurePublicationAvailable(bookId) }
                 }.onFailure { failure ->
+                    // A restored or unsynced book has no copy to download; the fix is the user's
+                    // original file, so offer that instead of the transport's diagnostic.
+                    Logger.w(failure) { "Book file unavailable: $bookId" }
                     context.materialAlertDialog()
                         .setTitle(context.getString(MR.strings.local_books_unavailable_title))
-                        .setMessage(failure.message ?: context.getString(MR.strings.local_book_download_failed_message))
-                        .setPositiveButton(android.R.string.ok, null)
+                        .setMessage(context.getString(MR.strings.local_books_unavailable_message))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(context.getString(MR.strings.local_books_relink_file)) { _, _ ->
+                            launchRelink(loaded)
+                        }
                         .show()
                     return@launch
                 }
@@ -529,6 +539,39 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
             // chapter catalog stop showing the provisional fallback immediately.
             refreshBookSnapshot()
             startActivity(LocalBookReaderActivity.intent(context, bookId, locator))
+        }
+    }
+
+    private fun launchRelink(book: LocalBook) {
+        val type = if (book.contentType == ContentType.EPUB) "application/epub+zip" else "application/pdf"
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            this.type = type
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(type))
+        }
+        startActivityForResult(intent, REQUEST_RELINK)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_RELINK || resultCode != Activity.RESULT_OK) return
+        val uri = data?.data ?: return
+        val target = book ?: return
+        val context = activity ?: return
+        viewScope.launch {
+            runCatching {
+                // Relink verifies the SHA-256, so only the book's own file is accepted.
+                withContext(Dispatchers.IO) { importService.relink(uri, target) }
+            }.onSuccess { relinked ->
+                context.toast(context.getString(MR.strings.local_books_relinked, relinked.displayName))
+                refreshBookSnapshot()
+            }.onFailure { error ->
+                Logger.w(error) { "Book relink failed: $bookId" }
+                context.toast(
+                    if (error is IllegalArgumentException) MR.strings.local_books_choose_original
+                    else MR.strings.local_books_relink_failed,
+                )
+            }
         }
     }
 
@@ -681,6 +724,7 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
 
     private companion object {
         const val BOOK_ID_KEY = "epigraph.book.id"
+        const val REQUEST_RELINK = 0xAEB4
 
         /** Matches MangaDetailsController.TITLE_RISE_DP. */
         const val TITLE_RISE_DP = 8
@@ -722,6 +766,13 @@ private fun readerReadableForeground(context: android.content.Context, backgroun
     return candidates.maxBy { ColorUtils.calculateContrast(it, opaqueBackground) }
 }
 
+/** [BookChapterMetrics.pdfLabel] wording in the app language. */
+internal fun android.content.Context.pdfLabelText() = BookChapterMetrics.PdfLabelText(
+    chapter = { current, total -> getString(MR.strings.local_book_chapter_progress, current, total) },
+    page = { current, total -> getString(MR.strings.book_reader_page_label, current, total) },
+    pages = { first, last, total -> getString(MR.strings.book_reader_pages_label, first, last, total) },
+)
+
 private fun bookProgressLabel(
     context: android.content.Context,
     book: LocalBook,
@@ -748,6 +799,7 @@ private fun bookProgressLabel(
                 total,
                 chapters,
                 structure?.chapterStartPages.orEmpty(),
+                text = context.pdfLabelText(),
             )
         }
     }

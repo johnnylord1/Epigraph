@@ -1427,6 +1427,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 pdfChapterCount,
                 pdfChapterStartPages,
                 pdfPagesShown(),
+                text = pdfLabelText(),
             )
         } else {
             label
@@ -1452,6 +1453,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 pdfChapterCount,
                 pdfChapterStartPages,
                 pdfPagesShown(),
+                text = pdfLabelText(),
             )
         } else {
             // While dragging only the slider value is known; otherwise use the chapter resolved
@@ -1463,7 +1465,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
             chrome.readerNav.leftPageText.text = (chapterIndex + 1).toString()
             chrome.readerNav.rightPageText.text = epubChapterCount.coerceAtLeast(1).toString()
-            chrome.pageNumber.text = "Chapter ${chapterIndex + 1} / ${epubChapterCount.coerceAtLeast(1)}"
+            chrome.pageNumber.text = getString(MR.strings.local_book_chapter_progress, chapterIndex + 1, epubChapterCount.coerceAtLeast(1))
         }
         chrome.pageNumber.isVisible = bookReaderPreferences.showPageNumber.get()
         chrome.toolbar.subtitle = label
@@ -1543,7 +1545,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = target,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Page ${target + 1} / ${readerProgressPageCount.coerceAtLeast(1)}",
+            label = getString(MR.strings.book_reader_page_label, target + 1, readerProgressPageCount.coerceAtLeast(1)),
         )
     }
 
@@ -1564,7 +1566,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         updateReaderProgress(
             value = target,
             max = (readerProgressPageCount - 1).coerceAtLeast(1),
-            label = "Page ${target + 1} / ${readerProgressPageCount.coerceAtLeast(1)}",
+            label = getString(MR.strings.book_reader_page_label, target + 1, readerProgressPageCount.coerceAtLeast(1)),
         )
         renderPdfReflowPage(reader, target)
     }

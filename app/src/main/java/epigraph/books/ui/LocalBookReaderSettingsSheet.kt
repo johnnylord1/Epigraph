@@ -456,12 +456,20 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
     }
 
     private var playbackScope: CoroutineScope? = null
+    private var observesTtsPlayback = false
 
     private fun bindTtsPlayback(activity: LocalBookReaderActivity) = with(binding) {
         ttsPlayPause.setOnClickListener { activity.toggleBookTts() }
         ttsStop.setOnClickListener { activity.stopBookTts() }
         ttsPrevious.setOnClickListener { activity.skipBookTts(forward = false) }
         ttsNext.setOnClickListener { activity.skipBookTts(forward = true) }
+        observesTtsPlayback = true
+        if (isAttachedToWindow) startTtsPlaybackUpdates()
+    }
+
+    // Collect only while attached: the service's state flow is static, so a view that was bound
+    // but never attached (and so never detached) would keep the reader activity alive.
+    private fun startTtsPlaybackUpdates() = with(binding) {
         playbackScope?.cancel()
         playbackScope = MainScope().also { scope ->
             scope.launch {
@@ -478,6 +486,11 @@ class LocalBookReaderSettingsView @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (observesTtsPlayback) startTtsPlaybackUpdates()
     }
 
     override fun onDetachedFromWindow() {

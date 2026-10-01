@@ -171,6 +171,7 @@ import kotlinx.coroutines.withContext
 import yokai.domain.ui.UiPreferences
 import yokai.domain.manga.MangaRepository
 import yokai.i18n.MR
+import co.touchlab.kermit.Logger
 import yokai.util.lang.getString
 import android.R as AR
 
@@ -2650,22 +2651,23 @@ open class LibraryController(
             return
         }
 
-        unifiedBooksView?.showStatus("Downloading ${book.displayName}...")
+        unifiedBooksView?.showStatus(context.getString(MR.strings.local_books_downloading, book.displayName))
         viewScope.launch {
             runCatching {
                 withContext(kotlinx.coroutines.Dispatchers.IO) {
                     bookAssetCoordinator.ensurePublicationAvailable(book.bookId)
                 }
             }.onSuccess {
-                unifiedBooksView?.showStatus("Downloaded ${book.displayName}")
+                unifiedBooksView?.showStatus(context.getString(MR.strings.local_books_downloaded, book.displayName))
                 startActivity(LocalBookReaderActivity.intent(context, book.bookId))
             }.onFailure { error ->
-                unifiedBooksView?.showStatus(error.message ?: "The book could not be downloaded")
+                Logger.w(error) { "Book file unavailable: ${book.bookId}" }
+                unifiedBooksView?.showStatus(context.getString(MR.strings.local_books_download_failed))
                 AlertDialog.Builder(context)
-                    .setTitle("Book file unavailable")
-                    .setMessage("The synchronized copy could not be downloaded. You can choose the original file instead.")
+                    .setTitle(context.getString(MR.strings.local_books_unavailable_title))
+                    .setMessage(context.getString(MR.strings.local_books_unavailable_message))
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("Relink") { _, _ -> launchBooksRelink(book) }
+                    .setPositiveButton(context.getString(MR.strings.local_books_relink_file)) { _, _ -> launchBooksRelink(book) }
                     .show()
             }
         }
@@ -3059,7 +3061,8 @@ open class LibraryController(
         }
         if (resultCode != Activity.RESULT_OK) return
         val uri = data?.data ?: return
-        val name = queryBookDisplayName(uri).ifBlank { "Imported book" }
+        val strings = activity ?: return
+        val name = queryBookDisplayName(uri).ifBlank { strings.getString(MR.strings.local_books_fallback_name) }
         val relinkId = booksRelinkId.also { booksRelinkId = null }
         viewScope.launch {
             if (requestCode == booksRelinkRequest && relinkId != null) {
@@ -3071,9 +3074,15 @@ open class LibraryController(
                         localBookImportService.relink(uri, target, name)
                     }
                 }.onSuccess {
-                    unifiedBooksView?.showStatus("Relinked ${it.displayName}")
+                    unifiedBooksView?.showStatus(strings.getString(MR.strings.local_books_relinked, it.displayName))
                 }.onFailure {
-                    unifiedBooksView?.showStatus(it.message ?: "The book could not be relinked")
+                    Logger.w(it) { "Book relink failed: $relinkId" }
+                    unifiedBooksView?.showStatus(
+                        strings.getString(
+                            if (it is IllegalArgumentException) MR.strings.local_books_choose_original
+                            else MR.strings.local_books_relink_failed,
+                        ),
+                    )
                 }
                 return@launch
             }
@@ -3090,29 +3099,30 @@ open class LibraryController(
                     append("\n\n${preview.contentType.name} • ")
                     append(android.text.format.Formatter.formatShortFileSize(context, preview.byteSize))
                     if (preview.alreadyImported) {
-                        append("\n\nThis file is already in the library and will reuse its private copy.")
+                        append("\n\n").append(context.getString(MR.strings.local_books_duplicate_note))
                     }
                 }
                 AlertDialog.Builder(context)
                     .setTitle(context.getString(MR.strings.library_import_book))
                     .setMessage(message)
                     .setNegativeButton(android.R.string.cancel, null)
-                    .setPositiveButton("Import") { _, _ ->
+                    .setPositiveButton(context.getString(MR.strings.local_books_import)) { _, _ ->
                         viewScope.launch {
                             runCatching {
                                 withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     localBookImportService.import(uri, name)
                                 }
                             }.onSuccess {
-                                unifiedBooksView?.showStatus("Imported ${it.displayName}")
+                                unifiedBooksView?.showStatus(context.getString(MR.strings.local_books_imported, it.displayName))
                             }.onFailure {
-                                unifiedBooksView?.showStatus(it.message ?: "The book could not be imported")
+                                Logger.w(it) { "Book import failed" }
+                                unifiedBooksView?.showStatus(it.message ?: context.getString(MR.strings.local_books_import_failed))
                             }
                         }
                     }
                     .show()
             }.onFailure {
-                unifiedBooksView?.showStatus(it.message ?: "The book could not be inspected")
+                unifiedBooksView?.showStatus(it.message ?: strings.getString(MR.strings.local_books_import_failed))
             }
         }
     }
@@ -3131,20 +3141,22 @@ open class LibraryController(
 
     private fun showBookActions(book: epigraph.books.local.LocalBook) {
         val context = activity ?: return
+        val open = context.getString(MR.strings.open)
         val setCategories = context.getString(MR.strings.move_to_categories)
+        val relink = context.getString(MR.strings.local_books_relink_file)
         val actions = buildList {
-            if (book.isAvailable) add("Open")
+            if (book.isAvailable) add(open)
             add(setCategories)
-            add("Relink file")
-            add("Remove from library")
+            add(relink)
+            add(context.getString(MR.strings.remove_from_library))
         }
         AlertDialog.Builder(context)
             .setTitle(book.displayName)
             .setItems(actions.toTypedArray()) { _, which ->
                 when (actions[which]) {
-                    "Open" -> startActivity(LocalBookReaderActivity.intent(context, book.bookId))
+                    open -> startActivity(LocalBookReaderActivity.intent(context, book.bookId))
                     setCategories -> showBookCategories(book)
-                    "Relink file" -> launchBooksRelink(book)
+                    relink -> launchBooksRelink(book)
                     else -> removeBook(book)
                 }
             }

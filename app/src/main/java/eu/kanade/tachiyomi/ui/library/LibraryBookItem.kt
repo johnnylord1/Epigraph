@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.library
 
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -27,6 +28,8 @@ import eu.kanade.tachiyomi.util.view.setCards
 import eu.kanade.tachiyomi.widget.AutofitRecyclerView
 import epigraph.books.local.LocalBook
 import java.io.File
+import yokai.i18n.MR
+import yokai.util.lang.getString
 
 /**
  * Local EPUB/PDF entry in the canonical Comics library pipeline.
@@ -124,12 +127,20 @@ private abstract class LibraryBookHolder(
             append(" • ")
             append(it)
         }
-        if (!book.isAvailable) append(" • File missing")
+        if (!book.isAvailable) {
+            append(" • ")
+            append(itemView.context.getString(MR.strings.local_books_file_missing))
+        }
     }
 
-    protected fun placeholderFor(book: LocalBook): Int =
-        if (book.contentType.name == "PDF") R.drawable.ic_file_open_24dp
+    /** The content-type glyph in the theme's secondary text color; the PDF glyph ships tinted black. */
+    protected fun placeholderFor(book: LocalBook): Drawable? {
+        val icon = if (book.contentType.name == "PDF") R.drawable.ic_file_open_24dp
         else R.drawable.ic_book_open_variant_24dp
+        return ContextCompat.getDrawable(itemView.context, icon)?.mutate()?.apply {
+            setTint(itemView.context.getResourceColor(android.R.attr.textColorSecondary))
+        }
+    }
 
     protected fun loadCover(image: ImageView, book: LocalBook) {
         image.dispose()
@@ -138,13 +149,13 @@ private abstract class LibraryBookHolder(
         )
         val cover = book.coverPath?.let(::File)?.takeIf { it.isFile }
         if (cover == null) {
-            image.setImageResource(placeholderFor(book))
+            image.setImageDrawable(placeholderFor(book))
             image.scaleType = ImageView.ScaleType.CENTER
             return
         }
         image.scaleType = ImageView.ScaleType.CENTER_CROP
         image.load(cover) {
-            ContextCompat.getDrawable(itemView.context, placeholderFor(book))?.asImage()?.let {
+            placeholderFor(book)?.asImage()?.let {
                 placeholder(it)
                 error(it)
             }

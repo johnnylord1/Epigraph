@@ -127,20 +127,28 @@ internal object BookChapterMetrics {
             .coerceIn(0, lastPage)
     }
 
+    /** Words for [pdfLabel]. English by default so the metrics stay locale-free; the UI passes its strings. */
+    class PdfLabelText(
+        val chapter: (current: Int, total: Int) -> String = { current, total -> "Chapter $current / $total" },
+        val page: (current: Int, total: Int) -> String = { current, total -> "Page $current / $total" },
+        val pages: (first: Int, last: Int, total: Int) -> String = { first, last, total -> "Pages $first-$last / $total" },
+    )
+
     fun pdfLabel(
         pageIndex: Int,
         totalPages: Int,
         chapterCount: Int,
         chapterStartPages: List<Int> = emptyList(),
         pagesShown: Int = 1,
+        text: PdfLabelText = PdfLabelText(),
     ): String {
         val pages = totalPages.coerceAtLeast(1)
         val chapters = chapterCount.coerceAtLeast(1)
         val chapter = chapterIndexForPage(pageIndex, pages, chapters, chapterStartPages) + 1
         val page = pageIndex.coerceIn(0, pages - 1) + 1
         val last = (page + pagesShown - 1).coerceAtMost(pages)
-        val range = if (last > page) "Pages $page-$last" else "Page $page"
-        return "Chapter $chapter / $chapters • $range / $pages"
+        val range = if (last > page) text.pages(page, last, pages) else text.page(page, pages)
+        return "${text.chapter(chapter, chapters)} • $range"
     }
 
     // Readium reports chapter starts such as 1/3 that land just below the boundary once multiplied.

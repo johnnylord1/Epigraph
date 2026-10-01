@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Book
+import androidx.core.content.ContextCompat
 import androidx.core.text.inSpans
 import androidx.core.view.updatePadding
 import androidx.core.view.isVisible
@@ -347,11 +348,11 @@ private class LocalBooksAdapter(
                     }
                 }
             }
-            val placeholder = if (book.contentType.name == "PDF") {
-                R.drawable.ic_file_open_24dp
-            } else {
-                R.drawable.ic_book_open_variant_24dp
-            }
+            // The PDF glyph ships tinted black; both take the secondary text color on any theme.
+            val placeholder = ContextCompat.getDrawable(
+                context,
+                if (book.contentType.name == "PDF") R.drawable.ic_file_open_24dp else R.drawable.ic_book_open_variant_24dp,
+            )?.mutate()?.apply { setTint(context.getResourceColor(android.R.attr.textColorSecondary)) }
             val coverFile = book.coverPath?.let(::File)?.takeIf(File::isFile)
             cover.dispose()
             if (coverFile != null) {
@@ -362,7 +363,7 @@ private class LocalBooksAdapter(
                 }
             } else {
                 cover.scaleType = ImageView.ScaleType.CENTER_INSIDE
-                cover.setImageResource(placeholder)
+                cover.setImageDrawable(placeholder)
             }
             root.setOnClickListener { if (book.isAvailable) onOpen(book) else onRecover(book) }
             recover.isVisible = !book.isAvailable
