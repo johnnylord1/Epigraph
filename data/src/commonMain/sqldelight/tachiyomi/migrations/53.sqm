@@ -1,0 +1,48 @@
+-- Builds before 0.1.0-alpha.1 sent router-keyed comic chapter states with the composite
+-- `comic.chapter_state::<comic>::<chapter>` id as comicId, which the Core rejects. The adapter
+-- now derives the bare comic id, but the Core has a stored receipt for each rejected
+-- clientMutationId, so re-key only this exact failure and identity shape once.
+CREATE TABLE aethon_sync_outbox_rekey_53 (
+    sequence INTEGER NOT NULL PRIMARY KEY,
+    old_client_mutation_id TEXT NOT NULL,
+    new_client_mutation_id TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO aethon_sync_outbox_rekey_53(
+    sequence,
+    old_client_mutation_id,
+    new_client_mutation_id
+)
+SELECT
+    sequence,
+    client_mutation_id,
+    lower(hex(randomblob(16)))
+FROM aethon_sync_outbox
+WHERE status = 'ERROR'
+  AND last_error = 'blocked:INVALID_SUWAYOMI_ENTITY_ID'
+  AND entity_type = 'comic.chapter_state'
+  AND entity_id GLOB 'comic.chapter_state::suwayomi:*:manga:*::*';
+
+UPDATE aethon_sync_outbox
+SET client_mutation_id = (
+        SELECT new_client_mutation_id
+        FROM aethon_sync_outbox_rekey_53
+        WHERE aethon_sync_outbox_rekey_53.sequence = aethon_sync_outbox.sequence
+    ),
+    payload_json = replace(
+        payload_json,
+        '"clientMutationId":"' || client_mutation_id || '"',
+        '"clientMutationId":"' || (
+            SELECT new_client_mutation_id
+            FROM aethon_sync_outbox_rekey_53
+            WHERE aethon_sync_outbox_rekey_53.sequence = aethon_sync_outbox.sequence
+        ) || '"'
+    ),
+    status = 'PENDING',
+    next_attempt_at = 0,
+    last_error = NULL,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE sequence IN (SELECT sequence FROM aethon_sync_outbox_rekey_53);
+
+DROP TABLE aethon_sync_outbox_rekey_53;

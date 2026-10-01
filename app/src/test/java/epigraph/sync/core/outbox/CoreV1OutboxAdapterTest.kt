@@ -552,6 +552,27 @@ class CoreV1OutboxAdapterTest {
     }
 
     @Test
+    fun `comic chapter state keyed by the reader router sends the bare comic id`() {
+        val command = SyncCommand.SetChapterState(
+            entityId = EpigraphEntityId("comic.chapter_state::${COMIC_ID.value}::chapter-7"),
+            state = ChapterStatePatch(chapterId = "chapter-7", read = true),
+        )
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.COMIC_CHAPTER_STATE, COMIC_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.COMIC_CHAPTER_STATE)),
+                lamport = 13,
+            ),
+        )
+
+        assertEquals("comic.chapter_state::${COMIC_ID.value}::chapter-7", ready.mutation.entityId)
+        assertEquals(COMIC_ID.value, ready.mutation.patch?.get("comicId")?.jsonPrimitive?.content)
+        assertEquals(ready.mutation.entityId, ready.mutation.patch?.get("chapterStateId")?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `projects novel progress with the stable chapter binding and progression`() {
         val command = SyncCommand.SetProgress(
             WORK_ID,

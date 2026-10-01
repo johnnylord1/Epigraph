@@ -605,8 +605,12 @@ class CoreV1OutboxAdapter(
         if (record.entityType != EpigraphCoreEntityType.COMIC_CHAPTER_STATE) return null
         val state = command.state
         val portable = state.portableWorkRef != null && state.portableChapterRef != null
-        val comicId = if (portable) PortableIdentityV3.workId(requireNotNull(state.portableWorkRef)) else record.entityId
         val chapterId = if (portable) PortableIdentityV3.chapterId(requireNotNull(state.portableChapterRef)) else state.chapterId
+        val comicId = if (portable) {
+            PortableIdentityV3.workId(requireNotNull(state.portableWorkRef))
+        } else {
+            comicIdOfChapterState(record.entityId, chapterId)
+        }
         val chapterStateId = "comic.chapter_state::$comicId::$chapterId"
         return Projection(
             entityId = chapterStateId,
@@ -627,6 +631,18 @@ class CoreV1OutboxAdapter(
                 put("explicitProgressReset", state.explicitProgressReset)
             },
         )
+    }
+
+    /**
+     * The reader router keys chapter-state rows as `comic.chapter_state::<comic>::<chapter>`;
+     * older rows used the bare comic id. Sending the composite as `comicId` makes the Core reject
+     * the mutation as a foreign Suwayomi identity.
+     */
+    private fun comicIdOfChapterState(entityId: String, chapterId: String): String {
+        val suffix = "::$chapterId"
+        if (!entityId.startsWith(COMIC_CHAPTER_STATE_PREFIX) || !entityId.endsWith(suffix)) return entityId
+        return entityId.substring(COMIC_CHAPTER_STATE_PREFIX.length, entityId.length - suffix.length)
+            .takeIf { it.isNotBlank() } ?: entityId
     }
 
     private fun projectNovelProgress(
@@ -807,6 +823,7 @@ class CoreV1OutboxAdapter(
         const val BOOKS_GLOBAL_SCOPE = "books:global"
         const val NOVELS_PROFILE_SCOPE_PREFIX = "novels:profile:"
         const val COMICS_PROFILE_SCOPE_PREFIX = "comics:profile:"
+        private const val COMIC_CHAPTER_STATE_PREFIX = "comic.chapter_state::"
 
         val CORE_V1_ENTITY_TYPES = setOf(
             EpigraphCoreEntityType.BOOK_ENTRY,

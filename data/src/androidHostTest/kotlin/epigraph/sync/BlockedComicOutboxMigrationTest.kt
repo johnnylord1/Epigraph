@@ -39,6 +39,33 @@ class BlockedComicOutboxMigrationTest {
         }
     }
 
+    @Test
+    fun `migration 53 reopens chapter states rejected for their composite comic id`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        driver.use {
+            createOutbox(driver)
+            insertBlocked(driver, "valid", "comic.chapter_state", CHAPTER_STATE_ID, "blocked:INVALID_SUWAYOMI_ENTITY_ID")
+            insertBlocked(driver, "bare", "comic.chapter_state", SERVER_SCOPED_COMIC_ID, "blocked:INVALID_SUWAYOMI_ENTITY_ID")
+            insertBlocked(driver, "other", "comic.chapter_state", CHAPTER_STATE_ID, "blocked:INVALID_PAGE_INDEX")
+            insertBlocked(driver, "history", "comic.history", CHAPTER_STATE_ID, "blocked:INVALID_SUWAYOMI_ENTITY_ID")
+
+            Database.Schema.migrate(driver, oldVersion = 53, newVersion = 54)
+
+            val recovered = recoveredState(driver, CHAPTER_STATE_ID)
+            assertEquals(RowState("PENDING", 0, null), recovered.state)
+            assertNotEquals("valid", recovered.clientMutationId)
+            assertTrue(recovered.clientMutationId.matches(Regex("[0-9a-f]{32}")))
+            assertEquals(
+                recovered.clientMutationId,
+                Json.parseToJsonElement(recovered.payloadJson)
+                    .jsonObject.getValue("clientMutationId").jsonPrimitive.content,
+            )
+            assertEquals(RowState("ERROR", Long.MAX_VALUE, "blocked:INVALID_SUWAYOMI_ENTITY_ID"), state(driver, "bare"))
+            assertEquals(RowState("ERROR", Long.MAX_VALUE, "blocked:INVALID_PAGE_INDEX"), state(driver, "other"))
+            assertEquals(RowState("ERROR", Long.MAX_VALUE, "blocked:INVALID_SUWAYOMI_ENTITY_ID"), state(driver, "history"))
+        }
+    }
+
     private fun createOutbox(driver: JdbcSqliteDriver) {
         driver.execute(
             identifier = null,
@@ -93,7 +120,10 @@ class BlockedComicOutboxMigrationTest {
         )
     }
 
-    private fun recoveredState(driver: JdbcSqliteDriver): RecoveredRow = driver.executeQuery(
+    private fun recoveredState(
+        driver: JdbcSqliteDriver,
+        entityId: String = SERVER_SCOPED_COMIC_ID,
+    ): RecoveredRow = driver.executeQuery(
         identifier = null,
         sql = """
             SELECT client_mutation_id, payload_json, status, next_attempt_at, last_error
@@ -111,7 +141,7 @@ class BlockedComicOutboxMigrationTest {
             )
         },
         parameters = 1,
-        binders = { bindString(0, SERVER_SCOPED_COMIC_ID) },
+        binders = { bindString(0, entityId) },
     ).value
 
     private fun state(driver: JdbcSqliteDriver, mutationId: String): RowState = driver.executeQuery(
@@ -140,5 +170,7 @@ class BlockedComicOutboxMigrationTest {
     private companion object {
         const val SERVER_SCOPED_COMIC_ID =
             "suwayomi:server:desktop-a:profile:main:manga:7"
+        const val CHAPTER_STATE_ID =
+            "comic.chapter_state::$SERVER_SCOPED_COMIC_ID::suwayomi:server:desktop-a:profile:main:chapter:70"
     }
 }

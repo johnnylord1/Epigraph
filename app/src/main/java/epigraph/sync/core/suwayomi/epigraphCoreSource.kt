@@ -104,7 +104,7 @@ class EpigraphCoreSource(
             ) ?: throw liveFailure
         }
 
-        return chapters.mapNotNull { chapter ->
+        return newestFirst(chapters).mapNotNull { chapter ->
             val chapterId = chapter.long("id")?.takeIf { it > 0 } ?: return@mapNotNull null
             SChapter.create().apply {
                 url = reference.serverId?.let {
@@ -166,6 +166,18 @@ class EpigraphCoreSource(
 
     private fun <T> unsupportedLegacyHttp(): T =
         throw UnsupportedOperationException("Epigraph Core source uses only its authenticated gateway")
+
+    /**
+     * Suwayomi numbers chapters oldest first (`sourceOrder` 1 is the first chapter) while the
+     * library treats list position 0 as the newest chapter, the way extensions return them.
+     * Without the reversal an unread series offers its latest chapter as "Start reading".
+     */
+    private fun newestFirst(chapters: List<JsonObject>): List<JsonObject> =
+        if (chapters.all { it.long("sourceOrder") != null }) {
+            chapters.sortedByDescending { it.long("sourceOrder") }
+        } else {
+            chapters.asReversed()
+        }
 
     private fun JsonObject.objectField(field: String): JsonObject =
         this[field] as? JsonObject

@@ -100,8 +100,32 @@ class EpigraphCoreSourceTest {
         assertEquals(19f, chapters.single().chapter_number)
     }
 
+    @Test
+    fun `Suwayomi chapters arrive oldest first and are listed newest first`() = runTest {
+        val gateway = RecordingGateway(
+            liveChapters = listOf(1, 2, 3).map { order ->
+                buildJsonObject {
+                    put("id", 100 + order)
+                    put("name", "Chapter $order")
+                    put("chapterNumber", order.toDouble())
+                    put("sourceOrder", order)
+                }
+            },
+        )
+        val source = EpigraphCoreSource(gateway)
+        val manga = SManga.create().apply {
+            url = SuwayomiCoreContentReference.forManga("desktop-one", "main", 7)
+            title = "Before"
+        }
+
+        val chapters = source.getChapterList(manga)
+
+        assertEquals(listOf("Chapter 3", "Chapter 2", "Chapter 1"), chapters.map { it.name })
+    }
+
     private class RecordingGateway(
         val includeChaptersCollection: Boolean = true,
+        val liveChapters: List<JsonObject>? = null,
         val failLiveChapters: Boolean = false,
         val includeCachedChapters: Boolean = false,
     ) : EpigraphCoreSourceGateway {
@@ -133,11 +157,15 @@ class EpigraphCoreSourceTest {
                     put("fetchChapters", buildJsonObject {
                         if (includeChaptersCollection) {
                             put("chapters", buildJsonArray {
-                                add(buildJsonObject {
-                                    put("id", 11)
-                                    put("name", "Chapter 12")
-                                    put("chapterNumber", 12.0)
-                                })
+                                if (liveChapters != null) {
+                                    liveChapters.forEach { add(it) }
+                                } else {
+                                    add(buildJsonObject {
+                                        put("id", 11)
+                                        put("name", "Chapter 12")
+                                        put("chapterNumber", 12.0)
+                                    })
+                                }
                             })
                         }
                     })
