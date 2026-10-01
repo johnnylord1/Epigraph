@@ -2,7 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
-> **Note:** Epigraph is built on the Hayai Android foundation, which is a fork of [Yokai](https://github.com/null2264/yokai). The changelog below reflects upstream changes prior to the Epigraph fork.
+## [android-0.1.0-alpha.1] - 2026-09-30
+
+First Android pre-release of Epigraph Mobile (`app.epigraph.mobile`), for Android 7.0 (API 24) and newer.
+
+### Added
+- One library for comics, novels, EPUB and PDF, with a Comics / Books & novels toggle, categories and manual library update.
+- EPUB and PDF reader: PDF as pages or as reflowed text, EPUB table of contents, reading themes, typography and read-aloud.
+- Novel reader: quotes and annotations, search in chapter, find-and-replace rules, auto-scroll and read-aloud.
+- Discover in Browse, with recommendations built from the library and tracker history.
+- Epigraph Core pairing on the local network (PIN, QR code or pairing bundle) with a pinned certificate. Library, progress, categories and tracking sync through an outbox, and the sync status never reports synced while commands are pending.
+- Tracker credentials sync only to the paired Core. They are sealed with the Android Keystore and wiped on unpair.
+- `.epigraphbk` backups. Restore still accepts `.tachibk`, `.proto.gz` and JSON backups.
+
+### Changes
+- Nocturne visual language shared with the desktop app: flat surfaces, small radii, no pill buttons, muted settings glyphs and Outfit typography.
+- One details page for comics, novels, EPUB and PDF, with a cover container transform, scroll veil and title rise.
+- Reader HUD with configurable page turns. Settings subpages share the axis transition, title size and row typography.
+- Onboarding has one layer and one filled button per step. The storage folder is chosen through the system picker.
+- Create and restore backup are plain rows, like the rest of Settings.
+- Connected button groups (Popular / Latest in Browse, reader modes) use the small radius instead of pill ends.
+- A book whose file is missing shows a "File missing" subtitle and offers to relink the original file from its details page.
+
+### Fixes
+- Creating a backup right after a restore no longer reports "Backup already in progress", and a manual library update can run again after the first one finishes.
+- Titles from a source that is not installed keep the source name recorded in the backup, in the restore dialog, on the details page and in the next backup, instead of a numeric ID.
+- A PDF position synced with Epigraph desktop opens on the same page. Desktop page numbers count from one, and a position that cannot be used no longer stops the other books from syncing.
+- Progress for a novel removed on another device no longer stops the novel library from syncing.
+- Novels synced from the desktop or restored from a backup stay in Books & novels when their plugin is not installed on the phone, instead of appearing under Comics. Backups now record which sources serve novels.
+- The Epigraph Core screen says "1 repository" instead of "1 repositories".
+- Novel plugins that only your desktop has now say that Install copies them from the desktop, instead of calling them unavailable next to an Install button.
+- EPUB and PDF placeholders stay visible on dark themes, and book import, download and relink messages are translated.
+- Book reader settings no longer keep a closed reader in memory through the read-aloud state.
+- Browse covers no longer go blank in release builds.
+- The status bar colour no longer flashes on Android 15 and newer.
+- The slowest frame when opening a details page dropped from ~120-156 ms to ~80 ms.
+
+### Other
+- Backups and sync never carry cookies, sessions or passwords. `allowBackup` is off, with explicit data extraction rules.
+- Stricter novel HTML sanitizer and network policy. Untrusted EPUB XML is parsed through SafeXml.
+- Extensions always install through the visible Package Installer.
+- No upstream Firebase or Crashlytics configuration is shipped.
+
+> **Note:** Epigraph is built on the Hayai Android foundation, which is a fork of [Yokai](https://github.com/null2264/yokai). The entries below reflect upstream changes prior to the Epigraph fork.
 
 The format is simplified version of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/):
 - `Additions` - New features

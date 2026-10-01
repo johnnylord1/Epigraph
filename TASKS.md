@@ -205,8 +205,8 @@ Biblioteca e UI (verificado no API 36, build debug):
 - [x] Explorar: cabeçalho "Last used" aparece uma vez só.
 - [x] Leitor de PDF: swipe horizontal pagina também no modo vertical; fling com zoom só move a
       página.
-- [x] Indicador de página/progresso dos leitores (mangá, novel, EPUB, PDF) ganhou fundo em pílula
-      com a cor do tema do leitor; antes o "0%" da novel e o "Chapter 1/3" do EPUB ficavam por
+- [x] Indicador de página/progresso dos leitores (mangá, novel, EPUB, PDF) ganhou fundo discreto
+      (raio xs, sem pílula); antes o "0%" da novel e o "Chapter 1/3" do EPUB ficavam por
       cima do texto.
 - [x] Onboarding: "instalar apps desconhecidos" passou a opcional. O instalador de extensões já
       trata `STATUS_PENDING_USER_ACTION` abrindo a tela do sistema, que pede a permissão sob
@@ -269,7 +269,8 @@ Fase 3 — Trackers
 Fase 4 — Tema, HUD e configurações
 
 - [ ] Tema "Epigraph Nocturne" com a paleta do desktop, padrão em instalações novas.
-- [ ] HUD dos leitores mais próximo do desktop (barra inferior em pílula, chip de capítulo).
+- [x] HUD dos leitores mais próximo do desktop: folha inferior plana e larga, sem pílula (o usuário
+      rejeitou botões e barras em pílula e texturas).
 - [ ] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
 
 Fase 5 — Explorar
@@ -287,3 +288,29 @@ Fase 6 — Itens adiados
 - [ ] Testes de morte de processo no download de mangá.
 
 Fase 7 — Gates, smoke no emulador e documentação.
+
+## 11. E2E da release 0.1.0-alpha.1 (2026-09-30)
+
+Fluxo de usuário comum na build `standardRelease` assinada (x86_64, emulador API 36), instalada
+por cima da anterior:
+
+- [x] Instalar, onboarding, restaurar `.epigraphbk`, exportar backup (sem segredos), ajustes,
+      leitores (mangá, novel, EPUB, PDF) com retomada de posição, Sobre "Release 0.1.0-alpha.1".
+- [x] Pareamento com o syncd do desktop por pairing bundle; status de sync nunca mostra
+      "synced" com falha ou com o Core fora do ar ("aguardando validação do Core").
+- [x] Bug: posições de PDF do desktop são 1-based (`pageIndex == totalPages` na última página) e
+      o `ReaderLocator.Pdf` do Android é 0-based. O `require` derrubava o snapshot inteiro de
+      `books:global` e o feed ficava em retry a cada 5 s. Corrigido nos dois sentidos (+1 ao
+      enviar, −1 com clamp ao receber, registro inutilizável é ignorado) com teste de regressão.
+- [x] Bug: `novel.progress` de uma novel removida no desktop (entry com tombstone
+      `novel_deleted`) não tinha `aethon_content_identity`, e a FK derrubava o snapshot de
+      novels inteiro. A projeção agora garante a identidade (como já fazia para quadrinhos). Os
+      testes de projeção passaram a abrir o banco com `foreign_keys` como o app; dois fixtures
+      sem a identidade pai foram corrigidos.
+- [x] Bug: novels sincronizadas cujo plugin não está instalado no aparelho apareciam em
+      Quadrinhos. Fontes de novels conhecidas (plugins carregados e fontes de novels vindas do
+      Core, `selectNovelSourceIds`) ficam registradas e a `StubSource` delas se declara fonte de
+      novel; a biblioteca reclassifica quando o conjunto muda.
+- [x] Fonte não instalada mantém o nome gravado no backup (restauração, detalhes e próximo
+      backup) em vez do ID numérico.
+- [x] "1 repositories · 2 plugins" virou plural correto.

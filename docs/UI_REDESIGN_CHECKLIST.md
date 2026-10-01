@@ -5,7 +5,7 @@ Status: `pendente` · `feito` · `feito*` (coberto por componente/tema compartil
 Tecnologia: V = View/XML (Conductor ou Activity), C = Compose (em `BaseComposeController`/`ComposeView`), V+C = misto.
 Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · global.
 
-**Resumo (30/09/2026):** 169 superfícies — 59 `feito`, 106 `feito*`, 4 `limitação`, 0 `pendente`.
+**Resumo (30/09/2026):** 169 superfícies — 62 `feito`, 106 `feito*`, 1 `limitação` (por contrato), 0 `pendente`.
 
 ## F0 — Global e componentes compartilhados
 | Superfície | Arquivo | Tec | De onde | Tipo | Status |
@@ -15,7 +15,7 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 | Barra inferior / rail | `res/layout/main_activity.xml`, `styles.xml` `Widget.Tachiyomi.BottomNavigationView` | V | raiz | global | feito |
 | Troca de abas raiz (fade through) | `ui/main/RootTabsController.kt` `animateSwap` | V | nav inferior | global | feito (frame `f4-recents-fade-through-mid`) |
 | Push/pop padrão (shared axis X + predictive back) | `util/view/ControllerExtensions.kt` `fadeTransactionHandler`, `ui/base/controller/*ChangeHandler.kt` | V | qualquer push | global | feito |
-| Predictive back (progresso do gesto) | `ControllerExtensions.kt` `BackHandlerControllerInterface`, `MainActivity` | V | gesto voltar | global | feito — progresso do gesto não verificado no emulador |
+| Predictive back (progresso do gesto) | `ControllerExtensions.kt` `BackHandlerControllerInterface`, `MainActivity` | V | gesto voltar | global | feito — progresso do gesto verificado no emulador (página encolhe sobre a anterior, 30/09/2026) |
 | Top bar grande/colapsável + busca | `ui/base/ExpandedAppBarLayout.kt`, `epigraph_app_bar_contents.xml` | V | todas as telas V | global | feito |
 | Top bar Compose | `yokai/presentation/component/AppBar.kt` | C | telas C | global | feito* |
 | Barra flutuante de seleção (action mode) | `ui/base/FloatingToolbar.kt` | V | seleção em listas | global | feito |
@@ -63,7 +63,7 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 | Criar/editar categoria | `ui/category/ManageCategoryDialog.kt` | V | Categorias | dialog | feito* |
 | Excluir categoria | `CategoryController.kt:136` | V | Categorias | dialog | feito* |
 | Livros locais (EPUB/PDF) | `epigraph/books/ui/LocalBooksController.kt` | V | Biblioteca | tela | feito (frames `f7-localbooks-*`) |
-| Detalhes de livro local | `epigraph/books/ui/LocalBookDetailsController.kt` | V | Livros locais | tela | feito (frames `f2-book-details-nocturne-accent`, `f2-book-details-chapters-aligned`) |
+| Detalhes de livro local | `epigraph/books/ui/LocalBookDetailsController.kt` | V | Livros locais | tela | feito — mesmo cabeçalho de Comics/Novels (`CoverVeil`, título sobe, "In library", linhas de capítulo, FAB Start/Continue); EPUB e PDF verificados |
 | Menu de livro local | `res/menu/book_details.xml` | V | detalhes do livro | menu | feito* |
 
 ## F2 — Detalhes da obra
@@ -71,8 +71,8 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 |---|---|---|---|---|---|
 | Capa → detalhes (container transform) | `ui/base/controller/CoverExpandChangeHandler.kt` | V | capa na grade | global | feito (frame `f2-container-transform-mid`) |
 | Detalhes (cabeçalho + capítulos) | `ui/manga/MangaDetailsController.kt`, `MangaHeaderHolder.kt` | V | Biblioteca/Recentes/Browse | tela | feito |
-| Cabeçalho reativo ao scroll (parallax, título sobe) | `MangaDetailsController.kt`, `manga_header_item.xml` | V | detalhes | tela | limitação — implementado; não verificado (obra de teste com 4 capítulos não rola) |
-| Paleta derivada da capa | `MangaDetailsController.kt` (`themeMangaDetails`) | V | detalhes | tela | feito — desligada (padrão) verificada; ligada não verificada |
+| Cabeçalho reativo ao scroll (parallax, título sobe) | `MangaDetailsController.kt`, `manga_header_item.xml` | V | detalhes | tela | feito — verificado com obra local de 36 capítulos: parallax/véu sob a status bar, barra volta com título ao subir |
+| Paleta derivada da capa | `MangaDetailsController.kt` (`themeMangaDetails`) | V | detalhes | tela | feito — desligada (padrão) e ligada verificadas (dourado, vermelho e cinza extraídos das capas) |
 | Linha de capítulo | `ui/manga/chapter/ChapterHolder.kt`, `chapters_item.xml` | V | detalhes | tela | feito |
 | Botão de download | `ui/download/DownloadButton.kt` | V | capítulo | tela | feito |
 | Metadados (Compose) | `ui/manga/MangaDetailCompose.kt` | C | detalhes | tela | feito |
@@ -111,8 +111,8 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 | Modo de leitura (popup) | `ReaderActivity.kt:1410` | V | HUD | popup | feito* |
 | Menu do leitor (sheet) | `ReaderActivity.kt:2881` | V | HUD | menu | feito* |
 | Diálogos do leitor (reset, busca, outro) | `ReaderActivity.kt:1234,2946,3222` | V | HUD | dialog | feito* |
-| Leitor de livros (EPUB/PDF) | `epigraph/books/ui/LocalBookReaderActivity.kt` | V | livro local | tela | limitação — tema aplicado; ~53 textos fixos em inglês em `LocalBookReaderActivity` |
-| Configurações do leitor de livros | `epigraph/books/ui/LocalBookReaderSettingsSheet.kt` | V | HUD livros | sheet | limitação — 2 textos fixos em inglês |
+| Leitor de livros (EPUB/PDF) | `epigraph/books/ui/LocalBookReaderActivity.kt` | V | livro local | tela | feito — tema aplicado; textos em moko `book_reader_*` (en + pt-BR); só mensagens internas de Readium/Pdfium ficam em inglês |
+| Configurações do leitor de livros | `epigraph/books/ui/LocalBookReaderSettingsSheet.kt` | V | HUD livros | sheet | feito — rótulos dos seletores em moko (en + pt-BR) |
 | Menu do leitor de livros | `LocalBookReaderActivity.kt:1367` | V | HUD livros | menu | feito* |
 | Diálogos do leitor de livros (7) | `LocalBookReaderActivity.kt:1627-2718` | V | HUD livros | dialog | feito* |
 | Momento: obra concluída | a definir no leitor | V | último capítulo lido | momento | feito — não disparado no emulador |
@@ -203,7 +203,7 @@ Tipo: tela · sub · sheet · dialog · menu · popup · hud · momento · globa
 | WebView | `ui/webview/WebViewActivity.kt`, `WebViewScreenContent.kt` | C | vários | tela | feito* |
 | Reconciliação de extensões (sync) | `epigraph/sync/core/extensions/ExtensionReconciliationActivity.kt` | C | sync | tela | feito |
 | Dependência LNReader | `epigraph/sync/core/novels/LnReaderDependencyActivity.kt` | V | sync | tela | feito |
-| Instalação de extensão | `extension/util/ExtensionInstallBroadcast.kt` | V | instalar | tela | limitação (Package Installer do sistema, obrigatório pelo AGENTS) |
+| Instalação de extensão | `extension/util/ExtensionInstallBroadcast.kt` | V | instalar | tela | limitação — por contrato: Package Installer visível do sistema (AGENTS.md), fora do alcance do tema |
 | Logins EH / MangaDex | `exh/ui/login/*`, `exh/md/MangaDexLoginActivity.kt` | V+C | Config. | tela | feito |
 | Momento: importação concluída | `SettingsDataScreen.kt` / restore | C | restaurar backup | momento | feito — restauração não disparada; importação de livro verificada (`f8-moment-import-*`) |
 | Momento: backup concluído | `SettingsDataScreen.kt` / create | C | criar backup | momento | feito — não disparado no emulador |
