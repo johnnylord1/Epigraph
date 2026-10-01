@@ -148,7 +148,7 @@ class UnifiedLibraryBooksView(
                 localBookRepository.observeBooks(),
                 mangaRepository.getLibraryMangaAsFlow(),
                 // Novel plugins load lazily; reclassify once their sources resolve.
-                sourceManager.catalogueSources,
+                sourceManager.libraryClassificationChanges,
                 getCategories.subscribe(),
                 // Book category links live in their own table; assignments bump this revision.
                 categoryRevision,

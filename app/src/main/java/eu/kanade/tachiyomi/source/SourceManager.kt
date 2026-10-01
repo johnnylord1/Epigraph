@@ -38,6 +38,7 @@ import epigraph.novel.plugin.NovelPluginManager
 // NOVEL <--
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
+import yokai.data.DatabaseHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,7 +66,24 @@ class SourceManager(
 
     private val stubSourcesMap = ConcurrentHashMap<Long, StubSource>()
 
+    // Names recorded by restored backups, so a source that is not installed keeps its name
+    // (and passes it on to the next backup) instead of degrading to its numeric ID.
+    private val recordedSourceNames by lazy {
+        context.getSharedPreferences(RECORDED_SOURCE_NAMES, Context.MODE_PRIVATE)
+    }
+
+    // Sources known to serve novels: installed novel plugins and the sources of novels synced
+    // from Epigraph Core. A novel whose plugin is not installed here still belongs in Books &
+    // novels, so its stub source keeps reporting itself as a novel source.
+    private val knownNovelSources by lazy {
+        context.getSharedPreferences(KNOWN_NOVEL_SOURCES, Context.MODE_PRIVATE)
+    }
+    private val novelSourceIds = MutableStateFlow<Set<Long>>(emptySet())
+
     val catalogueSources: Flow<List<CatalogueSource>> = sourcesMapFlow.map { it.values.filterIsInstance<CatalogueSource>() }
+
+    /** Emits whenever a title may have moved between the comic and novel libraries. */
+    val libraryClassificationChanges: Flow<Unit> = combine(catalogueSources, novelSourceIds) { _, _ -> }
     val onlineSources: Flow<List<HttpSource>> = catalogueSources.map { it.filterIsInstance<HttpSource>() }
 
     // EXH -->
@@ -74,6 +92,7 @@ class SourceManager(
 
     // NOVEL -->
     private val novelPluginManager: NovelPluginManager by injectLazy()
+    private val databaseHandler: DatabaseHandler by injectLazy()
     // NOVEL <--
 
     // FIXME: Delegated source, unused at the moment, J2K only delegate deep links
@@ -87,6 +106,16 @@ class SourceManager(
         // plugin on cold start) and contributed to issue #14's splash hang when the recents
         // path tried to render rows before the map had any sources.
         scope.launch { novelPluginManager.ensureInstalledPluginsLoaded() }
+        // Load the recorded names off the main thread before a stub first asks for one.
+        scope.launch { recordedSourceNames.all }
+        scope.launch {
+            novelSourceIds.value = knownNovelSources.all.keys.mapNotNull { it.toLongOrNull() }.toSet()
+            combine(
+                databaseHandler.subscribeToList { aethon_syncQueries.selectNovelSourceIds() },
+                novelPluginManager.installedSourcesFlow,
+            ) { synced, plugins -> synced.toSet() + plugins.map { it.id } }
+                .collect(::rememberNovelSources)
+        }
 
         scope.launch {
             // Single writer to sourcesMapFlow. Any change to extensions, the exhentai pref,
@@ -206,6 +235,30 @@ class SourceManager(
         }
     }
 
+    fun rememberSourceNames(names: Map<Long, String>) {
+        val editor = recordedSourceNames.edit()
+        names.forEach { (id, name) ->
+            if (name.isNotBlank() && name != id.toString()) editor.putString(id.toString(), name)
+        }
+        editor.apply()
+    }
+
+    // A source stays a novel source once seen, so uninstalling a plugin never moves its novels.
+    @Synchronized
+    fun rememberNovelSources(ids: Collection<Long>) {
+        val added = ids.toSet() - novelSourceIds.value
+        if (added.isEmpty()) return
+        val editor = knownNovelSources.edit()
+        added.forEach { editor.putBoolean(it.toString(), true) }
+        editor.apply()
+        novelSourceIds.value = novelSourceIds.value + added
+    }
+
+    private fun stubName(id: Long): String =
+        extensionManager.getStubSource(id)?.name
+            ?: recordedSourceNames.getString(id.toString(), null)
+            ?: id.toString()
+
     fun isDelegatedSource(source: Source): Boolean {
         return delegatedSources.values.count { it.sourceId == source.id } > 0
     }
@@ -240,7 +293,10 @@ class SourceManager(
     inner class StubSource(override val id: Long) : Source {
 
         override val name: String
-            get() = extensionManager.getStubSource(id)?.name ?: id.toString()
+            get() = stubName(id)
+
+        override val isNovelSource: Boolean
+            get() = id in novelSourceIds.value
 
         override suspend fun getMangaDetails(manga: SManga): SManga =
             throw getSourceNotInstalledException()
@@ -257,10 +313,7 @@ class SourceManager(
 
         private fun getSourceNotInstalledException(): Exception {
             return SourceNotFoundException(
-                context.getString(
-                    MR.strings.source_not_installed_,
-                    extensionManager.getStubSource(id)?.name ?: id.toString(),
-                ),
+                context.getString(MR.strings.source_not_installed_, stubName(id)),
                 id,
             )
         }
@@ -347,6 +400,8 @@ class SourceManager(
 
     companion object {
         private const val fillInSourceId = Long.MAX_VALUE
+        private const val RECORDED_SOURCE_NAMES = "recorded_source_names"
+        private const val KNOWN_NOVEL_SOURCES = "known_novel_sources"
 
         // Delegation table: maps extension qualified class names to EXH enhanced sources.
         // When an extension source matches, it gets wrapped with EnhancedHttpSource

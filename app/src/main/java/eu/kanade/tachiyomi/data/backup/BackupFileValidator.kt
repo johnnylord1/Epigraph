@@ -27,9 +27,10 @@ class BackupFileValidator(
         }
 
         val sources = backup.backupSources.associate { it.sourceId to it.name }
+        // Prefer the name the backup recorded: a stub only knows the id until its extension is installed.
         val missingSources = sources
             .filter { sourceManager.get(it.key) == null }
-            .map { sourceManager.getOrStub(it.key).name }
+            .map { (id, name) -> name.takeUnless { it.isBlank() || it == id.toString() } ?: sourceManager.getOrStub(id).name }
             .sorted()
 
         val trackers = backup.backupManga

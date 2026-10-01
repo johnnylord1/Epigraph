@@ -943,7 +943,7 @@ class LibraryPresenter(
             getPreferencesFlow(),
             forceUpdateEvent,
             // Novel plugins load lazily; re-partition once their sources resolve.
-            sourceManager.catalogueSources,
+            sourceManager.libraryClassificationChanges,
         ) { dbCategories, allLibraryManga, prefs, _, _ ->
             groupType = prefs.groupType
             // Novels live in the Books & Novels library, so Comics must not list them twice.

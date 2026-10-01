@@ -8,11 +8,13 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesBackupRestore
 import eu.kanade.tachiyomi.data.backup.restore.restorers.LocalBookBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
+import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.BackupUtil
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import yokai.i18n.MR
+import yokai.util.koin.get
 import yokai.util.lang.getString
 import java.io.File
 import java.text.SimpleDateFormat
@@ -25,6 +27,7 @@ class BackupRestorer(
     private val mangaBackupRestorer: MangaBackupRestorer = MangaBackupRestorer(),
     private val localBookBackupRestorer: LocalBookBackupRestorer = LocalBookBackupRestorer(),
     private val preferenceBackupRestorer: PreferenceBackupRestorer = PreferenceBackupRestorer(context),
+    private val sourceManager: SourceManager = get(),
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
@@ -59,6 +62,8 @@ class BackupRestorer(
         restoreAmount = backup.backupManga.size + backup.backupLocalBooks.size + 3 // +3 for categories, app prefs, source prefs
 
         sourceMapping = backup.backupSources.associate { it.sourceId to it.name }
+        sourceManager.rememberSourceNames(sourceMapping)
+        sourceManager.rememberNovelSources(backup.backupSources.filter { it.isNovel }.map { it.sourceId })
 
         coroutineScope {
             // Restore categories
