@@ -149,6 +149,22 @@ class EpigraphLibraryMutationRouter(
             ?.ref
         val syncEntityId = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId) ?: workEntityId
 
+        // Legacy Suwayomi comics (no portable binding) also travel through the causal Core path. A
+        // canonical Core projects them to Suwayomi; the direct queue below stays for older Cores and
+        // is discarded by the drainer once Core projection is active.
+        val legacyComicProfile = if (!isNovel && portableWork == null) {
+            suwayomiProfileIdForEntity(workEntityId.value)
+                ?.takeIf { suwayomiMangaIdForEntity(workEntityId.value) != null }
+                ?.takeIf { currentScopes.comics.value == "comics:profile:$it" }
+        } else {
+            null
+        }
+        val isLegacySuwayomiCategory: (EpigraphEntityId) -> Boolean = { category ->
+            legacyComicProfile != null &&
+                suwayomiCategoryIdForEntity(category.value) != null &&
+                suwayomiProfileIdForEntity(category.value) == legacyComicProfile
+        }
+
         val requestedCategoryIds = if (mutation.inLibrary) mutation.categoryIds else emptySet()
         val categoryList = categoriesQueries.findAll().executeAsList()
         val availableCategories = categoryList.associateBy { it._id }
@@ -280,7 +296,7 @@ class EpigraphLibraryMutationRouter(
                 // entry before assignments. This ordering is part of the protocol contract.
                 removedCategoryIds.forEach { categoryId ->
                     categoryEntities[categoryId]?.let { category ->
-                        if (isNovel || portableWork is PortableWorkRef.Comic) {
+                        if (isNovel || portableWork is PortableWorkRef.Comic || isLegacySuwayomiCategory(category)) {
                             add(SyncCommand.SetCategoryAssignment(syncEntityId, category, false, portableWork))
                         }
                     }
@@ -314,11 +330,14 @@ class EpigraphLibraryMutationRouter(
                                 ),
                             )
                         }
+                        if (portableWork == null && legacyComicProfile != null) {
+                            add(SyncCommand.SetLibraryMembership(syncEntityId, mutation.inLibrary, null))
+                        }
                     }
                 }
                 addedCategoryIds.forEach { categoryId ->
                     categoryEntities[categoryId]?.let { category ->
-                        if (isNovel || portableWork is PortableWorkRef.Comic) {
+                        if (isNovel || portableWork is PortableWorkRef.Comic || isLegacySuwayomiCategory(category)) {
                             add(SyncCommand.SetCategoryAssignment(syncEntityId, category, true, portableWork))
                         }
                     }

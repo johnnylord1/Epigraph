@@ -74,7 +74,7 @@ class EpigraphLibraryMutationRouterTest {
         assertTrue(result.changed)
         assertTrue(result.membershipChanged)
         assertEquals(setOf(categoryOne, categoryTwo), result.addedCategoryIds)
-        assertEquals(2, result.emittedCommandCount)
+        assertEquals(5, result.emittedCommandCount)
         assertTrue(database.mangasQueries.findById(mangaId).executeAsOne().favorite)
         assertEquals(
             setOf(categoryOne, categoryTwo),
@@ -91,7 +91,21 @@ class EpigraphLibraryMutationRouterTest {
             ),
             queued.map { it.operation_name },
         )
-        assertEquals(0, coordinator.claimReady(100, leaseDurationMillis = 1_000, limit = 10).size)
+        val claimed = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        assertEquals(3, claimed.size)
+        val membership = claimed[0] as SyncCommand.SetLibraryMembership
+        assertEquals("suwayomi:profile:main:manga:7", membership.entityId.value)
+        assertTrue(membership.inLibrary)
+        assertTrue(membership.portableWorkRef == null)
+        val assignments = claimed.subList(1, 3).map { it as SyncCommand.SetCategoryAssignment }
+        assertTrue(assignments.all { it.assigned })
+        assertTrue(assignments.all { it.portableWorkRef == null })
+        assertTrue(assignments.all { it.entityId.value == "suwayomi:profile:main:manga:7" })
+        assertEquals(
+            setOf("suwayomi:profile:main:category:11", "suwayomi:profile:main:category:12"),
+            assignments.map { it.categoryId.value }.toSet(),
+        )
     }
 
     @Test
@@ -163,6 +177,7 @@ class EpigraphLibraryMutationRouterTest {
             .executeAsList()
             .single()
         assertEquals("secondary", row.profile_id)
+        assertEquals(0, coordinator.claimReady(100, 1_000, 10).size)
     }
 
     @Test
@@ -357,6 +372,114 @@ class EpigraphLibraryMutationRouterTest {
         assertFalse((deleteCommands.first() as SyncCommand.SetCategoryAssignment).assigned)
         assertTrue(deleteCommands.last() is SyncCommand.SetNovelLibraryMembership)
         assertFalse((deleteCommands.last() as SyncCommand.SetNovelLibraryMembership).inLibrary)
+    }
+
+    @Test
+    fun `legacy comic removal tombstones assignments before membership`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        val categoryId = insertCategory("Keep", sort = 0)
+        bindMangaIdentity(mangaId, "suwayomi:profile:main:manga:9")
+        bindCategoryIdentity(categoryId, "suwayomi:profile:main:category:21", "Keep", 0)
+        val router = router(sequentialMutationIds())
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+        val addRows = coordinator.claimReady(100, 1_000, 10)
+        addRows.forEach {
+            coordinator.acknowledge(
+                EpigraphMutationAcknowledgement(
+                    deviceId = DeviceId(it.device_id),
+                    clientMutationId = ClientMutationId(it.client_mutation_id),
+                    scopeId = SyncScopeId(it.scope_id),
+                    entityType = it.entity_type,
+                    entityId = epigraph.contract.EpigraphEntityId(it.entity_id),
+                    canonicalEntityId = null,
+                    resultStatus = "APPLIED",
+                    requiredServerVersion = it.sequence,
+                    appliedLamport = null,
+                    eventClockJson = null,
+                    canonicalRecordSha256 = null,
+                    receivedAtEpochMillis = 101,
+                ),
+            )
+        }
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = false,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 200,
+        )
+        val deleteCommands = coordinator.claimReady(200, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        assertEquals(2, deleteCommands.size)
+        val tombstone = deleteCommands[0] as SyncCommand.SetCategoryAssignment
+        assertFalse(tombstone.assigned)
+        assertEquals("suwayomi:profile:main:category:21", tombstone.categoryId.value)
+        val membership = deleteCommands[1] as SyncCommand.SetLibraryMembership
+        assertFalse(membership.inLibrary)
+    }
+
+    @Test
+    fun `legacy comic keeps local-only category assignment off the Core path`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        val categoryId = insertCategory("Local", sort = 0)
+        bindMangaIdentity(mangaId, "suwayomi:profile:main:manga:7")
+        val router = router(sequentialMutationIds())
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(
+            listOf(categoryId),
+            database.categoriesQueries.findAllByMangaId(mangaId).executeAsList().map { it._id },
+        )
+        val claimed = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        assertEquals(1, claimed.size)
+        assertTrue(claimed[0] is SyncCommand.SetLibraryMembership)
+    }
+
+    @Test
+    fun `non-suwayomi legacy comic emits no Core envelope`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        bindMangaIdentity(mangaId)
+        val router = router(sequentialMutationIds())
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(0, coordinator.claimReady(100, 1_000, 10).size)
+        assertTrue(
+            database.aethon_suwayomi_mutation_queueQueries
+                .selectReady(100, 10)
+                .executeAsList()
+                .isEmpty(),
+        )
     }
 
     private fun router(

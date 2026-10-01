@@ -164,11 +164,13 @@ class EpigraphCategoryMutationRouterTest {
     }
 
     @Test
-    fun `comic delete tombstones only portable assignments and uses the category profile scope`() = runTest {
+    fun `comic delete tombstones portable and same-profile legacy assignments in the category profile scope`() = runTest {
         val category = insertCategory("Comics", sort = 0)
         bindCategory(category, "suwayomi:profile:secondary:category:21", "MANGA", "Comics", 1)
         val legacy = insertManga()
         bindWork(legacy, "suwayomi:profile:secondary:manga:7", "MANGA")
+        val otherProfile = insertManga()
+        bindWork(otherProfile, "suwayomi:profile:main:manga:9", "MANGA")
         val portable = insertManga()
         bindWork(portable, "suwayomi:profile:secondary:manga:8", "MANGA")
         val work = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/manga/8"))
@@ -186,21 +188,30 @@ class EpigraphCategoryMutationRouterTest {
         )
         database.aethon_syncQueries.insertMangaCategoryAssignment(legacy, category)
         database.aethon_syncQueries.insertMangaCategoryAssignment(portable, category)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(otherProfile, category)
 
         router().deleteCategory(category) { categoriesQueries.delete(category) }
 
         val envelopes = queued()
-        assertEquals(2, envelopes.size)
+        assertEquals(3, envelopes.size)
         assertTrue(envelopes.all { it.scopeId.value == "comics:profile:secondary" })
-        val tombstone = envelopes[0].command as SyncCommand.SetCategoryAssignment
-        assertEquals("comic.category_assignment", envelopes[0].entityType.value)
-        assertEquals(PortableIdentityV3.workId(work), tombstone.entityId.value)
-        assertEquals(work, tombstone.portableWorkRef)
-        assertFalse(tombstone.assigned)
-        assertEquals("comic.category", envelopes[1].entityType.value)
+        val tombstones = envelopes.take(2).map {
+            assertEquals("comic.category_assignment", it.entityType.value)
+            it.command as SyncCommand.SetCategoryAssignment
+        }
+        assertTrue(tombstones.none { it.assigned })
+        assertTrue(tombstones.all { it.categoryId.value == "suwayomi:profile:secondary:category:21" })
+        assertEquals(
+            mapOf(
+                PortableIdentityV3.workId(work) to work,
+                "suwayomi:profile:secondary:manga:7" to null,
+            ),
+            tombstones.associate { it.entityId.value to it.portableWorkRef },
+        )
+        assertEquals("comic.category", envelopes[2].entityType.value)
         assertEquals(
             "suwayomi:profile:secondary:category:21",
-            (envelopes[1].command as SyncCommand.DeleteEntity).entityId.value,
+            (envelopes[2].command as SyncCommand.DeleteEntity).entityId.value,
         )
     }
 

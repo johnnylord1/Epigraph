@@ -138,8 +138,13 @@ class EpigraphCategoryMutationRouter(
                 .workByLocalReference(mangaId.toString())
                 ?.takeIf { it.resolution.state.name == "BOUND" }
                 ?.ref
-            // Legacy comic rows have no Core assignment; Suwayomi drops them with the category.
-            if (!novel && portableWork !is PortableWorkRef.Comic) return@mapNotNull null
+            // Legacy Suwayomi comics of the category's profile also publish Core assignments (see
+            // EpigraphLibraryMutationRouter); other legacy rows never left the device.
+            if (!novel && portableWork !is PortableWorkRef.Comic &&
+                !isLegacySuwayomiAssignment(identity.entity_id, categoryEntity.value)
+            ) {
+                return@mapNotNull null
+            }
             val workEntity = portableWork?.let(PortableIdentityV3::workId)?.let(::EpigraphEntityId)
                 ?: EpigraphEntityId(identity.entity_id)
             SyncCommandEnvelope(
@@ -151,6 +156,13 @@ class EpigraphCategoryMutationRouter(
                 command = SyncCommand.SetCategoryAssignment(workEntity, categoryEntity, false, portableWork),
             )
         }
+    }
+
+    private fun isLegacySuwayomiAssignment(workEntityId: String, categoryEntityId: String): Boolean {
+        if (suwayomiMangaIdForEntity(workEntityId) == null) return false
+        if (suwayomiCategoryIdForEntity(categoryEntityId) == null) return false
+        val profile = suwayomiProfileIdForEntity(workEntityId) ?: return false
+        return profile == suwayomiProfileIdForEntity(categoryEntityId)
     }
 
     /** Book assignments are published as a full set per book; publish each set without [localCategoryId]. */
