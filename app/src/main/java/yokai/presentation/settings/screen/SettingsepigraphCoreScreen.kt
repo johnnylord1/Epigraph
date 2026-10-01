@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.icerock.moko.resources.StringResource
+import dev.icerock.moko.resources.compose.pluralStringResource
 import dev.icerock.moko.resources.compose.stringResource
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toPersistentList
@@ -466,8 +467,16 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         subtitle = novelInventory?.let { inventory ->
                             stringResource(
                                 MR.strings.epigraph_core_novel_dependencies_summary,
-                                inventory.repositories.size,
-                                inventory.plugins.size,
+                                pluralStringResource(
+                                    MR.plurals.epigraph_core_novel_repository_count,
+                                    inventory.repositories.size,
+                                    inventory.repositories.size,
+                                ),
+                                pluralStringResource(
+                                    MR.plurals.epigraph_core_novel_plugin_count,
+                                    inventory.plugins.size,
+                                    inventory.plugins.size,
+                                ),
                             )
                         } ?: stringResource(MR.strings.epigraph_core_novel_dependencies_no_inventory),
                         enabled = state is CorePairingUiState.Paired &&

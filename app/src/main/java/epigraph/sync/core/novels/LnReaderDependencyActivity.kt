@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.icerock.moko.resources.compose.pluralStringResource
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.util.system.setThemeByPref
@@ -147,8 +148,16 @@ private fun LnReaderDependencyContent(
                     Text(
                         stringResource(
                             MR.strings.epigraph_core_novel_dependencies_summary,
-                            current.repositories.size,
-                            current.plugins.size,
+                            pluralStringResource(
+                                MR.plurals.epigraph_core_novel_repository_count,
+                                current.repositories.size,
+                                current.repositories.size,
+                            ),
+                            pluralStringResource(
+                                MR.plurals.epigraph_core_novel_plugin_count,
+                                current.plugins.size,
+                                current.plugins.size,
+                            ),
                         ),
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -210,7 +219,7 @@ private fun LnReaderDependencyContent(
                     supportingContent = {
                         Text(
                             "${item.requirement.sourceId} · ${item.requirement.version} · ${pluginStatusText(item.status)}",
-                            maxLines = 2,
+                            maxLines = 3,
                             overflow = TextOverflow.Ellipsis,
                         )
                     },
@@ -271,8 +280,9 @@ private fun pluginStatusText(status: LnReaderPluginParityStatus): String = when 
     LnReaderPluginParityStatus.UPDATE_AVAILABLE ->
         stringResource(MR.strings.epigraph_core_extension_update_available)
     LnReaderPluginParityStatus.MISSING_AVAILABLE -> stringResource(MR.strings.epigraph_core_extension_missing)
+    // Install falls back to the copy the paired desktop serves, so "unavailable" would contradict the button.
     LnReaderPluginParityStatus.MISSING_UNAVAILABLE ->
-        stringResource(MR.strings.epigraph_core_extension_unavailable)
+        stringResource(MR.strings.epigraph_core_novel_plugin_from_desktop)
     LnReaderPluginParityStatus.IDENTITY_MISMATCH -> stringResource(MR.strings.epigraph_core_extension_mismatch)
     LnReaderPluginParityStatus.UNTRUSTED_OR_BLOCKED ->
         stringResource(MR.strings.epigraph_core_extension_blocked)

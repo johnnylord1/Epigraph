@@ -37,7 +37,7 @@ fun SliderPreferenceWidget(
                     modifier = Modifier
                         .padding(horizontal = PrefsHorizontalPadding)
                         .secondaryItemAlpha(),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 10,
                 )
             }

@@ -182,7 +182,7 @@ internal fun TagPill(
     }
     Surface(
         onClick = onClick ?: onRemove,
-        shape = CircleShape,
+        shape = MaterialTheme.shapes.small,
         color = container,
         contentColor = content,
         modifier = Modifier.heightIn(min = 32.dp),

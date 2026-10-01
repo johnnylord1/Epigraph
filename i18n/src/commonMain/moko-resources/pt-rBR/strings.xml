@@ -1217,12 +1217,13 @@
     <string name="epigraph_core_extensions_repository_failed">Não foi possível adicionar o repositório.</string>
     <string name="epigraph_core_extension_repository_required">Aprovação do repositório necessária</string>
     <string name="epigraph_core_novel_dependencies_title">Repositórios e plugins de novels</string>
-    <string name="epigraph_core_novel_dependencies_summary">%1$d repositórios · %2$d plugins</string>
+    <string name="epigraph_core_novel_dependencies_summary">%1$s · %2$s</string>
     <string name="epigraph_core_novel_dependencies_no_inventory">Sincronize com o Epigraph Core para comparar as dependências LNReader.</string>
     <string name="epigraph_core_novel_repositories">Repositórios</string>
     <string name="epigraph_core_novel_plugins">Plugins</string>
     <string name="epigraph_core_novel_repository_approve">Adicionar repositório</string>
     <string name="epigraph_core_novel_plugin_install">Instalar</string>
+    <string name="epigraph_core_novel_plugin_from_desktop">Não está nos seus repositórios mobile. Instalar copia do seu desktop</string>
     <string name="epigraph_core_novel_dependency_completed">A ação solicitada foi concluída.</string>
     <string name="epigraph_core_novel_dependency_approval_required">Aprove o repositório antes de instalar este plugin.</string>
     <string name="epigraph_core_novel_dependency_failed">Não foi possível validar a dependência. Nada foi instalado.</string>
@@ -1300,6 +1301,7 @@
     <string name="local_books_relink_title">Revincular livro</string>
     <string name="local_books_relink_message">O arquivo corresponde a %1$s. Copiar para o armazenamento privado?</string>
     <string name="local_books_relink">Revincular</string>
+    <string name="local_books_relink_file">Revincular arquivo</string>
     <string name="local_books_inspect_failed">Não foi possível verificar o arquivo substituto</string>
     <string name="local_books_relinking">Revinculando %1$s…</string>
     <string name="local_books_relinked">%1$s revinculado</string>
@@ -1308,7 +1310,7 @@
     <string name="local_books_downloaded">%1$s baixado</string>
     <string name="local_books_download_failed">Não foi possível baixar o livro</string>
     <string name="local_books_unavailable_title">Arquivo do livro indisponível</string>
-    <string name="local_books_unavailable_message">Não foi possível baixar a cópia sincronizada. Você pode escolher o arquivo original.</string>
+    <string name="local_books_unavailable_message">Este aparelho não tem o arquivo deste livro, e o Epigraph Core não pôde fornecê-lo. Escolha o arquivo original para continuar lendo.</string>
     <string name="local_books_remove_title">Remover livro</string>
     <string name="local_books_remove_message">Remover %1$s e apagar o arquivo deste aparelho?</string>
     <string name="local_books_file_missing">Arquivo ausente</string>

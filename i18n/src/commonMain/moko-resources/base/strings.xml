@@ -2337,12 +2337,13 @@
     <string name="epigraph_core_extensions_repository_failed">The repository could not be added.</string>
     <string name="epigraph_core_extension_repository_required">Repository approval required</string>
     <string name="epigraph_core_novel_dependencies_title">Novel repositories and plugins</string>
-    <string name="epigraph_core_novel_dependencies_summary">%1$d repositories · %2$d plugins</string>
+    <string name="epigraph_core_novel_dependencies_summary">%1$s · %2$s</string>
     <string name="epigraph_core_novel_dependencies_no_inventory">Sync with Epigraph Core to compare LNReader dependencies.</string>
     <string name="epigraph_core_novel_repositories">Repositories</string>
     <string name="epigraph_core_novel_plugins">Plugins</string>
     <string name="epigraph_core_novel_repository_approve">Add repository</string>
     <string name="epigraph_core_novel_plugin_install">Install</string>
+    <string name="epigraph_core_novel_plugin_from_desktop">Not in your mobile repositories. Install copies it from your desktop</string>
     <string name="epigraph_core_novel_dependency_completed">The requested action completed.</string>
     <string name="epigraph_core_novel_dependency_approval_required">Approve the repository before installing this plugin.</string>
     <string name="epigraph_core_novel_dependency_failed">The dependency could not be validated. Nothing was installed.</string>
@@ -2418,6 +2419,7 @@
     <string name="local_books_relink_title">Relink book</string>
     <string name="local_books_relink_message">The file matches %1$s. Copy it into private storage?</string>
     <string name="local_books_relink">Relink</string>
+    <string name="local_books_relink_file">Relink file</string>
     <string name="local_books_inspect_failed">The replacement file could not be inspected</string>
     <string name="local_books_relinking">Relinking %1$s…</string>
     <string name="local_books_relinked">Relinked %1$s</string>
@@ -2426,7 +2428,7 @@
     <string name="local_books_downloaded">Downloaded %1$s</string>
     <string name="local_books_download_failed">The book could not be downloaded</string>
     <string name="local_books_unavailable_title">Book file unavailable</string>
-    <string name="local_books_unavailable_message">The synchronized copy could not be downloaded. You can choose the original file instead.</string>
+    <string name="local_books_unavailable_message">This device does not have the file for this book, and Epigraph Core could not provide it. Choose the original file to keep reading.</string>
     <string name="local_books_remove_title">Remove book</string>
     <string name="local_books_remove_message">Remove %1$s and delete its file from this device?</string>
     <string name="local_books_file_missing">File missing</string>

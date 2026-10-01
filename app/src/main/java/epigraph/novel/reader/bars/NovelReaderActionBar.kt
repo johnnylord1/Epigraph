@@ -22,7 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material.icons.outlined.FastForward
@@ -158,7 +158,7 @@ fun NovelReaderActionBar(
 
         Surface(
             color = backgroundColor,
-            shape = RoundedCornerShape(50.dp),
+            shape = MaterialTheme.shapes.small,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 4.dp),
@@ -275,7 +275,7 @@ private fun NovelTtsControlsRow(
     ) {
         Surface(
             color = backgroundColor,
-            shape = RoundedCornerShape(50.dp),
+            shape = MaterialTheme.shapes.small,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 4.dp),

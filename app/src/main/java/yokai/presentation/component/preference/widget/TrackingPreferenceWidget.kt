@@ -47,8 +47,7 @@ fun TrackingPreferenceWidget(
                     .weight(1f)
                     .padding(horizontal = 16.dp),
                 maxLines = 1,
-                style = MaterialTheme.typography.titleLarge,
-                fontSize = TitleFontSize,
+                style = MaterialTheme.typography.bodyLarge,
             )
             if (checked) {
                 Icon(

@@ -137,4 +137,14 @@
         <item quantity="one">%d day</item>
         <item quantity="other">%d days</item>
     </plurals>
+
+    <plurals name="epigraph_core_novel_repository_count">
+        <item quantity="one">%d repository</item>
+        <item quantity="other">%d repositories</item>
+    </plurals>
+
+    <plurals name="epigraph_core_novel_plugin_count">
+        <item quantity="one">%d plugin</item>
+        <item quantity="other">%d plugins</item>
+    </plurals>
 </resources>

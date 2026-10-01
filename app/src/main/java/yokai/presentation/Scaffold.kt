@@ -224,6 +224,7 @@ fun YokaiScaffold(
                                     title = {
                                         Text(
                                             text = title,
+                                            fontWeight = FontWeight.SemiBold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )

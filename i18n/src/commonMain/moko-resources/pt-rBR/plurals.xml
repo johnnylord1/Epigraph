@@ -123,4 +123,14 @@
         <item quantity="many">%d estados</item>
         <item quantity="other">%d outros estados</item>
     </plurals>
+    <plurals name="epigraph_core_novel_repository_count">
+        <item quantity="one">%d repositório</item>
+        <item quantity="many">%d repositórios</item>
+        <item quantity="other">%d repositórios</item>
+    </plurals>
+    <plurals name="epigraph_core_novel_plugin_count">
+        <item quantity="one">%d plugin</item>
+        <item quantity="many">%d plugins</item>
+        <item quantity="other">%d plugins</item>
+    </plurals>
 </resources>

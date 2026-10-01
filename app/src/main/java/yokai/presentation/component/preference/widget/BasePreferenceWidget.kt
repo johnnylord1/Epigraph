@@ -30,7 +30,6 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import yokai.presentation.component.preference.LocalPreferenceHighlighted
 import yokai.presentation.component.preference.LocalPreferenceMinHeight
@@ -73,8 +72,7 @@ internal fun BasePreferenceWidget(
                     text = title,
                     overflow = TextOverflow.Ellipsis,
                     maxLines = 2,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontSize = TitleFontSize,
+                    style = MaterialTheme.typography.bodyLarge,
                 )
             }
             subcomponent?.invoke(this)
@@ -127,4 +125,3 @@ internal fun Modifier.highlightBackground(highlighted: Boolean): Modifier = comp
 internal val TrailingWidgetBuffer = 16.dp
 internal val PrefsHorizontalPadding = 16.dp
 internal val PrefsVerticalPadding = 16.dp
-internal val TitleFontSize = 16.sp

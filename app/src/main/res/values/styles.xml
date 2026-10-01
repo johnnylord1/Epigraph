@@ -469,7 +469,11 @@
         <item name="rippleColor">?attr/colorControlHighlight</item>
     </style>
 
-    <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3Expressive.MaterialButtonGroup.Connected" />
+    <!-- Connected groups keep the small radius outside and a tighter one between buttons, never pill ends. -->
+    <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3.MaterialButtonGroup.Connected">
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="innerCornerSize">@dimen/radius_xs</item>
+    </style>
 
     <!-- Reader settings buttons shared by novels, EPUB and PDF. Keep the same outline,
          accent and ripple tokens as the manga reader while avoiding the stock square button

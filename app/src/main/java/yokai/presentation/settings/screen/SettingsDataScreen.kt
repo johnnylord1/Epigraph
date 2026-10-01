@@ -6,18 +6,10 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Help
-import androidx.compose.material3.MultiChoiceSegmentedButtonRow
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -154,69 +146,48 @@ object SettingsDataScreen : ComposableSettings() {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.backup_and_restore),
             preferenceItems = persistentListOf(
-                Preference.PreferenceItem.CustomPreference(
-                    title = stringResource(MR.strings.backup_and_restore),
-                ) {
-                    BasePreferenceWidget(
-                        subcomponent = {
-                            MultiChoiceSegmentedButtonRow(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(intrinsicSize = IntrinsicSize.Min)
-                                    .padding(horizontal = PrefsHorizontalPadding),
-                            ) {
-                                SegmentedButton(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    checked = false,
-                                    onCheckedChange = {
-                                        if (!BackupRestoreJob.isRunning(context)) {
-                                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
-                                                context.toast(MR.strings.restore_miui_warning, Toast.LENGTH_LONG)
-                                            }
+                // Plain rows like the rest of Settings rather than a pill-shaped segmented pair.
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.create_backup),
+                    subtitle = stringResource(MR.strings.can_be_used_to_restore),
+                    onClick = {
+                        if (!BackupRestoreJob.isRunning(context)) {
+                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
+                                context.toast(MR.strings.restore_miui_warning, Toast.LENGTH_LONG)
+                            }
 
-                                            val dir = storageManager.getBackupsDirectory()
-                                            if (dir == null) {
-                                                context.toast(MR.strings.invalid_location_generic)
-                                                return@SegmentedButton
-                                            }
-
-                                            scope.launch {
-                                                alertDialog.awaitCreateBackup(
-                                                    context = context,
-                                                    uri = dir.uri,
-                                                )
-                                            }
-                                        } else {
-                                            context.toast(MR.strings.backup_in_progress)
-                                        }
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(0, 2),
-                                ) {
-                                    Text(stringResource(MR.strings.create_backup))
-                                }
-                                SegmentedButton(
-                                    modifier = Modifier.fillMaxHeight(),
-                                    checked = false,
-                                    onCheckedChange = {
-                                        if (!BackupRestoreJob.isRunning(context)) {
-                                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
-                                                context.toast(MR.strings.restore_miui_warning, Toast.LENGTH_LONG)
-                                            }
-
-                                            scope.launch { extensionManager.getExtensionUpdates(true) }
-                                            chooseBackup.launch("*/*")
-                                        } else {
-                                            context.toast(MR.strings.restore_in_progress)
-                                        }
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(1, 2),
-                                ) {
-                                    Text(stringResource(MR.strings.restore_backup))
+                            val dir = storageManager.getBackupsDirectory()
+                            if (dir == null) {
+                                context.toast(MR.strings.invalid_location_generic)
+                            } else {
+                                scope.launch {
+                                    alertDialog.awaitCreateBackup(
+                                        context = context,
+                                        uri = dir.uri,
+                                    )
                                 }
                             }
-                        },
-                    )
-                },
+                        } else {
+                            context.toast(MR.strings.backup_in_progress)
+                        }
+                    },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.restore_backup),
+                    subtitle = stringResource(MR.strings.restore_from_backup_file),
+                    onClick = {
+                        if (!BackupRestoreJob.isRunning(context)) {
+                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
+                                context.toast(MR.strings.restore_miui_warning, Toast.LENGTH_LONG)
+                            }
+
+                            scope.launch { extensionManager.getExtensionUpdates(true) }
+                            chooseBackup.launch("*/*")
+                        } else {
+                            context.toast(MR.strings.restore_in_progress)
+                        }
+                    },
+                ),
 
                 // Automatic backups
                 Preference.PreferenceItem.ListPreference(
