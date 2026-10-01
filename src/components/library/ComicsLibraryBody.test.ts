@@ -120,7 +120,7 @@ describe("ComicsLibraryBody", () => {
     expect(screen.getByRole("status", { name: "Library" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Nothing found for this view" })).toBeTruthy();
     expect(screen.getByText(vm.emptyMessage)).toBeTruthy();
-    expect(container.querySelector(".center .n-state--center")).toBeTruthy();
+    expect(container.querySelector(".center .n-state--open")).toBeTruthy();
   });
 
   test("keeps selection and context menu ownership outside the shared grid", async () => {

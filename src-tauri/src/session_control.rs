@@ -9,8 +9,21 @@ use tauri::Manager;
 struct LaunchState { closing: bool, active: usize }
 static LAUNCHES: (Mutex<LaunchState>, Condvar) = (Mutex::new(LaunchState { closing: false, active: 0 }), Condvar::new());
 pub struct LaunchPermit;
-pub fn require_native_install_handoff() -> Result<(), String> {
-    Err("Native installation requires graceful close and an attested installer handoff; application and runtime preserved".into())
+/// A managed (attested) run may only leave through its own graceful close, so it never installs.
+pub fn require_native_install_handoff(managed_run: bool) -> Result<(), String> {
+    if managed_run {
+        return Err("Native installation requires graceful close and an attested installer handoff; application and runtime preserved".into());
+    }
+    Ok(())
+}
+/// The Windows installer handoff ends this process with std::process::exit, so it only starts once
+/// everything this app owns has been stopped; otherwise the application and runtime stay as they are.
+pub fn install_after_owned_shutdown<T>(
+    shutdown: impl FnOnce() -> Result<(), String>,
+    install: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    shutdown()?;
+    install()
 }
 pub fn shutdown_pending() -> bool {
     LAUNCHES.0.lock().map(|state| state.closing).unwrap_or(true)
@@ -38,9 +51,18 @@ mod tests {
     #[test]
     fn b1_native_installer_cannot_bypass_the_owned_exit_handoff() {
         let mut invoked = false;
-        let result = require_native_install_handoff().map(|_| { invoked = true; });
-        assert!(result.is_err());
+        let result = require_native_install_handoff(true).map(|_| { invoked = true; });
+        assert!(result.unwrap_err().contains("attested installer handoff"));
         assert!(!invoked, "installer execution must not be enabled without a handoff");
+        assert!(require_native_install_handoff(false).is_ok());
+
+        let result = install_after_owned_shutdown(|| Err("Core shutdown unconfirmed".into()), || { invoked = true; Ok(()) });
+        assert!(result.is_err());
+        assert!(!invoked, "installer must not start before the owned shutdown is confirmed");
+
+        let order = std::cell::RefCell::new(Vec::new());
+        install_after_owned_shutdown(|| { order.borrow_mut().push("shutdown"); Ok(()) }, || { order.borrow_mut().push("install"); Ok(()) }).unwrap();
+        assert_eq!(order.into_inner(), ["shutdown", "install"]);
     }
     #[test]
     fn b1_shutdown_blocks_late_launch_and_preserves_an_inflight_permit_on_timeout() {

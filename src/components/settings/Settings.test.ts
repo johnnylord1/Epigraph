@@ -593,6 +593,75 @@ describe("Settings", () => {
     expect(screen.queryByText("Export")).toBeNull();
   });
 
+  test("refuses a downloads folder inside the current one before the server switches to it", async () => {
+    const baseInvoke = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((async (command: string, args?: Record<string, any>) => {
+      if (command === "check_path_exists") return true;
+      if (command === "check_downloads_move") {
+        if (String(args?.dst).startsWith("C:/Epigraph/Downloads/mangas")) throw "DOWNLOADS_PATH_NESTED";
+        return null;
+      }
+      return baseInvoke(command, args);
+    }) as typeof baseInvoke);
+    try {
+      renderSettings();
+      await fireEvent.click(screen.getByRole("button", { name: "System" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Edit paths" }));
+      const input = await screen.findByDisplayValue("C:/Epigraph/Downloads");
+      const saves = () => gqlMock.mock.calls.filter(([, variables]) => (variables as { path?: string } | undefined)?.path !== undefined);
+
+      await fireEvent.input(input, { target: { value: "C:/Epigraph/Downloads/mangas/moved" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByText(translate("outcomes.downloadsPathNested"))).toBeTruthy();
+      expect(invokeMock).toHaveBeenCalledWith("check_downloads_move", { src: "C:/Epigraph/Downloads", dst: "C:/Epigraph/Downloads/mangas/moved" });
+      expect(saves()).toEqual([]);
+      expect(screen.queryByText("Migration")).toBeNull();
+
+      await fireEvent.input(input, { target: { value: "D:/Library" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(saves().map(([, variables]) => variables)).toEqual([{ path: "D:/Library" }]));
+      expect(await screen.findByText("C:/Epigraph/Downloads → D:/Library")).toBeTruthy();
+    } finally {
+      invokeMock.mockImplementation(baseInvoke);
+    }
+  });
+
+  test("the folder picker opens the path editor to show a refused folder or the offer to move the files", async () => {
+    const baseInvoke = invokeMock.getMockImplementation()!;
+    invokeMock.mockImplementation((async (command: string, args?: Record<string, any>) => {
+      if (command === "check_path_exists") return true;
+      if (command === "check_downloads_move") {
+        if (String(args?.dst).startsWith("C:/Epigraph/Downloads/mangas")) throw "DOWNLOADS_PATH_NESTED";
+        return null;
+      }
+      return baseInvoke(command, args);
+    }) as typeof baseInvoke);
+    try {
+      renderSettings();
+      await fireEvent.click(screen.getByRole("button", { name: "System" }));
+      const saves = () => gqlMock.mock.calls.filter(([, variables]) => (variables as { path?: string } | undefined)?.path !== undefined);
+      expect(screen.queryByText("Path editor")).toBeNull();
+
+      openDialogMock.mockResolvedValueOnce("C:/Epigraph/Downloads/mangas/moved" as never);
+      await fireEvent.click(screen.getAllByRole("button", { name: "Browse" })[0]);
+      expect(await screen.findByText(translate("outcomes.downloadsPathNested"))).toBeTruthy();
+      expect(screen.getByText("Path editor")).toBeTruthy();
+      expect(saves()).toEqual([]);
+      // The summary keeps naming the folder in use, not the refused one.
+      expect(screen.queryByText("C:/Epigraph/Downloads/mangas/moved")).toBeNull();
+
+      await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
+      expect(screen.queryByText("Path editor")).toBeNull();
+      openDialogMock.mockResolvedValueOnce("D:/Library" as never);
+      await fireEvent.click(screen.getAllByRole("button", { name: "Browse" })[0]);
+      await waitFor(() => expect(saves().map(([, variables]) => variables)).toEqual([{ path: "D:/Library" }]));
+      expect(await screen.findByText("C:/Epigraph/Downloads → D:/Library")).toBeTruthy();
+      expect(screen.getByText("Path editor")).toBeTruthy();
+    } finally {
+      invokeMock.mockImplementation(baseInvoke);
+    }
+  });
+
   test("presents a backup audit as a simple visual restore summary", async () => {
     store.runtimeSettingsTab = "storage";
     renderSettings({

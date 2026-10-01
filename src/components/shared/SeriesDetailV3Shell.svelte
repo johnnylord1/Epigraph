@@ -1071,8 +1071,7 @@
   }
 
   .series-v3-root :global(.sort-menu),
-  .series-v3-root :global(.fp-menu),
-  .series-v3-root :global(.dl-dropdown) {
+  .series-v3-root :global(.fp-menu) {
     position: absolute;
     z-index: var(--component-detail-series-v3-root-dl-dropdown-z-index);
     top: calc(100% + 8px);
@@ -1090,13 +1089,6 @@
   .series-v3-root :global(.sort-menu),
   .series-v3-root :global(.fp-menu) {
     left: 0;
-  }
-
-  .series-v3-root :global(.dl-dropdown) {
-    right: 0;
-    width: min(318px, calc(100vw - 32px));
-    min-width: 0;
-    transform-origin: top right;
   }
 
   .series-v3-root :global(.sort-section-label) {
@@ -1308,6 +1300,26 @@
     line-height: 1.35;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Title line of a chapter row: the name ellipsizes and a bookmark glyph, when the chapter has
+     one, sits right after it in the accent colour — no label, the tooltip carries the word. */
+  .series-v3-root :global(.ch-title) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .series-v3-root :global(.ch-title .ch-name) {
+    min-width: 0;
+  }
+
+  .series-v3-root :global(.ch-bookmark) {
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--series-primary-strong);
   }
 
   .series-v3-root :global(.ch-meta) {

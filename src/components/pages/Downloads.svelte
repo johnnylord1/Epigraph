@@ -157,6 +157,9 @@
     });
     syncPausedItems(Array.from(nextPaused.values()));
 
+    // A chapter that leaves the queue after downloading is on disk now, so the storage figure is stale.
+    const nextIds = new Set(next.queue.map((item) => item.chapter.id));
+    if (status?.queue.some((item) => item.state === "DOWNLOADING" && !nextIds.has(item.chapter.id))) void loadStorageInfo();
     status = next;
     updateObservedSpeed(next);
   }
@@ -203,8 +206,10 @@
   async function loadStorageInfo() {
     try {
       const data = await gql<{ settings: { downloadsPath: string } }>(GET_DOWNLOADS_PATH);
+      // A blank path means the running profile's default folder, not the main profile's.
       storageInfo = await invoke<StorageInfo>("get_storage_info", {
         downloadsPath: data.settings.downloadsPath ?? "",
+        profileId: store.runtimeResolvedLocalProfileId ?? null,
       });
     } catch (error) {
       console.error(error);
@@ -554,7 +559,7 @@
     const visualState = getVisualState(item);
     const percent = Math.round(item.progress * 100);
 
-    if (visualState === "error") return $_("downloads.status.networkError");
+    if (visualState === "error") return $_("downloads.status.failed");
     if (visualState === "finished") return $_("downloads.status.finished");
     if (visualState === "queued") return $_("downloads.status.queued");
     if (visualState === "paused") return $_("downloads.status.pausedPercent", { values: { percent } });
@@ -598,18 +603,34 @@
     });
   });
   $effect(() => {
-    setSearchDownloads(queue.map((item) => ({
-      chapterId: item.chapter.id,
-      mangaTitle: item.chapter.manga?.title ?? $_("downloads.unknownTitle"),
-      chapterName: item.chapter.name,
-      progress: item.progress,
-      status: item.state,
-      image: item.chapter.manga?.thumbnailUrl ?? null,
-    })));
+    setSearchDownloads([
+      ...store.novelDownloads.map((novel) => ({
+        novelId: novel.novelId,
+        mangaTitle: novel.title,
+        chapterName: $_("novelDetail_download_progress", { done: novel.done, total: novel.total }),
+        progress: novel.total > 0 ? novel.done / novel.total : 0,
+        status: "DOWNLOADING",
+        image: novel.coverUrl ?? null,
+      })),
+      ...queue.map((item) => ({
+        chapterId: item.chapter.id,
+        mangaTitle: item.chapter.manga?.title ?? $_("downloads.unknownTitle"),
+        chapterName: item.chapter.name,
+        progress: item.progress,
+        status: item.state,
+        image: item.chapter.manga?.thumbnailUrl ?? null,
+      })),
+    ]);
   });
   let filteredQueue: DisplayDownloadItem[] = $derived(queue.filter((item: DisplayDownloadItem) => {
     if (!matchesSearch(item, searchQuery)) return false;
     return downloadFilter === "all" || getVisualState(item) === downloadFilter;
+  }));
+  // A novel being saved is always an active download, found by its title.
+  let filteredNovelDownloads = $derived(store.novelDownloads.filter((novel) => {
+    const normalized = searchQuery.trim().toLowerCase();
+    if (normalized && !novel.title.toLowerCase().includes(normalized)) return false;
+    return downloadFilter === "all" || downloadFilter === "downloading";
   }));
   let queueSize: number = $derived(queue.length);
   let activeCount: number = $derived(queue.filter((item: DownloadQueueItem) => getVisualState(item) === "downloading").length);
@@ -700,8 +721,8 @@
             <div class="downloads-menu-panel downloads-filter-panel n-popover-surface n-popover-menu" role="menu">
               <p class="n-popover-label">{$_("downloads.filter.show")}</p>
               {#each [
-                { id: "all", label: $_("downloads.filter.all"), count: queueSize },
-                { id: "downloading", label: $_("downloads.filter.active"), count: activeCount },
+                { id: "all", label: $_("downloads.filter.all"), count: queueSize + store.novelDownloads.length },
+                { id: "downloading", label: $_("downloads.filter.active"), count: activeCount + store.novelDownloads.length },
                 { id: "queued", label: $_("downloads.filter.queued"), count: queuedCount },
                 { id: "paused", label: $_("downloads.filter.paused"), count: pausedCount },
                 { id: "error", label: $_("downloads.filter.failed"), count: failedCount },
@@ -860,9 +881,33 @@
       {/if}
 
       <div class="downloads-list">
-        {#if filteredQueue.length === 0}
+        {#each filteredNovelDownloads as novel (novel.novelId)}
+          <div class="dl-row" data-download-novel-id={novel.novelId} tabindex="-1">
+            <div class="dl-row__thumb">
+              {#if novel.coverUrl}
+                <img class="dl-row__image" alt="" src={novel.coverUrl} loading="lazy" decoding="async" />
+              {/if}
+            </div>
+
+            <div class="dl-row__body">
+              <div class="dl-row__header">
+                <div>
+                  <h3 class="dl-row__title">{novel.title}</h3>
+                </div>
+                <span class="dl-row__status dl-row__status--accent">
+                  {$_("novelDetail_download_progress", { done: novel.done, total: novel.total })}
+                </span>
+              </div>
+
+              <div class="dl-progress">
+                <div class="dl-progress__fill" style={`width: ${novel.total > 0 ? Math.round((novel.done / novel.total) * 100) : 0}%;`}></div>
+              </div>
+            </div>
+          </div>
+        {/each}
+        {#if filteredQueue.length === 0 && filteredNovelDownloads.length === 0}
           <div class="downloads-empty">
-            <span>{queueSize === 0 ? $_("downloads.empty.none") : $_("downloads.empty.noSearchMatch")}</span>
+            <span>{queueSize === 0 && store.novelDownloads.length === 0 ? $_("downloads.empty.none") : $_("downloads.empty.noSearchMatch")}</span>
           </div>
         {:else}
           {#each filteredQueue as item (item.chapter.id)}

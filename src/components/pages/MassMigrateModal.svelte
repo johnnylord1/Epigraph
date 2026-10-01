@@ -1,20 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import {
-    ArrowLeft,
-    ArrowRight,
-    ArrowsLeftRight,
-    Check,
-    CircleNotch,
-    DotsThreeVertical,
-    ListChecks,
-    MagnifyingGlass,
-    Plugs,
-    Warning,
-    X,
-  } from "phosphor-svelte";
+  import { ArrowLeft, BookOpen, Check, CircleNotch, DotsThreeVertical, MagnifyingGlass, X } from "phosphor-svelte";
   import { _, translate } from "../../lib/i18n/runtime";
-  import { formatWorkStatus } from "../../lib/i18n/format";
+  import { readableErrorText } from "../../lib/i18n/networkErrorText";
   import { gql } from "../../lib/client";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
@@ -47,6 +35,8 @@
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import MigrationSourcePicker from "./MigrationSourcePicker.svelte";
+  import MigrationResultList from "./MigrationResultList.svelte";
   import { enterOnMount, glideHeight, listFlip, popIn, popOut } from "../../lib/motion/motion";
   import "./migrationModal.css";
 
@@ -84,6 +74,8 @@
   let runtimeErrors = $state(new Map<number, string>());
   let searchFilter = $state("");
   let manualQuery = $state(new Map<number, string>());
+  // The query typed in the open manual search; saved per work when the search runs.
+  let manualSearchText = $state("");
   let manualSearching = $state(new Set<number>());
   let manualResults = $state(new Map<number, Manga[]>());
   let manualSearchItemId: number | null = $state(null);
@@ -121,19 +113,6 @@
       origin.lang,
     );
   });
-  const targetSourceGroups = $derived.by(() => {
-    const groups = new Map<string, { name: string; sources: Source[] }>();
-    for (const source of targetSources) {
-      const key = sourcePackageName(source);
-      const current = groups.get(key) ?? {
-        name: source.extension?.name ?? source.displayName,
-        sources: [],
-      };
-      current.sources.push(source);
-      groups.set(key, current);
-    }
-    return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name));
-  });
   const selectedMigratableCount = $derived.by<number>(() => {
     const currentPreview = preview;
     return currentPreview
@@ -160,8 +139,26 @@
     manualSearchItemId === null ? null : preview?.items.find((item) => item.currentManga.id === manualSearchItemId) ?? null
   ));
 
-  const massSteps = ["origin", "target", "review", "migrating"] as const satisfies Step[];
-  const massStepIdx = $derived(massSteps.indexOf(step));
+  const originOptions = $derived(originSources.map((source) => ({
+    id: source.id,
+    name: source.displayName,
+    iconSrc: resolveServiceIconUrl(source, { kind: "source" }),
+  })));
+  const targetOptions = $derived(targetSources.map((source) => ({
+    id: source.id,
+    name: source.displayName,
+    iconSrc: resolveServiceIconUrl(source, { kind: "source" }),
+  })));
+  const QUEUE_FILTER_FROM = 8;
+  const showQueueFilter = $derived.by(() => (preview?.items.length ?? 0) > QUEUE_FILTER_FROM || searchFilter.length > 0);
+  const headerSubtitle = $derived.by(() => {
+    if (manualSearchItem) return manualSearchItem.currentManga.title;
+    if (step === "target") return originSource?.displayName ?? "";
+    if (originSource && targetSource && step !== "origin") {
+      return $_("massMigration.sourceToTarget", { values: { origin: originSource.displayName, target: targetSource.displayName } });
+    }
+    return "";
+  });
   // Each body view gets its own entrance, so switching steps reads as a page turn rather than a swap.
   const bodyView = $derived.by(() => {
     if (loading) return "loading";
@@ -170,23 +167,6 @@
     if (preview) return manualSearchItem ? "manual" : "review";
     return "none";
   });
-
-  const languageNames = (() => {
-    try { return new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "language" }); }
-    catch { return null; }
-  })();
-
-  function languageLabel(lang: string): string {
-    try { return languageNames?.of(lang) ?? lang.toUpperCase(); }
-    catch { return lang.toUpperCase(); }
-  }
-
-  function massStepLabel(st: Step): string {
-    if (st === "origin") return $_("massMigration.stepOrigin");
-    if (st === "target") return $_("massMigration.stepTarget");
-    if (st === "review") return $_("massMigration.stepReview");
-    return $_("massMigration.stepMigrate");
-  }
 
   function statusTone(item: MassMangaMigrationPreviewItem): string {
     const runtime = runtimeStatuses.get(item.currentManga.id);
@@ -465,6 +445,14 @@
     }
   }
 
+  // One press on a target source builds the review straight away.
+  function chooseTarget(id: string) {
+    const source = targetSources.find((candidate) => candidate.id === id);
+    if (!source || buildingPreview) return;
+    pickTarget(source);
+    void buildPreview();
+  }
+
   function pickTarget(source: Source) {
     if (!originSource) return;
     targetSource = source;
@@ -664,18 +652,40 @@
     activeActionsMenuId = activeActionsMenuId === item.currentManga.id ? null : item.currentManga.id;
   }
 
-  // The dialog is only as tall as its queue, so an open menu near the bottom would be cut off by the
-  // scrolling body. Reserving its overhang below the queue lets the dialog grow (or scroll) to show it.
-  function keepMenuInView(menu: HTMLElement) {
+  // The row menu floats over the dialog instead of taking room in the queue, so opening it never
+  // grows or scrolls the dialog. It opens under its button, or above it when the dialog ends first,
+  // and closes on a press outside it, or when the queue scrolls or the window resizes rather than
+  // drifting from its button.
+  function floatMenu(menu: HTMLElement) {
+    const trigger = menu.parentElement?.querySelector<HTMLElement>(".mg-icon-btn");
     const body = menu.closest<HTMLElement>(".mg-body");
-    const queue = menu.closest<HTMLElement>(".mg-queue");
-    if (!body || !queue) return;
-    const overhang = menu.getBoundingClientRect().bottom + 12 - body.getBoundingClientRect().bottom;
-    if (overhang > 0) queue.style.paddingBottom = `${Math.ceil(overhang)}px`;
-    menu.scrollIntoView?.({ block: "nearest" });
+    if (!trigger) return;
+    const anchor = trigger.getBoundingClientRect();
+    const bounds = menu.closest<HTMLElement>(".mg-modal")?.getBoundingClientRect();
+    const floor = Math.min(bounds?.bottom ?? window.innerHeight, window.innerHeight) - 8;
+    menu.style.left = "0px";
+    menu.style.top = "0px";
+    // Where (0, 0) lands, so the placement stays right even under a transformed ancestor.
+    const origin = menu.getBoundingClientRect();
+    const below = anchor.bottom + 6;
+    const above = anchor.top - 6 - origin.height;
+    const opensUp = below + origin.height > floor && above >= 8;
+    menu.dataset.side = opensUp ? "top" : "bottom";
+    menu.style.left = `${Math.max(8, anchor.right - origin.width) - origin.left}px`;
+    menu.style.top = `${(opensUp ? above : below) - origin.top}px`;
+    const close = () => { activeActionsMenuId = null; };
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !menu.contains(target) && !trigger.contains(target)) close();
+    };
+    body?.addEventListener("scroll", close, { passive: true });
+    window.addEventListener("resize", close);
+    document.addEventListener("pointerdown", closeOutside, true);
     return {
       destroy() {
-        queue.style.paddingBottom = "";
+        body?.removeEventListener("scroll", close);
+        window.removeEventListener("resize", close);
+        document.removeEventListener("pointerdown", closeOutside, true);
       },
     };
   }
@@ -688,6 +698,7 @@
       next.set(item.currentManga.id, item.currentManga.title);
       manualQuery = next;
     }
+    manualSearchText = manualQuery.get(item.currentManga.id) ?? item.currentManga.title;
     void searchManual(item);
   }
 
@@ -874,33 +885,14 @@
     <header class="mg-header">
       <span class="mg-mark"><img src={resolveServiceIconUrl(originSource ?? extension, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
       <div class="mg-heading">
-        <p class="mg-eyebrow">{$_("massMigration.title")}</p>
         <h2 class="mg-title" id={dialogTitleId}>{extension.name}</h2>
-        {#if originSource && targetSource && step !== "origin"}
-          <p class="mg-subtitle">{$_("massMigration.sourceToTarget", { values: { origin: originSource.displayName, target: targetSource.displayName } })}</p>
-        {/if}
+        <p class="mg-subtitle">{headerSubtitle || $_("massMigration.title")}</p>
         <span id={dialogDescriptionId} class="mg-sr-only">{$_("massMigration.description")}</span>
       </div>
       <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={applying} aria-label={$_("massMigration.close")}>
         <X size={16} weight="bold" />
       </button>
     </header>
-
-    <nav class="mg-steps" aria-label={$_("massMigration.steps")}>
-      <ol>
-        {#each massSteps as st, i}
-          <li class:is-complete={i < massStepIdx} aria-current={step === st ? "step" : undefined}>
-            <span class="mg-step-chip">
-              <span class="mg-step-icon" aria-hidden="true">
-                {#if i < massStepIdx}<Check size={15} weight="bold" />{:else if st === "origin"}<Plugs size={16} weight="duotone" />{:else if st === "target"}<MagnifyingGlass size={16} weight="duotone" />{:else if st === "review"}<ListChecks size={16} weight="duotone" />{:else}<ArrowsLeftRight size={16} weight="duotone" />{/if}
-              </span>
-              <span>{massStepLabel(st)}</span>
-            </span>
-            {#if i < massSteps.length - 1}<span class="mg-step-line" aria-hidden="true"><i></i></span>{/if}
-          </li>
-        {/each}
-      </ol>
-    </nav>
 
     <div class="mg-body">
       {#key bodyView}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
@@ -919,33 +911,12 @@
           actions={[{ label: $_("massMigration.retry"), kind: "primary", icon: "retry", onClick: loadInitialState }]}
         />
       {:else if step === "origin"}
-        <p class="mg-lede"><strong>{$_("massMigration.chooseSourceFrom", { values: { name: extension.name } })}</strong></p>
-        <p class="mg-section-label">{$_("massMigration.installedSourcesForExtension", { values: { count: originSources.length } })}</p>
-        {#if originSources.length === 0}
-          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("massMigration.noLinkedInstalledSource")}</span></div>
-        {:else}
-          <div class="mg-list">
-            {#each originSources as source, i}
-              <button class="mg-row" style:--mg-i={i} type="button" data-migration-source onclick={() => pickOrigin(source)}>
-                <span class="mg-mark"><img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
-                <span class="mg-row-copy">
-                  <strong>{source.displayName}</strong>
-                  <small>{languageLabel(source.lang)}</small>
-                </span>
-                <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <MigrationSourcePicker
+          sources={originOptions}
+          emptyLabel={$_("massMigration.noLinkedInstalledSource")}
+          onPick={(id) => { const source = originSources.find((candidate) => candidate.id === id); if (source) void pickOrigin(source); }}
+        />
       {:else if step === "target"}
-        <div class="mg-context">
-          <span class="mg-mark"><img src={resolveServiceIconUrl(originSource ?? extension, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
-          <span class="mg-row-copy">
-            <strong>{originSource?.displayName ?? extension.name}</strong>
-            <small>{$_("massMigration.libraryTitlesCompared", { values: { count: sourceItems.length } })}</small>
-          </span>
-          <button class="mg-btn mg-btn--small" type="button" onclick={() => step = "origin"} disabled={buildingPreview}>{$_("ui_change")}</button>
-        </div>
         {#if buildingPreview}
           <div class="mg-progress" aria-live="polite">
             <div class="mg-progress-head">
@@ -958,90 +929,38 @@
         {#if error}
           <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.targetSource")} title={$_("ui_searchFailed")} body={error} />
         {/if}
-        {#if targetSourceGroups.length === 0}
-          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("massMigration.noAlternativeSource")}</span></div>
-        {:else}
-          {#each targetSourceGroups as group}
-            <p class="mg-section-label">{group.name}</p>
-            <div class="mg-list" role="radiogroup" aria-label={group.name}>
-              {#each group.sources as source, i}
-                <button
-                  style:--mg-i={i}
-                  class="mg-row"
-                  class:is-selected={targetSource?.id === source.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={targetSource?.id === source.id}
-                  data-migration-source
-                  disabled={buildingPreview}
-                  onclick={() => pickTarget(source)}
-                >
-                  <span class="mg-mark"><img src={resolveServiceIconUrl(source, { kind: "source" })} alt="" onerror={(event) => applyServiceIconFallback(event, "source")} /></span>
-                  <span class="mg-row-copy">
-                    <strong>{source.displayName}</strong>
-                    <small>{languageLabel(source.lang)}</small>
-                  </span>
-                  <span class="mg-row-end">{#if targetSource?.id === source.id}<Check size={16} weight="bold" />{/if}</span>
-                </button>
-              {/each}
-            </div>
-          {/each}
-        {/if}
+        <MigrationSourcePicker
+          sources={targetOptions}
+          pendingId={buildingPreview ? targetSource?.id ?? null : null}
+          emptyLabel={$_("massMigration.noAlternativeSource")}
+          onPick={chooseTarget}
+        />
       {:else if preview && manualSearchItem}
-        <div class="mg-context">
-          <span class="mg-cover"><img src={resolveMangaCoverUrl(manualSearchItem.currentManga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
-          <span class="mg-row-copy">
-            <small>{$_("massMigration.manualSearch")}</small>
-            <strong title={manualSearchItem.currentManga.title}>{manualSearchItem.currentManga.title}</strong>
-          </span>
-        </div>
-        <form class="mg-field" onsubmit={(event) => { event.preventDefault(); void searchManual(manualSearchItem); }}>
-          <MagnifyingGlass size={16} weight="bold" />
-          <input
-            value={manualQuery.get(manualSearchItem.currentManga.id) ?? manualSearchItem.currentManga.title}
-            oninput={(event) => setManualQuery(manualSearchItem.currentManga.id, (event.currentTarget as HTMLInputElement).value)}
-            placeholder={$_("massMigration.searchTitleOnTarget")}
-            aria-label={$_("massMigration.searchTitleOnTarget")}
-          />
-          <button class="mg-btn mg-btn--primary mg-btn--small" type="submit" disabled={manualSearching.has(manualSearchItem.currentManga.id)}>
-            {#if manualSearching.has(manualSearchItem.currentManga.id)}<CircleNotch size={14} weight="bold" class="anim-spin" /> {$_("ui_searching")}{:else}{$_("novelSources_actions_search")}{/if}
-          </button>
-        </form>
-
-        {#if runtimeErrors.get(manualSearchItem.currentManga.id)}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("massMigration.manualSearch")} title={$_("ui_searchFailed")} body={runtimeErrors.get(manualSearchItem.currentManga.id)} />
-        {/if}
-
-        {#if manualSearching.has(manualSearchItem.currentManga.id)}
-          <div class="mg-list" aria-busy="true" aria-label={$_("massMigration.searchingTarget", { values: { name: targetSource?.displayName ?? $_("massMigration.targetSource") } })}>
-            {#each Array(4) as _}<div class="mg-skeleton"></div>{/each}
-          </div>
-        {:else if manualResults.get(manualSearchItem.currentManga.id)?.length}
-          <div class="mg-list">
-            {#each manualResults.get(manualSearchItem.currentManga.id) ?? [] as result, i}
-              <button class="mg-row" style:--mg-i={i} type="button" data-migration-result onclick={() => chooseManualMatch(manualSearchItem, result)}>
-                <span class="mg-cover"><img src={resolveMangaCoverUrl(result, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
-                <span class="mg-row-copy">
-                  <strong title={result.title}>{result.title}</strong>
-                  <small>{result.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}</small>
-                </span>
-                <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <div class="mg-empty">
-            <span class="mg-mark"><MagnifyingGlass size={18} weight="duotone" /></span>
-            <span>{$_("massMigration.noManualResults")}</span>
-          </div>
-        {/if}
+        {@const item = manualSearchItem}
+        <MigrationResultList
+          bind:query={manualSearchText}
+          searching={manualSearching.has(item.currentManga.id)}
+          results={(manualResults.get(item.currentManga.id) ?? []).map((result) => ({
+            id: String(result.id),
+            title: result.title,
+            coverSrc: resolveMangaCoverUrl(result, { context: "migration", persistence: "memory" }),
+          }))}
+          error={runtimeErrors.get(item.currentManga.id) ?? null}
+          emptyLabel={$_("massMigration.noManualResults")}
+          placeholder={$_("massMigration.searchTitleOnTarget")}
+          onSearch={() => { setManualQuery(item.currentManga.id, manualSearchText); void searchManual(item); }}
+          onPick={(id) => { const result = manualResults.get(item.currentManga.id)?.find((candidate) => String(candidate.id) === id); if (result) void chooseManualMatch(item, result); }}
+        />
       {:else if preview}
-        <p class="mg-lede">{$_("massMigration.reviewCounts", { values: { ready: preview.readyCount, review: preview.needsReviewCount, attention: preview.blockedCount } })}</p>
         <div class="mg-toolbar">
-          <label class="mg-field">
-            <MagnifyingGlass size={16} weight="bold" />
-            <input bind:value={searchFilter} placeholder={$_("massMigration.filterQueue")} aria-label={$_("massMigration.filterQueue")} />
-          </label>
+          {#if showQueueFilter}
+            <label class="mg-field">
+              <MagnifyingGlass size={16} weight="bold" />
+              <input bind:value={searchFilter} placeholder={$_("massMigration.filterQueue")} aria-label={$_("massMigration.filterQueue")} />
+            </label>
+          {:else}
+            <span class="mg-spacer"></span>
+          {/if}
           <button class="mg-btn" type="button" onclick={toggleAllVisibleMatches} disabled={visibleSelectableIds.length === 0}>
             {allVisibleSelectableSelected ? $_("massMigration.deselectAll") : $_("massMigration.selectAllMatches")}
           </button>
@@ -1058,10 +977,6 @@
             {#each visiblePreviewItems as item, i (item.currentManga.id)}
               {@const runtime = runtimeStatuses.get(item.currentManga.id)}
               {@const match = item.match}
-              {@const sourceLabel = item.currentManga.source?.displayName ?? originSource?.displayName ?? $_("massMigration.source")}
-              {@const targetLabel = match?.manga.source?.displayName ?? targetSource?.displayName ?? $_("massMigration.targetSource")}
-              {@const sourceStatus = formatWorkStatus(item.currentManga.status)}
-              {@const targetStatus = formatWorkStatus(match?.manga.status)}
               {@const selected = selectedIds.has(item.currentManga.id)}
               {@const done = runtime === "migrated" || runtime === "copied"}
               <article animate:listFlip style:--mg-i={i} class="mg-queue-item" class:is-selected={selected} class:is-muted={runtime === "excluded"}>
@@ -1076,23 +991,17 @@
                 >
                   {#if selected || done}<Check size={13} weight="bold" />{/if}
                 </button>
-                <div class="mg-queue-side">
-                  <span class="mg-cover"><img src={resolveMangaCoverUrl(item.currentManga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} /></span>
-                  <span class="mg-row-copy">
-                    <strong title={item.currentManga.title}>{item.currentManga.title}</strong>
-                    <small>{sourceLabel}{sourceStatus ? ` · ${sourceStatus}` : ""}</small>
-                  </span>
-                </div>
-                <span class="mg-queue-arrow" aria-hidden="true"><ArrowRight size={15} weight="bold" /></span>
-                <div class="mg-queue-side">
-                  <span class="mg-cover">
-                    {#if match}<img src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />{:else}<Warning size={16} weight="bold" />{/if}
-                  </span>
-                  <span class="mg-row-copy">
-                    <strong title={match?.manga.title ?? ""}>{match?.manga.title ?? statusLabel(item)}</strong>
-                    <small>{targetLabel}{targetStatus ? ` · ${targetStatus}` : ""}</small>
-                  </span>
-                </div>
+                <span class="mg-cover">
+                  {#if match}<img src={resolveMangaCoverUrl(match.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />{:else}<BookOpen size={16} weight="duotone" />{/if}
+                </span>
+                <span class="mg-row-copy">
+                  <strong title={item.currentManga.title}>{item.currentManga.title}</strong>
+                  {#if match}
+                    <small title={match.manga.title}>→ {match.manga.title}</small>
+                  {:else if issueReasonLabel(item)}
+                    <small title={issueReasonLabel(item)}>{issueReasonLabel(item)}</small>
+                  {/if}
+                </span>
                 <span class="mg-pill {statusTone(item)}">{statusLabel(item)}</span>
                 <div class="mg-menu-wrap">
                   <button
@@ -1106,7 +1015,7 @@
                     <DotsThreeVertical size={18} weight="bold" />
                   </button>
                   {#if activeActionsMenuId === item.currentManga.id}
-                    <div class="mg-menu" role="menu" use:keepMenuInView in:popIn out:popOut>
+                    <div class="mg-menu" role="menu" use:floatMenu in:popIn out:popOut>
                       {#if canSelect(item)}
                         <button type="button" role="menuitem" onclick={() => applySelected("migrate", [item.currentManga.id])}>{$_("massMigration.migrateNow")}</button>
                         <button type="button" role="menuitem" onclick={() => applySelected("copy", [item.currentManga.id])}>{$_("massMigration.copyNow")}</button>
@@ -1117,11 +1026,8 @@
                     </div>
                   {/if}
                 </div>
-                {#if issueReasonLabel(item)}
-                  <small class="mg-queue-note">{issueReasonLabel(item)}</small>
-                {/if}
                 {#if runtimeErrors.get(item.currentManga.id)}
-                  <small class="mg-queue-note is-error">{runtimeErrors.get(item.currentManga.id)}</small>
+                  <small class="mg-queue-note is-error">{readableErrorText(runtimeErrors.get(item.currentManga.id) ?? "")}</small>
                 {/if}
               </article>
             {/each}
@@ -1132,19 +1038,12 @@
     </div>
 
     <footer class="mg-footer">
-      {#if loading || (error && !preview && step !== "target")}
-        <span class="mg-spacer"></span>
-        <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
-      {:else if step === "origin"}
+      {#if loading || (error && !preview && step !== "target") || step === "origin"}
         <span class="mg-spacer"></span>
         <button class="mg-btn" type="button" onclick={onClose}>{$_("ui_cancel")}</button>
       {:else if step === "target"}
         <button class="mg-btn" type="button" onclick={() => step = "origin"} disabled={buildingPreview}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("ui_back")}</button>
         <span class="mg-spacer"></span>
-        <button class="mg-btn mg-btn--primary" type="button" disabled={!targetSource || sourceItems.length === 0 || buildingPreview} onclick={buildPreview}>
-          {#if buildingPreview}<CircleNotch size={15} weight="bold" class="anim-spin" />{/if}
-          {$_("massMigration.searchMatches")} <ArrowRight size={15} weight="bold" class="mg-arrow-next" />
-        </button>
       {:else if preview && manualSearchItem}
         <button class="mg-btn" type="button" onclick={closeManualSearch}><ArrowLeft size={15} weight="bold" class="mg-arrow-back" /> {$_("massMigration.backToReview")}</button>
         <span class="mg-spacer"></span>

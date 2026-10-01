@@ -572,6 +572,11 @@ vi.mock("../../lib/manga/runtime", async () => {
   };
 });
 
+vi.mock("../../lib/manga/runtime/extensionUpdateCoordinator", async () => {
+  const actual = await vi.importActual<typeof import("../../lib/manga/runtime/extensionUpdateCoordinator")>("../../lib/manga/runtime/extensionUpdateCoordinator");
+  return { ...actual, runTransactionalExtensionUpdates: runTransactionalExtensionUpdatesMock };
+});
+
 vi.mock("../../lib/cache", () => ({
   cache: { get: vi.fn(async (_key: string, load: () => Promise<unknown>) => load()) },
   CACHE_KEYS: { sourceMangaPage: vi.fn(() => "page-key") },
@@ -1039,6 +1044,15 @@ describe("BrowseV3", () => {
     expect(source).toContain('event.key === "ArrowUp"');
     expect(source).not.toContain("kw_results.filter((r) => r.mangas.length > 0 || r.loading || r.error)");
     expect(source).not.toContain("kw_novelResults.filter((r) => r.novels.length > 0 || r.loading || r.error)");
+  });
+
+  test("does not FLIP-measure every recommendation card whenever the ranking updates", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/pages/BrowseV3.svelte"), "utf8");
+    const rail = source.slice(source.indexOf("{#each section.items as item, itemIndex (item.candidate.id)}"), source.indexOf("</button>", source.indexOf("{#each section.items as item, itemIndex (item.candidate.id)}")));
+
+    expect(rail).toContain("in:arrive=");
+    // animate: reads every card's layout on each section update, which froze the first Browse open while covers loaded.
+    expect(rail).not.toMatch(/animate:/);
   });
 
   test("moves horizontally within one source and vertically to the nearest card without moving other rows", async () => {

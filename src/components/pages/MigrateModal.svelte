@@ -1,10 +1,10 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { _ } from "../../lib/i18n/runtime";
-  import { X, MagnifyingGlass, CircleNotch, ArrowRight, ArrowLeft, Check, Sparkle, Plugs, ArrowsLeftRight, Warning } from "phosphor-svelte";
+  import { X, CircleNotch, ArrowRight, ArrowLeft } from "phosphor-svelte";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
-  import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
+  import { resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES } from "../../lib/queries";
   import { fetchSourceMangaChapters } from "../../lib/manga/runtime";
@@ -21,7 +21,10 @@
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
-  import { enterOnMount, glideHeight, listFlip } from "../../lib/motion/motion";
+  import MigrationSourcePicker from "./MigrationSourcePicker.svelte";
+  import MigrationResultList from "./MigrationResultList.svelte";
+  import MigrationConfirm from "./MigrationConfirm.svelte";
+  import { enterOnMount, glideHeight } from "../../lib/motion/motion";
   import "./migrationModal.css";
 
   interface Props {
@@ -57,7 +60,6 @@
   let loadingSources        = $state(true);
   let sourceLoadError: string | null = $state(null);
   let selectedSource = $state<Source | null>(null);
-  let sourceFilter          = $state("");
 
   // Lang filter: "en" first, then alphabetical
   let selectedLang: string       = $state("all");
@@ -78,12 +80,9 @@
     return 3;
   }
   const visibleSources           = $derived.by(() => {
-    const needle = sourceFilter.trim().toLowerCase();
-    const matches = (s: Source) => !needle || s.displayName.toLowerCase().includes(needle) || s.name.toLowerCase().includes(needle);
-    if (selectedLang !== "all") return sources.filter(s => s.lang === selectedLang && matches(s));
+    if (selectedLang !== "all") return sources.filter(s => s.lang === selectedLang);
     const map = new Map<string, Source>();
     for (const s of sources) {
-      if (!matches(s)) continue;
       const existing = map.get(s.name);
       if (!existing) { map.set(s.name, s); continue; }
       const rank = langRank(s.lang) - langRank(existing.lang);
@@ -91,6 +90,11 @@
     }
     return Array.from(map.values());
   });
+  const sourceOptions = $derived(visibleSources.map((s) => ({
+    id: s.id,
+    name: s.displayName,
+    iconSrc: resolveServiceIconUrl(s, { kind: "source" }),
+  })));
 
   const languageNames = (() => {
     try { return new Intl.DisplayNames([document.documentElement.lang || "en"], { type: "language" }); }
@@ -112,20 +116,30 @@
   let overlayEl: HTMLDivElement | undefined = $state();
   let modalEl: HTMLDivElement | undefined = $state();
   let closeButtonEl: HTMLButtonElement | undefined = $state();
-  const readCount   = $derived(currentChapters.filter((c) => c.isRead).length);
   const totalCount  = $derived(currentChapters.length);
   const chapterDiff = $derived(chapterDifference(selectedMatch, totalCount));
-  const currentSteps = ["source", "search", "confirm"] as const satisfies Step[];
-  const stepIdx = $derived(currentSteps.indexOf(step));
   const currentSourceName = $derived(manga.source?.displayName ?? $_("libraryUpdate.unknownSource"));
   const selectedSourceName = $derived(selectedSource?.displayName ?? $_("libraryUpdate.unknownSource"));
+  const resultOptions = $derived(results.map(({ manga: m, similarity }, idx) => {
+    const best = idx === 0 && similarity > 0.5;
+    const match = $_("migrate.matchPercent", { percent: percent(similarity) });
+    return {
+      id: String(m.id),
+      title: m.title,
+      coverSrc: resolveMangaCoverUrl(m, { context: "migration", persistence: "memory" }),
+      hint: best ? `${$_("ui_bestMatch")} · ${match}` : match,
+      best,
+    };
+  }));
+  const confirmWarning = $derived.by(() => {
+    if (!selectedMatch) return null;
+    if (chapterDiff < -5) return `${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`;
+    if (selectedMatch.similarity < 0.5) return `${$_("ui_lowConfidenceMatch")}. ${$_("feedback.reviewMigration")}`;
+    return null;
+  });
 
   function chapterDifference(match: Match | null, currentTotal: number): number {
     return match ? match.chapters.length - currentTotal : 0;
-  }
-
-  function stepLabel(st: Step): string {
-    return st === "source" ? $_("ui_pickSource") : st === "search" ? $_("migrate.stepSearch") : $_("migrate.stepConfirm");
   }
 
   function percent(similarity: number): number {
@@ -210,7 +224,9 @@
     }
   }
 
-  function pickSource(src: Source) {
+  function pickSource(id: string) {
+    const src = sources.find((s) => s.id === id);
+    if (!src) return;
     selectedSource = src;
     error = null;
     step = "search";
@@ -221,6 +237,11 @@
     step = "source";
     results = [];
     error = null;
+  }
+
+  function pickResult(id: string) {
+    const picked = results.find((r) => String(r.manga.id) === id);
+    if (picked) void selectMatch(picked.manga, picked.similarity);
   }
 
   async function selectMatch(m: Manga, similarity: number) {
@@ -312,37 +333,16 @@
         <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt="" onerror={markBrokenImage} />
       </span>
       <div class="mg-heading">
-        <p class="mg-eyebrow">{$_("migrate.eyebrow")}</p>
         <h2 class="mg-title" title={manga.title}>{manga.title}</h2>
-        <p class="mg-subtitle">{$_("migrate.fromSource", { source: currentSourceName, count: totalCount })}</p>
+        <p class="mg-subtitle">{step === "source" ? $_("migrate.fromSource", { source: currentSourceName, count: totalCount }) : selectedSourceName}</p>
       </div>
       <button bind:this={closeButtonEl} class="mg-close" type="button" onclick={onClose} disabled={migrating} aria-label={$_("ui_closeMigrationModal")}><X size={16} weight="bold" /></button>
     </header>
 
-    <nav class="mg-steps" aria-label={$_("ui_migrateSource")}>
-      <ol>
-        {#each currentSteps as st, i}
-          <li class:is-complete={i < stepIdx} aria-current={step === st ? "step" : undefined}>
-            <span class="mg-step-chip">
-              <span class="mg-step-icon" aria-hidden="true">
-                {#if i < stepIdx}<Check size={15} weight="bold" />{:else if st === "source"}<Plugs size={16} weight="duotone" />{:else if st === "search"}<MagnifyingGlass size={16} weight="duotone" />{:else}<ArrowsLeftRight size={16} weight="duotone" />{/if}
-              </span>
-              <span>{stepLabel(st)}</span>
-            </span>
-            {#if i < currentSteps.length - 1}<span class="mg-step-line" aria-hidden="true"><i></i></span>{/if}
-          </li>
-        {/each}
-      </ol>
-    </nav>
-
     <div class="mg-body">
       {#key step}<div class="mg-step" use:enterOnMount={{ y: 10, blur: 4, duration: 560 }}>
       {#if step === "source"}
-        {#if loadingSources}
-          <div class="mg-list" aria-busy="true">
-            {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
-          </div>
-        {:else if sourceLoadError}
+        {#if sourceLoadError}
           <NocturneState
             layout="compact"
             tone="danger"
@@ -352,182 +352,47 @@
             body={sourceLoadError}
             actions={[{ label: $_("sources.actions.refresh"), kind: "primary", icon: "retry", onClick: loadSources }]}
           />
-        {:else if sources.length === 0}
-          <div class="mg-empty"><span class="mg-mark"><Plugs size={18} weight="duotone" /></span><span>{$_("ui_noOtherSourcesInstalled")}</span></div>
         {:else}
-          <p class="mg-lede">{$_("migrate.sourceLede")}</p>
-          <div class="mg-toolbar">
-            <label class="mg-field">
-              <MagnifyingGlass size={16} weight="bold" />
-              <input bind:value={sourceFilter} placeholder={$_("migrate.filterSources")} aria-label={$_("migrate.filterSources")} />
-            </label>
-            {#if hasMultipleLangs}
-              <label class="mg-field mg-field--select">
-                <select bind:value={selectedLang} aria-label={$_("migrate.allLanguages")}>
-                  <option value="all">{languageLabel("all")}</option>
-                  {#each availableLangs as lang}<option value={lang}>{languageLabel(lang)}</option>{/each}
-                </select>
-              </label>
-            {/if}
-          </div>
-          <p class="mg-section-label">{$_("migrate.sourceCount", { count: visibleSources.length })}</p>
-          {#if visibleSources.length === 0}
-            <div class="mg-empty">{$_("migrate.noSourceMatches")}</div>
-          {:else}
-            <div class="mg-list">
-              {#each visibleSources as src, i (src.id)}
-                <button
-                  animate:listFlip
-                  style:--mg-i={i}
-                  class="mg-row"
-                  class:is-selected={selectedSource?.id === src.id}
-                  type="button"
-                  data-migration-source
-                  onclick={() => pickSource(src)}>
-                  <span class="mg-mark">
-                    <img src={resolveServiceIconUrl(src, { kind: "source" })} alt="" onerror={(e) => applyServiceIconFallback(e, "source")} />
-                  </span>
-                  <span class="mg-row-copy">
-                    <strong>{src.displayName}</strong>
-                    <small>{languageLabel(src.lang)}{src.isNsfw ? " · NSFW" : ""}</small>
-                  </span>
-                  <span class="mg-row-end"><ArrowRight size={16} weight="bold" /></span>
-                </button>
-              {/each}
-            </div>
-          {/if}
+          <MigrationSourcePicker
+            sources={sourceOptions}
+            loading={loadingSources}
+            emptyLabel={$_("ui_noOtherSourcesInstalled")}
+            onPick={pickSource}
+          >
+            {#snippet tools()}
+              {#if hasMultipleLangs}
+                <label class="mg-field mg-field--select">
+                  <select bind:value={selectedLang} aria-label={$_("migrate.allLanguages")}>
+                    <option value="all">{languageLabel("all")}</option>
+                    {#each availableLangs as lang}<option value={lang}>{languageLabel(lang)}</option>{/each}
+                  </select>
+                </label>
+              {/if}
+            {/snippet}
+          </MigrationSourcePicker>
         {/if}
 
       {:else if step === "search"}
-        {#if selectedSource}
-          <div class="mg-context">
-            <span class="mg-mark">
-              <img src={resolveServiceIconUrl(selectedSource, { kind: "source" })} alt="" onerror={(e) => applyServiceIconFallback(e, "source")} />
-            </span>
-            <span class="mg-row-copy">
-              <strong>{selectedSource.displayName}</strong>
-              <small>{languageLabel(selectedSource.lang)}</small>
-            </span>
-            <button class="mg-btn mg-btn--small" type="button" onclick={backToSources}>{$_("ui_change")}</button>
-          </div>
-        {/if}
-        <p class="mg-lede">{$_("migrate.searchLede", { source: selectedSourceName })}</p>
-        <form class="mg-field" onsubmit={(e) => { e.preventDefault(); if (selectedSource) searchSource(selectedSource, query); }}>
-          <MagnifyingGlass size={16} weight="bold" />
-          <input bind:value={query} placeholder={$_("ui_searchTitle")} aria-label={$_("ui_searchTitle")} use:focusOnMount />
-          <button class="mg-btn mg-btn--primary mg-btn--small" type="submit" disabled={searching || !selectedSource || !query.trim()}>
-            {#if searching}<CircleNotch size={14} weight="bold" class="anim-spin" />{/if}
-            {$_("novelSources_actions_search")}
-          </button>
-        </form>
-
-        {#if error}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_searchFailed")} body={error} />
-        {/if}
-
-        {#if searching}
-          <div class="mg-list" aria-busy="true">
-            {#each Array(5) as _}<div class="mg-skeleton"></div>{/each}
-          </div>
-        {:else if results.length > 0}
-          <p class="mg-section-label">{$_("migrate.resultCount", { count: results.length })}</p>
-          <div class="mg-list">
-            {#each results as { manga: m, similarity }, idx (m.id)}
-              {@const best = idx === 0 && similarity > 0.5}
-              <button class="mg-row"
-                animate:listFlip
-                style:--mg-i={idx}
-                class:is-best={best}
-                type="button"
-                data-migration-result
-                onclick={() => selectMatch(m, similarity)}
-                disabled={loadingMatchId !== null}>
-                <span class="mg-cover">
-                  <img src={resolveMangaCoverUrl(m, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
-                </span>
-                <span class="mg-row-copy">
-                  <strong title={m.title}>{m.title}</strong>
-                  <small>
-                    {#if best}<span class="mg-pill mg-pill--accent"><Sparkle size={11} weight="fill" /> {$_("ui_bestMatch")}</span>{/if}
-                    <span class="mg-meter"><i style:width="{percent(similarity)}%"></i></span>
-                    <span>{$_("migrate.matchPercent", { percent: percent(similarity) })}</span>
-                  </small>
-                </span>
-                <span class="mg-row-end">
-                  {#if loadingMatchId === m.id}<CircleNotch size={16} weight="bold" class="anim-spin" />{:else}<ArrowRight size={16} weight="bold" />{/if}
-                </span>
-              </button>
-            {/each}
-          </div>
-        {:else if !error}
-          <div class="mg-empty">
-            <span class="mg-mark"><MagnifyingGlass size={18} weight="duotone" /></span>
-            <span>{query ? $_("ui_noResultsTryADifferentTitle") : $_("ui_enterATitleToSearch")}</span>
-          </div>
-        {/if}
+        <MigrationResultList
+          bind:query
+          {searching}
+          results={resultOptions}
+          pendingId={loadingMatchId === null ? null : String(loadingMatchId)}
+          {error}
+          onSearch={() => { if (selectedSource) searchSource(selectedSource, query); }}
+          onPick={pickResult}
+        />
 
       {:else if step === "confirm" && selectedMatch}
-        <p class="mg-lede">{$_("migrate.confirmLede")}</p>
-        <div class="mg-compare">
-          <div class="mg-compare-card">
-            <span class="mg-cover">
-              <img src={resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt="" onerror={markBrokenImage} />
-            </span>
-            <span class="mg-row-copy">
-              <span class="mg-pill">{$_("bookDetail_filter_current")}</span>
-              <strong title={manga.title}>{manga.title}</strong>
-              <small>{currentSourceName}</small>
-            </span>
-          </div>
-          <span class="mg-compare-arrow" aria-hidden="true"><ArrowRight size={16} weight="bold" /></span>
-          <div class="mg-compare-card is-new">
-            <span class="mg-cover">
-              <img src={resolveMangaCoverUrl(selectedMatch.manga, { context: "migration", persistence: "memory" })} alt="" onerror={markBrokenImage} />
-            </span>
-            <span class="mg-row-copy">
-              <span class="mg-pill mg-pill--accent">{$_("ui_new")}</span>
-              <strong title={selectedMatch.manga.title}>{selectedMatch.manga.title}</strong>
-              <small>{selectedSourceName}</small>
-            </span>
-          </div>
-        </div>
-
-        <div class="mg-metrics">
-          <div class="mg-metric">
-            <span>{$_("ui_titleMatch")}</span>
-            <strong
-              class:is-good={selectedMatch.similarity > 0.7}
-              class:is-warn={selectedMatch.similarity > 0.4 && selectedMatch.similarity <= 0.7}
-              class:is-bad={selectedMatch.similarity <= 0.4}>{percent(selectedMatch.similarity)}%</strong>
-          </div>
-          <div class="mg-metric">
-            <span>{$_("ui_chaptersOnNewSource")}</span>
-            <strong class:is-warn={chapterDiff < -5}>{selectedMatch.chapters.length}</strong>
-            {#if chapterDiff !== 0}<small>{chapterDiff > 0 ? `+${chapterDiff}` : chapterDiff} {$_("ui_vsCurrent")}</small>{/if}
-          </div>
-          <div class="mg-metric">
-            <span>{$_("ui_readProgressToCarryOver")}</span>
-            <strong>{selectedMatch.readCount} / {readCount}</strong>
-            <small>{$_("ui_chapters")}</small>
-          </div>
-        </div>
-
-        {#if chapterDiff < -5}
-          <NocturneState
-            layout="compact"
-            tone="warning"
-            icon="warning"
-            eyebrow={$_("ui_migration")}
-            title={$_("ui_warning")}
-            body={`${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`}
-          />
-        {/if}
-
-        <p class="mg-note"><Warning size={12} weight="bold" /> {$_("ui_theCurrentEntryWillBeRemovedFromYour")}</p>
-
-        {#if error}
-          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("ui_migration")} title={$_("ui_migrationFailed")} body={error} />
-        {/if}
+        <MigrationConfirm
+          from={{ title: manga.title, caption: currentSourceName, coverSrc: resolveMangaCoverUrl(manga, { context: "migration", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration }) }}
+          to={{ title: selectedMatch.manga.title, caption: selectedSourceName, coverSrc: resolveMangaCoverUrl(selectedMatch.manga, { context: "migration", persistence: "memory" }) }}
+          warning={confirmWarning}
+          note={$_("ui_theCurrentEntryWillBeRemovedFromYour")}
+          {error}
+        >
+          {#snippet summary()}{$_("migrate.confirmSummary", { chapters: selectedMatch?.chapters.length ?? 0, read: selectedMatch?.readCount ?? 0 })}{/snippet}
+        </MigrationConfirm>
       {/if}
       </div>{/key}
     </div>
@@ -553,7 +418,3 @@
     </footer>
   </div>
 </div>
-
-<script module lang="ts">
-  function focusOnMount(node: HTMLElement) { node.focus(); }
-</script>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
+  import { readableErrorText } from "../../lib/i18n/networkErrorText";
   import { onMount, untrack } from "svelte";
   import {
     ArrowCircleUp,
@@ -30,7 +31,6 @@
     getManagedSourceRuntime,
     loadExtensionCompatibilityState,
     runExplicitCompatibilityProbe,
-    runTransactionalExtensionUpdates,
     resolveExtensionStoreInputUrl,
     saveExtensionCompatibilityState,
     type ObservedCompatibilityReport,
@@ -40,6 +40,8 @@
     type SourceRuntime,
     upsertObservedCompatibilityReport,
   } from "../../lib/manga/runtime";
+  // Imported directly: through the runtime index, Rollup split the two into chunks that import each other.
+  import { runTransactionalExtensionUpdates } from "../../lib/manga/runtime/extensionUpdateCoordinator";
   import {
     addNovelRepositoryToState,
     deriveNovelRepositoryUiState,
@@ -1885,7 +1887,7 @@
             </div>
 
             {#if operationErrors.get(primary.pkgName)}
-              <p class="extensionOperationError">{operationErrors.get(primary.pkgName)}</p>
+              <p class="extensionOperationError">{readableErrorText(operationErrors.get(primary.pkgName) ?? "")}</p>
             {/if}
 
             {#if isExpanded && hasVariants}
@@ -1921,7 +1923,7 @@
                     </button>
                   </div>
                   {#if operationErrors.get(variant.pkgName)}
-                    <p class="extensionOperationError extensionOperationErrorVariant">{operationErrors.get(variant.pkgName)}</p>
+                    <p class="extensionOperationError extensionOperationErrorVariant">{readableErrorText(operationErrors.get(variant.pkgName) ?? "")}</p>
                   {/if}
                 {/each}
               </div>

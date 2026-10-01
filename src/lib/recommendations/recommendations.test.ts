@@ -5,6 +5,7 @@ import {
   normalizeRecency,
   normalizeScore,
   recommendationCandidateIdentityKeys,
+  rerankForDiversity,
   scoreRecommendationCandidate,
   type RecommendationCandidate,
   type RecommendationSection,
@@ -423,7 +424,7 @@ describe("recommendation sections", () => {
     expect(ids).not.toContain("library");
   });
 
-  it("uses section-specific criteria while allowing partial overlap", () => {
+  it("uses section-specific criteria without repeating a work across sections", () => {
     const sections = buildRecommendationSections([
       candidate("profile-match", {
         tags: ["Action", "Dungeon", "Regression"],
@@ -474,9 +475,9 @@ describe("recommendation sections", () => {
     expect(topBySection.get("freshInYourSources")).toBe("new-drop");
     expect(topBySection.get("outsideYourUsualReads")).toBe("outside-pick");
 
-    const highIds = sections.find((section) => section.key === "highConfidence")?.items.map((item) => item.candidate.id) ?? [];
-    const becauseIds = sections.find((section) => section.key === "becauseYouRatedHighly")?.items.map((item) => item.candidate.id) ?? [];
-    expect(highIds.some((id) => becauseIds.includes(id))).toBe(true);
+    const allIds = sections.flatMap((section) => section.items.map((item) => item.candidate.id));
+    expect(allIds).toHaveLength(new Set(allIds).size);
+    expect(new Set(allIds)).toEqual(new Set(["profile-match", "high-rated", "hot-now", "new-drop", "outside-pick"]));
   });
 
   it("orders overlapping candidates by each category's primary signal", () => {
@@ -553,7 +554,7 @@ describe("recommendation sections", () => {
     expect(idsFor("freshInYourSources").slice(0, 2)).toEqual(["fresh-first", "fresh-second"]);
   });
 
-  it("deduplicates within each section while allowing the same work across sections", () => {
+  it("shows each work, including its aliases, in only one section of the page", () => {
     const sharedWork = candidate("shared-work", {
       title: "Shared Work",
       tags: ["Action", "Dungeon", "Regression"],
@@ -582,8 +583,8 @@ describe("recommendation sections", () => {
       limitPerSection: 18,
     });
 
+    const seenKeys = new Set<string>();
     for (const section of sections) {
-      const seenKeys = new Set<string>();
       for (const item of section.items) {
         const identityKeys = recommendationCandidateIdentityKeys(item.candidate);
         expect(identityKeys.some((key) => seenKeys.has(key))).toBe(false);
@@ -594,7 +595,7 @@ describe("recommendation sections", () => {
     const sectionsContainingSharedWork = sections.filter((section) =>
       section.items.some((item) => recommendationCandidateIdentityKeys(item.candidate).includes("comic:shared work")),
     );
-    expect(sectionsContainingSharedWork.length).toBeGreaterThan(1);
+    expect(sectionsContainingSharedWork).toHaveLength(1);
   });
 
   it("keeps a profile match out of outside usual reads", () => {
@@ -608,7 +609,6 @@ describe("recommendation sections", () => {
           providerName: "AniList",
           kind: "tracker",
           score: normalizeScore(76, 100, 0.9),
-          trending: normalizeScore(90, 100, 0.8),
         },
       ],
     });
@@ -660,12 +660,21 @@ describe("recommendation sections", () => {
           { providerId: "source", providerName: "Flame Comics", kind: "source", availability: normalizeScore(1, 1, 0.8) },
         ],
       }),
+      candidate("acclaimed-manhwa", {
+        tags: ["Action"],
+        contentType: "manhwa",
+        providers: [
+          { providerId: "tracker", providerName: "AniList", kind: "tracker", score: normalizeScore(97, 100, 0.9) },
+          { providerId: "tracker-2", providerName: "MyAnimeList", kind: "tracker", score: normalizeScore(9.5, 10, 0.9) },
+          { providerId: "source", providerName: "Flame Comics", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        ],
+      }),
     ], manhwaProfile, { nowMs: NOW });
 
     expect(sections.find((section) => section.key === "becauseYouRatedHighly")?.items[0]?.candidate.id)
       .toBe("matching-manhwa");
     expect(sections.find((section) => section.key === "highConfidence")?.items[0]?.candidate.id)
-      .toBe("matching-manhwa");
+      .toBe("acclaimed-manhwa");
 
     const becauseIds = sections.find((section) => section.key === "becauseYouRatedHighly")?.items.map((item) => item.candidate.id) ?? [];
     const highIds = sections.find((section) => section.key === "highConfidence")?.items.map((item) => item.candidate.id) ?? [];
@@ -890,7 +899,7 @@ describe("recommendation sections", () => {
           ],
         }),
       ),
-      ...Array.from({ length: 24 }, (_, index) =>
+      ...Array.from({ length: 72 }, (_, index) =>
         candidate(`profile-manhwa-${index}`, {
           title: `Profile Manhwa ${index}`,
           tags: ["Action", "Fantasy"],
@@ -982,5 +991,214 @@ describe("recommendation sections", () => {
     expect(highConfidenceIds).toHaveLength(0);
     expect(freshIds).toHaveLength(18);
     expect(trendingIds).toHaveLength(0);
+  });
+
+  it("matches one taste of an eclectic reader instead of diluting it across the whole profile", () => {
+    const eclecticProfile = buildTasteProfile([
+      ...[0, 1, 2].map((index) => ({
+        id: `romance-${index}`, title: `Romance ${index}`, tags: ["Romance", "Drama", "School"],
+        contentType: "manga" as const, userRating: 9, status: "completed" as const,
+      })),
+      ...[0, 1, 2].map((index) => ({
+        id: `action-${index}`, title: `Action ${index}`, tags: ["Action", "Martial Arts", "Murim"],
+        contentType: "manga" as const, userRating: 9, status: "completed" as const,
+      })),
+      ...[0, 1, 2].map((index) => ({
+        id: `horror-${index}`, title: `Horror ${index}`, tags: ["Horror", "Mystery", "Psychological"],
+        contentType: "manga" as const, userRating: 9, status: "completed" as const,
+      })),
+    ]);
+    const romance = candidate("school-romance", {
+      tags: ["Romance", "School", "Drama"],
+      contentType: "manga",
+      providers: [{ providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) }],
+    });
+
+    expect(scoreRecommendationCandidate(romance, eclecticProfile, NOW).personalRatingAffinity).toBeGreaterThan(0.8);
+    const becauseIds = buildRecommendationSections([romance], eclecticProfile, { nowMs: NOW })
+      .find((section) => section.key === "becauseYouRatedHighly")?.items.map((item) => item.candidate.id);
+    expect(becauseIds).toEqual(["school-romance"]);
+  });
+
+  it("keeps titles with disliked tags out of the rows that promise your taste", () => {
+    const dislikeProfile = buildTasteProfile([
+      { id: "liked-1", title: "Liked 1", tags: ["Action", "Fantasy"], contentType: "manga", userRating: 10, status: "completed" },
+      { id: "liked-2", title: "Liked 2", tags: ["Action", "Adventure"], contentType: "manga", userRating: 9, status: "completed" },
+      { id: "dropped-1", title: "Dropped 1", tags: ["Harem"], contentType: "manga", userRating: 3, status: "dropped" },
+      { id: "dropped-2", title: "Dropped 2", tags: ["Harem", "Ecchi"], contentType: "manga", userRating: 2, status: "dropped" },
+    ]);
+    const providers = [
+      { providerId: "source", providerName: "Source", kind: "source" as const, availability: normalizeScore(1, 1, 0.8) },
+      {
+        providerId: "anilist",
+        providerName: "AniList",
+        kind: "tracker" as const,
+        score: normalizeScore(90, 100, 0.9),
+        trending: normalizeScore(95, 100, 0.9),
+      },
+    ];
+    const sections = buildRecommendationSections([
+      candidate("action-harem", { tags: ["Action", "Fantasy", "Harem"], contentType: "manga", providers }),
+      candidate("clean-action", { tags: ["Action", "Fantasy", "Adventure"], contentType: "manga", providers }),
+    ], dislikeProfile, { nowMs: NOW });
+
+    const idsFor = (key: RecommendationSection["key"]) =>
+      sections.find((section) => section.key === key)?.items.map((item) => item.candidate.id) ?? [];
+    for (const key of ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const) {
+      expect(idsFor(key)).not.toContain("action-harem");
+    }
+    expect(sections.flatMap((section) => section.items.map((item) => item.candidate.id))).toContain("clean-action");
+    expect(scoreRecommendationCandidate(
+      candidate("action-harem", { tags: ["Action", "Fantasy", "Harem"], contentType: "manga", providers }),
+      dislikeProfile,
+      NOW,
+    ).negativeTagPenalty).toBeGreaterThan(0.5);
+  });
+
+  it("spreads near-identical titles apart inside a row", () => {
+    const clone = (id: string, score: number) => ({
+      item: {
+        candidate: candidate(id, { tags: ["Action", "Dungeon", "Regression"] }),
+        breakdown: scoreRecommendationCandidate(candidate(id, { tags: ["Action", "Dungeon", "Regression"] }), profile, NOW),
+        badge: null,
+      },
+      score,
+    });
+    const distinct = {
+      item: {
+        candidate: candidate("distinct", { tags: ["Action", "Martial Arts"] }),
+        breakdown: scoreRecommendationCandidate(candidate("distinct", { tags: ["Action", "Martial Arts"] }), profile, NOW),
+        badge: null,
+      },
+      score: 0.8,
+    };
+
+    const ordered = rerankForDiversity([clone("clone-1", 0.86), clone("clone-2", 0.85), clone("clone-3", 0.84), distinct])
+      .map((item) => item.candidate.id);
+
+    expect(ordered[0]).toBe("clone-1");
+    expect(ordered[1]).toBe("distinct");
+    expect(ordered).toHaveLength(4);
+  });
+
+  it("never repeats a work across rows of a large mixed page", () => {
+    const pool = Array.from({ length: 120 }, (_, index) => candidate(`mixed-${index}`, {
+      title: `Mixed ${index % 90}`,
+      tags: [["Action", "Dungeon"], ["Action", "Martial Arts"], ["Mystery"], ["Cooking", "Slice of Life"]][index % 4],
+      updatedAtMs: NOW - ((index % 9) * 86_400_000),
+      providers: [
+        { providerId: `source-${index % 3}`, providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        {
+          providerId: "anilist",
+          providerName: "AniList",
+          kind: "tracker",
+          score: normalizeScore(60 + (index % 40), 100, 0.9),
+          trending: normalizeScore(index % 100, 100, 0.8),
+        },
+      ],
+    }));
+
+    const sections = buildRecommendationSections(pool, profile, { nowMs: NOW, limitPerSection: 40 });
+    const seen = new Set<string>();
+    for (const section of sections) {
+      for (const item of section.items) {
+        const identityKeys = recommendationCandidateIdentityKeys(item.candidate);
+        expect(identityKeys.some((key) => seen.has(key))).toBe(false);
+        for (const key of identityKeys) seen.add(key);
+      }
+    }
+    expect(sections.filter((section) => section.items.length > 0).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("matches source genre labels against tracker genres for the taste rows", () => {
+    // MANGA Plus names genres "Battle / Action" and "Sci-Fi / Fantasy"; trackers say "Action", "Sci-Fi", "Fantasy".
+    const sourceGenreProfile = buildTasteProfile([
+      {
+        id: "one-piece",
+        title: "One Piece",
+        tags: ["Battle / Action", "Sci-Fi / Fantasy"],
+        contentType: "manga",
+        implicitWeight: 0.55,
+        status: "reading",
+      },
+    ]);
+    const providers = [
+      { providerId: "mangaplus", providerName: "MANGA Plus", kind: "source" as const, availability: normalizeScore(1, 1, 0.8) },
+      {
+        providerId: "anilist",
+        providerName: "AniList",
+        kind: "tracker" as const,
+        score: normalizeScore(82, 100, 0.9),
+        trending: normalizeScore(90, 100, 0.9),
+      },
+    ];
+    const actionPick = candidate("kagurabachi", {
+      title: "Kagurabachi",
+      tags: ["Action", "Supernatural", "Manga", "Releasing"],
+      contentType: "manga",
+      providers,
+    });
+    const romancePick = candidate("quiet-romance", {
+      tags: ["Romance", "Slice of Life", "Manga"],
+      contentType: "manga",
+      providers,
+    });
+
+    expect([...sourceGenreProfile.tagWeights.keys()].sort()).toEqual(["action", "fantasy", "sci fi"]);
+    expect(scoreRecommendationCandidate(actionPick, sourceGenreProfile, NOW).matchedTagCount).toBe(1);
+
+    const sections = buildRecommendationSections([actionPick, romancePick], sourceGenreProfile, { nowMs: NOW });
+    const idsFor = (key: RecommendationSection["key"]) =>
+      sections.find((section) => section.key === key)?.items.map((item) => item.candidate.id) ?? [];
+    const tasteRowIds = ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"].flatMap((key) =>
+      idsFor(key as RecommendationSection["key"]));
+
+    expect(tasteRowIds).toContain("kagurabachi");
+    expect(idsFor("outsideYourUsualReads")).not.toContain("kagurabachi");
+    expect(tasteRowIds).not.toContain("quiet-romance");
+    expect(idsFor("outsideYourUsualReads")).toContain("quiet-romance");
+  });
+
+  it("folds genre spellings and counts a genre once per library work", () => {
+    const aliasProfile = buildTasteProfile([
+      {
+        id: "romcom",
+        title: "Rom-com",
+        tags: ["Romantic Comedy", "Shonen", "Battle / Action", "Action"],
+        contentType: "manga",
+        userRating: 9,
+        status: "completed",
+      },
+    ]);
+    const weight = aliasProfile.tagWeights.get("action");
+
+    expect([...aliasProfile.tagWeights.keys()].sort()).toEqual(["action", "comedy", "romance", "shounen"]);
+    for (const tag of ["comedy", "romance", "shounen"]) {
+      expect(aliasProfile.tagWeights.get(tag)).toBe(weight);
+    }
+    expect(scoreRecommendationCandidate(
+      candidate("tracker-romcom", { tags: ["Romance", "Comedy", "Shounen"], contentType: "manga" }),
+      aliasProfile,
+      NOW,
+    ).matchedTagCount).toBe(3);
+  });
+
+  it("applies a blocked genre to compound source labels without widening a blocked compound", () => {
+    const sourceProvider = [
+      { providerId: "source", providerName: "Source", kind: "source" as const, availability: normalizeScore(1, 1, 0.8) },
+    ];
+    const sections = buildRecommendationSections([
+      candidate("compound-action", { tags: ["Battle / Action"], providers: sourceProvider }),
+      candidate("romcom", { tags: ["Romantic Comedy"], providers: sourceProvider }),
+      candidate("plain-comedy", { tags: ["Comedy"], providers: sourceProvider }),
+    ], profile, {
+      blockedTags: ["Action", "Romantic Comedy"],
+      nowMs: NOW,
+    });
+    const ids = sections.flatMap((section) => section.items.map((item) => item.candidate.id));
+
+    expect(ids).not.toContain("compound-action");
+    expect(ids).not.toContain("romcom");
+    expect(ids).toContain("plain-comedy");
   });
 });

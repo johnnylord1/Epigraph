@@ -44,6 +44,7 @@ register("outcomes.failed", ["RESTORE_DOMAIN_FAILED"]);
 register("outcomes.syncDecisionTimeout", ["SYNC_DECISION_TIMEOUT"]);
 register("outcomes.syncRefreshTimeout", ["SYNC_REFRESH_TIMEOUT"]);
 register("outcomes.syncCoreUnavailable", ["SYNC_CORE_UNAVAILABLE"]);
+register("outcomes.downloadsPathNested", ["DOWNLOADS_PATH_NESTED"]);
 
 function messageKey(value: unknown, seen = new Set<unknown>()): string | undefined {
   if (typeof value === "string") return Object.hasOwn(messages, value) ? messages[value] : undefined;

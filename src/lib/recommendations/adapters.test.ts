@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Manga, TrackSearch } from "../types";
+import type { Manga, TrackRecord, TrackSearch } from "../types";
 import type { BookEntry, BookProgress } from "../books/types";
 import {
   bookToRecommendationCandidate,
@@ -8,6 +8,7 @@ import {
   mangaToTasteProfileSeed,
   mergeRecommendationCandidates,
   novelSourceResultToRecommendationCandidate,
+  trackRecordSeedStatus,
   trackerSearchToRecommendationCandidate,
 } from ".";
 
@@ -291,6 +292,70 @@ describe("recommendation adapters", () => {
     expect(candidate.providers[0]?.score?.value).toBe(0.9);
     expect(candidate.providers[0]?.activity).toBeUndefined();
   });
+
+  it("does not read the comic format out of ordinary synopsis words", () => {
+    const seed = mangaToTasteProfileSeed(createManga({
+      id: 46,
+      title: "Detective Investigates the Ecosystem",
+      description: "A player joins the school system and passes through the gate of a hunter's tower.",
+      genre: ["Mystery", "School Life"],
+      source: {
+        id: "source-generic",
+        name: "Generic Source",
+        displayName: "Generic Source",
+      },
+    }));
+
+    expect(seed.contentType).toBe("manga");
+  });
+
+  it("needs several manhwa tropes as genre tags before inferring manhwa", () => {
+    const singleTrope = mangaToTasteProfileSeed(createManga({
+      id: 47,
+      title: "Isekai Dungeon Diary",
+      genre: ["Fantasy", "Dungeon"],
+      source: { id: "source-a", name: "Generic Source", displayName: "Generic Source" },
+    }));
+    const tropeStack = mangaToTasteProfileSeed(createManga({
+      id: 48,
+      title: "Returned Ranker",
+      genre: ["Action", "Regression", "Tower", "Hunter"],
+      source: { id: "source-b", name: "Generic Source", displayName: "Generic Source" },
+    }));
+
+    expect(singleTrope.contentType).toBe("manga");
+    expect(tropeStack.contentType).toBe("manhwa");
+  });
+
+  it("takes the library seed reading status from the tracker, not the publication status", () => {
+    const manga = createManga({
+      id: 49,
+      title: "Finished Series",
+      status: "COMPLETED",
+      genre: ["Drama"],
+    });
+    const record = createTrackRecord({ id: 1, trackerId: 2, status: 4, score: 3, lastChapterRead: 12 });
+
+    const untracked = mangaToTasteProfileSeed(manga);
+    const dropped = mangaToTasteProfileSeed(manga, {
+      trackRecordsByMangaId: new Map([[49, [record]]]),
+      trackerStatusNamesById: new Map([[2, new Map([[4, "Dropped"]])]]),
+    });
+
+    expect(untracked.status).toBe("unknown");
+    expect(dropped.status).toBe("dropped");
+  });
+
+  it("maps tracker status names and ignores empty finish dates", () => {
+    const inProgress = createTrackRecord({ lastChapterRead: 30, totalChapters: 100, finishDate: "0" });
+
+    expect(trackRecordSeedStatus(inProgress, "Plan to Read")).toBe("planning");
+    expect(trackRecordSeedStatus(inProgress, "Dropped")).toBe("dropped");
+    expect(trackRecordSeedStatus(inProgress, "Completed")).toBe("completed");
+    expect(trackRecordSeedStatus(inProgress)).toBe("reading");
+    expect(trackRecordSeedStatus({ ...inProgress, finishDate: "1767225600000" })).toBe("completed");
+    expect(trackRecordSeedStatus({ ...inProgress, lastChapterRead: 0 })).toBe("planning");
+  });
 });
 
 function createManga(patch: Partial<Manga>): Manga {
@@ -318,6 +383,25 @@ function createBook(patch: Partial<BookEntry>): BookEntry {
     importPath: "book.epub",
     assetPath: "book.epub",
     sectionCount: 0,
+    ...patch,
+  };
+}
+
+function createTrackRecord(patch: Partial<TrackRecord>): TrackRecord {
+  return {
+    id: 1,
+    trackerId: 1,
+    remoteId: "remote-1",
+    title: "Tracked",
+    status: 1,
+    score: 0,
+    displayScore: "",
+    lastChapterRead: 0,
+    totalChapters: 0,
+    remoteUrl: null,
+    startDate: null,
+    finishDate: null,
+    private: false,
     ...patch,
   };
 }

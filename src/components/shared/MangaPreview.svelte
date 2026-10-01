@@ -35,6 +35,7 @@
   let linkSearch      = $state("");
   let allMangaForLink: Manga[] = $state([]);
   let loadingLinkList = $state(false);
+  let linkListError: string | null = $state(null);
 
   const linkedIds = $derived(store.previewManga ? (store.settings.mangaLinks?.[store.previewManga.id] ?? []) : []);
 
@@ -49,11 +50,17 @@
 
   async function openLinkPicker() {
     linkPickerOpen = true; linkSearch = "";
-    if (allMangaForLink.length) return;
+    if (allMangaForLink.length || loadingLinkList) return;
+    loadLinkList();
+  }
+
+  function loadLinkList() {
     loadingLinkList = true;
+    linkListError = null;
     gql<{ mangas: { nodes: Manga[] } }>(GET_ALL_MANGA)
       .then(d => { allMangaForLink = d.mangas.nodes; })
-      .catch(console.error)
+      // A failed load is not an empty library: say so and let the user retry.
+      .catch((error) => { linkListError = error instanceof Error ? error.message : String(error); })
       .finally(() => { loadingLinkList = false; });
   }
 
@@ -462,6 +469,8 @@
         <div class="link-list">
         {#if loadingLinkList}
           <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_loadingLibrary")} />
+        {:else if linkListError}
+          <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.links")} title={$_("library.error.title")} body={linkListError} actions={[{ label: $_("library.error.retry"), icon: "retry", onClick: loadLinkList }]} />
         {:else if linkPickerResults.length === 0}
           <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_noMatchingManga")} body={$_("feedback.tryAnotherLibraryTitle")} />
         {:else}

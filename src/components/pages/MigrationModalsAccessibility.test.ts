@@ -7,6 +7,7 @@ const MODALS = [
   "src/components/pages/MassMigrateModal.svelte",
   "src/components/pages/MigrateModal.svelte",
   "src/components/pages/NovelMigrateModal.svelte",
+  "src/components/pages/BookToNovelModal.svelte",
 ] as const;
 
 afterEach(() => {
@@ -33,6 +34,7 @@ describe("migration modal accessibility", () => {
       "src/components/pages/MassMigrateModal.svelte": "applying",
       "src/components/pages/MigrateModal.svelte": "migrating",
       "src/components/pages/NovelMigrateModal.svelte": "migrating",
+      "src/components/pages/BookToNovelModal.svelte": "applying",
     };
     for (const path of MODALS) {
       const source = readFileSync(resolve(process.cwd(), path), "utf8");
@@ -43,6 +45,7 @@ describe("migration modal accessibility", () => {
     expect(readFileSync(resolve(process.cwd(), MODALS[0]), "utf8")).toContain("event.target === event.currentTarget && !applying");
     expect(readFileSync(resolve(process.cwd(), MODALS[1]), "utf8")).toContain("e.target === e.currentTarget && !migrating");
     expect(readFileSync(resolve(process.cwd(), MODALS[2]), "utf8")).toContain('disabled={migrating} onclick={onClose}></button>');
+    expect(readFileSync(resolve(process.cwd(), MODALS[3]), "utf8")).toContain('disabled={applying} onclick={onClose}></button>');
   });
 
   test("isolates the background, wraps focus, and restores prior focus", async () => {

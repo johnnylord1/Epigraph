@@ -359,11 +359,16 @@ async fn stop_owned_instance(instance: &AttachedSuwayomi, _timeout: Duration) ->
 fn main_profile_root() -> PathBuf {
     std::env::var_os("EPIGRAPH_LOCAL_SERVER_MAIN_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("epigraph-main")
-        })
+        .unwrap_or_else(|| profile_roots_base().join("epigraph-main"))
+}
+
+/// Roaming data folder of this Core. It follows `APPDATA` like the desktop does, so a Core started for an isolated
+/// data folder (a debug build, a disposable profile) never looks at, or attaches to, the user's own servers.
+fn profile_roots_base() -> PathBuf {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn managed_profile_is_configured(root: &Path) -> bool {
@@ -920,17 +925,19 @@ fn root_flag_matches(argument: &str, expected: &str) -> bool {
 }
 
 fn owned_profile_roots() -> Vec<PathBuf> {
-    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    let explicit = [
+        "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
+        "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
+    ]
+    .into_iter()
+    .filter_map(std::env::var_os)
+    .map(PathBuf::from);
+    owned_profile_roots_under(&profile_roots_base(), explicit)
+}
+
+fn owned_profile_roots_under(base: &Path, explicit: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     let mut roots = vec![base.join("epigraph-main"), base.join("epigraph")];
-    roots.extend(
-        [
-            "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
-            "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
-        ]
-        .into_iter()
-        .filter_map(std::env::var_os)
-        .map(PathBuf::from),
-    );
+    roots.extend(explicit);
     if let Ok(entries) = std::fs::read_dir(&base) {
         roots.extend(
             entries
@@ -1051,6 +1058,23 @@ mod tests {
         let mut with_path = owner(&root);
         with_path.server_url = "http://127.0.0.1:4567/proxy".to_string();
         assert!(!owner_matches_root_and_endpoint(&with_path, &root));
+    }
+
+    #[test]
+    fn owned_roots_stay_inside_the_isolated_data_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("RoamingAppData");
+        std::fs::create_dir_all(base.join("epigraph-profile-reading")).unwrap();
+        std::fs::create_dir_all(base.join("unrelated")).unwrap();
+        let explicit = temp.path().join("LocalServerMain");
+
+        let roots = owned_profile_roots_under(&base, [explicit.clone()]);
+
+        assert_eq!(roots.len(), 4);
+        for expected in [base.join("epigraph-main"), base.join("epigraph"), base.join("epigraph-profile-reading"), explicit] {
+            assert!(roots.iter().any(|root| paths_identical(root, &expected)), "missing {}", expected.display());
+        }
+        assert!(roots.iter().all(|root| root.starts_with(temp.path())));
     }
 
     #[test]

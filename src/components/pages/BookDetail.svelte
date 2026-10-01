@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
   import {
+    ArrowsLeftRight,
     BookOpen,
     BookmarkSimple,
     CaretDown,
@@ -56,6 +57,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
+  import BookToNovelModal from "./BookToNovelModal.svelte";
   import { getServerAuthHeader } from "../../lib/client";
   import { requiresAuthenticatedMediaFetch } from "../../lib/imageCache";
 
@@ -91,6 +93,7 @@
   let detailsOpen = $state(false);
   let coverBroken = $state(false);
   let trackingOpen = $state(false);
+  let novelCopyOpen = $state(false);
   let sectionSortDir: "asc" | "desc" = $state("asc");
   let sortMenuOpen = $state(false);
   let filterMenuOpen = $state(false);
@@ -769,6 +772,10 @@
           </div>
         {/if}
       </div>
+      <button class="series-utility" type="button" onclick={() => novelCopyOpen = true} title={$_("bookToNovel_actionTitle")} aria-label={$_("bookToNovel_actionTitle")} data-book-to-novel-open>
+        <ArrowsLeftRight size={14} weight="light" />
+        {$_("bookToNovel_action")}
+      </button>
     {/snippet}
 
     {#snippet detailsExtra()}
@@ -876,11 +883,13 @@
             {#each visibleSections as item (item.id)}
               <button class="ch-row v3-ch-row" class:read={item.isRead} class:ch-selected={item.isCurrent} style={`--toc-depth:${item.depth};`} onclick={() => openBookSection(item)}>
                 <div class="ch-left">
-                  <span class="ch-name">{sectionTitle(item)}</span>
+                  <span class="ch-title">
+                    <span class="ch-name">{sectionTitle(item)}</span>
+                    {#if item.isBookmarked}<span class="ch-bookmark" role="img" title={$_("bookDetail.filter.bookmarked")} aria-label={$_("bookDetail.filter.bookmarked")}><BookmarkSimple size={12} weight="fill" /></span>{/if}
+                  </span>
                   <div class="ch-meta">
                     {#if sectionSubtitle(item)}<span class="ch-meta-item">{sectionSubtitle(item)}</span>{/if}
                     {#if item.isCurrent}<span class="ch-meta-item">{$_("bookDetail.filter.current")}</span>{/if}
-                    {#if item.isBookmarked}<span class="ch-meta-item"><BookmarkSimple size={10} weight="fill" /> {$_("bookDetail.filter.bookmarked")}</span>{/if}
                     {#if item.depth > 0}<span class="ch-meta-item">{$_("bookDetail.depthValue", { depth: item.depth })}</span>{/if}
                   </div>
                   <div class="chapter-progress" class:is-empty={!item.isRead}><div class="chapter-progress__fill" style={`width: ${item.isRead ? 100 : 0}%`}></div></div>
@@ -892,8 +901,6 @@
                   <span class="ch-status-main">
                     {#if item.isCurrent}
                       <BookOpen size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.current")} />
-                    {:else if item.isBookmarked}
-                      <BookmarkSimple size={14} weight="fill" class="read-icon" title={$_("bookDetail.filter.bookmarked")} />
                     {/if}
                   </span>
                   <span class="ch-status-action"></span>
@@ -924,6 +931,9 @@
       {/if}
     {/snippet}
   </SeriesDetailV3Shell>
+  {#if novelCopyOpen}
+    <BookToNovelModal book={activeBook} progress={activeProgress ?? null} coverSrc={coverSrc} onClose={() => novelCopyOpen = false} />
+  {/if}
   {#if trackingOpen}
     <NovelTrackingPanel
       title={activePresentation?.title ?? activeBook.title}

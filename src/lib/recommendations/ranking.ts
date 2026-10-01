@@ -4,7 +4,7 @@ import {
   recommendationCandidateTitleKeys,
   recommendationProviderRemoteKey,
 } from "./identity";
-import { isRecommendationMetadataTag } from "./metadata";
+import { isRecommendationMetadataTag, recommendationTagTokens } from "./metadata";
 import type {
   BuildRecommendationSectionsOptions,
   RecommendationCandidate,
@@ -18,11 +18,40 @@ import type {
 } from "./types";
 
 const DEFAULT_LIMIT = 18;
-const PROFILE_MATCH_MIN = 0.28;
-const HIGH_CONFIDENCE_PROFILE_MIN = 0.18;
-const TRENDING_PROFILE_MIN = 0.12;
+const PROFILE_MATCH_MIN = 0.3;
+const HIGH_CONFIDENCE_PROFILE_MIN = 0.2;
+const TRENDING_PROFILE_MIN = 0.15;
 const OUTSIDE_PROFILE_OVERLAP_MAX = 0.16;
-const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.22;
+const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.2;
+// A tag the reader actively dislikes (dropped/low-rated works) keeps a title out
+// of the "like what you read" rows even when other tags match.
+const PROFILE_NEGATIVE_MAX = 0.35;
+const SECTION_NEGATIVE_MAX = 0.5;
+const NEGATIVE_WEIGHT_SCALE = 1.2;
+const MATCHED_TAG_MIN = 0.25;
+// Maximal Marginal Relevance (Carbonell & Goldstein): trade a little relevance
+// for fewer near-identical titles next to each other inside a row.
+const MMR_LAMBDA = 0.8;
+const MMR_POSITIONS = 36;
+const MMR_WINDOW = 72;
+// Every work appears in at most one row. Rows pick in turns so each keeps its
+// strongest matches instead of the first row taking everything; this order
+// also breaks ties when a work ranks equally well in two rows. Trending goes
+// first because its criterion (momentum) is the narrowest.
+const SECTION_DRAFT_ORDER: RecommendationSectionKey[] = [
+  "trendingNearYourTaste",
+  "becauseYouRatedHighly",
+  "highConfidence",
+  "freshInYourSources",
+  "outsideYourUsualReads",
+];
+const SECTION_DISPLAY_ORDER: RecommendationSectionKey[] = [
+  "becauseYouRatedHighly",
+  "highConfidence",
+  "trendingNearYourTaste",
+  "freshInYourSources",
+  "outsideYourUsualReads",
+];
 
 const SECTION_META: Record<RecommendationSectionKey, { title: string; reason: string }> = {
   becauseYouRatedHighly: {
@@ -52,13 +81,9 @@ export function scoreRecommendationCandidate(
   profile: TasteProfile,
   nowMs = Date.now(),
 ): RecommendationScoreBreakdown {
-  const normalizedTags = [...new Set(candidate.tags.map(normalizeToken).filter(Boolean))];
+  const normalizedTags = [...new Set(candidate.tags.flatMap(recommendationTagTokens))];
   const topicalTags = normalizedTags.filter((tag) => !isRecommendationMetadataTag(tag));
-  const tagWeights = normalizedTags.map((tag) => profile.tagWeights.get(tag) ?? 0);
-  const positiveWeight = tagWeights.filter((weight) => weight > 0).reduce((sum, weight) => sum + weight, 0);
-  const negativeWeight = Math.abs(tagWeights.filter((weight) => weight < 0).reduce((sum, weight) => sum + weight, 0));
-  const maxPositive = Math.max(1, [...profile.tagWeights.values()].filter((weight) => weight > 0).reduce((sum, weight) => sum + weight, 0));
-  const personalRatingAffinity = clamp01((positiveWeight / maxPositive) - (negativeWeight / maxPositive));
+  const { affinity: personalRatingAffinity, negativeTagPenalty, matchedTagCount } = tagTasteAffinity(topicalTags, profile);
 
   const profileTagOverlap = profileTagOverlapRatioForTags(topicalTags, profile);
   const contentTypeFit = clamp01(contentTypeWeightForCandidate(candidate.contentType, profile) / Math.max(1, maxMapValue(profile.contentTypeWeights)));
@@ -111,8 +136,52 @@ export function scoreRecommendationCandidate(
     recency,
     sourceAvailability,
     novelty,
+    negativeTagPenalty,
+    matchedTagCount,
     finalScore,
     diversityBucket: diversityBucket(profileTagOverlap, personalRatingAffinity),
+  };
+}
+
+/**
+ * How much of this title is made of things the reader likes. Each tag is
+ * scored against the reader's strongest tag (square root so secondary tastes
+ * still count), then averaged over the title's own tags. Unlike a share of the
+ * whole profile, this does not collapse for readers with several distinct
+ * tastes. The strongest disliked tag scales the result down.
+ */
+function tagTasteAffinity(topicalTags: string[], profile: TasteProfile): {
+  affinity: number;
+  negativeTagPenalty: number;
+  matchedTagCount: number;
+} {
+  if (topicalTags.length === 0) return { affinity: 0, negativeTagPenalty: 0, matchedTagCount: 0 };
+  let strongestPositive = 0;
+  for (const weight of profile.tagWeights.values()) {
+    if (weight > strongestPositive) strongestPositive = weight;
+  }
+  const reference = Math.max(0.35, strongestPositive);
+
+  let positive = 0;
+  let negativeTagPenalty = 0;
+  let matchedTagCount = 0;
+  for (const tag of topicalTags) {
+    const weight = profile.tagWeights.get(tag) ?? 0;
+    if (weight > 0) {
+      const match = Math.min(1, Math.sqrt(weight / reference));
+      positive += match;
+      if (match >= MATCHED_TAG_MIN) matchedTagCount += 1;
+    } else if (weight < 0) {
+      negativeTagPenalty = Math.max(negativeTagPenalty, Math.min(1, Math.abs(weight) / NEGATIVE_WEIGHT_SCALE));
+    }
+  }
+  // Long tag lists are common on some sources; damp them so unrelated extra
+  // tags do not erase a strong match, while a single matching tag stays weak.
+  const evidence = Math.max(3, Math.sqrt(3 * topicalTags.length));
+  return {
+    affinity: clamp01((positive / evidence) * (1 - negativeTagPenalty)),
+    negativeTagPenalty,
+    matchedTagCount,
   };
 }
 
@@ -131,86 +200,101 @@ export function buildRecommendationSections(
     }))
     .filter((item) => !isAffinityGroupMismatch(item, profile));
 
-  const becauseYouRatedHighly = buildCriterionSection("becauseYouRatedHighly", items, requestedLimit, (item) =>
-    (item.breakdown.personalRatingAffinity * 0.7)
-    + (item.breakdown.profileTagOverlap * 0.26)
-    + (item.breakdown.sourceAffinity * 0.04),
-    (item) => profile.seedCount > 0
-      && hasExternalProvider(item)
-      && matchesDominantComicFormat(item, profile)
-      && hasMeaningfulProfileSignal(item, profile)
-      && profileTasteSignalScore(item, profile) >= PROFILE_MATCH_MIN
-      && item.breakdown.diversityBucket !== "divergent",
-    profile,
-  );
-  const highConfidence = buildCriterionSection("highConfidence", rerankForDiversity(items), requestedLimit, (item) =>
-    (qualityScore(item) * 0.42)
-    + (item.breakdown.trackerConsensus * 0.2)
-    + (providerEvidenceScore(item) * 0.18)
-    + (profileAffinityScore(item) * 0.12)
-    + (item.breakdown.sourceAvailability * 0.08),
-    (item) => hasExternalProvider(item)
-      && (qualityScore(item) >= 0.52 || proseWarmStartCandidate(item, profile))
-      && (profile.seedCount === 0 || (
-        fitsProfileComicFormat(item, profile)
-        && (
-          profileTasteSignalScore(item, profile) >= HIGH_CONFIDENCE_PROFILE_MIN
-          || (
-            !hasTopicalTags(item)
-            && item.breakdown.trackerConsensus >= 0.82
-            && qualityScore(item) >= 0.72
+  const ranked: Record<RecommendationSectionKey, RecommendationItem[]> = {
+    becauseYouRatedHighly: rankSectionItems(items, requestedLimit, "becauseYouRatedHighly", (item) =>
+      (item.breakdown.personalRatingAffinity * 0.7)
+      + (item.breakdown.profileTagOverlap * 0.2)
+      + (item.breakdown.sourceAffinity * 0.05)
+      + (qualityScore(item) * 0.05),
+      (item) => profile.seedCount > 0
+        && hasExternalProvider(item)
+        && matchesDominantComicFormat(item, profile)
+        && item.breakdown.matchedTagCount > 0
+        && item.breakdown.personalRatingAffinity >= PROFILE_MATCH_MIN
+        && item.breakdown.negativeTagPenalty < PROFILE_NEGATIVE_MAX,
+      profile,
+    ),
+    highConfidence: rankSectionItems(items, requestedLimit, "highConfidence", (item) =>
+      (qualityScore(item) * 0.42)
+      + (item.breakdown.trackerConsensus * 0.2)
+      + (providerEvidenceScore(item) * 0.18)
+      + (profileAffinityScore(item) * 0.12)
+      + (item.breakdown.sourceAvailability * 0.08),
+      (item) => hasExternalProvider(item)
+        && (qualityScore(item) >= 0.52 || proseWarmStartCandidate(item, profile))
+        && (profile.seedCount === 0 || (
+          fitsProfileComicFormat(item, profile)
+          && (
+            (
+              item.breakdown.personalRatingAffinity >= HIGH_CONFIDENCE_PROFILE_MIN
+              && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+            )
+            || (
+              !hasTopicalTags(item)
+              && item.breakdown.trackerConsensus >= 0.82
+              && qualityScore(item) >= 0.72
+            )
           )
-        )
-      )),
-    profile,
-  );
-  const trendingNearYourTaste = buildCriterionSection("trendingNearYourTaste", items, requestedLimit, (item) =>
-    (momentumScore(item) * 0.52)
-    + (item.breakdown.trendingVelocity * 0.18)
-    + (item.breakdown.recency * 0.1)
-    + (profileAffinityScore(item) * 0.1)
-    + (qualityScore(item) * 0.06)
-    + (item.breakdown.sourceAffinity * 0.04),
-    (item) => hasExternalProvider(item)
-      && (momentumScore(item) >= 0.08 || proseWarmStartCandidate(item, profile))
-      && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
-      && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile))
-      && (profile.seedCount === 0 || profileTasteSignalScore(item, profile) >= TRENDING_PROFILE_MIN),
-    profile,
-  );
-  const freshInYourSources = buildCriterionSection("freshInYourSources", items, requestedLimit, (item) =>
-    (freshnessScore(item) * 0.76)
-    + (item.breakdown.sourceAvailability * 0.1)
-    + (item.breakdown.sourceAffinity * 0.06)
-    + (item.breakdown.contentTypeFit * 0.04)
-    + (qualityScore(item) * 0.04),
-    (item) => hasExternalProvider(item)
-      && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
-      && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile)),
-    profile,
-  );
+        )),
+      profile,
+    ),
+    trendingNearYourTaste: rankSectionItems(items, requestedLimit, "trendingNearYourTaste", (item) =>
+      (momentumScore(item) * 0.52)
+      + (item.breakdown.trendingVelocity * 0.18)
+      + (item.breakdown.recency * 0.1)
+      + (profileAffinityScore(item) * 0.1)
+      + (qualityScore(item) * 0.06)
+      + (item.breakdown.sourceAffinity * 0.04),
+      (item) => hasExternalProvider(item)
+        && (momentumScore(item) >= 0.08 || proseWarmStartCandidate(item, profile))
+        && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
+        && (profile.seedCount === 0 || (
+          fitsProfileComicFormat(item, profile)
+          && item.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN
+          && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+        )),
+      profile,
+    ),
+    freshInYourSources: rankSectionItems(items, requestedLimit, "freshInYourSources", (item) =>
+      (freshnessScore(item) * 0.62)
+      + (item.breakdown.personalRatingAffinity * 0.14)
+      + (item.breakdown.sourceAvailability * 0.1)
+      + (item.breakdown.sourceAffinity * 0.06)
+      + (item.breakdown.contentTypeFit * 0.04)
+      + (qualityScore(item) * 0.04),
+      (item) => hasExternalProvider(item)
+        && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
+        && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile))
+        && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX,
+      profile,
+    ),
+    outsideYourUsualReads: rankSectionItems(items, requestedLimit, "outsideYourUsualReads", (item) =>
+      (item.breakdown.novelty * 0.64)
+      + (qualityScore(item) * 0.18)
+      + (item.breakdown.sourceAvailability * 0.1)
+      + (freshnessScore(item) * 0.08),
+      (item) => profile.seedCount > 0
+        && hasExternalProvider(item)
+        && outsideUsualEligibility(item, profile)
+        && item.breakdown.diversityBucket === "divergent"
+        && item.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX
+        && item.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX
+        // Divergent, not disliked: a tag from dropped or low-rated works only
+        // passes when the title is exceptionally well regarded.
+        && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+        && (item.breakdown.negativeTagPenalty === 0 || qualityScore(item) >= 0.7),
+      profile,
+    ),
+  };
 
-  const outsideYourUsualReads = buildCriterionSection("outsideYourUsualReads", items, requestedLimit, (item) =>
-    (item.breakdown.novelty * 0.64)
-    + (qualityScore(item) * 0.18)
-    + (item.breakdown.sourceAvailability * 0.1)
-    + (freshnessScore(item) * 0.08),
-    (item) => profile.seedCount > 0
-      && hasExternalProvider(item)
-      && outsideUsualEligibility(item, profile)
-      && item.breakdown.diversityBucket === "divergent"
-      && item.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX
-      && item.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX,
-    profile,
-  );
-
-  return [
-    becauseYouRatedHighly,
-    highConfidence,
-    trendingNearYourTaste,
-    freshInYourSources,
-    outsideYourUsualReads,
-  ];
+  const drafted = draftUniqueSectionItems(ranked, requestedLimit);
+  return SECTION_DISPLAY_ORDER.map((key) => {
+    const meta = SECTION_META[key];
+    const sectionItems = shouldApplyProfileComicMix(key)
+      ? applyProfileComicMix(drafted[key], profile, requestedLimit).slice(0, requestedLimit)
+      : drafted[key];
+    return { key, title: meta.title, reason: meta.reason, items: sectionItems };
+  });
 }
 
 export function buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge | null {
@@ -235,44 +319,39 @@ export function buildTrackerScoreBadge(candidate: RecommendationCandidate): Trac
   };
 }
 
-export function rerankForDiversity(items: RecommendationItem[]): RecommendationItem[] {
-  const sorted = [...items].sort((a, b) => b.breakdown.finalScore - a.breakdown.finalScore);
-  const buckets: Record<RecommendationDiversityBucket, RecommendationItem[]> = {
-    familiar: sorted.filter((item) => item.breakdown.diversityBucket === "familiar"),
-    adjacent: sorted.filter((item) => item.breakdown.diversityBucket === "adjacent"),
-    divergent: sorted.filter((item) => item.breakdown.diversityBucket === "divergent"),
-  };
+/**
+ * Reorders a ranked row so near-identical titles (same tag set) do not sit
+ * next to each other. Relevance still dominates; only the first positions are
+ * rearranged and the tail keeps its ranked order.
+ */
+export function rerankForDiversity(
+  entries: Array<{ item: RecommendationItem; score: number }>,
+): RecommendationItem[] {
+  if (entries.length <= 2) return entries.map((entry) => entry.item);
+  const remaining = entries.slice(0, MMR_WINDOW);
+  const tail = entries.slice(MMR_WINDOW);
+  const tagSets = new Map(remaining.map((entry) => [entry.item, topicalTagSet(entry.item)]));
+  const selected: typeof entries = [];
 
-  const pattern: RecommendationDiversityBucket[] = [
-    "familiar", "familiar", "familiar", "familiar", "familiar", "familiar", "familiar",
-    "adjacent", "adjacent",
-    "divergent",
-  ];
-  const result: RecommendationItem[] = [];
-  while (result.length < sorted.length) {
-    const before = result.length;
-    for (const bucket of pattern) {
-      const next = buckets[bucket].shift();
-      if (next) result.push(next);
+  while (remaining.length > 0 && selected.length < MMR_POSITIONS) {
+    let bestIndex = 0;
+    let bestValue = Number.NEGATIVE_INFINITY;
+    for (let index = 0; index < remaining.length; index += 1) {
+      const candidateTags = tagSets.get(remaining[index].item)!;
+      let maxSimilarity = 0;
+      for (const chosen of selected) {
+        maxSimilarity = Math.max(maxSimilarity, jaccardSimilarity(candidateTags, tagSets.get(chosen.item)!));
+      }
+      const value = (MMR_LAMBDA * remaining[index].score) - ((1 - MMR_LAMBDA) * maxSimilarity);
+      if (value > bestValue) {
+        bestValue = value;
+        bestIndex = index;
+      }
     }
-    if (result.length === before) break;
+    selected.push(remaining.splice(bestIndex, 1)[0]);
   }
 
-  return result;
-}
-
-function buildCriterionSection(
-  key: RecommendationSectionKey,
-  items: RecommendationItem[],
-  limit: number,
-  scoreFn: (item: RecommendationItem) => number,
-  isEligible: (item: RecommendationItem) => boolean,
-  profile?: TasteProfile,
-  excludedIdentityKeys: ReadonlySet<string> = new Set(),
-): RecommendationSection {
-  const meta = SECTION_META[key];
-  const ranked = rankSectionItems(items, limit, key, scoreFn, isEligible, profile, excludedIdentityKeys);
-  return { key, title: meta.title, reason: meta.reason, items: ranked };
+  return [...selected, ...remaining, ...tail].map((entry) => entry.item);
 }
 
 function rankSectionItems(
@@ -281,27 +360,122 @@ function rankSectionItems(
   sectionKey: RecommendationSectionKey,
   scoreFn: (item: RecommendationItem) => number,
   isEligible: (item: RecommendationItem) => boolean,
-  profile?: TasteProfile,
-  excludedIdentityKeys: ReadonlySet<string> = new Set(),
+  profile: TasteProfile,
 ): RecommendationItem[] {
   if (limit <= 0) return [];
-  const ranked = [...items]
-    .map((item) => ({
-      item,
-      score: scoreFn(item),
-    }))
-    .filter((item) => {
-      return item.score > 0
-        && isEligible(item.item)
-        && !recommendationCandidateIdentityKeys(item.item.candidate)
-          .some((key) => excludedIdentityKeys.has(key));
-    })
-    .sort((a, b) => (b.score - a.score) || (stableSectionJitter(b.item, sectionKey) - stableSectionJitter(a.item, sectionKey)))
-    .map((entry) => entry.item);
-  const unique = dedupeRecommendationItems(ranked);
-  const shouldApplyProfileMix = sectionKey !== "freshInYourSources"
-    && sectionKey !== "outsideYourUsualReads";
-  return (shouldApplyProfileMix ? applyProfileComicMix(unique, profile, limit) : unique).slice(0, limit);
+  const scored = items
+    .map((item) => ({ item, score: scoreFn(item) }))
+    .filter((entry) => entry.score > 0 && isEligible(entry.item))
+    .sort((a, b) => (b.score - a.score) || (stableSectionJitter(b.item, sectionKey) - stableSectionJitter(a.item, sectionKey)));
+  const uniqueItems = new Set(dedupeRecommendationItems(scored.map((entry) => entry.item)));
+  const unique = scored.filter((entry) => uniqueItems.has(entry.item));
+  // Fresh keeps pure recency order; every other row spreads similar titles apart.
+  const ordered = sectionKey === "freshInYourSources"
+    ? unique.map((entry) => entry.item)
+    : rerankForDiversity(unique);
+  return shouldApplyProfileComicMix(sectionKey) ? applyProfileComicMix(ordered, profile, limit) : ordered;
+}
+
+/**
+ * Page-level uniqueness: every work (by any identity key, so aliases count)
+ * lands in one row only. Rows take turns in SECTION_DRAFT_ORDER claiming their
+ * best remaining work, but skip a work that another row ranks far higher, so a
+ * title that leads "Fresh" is not taken by a row where it is only a filler.
+ * A second pass lets rows with room pick works whose preferred row filled up.
+ */
+function draftUniqueSectionItems(
+  ranked: Record<RecommendationSectionKey, RecommendationItem[]>,
+  limit: number,
+): Record<RecommendationSectionKey, RecommendationItem[]> {
+  const identityKeysByItem = new Map<RecommendationItem, string[]>();
+  const identityKeysOf = (item: RecommendationItem) => {
+    let keys = identityKeysByItem.get(item);
+    if (!keys) {
+      keys = recommendationCandidateIdentityKeys(item.candidate);
+      identityKeysByItem.set(item, keys);
+    }
+    return keys;
+  };
+
+  // Best rank of each identity key in each row.
+  const ranksByIdentity = new Map<string, Map<RecommendationSectionKey, number>>();
+  for (const key of SECTION_DRAFT_ORDER) {
+    ranked[key].forEach((item, rank) => {
+      for (const identityKey of identityKeysOf(item)) {
+        let ranks = ranksByIdentity.get(identityKey);
+        if (!ranks) {
+          ranks = new Map();
+          ranksByIdentity.set(identityKey, ranks);
+        }
+        if (!ranks.has(key) || rank < ranks.get(key)!) ranks.set(key, rank);
+      }
+    });
+  }
+  // Rows that rank a work similarly share it by taking turns; a row only
+  // yields when another ranks the work at least twice as high.
+  const rankedFarHigherElsewhere = (item: RecommendationItem, key: RecommendationSectionKey, rank: number) =>
+    identityKeysOf(item).some((identityKey) => {
+      for (const [otherKey, otherRank] of ranksByIdentity.get(identityKey) ?? []) {
+        if (otherKey !== key && picked[otherKey].length < limit && otherRank < rank / 2) return true;
+      }
+      return false;
+    });
+
+  const claimed = new Set<string>();
+  const picked = Object.fromEntries(
+    SECTION_DRAFT_ORDER.map((key) => [key, [] as RecommendationItem[]]),
+  ) as Record<RecommendationSectionKey, RecommendationItem[]>;
+
+  const runPass = (respectPreference: boolean) => {
+    const cursors = new Map<RecommendationSectionKey, number>(SECTION_DRAFT_ORDER.map((key) => [key, 0]));
+    let progressed = true;
+    while (progressed) {
+      progressed = false;
+      for (const key of SECTION_DRAFT_ORDER) {
+        if (picked[key].length >= limit) continue;
+        const list = ranked[key];
+        let cursor = cursors.get(key) ?? 0;
+        while (cursor < list.length) {
+          const rank = cursor;
+          const item = list[cursor];
+          cursor += 1;
+          const identityKeys = identityKeysOf(item);
+          if (identityKeys.some((identityKey) => claimed.has(identityKey))) continue;
+          if (respectPreference && rankedFarHigherElsewhere(item, key, rank)) continue;
+          for (const identityKey of identityKeys) claimed.add(identityKey);
+          picked[key].push(item);
+          progressed = true;
+          break;
+        }
+        cursors.set(key, cursor);
+      }
+    }
+  };
+  runPass(true);
+  runPass(false);
+
+  for (const key of SECTION_DRAFT_ORDER) {
+    const rankOf = new Map(ranked[key].map((item, rank) => [item, rank]));
+    picked[key].sort((a, b) => (rankOf.get(a) ?? 0) - (rankOf.get(b) ?? 0));
+  }
+  return picked;
+}
+
+function shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey): boolean {
+  return sectionKey !== "freshInYourSources" && sectionKey !== "outsideYourUsualReads";
+}
+
+function topicalTagSet(item: RecommendationItem): Set<string> {
+  return new Set(item.candidate.tags
+    .flatMap(recommendationTagTokens)
+    .filter((tag) => !isRecommendationMetadataTag(tag)));
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let overlap = 0;
+  for (const tag of a) if (b.has(tag)) overlap += 1;
+  return overlap / (a.size + b.size - overlap);
 }
 
 export function dedupeRecommendationItems(items: RecommendationItem[]): RecommendationItem[] {
@@ -344,22 +518,6 @@ function profileAffinityScore(item: RecommendationItem): number {
     + (item.breakdown.contentTypeFit * 0.1)
     + (item.breakdown.sourceAffinity * 0.08),
   );
-}
-
-function profileTasteSignalScore(item: RecommendationItem, profile: TasteProfile): number {
-  // Content type is useful for ordering, but it is not a personal taste
-  // signal. A source result with missing genres must not qualify as a profile
-  // recommendation merely because it is a comic or a novel.
-  return Math.max(
-    item.breakdown.personalRatingAffinity,
-    item.breakdown.profileTagOverlap,
-    profileTagOverlapRatio(item, profile),
-  );
-}
-
-function hasMeaningfulProfileSignal(item: RecommendationItem, profile: TasteProfile): boolean {
-  return profileTasteSignalScore(item, profile) > 0
-    && (item.breakdown.profileTagOverlap > 0 || item.breakdown.personalRatingAffinity > 0);
 }
 
 function contentTypeFitScore(item: RecommendationItem, profile: TasteProfile): number {
@@ -506,15 +664,6 @@ function isProseContentType(contentType: RecommendationCandidate["contentType"])
   return contentType === "novel" || contentType === "book";
 }
 
-function profileTagOverlapRatio(item: RecommendationItem, profile: TasteProfile): number {
-  return profileTagOverlapRatioForTags(
-    item.candidate.tags
-      .map(normalizeToken)
-      .filter((tag) => Boolean(tag) && !isRecommendationMetadataTag(tag)),
-    profile,
-  );
-}
-
 function profileTagOverlapRatioForTags(tags: string[], profile: TasteProfile): number {
   const profileTags = new Set(profile.topTags.map(normalizeToken).filter(Boolean));
   const candidateTags = new Set(tags.map(normalizeToken).filter(Boolean));
@@ -527,8 +676,7 @@ function profileTagOverlapRatioForTags(tags: string[], profile: TasteProfile): n
 
 function hasTopicalTags(item: RecommendationItem): boolean {
   return item.candidate.tags
-    .map(normalizeToken)
-    .filter(Boolean)
+    .flatMap(recommendationTagTokens)
     .some((tag) => !isRecommendationMetadataTag(tag));
 }
 
@@ -609,13 +757,14 @@ function profileHasAffinityGroup(profile: TasteProfile, group: AffinityGroup): b
 
 function candidateTextTokens(item: RecommendationItem): string[] {
   return [
-    item.candidate.title,
-    ...(item.candidate.alternativeTitles ?? []),
-    ...(item.candidate.tags ?? []),
-    item.candidate.status ?? "",
-  ]
-    .map(normalizeToken)
-    .filter(Boolean);
+    ...[
+      item.candidate.title,
+      ...(item.candidate.alternativeTitles ?? []),
+      ...(item.candidate.tags ?? []),
+      item.candidate.status ?? "",
+    ].map(normalizeToken),
+    ...(item.candidate.tags ?? []).flatMap(recommendationTagTokens),
+  ].filter(Boolean);
 }
 
 function isBoysLoveTag(tag: string): boolean {
@@ -666,7 +815,9 @@ function passesFilters(candidate: RecommendationCandidate, options: BuildRecomme
 
   const blockedTags = new Set((options.blockedTags ?? []).map(normalizeToken).filter(Boolean));
   if (blockedTags.size === 0) return true;
-  return !candidate.tags.some((tag) => blockedTags.has(normalizeToken(tag)));
+  // A blocked "Action" also hides "Battle / Action"; a blocked compound only hides itself.
+  return !candidate.tags.some((tag) =>
+    blockedTags.has(normalizeToken(tag)) || recommendationTagTokens(tag).some((token) => blockedTags.has(token)));
 }
 
 function isKnownCandidate(candidate: RecommendationCandidate, options: BuildRecommendationSectionsOptions): boolean {

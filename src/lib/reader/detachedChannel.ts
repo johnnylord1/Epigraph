@@ -3,6 +3,8 @@
 // message is sealed with AES-GCM under a key that only the main window and that reader window know. The
 // key travels in the URL fragment of the window the main window creates, never through an event.
 
+import { decodeBase64, encodeBase64 } from "./base64";
+
 export const DETACHED_READER_LABEL_PREFIX = "detached-reader-";
 export const DETACHED_READER_QUERY = "detachedReader";
 export const DETACHED_READER_TO_MAIN_EVENT = "detached-reader:to-main";
@@ -38,17 +40,11 @@ export function isDetachedReaderLabel(label: unknown): label is string {
 }
 
 function toBase64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return encodeBase64(bytes, "base64url");
 }
 
 function fromBase64Url(value: string): Uint8Array<ArrayBuffer> {
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
+  return decodeBase64(value, "base64url");
 }
 
 function importKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
@@ -139,9 +135,9 @@ export const DETACHED_READER_STORE_METHODS: ReadonlySet<string> = new Set([
   "mangaProgressSaved",
   "fetchChapterPages",
   "openOfflineMangaChapter",
-  "readOfflineMangaPage",
   "loadNovelChapter",
   "saveNovelReaderChanges",
+  "startFlareSolverr",
 ]);
 
 /** Page URLs the main window already fetched for the chapter it hands over, or null when they are not plain

@@ -1,3 +1,5 @@
+import { normalizeToken } from "./normalization";
+
 const STRUCTURAL_METADATA_TAGS = new Set([
   "manga",
   "manhwa",
@@ -164,4 +166,37 @@ export function isRecommendationMetadataTag(tag: string): boolean {
   return LANGUAGE_METADATA_TAGS.has(language)
     && /^[a-z]{2,3}$/.test(region ?? "")
     && (parts.length === 2 || /^[a-z]{2,3}$/.test(parts[2] ?? ""));
+}
+
+// Sources and trackers name the same genre differently ("Battle / Action",
+// "Sci-Fi / Fantasy", "Romantic Comedy" vs "Action", "Sci-Fi", "Romance").
+// Compound labels are split and spellings folded so a reader's taste still
+// matches titles described by another provider.
+const COMPOUND_TAG_SEPARATOR = /\s*[/,|;]\s*/;
+
+const TAG_ALIASES = new Map<string, string[]>([
+  ["battle", ["action"]],
+  ["science fiction", ["sci fi"]],
+  ["scifi", ["sci fi"]],
+  ["romantic comedy", ["romance", "comedy"]],
+  ["rom com", ["romance", "comedy"]],
+  ["romcom", ["romance", "comedy"]],
+  ["romantic", ["romance"]],
+  ["shonen", ["shounen"]],
+  ["shojo", ["shoujo"]],
+  ["shonen ai", ["shounen ai"]],
+  ["shojo ai", ["shoujo ai"]],
+  ["martial art", ["martial arts"]],
+  ["superpower", ["super power"]],
+  ["super powers", ["super power"]],
+]);
+
+export function recommendationTagTokens(tag: string): string[] {
+  const tokens = new Set<string>();
+  for (const part of tag.split(COMPOUND_TAG_SEPARATOR)) {
+    const normalized = normalizeToken(part);
+    if (!normalized) continue;
+    for (const token of TAG_ALIASES.get(normalized) ?? [normalized]) tokens.add(token);
+  }
+  return [...tokens];
 }

@@ -6,6 +6,8 @@ export interface MangaChapterProgress {
 
 interface MangaProgressPersisterOptions {
   delayMs?: number;
+  /** First wait before a failed save is tried again; it doubles up to a minute while the server stays away. */
+  retryDelayMs?: number;
   write: (progress: MangaChapterProgress) => Promise<MangaChapterProgress | void>;
   journal?: MangaProgressJournal;
 }
@@ -42,6 +44,7 @@ interface ChapterProgressState {
   persistedRead: boolean;
   dirty: boolean;
   timer: ReturnType<typeof setTimeout> | null;
+  retryDelay: number;
   writeChain: Promise<void>;
 }
 
@@ -58,6 +61,9 @@ export function createMangaProgressPersister(
   options: MangaProgressPersisterOptions,
 ): MangaProgressPersister {
   const delayMs = Math.max(0, options.delayMs ?? 450);
+  const retryDelayMs = Math.max(1, options.retryDelayMs ?? 5000);
+  // Nothing announces the server coming back, so the wait between tries stays short enough to catch it soon.
+  const MAX_RETRY_DELAY_MS = 15_000;
   const chapters = new Map<number, ChapterProgressState>();
 
   function persistPending() {
@@ -76,6 +82,7 @@ export function createMangaProgressPersister(
       persistedRead: false,
       dirty: false,
       timer: null,
+      retryDelay: retryDelayMs,
       writeChain: Promise.resolve(),
     };
     chapters.set(chapterId, created);
@@ -95,12 +102,21 @@ export function createMangaProgressPersister(
     }
   }
 
-  function schedule(chapterId: number, state: ChapterProgressState) {
+  function schedule(chapterId: number, state: ChapterProgressState, wait = delayMs) {
     if (state.timer) clearTimeout(state.timer);
     state.timer = setTimeout(() => {
       state.timer = null;
       void flush(chapterId).catch(() => {});
-    }, delayMs);
+    }, wait);
+  }
+
+  // Progress read while the server is away stays in the journal and is saved once the server answers again,
+  // without waiting for another page turn or for the reader to close.
+  function scheduleRetry(chapterId: number, state: ChapterProgressState) {
+    if (!state.dirty || state.timer) return;
+    const wait = state.retryDelay;
+    state.retryDelay = Math.min(MAX_RETRY_DELAY_MS, state.retryDelay * 2);
+    schedule(chapterId, state, wait);
   }
 
   function record(chapterId: number, lastPageRead: number, isRead: boolean): MangaChapterProgress {
@@ -137,6 +153,7 @@ export function createMangaProgressPersister(
         state.lastPageRead = Math.max(state.lastPageRead, state.persistedPage);
         state.isRead ||= state.persistedRead;
         state.dirty = state.lastPageRead > state.persistedPage || (state.isRead && !state.persistedRead);
+        state.retryDelay = retryDelayMs;
         persistPending();
       } catch (error) {
         state.dirty = true;
@@ -144,7 +161,12 @@ export function createMangaProgressPersister(
       }
     });
     state.writeChain = operation.catch(() => {});
-    await operation;
+    try {
+      await operation;
+    } catch (error) {
+      scheduleRetry(chapterId, state);
+      throw error;
+    }
 
     if (state.dirty && !state.timer) schedule(chapterId, state);
   }
@@ -158,6 +180,8 @@ export function createMangaProgressPersister(
     state.lastPageRead = Math.max(state.lastPageRead, progress.lastPageRead);
     state.isRead ||= progress.isRead;
     state.dirty = true;
+    // Left over from an earlier session that closed while the server was away.
+    scheduleRetry(progress.chapterId, state);
   }
 
   function peek(chapterId: number): MangaChapterProgress | null {

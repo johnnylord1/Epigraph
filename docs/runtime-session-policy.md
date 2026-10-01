@@ -53,6 +53,13 @@ original acceptance evidence and separately classified follow-up work.
 - keep normal desktop launches silent
 - keep Syncd test flows isolated from the normal desktop session
 
+## Development and stable data
+
+- Debug builds (`pnpm tauri:dev`, `tauri:dev:gate`, the `dev` desktop launcher) keep app data, the WebView profile and Suwayomi folders under `%LOCALAPPDATA%\Epigraph-dev` (override with `EPIGRAPH_DEV_DATA_DIR`) and run the sync Core on port 4787 instead of 4777.
+- `--local-app-data-dir`, `EPIGRAPH_SYNCD_PORT`, `WEBVIEW2_USER_DATA_FOLDER` and explicit `EPIGRAPH_LOCAL_SERVER_*_ROOT` values still win, so gates and disposable profiles keep their own folders.
+- Release builds are unchanged and use the normal application data folders.
+- The Core only attaches to or proxies a Suwayomi server whose root is inside its own data folder, so a development Core never touches an installed release's server. Suwayomi ports 4567/4667 are still fixed: while the installed app runs, a development build reports the port as occupied instead of starting manga.
+
 ## Approved Entry Points
 
 ### Normal desktop UI verification

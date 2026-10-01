@@ -52,14 +52,14 @@ describe("syncd connection theme tokens", () => {
     const unused = [...definitions].filter((token) => !consumed.has(token)).sort();
     const undefinedTokens = [...consumed].filter((token) => !definitions.has(token)).sort();
 
-    expect(definitions.size).toBe(99);
+    expect(definitions.size).toBe(65);
     for (const source of tokenSources) {
       const layerDefinitions = new Set(
         [...source.matchAll(/(--component-syncd-[\w-]+)\s*:/g)].map((match) => match[1]),
       );
       expect(layerDefinitions).toEqual(definitions);
     }
-    expect(consumed.size).toBe(99);
+    expect(consumed.size).toBe(65);
     expect(unused, "all Syncd component tokens should be consumed").toEqual([]);
     expect(undefinedTokens, "all consumed Syncd component tokens should be defined").toEqual([]);
     expect(readRepoFile("src/styles/nocturne-theme.css")).toContain(
@@ -76,17 +76,18 @@ describe("syncd connection theme tokens", () => {
     expect(popoverRule).not.toMatch(/\btop\s*:/);
   });
 
-  test("derives modal surfaces from the active theme accent and semantic surfaces", () => {
+  test("derives the modal from the shared app modal surfaces and the theme accent", () => {
     for (const file of TOKEN_FILES) {
       const source = readRepoFile(file);
-      expect(source).toContain("--component-syncd-modal-bg: var(--component-settings-modal-bg);");
-      expect(source).toContain("--component-syncd-modal-chrome-bg: var(--component-settings-card-bg);");
-      expect(source).toContain("--component-syncd-status-bg: var(--component-settings-button-bg);");
+      expect(source).toContain("--component-syncd-modal-bg: var(--component-modal-bg);");
+      expect(source).toContain("--component-syncd-modal-border: var(--component-modal-border);");
+      expect(source).toContain("--component-syncd-modal-shadow: var(--component-modal-shadow);");
+      expect(source).toContain("--component-syncd-field-underline: var(--component-syncd-accent-fg);");
       expect(source).toMatch(
-        /--component-syncd-modal-border:\s*color-mix\(in srgb, var\(--accent\) 24%, var\(--component-modal-border\)\);/,
+        /--component-syncd-surface:\s*color-mix\(in srgb, var\(--text-primary\) 4%, transparent\);/,
       );
       expect(source).toMatch(
-        /--component-syncd-status-border:\s*color-mix\(in srgb, var\(--accent\) 22%, var\(--component-settings-border-dim\)\);/,
+        /--component-syncd-field-focus-bg:\s*color-mix\(in srgb, var\(--(?:color-accent|accent-fg)\) 7%, var\(--component-syncd-surface\)\);/,
       );
     }
   });

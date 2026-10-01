@@ -20,6 +20,7 @@
   import { setNovelReaderRelay } from "../../lib/novels/readerData";
   import { setChapterPagesRelay } from "../../lib/manga/runtime/sourceOperations";
   import { relayDetachedStoreMethods } from "../../lib/reader/detachedStoreRelay";
+  import { setFlareSolverrStartRelay } from "../../lib/flaresolverr";
   import { setOfflineMangaRelay } from "../../lib/reader/offlineManga";
   import { applyCustomTheme, clearCustomThemeProperties } from "../../lib/theme/provider";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "../../lib/theme/contract";
@@ -32,6 +33,7 @@
   const HUD_BASE_HEIGHT = 900;
   const HUD_MIN_SCALE = 0.82;
   const HUD_MAX_SCALE = 1.08;
+  const CLOSE_PROGRESS_WAIT_MS = 400;
 
   let MangaReaderComponent = $state<any>(null);
   let BookReaderComponent = $state<any>(null);
@@ -80,7 +82,10 @@
     if (finalizing || !client) return;
     finalizing = true;
     try {
-      await flushAllMangaProgress();
+      // Reading progress is in this window's journal from the moment it is recorded, and the main window takes that
+      // journal over once this window is gone, so closing never waits on Suwayomi (Mihon's reader likewise saves
+      // locally and syncs later). A reachable server still gets the last page before the window goes away.
+      await Promise.race([flushAllMangaProgress(), new Promise((resolve) => setTimeout(resolve, CLOSE_PROGRESS_WAIT_MS))]);
       if (client.context.target.kind === "book") {
         await client.request("flushBookLibraryPersistence", []).catch((error) => console.warn("Book progress was not flushed:", error));
       }
@@ -224,7 +229,6 @@
           setChapterPagesRelay(({ chapterId, mangaId }) => link.request("fetchChapterPages", [chapterId, mangaId]));
           setOfflineMangaRelay({
             open: (input) => link.request("openOfflineMangaChapter", [input]),
-            page: (id, index) => link.request("readOfflineMangaPage", [id, index]),
           });
           MangaReaderComponent = (await import("./Reader.svelte")).default;
           if (disposed) return;
@@ -236,6 +240,7 @@
             loadChapter: (scope, reader) => link.request("loadNovelChapter", [scope, reader]),
             saveChanges: (scope, changes) => link.request("saveNovelReaderChanges", [scope, changes]),
           });
+          setFlareSolverrStartRelay(() => link.request("startFlareSolverr", []));
           NovelReaderComponent = (await import("./NovelReader.svelte")).default;
           if (disposed) return;
           if (target.detail) setActiveNovelDetail(target.detail);

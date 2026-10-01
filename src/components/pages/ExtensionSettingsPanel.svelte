@@ -1,5 +1,6 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
+  import { readableErrorText } from "../../lib/i18n/networkErrorText";
   import { CircleNotch, StackSimple, Trash, X } from "phosphor-svelte";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import type { ManagedExtension } from "../../lib/managedExtensions";
@@ -475,7 +476,7 @@
                     <span class="preferenceFeedback" aria-live="polite">{$_("extensionSettings_savingAndVerifying")}</span>
                   {:else if preferenceErrors[key]}
                     <span class="preferenceFeedback preferenceFeedbackError" role="alert">
-                      {preferenceErrors[key]}
+                      {readableErrorText(preferenceErrors[key])}
                     </span>
                   {/if}
                 </div>

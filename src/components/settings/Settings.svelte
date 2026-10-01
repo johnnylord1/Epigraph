@@ -1047,6 +1047,20 @@
       return;
     }
 
+    // A new folder inside the one holding the downloads could never receive them, so refuse it before
+    // the server starts writing there.
+    const oldDl = confirmedDownloadsPath || defaultDownloadsPath;
+    const newDl = dl || defaultDownloadsPath;
+    const offerMove = !isExternalServer && !!newDl && !!oldDl && newDl !== oldDl;
+    if (offerMove) {
+      try {
+        await invoke("check_downloads_move", { src: oldDl, dst: newDl });
+      } catch (e) {
+        pathsFieldError = { dl: operationFailure(e, "outcomes.pathCheckFailed") };
+        return;
+      }
+    }
+
     pathsSaving = true;
     try {
       // Send each mutation independently Ã¢â‚¬â€ localSourcePath rejects empty string server-side
@@ -1056,13 +1070,9 @@
       updateSettings({ serverDownloadsPath: dl, serverLocalSourcePath: loc });
 
       // Migration requires local filesystem access Ã¢â‚¬â€ skip for external servers.
-      if (!isExternalServer) {
-        const oldDl = confirmedDownloadsPath || defaultDownloadsPath;
-        const newDl = dl || defaultDownloadsPath;
-        if (newDl && oldDl && newDl !== oldDl) {
-          const hadContent = await invoke<boolean>("check_path_exists", { path: oldDl });
-          if (hadContent) { migrateFrom = oldDl; migrateTo = newDl; }
-        }
+      if (offerMove) {
+        const hadContent = await invoke<boolean>("check_path_exists", { path: oldDl });
+        if (hadContent) { migrateFrom = oldDl; migrateTo = newDl; }
       }
 
       confirmedDownloadsPath   = dl;
@@ -1094,6 +1104,11 @@
       localSourcePathInput = selected;
     }
     await savePaths();
+    // The picker saves at once, so open the editor when the choice needs attention or offers to move files.
+    if (pathsFieldError.dl || pathsFieldError.loc || pathsError || migrateFrom) {
+      advStorageOpen = true;
+      storageAdvancedSource = "paths";
+    }
   }
 
   async function startMigration() {
@@ -1122,6 +1137,8 @@
   }
 
   function dismissMigration() {
+    // Keeping the files where they are is a valid choice; say where they stayed so they are not taken for lost.
+    if (migrateFrom) addToast({ kind: "info", title: translate("settings_inline_migrationKeptTitle"), body: migrateFrom, duration: 6000 });
     migrateFrom = null; migrateTo = null; migrateError = null; migrateProgress = null;
   }
 
@@ -3473,7 +3490,7 @@
     dlTotal     = null;
     try {
       if (IS_WINDOWS) {
-        try { await invoke("kill_server", { serverUrl: currentRuntimeServerUrl }); } catch {}
+        // The native handoff stops the runtime itself, only after the signed download succeeded.
         await invoke("download_and_install_update", { expectedVersion: updateCheck?.version ?? release.tag_name });
         updatePhase = "ready";
       } else {
@@ -5127,7 +5144,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings.storage.downloadsPath")}</p>
-                    <p class="settings-mini-row__hint" style={(downloadsPathInput || defaultDownloadsPath) ? "font-family:var(--font-mono)" : ""}>{downloadsPathInput || defaultDownloadsPath || $_("settings.storage.notConfigured")}</p>
+                    <p class="settings-mini-row__hint" style={(confirmedDownloadsPath || defaultDownloadsPath) ? "font-family:var(--font-mono)" : ""}>{confirmedDownloadsPath || defaultDownloadsPath || $_("settings.storage.notConfigured")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("downloads")} disabled={isExternalServer}>{$_("common.browse")}</button>
                 </div>
@@ -5135,7 +5152,7 @@
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">
                     <p class="settings-mini-row__label">{$_("settings.storage.localSourcePath")}</p>
-                    <p class="settings-mini-row__hint" style={localSourcePathInput ? "font-family:var(--font-mono)" : ""}>{localSourcePathInput || $_("common.optional")}</p>
+                    <p class="settings-mini-row__hint" style={confirmedLocalSourcePath ? "font-family:var(--font-mono)" : ""}>{confirmedLocalSourcePath || $_("common.optional")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => browseSettingsPath("local")} disabled={isExternalServer}>{$_("common.browse")}</button>
                 </div>
@@ -5212,14 +5229,14 @@
                         <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={startMigration} disabled={migrating}>
                           {migrating ? (migrateProgress ? $_("settings_storage_moving", { done: migrateProgress.done, total: migrateProgress.total }) : $_("settings_storage_starting")) : $_("ui_moveFiles")}
                         </button>
-                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>{$_("settings_inline_skip")}</button>
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={dismissMigration} disabled={migrating}>{$_("settings_inline_migrationKeep")}</button>
                       </div>
                     </div>
                     <p class="settings-card__intro">{$_("settings_inline_migrationHint")}</p>
                     <div class="settings-row settings-mini-row settings-mini-row--stretch">
                       <div class="settings-mini-row__body">
                         <p class="settings-mini-row__label">{$_("settings_inline_pathChange")}</p>
-                        <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{migrateFrom} ? {migrateTo}</p>
+                        <p class="settings-mini-row__hint" style="font-family:var(--font-mono)">{migrateFrom} → {migrateTo}</p>
                       </div>
                       {#if migrateProgress && migrateProgress.total > 0}
                         <span class="sec-status-pill">{migrateProgress.done}/{migrateProgress.total}</span>

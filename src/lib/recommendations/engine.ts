@@ -47,6 +47,10 @@ export function buildSearchRecommendations(
 ): SearchRecommendationResult {
   const trackerNameById = new Map((input.trackers ?? []).map((tracker) => [tracker.id, tracker.name]));
   const trackerIconById = new Map((input.trackers ?? []).map((tracker) => [tracker.id, tracker.icon || tracker.name]));
+  const trackerStatusNamesById = new Map((input.trackers ?? []).map((tracker) => [
+    tracker.id,
+    new Map((tracker.statuses ?? []).map((status) => [status.value, status.name])),
+  ]));
   const mangaCandidateOptions = {
     trackRecordsByMangaId: input.trackRecordsByMangaId,
     trackerNameById,
@@ -56,7 +60,10 @@ export function buildSearchRecommendations(
 
   const seeds = [
     ...(input.libraryManga ?? []).map((manga) =>
-      mangaToTasteProfileSeed(manga, { trackRecordsByMangaId: input.trackRecordsByMangaId }),
+      mangaToTasteProfileSeed(manga, {
+        trackRecordsByMangaId: input.trackRecordsByMangaId,
+        trackerStatusNamesById,
+      }),
     ),
     ...(input.libraryNovels ?? []).map(novelToTasteProfileSeed),
     ...(input.libraryBooks ?? []).map((book) =>

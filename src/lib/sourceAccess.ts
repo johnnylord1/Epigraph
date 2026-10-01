@@ -32,7 +32,9 @@ export function isConfirmedAntibotChallengeMessage(message: string): boolean {
 }
 
 export function classifySourceAccessError(error: unknown): SourceAccessClassification {
-  const message = sourceAccessErrorMessage(error);
+  // Suwayomi wraps every resolver failure in "Exception while fetching data (/field) :", which says nothing about
+  // the cause and would otherwise read as a network failure.
+  const message = sourceAccessErrorMessage(error).replace(/Exception while fetching data \([^)]*\)\s*:?/gi, "");
   if (/timeout|timed out|abort/i.test(message)) {
     return { errorType: "timeout", sourceWide: false, recoveryHint: null };
   }

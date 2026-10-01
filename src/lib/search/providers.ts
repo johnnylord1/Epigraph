@@ -100,7 +100,7 @@ function catalogResult(entry: SearchPageEntry): SearchResult {
 function downloadResult(entry: SearchDownloadEntry): SearchResult {
   const downloadsLabel = translate("downloads.eyebrow");
   return {
-    id: `download:${entry.chapterId}`,
+    id: "novelId" in entry ? `download:novel:${entry.novelId}` : `download:${entry.chapterId}`,
     type: "download",
     title: entry.mangaTitle,
     description: entry.chapterName,
@@ -109,7 +109,7 @@ function downloadResult(entry: SearchDownloadEntry): SearchResult {
     breadcrumb: `${downloadsLabel} > ${entry.status}`,
     image: entry.image,
     metadata: { progress: Math.round(entry.progress * 100), status: entry.status },
-    action: { kind: "download", chapterId: entry.chapterId },
+    action: "novelId" in entry ? { kind: "download", novelId: entry.novelId } : { kind: "download", chapterId: entry.chapterId },
   };
 }
 

@@ -1,4 +1,5 @@
 import type { NativeSourceRestoreChoice, ReconciliationClusterResult } from "../reconciliation/types";
+import { loadSettingsStorageRuntime } from "./storageRuntime";
 
 export interface MangaDependencyPlan {
   repositories: readonly { id: string; indexUrl: string }[];
@@ -49,8 +50,8 @@ export function createMangaRestoreDependencySession(deps: {
 }
 
 export async function createProductionMangaDependencySession(file: File, format: "native" | "epigraph") {
-  const [{ store, bumpContentSetupVersion }, { loadSettingsStorageRuntime }, { getManagedSourceRuntime }, { invoke }, { gql }, { GET_TRACKERS }] = await Promise.all([
-    import("../../store/state.svelte"), import("./storageRuntime"), import("../manga/runtime"), import("@tauri-apps/api/core"), import("../client"), import("../startupQueries"),
+  const [{ store, bumpContentSetupVersion }, { getManagedSourceRuntime }, { invoke }, { gql }, { GET_TRACKERS }] = await Promise.all([
+    import("../../store/state.svelte"), import("../manga/runtime"), import("@tauri-apps/api/core"), import("../client"), import("../startupQueries"),
   ]);
   const profileId = store.runtimeResolvedLocalProfileId;
   const target = () => JSON.stringify([store.runtimeResolvedLocalProfileId, store.runtimeServerUrl]);

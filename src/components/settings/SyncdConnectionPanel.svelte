@@ -4,7 +4,8 @@
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
-  import { CircleNotch, X } from "phosphor-svelte";
+  import { ArrowClockwise, CaretRight, Check, CircleNotch, Copy, Desktop, Devices, DownloadSimple, ImageSquare, Info, Plugs, QrCode, Trash, UploadSimple, Warning, X } from "phosphor-svelte";
+  import { glideHeight } from "../../lib/motion/motion";
   import { addToast, store } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
   import NocturneState from "../shared/NocturneState.svelte";
@@ -102,6 +103,7 @@
   let modalView = $state<SyncdModalView>("pairing");
   let pairingMode = $state<SyncdPairingMode>("create");
   let advancedConnectOpen = $state(false);
+  let hostOptionsOpen = $state(false);
   let modalElement = $state<HTMLElement | null>(null);
   let modalBodyElement = $state<HTMLElement | null>(null);
   let runtimeIdentity = $state<SyncdRuntimeIdentity | null>(null);
@@ -201,6 +203,13 @@
       || translate("syncd_status_waiting");
   });
 
+  // Only the device behind this connection gets scope switches; hide the block when there is none.
+  const permissionDevices = $derived(
+    pairedDevices.filter((device) => device.deviceName === remoteDeviceName
+      || device.deviceId === host?.claimedDeviceId
+      || device.deviceId === connect?.claimedDeviceId),
+  );
+
   const remotePlatformLabel = $derived.by(() => {
     const claimedDeviceId = host?.claimedDeviceId ?? connect?.claimedDeviceId ?? null;
     const pairedDevice = claimedDeviceId
@@ -240,6 +249,15 @@
     if (host && ["pending", "approved"].includes(host.status)) return "waiting" as const;
     return "start" as const;
   });
+
+  /* Header status line: "no desktop yet" before pairing starts, the live overview after. */
+  const headerTone = $derived(pairingStage === "start" && !panelError ? "neutral" : overviewStatus.tone);
+  const headerStatus = $derived(pairingStage === "start" && !panelError ? translate("syncd_modal_noActiveDesktop") : overviewStatus.title);
+
+  /* The floating dialog glides between step heights; the first-run embedding keeps its sheet's height. */
+  function glideWhenModal(node: HTMLElement) {
+    return presentation === "modal" ? glideHeight(node) : undefined;
+  }
 
   function portal(node: HTMLElement) {
     if (presentation === "embedded") return { destroy() {} };
@@ -1108,76 +1126,83 @@
 </script>
 
 <div class:syncd-modal-backdrop--embedded={presentation === "embedded"} class="syncd-modal-backdrop" role="presentation" use:portal>
-  <div bind:this={modalElement} class:syncd-modal--embedded={presentation === "embedded"} class="syncd-modal" role="dialog" aria-modal={presentation === "modal" ? "true" : undefined} aria-labelledby="syncd-modal-title" tabindex="-1" onkeydown={handleModalKeydown}>
+  <div bind:this={modalElement} class:syncd-modal--embedded={presentation === "embedded"} class="syncd-modal" role="dialog" aria-modal={presentation === "modal" ? "true" : undefined} aria-labelledby="syncd-modal-title" tabindex="-1" onkeydown={handleModalKeydown} use:glideWhenModal>
     <div class="syncd-panel-grid" data-testid="syncd-panel-grid" data-panel-ready={panelSubscriptionsReady ? "ready" : "loading"}>
       <header class="syncd-modal__header">
+        <span class="syncd-modal__glyph" aria-hidden="true"><Devices size={24} weight="duotone" /></span>
         <div class="syncd-modal__heading">
           <h2 id="syncd-modal-title">{$_("settings_inline_desktopSyncPairing")}</h2>
-          <p>{scopeLabel}</p>
+          <p class="syncd-status-copy" data-tone={headerTone}><span class="syncd-status-dot"></span><span>{headerStatus}</span></p>
         </div>
-        {#if presentation === "modal"}<button class="n-icon-btn syncd-modal__close" type="button" aria-label={$_("common_close")} onclick={closeModal}><X size={16} weight="bold" /></button>{/if}
+        {#if presentation === "modal"}<button class="syncd-icon-btn" type="button" aria-label={$_("common_close")} onclick={closeModal}><X size={18} weight="bold" /></button>{/if}
       </header>
 
       <div bind:this={modalBodyElement} class="syncd-modal__body">
         <section class="syncd-view" hidden={modalView !== "pairing"} aria-hidden={modalView !== "pairing"} data-testid="syncd-pairing-view">
-          <div class="syncd-status-line">
-            <span class="syncd-status-copy"><span class:syncd-status-dot--live={pairingStage !== "start"} class="syncd-status-dot"></span>{pairingStage === "start" ? $_("syncd_modal_noActiveDesktop") : overviewStatus.title}</span>
-            <button class="syncd-link" type="button" data-testid="syncd-modal-details" onclick={() => showView("details")}>{$_("syncd_modal_connectionDetails")}</button>
-          </div>
-
           {#if pairingStage === "start"}
-            <div class="syncd-mode-switch" aria-label={$_("syncd_modal_pairingOptions")}>
-              <button class:is-active={pairingMode === "create"} type="button" aria-pressed={pairingMode === "create"} onclick={() => (pairingMode = "create")}>{$_("syncd_action_createPairingQr")}</button>
-              <button class:is-active={pairingMode === "use"} type="button" aria-pressed={pairingMode === "use"} onclick={() => (pairingMode = "use")}>{$_("ui_loadQrImage")}</button>
+            <div class="syncd-tabs" role="group" aria-label={$_("syncd_modal_pairingOptions")}>
+              <button class:is-active={pairingMode === "create"} type="button" aria-pressed={pairingMode === "create"} onclick={() => (pairingMode = "create")}><QrCode size={16} />{$_("syncd_action_createPairingQr")}</button>
+              <button class:is-active={pairingMode === "use"} type="button" aria-pressed={pairingMode === "use"} onclick={() => (pairingMode = "use")}><UploadSimple size={16} />{$_("ui_loadQrImage")}</button>
             </div>
 
             {#if pairingMode === "create"}
-              <div class="syncd-start-copy" data-testid="syncd-host-card">
+              <div class="syncd-start-copy syncd-pane" data-testid="syncd-host-card">
                 <h3>{$_("syncd_modal_pairDesktop")}</h3>
                 <p>{$_("syncd_modal_createShortLivedQr")}</p>
-                <div class="syncd-note">{$_("syncd_modal_approveOnlyIfStarted")}</div>
                 <span class="syncd-hidden-value" data-testid="syncd-host-status">{statusLabel("idle")}</span>
                 <span class="syncd-hidden-value" data-testid="syncd-host-start-stage">{hostStartStage}</span>
               </div>
             {:else}
-              <div class="syncd-start-copy" data-testid="syncd-options-view">
-                <h3>{$_("syncd_modal_connect")}</h3>
+              <div class="syncd-start-copy syncd-pane" data-testid="syncd-options-view">
                 <p>{$_("syncd_modal_useHostPairingPackage")}</p>
-                <label class="syncd-field"><span>{$_("ui_bootstrapBundle")}</span><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></label>
                 <input bind:this={qrFileInput} class="syncd-hidden-input" data-testid="syncd-qr-file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange={handleQrFilePicked} />
-                <div class="syncd-field-actions"><span>{$_("syncd_modal_pairing")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>{qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}</button></div>
+                <button class="syncd-link" type="button" data-testid="syncd-connect-load-qr" onclick={openQrImagePicker} disabled={qrDecodeBusy}>{#if qrDecodeBusy}<CircleNotch size={15} class="syncd-spinner" />{:else}<ImageSquare size={15} />{/if}{qrDecodeBusy ? $_("ui_readingQr") : $_("ui_loadQrImage")}</button>
+                {#if bootstrapBundleInput.trim() && !advancedConnectOpen}<p class="syncd-note"><Check size={15} weight="bold" />{$_("ui_syncQrLoaded")}</p>{/if}
                 <div class:syncd-disclosure--open={advancedConnectOpen} class="syncd-disclosure">
-                  <button type="button" data-testid="syncd-modal-options" aria-expanded={advancedConnectOpen} onclick={() => (advancedConnectOpen = !advancedConnectOpen)}>{$_("syncd_modal_pairingOptions")}</button>
+                  <button type="button" data-testid="syncd-modal-options" aria-expanded={advancedConnectOpen} onclick={() => (advancedConnectOpen = !advancedConnectOpen)}><CaretRight size={13} weight="bold" class="syncd-disclosure__caret" />{$_("syncd_modal_pairingOptions")}</button>
                   {#if advancedConnectOpen}
                     <div class="syncd-disclosure__body">
-                      <div class="syncd-row"><span>{$_("ui_discoveredPeers")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>{loadingCandidates ? $_("common_refreshing") : $_("ui_refreshPeers")}</button></div>
-                      {#if candidates.length > 0}<div class="syncd-list" data-testid="syncd-discovered-peers">{#each candidates as candidate}<div class="syncd-list__item" data-testid="syncd-peer-item"><div><strong>{candidate.instanceName}</strong><small>{candidate.effectiveOrigin}</small></div><button class="syncd-link" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button></div>{/each}</div>{/if}
-                      <label class="syncd-field"><span>{$_("ui_manualOriginFallback")}</span><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></label>
+                      <label class="syncd-field"><span class="syncd-field__label">{$_("ui_bootstrapBundle")}</span><span class="syncd-field__control"><textarea bind:this={bootstrapBundleTextarea} class="syncd-textarea" data-testid="syncd-bootstrap-bundle-input" bind:value={bootstrapBundleInput} placeholder={$_("ui_pasteTheHostBundleJsonHere")}></textarea></span></label>
+                      <div class="syncd-row"><span>{$_("ui_discoveredPeers")}</span><button class="syncd-link" type="button" data-testid="syncd-connect-refresh-peers" onclick={refreshDiscoveryCandidates} disabled={loadingCandidates}>{#if loadingCandidates}<CircleNotch size={14} class="syncd-spinner" />{:else}<ArrowClockwise size={14} />{/if}{loadingCandidates ? $_("common_refreshing") : $_("ui_refreshPeers")}</button></div>
+                      {#if candidates.length > 0}<div class="syncd-list" data-testid="syncd-discovered-peers">{#each candidates as candidate}<div class="syncd-list__item" data-testid="syncd-peer-item"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={18} /></span><div><strong>{candidate.instanceName}</strong><small>{candidate.effectiveOrigin}</small></div><button class="syncd-link" type="button" data-testid="syncd-peer-use-origin" onclick={() => (manualOrigin = candidate.discoveryOrigin)}>{$_("ui_useOrigin")}</button></div>{/each}</div>{/if}
+                      <label class="syncd-field"><span class="syncd-field__label">{$_("ui_manualOriginFallback")}</span><span class="syncd-field__control"><input bind:this={manualOriginInput} class="syncd-input" data-testid="syncd-manual-origin" bind:value={manualOrigin} placeholder={$_("ui_https1921681254777")} spellcheck="false" /></span></label>
                     </div>
                   {/if}
                 </div>
               </div>
             {/if}
           {:else if pairingStage === "waiting" && host}
-            <div class="syncd-pairing-live">
-              <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">{#if qrCodeDataUrl}<img class="syncd-qr-image" data-testid="syncd-host-qr-image" data-session-id={host.sessionId} data-origin={host.advertisedBaseUrl} src={qrCodeDataUrl} alt={$_("ui_syncBootstrapQrCode")} />{:else}<CircleNotch size={24} weight="bold" class="syncd-status__spinner" />{/if}</div>
-              <div class="syncd-pairing-live__copy">{#if hostPinDisplay}<span>{$_("syncd_modal_pinLabel")}</span><strong class="syncd-pairing-pin" data-testid="syncd-host-pin">{hostPinDisplay}</strong><small class="syncd-pin-hint">{$_("syncd_modal_pinHint", { name: localDeviceName })}</small><div class="syncd-pin-expiry" aria-live="off"><span class="syncd-pin-expiry__bar"><i style:transform={`scaleX(${Math.min(1, hostSecondsLeft / 300)})`}></i></span><small>{$_("syncd_modal_pinRenews", { time: formatCountdown(hostSecondsLeft) })}</small></div>{/if}<span>{$_("ui_pairingCode")}</span><strong class="syncd-pairing-code">{host.pairingCode}</strong><small>{$_("ui_expires")} {formatWhen(host.expiresAtMs)}</small><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>{copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}</button><button class="syncd-link" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}>{$_("ui_saveQrImage")}</button></div></div>
+            <div class="syncd-pairing-live syncd-pane">
+              <div class="syncd-qr-surface" data-testid="syncd-host-qr-surface">{#if qrCodeDataUrl}<img class="syncd-qr-image" data-testid="syncd-host-qr-image" data-session-id={host.sessionId} data-origin={host.advertisedBaseUrl} src={qrCodeDataUrl} alt={$_("ui_syncBootstrapQrCode")} />{:else}<CircleNotch size={24} weight="bold" class="syncd-spinner" />{/if}</div>
+              <div class="syncd-pairing-live__copy">
+                {#if hostPinDisplay}
+                  <strong class="syncd-pairing-pin" data-testid="syncd-host-pin" aria-label={$_("syncd_modal_pinLabel")}>{hostPinDisplay}</strong>
+                  <small class="syncd-pin-hint">{$_("syncd_modal_pinHint", { name: localDeviceName })}</small>
+                {:else}
+                  <strong class="syncd-pairing-pin" aria-label={$_("ui_pairingCode")}>{host.pairingCode}</strong>
+                {/if}
+                <div class="syncd-pin-expiry" aria-live="off"><span class="syncd-pin-expiry__bar"><i style:transform={`scaleX(${Math.min(1, hostSecondsLeft / 300)})`}></i></span><small>{$_("syncd_modal_pinRenews", { time: formatCountdown(hostSecondsLeft) })}</small></div>
+              </div>
               <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
             </div>
-            <div class="syncd-note">{$_("syncd_modal_keepWindowsOpen")}</div>
+            <div class:syncd-disclosure--open={hostOptionsOpen} class="syncd-disclosure">
+              <button type="button" aria-expanded={hostOptionsOpen} onclick={() => (hostOptionsOpen = !hostOptionsOpen)}><CaretRight size={13} weight="bold" class="syncd-disclosure__caret" />{$_("syncd_modal_pairingOptions")}</button>
+              {#if hostOptionsOpen}
+                <div class="syncd-disclosure__body">
+                  {#if hostPinDisplay}<div class="syncd-row"><span>{$_("ui_pairingCode")}</span><strong class="syncd-pairing-code">{host.pairingCode}</strong></div>{/if}
+                  <div class="syncd-actions"><button class="syncd-link" type="button" data-testid="syncd-host-copy-bundle" onclick={copyBootstrapBundle}>{#if copiedBundle}<Check size={15} weight="bold" />{:else}<Copy size={15} />{/if}{copiedBundle ? $_("massMigration_statusCopied") : $_("ui_copyBundle")}</button><button class="syncd-link" type="button" data-testid="syncd-host-save-qr" onclick={saveBootstrapQrCode} disabled={!qrCodeDataUrl}><DownloadSimple size={15} />{$_("ui_saveQrImage")}</button></div>
+                </div>
+              {/if}
+            </div>
+            <p class="syncd-note"><Info size={16} />{$_("syncd_modal_keepWindowsOpen")}</p>
           {:else if pairingStage === "approval" && host}
-            <div class="syncd-start-copy"><h3>{$_("syncd_modal_desktopWantsConnect")}</h3><p>{$_("syncd_modal_reviewApprove")}</p></div>
-            <div class="syncd-request"><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div><span>{statusLabel("claimed")}</span></div>
-            <div class="syncd-verification" data-testid="syncd-host-verification"><span>{$_("syncd_modal_verificationLabel")}</span><strong>{hostVerificationCode}</strong><small>{$_("syncd_modal_verificationHint")}</small></div>
-            <div class="syncd-scope-list" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<span>{permissionScopeLabel(scope)}</span>{/each}</div>
+            <div class="syncd-start-copy syncd-pane"><h3>{$_("syncd_modal_desktopWantsConnect")}</h3></div>
+            <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={20} /></span><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div></div>
+            <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{$_("syncd_modal_verificationHint")}</small></div>
+            <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
             <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}
-            <div class="syncd-device-pair">
-              <div><small>{$_("syncd_modal_currentDevice")}</small><strong>{localDeviceName}</strong><span>{scopeLabel}</span></div>
-              <em>{statusLabel("connected")}</em>
-              <div><small>{$_("ui_claimedDevice")}</small><strong>{remoteDeviceName}</strong><span>{remotePlatformLabel}</span></div>
-            </div>
-            <div class="syncd-session-summary"><div><strong>{$_("ui_replication")}</strong><span>{overviewStatus.body}</span></div><span>{statusLabel(replicationSnapshot?.replicationStatus ?? "connected")}</span></div>
+            <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={20} /></span><div><strong>{remoteDeviceName}</strong><small>{overviewStatus.body}</small></div><span class="syncd-state" data-tone={overviewStatus.tone}>{statusLabel(replicationSnapshot?.replicationStatus ?? "connected")}</span></div>
             <span class="syncd-hidden-value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
             <span class="syncd-hidden-value" data-testid="syncd-replication-status" data-status={replicationSnapshot?.replicationStatus ?? "idle"}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span>
           {/if}
@@ -1185,45 +1210,54 @@
           {#if connect}<div class="syncd-hidden-value" data-testid="syncd-connect-state"><span data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>{#if connect.error}<span data-testid="syncd-connect-error">{connect.error}</span>{/if}</div>{/if}
           {#if host?.error}<div data-testid="syncd-host-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_host")} title={$_("ui_hostPairingFailed")} body={host.error} /></div>{/if}
           {#if presentation === "embedded" && initialSyncError}
-            <div role="alert" data-testid="syncd-initial-sync-error">
-              <p>{presentOperationFailure(initialSyncError, $_)}</p>
-              <button type="button" class="n-btn n-btn--sm" onclick={() => initialSyncRetry += 1}>{$_("setup_retry")}</button>
+            <div class="syncd-inline-alert" role="alert" data-testid="syncd-initial-sync-error">
+              <p><Warning size={16} />{presentOperationFailure(initialSyncError, $_)}</p>
+              <button type="button" class="syncd-btn" onclick={() => initialSyncRetry += 1}>{$_("setup_retry")}</button>
             </div>
           {/if}
           {#if presentation === "embedded" && pairingStage === "connected" && !initialSyncReady && !initialSyncError}
-            <p role="status" data-testid="syncd-initial-sync-status" data-phase={initialSyncPhase}>{initialSyncKey ? $_("ui_loading") : statusLabel(replicationSnapshot?.replicationStatus ?? "connecting")}</p>
+            <p class="syncd-inline-status" role="status" data-testid="syncd-initial-sync-status" data-phase={initialSyncPhase}><CircleNotch size={15} class="syncd-spinner" />{initialSyncKey ? $_("ui_loading") : statusLabel(replicationSnapshot?.replicationStatus ?? "connecting")}</p>
           {/if}
           {#if panelError}<div data-testid="syncd-panel-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_sync")} title={$_("ui_syncActionFailed")} body={panelErrorText} /></div>{/if}
         </section>
 
         <section class="syncd-view syncd-manage" hidden={modalView !== "details"} aria-hidden={modalView !== "details"} data-testid="syncd-details-view">
-          <div class="syncd-status-line"><button class="syncd-link" type="button" data-testid="syncd-modal-pairing" onclick={() => showView("pairing")}>{$_("syncd_modal_pairing")}</button><span class="syncd-status-copy"><span class:syncd-status-dot--live={Boolean(replicationSnapshot?.activeSessionKey)} class="syncd-status-dot"></span>{replicationSnapshot?.activeSessionKey ? $_("ui_activeSession") : $_("syncd_modal_connectionDetails")}</span></div>
-          <div class="syncd-start-copy"><h3>{remoteDeviceName}</h3><p>{$_("syncd_modal_connectionDetailsHint")}</p></div>
-          <div class="syncd-meta-grid">
-            <div><small>{$_("syncd_modal_currentDevice")}</small><strong>{localDeviceName}</strong></div>
-            <div><small>{$_("ui_claimedDevice")}</small><strong>{remoteDeviceName}</strong></div>
-            <div><small>{$_("ui_advertisedOrigin")}</small><strong class="is-mono">{activeSession?.canonicalOrigin ?? connect?.remoteOrigin ?? host?.advertisedBaseUrl ?? $_("syncd_status_waiting")}</strong></div>
-            <div><small>{$_("ui_lastConnected")}</small><strong>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</strong></div>
-            <div><small>{$_("ui_replication")}</small><strong>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</strong></div>
-            <div><small>{$_("syncd_action_revalidate")}</small><strong>{statusLabel(activeSession?.lastKnownStatus ?? "ready")}</strong></div>
-          </div>
-          <div class="syncd-permissions" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each pairedDevices as device}{#if device.deviceName === remoteDeviceName || device.deviceId === host?.claimedDeviceId || device.deviceId === connect?.claimedDeviceId}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><span><strong>{permissionScopeLabel(scope)}</strong><small>{device.deviceName}</small></span><input type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}</div>{/if}{/each}</div>
+          <div class="syncd-start-copy syncd-pane"><h3>{$_("syncd_modal_connectionDetails")}</h3></div>
+          <dl class="syncd-meta-list syncd-pane">
+            <div><dt>{$_("syncd_modal_currentDevice")}</dt><dd>{localDeviceName}</dd></div>
+            <div><dt>{$_("ui_claimedDevice")}</dt><dd>{remoteDeviceName}</dd></div>
+            <div><dt>{$_("ui_advertisedOrigin")}</dt><dd class="is-mono">{activeSession?.canonicalOrigin ?? connect?.remoteOrigin ?? host?.advertisedBaseUrl ?? $_("syncd_status_waiting")}</dd></div>
+            <div><dt>{$_("ui_lastConnected")}</dt><dd>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</dd></div>
+          </dl>
+          {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}</div>{/each}</div>{/if}
           {#if persistedSessions.length > 0}<div class="syncd-hidden-value" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
         </section>
       </div>
 
       <footer class="syncd-modal__footer">
         {#if modalView === "details"}
-          <div><button class="n-btn n-btn--sm n-btn-danger" type="button" disabled={!activeSession || forgetBusyKey !== null} onclick={() => activeSession && forgetSession(activeSession.sessionKey)}>{forgetBusyKey ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}</button></div>
-          <div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" disabled={!activeSession || disconnectBusyKey !== null} onclick={() => activeSession && disconnectSession(activeSession.sessionKey)}>{$_("syncd_action_disconnect")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("syncd_action_revalidate")}</button><button class="syncd-link" type="button" onclick={() => showView("pairing")}>{$_("sources_actions_done")}</button></div>
-        {:else if pairingStage === "start"}
-          <span></span><div class="syncd-actions">{#if presentation === "modal"}<button class="n-btn n-btn--sm" type="button" onclick={closeModal}>{$_("ui_cancel")}</button>{/if}{#if pairingMode === "create"}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>{loadingHost ? $_("syncd_action_preparing") : $_("syncd_action_createPairingQr")}</button>{:else}<button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>{/if}</div>
-        {:else if pairingStage === "approval"}
-          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm n-btn-danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "reject" ? $_("syncd_action_rejecting") : $_("syncd_action_reject")}</button><button class="n-btn n-btn--sm n-btn-primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "approve" ? $_("syncd_action_approving") : $_("syncd_action_approve")}</button></div>
-        {:else if pairingStage === "connected"}
-          <span></span><div class="syncd-actions"><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-toggle" onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}</button><button class="n-btn n-btn--sm" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}</button>{#if presentation === "modal"}<button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}</div>
+          <button class="syncd-btn syncd-btn--danger" type="button" disabled={!activeSession || forgetBusyKey !== null} onclick={() => activeSession && forgetSession(activeSession.sessionKey)}><Trash size={16} />{forgetBusyKey ? $_("syncd_action_forgetting") : $_("syncd_action_forget")}</button>
+          <span class="syncd-spacer"></span>
+          <button class="syncd-btn" type="button" disabled={!activeSession || disconnectBusyKey !== null} onclick={() => activeSession && disconnectSession(activeSession.sessionKey)}>{$_("syncd_action_disconnect")}</button>
+          <button class="syncd-btn" type="button" data-testid="syncd-revalidate-sessions" onclick={revalidatePersisted} disabled={!hasProfile() || revalidateBusy}>{revalidateBusy ? $_("syncd_action_revalidating") : $_("syncd_action_revalidate")}</button>
+          <button class="syncd-btn syncd-btn--primary" type="button" data-testid="syncd-modal-pairing" onclick={() => showView("pairing")}>{$_("sources_actions_done")}</button>
         {:else}
-          <button class="n-btn n-btn--sm" type="button" onclick={startHostPairing}>{$_("ui_refreshBundle")}</button>{#if presentation === "modal"}<button class="syncd-link" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}
+          <button class="syncd-btn syncd-btn--quiet" type="button" data-testid="syncd-modal-details" onclick={() => showView("details")}><Info size={16} />{$_("syncd_modal_connectionDetails")}</button>
+          <span class="syncd-spacer"></span>
+          {#if pairingStage === "start"}
+            {#if presentation === "modal"}<button class="syncd-btn" type="button" onclick={closeModal}>{$_("ui_cancel")}</button>{/if}
+            {#if pairingMode === "create"}<button class="syncd-btn syncd-btn--primary" type="button" data-testid="syncd-host-start" onclick={startHostPairing} disabled={!hasProfile() || loadingHost}>{#if loadingHost}<CircleNotch size={16} class="syncd-spinner" />{:else}<QrCode size={16} />{/if}{loadingHost ? $_("syncd_action_preparing") : $_("syncd_action_createPairingQr")}</button>{:else}<button class="syncd-btn syncd-btn--primary" type="button" data-testid="syncd-connect-submit" onclick={connectToRemote} disabled={!hasProfile() || connectBusy || !bootstrapBundleInput.trim()}>{#if connectBusy}<CircleNotch size={16} class="syncd-spinner" />{:else}<Plugs size={16} />{/if}{connectBusy ? $_("settings_inline_connecting") : $_("ui_connectToHost")}</button>{/if}
+          {:else if pairingStage === "approval"}
+            <button class="syncd-btn syncd-btn--danger" type="button" data-testid="syncd-host-reject" onclick={() => decideHostPairing("reject")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "reject" ? $_("syncd_action_rejecting") : $_("syncd_action_reject")}</button>
+            <button class="syncd-btn syncd-btn--primary" type="button" data-testid="syncd-host-approve" onclick={() => decideHostPairing("approve")} disabled={hostDecisionBusy !== null}>{hostDecisionBusy === "approve" ? $_("syncd_action_approving") : $_("syncd_action_approve")}</button>
+          {:else if pairingStage === "connected"}
+            <button class="syncd-btn" type="button" data-testid="syncd-replication-toggle" onclick={replicationSnapshot?.paused ? resumeReplication : pauseReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationSnapshot?.paused ? $_("ui_resumeReplication") : $_("ui_pauseReplication")}</button>
+            <button class="syncd-btn" type="button" data-testid="syncd-replication-reconnect" onclick={reconnectReplication} disabled={!replicationSnapshot?.activeSessionKey || replicationActionBusy !== null}>{replicationActionBusy === "reconnect" ? $_("syncd_action_reconnecting") : $_("ui_reconnectNow")}</button>
+            {#if presentation === "modal"}<button class="syncd-btn syncd-btn--primary" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}
+          {:else}
+            <button class="syncd-btn" type="button" onclick={startHostPairing}><ArrowClockwise size={16} />{$_("ui_refreshBundle")}</button>
+            {#if presentation === "modal"}<button class="syncd-btn syncd-btn--primary" type="button" onclick={closeModal}>{$_("common_close")}</button>{/if}
+          {/if}
         {/if}
       </footer>
     </div>
@@ -1231,6 +1265,10 @@
 </div>
 
 <style>
+  /* Pairing dialog in the language of the app's other modals (migration, first run): a title and
+     status line on the open surface, hairline dividers, text tabs with an accent underline,
+     filled fields that grow the same underline on focus, statuses as coloured words, and one filled
+     primary action in the footer. No cards, capsules or boxed notes. */
   .syncd-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -1241,6 +1279,7 @@
     padding: var(--component-syncd-modal-backdrop-padding);
     background: var(--component-syncd-modal-backdrop-bg);
     backdrop-filter: var(--component-syncd-modal-backdrop-blur);
+    animation: syncd-fade var(--component-syncd-transition-fast) both;
   }
 
   .syncd-modal-backdrop--embedded {
@@ -1254,21 +1293,27 @@
     align-items: stretch;
     background: transparent;
     backdrop-filter: none;
+    animation: none;
   }
 
   .syncd-modal {
     width: var(--component-syncd-modal-width);
-    max-width: var(--component-syncd-modal-width);
-    height: var(--component-syncd-modal-height);
+    max-width: 100%;
     max-height: var(--component-syncd-modal-height);
-    padding: 0;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--component-syncd-modal-border);
     border-radius: var(--component-syncd-modal-radius);
     background: var(--component-syncd-modal-bg);
-    color: var(--text-primary);
     box-shadow: var(--component-syncd-modal-shadow);
-    animation: syncdModalIn var(--component-syncd-modal-animation) both;
+    color: var(--component-syncd-body-fg);
+    font-family: var(--font-ui);
+    animation: syncd-rise var(--component-syncd-modal-animation) both;
+  }
+
+  .syncd-modal:focus {
+    outline: none;
   }
 
   .syncd-modal--embedded {
@@ -1278,386 +1323,672 @@
     max-height: none;
     border: 0;
     border-radius: inherit;
+    background: transparent;
     box-shadow: none;
     animation: none;
   }
 
   .syncd-panel-grid {
-    width: 100%;
-    height: 100%;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 0;
-  }
-
-  .syncd-modal__header,
-  .syncd-modal__footer {
+    min-height: 0;
+    flex: 1 1 auto;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--component-syncd-control-gap);
-    padding: var(--component-syncd-modal-chrome-padding);
-    background: var(--component-syncd-modal-chrome-bg);
+    flex-direction: column;
   }
 
+  /* Header: accent glyph, eyebrow, title and the live status as a coloured line. */
   .syncd-modal__header {
-    border-bottom: 1px solid var(--component-syncd-modal-divider);
-  }
-
-  .syncd-modal__footer {
-    border-top: 1px solid var(--component-syncd-modal-divider);
-  }
-
-  .syncd-modal__heading,
-  .syncd-modal__views,
-  .syncd-view__intro,
-  .syncd-status,
-  .syncd-status__line,
-  .syncd-pairing-live,
-  .syncd-approval {
     display: flex;
-    align-items: center;
-    gap: var(--component-syncd-control-gap);
+    align-items: flex-start;
+    gap: 14px;
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--component-syncd-divider);
   }
 
-  .syncd-modal__heading-icon,
-  .syncd-status__icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 auto;
-    color: var(--component-syncd-status-icon-fg);
-    background: var(--component-syncd-status-icon-bg);
-    border: 1px solid var(--component-syncd-status-icon-border);
-    border-radius: var(--component-syncd-status-icon-radius);
+  .syncd-modal__glyph {
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding-top: 2px;
+    color: var(--component-syncd-accent-fg);
   }
 
-  .syncd-modal__heading-icon {
-    width: var(--component-syncd-heading-icon-size);
-    height: var(--component-syncd-heading-icon-size);
-  }
-
-  .syncd-modal__heading h2,
-  .syncd-status h3,
-  .syncd-view__intro h3 {
-    margin: 0;
-    color: var(--text-primary);
-    font-family: var(--component-settings-font);
-    font-synthesis: none;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0;
-    text-rendering: optimizeLegibility;
+  .syncd-modal__heading {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    gap: 3px;
   }
 
   .syncd-modal__heading h2 {
-    font-size: var(--text-lg);
-    line-height: var(--leading-tight);
+    margin: 0;
+    color: var(--component-syncd-title-fg);
+    font-size: var(--text-xl);
+    font-weight: 750;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
   }
 
-  .syncd-modal__close {
-    flex: 0 0 auto;
+  .syncd-status-copy {
+    min-width: 0;
+    margin: 2px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
   }
 
+  .syncd-status-dot {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: var(--component-syncd-pill-radius);
+    background: currentColor;
+    transition: background var(--component-syncd-transition-normal);
+  }
+
+  .syncd-status-copy[data-tone="success"] .syncd-status-dot { background: var(--component-syncd-good-fg); animation: syncd-pulse 2.4s var(--component-syncd-easing) infinite; }
+  .syncd-status-copy[data-tone="info"] .syncd-status-dot { background: var(--component-syncd-accent-fg); animation: syncd-pulse 2.4s var(--component-syncd-easing) infinite; }
+  .syncd-status-copy[data-tone="danger"] .syncd-status-dot { background: var(--component-syncd-bad-fg); }
+
+  .syncd-icon-btn {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: var(--component-syncd-button-radius);
+    color: var(--component-syncd-icon-fg);
+    background: transparent;
+    cursor: pointer;
+    transition: color var(--component-syncd-transition-fast), background var(--component-syncd-transition-fast), transform var(--component-syncd-transition-spring);
+  }
+
+  .syncd-icon-btn:hover { color: var(--component-syncd-strong-fg); background: var(--component-syncd-surface-strong); }
+  .syncd-icon-btn:active { transform: scale(0.92); }
+
+  /* Body scrolls once the dialog reaches its cap; header and footer stay put. */
   .syncd-modal__body {
     min-height: 0;
-    overflow: auto;
-    padding: var(--component-syncd-modal-body-padding);
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 18px 20px 20px;
+    scrollbar-gutter: stable;
+  }
+
+  /* is-gliding is set by the glideHeight action at runtime. */
+  .syncd-modal:global(.is-gliding) .syncd-modal__body {
+    overflow-y: hidden;
   }
 
   .syncd-view {
     display: flex;
     flex-direction: column;
-    gap: var(--component-syncd-grid-gap);
+    gap: 18px;
   }
 
   .syncd-view[hidden] {
     display: none;
   }
 
-  .syncd-view__intro {
-    align-items: flex-start;
-    color: var(--component-syncd-status-icon-fg);
+  /* Each block arrives with a short rise when its step or tab changes. */
+  .syncd-pane {
+    animation: syncd-pane-in var(--component-syncd-transition-spring) both;
   }
 
-  .syncd-view__intro h3 {
-    font-size: var(--text-base);
+  /* Create / load switch: text tabs with the accent underline of the fields. */
+  .syncd-tabs {
+    display: flex;
+    gap: 22px;
+    border-bottom: 1px solid var(--component-syncd-divider);
   }
 
-  .syncd-view__intro p,
-  .syncd-status__copy > p {
-    margin: var(--space-xs) 0 0;
+  .syncd-tabs button {
+    position: relative;
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 2px;
+    border: 0;
     color: var(--component-syncd-muted-fg);
-    font-size: var(--text-xs);
-    line-height: var(--leading-normal);
+    background: transparent;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
+    transition: color var(--component-syncd-transition-fast);
   }
 
-  .syncd-status {
-    align-items: flex-start;
-    padding: var(--component-syncd-status-padding);
-    border: 1px solid var(--component-syncd-status-border);
-    border-radius: var(--component-syncd-status-radius);
-    background: var(--component-syncd-status-bg);
-  }
-
-  .syncd-status__icon {
-    width: var(--component-syncd-status-icon-size);
-    height: var(--component-syncd-status-icon-size);
-  }
-
-  .syncd-status__copy {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .syncd-status__line {
-    justify-content: space-between;
-  }
-
-  .syncd-status h3 {
-    margin-top: var(--space-xs);
-    font-size: var(--text-xl);
-  }
-
-  .syncd-progress {
-    height: var(--component-syncd-progress-height);
-    margin-top: var(--component-syncd-stack-gap);
-    overflow: hidden;
+  .syncd-tabs button::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
     border-radius: var(--component-syncd-pill-radius);
-    background: var(--component-syncd-progress-track-bg);
+    background: var(--component-syncd-field-underline);
+    transform: scaleX(0);
+    transition: transform var(--component-syncd-transition-slow);
   }
 
-  .syncd-progress span {
-    display: block;
-    width: var(--component-syncd-progress-idle-width);
-    height: 100%;
-    border-radius: inherit;
-    background: var(--component-syncd-progress-fill-bg);
-    transition: width var(--component-syncd-progress-transition);
-  }
+  .syncd-tabs button:hover { color: var(--component-syncd-body-fg); }
+  .syncd-tabs button.is-active { color: var(--component-syncd-strong-fg); }
+  .syncd-tabs button.is-active::after { transform: scaleX(1); }
+  .syncd-tabs button.is-active :global(svg) { color: var(--component-syncd-accent-fg); }
 
-  .syncd-progress .syncd-progress__fill--complete {
-    width: 100%;
-  }
-
-  .syncd-progress .syncd-progress__fill--busy {
-    width: var(--component-syncd-progress-busy-width);
-    animation: syncdProgress var(--component-syncd-progress-animation) infinite;
-  }
-
-  :global(.syncd-status__spinner) {
-    animation: syncdSpin var(--component-syncd-spinner-animation) infinite;
-  }
-
-  .syncd-card {
-    border: 1px solid var(--component-syncd-card-border);
-    border-radius: var(--component-syncd-card-radius);
-    background: var(--component-syncd-card-bg);
-    padding: var(--component-syncd-card-padding);
+  .syncd-start-copy {
     display: flex;
     flex-direction: column;
-    gap: var(--component-syncd-card-gap);
-    min-width: 0;
+    gap: 6px;
   }
 
-  .syncd-card__head,
+  .syncd-start-copy h3,
+  .syncd-permissions h3 {
+    margin: 0;
+    color: var(--component-syncd-strong-fg);
+    font-size: var(--text-base);
+    font-weight: 700;
+  }
+
+  .syncd-start-copy > p {
+    max-width: 56ch;
+    margin: 0;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-sm);
+    line-height: 1.55;
+  }
+
+  /* A note is a muted line led by its icon, never a boxed callout. */
+  .syncd-start-copy > .syncd-note,
+  .syncd-note {
+    margin: 6px 0 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+  }
+
+  .syncd-note :global(svg) {
+    flex: none;
+    margin-top: 1px;
+    color: var(--component-syncd-accent-fg);
+  }
+
+  /* Filled field with the growing accent underline. */
+  .syncd-field {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .syncd-field__label,
+  .syncd-row > span {
+    color: var(--component-syncd-label-fg);
+    font-size: var(--text-2xs);
+    font-weight: 750;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .syncd-field__control {
+    position: relative;
+    display: block;
+    overflow: hidden;
+    border-radius: var(--component-syncd-field-radius);
+    background: var(--component-syncd-surface);
+    transition: background var(--component-syncd-transition-normal);
+  }
+
+  .syncd-field__control:hover { background: var(--component-syncd-surface-strong); }
+  .syncd-field__control:focus-within { background: var(--component-syncd-field-focus-bg); }
+
+  .syncd-field__control::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 0;
+    height: 2px;
+    background: var(--component-syncd-field-underline);
+    transform: scaleX(0);
+    transition: transform var(--component-syncd-transition-slow);
+  }
+
+  .syncd-field__control:focus-within::after { transform: scaleX(1); }
+
+  .syncd-input,
+  .syncd-textarea {
+    width: 100%;
+    min-width: 0;
+    display: block;
+    padding: 11px 12px;
+    border: 0;
+    outline: 0;
+    color: var(--component-syncd-input-fg);
+    background: transparent;
+    font-family: var(--font-mono, "Cascadia Mono", monospace);
+    font-size: var(--text-xs);
+  }
+
+  .syncd-input::placeholder,
+  .syncd-textarea::placeholder {
+    color: var(--component-syncd-muted-fg);
+  }
+
+  .syncd-textarea {
+    min-height: 88px;
+    resize: none;
+  }
+
+  /* Text actions: quiet until hovered, led by their icon. */
+  .syncd-link {
+    align-self: flex-start;
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: -8px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--component-syncd-button-radius);
+    color: var(--component-syncd-accent-fg);
+    background: transparent;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    cursor: pointer;
+    transition: background var(--component-syncd-transition-fast), color var(--component-syncd-transition-fast);
+  }
+
+  .syncd-link:hover:not(:disabled) { background: var(--component-syncd-surface-strong); }
+  .syncd-link:disabled { opacity: var(--component-syncd-disabled-opacity); cursor: not-allowed; }
+
+  .syncd-disclosure {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid var(--component-syncd-divider);
+  }
+
+  .syncd-disclosure > button {
+    width: 100%;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    color: var(--component-syncd-body-fg);
+    background: transparent;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    text-align: left;
+    cursor: pointer;
+    transition: color var(--component-syncd-transition-fast);
+  }
+
+  .syncd-disclosure > button:hover { color: var(--component-syncd-strong-fg); }
+
+  .syncd-disclosure > button :global(.syncd-disclosure__caret) {
+    color: var(--component-syncd-muted-fg);
+    transition: transform var(--component-syncd-transition-spring);
+  }
+
+  .syncd-disclosure--open > button :global(.syncd-disclosure__caret) { transform: rotate(90deg); }
+
+  .syncd-disclosure__body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 0 2px 21px;
+    animation: syncd-pane-in var(--component-syncd-transition-spring) both;
+  }
+
   .syncd-row,
   .syncd-list__item,
-  .syncd-actions {
+  .syncd-request {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--component-syncd-control-gap);
   }
 
-  .syncd-card__title,
-  .syncd-row__label,
-  .syncd-list__title,
-  .syncd-meta__label {
-    margin: 0;
-    font-size: var(--component-syncd-pill-font-size);
-    font-weight: var(--weight-bold);
-    letter-spacing: var(--tracking-wide);
-    text-transform: uppercase;
-    color: var(--component-syncd-label-fg);
+  .syncd-row .syncd-link,
+  .syncd-list__item .syncd-link {
+    align-self: center;
+    margin-left: 0;
   }
 
-  .syncd-card__intro,
-  .syncd-row__hint,
-  .syncd-list__hint,
-  .syncd-list__meta,
-  .syncd-meta__value {
-    margin: 0;
-    font-size: var(--component-syncd-input-font-size);
-    line-height: var(--leading-normal);
+  .syncd-list {
+    display: grid;
+    gap: 2px;
+  }
+
+  .syncd-list__item {
+    padding: 8px;
+    margin: 0 -8px;
+    border-radius: var(--component-syncd-row-radius);
+    transition: background var(--component-syncd-transition-fast);
+  }
+
+  .syncd-list__item:hover { background: var(--component-syncd-surface); }
+
+  .syncd-list__item > div,
+  .syncd-request > div {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    gap: 2px;
+  }
+
+  .syncd-list__icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    color: var(--component-syncd-accent-fg);
+  }
+
+  .syncd-list__item strong,
+  .syncd-request strong {
+    overflow: hidden;
+    color: var(--component-syncd-strong-fg);
+    font-size: var(--text-sm);
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .syncd-list__item small,
+  .syncd-request small {
+    overflow: hidden;
     color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
   }
 
-  .syncd-stack,
-  .syncd-field {
+  .syncd-list__item small { white-space: nowrap; }
+
+  /* Statuses read as a coloured word. */
+  .syncd-state {
+    flex: none;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .syncd-state[data-tone="success"] { color: var(--component-syncd-good-fg); }
+  .syncd-state[data-tone="info"] { color: var(--component-syncd-accent-fg); }
+  .syncd-state[data-tone="danger"] { color: var(--component-syncd-bad-fg); }
+
+  /* Live pairing: the QR on a light plate (scanners need the contrast), the codes beside it. */
+  .syncd-pairing-live {
+    display: grid;
+    grid-template-columns: var(--component-syncd-qr-size) minmax(0, 1fr);
+    align-items: center;
+    gap: 22px;
+  }
+
+  .syncd-qr-surface {
+    width: var(--component-syncd-qr-size);
+    aspect-ratio: 1;
+    display: grid;
+    place-items: center;
+    padding: 10px;
+    border-radius: var(--component-syncd-qr-radius);
+    color: var(--component-syncd-accent-fg);
+    background: var(--component-syncd-qr-bg);
+    box-shadow: var(--component-syncd-qr-shadow);
+  }
+
+  .syncd-qr-image {
+    width: 100%;
+    height: auto;
+    display: block;
+    image-rendering: pixelated;
+    animation: syncd-qr-in var(--component-syncd-transition-spring) both;
+  }
+
+  .syncd-pairing-live__copy {
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--component-syncd-stack-gap);
+    gap: 4px;
+  }
+
+  .syncd-pairing-pin {
+    color: var(--component-syncd-strong-fg);
+    font-size: 34px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .syncd-pin-hint,
+  .syncd-pin-expiry small {
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+  }
+
+  .syncd-pin-expiry {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .syncd-pin-expiry__bar {
+    flex: 0 0 120px;
+    height: 3px;
+    overflow: hidden;
+    border-radius: var(--component-syncd-pill-radius);
+    background: var(--component-syncd-progress-track-bg);
+  }
+
+  .syncd-pin-expiry__bar i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--component-syncd-accent-fg);
+    transform-origin: left;
+    transition: transform 1s linear;
+  }
+
+  .syncd-pairing-code {
+    color: var(--component-syncd-body-fg);
+    font-family: var(--font-mono, "Cascadia Mono", monospace);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    letter-spacing: 0.06em;
   }
 
   .syncd-actions {
+    display: flex;
     flex-wrap: wrap;
-    justify-content: flex-start;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .syncd-actions .syncd-link:first-child { margin-left: -8px; }
+  .syncd-actions .syncd-link + .syncd-link { margin-left: 0; }
+
+  /* Approval: who asks, the code to compare, and what it may sync — split by hairlines. */
+  .syncd-request {
+    padding: 12px 0;
+    border-top: 1px solid var(--component-syncd-divider);
+    border-bottom: 1px solid var(--component-syncd-divider);
+  }
+
+  .syncd-verification {
+    display: grid;
+    gap: 4px;
+  }
+
+  .syncd-verification strong {
+    color: var(--component-syncd-accent-fg);
+    font-size: 30px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .syncd-verification small {
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-xs);
+    line-height: 1.5;
   }
 
   .syncd-scope-list {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: var(--component-syncd-pill-gap);
-    margin-top: var(--component-syncd-stack-gap);
+    gap: 8px 18px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
 
-  .syncd-device-permission {
-    align-items: center;
-  }
-
-  .syncd-scope-toggle {
+  .syncd-scope-list li {
     display: inline-flex;
     align-items: center;
-    gap: var(--component-syncd-pill-gap);
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-input-font-size);
-    cursor: pointer;
-  }
-
-  .syncd-scope-toggle input {
-    accent-color: var(--component-syncd-input-border-focus);
-  }
-
-  .syncd-scope-toggle:has(input:disabled) {
-    opacity: var(--component-syncd-control-disabled-opacity);
-    cursor: default;
-  }
-
-  .syncd-actions--stack {
-    align-items: stretch;
-    justify-content: flex-start;
-  }
-
-  .syncd-surface {
-    border: 1px solid var(--component-syncd-surface-border);
-    border-radius: var(--component-syncd-surface-radius);
-    background: var(--component-syncd-surface-bg);
-    padding: var(--component-syncd-surface-padding);
-    display: flex;
-    flex-direction: column;
-    gap: var(--component-syncd-surface-gap);
-    min-width: 0;
-  }
-
-  .syncd-meta-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: var(--component-syncd-meta-gap);
-  }
-
-  .syncd-meta__label,
-  .syncd-meta__value {
-    display: block;
-  }
-
-  .syncd-meta__value--mono,
-  .syncd-textarea,
-  .syncd-input {
-    font-family: var(--font-mono, "Cascadia Mono", monospace);
-  }
-
-  .syncd-input,
-  .syncd-textarea {
-    width: 100%;
-    min-width: 0;
-    border-radius: var(--component-syncd-input-radius);
-    border: 1px solid var(--component-syncd-input-border);
-    background: var(--component-syncd-input-bg);
-    color: var(--component-syncd-input-fg);
-    padding: var(--component-syncd-input-padding);
-    font-size: var(--component-syncd-input-font-size);
+    gap: 6px;
+    color: var(--component-syncd-body-fg);
+    font-size: var(--text-sm);
     font-weight: 600;
   }
 
-  .syncd-textarea {
-    min-height: var(--component-syncd-textarea-min-height);
-    resize: vertical;
+  .syncd-scope-list li :global(svg) { color: var(--component-syncd-good-fg); }
+
+  /* Details: label and value rows between hairlines, scopes as switch rows. */
+  .syncd-meta-list {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 14px 0;
+    border-top: 1px solid var(--component-syncd-divider);
+    border-bottom: 1px solid var(--component-syncd-divider);
   }
 
-  .syncd-input:focus,
-  .syncd-textarea:focus {
-    outline: none;
-    border-color: var(--component-syncd-input-border-focus);
-    background: var(--component-syncd-input-bg-focus);
-  }
-
-  .syncd-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--component-syncd-stack-gap);
-  }
-
-  .syncd-qr-surface {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: var(--component-syncd-qr-min-height);
-    border: 1px dashed var(--component-syncd-qr-border);
-    border-radius: var(--component-syncd-qr-radius);
-    background: var(--component-syncd-qr-bg);
-    padding: var(--component-syncd-qr-padding);
-  }
-
-  .syncd-qr-image {
-    width: min(100%, 220px);
-    height: auto;
-    display: block;
-  }
-
-  .syncd-list__item {
-    align-items: flex-start;
-    border: 1px solid var(--component-syncd-list-item-border);
-    border-radius: var(--component-syncd-list-item-radius);
-    background: var(--component-syncd-list-item-bg);
-    padding: var(--component-syncd-list-item-padding);
-  }
-
-  .syncd-list__body {
+  .syncd-meta-list > div {
     min-width: 0;
     display: flex;
-    flex-direction: column;
-    gap: var(--component-syncd-pill-gap);
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
   }
 
-  .syncd-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--component-syncd-pill-gap);
-    border-radius: var(--component-syncd-pill-radius);
-    padding: var(--component-syncd-pill-padding);
-    border: 1px solid var(--component-syncd-pill-border);
-    background: var(--component-syncd-pill-bg);
-    color: var(--component-syncd-pill-fg);
-    font-size: var(--component-syncd-pill-font-size);
-    text-transform: none;
+  .syncd-meta-list dt {
+    flex: none;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-sm);
+  }
+
+  .syncd-meta-list dd {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    color: var(--component-syncd-body-fg);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-align: right;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .syncd-pill--success {
-    border-color: var(--component-syncd-pill-success-border);
-    color: var(--component-syncd-pill-success-fg);
+  .syncd-meta-list .is-mono {
+    font-family: var(--font-mono, "Cascadia Mono", monospace);
+    font-size: var(--text-xs);
   }
 
-  .syncd-pill--info {
-    border-color: var(--component-syncd-pill-info-border);
-    color: var(--component-syncd-pill-info-fg);
+  .syncd-permissions {
+    display: grid;
+    gap: 4px;
   }
 
-  .syncd-pill--danger {
-    border-color: var(--component-syncd-pill-danger-border);
-    color: var(--component-syncd-pill-danger-fg);
+  .syncd-permission-device {
+    display: grid;
+    gap: 2px;
   }
+
+  .syncd-permission-device label {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--component-syncd-control-gap);
+    margin: 0 -8px;
+    padding: 6px 8px;
+    border-radius: var(--component-syncd-row-radius);
+    cursor: pointer;
+    transition: background var(--component-syncd-transition-fast);
+  }
+
+  .syncd-permission-device label:hover { background: var(--component-syncd-surface); }
+
+  .syncd-permission-device label strong {
+    color: var(--component-syncd-strong-fg);
+    font-size: var(--text-sm);
+    font-weight: 650;
+  }
+
+  .syncd-switch {
+    position: relative;
+    width: 34px;
+    height: 20px;
+    flex: none;
+    margin: 0;
+    appearance: none;
+    border-radius: var(--component-syncd-pill-radius);
+    background: var(--component-syncd-surface-strong);
+    cursor: pointer;
+    transition: background var(--component-syncd-transition-normal);
+  }
+
+  .syncd-switch::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--component-syncd-pill-radius);
+    background: var(--component-syncd-muted-fg);
+    transition: transform var(--component-syncd-transition-spring), background var(--component-syncd-transition-normal);
+  }
+
+  .syncd-switch:checked { background: var(--component-syncd-primary-bg); }
+  .syncd-switch:checked::before { background: var(--component-syncd-primary-ink); transform: translateX(14px); }
+  .syncd-switch:focus-visible { outline: 2px solid var(--component-syncd-focus-ring); outline-offset: 2px; }
+  .syncd-switch:disabled { opacity: var(--component-syncd-disabled-opacity); cursor: not-allowed; }
+
+  /* First-run embedding: plain status and error lines. */
+  .syncd-inline-status,
+  .syncd-inline-alert p {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--component-syncd-muted-fg);
+    font-size: var(--text-sm);
+  }
+
+  .syncd-inline-alert {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--component-syncd-control-gap);
+  }
+
+  .syncd-inline-alert p :global(svg) { flex: none; color: var(--component-syncd-bad-fg); }
 
   .syncd-hidden-input {
     display: none;
@@ -1671,519 +2002,103 @@
     clip-path: inset(50%);
   }
 
-  .syncd-pairing-live {
-    align-items: stretch;
+  :global(.syncd-spinner) {
+    flex: none;
+    animation: syncd-spin var(--component-syncd-spinner-animation) infinite;
   }
 
-  .syncd-pairing-pin {
-    color: var(--text-primary);
-    font-size: 34px;
-    font-weight: 800;
-    letter-spacing: .08em;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .syncd-pin-hint {
-    margin-bottom: 6px;
-  }
-
-  .syncd-pin-expiry {
+  /* Footer: quiet text buttons and one filled primary action. */
+  .syncd-modal__footer {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 14px;
+    gap: 8px;
+    padding: 12px 20px 16px;
+    border-top: 1px solid var(--component-syncd-divider);
   }
 
-  .syncd-pin-expiry__bar {
-    flex: 0 0 120px;
-    height: 3px;
-    overflow: hidden;
-    border-radius: 2px;
-    background: var(--border-base);
-  }
-
-  .syncd-pin-expiry__bar i {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    transform-origin: left;
-    transition: transform 1s linear;
-  }
-
-  .syncd-verification {
-    display: grid;
-    gap: 4px;
-    margin: 12px 0;
-    padding: 12px 14px;
-    border-radius: 12px;
-    background: var(--accent-muted);
-  }
-
-  .syncd-verification span,
-  .syncd-verification small {
-    color: var(--text-secondary);
-    font-size: var(--text-xs);
-  }
-
-  .syncd-verification strong {
-    color: var(--accent-fg);
-    font-size: 26px;
-    font-weight: 800;
-    letter-spacing: .18em;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .syncd-pairing-live .syncd-qr-surface {
-    width: var(--component-syncd-qr-column-width);
-    min-height: 0;
-    flex: 0 0 auto;
-  }
-
-  .syncd-pairing-live__copy {
-    min-width: 0;
+  .syncd-spacer {
     flex: 1;
-    display: flex;
-    flex-direction: column;
+  }
+
+  .syncd-btn {
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
-    gap: var(--component-syncd-stack-gap);
+    gap: 8px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: var(--component-syncd-button-radius);
+    color: var(--component-syncd-body-fg);
+    background: transparent;
+    font: inherit;
+    font-size: var(--text-base);
+    font-weight: 650;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color var(--component-syncd-transition-fast), background var(--component-syncd-transition-fast), transform var(--component-syncd-transition-spring), filter var(--component-syncd-transition-fast);
   }
 
-  .syncd-pairing-code {
-    margin: var(--space-xs) 0 0;
-    color: var(--text-primary);
-    font-family: var(--font-mono, "Cascadia Mono", monospace);
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-bold);
-    letter-spacing: var(--tracking-wide);
-  }
+  .syncd-btn:hover:not(:disabled) { color: var(--component-syncd-strong-fg); background: var(--component-syncd-surface-strong); }
+  .syncd-btn:active:not(:disabled) { transform: scale(0.96); }
+  .syncd-btn:disabled { opacity: var(--component-syncd-disabled-opacity); cursor: not-allowed; }
+  .syncd-btn:focus-visible,
+  .syncd-link:focus-visible,
+  .syncd-icon-btn:focus-visible,
+  .syncd-tabs button:focus-visible,
+  .syncd-disclosure > button:focus-visible { outline: 2px solid var(--component-syncd-focus-ring); outline-offset: 2px; }
+  .syncd-btn--quiet { margin-left: -10px; padding: 0 10px; color: var(--component-syncd-muted-fg); font-size: var(--text-sm); }
+  .syncd-btn--danger { color: var(--component-syncd-bad-fg); }
+  .syncd-btn--danger:hover:not(:disabled) { color: var(--component-syncd-bad-fg); }
+  .syncd-btn--primary { padding: 0 18px; color: var(--component-syncd-primary-ink); background: var(--component-syncd-primary-bg); font-weight: 700; }
+  .syncd-btn--primary:hover:not(:disabled) { color: var(--component-syncd-primary-ink); background: var(--component-syncd-primary-bg); filter: var(--component-syncd-primary-hover-filter); }
 
-  .syncd-approval {
-    justify-content: space-between;
-    padding: var(--component-syncd-surface-padding);
-    border: 1px solid var(--component-syncd-pill-info-border);
-    border-radius: var(--component-syncd-surface-radius);
-    background: var(--component-syncd-status-bg);
-  }
-
-  .syncd-modal__views .is-active {
-    color: var(--component-syncd-status-icon-fg);
-    border-color: var(--component-syncd-input-border-focus);
-    background: var(--component-syncd-status-icon-bg);
-  }
-
-  @keyframes syncdSpin {
+  @keyframes syncd-spin {
     to { transform: rotate(360deg); }
   }
 
-  @keyframes syncdProgress {
-    0% { transform: translateX(-110%); }
-    100% { transform: translateX(240%); }
+  @keyframes syncd-fade {
+    from { opacity: 0; }
   }
 
-  @keyframes syncdModalIn {
+  @keyframes syncd-rise {
     from { opacity: 0; transform: translateY(var(--component-syncd-modal-enter-offset)) scale(var(--component-syncd-modal-enter-scale)); }
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
-  @media (max-width: 880px) {
-    .syncd-card__head,
-    .syncd-row,
-    .syncd-list__item,
-    .syncd-approval {
-      align-items: stretch;
-      flex-direction: column;
+  @keyframes syncd-pane-in {
+    from { opacity: 0; transform: translateY(6px); }
+  }
+
+  @keyframes syncd-qr-in {
+    from { opacity: 0; transform: scale(0.94); }
+  }
+
+  @keyframes syncd-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    40% { box-shadow: var(--component-syncd-pulse-ring); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .syncd-modal,
+    .syncd-modal-backdrop,
+    .syncd-pane,
+    .syncd-disclosure__body,
+    .syncd-qr-image,
+    .syncd-status-dot {
+      animation: none;
     }
-
-    .syncd-modal__header,
-    .syncd-modal__footer {
-      padding: var(--component-syncd-modal-chrome-padding-compact);
-    }
-
-    .syncd-modal__body {
-      padding: var(--component-syncd-modal-body-padding-compact);
-    }
-
-    .syncd-modal__views {
-      min-width: 0;
-      overflow-x: auto;
-    }
-
-    .syncd-pairing-live {
-      flex-direction: column;
-    }
-
-    .syncd-pairing-live .syncd-qr-surface {
-      width: 100%;
-    }
-  }
-
-  /* Compact state-driven pairing flow approved for the Nocturne desktop shell. */
-  .syncd-modal {
-    height: auto;
-    min-height: min(500px, calc(100vh - 64px));
-  }
-
-  .syncd-modal__header {
-    align-items: flex-start;
-  }
-
-  .syncd-modal__heading {
-    display: block;
-  }
-
-  .syncd-modal__heading h2 {
-    font-size: var(--text-base);
-    letter-spacing: var(--tracking-normal);
-    line-height: var(--leading-snug);
-  }
-
-  .syncd-modal__heading p {
-    margin: var(--space-xs) 0 0;
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-input-font-size);
-  }
-
-  .syncd-modal__body {
-    min-height: 350px;
-  }
-
-  .syncd-status-line,
-  .syncd-field-actions,
-  .syncd-request,
-  .syncd-session-summary,
-  .syncd-device-pair {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--component-syncd-control-gap);
-  }
-
-  .syncd-status-copy {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--component-syncd-pill-gap);
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: var(--component-syncd-pill-radius);
-    background: var(--component-syncd-pill-fg);
-  }
-
-  .syncd-status-dot--live {
-    background: var(--component-syncd-status-icon-fg);
-  }
-
-  .syncd-link {
-    min-height: 28px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-link:hover {
-    color: var(--component-syncd-status-icon-fg);
-  }
-
-  .syncd-mode-switch {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--component-syncd-pill-gap);
-    margin-top: var(--component-syncd-grid-gap);
-    padding: var(--component-syncd-pill-gap);
-    border: 1px solid var(--component-syncd-input-border);
-    border-radius: var(--component-syncd-input-radius);
-    background: var(--component-syncd-input-bg);
-  }
-
-  .syncd-mode-switch button {
-    min-height: 34px;
-    border: 1px solid transparent;
-    border-radius: calc(var(--component-syncd-input-radius) - 3px);
-    background: transparent;
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-input-font-size);
-    font-weight: var(--weight-semibold);
-  }
-
-  .syncd-mode-switch button.is-active {
-    border-color: var(--component-syncd-surface-border);
-    background: var(--component-syncd-status-icon-bg);
-    color: var(--text-primary);
-  }
-
-  .syncd-start-copy {
-    padding-top: var(--component-syncd-grid-gap);
-  }
-
-  .syncd-start-copy h3,
-  .syncd-permissions h3 {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--text-sm);
-    letter-spacing: var(--tracking-tight);
-  }
-
-  .syncd-start-copy > p {
-    max-width: 52ch;
-    margin: var(--space-xs) 0 0;
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-input-font-size);
-    line-height: var(--leading-normal);
-  }
-
-  .syncd-note {
-    margin-top: var(--component-syncd-grid-gap);
-    padding: var(--component-syncd-stack-gap) var(--component-syncd-surface-padding);
-    border-left: 2px solid var(--component-syncd-status-icon-border);
-    background: var(--component-syncd-status-bg);
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-    line-height: var(--leading-normal);
-  }
-
-  .syncd-field {
-    margin-top: var(--component-syncd-grid-gap);
-  }
-
-  .syncd-field > span,
-  .syncd-field-actions > span {
-    color: var(--component-syncd-label-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-textarea {
-    min-height: 72px;
-    resize: none;
-  }
-
-  .syncd-field-actions {
-    margin-top: var(--component-syncd-pill-gap);
-  }
-
-  .syncd-disclosure {
-    margin-top: var(--component-syncd-grid-gap);
-    border-top: 1px solid var(--component-syncd-modal-divider);
-  }
-
-  .syncd-disclosure > button {
-    width: 100%;
-    min-height: 38px;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--component-syncd-muted-fg);
-    text-align: left;
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-disclosure__body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--component-syncd-stack-gap);
-    padding-bottom: var(--component-syncd-stack-gap);
-  }
-
-  .syncd-list__item strong,
-  .syncd-list__item small {
-    display: block;
-  }
-
-  .syncd-list__item strong {
-    color: var(--text-secondary);
-    font-size: var(--component-syncd-input-font-size);
-  }
-
-  .syncd-list__item small {
-    margin-top: var(--component-syncd-pill-gap);
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-pairing-live {
-    display: grid;
-    grid-template-columns: var(--component-syncd-qr-column-width) 1fr;
-    margin-top: var(--component-syncd-grid-gap);
-  }
-
-  .syncd-pairing-live .syncd-qr-surface {
-    width: var(--component-syncd-qr-column-width);
-    background: var(--component-syncd-status-icon-fg);
-    border-style: solid;
-  }
-
-  .syncd-qr-image {
-    width: 100%;
-    border-radius: calc(var(--component-syncd-qr-radius) - 4px);
-  }
-
-  .syncd-pairing-live__copy > span,
-  .syncd-pairing-live__copy > small {
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-request,
-  .syncd-session-summary {
-    margin-top: var(--component-syncd-grid-gap);
-    padding: var(--component-syncd-surface-padding) 0;
-    border-top: 1px solid var(--component-syncd-modal-divider);
-    border-bottom: 1px solid var(--component-syncd-modal-divider);
-  }
-
-  .syncd-request strong,
-  .syncd-request small,
-  .syncd-session-summary strong,
-  .syncd-session-summary span {
-    display: block;
-  }
-
-  .syncd-request strong,
-  .syncd-session-summary strong {
-    color: var(--text-primary);
-    font-size: var(--component-syncd-input-font-size);
-  }
-
-  .syncd-request small,
-  .syncd-session-summary span {
-    margin-top: var(--component-syncd-pill-gap);
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-request > span,
-  .syncd-session-summary > span {
-    color: var(--component-syncd-status-icon-fg);
-  }
-
-  .syncd-scope-list > span {
-    padding: var(--component-syncd-pill-padding);
-    border: 1px solid var(--component-syncd-pill-border);
-    border-radius: var(--component-syncd-input-radius);
-    background: var(--component-syncd-pill-bg);
-    color: var(--component-syncd-pill-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-device-pair {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    margin-top: var(--component-syncd-grid-gap);
-  }
-
-  .syncd-device-pair > div:last-child {
-    text-align: right;
-  }
-
-  .syncd-device-pair small,
-  .syncd-device-pair strong,
-  .syncd-device-pair span {
-    display: block;
-  }
-
-  .syncd-device-pair small,
-  .syncd-device-pair span {
-    color: var(--component-syncd-muted-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-device-pair strong {
-    margin: var(--component-syncd-pill-gap) 0;
-    color: var(--text-primary);
-    font-size: var(--component-syncd-input-font-size);
-  }
-
-  .syncd-device-pair em {
-    padding: var(--component-syncd-pill-padding);
-    border-top: 1px solid var(--component-syncd-status-icon-border);
-    border-bottom: 1px solid var(--component-syncd-status-icon-border);
-    color: var(--component-syncd-status-icon-fg);
-    font-size: var(--component-syncd-pill-font-size);
-    font-style: normal;
-  }
-
-  .syncd-manage .syncd-meta-grid {
-    margin-top: var(--component-syncd-grid-gap);
-    padding-bottom: var(--component-syncd-grid-gap);
-    border-bottom: 1px solid var(--component-syncd-modal-divider);
-  }
-
-  .syncd-manage .syncd-meta-grid small,
-  .syncd-manage .syncd-meta-grid strong {
-    display: block;
-  }
-
-  .syncd-manage .syncd-meta-grid small {
-    color: var(--component-syncd-label-fg);
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-manage .syncd-meta-grid strong {
-    margin-top: var(--component-syncd-pill-gap);
-    color: var(--text-secondary);
-    font-size: var(--component-syncd-input-font-size);
-    font-weight: var(--weight-medium);
-  }
-
-  .syncd-manage .syncd-meta-grid .is-mono {
-    font-family: var(--font-mono, "Cascadia Mono", monospace);
-    overflow-wrap: anywhere;
-  }
-
-  .syncd-permissions {
-    margin-top: var(--component-syncd-grid-gap);
-  }
-
-  .syncd-permission-device label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 38px;
-    color: var(--text-secondary);
-  }
-
-  .syncd-permission-device label strong,
-  .syncd-permission-device label small {
-    display: block;
-    font-size: var(--component-syncd-pill-font-size);
-  }
-
-  .syncd-permission-device label small {
-    margin-top: var(--component-syncd-pill-gap);
-    color: var(--component-syncd-muted-fg);
-  }
-
-  .syncd-permission-device input {
-    accent-color: var(--component-syncd-input-border-focus);
   }
 
   @media (max-width: 620px) {
-    .syncd-modal {
-      width: calc(100vw - 24px);
-      max-width: calc(100vw - 24px);
+    .syncd-modal__header,
+    .syncd-modal__body,
+    .syncd-modal__footer {
+      padding-left: 16px;
+      padding-right: 16px;
     }
 
-    .syncd-device-pair {
-      grid-template-columns: 1fr;
-    }
-
-    .syncd-device-pair > div:last-child {
-      text-align: left;
-    }
-
-    .syncd-device-pair em {
-      width: max-content;
-      padding-inline: 0;
-    }
-
-    .syncd-modal__footer,
-    .syncd-modal__footer .syncd-actions {
-      flex-wrap: wrap;
-    }
+    .syncd-pairing-live { grid-template-columns: 1fr; }
   }
 </style>

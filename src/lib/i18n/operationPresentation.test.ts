@@ -22,6 +22,7 @@ describe("localized operation presentation", () => {
     ["RESTORE_CANCELLED", "outcomes.cancelled"],
     ["RESTORE_HTTP_RESPONSE_UNCERTAIN", "outcomes.uncertain"],
     ["SYNC_CORE_UNAVAILABLE", "outcomes.syncCoreUnavailable"],
+    ["DOWNLOADS_PATH_NESTED", "outcomes.downloadsPathNested"],
   ])("preserves the actionable distinction for %s", (code, key) => {
     applyAppLanguage("pt-BR");
     expect(operationError(new Error(code))).toBe(translate(key));

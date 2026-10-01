@@ -517,7 +517,7 @@
         cacheGeneration: store.libraryCoverCacheGeneration,
       });
     }
-    if (result.action.kind === "download") {
+    if (result.action.kind === "download" && "chapterId" in result.action) {
       return resolveMangaCoverUrl(result.image, {
         context: "downloads",
         persistence: "persistent",
@@ -681,12 +681,12 @@
         }
         break;
       case "download":
-        const chapterId = result.action.chapterId;
+        const downloadRow = "novelId" in result.action
+          ? `[data-download-novel-id="${CSS.escape(result.action.novelId)}"]`
+          : `[data-download-chapter-id="${result.action.chapterId}"]`;
         setNavPage("downloads");
         void tick().then(() => {
-          const target = document.querySelector<HTMLElement>(
-            `[data-download-chapter-id="${chapterId}"]`,
-          );
+          const target = document.querySelector<HTMLElement>(downloadRow);
           target?.scrollIntoView({ block: "center" });
           target?.focus({ preventScroll: true });
         });
@@ -810,9 +810,17 @@
     if (target) void moveActiveResult(target.id);
   }
 
+  // A modal opened over the page (migration, sync, preview...) owns Escape until it closes. The
+  // engaged search underneath must not swallow that key and clear the user's library filter.
+  function otherModalIsOpen(): boolean {
+    return [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')]
+      .some((dialog) => !paletteRoot?.contains(dialog));
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     const searchInputTarget = event.target instanceof HTMLInputElement
       && event.target.matches(".n-search__input");
+    if (event.key === "Escape" && !store.searchOpen && otherModalIsOpen()) return;
     if (event.key === "Escape" && store.searchEngaged && !store.searchOpen) {
       event.preventDefault();
       event.stopImmediatePropagation();

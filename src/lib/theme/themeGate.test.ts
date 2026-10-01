@@ -189,10 +189,10 @@ describe("final derived theme gate", () => {
 
     expect(selectorStart).toBeGreaterThan(-1);
     expect(selectorEnd).toBeGreaterThan(selectorStart);
-    expect(exactSources).toHaveLength(202);
+    expect(exactSources).toHaveLength(196);
     expect(builtinBlock).toContain("--color-on-accent-strong: #352660;");
     expect(outsideBuiltin).not.toMatch(/--color-on-accent-strong\s*:/);
-    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(202);
+    expect(new Set(exactSources.map(({ name }) => name)).size).toBe(196);
     expect(missingFallback).toEqual([]);
     expect(unreferenced).toEqual([]);
     expect(leaked).toEqual([]);
@@ -318,13 +318,13 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1471,
-      editable: 1316,
-      absolute: 238,
+      componentColors: 1415,
+      editable: 1273,
+      absolute: 231,
       absoluteOnly: 0,
-      mixedEditableAbsolute: 238,
+      mixedEditableAbsolute: 231,
       runtime: 9,
-      neutral: 155,
+      neutral: 142,
     });
     expect(unresolved).toEqual([]);
   });
@@ -419,7 +419,7 @@ describe("final derived theme gate", () => {
     ["button text", "--text-primary", "--component-button-bg"],
     ["input text", "--component-input-fg", "--component-input-bg"],
     ["Reader muted text", "--component-reader-muted-fg", "--component-reader-panel-bg"],
-    ["Migration eyebrow", "--component-migration-eyebrow-fg", "--component-migration-modal-bg"],
+    ["Migration body text", "--component-migration-body-fg", "--component-migration-modal-bg"],
     ["Migration muted text", "--component-migration-muted-fg", "--component-migration-modal-bg"],
   ])("keeps %s at WCAG AA in Nocturne and the theme probe", (_label, foreground, background) => {
     const nocturneSource = `${tokensCss}\n${nocturneCss}`;

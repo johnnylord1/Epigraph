@@ -160,9 +160,10 @@ function getBookReadChapterCount(book: BookEntry, progress: BookProgress | null 
   return Math.max(0, Math.min(chapterCount, Math.round(pct * chapterCount)));
 }
 
-function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean): string {
+function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean, hasStarted: boolean): string {
   if (!hasLocalAsset) return "Missing file";
-  return isReadFinished ? "Finished" : "Completed";
+  if (isReadFinished) return "Finished";
+  return hasStarted ? "In progress" : "Not started";
 }
 
 function formatBookFileSource(book: BookEntry): string {
@@ -283,7 +284,7 @@ export function buildBooksSectionState(input: BuildBooksSectionInput): BooksSect
           const badges = !hasLocalAsset
             ? [{ kind: "status" as const, label: "Missing file" }]
             : [];
-          const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
+          const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0)];
           if (!hasLocalAsset) metaChips.push("Metadata only");
 
           return {

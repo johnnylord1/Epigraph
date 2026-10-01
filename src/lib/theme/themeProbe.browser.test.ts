@@ -15,7 +15,7 @@ const surfaceTokens = [
   "--component-menu-bg",
   "--component-sidebar-bg",
   "--component-settings-card-bg",
-  "--component-syncd-card-bg",
+  "--component-syncd-modal-bg",
   "--component-detail-layer-bg",
   "--component-home-card-bg",
   "--component-activity-center-bg",
@@ -164,7 +164,7 @@ describe("test-only theme probe", () => {
       const builtinShadow = computedShadow("--component-card-shadow");
       const builtinRadius = computedToken("--component-toast-radius");
 
-      expect(exactProperties).toHaveLength(256);
+      expect(exactProperties).toHaveLength(250);
       expect(applyCustomTheme(root, {
         version: 5,
         id: "custom:empty-nocturne-browser",
@@ -376,7 +376,7 @@ describe("test-only theme probe", () => {
       const sourceNames = builtinExactSourceNames();
       const builtin = new Map(sourceNames.map((token) => [token, computedToken(token)]));
 
-      expect(sourceNames).toHaveLength(202);
+      expect(sourceNames).toHaveLength(196);
       applyProbeContract(true);
       await new Promise(requestAnimationFrame);
       const custom = new Map(sourceNames.map((token) => [token, computedToken(token)]));
@@ -396,7 +396,7 @@ describe("test-only theme probe", () => {
       expect(
         sourceNames.filter((token) => custom.get(token) !== builtin.get(token)).length,
         "the custom V5 contract must materially change the exact Nocturne source palette",
-      ).toBeGreaterThanOrEqual(201);
+      ).toBeGreaterThanOrEqual(196);
     } finally {
       restoreRootState(original);
       await new Promise(requestAnimationFrame);

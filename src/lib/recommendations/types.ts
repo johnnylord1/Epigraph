@@ -73,6 +73,10 @@ export interface RecommendationScoreBreakdown {
   recency: number;
   sourceAvailability: number;
   novelty: number;
+  /** Strongest dislike among the candidate's tags (0 = none, 1 = strongly disliked). */
+  negativeTagPenalty: number;
+  /** Topical tags that meaningfully match a positive taste signal. */
+  matchedTagCount: number;
   finalScore: number;
   diversityBucket: RecommendationDiversityBucket;
 }

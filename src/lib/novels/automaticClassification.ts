@@ -12,6 +12,7 @@ import {
 import {
   browseInstalledNovelSource,
   loadInstalledNovelSources,
+  loadTrustedInstalledNovelSources,
   readInstalledNovelChapter,
   readInstalledNovelDetails,
   readInstalledNovelSourceRuntimeSummary,
@@ -25,6 +26,7 @@ interface AutomaticClassificationSearchOutcome {
 }
 
 const inFlightClassifications = new Map<string, Promise<PersistedNovelSourceClassificationRecord>>();
+const inFlightSweeps = new Map<string, Promise<boolean>>();
 const AUTOMATIC_BROWSE_PAGES = 3;
 const AUTOMATIC_BROWSE_TITLE_LIMIT = 6;
 const GENERIC_AUTOMATIC_SEARCH_TERMS = {
@@ -269,16 +271,26 @@ export function buildAutomaticSearchTerms(input: {
   ])];
 }
 
+/**
+ * A smoke that ended `pending` (offline, a site hiccup, a runtime gap fixed by an app update) is
+ * retried after this long, so a source is not left out of migration for good by one bad run.
+ */
+export const PENDING_NOVEL_SOURCE_RETRY_MS = 15 * 60 * 1000;
+
 export function needsAutomaticNovelSourceClassification(
   classificationState: PersistedNovelSourceClassificationState,
   plugin: { pluginId: string; version: string; enabled: boolean },
   repository: { trustState: string; enabled: boolean } | null,
+  nowMs: number = Date.now(),
 ): boolean {
   if (!plugin.enabled || !repository || repository.enabled === false || repository.trustState !== "trusted") {
     return false;
   }
   const record = getNovelSourceClassificationRecord(classificationState, plugin.pluginId);
-  return !record || record.version !== plugin.version;
+  if (!record || record.version !== plugin.version) {
+    return true;
+  }
+  return record.status === "pending" && nowMs - record.classifiedAtMs >= PENDING_NOVEL_SOURCE_RETRY_MS;
 }
 
 export function hasReusableNovelSourceClassification(
@@ -493,5 +505,43 @@ export async function runAutomaticNovelSourceClassification(
   });
 
   inFlightClassifications.set(key, promise);
+  return promise;
+}
+
+/**
+ * Classifies, one source at a time, every trusted installed source that has no record for its
+ * installed version in this profile yet, or whose last smoke ended `pending` long enough ago to
+ * retry. Resolves true when at least one record was written.
+ * Sources installed, restored or updated anywhere in the app land here the first time a novel
+ * screen that depends on the migration gate asks for them.
+ */
+export function classifyUnclassifiedNovelSources(scopeInput: NovelRepositoryScopeInput): Promise<boolean> {
+  const key = classificationKey(scopeInput, "*");
+  const existing = inFlightSweeps.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const promise = (async () => {
+    const sources = await loadTrustedInstalledNovelSources(scopeInput);
+    let wrote = false;
+    for (const source of sources) {
+      const state = await loadNovelSourceClassificationState(scopeInput);
+      if (!needsAutomaticNovelSourceClassification(state, source, { trustState: source.trustState, enabled: true })) {
+        continue;
+      }
+      try {
+        await runAutomaticNovelSourceClassification(scopeInput, source.pluginId);
+        wrote = true;
+      } catch {
+        // One source failing its smoke must not stop the others from being classified.
+      }
+    }
+    return wrote;
+  })().finally(() => {
+    inFlightSweeps.delete(key);
+  });
+
+  inFlightSweeps.set(key, promise);
   return promise;
 }

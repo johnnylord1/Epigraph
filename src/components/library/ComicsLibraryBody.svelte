@@ -70,6 +70,9 @@
     onCoverErrorDetected?: (mangaId: number) => void;
     coverRecoveryVersions?: ReadonlyMap<number, number>;
     coverCacheGeneration?: number;
+    /** True when search, status or genre filters hide titles that exist. */
+    filtersActive?: boolean;
+    onClearFilters?: () => void;
   };
 
   let {
@@ -98,6 +101,8 @@
     onCoverErrorDetected = () => {},
     coverRecoveryVersions = new Map(),
     coverCacheGeneration = 0,
+    filtersActive = false,
+    onClearFilters,
   }: Props = $props();
 
   let contentEl: HTMLDivElement | null = $state(null);
@@ -1039,10 +1044,22 @@
         </div>
       {/each}
     </div>
-  {:else if mangas.length === 0}
-    <div class="center comics-empty">
+  {:else if mangas.length === 0 && filtersActive && onClearFilters}
+    <div class="center comics-empty" data-library-empty="filtered">
       <NocturneState
-        layout="center"
+        layout="open"
+        tone="info"
+        icon="search"
+        eyebrow={$_("library.eyebrow")}
+        title={$_("library_empty_noMatchesTitle")}
+        body={$_("library_empty_comicsFiltered")}
+        actions={[{ label: $_("library_empty_clear"), kind: "primary", onClick: onClearFilters }]}
+      />
+    </div>
+  {:else if mangas.length === 0}
+    <div class="center comics-empty" data-library-empty="shelf">
+      <NocturneState
+        layout="open"
         tone="info"
         icon="books"
         eyebrow={$_("library.eyebrow")}

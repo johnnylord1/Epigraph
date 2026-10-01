@@ -99,7 +99,7 @@ describe("buildBooksSectionState", () => {
     expect(state.vm.cards[0].metaChips).toEqual(["Finished"]);
     expect(state.vm.cards[1].coverSrc).toBe("book://alpha");
     expect(state.vm.cards[1].subtitle).toBe("EPUB");
-    expect(state.vm.cards[1].metaChips).toEqual(["Completed"]);
+    expect(state.vm.cards[1].metaChips).toEqual(["In progress"]);
     expect(state.vm.cards[1].sourceMetricBanner?.newCount).toBe(3);
     expect(state.vm.cards[1].progress?.secondaryLabel).toBe("/ 4 chapters");
     expect(state.vm.collections.map((entry) => entry.label)).toEqual(["All", "Favorites"]);

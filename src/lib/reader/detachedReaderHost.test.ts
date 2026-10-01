@@ -6,7 +6,7 @@ import {
   type DetachedToReaderMessage,
   type SealedDetachedMessage,
 } from "./detachedChannel";
-import { createDetachedReaderHost, detachedWindowPlacement, type DetachedReaderTarget } from "./detachedReaderHost";
+import { createDetachedReaderHost, detachedWindowPlacement, rememberedWindowPlacement, type DetachedReaderTarget } from "./detachedReaderHost";
 
 const LABEL = "detached-reader-one";
 const TARGET: DetachedReaderTarget = { kind: "book", bookId: "book-1" };
@@ -123,6 +123,7 @@ describe("detached reader host", () => {
     host.forget(LABEL);
     expect(invokeCommand.mock.calls).toEqual([["end_suwayomi_runtime_operation", { token: "lease-2" }]]);
     expect(bridge.readerClosed).toHaveBeenCalledTimes(1);
+    expect(bridge.readerClosed).toHaveBeenCalledWith(LABEL);
     expect(host.sessions.has(LABEL)).toBe(false);
     host.forget(LABEL);
     expect(bridge.readerClosed).toHaveBeenCalledTimes(1);
@@ -179,5 +180,24 @@ describe("detached reader window placement", () => {
   it("scales the default size to the monitor and keeps it inside a small work area", () => {
     expect(detachedWindowPlacement(monitor(2560, 0, 3840, 2100, 1.5))).toEqual({ x: 3655, y: 435, width: 1650, height: 1230 });
     expect(detachedWindowPlacement(monitor(0, 0, 1280, 680, 1.25))).toEqual({ x: 0, y: 0, width: 1280, height: 680 });
+  });
+
+  it("reopens at the last window's size and position while it is still on a monitor", () => {
+    const monitors = [monitor(-1920, 0, 1920, 1040), monitor(0, 0, 2560, 1400)];
+    expect(rememberedWindowPlacement({ x: -1700, y: 60, width: 900, height: 700 }, monitors))
+      .toEqual({ x: -1700, y: 60, width: 900, height: 700 });
+    // Partly off the edge: pulled back inside the monitor its centre is on, and no larger than its work area.
+    expect(rememberedWindowPlacement({ x: 2000, y: 1000, width: 900, height: 700 }, monitors))
+      .toEqual({ x: 1660, y: 700, width: 900, height: 700 });
+    expect(rememberedWindowPlacement({ x: -1920, y: 0, width: 3000, height: 1200 }, monitors))
+      .toEqual({ x: -1920, y: 0, width: 1920, height: 1040 });
+  });
+
+  it("ignores a saved placement whose monitor is gone or that is malformed", () => {
+    const monitors = [monitor(0, 0, 1920, 1040)];
+    expect(rememberedWindowPlacement({ x: -1700, y: 60, width: 900, height: 700 }, monitors)).toBeNull();
+    expect(rememberedWindowPlacement({ x: 10, y: 10, width: 0, height: 700 }, monitors)).toBeNull();
+    expect(rememberedWindowPlacement({ x: "10", y: 10, width: 900, height: 700 }, monitors)).toBeNull();
+    expect(rememberedWindowPlacement(null, monitors)).toBeNull();
   });
 });

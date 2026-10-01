@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NovelDetailChapter, PersistedNovelChapterEntry } from "../novels/domain";
 import type { Chapter } from "../types";
-import { matchMangaChapters, matchNovelChapters } from "./chapterMapping";
+import { extractedChapterNumber, matchMangaChapters, matchNovelChapters } from "./chapterMapping";
 
 function mangaChapter(
   id: number,
@@ -118,6 +118,37 @@ describe("chapter migration mapping", () => {
       ["old-1", "new-1"],
     ]);
     expect(matches.some((match) => match.oldChapter.id === "old-special")).toBe(false);
+  });
+
+  it("reads numbered-list chapter labels so Royal Road titles match Chapter N labels", () => {
+    expect(extractedChapterNumber("1. Homecoming")).toBe("1");
+    expect(extractedChapterNumber("12 - Orphan of War")).toBe("12");
+    expect(extractedChapterNumber("3.5. Interlude")).toBe("3.5");
+    expect(extractedChapterNumber("Chapter 2: Orphan of War")).toBe("2");
+    expect(extractedChapterNumber("1984")).toBe("1984");
+    expect(extractedChapterNumber("1984 Revisited")).toBeNull();
+    expect(extractedChapterNumber("Side Story: Rain")).toBeNull();
+
+    const matches = matchNovelChapters(
+      [
+        oldNovelChapter("old-1", "1. Homecoming", 0),
+        oldNovelChapter("old-2", "2. Orphan of War", 1),
+        oldNovelChapter("old-side", "Side Story: Rain", 2),
+        oldNovelChapter("old-interlude", "Interlude 1 - Crystal Mountain", 3),
+      ],
+      [
+        newNovelChapter("new-2", "Chapter 2: Orphan of War", 1),
+        newNovelChapter("new-1", "Chapter 1: Homecoming", 0),
+        newNovelChapter("new-interlude", "Chapter Interlude 1 - Crystal Mountain", 17),
+        newNovelChapter("new-side", "Chapter Side Story: Snow", 30),
+      ],
+    );
+
+    expect(matches.map((match) => [match.oldChapter.id, match.newChapter.id, match.reason])).toEqual([
+      ["old-1", "new-1", "chapter-number"],
+      ["old-2", "new-2", "chapter-number"],
+      ["old-interlude", "new-interlude", "title"],
+    ]);
   });
 
   it("uses order only to disambiguate duplicate novel identities", () => {

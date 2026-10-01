@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import JSZip from "jszip";
 
 const { invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
@@ -7,13 +6,12 @@ const { invokeMock } = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
+  convertFileSrc: (path: string, protocol: string) => `http://${protocol}.localhost/${encodeURIComponent(path)}`,
 }));
 
 import {
   loadOfflineMangaChapter,
   openOfflineMangaChapterForWindow,
-  readOfflineMangaPageForWindow,
-  revokeOfflineMangaPages,
   setOfflineMangaRelay,
 } from "./offlineManga";
 
@@ -23,98 +21,60 @@ const INPUT = {
   mangaTitle: "Audit Manga",
   chapterName: "Chapter 1",
 };
-
-async function archive() {
-  const zip = new JSZip();
-  zip.file("10.png", new Uint8Array([10, 11]));
-  zip.file("2.jpg", new Uint8Array([2]));
-  return Buffer.from(await zip.generateAsync({ type: "uint8array" })).toString("base64");
-}
+const ID = "0123456789abcdef0123456789abcdef";
+const PAGES = [
+  `http://offline-page.localhost/${ID}%2F0`,
+  `http://offline-page.localhost/${ID}%2F1`,
+  `http://offline-page.localhost/${ID}%2F2`,
+];
 
 describe("offline manga release contract", () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    vi.stubGlobal("URL", {
-      createObjectURL: vi.fn((blob: Blob) => `blob:epigraph-${blob.type}-${blob.size}`),
-      revokeObjectURL: vi.fn(),
-    });
   });
 
-  it("loads downloaded archive pages in natural order without a server response", async () => {
-    const zip = new JSZip();
-    zip.file("10.png", new Uint8Array([10]));
-    zip.file("2.jpg", new Uint8Array([2]));
-    zip.file("notes.txt", "ignored");
-    const bytes = await zip.generateAsync({ type: "uint8array" });
-    invokeMock.mockResolvedValue(Buffer.from(bytes).toString("base64"));
+  it("opens a downloaded chapter as one address per page, reading no page up front", async () => {
+    invokeMock.mockResolvedValue({ id: ID, pages: 3 });
 
-    const urls = await loadOfflineMangaChapter({
-      downloadsPath: "C:/isolated/downloads",
-      sourceName: "Audit Source",
-      mangaTitle: "Audit Manga",
-      chapterName: "Chapter 1",
-    });
+    await expect(loadOfflineMangaChapter(INPUT)).resolves.toEqual(PAGES);
 
-    expect(invokeMock).toHaveBeenCalledWith("read_downloaded_chapter_archive", expect.objectContaining({
-      scanlator: null,
-    }));
-    expect(urls).toEqual([
-      "blob:epigraph-image/jpeg-1",
-      "blob:epigraph-image/png-1",
-    ]);
-
-    revokeOfflineMangaPages(urls);
-    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("open_downloaded_chapter", { ...INPUT, scanlator: null, profileId: null });
   });
 
   it("returns an empty page list when no downloaded archive exists", async () => {
     invokeMock.mockResolvedValue(null);
-    await expect(loadOfflineMangaChapter({
-      downloadsPath: "C:/isolated/downloads",
-      sourceName: "Audit Source",
-      mangaTitle: "Audit Manga",
-      chapterName: "Chapter 1",
-    })).resolves.toEqual([]);
+    await expect(loadOfflineMangaChapter(INPUT)).resolves.toEqual([]);
   });
 
-  it("hands a detached window one page at a time and forgets each page it took", async () => {
-    invokeMock.mockResolvedValue(await archive());
-    const opened = await openOfflineMangaChapterForWindow({ ...INPUT, scanlator: null });
-    expect(opened).toEqual({ id: expect.any(String), types: ["image/jpeg", "image/png"] });
+  it("refuses an answer that does not name a chapter and its pages", async () => {
+    for (const answer of [{ id: "../books", pages: 2 }, { id: ID, pages: 0 }, { id: ID, pages: 1.5 }, { pages: 2 }]) {
+      invokeMock.mockResolvedValueOnce(answer);
+      await expect(loadOfflineMangaChapter(INPUT)).rejects.toThrow("Downloaded chapter could not be read.");
+    }
+  });
+
+  it("lets a detached window read the pages itself once the main window opened the chapter", async () => {
+    invokeMock.mockResolvedValue({ id: ID, pages: 3 });
+    const opened = await openOfflineMangaChapterForWindow({ ...INPUT, scanlator: null, profileId: "profile-a" });
+    // A blank downloads path resolves inside the profile the reading window belongs to.
+    expect(invokeMock).toHaveBeenCalledWith("open_downloaded_chapter", { ...INPUT, scanlator: null, profileId: "profile-a" });
     // The window runs in another webview; the relay stands in for the sealed channel.
-    setOfflineMangaRelay({
-      open: async () => opened,
-      page: async (id, index) => readOfflineMangaPageForWindow(id, index),
-    });
+    const open = vi.fn(async () => opened);
+    setOfflineMangaRelay({ open });
     try {
-      expect(await loadOfflineMangaChapter(INPUT)).toEqual(["blob:epigraph-image/jpeg-1", "blob:epigraph-image/png-2"]);
+      await expect(loadOfflineMangaChapter(INPUT)).resolves.toEqual(PAGES);
     } finally {
       setOfflineMangaRelay(null);
     }
+    expect(open).toHaveBeenCalledWith(INPUT);
     expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(() => readOfflineMangaPageForWindow(opened!.id, 0)).toThrow("OFFLINE_CHAPTER_EXPIRED");
   });
 
-  it("refuses bad requests from a window and frees pages it already made when a later page fails", async () => {
+  it("refuses bad requests from a window", async () => {
     await expect(openOfflineMangaChapterForWindow({ ...INPUT, chapterName: 4 })).rejects.toThrow("OFFLINE_CHAPTER_INVALID");
-    invokeMock.mockResolvedValue(await archive());
-    const opened = await openOfflineMangaChapterForWindow(INPUT);
-    expect(() => readOfflineMangaPageForWindow(opened!.id, 5)).toThrow("OFFLINE_CHAPTER_PAGE_INVALID");
-    readOfflineMangaPageForWindow(opened!.id, 0);
-    expect(() => readOfflineMangaPageForWindow(opened!.id, 0)).toThrow("OFFLINE_CHAPTER_PAGE_INVALID");
-
-    setOfflineMangaRelay({
-      open: async () => ({ id: "x", types: ["image/png", "image/png"] }),
-      page: async (_id, index) => {
-        if (index === 1) throw new Error("DETACHED_READER_MAIN_WINDOW_UNAVAILABLE");
-        return Buffer.from([1]).toString("base64");
-      },
-    });
-    try {
-      await expect(loadOfflineMangaChapter(INPUT)).rejects.toThrow("DETACHED_READER_MAIN_WINDOW_UNAVAILABLE");
-    } finally {
-      setOfflineMangaRelay(null);
-    }
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:epigraph-image/png-1");
+    await expect(openOfflineMangaChapterForWindow({ ...INPUT, profileId: 7 })).rejects.toThrow("OFFLINE_CHAPTER_INVALID");
+    await expect(openOfflineMangaChapterForWindow(null)).rejects.toThrow("OFFLINE_CHAPTER_INVALID");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

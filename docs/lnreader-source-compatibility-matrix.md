@@ -17,7 +17,7 @@ Rules:
 - Epigraph targets the final generated plugin artifact published in `plugins.min.json`
 - this matrix records only what has actually been observed in Epigraph
 - `working` means the source has been proven on the listed actions
-- `migration-safe` means the source is proven on install, open, search, details, and chapter, and can safely participate in novels migration
+- `migration-safe` means the source is proven on install, open, search, details, and chapter in the historical probes; like `working`, it can participate in novels migration
 - `working-with-known-limitations` means the source works on the listed actions but still has a known quality issue
 - `blocked-by-site` means the current blocker is external site behavior such as redirect, anti-bot, or rate limit
 - `runtime-gap` means the blocker is in Epigraph's current runtime/helper boundary
@@ -60,15 +60,20 @@ Rules:
 
 ## Migration Gate
 
-- `novel migration` stays disabled by default until the minimum migration-safe cohort exists:
-  - at least 2 `English` sources
-  - at least 1 `Português` source
-  - each proven on `search + details + chapter`
-- current minimum cohort is now available through:
-  - `archiveofourown`
-  - `royalroad`
-  - `illusia`
-- remaining caution is source quality outside this minimum cohort, not the gate itself
+- a source can take part in novel migration (as origin or target) once its
+  install smoke on the current profile proved plugin load, search, details and
+  chapter, i.e. it is classified `working` or `migration-safe`
+- that smoke already runs when a source is installed or updated, so migration
+  adds no second, product-wide cohort gate and no fixed allow-list
+- `working-with-known-limitations`, `blocked-by-site`, `runtime-gap` and
+  `pending` sources stay out: their titles and chapter names would feed the
+  matcher, or the site cannot be reached reliably
+- before a profile's own smoke has run, the rows of this matrix are the fallback
+- a smoke that ended `pending` (offline, site hiccup, runtime gap fixed by an
+  update) is retried after 15 minutes the next time a novel screen asks, so one
+  bad run does not keep a source out of migration for good
+- when no installed source qualifies, the migration modals point the user to
+  `Novel sources` instead of showing a dead end
 
 ## Evidence Anchors
 
@@ -78,8 +83,8 @@ Rules:
   whitelist, invocation, cancellation, health, and shutdown.
 - [repositories.test.ts](../src/lib/novels/repositories.test.ts): published
   repository parsing, canonicalization, and artifact metadata.
-- [migrationSafe.test.ts](../src/lib/novels/migrationSafe.test.ts): minimum
-  source cohort and migration eligibility.
+- [migrationSafe.test.ts](../src/lib/novels/migrationSafe.test.ts): migration
+  eligibility from the install smoke classification.
 - [offlineChapters.test.ts](../src/lib/novels/offlineChapters.test.ts): bounded
   offline chapter storage and fallback.
 

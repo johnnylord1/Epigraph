@@ -247,6 +247,19 @@
         from { transform: translateX(-110%); }
         to { transform: translateX(250%); }
       }
+
+      @keyframes boot-splash-breathe {
+        0%, 100% { opacity: 0.22; }
+        50% { opacity: 1; }
+      }
+
+      /* With reduced motion the loading line breathes in place instead of sweeping, so it never looks stuck. */
+      @media (prefers-reduced-motion: reduce) {
+        .boot-splash__line::after {
+          width: 100%;
+          animation: boot-splash-breathe 1.8s ease-in-out infinite;
+        }
+      }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">

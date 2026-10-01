@@ -13,6 +13,8 @@ import type {
 
 export interface MangaLibrarySeedOptions {
   trackRecordsByMangaId?: Map<number, TrackRecord[]>;
+  /** trackerId -> status value -> tracker status name ("Dropped", "Plan to Read", ...). */
+  trackerStatusNamesById?: Map<number, Map<number, string>>;
 }
 
 export interface MangaCandidateOptions {
@@ -42,6 +44,7 @@ export function mangaToTasteProfileSeed(
   const bestRecord = records
     .filter((record) => Number.isFinite(record.score) && record.score > 0)
     .sort((a, b) => b.score - a.score)[0];
+  const statusRecord = bestRecord ?? records[0];
 
   return {
     id: `manga:${manga.id}`,
@@ -52,7 +55,14 @@ export function mangaToTasteProfileSeed(
     userRating: bestRecord?.score ?? null,
     userRatingMax: inferTrackRecordScoreMax(bestRecord),
     implicitWeight: manga.inLibrary ? inferMangaImplicitWeight(manga) : 0,
-    status: mapMangaStatusToSeedStatus(manga.status),
+    // The publication status ("ONGOING", "COMPLETED") says nothing about the
+    // reader; only a tracker record knows whether they dropped or finished it.
+    status: statusRecord
+      ? trackRecordSeedStatus(
+        statusRecord,
+        options.trackerStatusNamesById?.get(statusRecord.trackerId)?.get(statusRecord.status),
+      )
+      : "unknown",
   };
 }
 
@@ -64,7 +74,7 @@ export function novelToTasteProfileSeed(novel: PersistedNovelLibraryEntry): Tast
     contentType: "novel",
     sourceId: novel.source.sourceId ?? novel.source.pluginId,
     implicitWeight: inferNovelImplicitWeight(novel),
-    status: mapMangaStatusToSeedStatus(novel.status),
+    status: "unknown",
   };
 }
 
@@ -406,62 +416,92 @@ function strongestMetric<T extends RecommendationProviderSignal["score"]>(curren
 }
 
 function inferMangaContentType(manga: Manga): RecommendationContentType {
-  const sourceName = (manga.source?.displayName || manga.source?.name || "").toLowerCase();
-  const haystack = [
-    manga.title,
-    manga.description ?? "",
-    ...(manga.genre ?? []),
-  ].join(" ").toLowerCase();
+  return inferMangaRecommendationContentType(manga);
+}
 
-  // Dedicated manhwa/manhua sources
-  if (
-    sourceName.includes("asura")
-    || sourceName.includes("flame")
-    || sourceName.includes("reaper")
-    || sourceName.includes("void scans")
-  ) {
-    return "manhwa";
-  }
+const MANHWA_SOURCE_MARKERS = ["asura", "flame", "reaper", "void scans"];
+const COMIC_AGGREGATOR_MARKERS = ["mangakakalot", "manganato", "mangadex", "mangalife"];
+const MANHWA_MARKER_PATTERN = /\b(manhwa|korean|webtoons?)\b/;
+const MANHUA_MARKER_PATTERN = /\b(manhua|chinese)\b/;
+const MANHWA_GENRES = new Set(["murim"]);
+const MANHUA_GENRES = new Set(["cultivation", "wuxia", "xianxia", "xuanhuan"]);
+// Tropes common in Korean web novels/comics, but also used by Japanese isekai.
+// They only tip the balance as explicit genre tags and when several co-occur.
+const MANHWA_TROPE_GENRES = new Set([
+  "regression",
+  "necromancer",
+  "dungeon",
+  "system",
+  "level up",
+  "hunter",
+  "hunters",
+  "tower",
+  "gate",
+  "gates",
+  "ranker",
+  "player",
+  "constellation",
+]);
 
-  // Work properties classification
-  if (
-    haystack.includes("manhwa")
-    || haystack.includes("korean")
-    || haystack.includes("webtoon")
-    || haystack.includes("regression")
-    || haystack.includes("murim")
-    || haystack.includes("necromancer")
-    || haystack.includes("dungeon")
-    || haystack.includes("system")
-    || haystack.includes("level up")
-    || haystack.includes("hunter")
-    || haystack.includes("tower")
-    || haystack.includes("gate")
-    || haystack.includes("ranker")
-    || haystack.includes("player")
-    || haystack.includes("constellation")
-  ) return "manhwa";
+/**
+ * Classifies a comic as manga/manhwa/manhua from source, explicit markers and
+ * genre tags. Synopsis text is ignored on purpose: words like "system",
+ * "player" or "gate" appear in ordinary descriptions and used to mislabel
+ * Japanese series as manhwa.
+ */
+export function inferMangaRecommendationContentType(
+  manga: Manga | null | undefined,
+  fallbackTitle = "",
+): RecommendationContentType {
+  const sourceName = (manga?.source?.displayName || manga?.source?.name || "").toLowerCase();
+  if (MANHWA_SOURCE_MARKERS.some((marker) => sourceName.includes(marker))) return "manhwa";
 
-  if (
-    haystack.includes("manhua")
-    || haystack.includes("chinese")
-    || haystack.includes("cultivation")
-    || haystack.includes("wuxia")
-    || haystack.includes("xianxia")
-    || haystack.includes("xuanhuan")
-  ) return "manhua";
+  const genres = (manga?.genre ?? []).map((genre) => genre.trim().toLowerCase()).filter(Boolean);
+  const markerText = [fallbackTitle, manga?.title ?? "", ...genres].join(" ").toLowerCase();
+
+  if (MANHWA_MARKER_PATTERN.test(markerText)) return "manhwa";
+  if (MANHUA_MARKER_PATTERN.test(markerText)) return "manhua";
+  if (genres.some((genre) => MANHWA_GENRES.has(genre))) return "manhwa";
+  if (genres.some((genre) => MANHUA_GENRES.has(genre))) return "manhua";
+  if (genres.filter((genre) => MANHWA_TROPE_GENRES.has(genre)).length >= 2) return "manhwa";
 
   // Fallback to source language if available and source is not a general aggregator
-  const isAggregator = sourceName.includes("mangakakalot")
-    || sourceName.includes("manganato")
-    || sourceName.includes("mangadex")
-    || sourceName.includes("mangalife");
+  const isAggregator = COMIC_AGGREGATOR_MARKERS.some((marker) => sourceName.includes(marker));
   if (!isAggregator) {
-    const sourceLangType = inferComicTypeFromLanguage(manga.source?.lang);
+    const sourceLangType = inferComicTypeFromLanguage(manga?.source?.lang);
     if (sourceLangType) return sourceLangType;
   }
 
   return "manga";
+}
+
+/**
+ * Reading status of a tracker record. Tracker status values differ per
+ * service, so the status name (from the tracker's status list) is preferred;
+ * progress is only a fallback when the name is unknown.
+ */
+export function trackRecordSeedStatus(
+  record: Pick<TrackRecord, "lastChapterRead" | "totalChapters" | "finishDate">,
+  statusName?: string | null,
+): TasteProfileSeedItem["status"] {
+  const normalizedName = statusName?.trim().toLowerCase() ?? "";
+  if (/drop|unfinished|abandon/.test(normalizedName)) return "dropped";
+  if (/plan|wish|want/.test(normalizedName)) return "planning";
+  if (/complet|finished/.test(normalizedName)) return "completed";
+  if (/reading|watching|current|rereading|repeating/.test(normalizedName)) return "reading";
+
+  if (hasTrackRecordDate(record.finishDate)) return "completed";
+  if (record.totalChapters > 0 && record.lastChapterRead >= record.totalChapters) return "completed";
+  if (record.lastChapterRead > 0) return "reading";
+  return "planning";
+}
+
+function hasTrackRecordDate(value: string | null | undefined): boolean {
+  const normalized = value?.trim() ?? "";
+  if (!normalized || normalized === "0") return false;
+  const numeric = Number(normalized);
+  if (Number.isFinite(numeric)) return numeric > 0;
+  return Number.isFinite(Date.parse(normalized));
 }
 
 function inferComicTypeFromLanguage(language: string | null | undefined): RecommendationContentType | null {
@@ -526,15 +566,6 @@ function inferTrackRecordScoreMax(record: TrackRecord | undefined): number | nul
   if (!record) return null;
   if (record.score > 10) return 100;
   return 10;
-}
-
-function mapMangaStatusToSeedStatus(status: string | null | undefined): TasteProfileSeedItem["status"] {
-  const normalized = status?.toLowerCase() ?? "";
-  if (normalized.includes("complete") || normalized.includes("finished")) return "completed";
-  if (normalized.includes("drop")) return "dropped";
-  if (normalized.includes("plan")) return "planning";
-  if (normalized.includes("read") || normalized.includes("ongoing")) return "reading";
-  return "unknown";
 }
 
 function inferSafetyLevel(tags: string[]): RecommendationSafetyLevel {

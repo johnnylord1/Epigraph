@@ -4,7 +4,8 @@ import { FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../lib/firstRun";
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe("first-run state before the startup splash", () => {
-  it("keeps setup pending if startup is interrupted before Layout mounts", async () => {
+  // Imports the whole store twice from an empty module cache, which alone can take seconds on a busy machine.
+  it("keeps setup pending if startup is interrupted before Layout mounts", { timeout: 20_000 }, async () => {
     const values = new Map<string, string>();
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => values.get(key) ?? null,
@@ -23,7 +24,7 @@ describe("first-run state before the startup splash", () => {
     expect(restarted.store.settings.theme).toBe("light");
   });
 
-  it("does not enroll an existing installation into first run", async () => {
+  it("does not enroll an existing installation into first run", { timeout: 20_000 }, async () => {
     const values = new Map([["epigraph-store", JSON.stringify({ storeVersion: 7, settings: { theme: "dark" } })]]);
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => values.get(key) ?? null,

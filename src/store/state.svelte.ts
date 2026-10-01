@@ -46,6 +46,7 @@ import type {
 } from "../lib/novels/domain";
 import type { ComicsUpdateNotificationInput } from "../lib/library/comicsChapterSnapshot";
 import { normalizeAppLanguage, type AppLanguageCode } from "../lib/i18n/languages";
+import { readableErrorText } from "../lib/i18n/networkErrorText";
 import {
   normalizeThemeSelection,
   type CustomTheme,
@@ -408,6 +409,15 @@ export interface ActiveDownload {
   state?:    "QUEUED" | "DOWNLOADING" | "FINISHED" | "ERROR" | "PAUSED";
 }
 
+// Novel chapters are saved by the app itself, not queued on the server, so the Downloads page learns about them here.
+export interface NovelDownloadProgress {
+  novelId:    string;
+  title:      string;
+  coverUrl:   string | null;
+  pendingIds: string[];
+  done:       number;
+  total:      number;
+}
 export interface PausedDownloadItem {
   chapterId: number;
   mangaId: number;
@@ -1547,6 +1557,8 @@ class Store {
    * when to re-fetch library data and refresh the hero section.
    */
   readerSessionId:   number           = $state(0);
+  /** Counts detached reader windows that closed, so an open series page reads the progress they saved. */
+  detachedReaderClosures: number      = $state(0);
 
   genreFilter:       string           = $state("");
   searchPrefill:     string           = $state("");
@@ -1586,6 +1598,7 @@ class Store {
   activeDownloads:   ActiveDownload[] = $state([]);
   pausedDownloads:   PausedDownloadItem[] = $state([]);
   searchDownloads:   SearchDownloadEntry[] = $state([]);
+  novelDownloads:    NovelDownloadProgress[] = $state([]);
   toasts:            Toast[]          = $state([]);
   libraryUpdateProgress: LibraryUpdateProgress | null = $state(null);
   libraryUpdateInFlight: boolean = $state(false);
@@ -1852,6 +1865,7 @@ class Store {
   /** A detached reader window closed; Home refreshes as it does when the docked reader closes. */
   noteDetachedReaderClosed() {
     this.readerSessionId   += 1;
+    this.detachedReaderClosures += 1;
   }
 
   /** Detached reader windows follow the settings and bookmarks the main window persists. */
@@ -2247,6 +2261,7 @@ class Store {
   }
 
   addToast(toast: Omit<Toast, "id"> & { id?: string }) {
+    if (toast.body) toast = { ...toast, body: readableErrorText(toast.body) };
     const body = toast.body ?? "";
     const isDownloadLike = toast.kind === "download" || /download/i.test(toast.title);
     const existing = this.toasts.find(t =>
@@ -2326,6 +2341,12 @@ class Store {
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads = next; }
   setPausedDownloads(next: PausedDownloadItem[]) { this.pausedDownloads = next; }
   setSearchDownloads(next: SearchDownloadEntry[]) { this.searchDownloads = next; }
+  setNovelDownload(novelId: string, next: NovelDownloadProgress | null) {
+    const others = this.novelDownloads.filter((entry) => entry.novelId !== novelId);
+    if (!next) this.novelDownloads = others;
+    else if (others.length === this.novelDownloads.length) this.novelDownloads = [...others, next];
+    else this.novelDownloads = this.novelDownloads.map((entry) => entry.novelId === novelId ? next : entry);
+  }
   clearActiveDetailState() {
     this.activeManga = null;
     this.activeBookId = null;
@@ -2905,6 +2926,7 @@ export function setLibraryTrackingSummarySnapshot(next: TrackerCompletionTracker
 export function setActiveDownloads(next: ActiveDownload[])               { store.setActiveDownloads(next); }
 export function setPausedDownloads(next: PausedDownloadItem[])           { store.setPausedDownloads(next); }
 export function setSearchDownloads(next: SearchDownloadEntry[])           { store.setSearchDownloads(next); }
+export function setNovelDownload(novelId: string, next: NovelDownloadProgress | null) { store.setNovelDownload(novelId, next); }
 export function setNavPage(next: NavPage)                                { store.setNavPage(next); }
 export function setLibrarySection(next: LibrarySection)                  { store.setLibrarySection(next); }
 export function setLibraryFilter(next: LibraryFilter)                    { store.setLibraryFilter(next); }

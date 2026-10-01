@@ -26,6 +26,7 @@ import {
   isFlareSolverrEligibleFailure,
   normalizedFlareSolverrEndpoint,
   saveFlareSolverrConfig,
+  setFlareSolverrStartRelay,
   startDockerFlareSolverrAndEnable,
   startLocalFlareSolverrAndEnable,
   testFlareSolverrEndpoint,
@@ -202,6 +203,22 @@ describe("FlareSolverr integration contracts", () => {
 
     expect(invoke).toHaveBeenCalledTimes(2);
     expect(gql).toHaveBeenCalledOnce();
+  });
+
+  it("asks the main window to start the service from a detached reader window", async () => {
+    const relay = vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("FlareSolverr did not become ready"));
+    setFlareSolverrStartRelay(relay);
+    try {
+      await expect(startLocalFlareSolverrAndEnable()).resolves.toBeUndefined();
+      await expect(startLocalFlareSolverrAndEnable()).rejects.toThrow("did not become ready");
+    } finally {
+      setFlareSolverrStartRelay(null);
+    }
+
+    expect(relay).toHaveBeenCalledTimes(2);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(gql).not.toHaveBeenCalled();
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 
   it("rejects and cleans up a healthy endpoint owned by another process", async () => {

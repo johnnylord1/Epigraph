@@ -2,6 +2,7 @@ mod discord_cover;
 mod discord_rpc;
 mod compat;
 mod migration_journal;
+mod offline_chapter;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
 mod restore_commands;
@@ -2087,6 +2088,26 @@ mod tests {
     use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
     #[test]
+    fn server_health_probes_do_not_hold_the_calling_thread() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let server_url = format!("http://{}", listener.local_addr().unwrap());
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let started = std::time::Instant::now();
+        let (healthy, ticked_at) = runtime.block_on(async move {
+            let probe = tokio::spawn(probe_server_health(server_url));
+            let ticker = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                started.elapsed()
+            });
+            let ticked_at = ticker.await.unwrap();
+            (probe.await.unwrap(), ticked_at)
+        });
+        drop(listener);
+        assert!(!healthy, "a server that never answers is not healthy");
+        assert!(ticked_at < Duration::from_millis(1000), "other work waited {ticked_at:?} behind a hanging probe");
+    }
+
+    #[test]
     fn tracker_oauth_callbacks_identify_the_request_without_breaking_legacy_payloads() {
         let legacy = TrackerOAuthCallbackPayload { url: "https://suwayomi.org/tracker-oauth?code=test".into(), session_id: None };
         assert_eq!(serde_json::to_value(legacy).unwrap(), serde_json::json!({ "url": "https://suwayomi.org/tracker-oauth?code=test" }));
@@ -2749,6 +2770,34 @@ server.maxSourcesInParallel = 6
     }
 
     #[test]
+    fn dev_isolation_uses_its_own_folder_unless_one_is_given() {
+        let root = PathBuf::from(r"C:\Users\dev\AppData\Local\Epigraph-dev");
+        let mut isolated = AutomationLaunchOverrides {
+            syncd_port: Some(4988),
+            ..AutomationLaunchOverrides::default()
+        };
+        apply_dev_data_isolation(&mut isolated, &root);
+        assert_eq!(isolated.local_app_data_dir, Some(root.join("LocalAppData")));
+        assert_eq!(isolated.syncd_port, Some(4988));
+        assert_eq!(
+            automation_local_server_root(isolated.local_app_data_dir.as_ref().unwrap(), LocalServerProfile::Main),
+            root.join("LocalServerMain")
+        );
+        assert_eq!(
+            automation_roaming_app_data_path(isolated.local_app_data_dir.as_ref().unwrap()),
+            root.join("RoamingAppData")
+        );
+
+        let mut explicit = parse_automation_launch_overrides_from_args([
+            r"--local-app-data-dir=C:\Temp\EpigraphHost",
+            "--syncd-port=4988",
+        ]);
+        apply_dev_data_isolation(&mut explicit, &root);
+        assert_eq!(explicit.local_app_data_dir, Some(PathBuf::from(r"C:\Temp\EpigraphHost")));
+        assert_eq!(explicit.syncd_port, Some(4988));
+    }
+
+    #[test]
     fn automation_launch_overrides_ignore_invalid_syncd_port() {
         let overrides = parse_automation_launch_overrides_from_args([
             "--local-app-data-dir=C:\\Temp\\EpigraphJoiner",
@@ -3370,10 +3419,6 @@ fn strip_unc(path: PathBuf) -> PathBuf {
     }
 }
 
-fn resolve_downloads_path(downloads_path: &str) -> PathBuf {
-    resolve_downloads_path_for_profile(downloads_path, None)
-}
-
 fn resolve_downloads_path_for_profile(downloads_path: &str, profile_id: Option<&str>) -> PathBuf {
     if !downloads_path.trim().is_empty() {
         return PathBuf::from(downloads_path);
@@ -3389,8 +3434,8 @@ fn resolve_downloads_path_for_profile(downloads_path: &str, profile_id: Option<&
 }
 
 #[tauri::command]
-fn get_storage_info(downloads_path: String) -> Result<StorageInfo, String> {
-    let path = resolve_downloads_path(&downloads_path);
+fn get_storage_info(downloads_path: String, profile_id: Option<String>) -> Result<StorageInfo, String> {
+    let path = resolve_downloads_path_for_profile(&downloads_path, profile_id.as_deref());
 
     let manga_bytes = if path.exists() {
         WalkDir::new(&path)
@@ -3434,6 +3479,28 @@ fn get_default_downloads_path(profile_id: Option<String>) -> String {
         .into_owned()
 }
 
+/// Suwayomi's `SafePath.buildValidFilename`, which names a source's and a series' download folders: trims
+/// dots and spaces, replaces characters FAT/NTFS reject with `_`, and keeps at most 240 UTF-8 bytes.
+fn suwayomi_safe_filename(value: &str) -> String {
+    let trimmed = value.trim_matches(|ch| ch == '.' || ch == ' ');
+    if trimmed.is_empty() {
+        return "(invalid)".to_string();
+    }
+    let mut name = String::with_capacity(trimmed.len());
+    for ch in trimmed.chars() {
+        let ch = if (ch as u32) <= 31 || matches!(ch, '"' | '*' | '/' | ':' | '<' | '>' | '?' | '\\' | '|' | '\u{7f}') {
+            '_'
+        } else {
+            ch
+        };
+        if name.len() + ch.len_utf8() > 240 {
+            break;
+        }
+        name.push(ch);
+    }
+    name
+}
+
 fn download_name_key(value: &str) -> String {
     value
         .chars()
@@ -3442,16 +3509,20 @@ fn download_name_key(value: &str) -> String {
         .collect()
 }
 
-#[tauri::command]
-fn read_downloaded_chapter_archive(
-    downloads_path: String,
-    source_name: String,
-    manga_title: String,
-    chapter_name: String,
-    scanlator: Option<String>,
-) -> Result<Option<String>, String> {
-    let root = resolve_downloads_path(&downloads_path);
-    let manga_dir = root.join("mangas").join(&source_name).join(&manga_title);
+/// Finds the CBZ Suwayomi wrote for a downloaded chapter, without reading it.
+fn find_downloaded_chapter_archive(
+    downloads_path: &str,
+    source_name: &str,
+    manga_title: &str,
+    chapter_name: &str,
+    scanlator: Option<&str>,
+    profile_id: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let root = resolve_downloads_path_for_profile(downloads_path, profile_id);
+    let manga_dir = root
+        .join("mangas")
+        .join(suwayomi_safe_filename(&source_name))
+        .join(suwayomi_safe_filename(&manga_title));
     if !manga_dir.is_dir() {
         return Ok(None);
     }
@@ -3464,9 +3535,8 @@ fn read_downloaded_chapter_archive(
         return Err("Downloaded chapter path escaped the downloads directory.".to_string());
     }
 
-    let chapter_key = download_name_key(&chapter_name);
+    let chapter_key = download_name_key(chapter_name);
     let scanlator_key = scanlator
-        .as_deref()
         .map(download_name_key)
         .filter(|value| !value.is_empty());
     let mut best_match: Option<(u8, PathBuf)> = None;
@@ -3505,13 +3575,7 @@ fn read_downloaded_chapter_archive(
         }
     }
 
-    let Some((_, path)) = best_match else {
-        return Ok(None);
-    };
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-    Ok(Some(
-        base64::engine::general_purpose::STANDARD.encode(bytes),
-    ))
+    Ok(best_match.map(|(_, path)| path))
 }
 
 /// Returns true if the given path exists and is a directory.
@@ -3891,10 +3955,17 @@ fn probe_local_server(server_url: &str, timeout: Duration) -> bool {
 
 const LOCAL_SERVER_HEALTH_PROBE_TIMEOUT: Duration = Duration::from_millis(2500);
 
+// Synchronous commands run on the main thread, and a refused loopback connect takes ~2s on
+// Windows; queued probes while Suwayomi is down would stall every other IPC call, including
+// opening downloaded chapters offline.
 #[tauri::command]
-fn probe_server_health(server_url: String) -> bool {
-    probe_local_server(&server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT)
-        && relocated_managed_server_is_owned(&server_url)
+async fn probe_server_health(server_url: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        probe_local_server(&server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT)
+            && relocated_managed_server_is_owned(&server_url)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// A launch with a relocated profile root (automation, disposable profiles) shares the managed
@@ -4153,66 +4224,219 @@ fn acquire_spawn_lock(lock_path: &Path, data_dir: &Path) -> std::io::Result<bool
     }
 }
 
-/// Moves all content from `src` into `dst`, then removes `src`.
-/// Emits `migrate_progress` events: `{ done, total, current }`.
-/// Only deletes the source tree after every file is confirmed copied.
+/// The folders Suwayomi keeps under its downloads root; a migration moves these and nothing else, so a
+/// downloads path that also holds the user's own files never loses them.
+const SUWAYOMI_DOWNLOAD_FOLDERS: [&str; 2] = ["mangas", "thumbnails"];
+
+/// Resolves a path that may not exist yet through its nearest existing ancestor, so two spellings of one
+/// folder (case, separators, `..`, a trailing slash) compare equal.
+fn resolve_existing_prefix(path: &Path) -> Result<PathBuf, String> {
+    let mut missing = Vec::new();
+    let mut current = path.to_path_buf();
+    loop {
+        if let Ok(resolved) = current.canonicalize() {
+            return Ok(missing.into_iter().rev().fold(resolved, |acc: PathBuf, part| acc.join(part)));
+        }
+        let Some(name) = current.file_name().map(|name| name.to_os_string()) else {
+            return Err(format!("Could not resolve {}", path.display()));
+        };
+        missing.push(name);
+        if !current.pop() {
+            return Err(format!("Could not resolve {}", path.display()));
+        }
+    }
+}
+
+/// What a downloads move would copy: the resolved roots and the download folders present in `src`.
+/// `None` when there is nothing to move (no source, or the same folder spelled differently). A destination
+/// inside a folder being moved is refused: the copy would walk into itself and the removal would then
+/// delete the copy.
+fn plan_download_move(src: &Path, dst: &Path) -> Result<Option<(PathBuf, PathBuf, Vec<&'static str>)>, String> {
+    if !src.is_dir() {
+        return Ok(None);
+    }
+    let src = resolve_existing_prefix(src)?;
+    let dst = resolve_existing_prefix(dst)?;
+    if src == dst {
+        return Ok(None);
+    }
+    let folders: Vec<&'static str> = SUWAYOMI_DOWNLOAD_FOLDERS
+        .into_iter()
+        .filter(|folder| src.join(folder).is_dir())
+        .collect();
+    for folder in &folders {
+        let from = src.join(folder);
+        let to = dst.join(folder);
+        if to.starts_with(&from) || from.starts_with(&to) {
+            return Err("DOWNLOADS_PATH_NESTED".to_string());
+        }
+    }
+    Ok(Some((src, dst, folders)))
+}
+
+/// Moves Suwayomi's download folders from `src` into `dst`, reporting `(done, total, current)` per file.
+/// Each folder is removed only after all of its files were copied.
+fn move_download_folders(
+    src: &Path,
+    dst: &Path,
+    mut on_progress: impl FnMut(u64, u64, &str),
+) -> Result<(), String> {
+    let Some((src, dst, folders)) = plan_download_move(src, dst)? else {
+        return Ok(());
+    };
+
+    let total: u64 = folders
+        .iter()
+        .flat_map(|folder| WalkDir::new(src.join(folder)).into_iter().filter_map(|e| e.ok()))
+        .filter(|e| e.file_type().is_file())
+        .count() as u64;
+    on_progress(0, total, "");
+
+    let mut done: u64 = 0;
+    for folder in &folders {
+        let from = src.join(folder);
+        let to = dst.join(folder);
+        for entry in WalkDir::new(&from).into_iter().filter_map(|e| e.ok()) {
+            let rel = entry.path().strip_prefix(&from).map_err(|e| e.to_string())?;
+            let target = to.join(rel);
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                fs::copy(entry.path(), &target).map_err(|e| e.to_string())?;
+                done += 1;
+                on_progress(done, total, &Path::new(folder).join(rel).to_string_lossy());
+            }
+        }
+        fs::remove_dir_all(&from).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Refuses a new downloads folder that a later `migrate_downloads` could not move into, before it is saved.
+#[tauri::command]
+fn check_downloads_move(src: String, dst: String) -> Result<(), String> {
+    plan_download_move(Path::new(src.trim()), Path::new(dst.trim())).map(|_| ())
+}
+
+/// Moves Suwayomi's downloads from `src` into `dst`, emitting `migrate_progress` events: `{ done, total, current }`.
 #[tauri::command]
 async fn migrate_downloads(app: tauri::AppHandle, src: String, dst: String) -> Result<(), String> {
-    use std::fs;
     use tauri::Emitter;
 
     let src_path = std::path::PathBuf::from(src.trim());
     let dst_path = std::path::PathBuf::from(dst.trim());
+    move_download_folders(&src_path, &dst_path, |done, total, current| {
+        let _ = app.emit(
+            "migrate_progress",
+            serde_json::json!({ "done": done, "total": total, "current": current }),
+        );
+    })
+}
 
-    if !src_path.is_dir() {
-        return Ok(()); // nothing to migrate
+#[cfg(test)]
+mod download_folder_tests {
+    use super::*;
+
+    fn write(path: &Path, bytes: &[u8]) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
     }
 
-    // Count files first so the frontend can show accurate progress
-    let total: u64 = WalkDir::new(&src_path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .count() as u64;
-
-    let _ = app.emit(
-        "migrate_progress",
-        serde_json::json!({
-            "done": 0u64, "total": total, "current": ""
-        }),
-    );
-
-    let mut done: u64 = 0;
-
-    for entry in WalkDir::new(&src_path).into_iter().filter_map(|e| e.ok()) {
-        let rel = entry
-            .path()
-            .strip_prefix(&src_path)
-            .map_err(|e| e.to_string())?;
-        let target = dst_path.join(rel);
-
-        if entry.file_type().is_dir() {
-            fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::copy(entry.path(), &target).map_err(|e| e.to_string())?;
-            done += 1;
-            let _ = app.emit(
-                "migrate_progress",
-                serde_json::json!({
-                    "done": done,
-                    "total": total,
-                    "current": rel.to_string_lossy()
-                }),
-            );
-        }
+    #[test]
+    fn download_folder_names_match_suwayomi() {
+        assert_eq!(suwayomi_safe_filename("Series: Part 1?"), "Series_ Part 1_");
+        assert_eq!(suwayomi_safe_filename(" ..A/B\\C|D*E\"F<G>H\u{1}\u{7f}.. "), "A_B_C_D_E_F_G_H__");
+        assert_eq!(suwayomi_safe_filename(" . . "), "(invalid)");
+        let long = suwayomi_safe_filename(&"\u{00e9}".repeat(200));
+        assert_eq!(long.len(), 240);
+        assert_eq!(long.chars().count(), 120);
     }
 
-    // Only remove source after all files are confirmed copied
-    fs::remove_dir_all(&src_path).map_err(|e| e.to_string())?;
-    Ok(())
+    #[test]
+    fn offline_reader_opens_chapters_in_the_folders_suwayomi_writes() {
+        let temp = tempfile::tempdir().unwrap();
+        let series = temp.path().join("mangas").join("Source_ One").join("Title_ Two_");
+        write(&series.join("Group_Chapter 3.cbz"), b"chapter three");
+        write(&series.join("Chapter 30.cbz"), b"chapter thirty");
+        let root = temp.path().to_string_lossy().to_string();
+
+        let found = find_downloaded_chapter_archive(
+            &root, "Source: One", "Title: Two?", "Chapter 3", Some("Group"), None,
+        )
+        .unwrap();
+        assert_eq!(fs::read(found.unwrap()).unwrap(), b"chapter three");
+        let missing = find_downloaded_chapter_archive(
+            &root, "Source: One", "Another", "Chapter 3", None, None,
+        )
+        .unwrap();
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn migration_moves_only_download_folders_and_reports_each_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("old");
+        let dst = temp.path().join("new").join("nested");
+        write(&src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz"), b"one");
+        write(&src.join("thumbnails").join("1.jpg"), b"cover");
+        write(&src.join("notes.txt"), b"mine");
+
+        let mut events = Vec::new();
+        move_download_folders(&src, &dst, |done, total, _| events.push((done, total))).unwrap();
+
+        assert_eq!(events, vec![(0, 2), (1, 2), (2, 2)]);
+        assert_eq!(fs::read(dst.join("mangas").join("Source").join("Series").join("Chapter 1.cbz")).unwrap(), b"one");
+        assert_eq!(fs::read(dst.join("thumbnails").join("1.jpg")).unwrap(), b"cover");
+        assert!(!src.join("mangas").exists());
+        assert!(!src.join("thumbnails").exists());
+        assert_eq!(fs::read(src.join("notes.txt")).unwrap(), b"mine");
+        assert!(!dst.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn migration_to_the_same_folder_keeps_every_download() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("downloads");
+        let chapter = src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz");
+        write(&chapter, b"one");
+
+        move_download_folders(&src, &src.join(".").join("mangas").join(".."), |_, _, _| {}).unwrap();
+
+        assert_eq!(fs::read(&chapter).unwrap(), b"one");
+    }
+
+    #[test]
+    fn migration_into_a_download_folder_is_refused_before_copying() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("downloads");
+        let chapter = src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz");
+        write(&chapter, b"one");
+
+        let mut calls = 0;
+        let error = move_download_folders(&src, &src.join("mangas").join("moved"), |_, _, _| calls += 1).unwrap_err();
+
+        assert_eq!(error, "DOWNLOADS_PATH_NESTED");
+        assert_eq!(check_downloads_move(src.to_string_lossy().into(), src.join("mangas").join("moved").to_string_lossy().into()).unwrap_err(), "DOWNLOADS_PATH_NESTED");
+        assert!(check_downloads_move(src.to_string_lossy().into(), temp.path().join("elsewhere").to_string_lossy().into()).is_ok());
+        assert_eq!(calls, 0);
+        assert_eq!(fs::read(&chapter).unwrap(), b"one");
+        assert!(!src.join("mangas").join("moved").exists());
+    }
+
+    #[test]
+    fn migration_into_a_sibling_subfolder_of_the_old_root_is_allowed() {
+        let temp = tempfile::tempdir().unwrap();
+        let src = temp.path().join("downloads");
+        write(&src.join("mangas").join("Source").join("Series").join("Chapter 1.cbz"), b"one");
+
+        move_download_folders(&src, &src.join("library"), |_, _, _| {}).unwrap();
+
+        assert_eq!(fs::read(src.join("library").join("mangas").join("Source").join("Series").join("Chapter 1.cbz")).unwrap(), b"one");
+        assert!(!src.join("mangas").exists());
+    }
 }
 
 /// Returns the OS/monitor DPI scale factor for the window's current monitor.
@@ -6555,7 +6779,7 @@ async fn download_and_install_update(
 ) -> Result<(), String> {
     // The Windows updater exits through std::process::exit after starting its
     // installer. It cannot bypass the owned shutdown/attested relaunch contract.
-    session_control::require_native_install_handoff()?;
+    session_control::require_native_install_handoff(std::env::var_os("EPIGRAPH_SESSION_RECORD").is_some())?;
     #[cfg(not(target_os = "windows"))]
     return Err("Native install is Windows-only; open the GitHub release page instead.".into());
 
@@ -6578,8 +6802,9 @@ async fn download_and_install_update(
         }
 
         let app_clone = app.clone();
-        update
-            .download_and_install(
+        // The signature is verified while downloading, before anything is stopped.
+        let bytes = update
+            .download(
                 move |downloaded, total| {
                     let _ = app_clone.emit(
                         "update-progress",
@@ -6594,7 +6819,16 @@ async fn download_and_install_update(
             .await
             .map_err(|e| e.to_string())?;
 
-        Ok(())
+        // Stopping the owned runtime blocks on Core confirmation, so it runs off the async runtime.
+        let handoff_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            session_control::install_after_owned_shutdown(
+                || prepare_owned_desktop_shutdown(&handoff_app),
+                || update.install(&bytes).map_err(|e| e.to_string()),
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 }
 
@@ -6899,21 +7133,60 @@ where
     overrides
 }
 
+/// Core port of a debug build, so `pnpm tauri:dev` never answers as, or reaches, an installed release's Core.
+const DEV_SYNCD_PORT: u16 = 4787;
+
+/// Where a debug build keeps its data unless `--local-app-data-dir` says otherwise: `EPIGRAPH_DEV_DATA_DIR`, or
+/// `Epigraph-dev` beside the real local app data. An installed release never uses this folder.
+fn dev_data_root() -> Option<PathBuf> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    std::env::var_os("EPIGRAPH_DEV_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::data_local_dir().map(|base| base.join("Epigraph-dev")))
+}
+
+/// A debug build takes the same isolated layout the automation flag gives, plus its own WebView profile and
+/// Core port, so developing never reads or writes an installed release's library, servers or settings.
+fn apply_dev_data_isolation(overrides: &mut AutomationLaunchOverrides, root: &Path) {
+    if overrides.local_app_data_dir.is_some() {
+        return;
+    }
+    overrides.local_app_data_dir = Some(root.join("LocalAppData"));
+    if std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").is_none() {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", root.join("WebView2"));
+    }
+    if overrides.syncd_port.is_none() && std::env::var_os("EPIGRAPH_SYNCD_PORT").is_none() {
+        overrides.syncd_port = Some(DEV_SYNCD_PORT);
+    }
+}
+
 fn apply_automation_launch_overrides() {
-    let overrides = parse_automation_launch_overrides();
+    let mut overrides = parse_automation_launch_overrides();
+    let explicit_data_dir = overrides.local_app_data_dir.is_some();
+    if let Some(root) = dev_data_root() {
+        apply_dev_data_isolation(&mut overrides, &root);
+    }
 
     if let Some(path) = overrides.local_app_data_dir {
         let roaming_path = automation_roaming_app_data_path(&path);
         std::env::set_var("LOCALAPPDATA", &path);
         std::env::set_var("APPDATA", &roaming_path);
-        std::env::set_var(
-            "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
-            automation_local_server_root(&path, LocalServerProfile::Main),
-        );
-        std::env::set_var(
-            "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
-            automation_local_server_root(&path, LocalServerProfile::Test),
-        );
+        // A gate script that already chose its server folders keeps them when only the dev default moved app data.
+        if explicit_data_dir || std::env::var_os("EPIGRAPH_LOCAL_SERVER_MAIN_ROOT").is_none() {
+            std::env::set_var(
+                "EPIGRAPH_LOCAL_SERVER_MAIN_ROOT",
+                automation_local_server_root(&path, LocalServerProfile::Main),
+            );
+        }
+        if explicit_data_dir || std::env::var_os("EPIGRAPH_LOCAL_SERVER_TEST_ROOT").is_none() {
+            std::env::set_var(
+                "EPIGRAPH_LOCAL_SERVER_TEST_ROOT",
+                automation_local_server_root(&path, LocalServerProfile::Test),
+            );
+        }
     }
 
     if let Some(port) = overrides.syncd_port {
@@ -7094,6 +7367,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         .register_uri_scheme_protocol("book", |_ctx, request| serve_book_asset(request))
         .register_uri_scheme_protocol("cover", |_ctx, request| serve_library_cover_asset(request))
+        .register_asynchronous_uri_scheme_protocol("offline-page", |ctx, request, responder| {
+            let trusted = offline_chapter::may_read_pages(ctx.webview_label());
+            tauri::async_runtime::spawn_blocking(move || {
+                responder.respond(offline_chapter::serve_page(trusted, &request))
+            });
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
@@ -7156,9 +7435,10 @@ pub fn run() {
             syncd_replication::syncd_ack_comic_reader_changes,
             get_storage_info,
             get_default_downloads_path,
-            read_downloaded_chapter_archive,
+            offline_chapter::open_downloaded_chapter,
             check_path_exists,
             create_directory,
+            check_downloads_move,
             migrate_downloads,
             read_reconciliation_overlay,
             write_reconciliation_overlay,

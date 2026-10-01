@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyAppLanguage, resolveMessageLocale, translate } from "./runtime";
+import { m } from "../../paraglide/messages.js";
 import { APP_LANGUAGE_OPTIONS, normalizeAppLanguage } from "./languages";
 import en from "../../../messages/en.json";
 import ptBr from "../../../messages/pt-BR.json";
@@ -68,5 +69,48 @@ describe("resolveMessageLocale", () => {
   ])("renders a real %s translation", (locale, expected) => {
     applyAppLanguage(locale);
     expect(translate("shell.navigation.library")).toBe(expected);
+  });
+});
+
+describe("message catalogs", () => {
+  it("renders every message exactly as the compiled Paraglide messages do", () => {
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      applyAppLanguage(locale);
+      for (const [key, value] of Object.entries(catalog)) {
+        const values = Object.fromEntries(placeholders(value).map((token) => [token.slice(1, -1), `<${token}>`]));
+        const compiled = Reflect.get(m, key) as (inputs: object, options: { locale: string }) => string;
+        expect(translate(key, values), `${locale} ${key}`).toBe(compiled(values, { locale }));
+      }
+    }
+  });
+
+  it("loads a language when it is chosen and keeps the current text until it arrives", async () => {
+    vi.resetModules();
+    const runtime = await import("./runtime");
+    runtime.applyAppLanguage("en");
+    const seen: string[] = [];
+    const unsubscribe = runtime._.subscribe((t) => seen.push(t("shell.navigation.library")));
+
+    runtime.applyAppLanguage("pt-BR");
+    expect(runtime.translate("shell.navigation.library")).toBe("Library");
+    await runtime.messagesReady();
+    expect(runtime.translate("shell.navigation.library")).toBe("Biblioteca");
+    expect(seen.at(-1)).toBe("Biblioteca");
+    unsubscribe();
+  });
+
+  it("keeps the last chosen language when an earlier one finishes loading later", async () => {
+    vi.resetModules();
+    const runtime = await import("./runtime");
+    runtime.applyAppLanguage("ja");
+    runtime.applyAppLanguage("es");
+    await runtime.messagesReady();
+    await runtime.loadMessageLocale("ja");
+    expect(runtime.translate("shell.navigation.library")).toBe("Biblioteca");
+  });
+
+  it("does not treat object built-ins as message ids", () => {
+    expect(translate("constructor")).toBe("constructor");
+    expect(translate("toString")).toBe("toString");
   });
 });

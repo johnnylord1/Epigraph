@@ -99,14 +99,15 @@ describe("Home theme tokens", () => {
     expect(home).not.toContain("metricValue: presented.readPercentLabel");
   });
 
-  it("renders the complete runtime tracker inventory without a fixed display limit", () => {
+  it("renders every connected runtime tracker without a fixed display limit", () => {
     const home = readProjectFile(HOME_PATH);
 
     expect(home).toContain("loadTrackingProviderInventory(homeTrackers");
     expect(home).toContain("collectTrackedMangaIds(trackingSummary)");
     expect(home).toContain("loadNativeTrackedTitleKeys({");
     expect(home).toContain("CACHE_KEYS.TRACKERS");
-    expect(home).toContain("{#each displayTrackers as tracker (tracker.id)}");
+    expect(home).toContain("connectedTrackers = $derived(displayTrackers.filter((tracker) => tracker.isLoggedIn))");
+    expect(home).toContain("{#each connectedTrackers as tracker (tracker.id)}");
     expect(home).not.toMatch(/homeTrackers\.slice\(/);
     expect(home).not.toContain("trackedTitleCount = $derived(trackedCompletedIds.size)");
   });

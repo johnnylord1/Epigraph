@@ -1,4 +1,5 @@
 import { planNovelRestoreDependencies, provisionEpigraphNovelDependencies } from "./novelsRestoreProvisioning";
+import { loadSettingsStorageRuntime } from "./storageRuntime";
 import type { RestoredEpigraphNovelsSnapshot } from "./novelsBackup";
 import type { PersistedNovelRepositoryState } from "../novels/repositoryState";
 
@@ -36,8 +37,8 @@ export function createNovelRestoreDependencySession(deps: {
 }
 
 export async function createProductionNovelDependencySession(file: File, format: "epigraph" | "lnreader") {
-  const [{ store, bumpContentSetupVersion }, { loadSettingsStorageRuntime }, { invoke }] = await Promise.all([
-    import("../../store/state.svelte"), import("./storageRuntime"), import("@tauri-apps/api/core"),
+  const [{ store, bumpContentSetupVersion }, { invoke }] = await Promise.all([
+    import("../../store/state.svelte"), import("@tauri-apps/api/core"),
   ]);
   const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
   const target = () => JSON.stringify([store.runtimeResolvedLocalProfileId, store.runtimeServerUrl]);

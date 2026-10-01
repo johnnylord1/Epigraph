@@ -1,5 +1,6 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
+  import { readableErrorText } from "../../lib/i18n/networkErrorText";
   import {
     ArrowsClockwise,
     Books,
@@ -13,7 +14,8 @@
 
   type Tone = "neutral" | "info" | "warning" | "danger" | "success";
   type IconName = "info" | "warning" | "plug" | "retry" | "search" | "books" | "folder" | "check";
-  type Layout = "panel" | "compact" | "center";
+  /** "open" is the unboxed, centered variant for empty views that fill a page area. */
+  type Layout = "panel" | "compact" | "center" | "open";
 
   let {
     eyebrow = translate("downloads_summary_status"),
@@ -53,6 +55,10 @@
   }
 
   const StateIcon = $derived(iconFor(icon));
+  // Error states often pass a caught error's message straight through; a request that never reached its
+  // server must still read in the app language.
+  const shownBody = $derived(body ? readableErrorText(body) : "");
+  const shownDetail = $derived(detail ? readableErrorText(detail) : "");
 </script>
 
 <section
@@ -69,11 +75,11 @@
       <p class="n-state__eyebrow">{eyebrow}</p>
     {/if}
     <h2 class="n-state__title">{title}</h2>
-    {#if body}
-      <p class="n-state__body">{body}</p>
+    {#if shownBody}
+      <p class="n-state__body">{shownBody}</p>
     {/if}
-    {#if detail}
-      <p class="n-state__detail">{detail}</p>
+    {#if shownDetail}
+      <p class="n-state__detail">{shownDetail}</p>
     {/if}
     {#if actions.length > 0}
       <div class="n-state__actions">
@@ -153,6 +159,45 @@
     width: var(--component-nocturne-state-center-width);
     margin: auto;
     align-items: flex-start;
+  }
+
+  .n-state--open {
+    width: var(--component-nocturne-state-center-width);
+    margin: auto;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    animation: n-state-open-enter var(--motion-duration-slow) var(--motion-easing-emphasized) both;
+  }
+
+  .n-state--open::before {
+    content: none;
+  }
+
+  .n-state--open .n-state__icon {
+    align-self: center;
+    margin-top: 0;
+    background: none;
+    border: none;
+  }
+
+  .n-state--open .n-state__content {
+    align-items: center;
+  }
+
+  .n-state--open .n-state__actions {
+    justify-content: center;
+  }
+
+  @keyframes n-state-open-enter {
+    from { opacity: 0; transform: translateY(var(--sp-2)); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .n-state--open {
+      animation: none;
+    }
   }
 
   .n-state--info {

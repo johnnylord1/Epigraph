@@ -51,6 +51,9 @@
     novelEntries?: PersistedNovelLibraryEntry[];
     novelCardContext?: NovelShelfCardContext;
     onOpenNovel?: (novelId: string) => void;
+    /** True when search, status, genre or shelf filters hide titles that exist. */
+    filtersActive?: boolean;
+    onClearFilters?: () => void;
   };
 
   let {
@@ -71,6 +74,8 @@
       hardcoverRecordByNovelId: new Map(),
     },
     onOpenNovel = () => {},
+    filtersActive = false,
+    onClearFilters,
   }: Props = $props();
 
   const win = getCurrentWindow();
@@ -128,9 +133,10 @@
     return book.subtype.toUpperCase();
   }
 
-  function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean): string {
+  function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean, hasStarted: boolean): string {
     if (!hasLocalAsset) return "Missing file";
-    return isReadFinished ? "Finished" : "Completed";
+    if (isReadFinished) return "Finished";
+    return hasStarted ? "In progress" : "Not started";
   }
 
   const totalCardCount = $derived(books.length + novelEntries.length);
@@ -169,7 +175,7 @@
     const badges = !hasLocalAsset
       ? [{ kind: "status" as const, label: translate("ui_missingFile") }]
       : [];
-    const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0)];
+    const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0)];
     if (!hasLocalAsset) metaChips.push("Metadata only");
 
     return {
@@ -731,10 +737,22 @@
 </script>
 
 <div class="content" class:library-scroll-active={isScrolling} bind:this={contentEl} onscroll={handleContentScroll}>
-  {#if totalCardCount === 0}
-    <div class="center books-empty">
+  {#if totalCardCount === 0 && filtersActive && onClearFilters}
+    <div class="center books-empty" data-library-empty="filtered">
       <NocturneState
-        layout="center"
+        layout="open"
+        tone="info"
+        icon="search"
+        eyebrow={$_("library.eyebrow")}
+        title={$_("library_empty_noMatchesTitle")}
+        body={vm.emptyMessage}
+        actions={[{ label: $_("library_empty_clear"), kind: "primary", onClick: onClearFilters }]}
+      />
+    </div>
+  {:else if totalCardCount === 0}
+    <div class="center books-empty" data-library-empty="shelf">
+      <NocturneState
+        layout="open"
         tone="info"
         icon="books"
         eyebrow={$_("library.eyebrow")}

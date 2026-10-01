@@ -1,5 +1,5 @@
-import { clamp01, normalizeScore, normalizeToken } from "./normalization";
-import { isRecommendationMetadataTag } from "./metadata";
+import { clamp01, normalizeScore } from "./normalization";
+import { isRecommendationMetadataTag, recommendationTagTokens } from "./metadata";
 import type { RecommendationContentType, TasteProfile, TasteProfileSeedItem } from "./types";
 
 const DEFAULT_IMPLICIT_WEIGHT = 0.35;
@@ -16,11 +16,11 @@ export function buildTasteProfile(items: TasteProfileSeedItem[]): TasteProfile {
     addWeight(contentTypeWeights, item.contentType, preference);
     if (item.sourceId) addWeight(sourceWeights, item.sourceId, preference);
 
-    for (const tag of item.tags) {
-      const normalized = normalizeToken(tag);
-      if (!normalized) continue;
-      if (isRecommendationMetadataTag(normalized)) continue;
-      addWeight(tagWeights, normalized, preference);
+    // "Battle / Action" and "Action" on one title are the same taste once.
+    const tokens = new Set(item.tags.flatMap(recommendationTagTokens));
+    for (const token of tokens) {
+      if (isRecommendationMetadataTag(token)) continue;
+      addWeight(tagWeights, token, preference);
     }
   }
 

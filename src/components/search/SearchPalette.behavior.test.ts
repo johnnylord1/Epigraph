@@ -251,6 +251,33 @@ describe("SearchPalette behavior", () => {
     });
   });
 
+  test("leaves Escape to a modal open over the page instead of clearing the engaged search", async () => {
+    originInput();
+    store.searchContext = "library";
+    store.engageSearch();
+    store.setSearchQuery("one piece");
+    render(SearchPalette);
+
+    const modal = document.createElement("div");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    const modalEscape = vi.fn();
+    modal.addEventListener("keydown", modalEscape);
+    document.body.append(modal);
+    try {
+      await fireEvent.keyDown(modal, { key: "Escape" });
+
+      expect(modalEscape).toHaveBeenCalledTimes(1);
+      expect(store.searchEngaged).toBe(true);
+      expect(store.searchQuery).toBe("one piece");
+    } finally {
+      modal.remove();
+    }
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(store.searchEngaged).toBe(false);
+  });
+
   test("keeps the dim when the typed query is erased in the focused input", async () => {
     const origin = originInput();
     store.openSearchPalette("home", "moon");

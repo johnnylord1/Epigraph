@@ -8,20 +8,30 @@ All notable user-facing changes to Epigraph are documented here.
 
 - The manga, novel and book readers can open in their own window from the reader bar, so the app stays usable while reading and several chapters, of the same work or different ones, can be open at once.
 - Books can be imported from a file picker in the books library toolbar, in addition to drag and drop.
-- Reader windows open on the monitor that shows the main window.
+- Reader windows open on the monitor that shows the main window, or at the size and position the last one was left at.
+- FlareSolverr can be started from a novel reader window when its source asks for it.
 - Novel chapters can be downloaded for offline reading from the novel page, with real downloaded counts and a way to delete them; HTML export is its own menu item.
 - Manga, novel and book readers keep their own brightness, zoom and text settings, and Settings → Reader has a section for each.
+- An imported book can be continued as a novel: its page has a "To novel" action that finds it in a novel source, adds the novel to the library and resumes at the chapter that matches the book position, while the book stays in the library.
 
 ### Changed
 
+- Development builds keep their data, browser profile and sync Core apart from an installed release, and the sync Core no longer uses a Suwayomi server that belongs to another data folder.
 - The manga, novel and mass migration windows were redesigned to match the first-run screens: a step bar with icons, a filter and language picker for sources, a match percentage for each result, a side-by-side comparison before moving, and one main action in the footer.
 - Migration windows grow and shrink smoothly with their content, and steps, rows and cards animate in and move into place when a filter changes the list.
+- The mass migration cards no longer sit inside a tinted strip, and their three-dot menu floats over the window instead of making it taller.
+- The sync panel in Settings follows the layout of the other windows, without boxed sections or pills.
+- Bookmarked chapters on manga, novel and book pages show only a bookmark icon next to the chapter title.
+- Home sizes "Continue reading" to the titles in progress, shows real read counts and progress, lists each title once in recent updates with how many more chapters were read, links to all sources and offers to connect a tracker instead of listing every disconnected one.
+- A library search or filter that matches nothing says so and offers to clear it, and books show "In progress" or "Not started" instead of "Completed" while unread.
 
 ### Fixed
 
+- The PDF reader and the translations for languages not in use are no longer loaded while the app starts.
 - Arrow keys, fullscreen and the other manga reader shortcuts work again after clicking the page.
 - A novel chapter can be scrolled with Page Down, the arrow keys and Space as soon as it opens, in the main window or its own window.
 - Space scrolls a long-strip manga chapter without also showing or hiding the reader bar.
+- Entering or leaving fullscreen, or resizing the window, keeps a long-strip manga chapter on the same page, and the page counter stays right.
 - Reopening an EPUB, or moving it to its own window, no longer goes back a page each time.
 - Sync no longer misses changes made between reconnecting and resuming the live stream, or chapter progress mirrored from Suwayomi.
 - Editing books in a second local profile no longer overwrites the main profile's book library.

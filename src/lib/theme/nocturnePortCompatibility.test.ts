@@ -101,9 +101,9 @@ describe("Nocturne port compatibility contract", () => {
     expect(legacy).toEqual(PORT_LEGACY_TOKENS);
     expect(port).not.toMatch(/^\s*--color-info-bg\s*:/m);
     expect(port).not.toMatch(/^\s*--splash-(?:error|ink-muted)\s*:/m);
-    expect(readProjectFile("src/styles/tokens.css")).toContain(
-      "--component-settings-info-bg: var(--color-info-bg);",
-    );
+    // The Settings info notice was never rendered; its token went with it.
+    expect(`${readProjectFile("src/styles/tokens.css")}\n${readProjectFile("src/styles/nocturne-theme.css")}`)
+      .not.toMatch(/^\s*--component-settings-info-bg\s*:/m);
   });
 
   test("retires compatibility aliases while preserving canonical shell geometry", () => {

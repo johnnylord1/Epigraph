@@ -69,7 +69,6 @@
     GET_SOURCES,
     UPDATE_MANGA,
     DELETE_DOWNLOADED_CHAPTERS,
-    DEQUEUE_DOWNLOAD,
     CREATE_CATEGORY,
     DELETE_CATEGORY,
     UPDATE_MANGA_CATEGORIES,
@@ -86,6 +85,7 @@
     setLibrarySection,
     setLibraryMangaSnapshot,
     setSearchNovelLibrarySnapshot,
+    setSearchQuery,
     setLibraryUpdateInFlight,
     bumpLibraryCoverCacheGeneration,
     recordComicsUpdateNotifications,
@@ -114,6 +114,7 @@
   import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte";
   import LibraryToolbar from "../library/LibraryToolbar.svelte";
   import LibraryShell from "../library/LibraryShell.svelte";
+  import LibraryRefreshModal from "../library/LibraryRefreshModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
 
   const DT_TAB = "application/x-epigraph-tab";
@@ -1159,7 +1160,23 @@
     ])),
   );
   const activeGenreChips = $derived(visualLibrarySection === "books" ? booksGenreChips : comicsGenreChips);
-  const hasScrollableGenreChips = $derived(activeGenreChips.length > 4);
+  // Chips are as wide as their label, so whether more genres sit past the edge is measured, not counted.
+  let hasScrollableGenreChips = $state(false);
+
+  function updateGenreOverflow() {
+    const el = genreScrollEl;
+    hasScrollableGenreChips = !!el && el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+  }
+
+  $effect(() => {
+    void activeGenreChips;
+    const el = genreScrollEl;
+    if (!el) return;
+    updateGenreOverflow();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateGenreOverflow);
+    observer?.observe(el);
+    return () => observer?.disconnect();
+  });
   const genreFilteredComicsManga = $derived(
     activeLibraryGenre
       ? (comicsSectionState?.filteredManga ?? []).filter((manga) => genreListMatches(manga.genre, activeLibraryGenre))
@@ -1214,6 +1231,19 @@
       : label;
   }
 
+  // A plain mouse wheel only scrolls vertically, so over the genre row it moves the row sideways;
+  // at either end the wheel goes back to scrolling the page.
+  function handleGenreWheel(event: WheelEvent) {
+    const el = genreScrollEl;
+    if (!el || event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+    const max = el.scrollWidth - el.clientWidth;
+    if (max <= 0) return;
+    const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * el.clientWidth : event.deltaY;
+    if ((delta < 0 && el.scrollLeft <= 0) || (delta > 0 && el.scrollLeft >= max - 1)) return;
+    event.preventDefault();
+    el.scrollLeft = Math.min(max, Math.max(0, el.scrollLeft + delta));
+  }
+
   function handleGenrePointerDown(event: PointerEvent) {
     if (!genreScrollEl) return;
     genreDragActive = true;
@@ -1259,13 +1289,6 @@
   function getGenreButtonLabel(target: EventTarget | null): string | null {
     if (!(target instanceof Element)) return null;
     return target.closest<HTMLButtonElement>("[data-library-genre]")?.dataset.genreLabel ?? null;
-  }
-
-  function genreChipFitClass(label: string): string {
-    const length = label.trim().length;
-    if (length >= 15) return "fit-xs";
-    if (length >= 12) return "fit-sm";
-    return "";
   }
 
   const activeHeroTitle = $derived(visualLibrarySection === "books" ? $_("library.sections.books") : $_("library.sections.comics"));
@@ -1367,6 +1390,27 @@
       if (book) setActiveBookId(book.id);
     },
   }));
+
+  const booksFiltersActive = $derived(
+    Boolean(booksSearch.trim()) || bookStatusFilter !== "all" || Boolean(activeLibraryGenre) || activeBooksStandardFilter !== "saved",
+  );
+  const comicsFiltersActive = $derived(
+    Boolean(comicsSearch.trim()) || tabStatus !== "ALL" || Boolean(activeLibraryGenre),
+  );
+
+  function clearBooksFilters() {
+    activeLibraryGenre = null;
+    activeBooksStandardFilter = "saved";
+    if (store.searchContext === "library") setSearchQuery("");
+    updateBooksLibraryUi({ search: "", statusFilter: "all" });
+  }
+
+  function clearComicsFilters() {
+    activeLibraryGenre = null;
+    if (store.searchContext === "library") setSearchQuery("");
+    comicsSearch = "";
+    setTabStatus("ALL");
+  }
 
   function openNovelCard(novelId: string) {
     const entry = getNovelLibraryEntry(novelsLibraryState, novelId);
@@ -1877,10 +1921,15 @@
       const ids = data.chapters.nodes.filter((chapter) => chapter.isDownloaded).map((chapter) => chapter.id);
       if (!ids.length) return;
       await gql(DELETE_DOWNLOADED_CHAPTERS, { ids });
-      await Promise.allSettled(ids.map((id) => gql(DEQUEUE_DOWNLOAD, { chapterId: id })));
       setLibraryMangaSnapshot(allManga.map((entry) => entry.id === manga.id ? { ...entry, downloadCount: 0 } : entry));
+      addToast({ kind: "info", title: translate("detail_download_deletedTitle"), body: manga.title });
     } catch (deleteError) {
       console.error(deleteError);
+      addToast({
+        kind: "error",
+        title: translate("detail_download_deleteFailed"),
+        body: deleteError instanceof Error ? deleteError.message : String(deleteError),
+      });
     }
   }
 
@@ -2094,20 +2143,20 @@
                       onpointerup={handleGenrePointerUp}
                       onpointercancel={handleGenrePointerUp}
                       onpointerleave={handleGenrePointerUp}
+                      onscroll={updateGenreOverflow}
+                      onwheel={handleGenreWheel}
                     >
                       {#each activeGenreChips as chip}
                         <button
                           type="button"
                           class="n-genre-chip library-genre-chip"
-                          class:fit-sm={genreChipFitClass(chip.label) === "fit-sm"}
-                          class:fit-xs={genreChipFitClass(chip.label) === "fit-xs"}
                           class:is-active={chip.active}
                           data-library-genre
                           data-genre-label={chip.label}
                           title={`${chip.label} (${chip.count})`}
                           onclick={(event) => handleGenreClick(chip.label, event)}
                         >
-                          {chip.label}
+                          <span class="library-genre-chip__label">{chip.label}</span>
                         </button>
                       {/each}
                     </div>
@@ -2182,6 +2231,8 @@
         novelEntries={genreFilteredNovelEntries}
         novelCardContext={novelsShelf.cardContext}
         onOpenNovel={openNovelCard}
+        filtersActive={booksFiltersActive}
+        onClearFilters={clearBooksFilters}
       />
     </div>
 
@@ -2216,53 +2267,18 @@
         onCoverErrorDetected={wakeServerForLibraryCovers}
         coverRecoveryVersions={coverRecoveryVersions}
         coverCacheGeneration={store.libraryCoverCacheGeneration}
+        filtersActive={comicsFiltersActive}
+        onClearFilters={clearComicsFilters}
       />
     </div>
   </LibraryShell>
   {#if refreshDialogOpen}
-    <div class="library-refresh-backdrop" role="presentation" onclick={closeLibraryRefreshDialog}>
-      <div
-        class="library-refresh-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="library-refresh-title"
-        tabindex="-1"
-        onclick={(event) => event.stopPropagation()}
-        onkeydown={(event) => event.stopPropagation()}
-      >
-        <div class="library-refresh-modal__head">
-          <div>
-            <p class="n-eyebrow">{$_("library.refresh.eyebrow")}</p>
-            <h2 id="library-refresh-title">{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</h2>
-          </div>
-          <button class="n-icon-btn library-refresh-modal__close" type="button" aria-label={$_("library.refresh.close")} onclick={closeLibraryRefreshDialog} disabled={manualRefreshInFlight || store.libraryUpdateInFlight}>
-            <span class="material-symbols-outlined" aria-hidden="true">close</span>
-          </button>
-        </div>
-        <div class="library-refresh-options">
-          <button
-            type="button"
-            class="library-refresh-option"
-            disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
-            onclick={() => runLibraryRefresh("active")}
-          >
-            <span>{store.librarySection === "comics" ? $_("library.refresh.updateComics") : $_("library.refresh.updateBooks")}</span>
-            <small>{store.librarySection === "comics" ? $_("library.refresh.updateComicsHint") : $_("library.refresh.updateBooksHint")}</small>
-            <i class="material-symbols-outlined library-refresh-option__arrow" aria-hidden="true">arrow_forward</i>
-          </button>
-          <button
-            type="button"
-            class="library-refresh-option library-refresh-option--primary"
-            disabled={manualRefreshInFlight || store.libraryUpdateInFlight}
-            onclick={() => runLibraryRefresh("all")}
-          >
-            <span>{$_("library.refresh.updateAll")}</span>
-            <small>{$_("library.refresh.updateAllHint")}</small>
-            <i class="material-symbols-outlined library-refresh-option__arrow" aria-hidden="true">arrow_forward</i>
-          </button>
-        </div>
-      </div>
-    </div>
+    <LibraryRefreshModal
+      section={store.librarySection === "comics" ? "comics" : "books"}
+      busy={manualRefreshInFlight || store.libraryUpdateInFlight || refreshDialogBusy !== null}
+      onRun={(target) => void runLibraryRefresh(target)}
+      onClose={closeLibraryRefreshDialog}
+    />
   {/if}
 {/if}
 
@@ -2290,156 +2306,6 @@
     pointer-events: auto;
     overflow: visible;
   }
-
-  .library-refresh-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: var(--component-library-refresh-z-index);
-    display: grid;
-    place-items: center;
-    padding: 24px;
-    background: var(--component-library-refresh-backdrop-bg);
-    backdrop-filter: var(--component-library-refresh-backdrop-blur);
-  }
-
-  .library-refresh-modal {
-    width: min(390px, calc(100vw - 42px));
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    padding: 18px;
-    border: 1px solid var(--component-library-refresh-modal-border);
-    border-radius: var(--component-library-refresh-modal-radius);
-    background: var(--component-library-refresh-modal-bg);
-    box-shadow: var(--component-library-refresh-modal-shadow);
-    color: var(--component-library-fg);
-    font-family: var(--component-library-font);
-    animation: scaleIn 460ms var(--ui-spring) both;
-  }
-
-  .library-refresh-modal__head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  .library-refresh-modal__head h2 {
-    margin: 4px 0 0;
-    color: var(--text-primary);
-    font-family: var(--font-sans);
-    font-size: 1.02rem;
-    font-weight: 800;
-    letter-spacing: 0;
-  }
-
-  .library-refresh-modal__close {
-    width: 32px;
-    height: 32px;
-    flex: 0 0 auto;
-  }
-
-  .library-refresh-modal__close span {
-    color: var(--text-muted);
-    font-size: 18px;
-  }
-
-  .library-refresh-options {
-    display: grid;
-    gap: 8px;
-  }
-
-  .library-refresh-option {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 6px;
-    width: 100%;
-    min-height: 74px;
-    padding: 13px 44px 13px 18px;
-    border: 1px solid var(--component-library-refresh-option-border);
-    border-radius: var(--radius-lg);
-    background: var(--component-library-refresh-option-bg);
-    color: var(--component-library-fg);
-    text-align: left;
-    cursor: pointer;
-    transition: background 250ms ease, transform 450ms var(--ui-spring), box-shadow 250ms ease;
-  }
-
-  .library-refresh-option__arrow {
-    position: absolute;
-    top: 50%;
-    right: 16px;
-    color: var(--text-muted);
-    font-size: 18px;
-    font-style: normal;
-    transform: translate(-4px, -50%);
-    opacity: 0.5;
-    transition: transform 500ms var(--ui-bounce), opacity 250ms ease, color 250ms ease;
-  }
-
-  .library-refresh-option:hover:not(:disabled) .library-refresh-option__arrow {
-    color: var(--accent-fg);
-    opacity: 1;
-    transform: translate(0, -50%);
-  }
-
-  .library-refresh-option:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .library-refresh-option::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 14px;
-    bottom: 14px;
-    width: 2px;
-    border-radius: var(--radius-full);
-    background: var(--component-library-refresh-option-accent-bg);
-    opacity: 0;
-  }
-
-  .library-refresh-option:hover:not(:disabled) {
-    border-color: var(--component-library-refresh-option-hover-border);
-    background: var(--component-library-refresh-option-hover-bg);
-    box-shadow: var(--component-library-refresh-option-hover-shadow);
-    transform: translateY(-1px);
-  }
-
-  .library-refresh-option:disabled {
-    opacity: var(--component-library-disabled-opacity);
-    cursor: default;
-  }
-
-  .library-refresh-option span {
-    font-family: var(--font-sans);
-    font-size: 0.82rem;
-    font-weight: 800;
-    letter-spacing: 0;
-  }
-
-  .library-refresh-option small {
-    max-width: 34rem;
-    color: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: 0.75rem;
-    line-height: 1.45;
-    letter-spacing: 0;
-  }
-
-  .library-refresh-option--primary {
-    border-color: var(--component-library-accent-border);
-    background: var(--component-library-accent-muted-bg);
-  }
-
-  .library-refresh-option--primary::before {
-    background: var(--accent-bright);
-    box-shadow: var(--component-library-refresh-option-accent-shadow);
-    opacity: 0.9;
-  }
-
 
   .library-hero {
     position: relative;
@@ -2540,14 +2406,13 @@
   }
 
   .library-genre-frame {
-    container-type: inline-size;
-    --library-genre-chip-width: clamp(78px, 7.8vw, 92px);
+    --library-genre-frame-width: clamp(260px, 32vw, 440px);
     --library-genre-gap: 8px;
     position: relative;
     align-self: center;
-    flex: 0 1 calc((var(--library-genre-chip-width) * 4) + (var(--library-genre-gap) * 3));
-    width: calc((var(--library-genre-chip-width) * 4) + (var(--library-genre-gap) * 3));
-    max-width: calc((var(--library-genre-chip-width) * 4) + (var(--library-genre-gap) * 3));
+    flex: 0 1 var(--library-genre-frame-width);
+    width: var(--library-genre-frame-width);
+    max-width: var(--library-genre-frame-width);
     min-width: 0;
   }
 
@@ -2591,6 +2456,10 @@
     user-select: none;
   }
 
+  .library-genre-frame.has-overflow .library-genre-scroll {
+    mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+  }
+
   .library-genre-frame.is-dragging .library-genre-scroll {
     cursor: grabbing;
   }
@@ -2600,28 +2469,21 @@
   }
 
   .library-genre-chip {
-    width: var(--library-genre-chip-width);
-    flex: 0 0 var(--library-genre-chip-width);
+    flex: 0 0 auto;
+    max-width: 176px;
     min-height: 27px !important;
-    padding-inline: 7px !important;
-    font-size: clamp(7px, 2.55cqw, 10px) !important;
+    padding-inline: 12px !important;
+    font-size: 11px !important;
     line-height: 1.15 !important;
-    min-width: 0;
     justify-content: center;
-    overflow: hidden;
-    text-overflow: clip;
     white-space: nowrap;
     transition-property: background-color, border-color, color, box-shadow, transform, opacity;
   }
 
-  .library-genre-chip.fit-sm {
-    font-size: clamp(6.5px, 2.15cqw, 8.4px) !important;
-    padding-inline: 6px !important;
-  }
-
-  .library-genre-chip.fit-xs {
-    font-size: clamp(5.7px, 1.86cqw, 7.2px) !important;
-    padding-inline: 5px !important;
+  .library-genre-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .center {
@@ -2645,8 +2507,7 @@
     }
 
     .library-genre-frame {
-      --library-genre-chip-width: clamp(62px, 20vw, 76px);
-      max-width: 100%;
+      --library-genre-frame-width: 100%;
     }
   }
 

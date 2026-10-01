@@ -1,9 +1,17 @@
-import { getLocale, locales, setLocale } from "../../paraglide/runtime.js";
-import { m } from "../../paraglide/messages.js";
+import en from "../../../messages/en.json";
 import { resolveAppLocale } from "./languages";
 
+type Catalog = Record<string, string>;
+
 const FALLBACK_LOCALE = "en";
-const MESSAGE_LOCALES = new Set<string>(locales as readonly string[]);
+// English ships with the app shell; every other catalog is its own chunk, loaded when that language is chosen.
+const CATALOG_LOADERS: Record<string, () => Promise<{ default: Catalog }>> = {
+  "pt-BR": () => import("../../../messages/pt-BR.json"),
+  es: () => import("../../../messages/es.json"),
+  ja: () => import("../../../messages/ja.json"),
+  "zh-CN": () => import("../../../messages/zh-CN.json"),
+};
+const MESSAGE_LOCALES = new Set<string>([FALLBACK_LOCALE, ...Object.keys(CATALOG_LOADERS)]);
 const MESSAGE_LOCALE_BY_LANGUAGE = new Map<string, string>();
 for (const locale of MESSAGE_LOCALES) {
   const language = locale.split("-")[0]?.toLowerCase();
@@ -18,9 +26,19 @@ type TranslateFn = (id: string, options?: TranslateOptions | TranslateValues) =>
 type Subscriber = (translate: TranslateFn) => void;
 
 const subscribers = new Set<Subscriber>();
+const catalogs = new Map<string, Catalog>([[FALLBACK_LOCALE, en]]);
+const pendingCatalogs = new Map<string, Promise<void>>();
+let activeCatalog: Catalog = en;
+let activeMessageLocale = FALLBACK_LOCALE;
+let requestedMessageLocale = FALLBACK_LOCALE;
+let messagesReadyPromise: Promise<void> = Promise.resolve();
 
 function messageKey(id: string) {
   return id.replace(/\./g, "_");
+}
+
+function catalogMessage(catalog: Catalog, key: string): string | undefined {
+  return Object.hasOwn(catalog, key) ? catalog[key] : undefined;
 }
 
 export function resolveMessageLocale(appLocale: string): string {
@@ -32,14 +50,13 @@ export function resolveMessageLocale(appLocale: string): string {
 
 export const translate: TranslateFn = (id, options = {}) => {
   const key = messageKey(id);
-  const message: unknown = Reflect.get(m, key);
-  if (typeof message !== "function") return id;
+  const message = catalogMessage(activeCatalog, key) ?? catalogMessage(en, key);
+  if (message === undefined) return id;
   const nestedValues = "values" in options ? options.values : undefined;
-  const values = nestedValues && typeof nestedValues === "object"
+  const values = (nestedValues && typeof nestedValues === "object"
     ? nestedValues
-    : ("values" in options ? {} : options);
-  const translated: unknown = Reflect.apply(message, undefined, [values]);
-  return typeof translated === "string" ? translated : String(translated);
+    : ("values" in options ? {} : options)) as TranslateValues;
+  return message.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => `${values[name]}`);
 };
 
 export const _ = {
@@ -54,19 +71,62 @@ function notifySubscribers() {
   subscribers.forEach((run) => run(translate));
 }
 
+/** Loads a message catalog without switching to it. */
+export function loadMessageLocale(locale: string): Promise<void> {
+  if (catalogs.has(locale)) return Promise.resolve();
+  const pending = pendingCatalogs.get(locale);
+  if (pending) return pending;
+  const loader = CATALOG_LOADERS[locale];
+  if (!loader) return Promise.resolve();
+  const loading = loader()
+    .then((module) => { catalogs.set(locale, module.default); })
+    .finally(() => pendingCatalogs.delete(locale));
+  pendingCatalogs.set(locale, loading);
+  return loading;
+}
+
+function activateMessageLocale(locale: string) {
+  activeMessageLocale = locale;
+  activeCatalog = catalogs.get(locale) ?? en;
+  if (typeof document !== "undefined") {
+    document.documentElement.dataset.appMessageLocale = activeMessageLocale;
+  }
+  notifySubscribers();
+}
+
+/** Settles once the catalog for the last requested language is in use (or failed and English stayed). */
+export function messagesReady(): Promise<void> {
+  return messagesReadyPromise;
+}
+
 export function applyAppLanguage(language: unknown): string {
   const nextLocale = resolveAppLocale(language);
   const nextMessageLocale = resolveMessageLocale(nextLocale);
-  setLocale(nextMessageLocale as never, { reload: false });
+  requestedMessageLocale = nextMessageLocale;
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = nextLocale;
     document.documentElement.dir = /^(ar|fa|he|ur)(-|$)/i.test(nextLocale) ? "rtl" : "ltr";
     document.documentElement.dataset.appLocale = nextLocale;
-    document.documentElement.dataset.appMessageLocale = getLocale();
   }
 
-  notifySubscribers();
+  if (catalogs.has(nextMessageLocale)) {
+    activateMessageLocale(nextMessageLocale);
+    messagesReadyPromise = Promise.resolve();
+  } else {
+    // Until the catalog arrives the current text stays on screen; a later language choice wins.
+    messagesReadyPromise = loadMessageLocale(nextMessageLocale).then(
+      () => {
+        if (requestedMessageLocale === nextMessageLocale) activateMessageLocale(nextMessageLocale);
+      },
+      (error: unknown) => {
+        console.warn(`Could not load the ${nextMessageLocale} messages; English stays in use.`, error);
+        if (requestedMessageLocale === nextMessageLocale && activeMessageLocale !== FALLBACK_LOCALE) {
+          activateMessageLocale(FALLBACK_LOCALE);
+        }
+      },
+    );
+  }
   return nextLocale;
 }
 

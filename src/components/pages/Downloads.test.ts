@@ -176,8 +176,10 @@ vi.mock("../../store/state.svelte", async () => {
   };
 });
 
+import { invoke } from "@tauri-apps/api/core";
 import Downloads from "./Downloads.svelte";
-import { setPausedDownloads, store } from "../../store/state.svelte";
+import { setNovelDownload, setPausedDownloads, store } from "../../store/state.svelte";
+import { createCatalogProvider } from "../../lib/search/providers";
 
 describe("Downloads", () => {
   beforeEach(() => {
@@ -383,5 +385,123 @@ describe("Downloads", () => {
     await fireEvent.click(screen.getByRole("button", { name: "More download options" }));
     await fireEvent.click(screen.getByRole("menuitem", { name: /Open downloads folder/ }));
     expect(openPathMock).toHaveBeenCalledWith("C:/Downloads");
+  });
+
+  test("measures the downloads folder again once a running download leaves the queue", async () => {
+    const storageReads = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_storage_info").length;
+    const base = gqlMock.getMockImplementation()!;
+    vi.mocked(invoke).mockClear();
+    render(Downloads);
+    await screen.findByText("Chapter 327");
+    await waitFor(() => expect(storageReads()).toBe(1));
+
+    gqlMock.mockImplementation(async (query, variables) => {
+      const result = await base(query, variables);
+      if (String(query).toLowerCase().includes("getdownloadstatus")) {
+        const { downloadStatus } = result as { downloadStatus: DownloadStatus };
+        downloadStatus.queue = downloadStatus.queue.filter((item) => item.chapter.id !== 327);
+      }
+      return result;
+    });
+    try {
+      await waitFor(() => expect(storageReads()).toBe(2), { timeout: 5000 });
+    } finally {
+      gqlMock.mockImplementation(base);
+    }
+  });
+
+  test("measures the downloads folder of the profile that is running", async () => {
+    const previousProfileId = store.runtimeResolvedLocalProfileId;
+    store.runtimeResolvedLocalProfileId = "profile-a";
+    try {
+      render(Downloads);
+      await waitFor(() => {
+        expect(vi.mocked(invoke)).toHaveBeenCalledWith("get_storage_info", { downloadsPath: "C:/Downloads", profileId: "profile-a" });
+      });
+    } finally {
+      store.runtimeResolvedLocalProfileId = previousProfileId;
+    }
+  });
+
+  test("lists a novel being saved for offline reading next to the manga queue, and drops it once saved", async () => {
+    const base = gqlMock.getMockImplementation()!;
+    gqlMock.mockImplementation(async (query: string, variables?: { chapterId?: number; to?: number }) => {
+      if (String(query).toLowerCase().includes("getdownloadstatus")) return { downloadStatus: { state: "STOPPED", queue: [] } };
+      return base(query, variables);
+    });
+    setNovelDownload("novel-1", { novelId: "novel-1", title: "Lord of Mysteries", coverUrl: null, pendingIds: ["c2", "c3"], done: 1, total: 3 });
+    try {
+      const { container } = render(Downloads);
+
+      const row = await waitFor(() => {
+        const found = container.querySelector<HTMLElement>('[data-download-novel-id="novel-1"]');
+        expect(found).toBeTruthy();
+        return found!;
+      });
+      expect(within(row).getByText("Lord of Mysteries")).toBeTruthy();
+      expect(within(row).getByText("Saving 1 / 3")).toBeTruthy();
+      expect(row.querySelector<HTMLElement>(".dl-progress__fill")!.style.width).toBe("33%");
+      expect(container.querySelector(".downloads-empty")).toBeNull();
+
+      setNovelDownload("novel-1", null);
+      await waitFor(() => expect(container.querySelector('[data-download-novel-id="novel-1"]')).toBeNull());
+      expect(container.querySelector(".downloads-empty")).toBeTruthy();
+    } finally {
+      setNovelDownload("novel-1", null);
+      gqlMock.mockImplementation(base);
+    }
+  });
+  test("applies the topbar search and the downloads filter to a novel being saved too", async () => {
+    setNovelDownload("novel-1", { novelId: "novel-1", title: "Lord of Mysteries", coverUrl: null, pendingIds: ["c2", "c3"], done: 1, total: 3 });
+    try {
+      const { container } = render(Downloads);
+      await waitFor(() => expect(screen.getByText("Vagabond")).toBeTruthy());
+      const novelRow = () => container.querySelector('[data-download-novel-id="novel-1"]');
+      expect(novelRow()).toBeTruthy();
+
+      const input = screen.getByPlaceholderText("Search downloads...");
+      await fireEvent.input(input, { target: { value: "vinland" } });
+      expect(novelRow()).toBeNull();
+      expect(screen.getByText("Vinland Saga")).toBeTruthy();
+      await fireEvent.input(input, { target: { value: "mysteries" } });
+      expect(novelRow()).toBeTruthy();
+      expect(screen.queryByText("Vinland Saga")).toBeNull();
+      expect(container.querySelector(".downloads-empty")).toBeNull();
+      await fireEvent.input(input, { target: { value: "nothing like this" } });
+      expect(novelRow()).toBeNull();
+      expect(screen.getByText("No downloads match this search.")).toBeTruthy();
+      await fireEvent.input(input, { target: { value: "" } });
+      store.closeSearchPalette(false);
+
+      await fireEvent.click(screen.getByRole("button", { name: "Filter downloads" }));
+      expect(screen.getByRole("menuitemradio", { name: /All/ }).textContent).toContain("5");
+      expect(screen.getByRole("menuitemradio", { name: /Active/ }).textContent).toContain("2");
+      await fireEvent.click(screen.getByRole("menuitemradio", { name: /Failed/ }));
+      expect(novelRow()).toBeNull();
+      expect(screen.getByText("Berserk")).toBeTruthy();
+
+      await fireEvent.click(screen.getByRole("button", { name: "Filter downloads" }));
+      await fireEvent.click(screen.getByRole("menuitemradio", { name: /Active/ }));
+      expect(novelRow()).toBeTruthy();
+      expect(screen.getByText("Vagabond")).toBeTruthy();
+      expect(screen.queryByText("Berserk")).toBeNull();
+    } finally {
+      setNovelDownload("novel-1", null);
+    }
+  });
+  test("offers a novel being saved in the downloads search palette, pointing at its row", async () => {
+    setNovelDownload("novel-1", { novelId: "novel-1", title: "Lord of Mysteries", coverUrl: null, pendingIds: ["c2", "c3"], done: 1, total: 3 });
+    try {
+      render(Downloads);
+      await waitFor(() => expect(screen.getByText("Vagabond")).toBeTruthy());
+
+      const results = await createCatalogProvider({ downloads: store.searchDownloads })
+        .search({ context: "downloads", query: "mysteries", signal: new AbortController().signal });
+      expect(results.map(({ title, description, action }) => ({ title, description, action }))).toEqual([
+        { title: "Lord of Mysteries", description: "Saving 1 / 3", action: { kind: "download", novelId: "novel-1" } },
+      ]);
+    } finally {
+      setNovelDownload("novel-1", null);
+    }
   });
 });

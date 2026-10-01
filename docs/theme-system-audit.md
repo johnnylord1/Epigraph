@@ -619,15 +619,16 @@ Notas de captura:
 ### Tokens utilizados/criados
 Foram adicionados tokens `--component-library-*` em `src/styles/tokens.css`, com implementacao canonica Nocturne em `src/styles/nocturne-theme.css`:
 
-- base/escala: `--component-library-font`, `--component-library-scale`, `--component-library-topbar-height`;
+- base/escala: `--component-library-scale`, `--component-library-topbar-height`;
 - surfaces/text/borders/status: `--component-library-surface`, `--component-library-surface-raised`, `--component-library-border-dim`, `--component-library-border-strong`, `--component-library-fg`, `--component-library-muted-fg`, `--component-library-faint-fg`, `--component-library-disabled-opacity`, `--component-library-accent-fg`, `--component-library-accent-muted-bg`, `--component-library-accent-border`, `--component-library-danger-*`;
 - cards: `--component-library-card-*`, `--component-library-cover-fallback-bg`;
 - navigation/toolbar/popover: `--component-library-chip-divider-bg`, `--component-library-overflow-indicator-*`, `--component-library-toolbar-divider`, `--component-library-dropdown-z-index`, `--component-library-header-z-index`, `--component-library-panel-*`, `--component-library-control-z-index`, `--component-library-insert-shadow`, `--component-library-popover-*`;
 - density: `--component-library-density-*`;
-- Books/Comics local states: `--component-library-drop-*`, `--component-library-select-*`;
-- refresh dialog: `--component-library-refresh-*`.
+- Books/Comics local states: `--component-library-drop-*`, `--component-library-select-*`.
 
-Classificacao: todos os 94 tokens `--component-library-*` definidos estao Ativos e consumidos por componentes reais da Library. Validacao automatica: 94 definidos, 0 sem consumo.
+O dialogo de atualizacao da Library (`LibraryRefreshModal.svelte`) nao tem tokens proprios: usa a casca compartilhada `migrationModal.css` (`mg-*`, variante `mg-modal--compact` com `--component-migration-compact-width`). Os antigos `--component-library-refresh-*`, `--component-library-font` e as fontes `--color-library-backdrop-source`, `--color-library-modal-deep-source` e `--color-library-modal-raised-source` foram removidos.
+
+Classificacao: todos os 83 tokens `--component-library-*` definidos estao Ativos e consumidos por componentes reais da Library. Validacao automatica: 83 definidos, 0 sem consumo.
 
 ### Cores diretas removidas
 Comando de verificacao:
@@ -1594,7 +1595,7 @@ Comparacao visual: Books Library empty state manteve geometria, surfaces, rail, 
 Classificacao: todos os tokens novos do Marco 17 estao Ativos por consumo direto nas superficies migradas.
 
 Contagem validada automaticamente:
-- `--component-detail-*`: 274 definidos, 274 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
+- `--component-detail-*`: 254 definidos, 254 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
 - `--component-tracking-*`: 116 definidos, 116 consumidos, 0 sem consumo, 0 consumidos sem definicao, 0 ausentes no Nocturne.
 
 Categorias cobertas:
@@ -1605,7 +1606,8 @@ Categorias cobertas:
 ### Cores e efeitos diretos removidos
 - `SeriesDetailV3Shell.svelte`: removidos hex, `rgba(...)`, gradientes, shadows, blur/filter, z-index direto, radius/opacities diretos e consumo direto de `--n-*` no componente.
 - `SeriesDetail.svelte`: menus/dropdowns e link picker migrados para `--component-detail-*`.
-- `NovelDetail.svelte`: download dropdown e link picker migrados para `--component-detail-*`.
+- `NovelDetail.svelte`: link picker migrado para `--component-detail-*`.
+- `DetailDownloadMenu.svelte`: menu de download compartilhado por `SeriesDetail` e `NovelDetail` (mesma superficie dos menus de ordenacao/pastas, `--component-detail-series-v3-root-dl-dropdown-*` e `--component-detail-dl-*`). Os tokens do dropdown antigo sem consumo (`--component-detail-dl-dropdown-{background,border,border-radius,box-shadow,z-index}`, `-dl-state-label-*`, `-dl-section-*`, `-dl-actions-border-top`, `-dl-danger-zone-empty-border-top-color`, `-dl-item-danger-{color,color-3,dl-item-sub-color}`, `-dl-next-btn-border`, `-dl-next-sub-color-2`) e as fontes `--color-detail-dropdown-surface-source` e `--color-settings-input-source` foram removidos.
 - `BookDetail.svelte`: preview frame visual migrado para `--component-detail-*`.
 - `TrackingPanel.svelte` e `NovelTrackingPanel.svelte`: backdrop/modal/tabs/records/search/results migrados para `--component-tracking-*`.
 

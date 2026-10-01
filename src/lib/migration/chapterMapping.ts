@@ -28,7 +28,7 @@ export interface NovelChapterMatch {
   reason: NovelChapterMatchReason;
 }
 
-function normalizeText(value: string | null | undefined): string {
+export function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -53,15 +53,24 @@ function finiteNumberKey(value: number): string | null {
   return Number.isFinite(value) ? String(value) : null;
 }
 
-function extractedChapterNumber(value: string): string | null {
+export function extractedChapterNumber(value: string): string | null {
   const normalized = normalizeText(value);
   const marked = normalized.match(
     /\b(?:chapter|chap|ch|capitulo|cap|episode|ep)\s*(\d+(?:[.,]\d+)?)\b/,
   );
-  const raw = marked?.[1] ?? (/^\d+(?:[.,]\d+)?$/.test(normalized) ? normalized : null);
+  // Royal Road and many EPUB tables of contents label chapters as "12. Title" or "12 - Title".
+  const leading = String(value ?? "").match(/^\s*#?(\d+(?:[.,]\d+)?)\s*[.:)\-–—|]\s*\S/u);
+  const raw = marked?.[1] ?? leading?.[1] ?? (/^\d+(?:[.,]\d+)?$/.test(normalized) ? normalized : null);
   if (!raw) return null;
   const parsed = Number(raw.replace(",", "."));
   return finiteNumberKey(parsed);
+}
+
+// "Chapter Interlude 1 - Crystal Mountain" and "Interlude 1 - Crystal Mountain" name the same
+// chapter; the marker is dropped only when no number follows it, so numbered labels keep it.
+function chapterTitleKey(value: string | null | undefined): string | null {
+  const normalized = normalizeText(value).replace(/^(?:chapter|chap|ch|capitulo|cap|episode|ep)\s+(?=\D)/, "");
+  return normalized || null;
 }
 
 function pairUniqueByKey<TOld, TNew, TReason extends string>(input: {
@@ -284,8 +293,8 @@ export function matchNovelChapters(
     newItems: newChapters,
     oldUsed,
     newUsed,
-    oldKey: (chapter) => normalizeText(chapter.title) || null,
-    newKey: (chapter) => normalizeText(chapter.title) || null,
+    oldKey: (chapter) => chapterTitleKey(chapter.title),
+    newKey: (chapter) => chapterTitleKey(chapter.title),
     reason: "title",
     add,
   });
@@ -294,12 +303,12 @@ export function matchNovelChapters(
   const newTitleGroups = new Map<string, NovelDetailChapter[]>();
   for (const chapter of oldChapters) {
     if (oldUsed.has(chapter)) continue;
-    const key = normalizeText(chapter.title);
+    const key = chapterTitleKey(chapter.title);
     if (key) oldTitleGroups.set(key, [...(oldTitleGroups.get(key) ?? []), chapter]);
   }
   for (const chapter of newChapters) {
     if (newUsed.has(chapter)) continue;
-    const key = normalizeText(chapter.title);
+    const key = chapterTitleKey(chapter.title);
     if (key) newTitleGroups.set(key, [...(newTitleGroups.get(key) ?? []), chapter]);
   }
   for (const [titleKey, oldGroup] of oldTitleGroups) {

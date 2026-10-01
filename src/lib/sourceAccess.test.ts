@@ -40,6 +40,18 @@ describe("source access classification", () => {
     });
   });
 
+  it("classifies Suwayomi-wrapped failures by their cause, not by the wrapper", () => {
+    expect(classifySourceAccessError(
+      "Exception while fetching data (/fetchChapterPages) : Connection refused: getsockopt\r\n\r\njava.io.IOException: Connection refused: getsockopt",
+    )).toMatchObject({ errorType: "network" });
+    expect(classifySourceAccessError("Exception while fetching data (/fetchChapterPages) : HTTP error 404")).toMatchObject({
+      errorType: "unknown",
+    });
+    expect(classifySourceAccessError("Exception while fetching data (/fetchChapterPages) : HTTP 403 Forbidden")).toMatchObject({
+      errorType: "source-error",
+    });
+  });
+
   it.each([
     "java.lang.AbstractMethodError: parse response",
     "JsonDecodingException: missing field",

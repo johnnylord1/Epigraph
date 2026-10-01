@@ -9,6 +9,7 @@ const DETAIL_SURFACE_FILES = [
   "src/components/pages/SeriesDetail.svelte",
   "src/components/pages/NovelDetail.svelte",
   "src/components/pages/BookDetail.svelte",
+  "src/components/shared/DetailDownloadMenu.svelte",
 ] as const;
 
 const TRACKING_SURFACE_FILES = [
@@ -90,8 +91,8 @@ describe("detail surfaces theme tokens", () => {
     const detailMissingNocturne = [...detailConsumed].filter((token) => !detailNocturne.has(token)).sort();
     const trackingMissingNocturne = [...trackingConsumed].filter((token) => !trackingNocturne.has(token)).sort();
 
-    expect(detailDefinitions.size).toBe(274);
-    expect(detailConsumed.size).toBe(274);
+    expect(detailDefinitions.size).toBe(254);
+    expect(detailConsumed.size).toBe(254);
     expect(trackingDefinitions.size).toBe(117);
     expect(trackingConsumed.size).toBe(114);
     expect(detailUnused).toEqual([]);

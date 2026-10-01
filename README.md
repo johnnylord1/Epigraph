@@ -52,6 +52,12 @@ pnpm install
 pnpm tauri:dev
 ```
 
+A development (debug) build keeps its own data in `%LOCALAPPDATA%\Epigraph-dev`
+(or `EPIGRAPH_DEV_DATA_DIR`), with its own WebView profile and sync Core on port
+4787, so it never reads or changes the library of an installed release. Only
+the local Suwayomi ports (4567 and 4667) are shared: close the installed app
+before reading manga in a development build.
+
 Create a production bundle:
 
 ```bash

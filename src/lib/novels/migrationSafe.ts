@@ -37,14 +37,22 @@ export function getNovelMigrationSafetyRecord(
   return baseline;
 }
 
+/**
+ * A source can take part in a migration once its install smoke passed plugin load, search, details
+ * and chapter on this profile. That smoke already runs when a source is installed or updated, so
+ * migration adds no second, fixed allow-list on top of it. Sources with known limitations
+ * (mojibake, weak metadata) stay out: their titles and chapter names would feed the matcher.
+ */
+function isMigrationReady(status: NovelSourceClassificationStatus): boolean {
+  return status === "migration-safe" || status === "working";
+}
+
 export function isNovelSourceMigrationSafe(
   pluginId: string,
   classificationState?: PersistedNovelSourceClassificationState | null,
 ): boolean {
-  if (!classificationState) {
-    return getNovelSourceClassificationBaselineRecord(pluginId)?.status === "migration-safe";
-  }
-  return getNovelMigrationSafetyRecord(pluginId, classificationState)?.status === "migration-safe";
+  const record = getNovelMigrationSafetyRecord(pluginId, classificationState);
+  return Boolean(record && isMigrationReady(record.status));
 }
 
 export function getNovelMigrationBlocker(
@@ -60,7 +68,7 @@ export function getNovelMigrationBlocker(
   if (!record) {
     return "This source has not been classified for migration safety yet.";
   }
-  if (record.status === "migration-safe") {
+  if (isMigrationReady(record.status)) {
     return null;
   }
   return record.notes;
@@ -77,21 +85,8 @@ export function getNovelMigrationBlockerKind(
   if (classificationState && !persisted) return "pending";
   const record = getNovelMigrationSafetyRecord(pluginId, classificationState);
   if (!record) return "unverified";
-  if (record.status === "migration-safe") return null;
+  if (isMigrationReady(record.status)) return null;
   if (record.status === "pending") return "pending";
   if (record.status === "blocked-by-site") return "site";
   return "limited";
-}
-
-export function hasMinimumNovelMigrationSafeCohort(
-  classificationState?: PersistedNovelSourceClassificationState | null,
-): boolean {
-  const records = classificationState
-    ? classificationState.records.filter((entry) => entry.status === "migration-safe").map((entry) => ({
-        lang: entry.lang ?? getNovelSourceClassificationBaselineRecord(entry.pluginId)?.lang ?? "unknown",
-      }))
-    : listNovelSourceClassificationBaseline().filter((entry) => entry.status === "migration-safe");
-  const english = records.filter((entry) => entry.lang === "en").length;
-  const portuguese = records.filter((entry) => entry.lang === "pt").length;
-  return english >= 2 && portuguese >= 1;
 }

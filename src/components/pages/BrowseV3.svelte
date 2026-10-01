@@ -1,7 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { enterView } from "../../lib/motion/motion";
+  import { arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
   import { formatWorkStatus } from "../../lib/i18n/format";
@@ -47,6 +47,7 @@
     buildSearchRecommendations,
     buildTasteProfile,
     dedupeRecommendationItems,
+    inferMangaRecommendationContentType,
     mangaToTasteProfileSeed,
     novelToTasteProfileSeed,
     bookToTasteProfileSeed,
@@ -54,6 +55,7 @@
     novelSourceResultToRecommendationCandidate,
     recommendationTitleKey,
     recommendationTrackerRemoteKey,
+    trackRecordSeedStatus,
     type RecommendationCandidate,
     type RecommendationItem,
     type RecommendationProviderSignal,
@@ -670,7 +672,8 @@
   let searchLibraryManga: Manga[] = $state([]);
   let searchTrackRecordsByMangaId: Map<number, TrackRecord[]> = $state(new Map());
   let searchTrackRecords: TrackRecord[] = $state([]);
-  let searchTrackerSeedItems: TasteProfileSeedItem[] = $state([]);
+  // libraryMangaId: set when the tracked work is in the library, which already seeds the profile.
+  let searchTrackerSeedItems: Array<TasteProfileSeedItem & { libraryMangaId?: number }> = $state([]);
   let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
   let searchSourceSeedResults: Manga[] = $state([]);
   let searchFreshSourceSeedResults: Manga[] = $state([]);
@@ -1234,7 +1237,7 @@
       const byMangaId = new Map<number, TrackRecord[]>();
       const candidateByMangaId = new Map<number, RecommendationCandidate>();
       const allRecords: TrackRecord[] = [];
-      const trackerSeeds: TasteProfileSeedItem[] = [];
+      const trackerSeeds: Array<TasteProfileSeedItem & { libraryMangaId?: number }> = [];
       for (const tracker of data.trackers.nodes ?? []) {
         for (const record of tracker.trackRecords?.nodes ?? []) {
           const normalizedRecord: TrackRecord = {
@@ -1247,7 +1250,10 @@
             finishDate: record.finishDate ?? null,
           };
           allRecords.push(normalizedRecord);
-          trackerSeeds.push(trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker));
+          trackerSeeds.push({
+            ...trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker),
+            libraryMangaId: record.manga?.inLibrary ? record.manga.id : undefined,
+          });
 
           const mangaId = record.manga?.id;
           if (typeof mangaId !== "number") continue;
@@ -1920,6 +1926,12 @@
       || searchHardcoverDiscoveryResults.length > 0,
   );
 
+  function searchTrackerSeedsOutsideLibrary(): TasteProfileSeedItem[] {
+    const libraryIds = new Set(searchLibraryManga.map((manga) => manga.id));
+    return searchTrackerSeedItems
+      .filter((seed) => seed.libraryMangaId === undefined || !libraryIds.has(seed.libraryMangaId));
+  }
+
   const searchRecommendationResult = $derived.by(() => {
     if (activeContentType === "novels") {
       return buildSearchRecommendations({
@@ -1949,7 +1961,7 @@
       extraCandidates: searchHasLiveMangaRecommendationData
         ? [...searchTrackerRecordCandidates, ...searchFreshSourceMangaCandidates]
         : [],
-      extraSeeds: searchHasLiveMangaRecommendationData ? searchTrackerSeedItems : [],
+      extraSeeds: searchHasLiveMangaRecommendationData ? searchTrackerSeedsOutsideLibrary() : [],
     }, {
       includeInLibrary: searchIncludeLibrary,
       knownTitleKeys: searchKnownTitleKeys,
@@ -2316,100 +2328,11 @@
       userRating: record.score > 0 ? record.score : null,
       userRatingMax: record.score > 10 ? 100 : 10,
       implicitWeight: record.score > 0 ? null : 0.42,
-      status: trackRecordSeedStatus(record),
+      status: trackRecordSeedStatus(
+        record,
+        tracker.statuses?.find((status) => status.value === record.status)?.name,
+      ),
     };
-  }
-
-  function trackRecordSeedStatus(record: TrackRecord): TasteProfileSeedItem["status"] {
-    if (record.finishDate || (record.totalChapters > 0 && record.lastChapterRead >= record.totalChapters)) return "completed";
-    if (record.lastChapterRead > 0) return "reading";
-    if (record.status < 0) return "dropped";
-    return "planning";
-  }
-
-  function inferMangaRecommendationContentType(
-    manga: Manga | null | undefined,
-    fallbackTitle = "",
-  ): RecommendationCandidate["contentType"] {
-    const sourceName = (manga?.source?.displayName || manga?.source?.name || "").toLowerCase();
-    const haystack = [
-      fallbackTitle,
-      manga?.title,
-      manga?.description ?? "",
-      ...(manga?.genre ?? []),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-
-    // Dedicated manhwa/manhua sources
-    if (
-      sourceName.includes("asura")
-      || sourceName.includes("flame")
-      || sourceName.includes("reaper")
-      || sourceName.includes("void scans")
-    ) {
-      return "manhwa";
-    }
-
-    if (
-      haystack.includes("manhwa")
-      || haystack.includes("korean")
-      || haystack.includes("webtoon")
-      || haystack.includes("regression")
-      || haystack.includes("murim")
-      || haystack.includes("necromancer")
-      || haystack.includes("dungeon")
-      || haystack.includes("system")
-      || haystack.includes("level up")
-      || haystack.includes("hunter")
-      || haystack.includes("tower")
-      || haystack.includes("gate")
-      || haystack.includes("ranker")
-      || haystack.includes("player")
-      || haystack.includes("constellation")
-    ) return "manhwa";
-
-    if (
-      haystack.includes("manhua")
-      || haystack.includes("chinese")
-      || haystack.includes("cultivation")
-      || haystack.includes("wuxia")
-      || haystack.includes("xianxia")
-      || haystack.includes("xuanhuan")
-    ) return "manhua";
-
-    // Fallback to source language if available and source is not a general aggregator
-    const isAggregator = sourceName.includes("mangakakalot")
-      || sourceName.includes("manganato")
-      || sourceName.includes("mangadex")
-      || sourceName.includes("mangalife");
-    if (!isAggregator) {
-      const sourceLangType = inferComicTypeFromLanguage(manga?.source?.lang);
-      if (sourceLangType) return sourceLangType;
-    }
-
-    return "manga";
-  }
-
-  function inferComicTypeFromLanguage(language: string | null | undefined): RecommendationCandidate["contentType"] | null {
-    const normalized = language?.trim().toLowerCase().replace("_", "-") ?? "";
-    if (!normalized) return null;
-    if (normalized === "kr" || normalized === "ko" || normalized.startsWith("ko-") || normalized.includes("korean")) {
-      return "manhwa";
-    }
-    if (
-      normalized === "cn"
-      || normalized === "zh"
-      || normalized.startsWith("zh-")
-      || normalized.includes("chinese")
-    ) {
-      return "manhua";
-    }
-    if (normalized === "jp" || normalized === "ja" || normalized.startsWith("ja-") || normalized.includes("japanese")) {
-      return "manga";
-    }
-    return null;
   }
 
   function withMangaSourceMetadata(mangas: Manga[], source: Source | BrowseSourceEntry): Manga[] {
@@ -2577,6 +2500,50 @@
 
   function hasSearchCover(candidate: RecommendationCandidate) {
     return Boolean(candidate.coverUrl?.trim()) && !failedSearchCoverKeys.has(searchCoverKey(candidate));
+  }
+
+  const SEARCH_SKELETON_SECTION_COUNT = 3;
+  const SEARCH_SKELETON_CARD_COUNT = 8;
+  const SEARCH_LOADING_MORE_CARD_COUNT = 3;
+  const SEARCH_CARD_STAGGER_BATCH = 8;
+  const SEARCH_CARD_STAGGER_MS = 40;
+  // Sections that replace the loading skeleton rise in; a later mount (tab switch) is left to enterView.
+  const SEARCH_SKELETON_HANDOFF_MS = 400;
+  let searchSkeletonHiddenAt = Number.NEGATIVE_INFINITY;
+
+  function trackSearchSkeleton(_node: HTMLElement) {
+    return {
+      destroy() {
+        searchSkeletonHiddenAt = performance.now();
+      },
+    };
+  }
+
+  function arriveAfterSearchSkeleton(node: HTMLElement, index: number) {
+    if (performance.now() - searchSkeletonHiddenAt > SEARCH_SKELETON_HANDOFF_MS) return;
+    playEnter(node, { y: 16, blur: 6, duration: 760, delay: index * 80, scale: 0.99 });
+  }
+
+  /** The cover stays transparent over its shimmer until the image has decoded. */
+  function revealSearchCover(node: HTMLImageElement) {
+    const reveal = () => node.setAttribute("data-cover-state", "ready");
+    if (node.complete && node.naturalWidth > 0) {
+      reveal();
+      return;
+    }
+    node.addEventListener("load", reveal);
+    node.addEventListener("error", reveal);
+    return {
+      destroy() {
+        node.removeEventListener("load", reveal);
+        node.removeEventListener("error", reveal);
+      },
+    };
+  }
+
+  function isSearchSectionLoadingMore(sectionKey: string) {
+    return searchRecommendationMoreLoadingKeys.has(searchRecommendationMoreKey(sectionKey))
+      || (sectionKey === "trendingNearYourTaste" && activeContentType === "manga" && searchTrackerTrendingLoading);
   }
 
   function markSearchCoverFailed(candidate: RecommendationCandidate) {
@@ -5316,14 +5283,27 @@
           </div>
 
           {#if searchRecommendationHydrating}
-            <NocturneState
-              layout="compact"
-              tone="info"
-              icon="retry"
-              eyebrow={$_("browse.search.statusEyebrow")}
-              title={$_("browse.search.preparingRecommendations")}
-              body={searchHeroStatusText}
-            />
+            <div class="searchRecommendationSkeleton" role="status" use:trackSearchSkeleton>
+              <span class="searchSrOnly">{$_("browse.search.preparingRecommendations")}</span>
+              {#each Array(SEARCH_SKELETON_SECTION_COUNT) as _, sectionIndex (sectionIndex)}
+                <div class="searchRecommendationSection" aria-hidden="true">
+                  <div class="searchRecommendationHeader">
+                    <div class="searchSkeletonHeading">
+                      <div class="skeleton searchSkeletonTitle"></div>
+                      <div class="skeleton searchSkeletonReason"></div>
+                    </div>
+                  </div>
+                  <div class="searchRecommendationRow searchSkeletonRow">
+                    {#each Array(SEARCH_SKELETON_CARD_COUNT) as _, cardIndex (cardIndex)}
+                      <div class="skCard" style:--sk-index={cardIndex}>
+                        <div class="skeleton skCover"></div>
+                        <div class="skeleton skTitle"></div>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            </div>
           {:else if searchEmptyStateMessage}
             {#if setupState && setupState.kind !== "ready"}
               <div class="setup-banner">
@@ -5346,8 +5326,8 @@
               />
             {/if}
           {:else}
-            {#each searchRecommendationSections as section (section.key)}
-              <section class="searchRecommendationSection">
+            {#each searchRecommendationSections as section, sectionIndex (section.key)}
+              <section class="searchRecommendationSection" use:arriveAfterSearchSkeleton={sectionIndex}>
                 <div class="searchRecommendationHeader">
                   <div>
                     <span class="searchSectionIcon material-symbols-outlined" aria-hidden="true">
@@ -5368,22 +5348,32 @@
                   {/if}
                 </div>
                 {#if section.items.length > 0}
-                  <div class="searchRecommendationRow" data-search-row={section.key} onscroll={(event) => handleSearchRailScroll(section.key, event)}>
-                    {#each section.items as item (item.candidate.id)}
+                  <div
+                    class="searchRecommendationRow"
+                    data-search-row={section.key}
+                    aria-busy={isSearchSectionLoadingMore(section.key)}
+                    onscroll={(event) => handleSearchRailScroll(section.key, event)}
+                    in:arrive={{ y: 10 }}
+                  >
+                    {#each section.items as item, itemIndex (item.candidate.id)}
                       {@const bannerInfo = getRecommendationBannerInfo(item)}
                       <button
                         class="n-library-card"
                         onclick={() => openSearchRecommendation(item)}
+                        in:arrive={{ y: 10, delay: (itemIndex % SEARCH_CARD_STAGGER_BATCH) * SEARCH_CARD_STAGGER_MS }}
                       >
                         <div class="card-cover-container searchRecommendationCard">
                           <div class="n-library-card__cover">
                             {#if hasSearchCover(item.candidate)}
+                              <span class="skeleton searchCoverSkeleton" aria-hidden="true"></span>
                               <img
                                 src={resolveMangaCoverUrl(item.candidate.coverUrl, { context: "browse", persistence: "memory" })}
                                 alt={item.candidate.title}
                                 loading="lazy"
                                 decoding="async"
                                 fetchpriority="low"
+                                data-cover-state="loading"
+                                use:revealSearchCover
                                 onerror={() => markSearchCoverFailed(item.candidate)}
                               />
                             {:else}
@@ -5457,6 +5447,14 @@
                         </div>
                       </button>
                     {/each}
+                    {#if isSearchSectionLoadingMore(section.key)}
+                      {#each Array(SEARCH_LOADING_MORE_CARD_COUNT) as _, cardIndex (cardIndex)}
+                        <div class="skCard" aria-hidden="true" style:--sk-index={cardIndex}>
+                          <div class="skeleton skCover"></div>
+                          <div class="skeleton skTitle"></div>
+                        </div>
+                      {/each}
+                    {/if}
                   </div>
                 {:else}
                   <NocturneState
@@ -7041,13 +7039,78 @@
     width: var(--component-browse-skcard-width);
   }
   .tagGrid .skCard { width: 100%; }
-  .skeleton { border-radius: var(--radius-sm); }
+  .skeleton {
+    border-radius: var(--radius-sm);
+    animation: shimmer 1.6s ease-in-out infinite;
+    animation-delay: calc(var(--sk-index, 0) * 90ms);
+  }
   .skCover {
     aspect-ratio: 2 / 3;
     width: 100%;
     border-radius: var(--radius-md);
   }
   .skTitle { height: 10px; width: 80%; }
+  .searchRecommendationRow .skCard {
+    flex: var(--component-browse-searchrecommendationrow-n-library-card-flex);
+    width: var(--component-browse-searchrecommendationrow-n-library-card-width);
+    scroll-snap-align: start;
+  }
+  .searchRecommendationRow .skCover {
+    aspect-ratio: var(--component-browse-searchrecommendationrow-n-library-card-cover-aspect-ratio);
+  }
+  .searchRecommendationSkeleton,
+  .searchRecommendationRow .skCard,
+  .n-library-card__cover > .searchCoverSkeleton {
+    /* Light themes give raised and overlay the same white; sweep toward subtle so the shimmer shows. */
+    --bg-overlay: var(--bg-subtle);
+  }
+  .searchRecommendationSkeleton {
+    display: flex;
+    flex-direction: column;
+    gap: var(--component-browse-searchmaincolumn-gap);
+  }
+  .searchSkeletonRow {
+    overflow: hidden;
+  }
+  .searchRecommendationHeader > .searchSkeletonHeading {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-2);
+    width: 100%;
+  }
+  .searchSkeletonTitle { height: 14px; width: 180px; max-width: 60%; }
+  .searchSkeletonReason { height: 10px; width: 280px; max-width: 80%; }
+  .searchSrOnly {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .n-library-card__cover > .searchCoverSkeleton {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    animation: none;
+  }
+  .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+  .searchRecommendationCard .n-library-card__cover img {
+    position: relative;
+    transition: opacity 320ms ease, filter 160ms ease, transform 160ms ease;
+  }
+  .searchRecommendationCard .n-library-card__cover img[data-cover-state="loading"] {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton,
+    .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
+      animation: none;
+    }
+  }
   .splitRoot {
     flex: 1;
     display: flex;

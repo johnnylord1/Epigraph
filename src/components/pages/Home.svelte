@@ -36,6 +36,8 @@
     openSearchPalette,
     setSearchQuery,
     updateSettings,
+    setSettingsOpen,
+    setRuntimeSettingsTab,
   } from "../../store/state.svelte";
   import type { HistoryEntry, LibrarySortDir, LibrarySortMode } from "../../store/state.svelte";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
@@ -490,16 +492,16 @@
 
   const continueCards = $derived((() => {
     const mangaCards = continueReading
-      .map((entry, index) => {
+      .map((entry) => {
         const manga = libraryManga.find((candidate) => candidate.id === entry.mangaId) ?? null;
         if (!manga) return null;
         const metric = extractMetricValue(entry, manga, "");
         return {
           kind: "manga" as const,
           ts: entry.readAt,
-          eyebrow: index === 0 ? translate("ui_inProgress") : index === 1 ? translate("home_continue_resume") : translate("library_error_eyebrow"),
+          eyebrow: translate("ui_inProgress"),
           title: entry.mangaTitle,
-          subtitle: manga.author ?? "",
+          subtitle: entry.chapterName || (manga.author ?? ""),
           metricValue: metric.value,
           metricLabel: metric.label,
           coverUrl: resolveMangaCoverUrl(entry.thumbnailUrl, {
@@ -507,7 +509,7 @@
             persistence: "persistent",
             cacheGeneration: store.libraryCoverCacheGeneration,
           }),
-          progressPct: manga.chapterCount ? Math.min(92, Math.max(10, Math.round((Number(metric.value || 0) / Math.max(manga.chapterCount, 1)) * 100))) : 0,
+          progressPct: metric.percent,
           entry,
           manga,
           book: null,
@@ -530,7 +532,7 @@
           metricValue: presented.progressValueLabel,
           metricLabel: presented.progressTotalLabel,
           coverUrl: presented.coverSrc ?? "",
-          progressPct: Math.max(10, Math.round(presented.readPercent * 100)),
+          progressPct: Math.round(presented.readPercent * 100),
           entry: null,
           manga: null,
           book,
@@ -557,6 +559,7 @@
         book: null;
         progress: null;
         entry: HistoryEntry | null;
+        extraCount: number;
       }
     | {
         kind: "book";
@@ -569,10 +572,18 @@
         book: BookEntry;
         progress: BookProgress;
         entry: null;
+        extraCount: number;
       };
 
   const recentUpdates = $derived((() => {
-    const mangaRows = store.history.slice(0, 4).map((real) => ({
+    // One row per title: the newest chapter, plus how many other chapters of it were read.
+    const latestByManga = new Map<HistoryEntry["mangaId"], { entry: HistoryEntry; count: number }>();
+    for (const real of store.history) {
+      const seen = latestByManga.get(real.mangaId);
+      if (seen) seen.count += 1;
+      else latestByManga.set(real.mangaId, { entry: real, count: 1 });
+    }
+    const mangaRows = [...latestByManga.values()].slice(0, 4).map(({ entry: real, count }) => ({
       kind: "manga" as const,
       ts: real.readAt,
       title: real.mangaTitle,
@@ -587,6 +598,7 @@
       book: null,
       progress: null,
       entry: real,
+      extraCount: count - 1,
     } satisfies HomeRecentUpdateRow));
 
     const bookRows = libraryBooks
@@ -605,6 +617,7 @@
           book,
           progress: progress ?? null,
           entry: null,
+          extraCount: 0,
         } satisfies HomeRecentUpdateRow;
       })
       .filter((item): item is Extract<HomeRecentUpdateRow, { kind: "book" }> => Boolean(item));
@@ -688,10 +701,19 @@
     }));
   })());
 
-  function extractMetricValue(entry: HistoryEntry, manga: Manga | null, fallback: string): { value: string; label: string } {
+  // Read chapters out of the chapters the library knows about; without a total, show the chapter number alone.
+  function extractMetricValue(entry: HistoryEntry, manga: Manga | null, fallback: string): { value: string; label: string; percent: number } {
+    const total = manga?.chapterCount ?? 0;
+    if (total > 0) {
+      const read = Math.min(total, Math.max(0, total - (manga?.unreadCount ?? 0)));
+      return {
+        value: String(read),
+        label: translate("library.card.ofChapters", { count: total }),
+        percent: Math.round((read / total) * 100),
+      };
+    }
     const numeric = entry.chapterName.match(/(\d+(?:\.\d+)?)/)?.[1] ?? fallback;
-    const total = manga?.chapterCount ? translate("library.card.ofChapters", { count: manga.chapterCount }) : "";
-    return { value: numeric, label: total };
+    return { value: numeric, label: "", percent: 0 };
   }
 
   type HomeFinishedRow =
@@ -702,7 +724,7 @@
     const mangaRows = completedManga.map((real) => ({
       kind: "manga" as const,
       title: real.title,
-      subtitle: translate("home.chapterCount", { count: real.chapterCount ?? 0 }),
+      subtitle: real.chapterCount === 1 ? translate("preview_chapterCountOne") : translate("home.chapterCount", { count: real.chapterCount ?? 0 }),
       meta: translate("home.done"),
       coverUrl: resolveMangaCoverUrl(real, {
         context: "home",
@@ -795,6 +817,12 @@
     });
     return trackedMangaIds.size + nativeKeys.length;
   });
+  const connectedTrackers = $derived(displayTrackers.filter((tracker) => tracker.isLoggedIn));
+
+  function openTrackingSettings() {
+    setSettingsOpen(true);
+    setRuntimeSettingsTab("tracking");
+  }
 
   const activeDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "DOWNLOADING").length);
   const queuedDownloadCount = $derived(store.activeDownloads.filter((item) => item.state === "QUEUED").length);
@@ -803,6 +831,9 @@
     const count = setupState && "usableSourceCount" in setupState ? setupState.usableSourceCount : null;
     return count ?? visibleHomeSources.length;
   });
+  const hiddenHomeSourceCount = $derived(
+    Math.max(dedupeSources(homeSources, store.settings.preferredExtensionLang || "en").length, sourceReadyCount) - visibleHomeSources.length,
+  );
   const browseSourcesSummary = $derived(
     sourceReadyCount > 0
       ? $_("home.quick.sourcesReady", { values: { count: sourceReadyCount } })
@@ -982,27 +1013,27 @@
               </button>
             </div>
           {:else}
-          <div class="home-continue-grid">
+          <div class="home-continue-grid" data-count={continueDisplayCards.length}>
             {#each continueDisplayCards as item, index (index)}
               <article class="home-card home-continue-card" data-enter>
-                {#if item.coverUrl && (item.manga || item.book)}
-                  <button
-                    class="home-continue-card__cover"
-                    type="button"
-                    onclick={() => openContinueItem(item)}
-                  >
+                <button
+                  class="home-continue-card__cover"
+                  class:home-continue-card__cover--blank={!item.coverUrl}
+                  type="button"
+                  aria-label={item.coverUrl ? undefined : item.title}
+                  onclick={() => openContinueItem(item)}
+                >
+                  {#if item.coverUrl}
                     <img src={item.coverUrl} alt={`${item.title} cover`} loading="lazy" decoding="async" />
-                    <div class="home-continue-card__progress-track">
-                      <div class="home-continue-card__progress-fill" style={`width:${item.progressPct}%;`}></div>
-                    </div>
-                  </button>
-                {:else}
-                  <div class="home-continue-card__cover home-continue-card__cover--blank" aria-hidden="true">
-                    <div class="home-continue-card__progress-track">
-                      <div class="home-continue-card__progress-fill" style="width:0%;"></div>
-                    </div>
+                  {:else}
+                    <span class="material-symbols-outlined home-continue-card__cover-icon" aria-hidden="true">
+                      {item.kind === "book" ? "menu_book" : "auto_stories"}
+                    </span>
+                  {/if}
+                  <div class="home-continue-card__progress-track">
+                    <div class="home-continue-card__progress-fill" style={`width:${item.progressPct}%;`}></div>
                   </div>
-                {/if}
+                </button>
                 <div class="home-continue-card__body">
                   <div class="home-continue-card__copy">
                     <span class="home-card__eyebrow">{item.eyebrow}</span>
@@ -1077,10 +1108,19 @@
                     type="button"
                     onclick={() => openRecentItem(row)}
                   >
-                    <img class="home-update-row__thumb" src={row.coverUrl} alt={row.title} loading="lazy" decoding="async" />
+                    {#if row.coverUrl}
+                      <img class="home-update-row__thumb" src={row.coverUrl} alt={row.title} loading="lazy" decoding="async" />
+                    {:else}
+                      <span class="home-thumb--blank material-symbols-outlined" aria-hidden="true">{row.kind === "book" ? "menu_book" : "auto_stories"}</span>
+                    {/if}
                     <div class="home-update-row__copy">
                       <strong>{row.title}</strong>
-                      <span>{row.subtitle}</span>
+                      <span>
+                        {row.subtitle}
+                        {#if row.extraCount > 0}
+                          <em class="home-update-row__more">{$_("home.updates.moreChapters", { values: { count: row.extraCount } })}</em>
+                        {/if}
+                      </span>
                     </div>
                     <small>{row.meta}</small>
                   </button>
@@ -1140,7 +1180,11 @@
                     type="button"
                     onclick={() => openFinishedItem(row)}
                   >
-                    <img src={row.coverUrl} alt={row.title} loading="lazy" decoding="async" />
+                    {#if row.coverUrl}
+                      <img src={row.coverUrl} alt={row.title} loading="lazy" decoding="async" />
+                    {:else}
+                      <span class="home-thumb--blank material-symbols-outlined" aria-hidden="true">{row.kind === "book" ? "menu_book" : "auto_stories"}</span>
+                    {/if}
                     <div class="home-finished-row__copy">
                       <strong>{row.title}</strong>
                         <span>{row.subtitle}</span>
@@ -1168,7 +1212,6 @@
                   <span>{$_("home.metrics.completeCount", { values: { count: archiveFinishedCount } })}</span>
                   <small>{archiveCompletionRatio}%</small>
                 </div>
-                <span class="home-side-card__storage-label">{$_("downloads.summary.storage")}</span>
                 <div class="home-side-card__progress-track">
                   <div class="home-side-card__progress-fill" style={`width:${archiveCompletionRatio}%;`}></div>
                 </div>
@@ -1186,7 +1229,14 @@
             </section>
 
             <section class="home-card home-side-card">
-              <h3 class="home-side-card__title">{$_("home.sections.sources")}</h3>
+              <div class="home-side-card__head">
+                <h3 class="home-side-card__title">{$_("home.sections.sources")}</h3>
+                {#if hiddenHomeSourceCount > 0}
+                  <button class="home-link-btn" type="button" onclick={() => openSearchSources("browse")}>
+                    {$_("home.sources.viewAll")}
+                  </button>
+                {/if}
+              </div>
               {#if visibleHomeSources.length > 0}
                 <ul class="home-source-list">
                   {#each visibleHomeSources as item (item.source.id)}
@@ -1204,14 +1254,12 @@
 
             <section class="home-card home-side-card">
               <h3 class="home-side-card__title">{$_("home.sections.tracking")}</h3>
-              {#if displayTrackers.length > 0}
+              {#if connectedTrackers.length > 0}
                 <ul class="home-tracking-list">
-                  {#each displayTrackers as tracker (tracker.id)}
+                  {#each connectedTrackers as tracker (tracker.id)}
                     <li>
                       <span>{tracker.name}</span>
-                      <small class:is-synced={tracker.isLoggedIn} class:is-muted={!tracker.isLoggedIn}>
-                        {tracker.isLoggedIn ? $_("home.tracking.connected") : $_("home.tracking.notConnected")}
-                      </small>
+                      <small class="is-synced">{$_("home.tracking.connected")}</small>
                     </li>
                   {/each}
                   {#if trackedTitleCount > 0}
@@ -1221,6 +1269,14 @@
                     </li>
                   {/if}
                 </ul>
+              {:else if displayTrackers.length > 0}
+                <div class="home-side-card__cta">
+                  <p>{$_("home.tracking.emptyBody")}</p>
+                  <button class="n-btn n-btn-ghost n-btn--sm" type="button" onclick={openTrackingSettings}>
+                    {$_("home.tracking.connect")}
+                    <span class="material-symbols-outlined home-empty__arrow" aria-hidden="true">arrow_forward</span>
+                  </button>
+                </div>
               {:else}
                 <div class="home-side-card__blank"></div>
               {/if}
@@ -1245,7 +1301,13 @@
   }
 
   .home-continue-card__cover--blank {
-    cursor: default;
+    display: grid;
+    place-items: center;
+    color: var(--component-home-quiet-fg);
+  }
+
+  .home-continue-card__cover-icon {
+    font-size: calc(34px * var(--component-home-scale));
   }
 
   .body {
@@ -1337,6 +1399,18 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: calc(24px * var(--component-home-scale));
+  }
+
+  /* Fewer than three titles in progress: size the cards to what exists instead of leaving empty columns. */
+  .home-continue-grid[data-count="1"] {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: calc(560px * var(--component-home-scale));
+  }
+
+  @media (min-width: 1181px) {
+    .home-continue-grid[data-count="2"] {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   .home-continue-card {
@@ -1636,6 +1710,25 @@
     text-overflow: ellipsis;
   }
 
+  .home-thumb--blank {
+    display: grid;
+    place-items: center;
+    width: calc(40px * var(--component-home-scale));
+    height: calc(56px * var(--component-home-scale));
+    border-radius: var(--component-home-thumb-radius);
+    background: var(--component-home-cover-bg);
+    color: var(--component-home-quiet-fg);
+    font-size: calc(20px * var(--component-home-scale));
+    flex-shrink: 0;
+  }
+
+  .home-update-row__more {
+    margin-left: calc(6px * var(--component-home-scale));
+    color: var(--component-home-accent-fg);
+    font-style: normal;
+    font-weight: 700;
+  }
+
   .home-update-row small {
     color: var(--component-home-faint-fg);
     font-size: calc(11px * var(--component-home-scale));
@@ -1789,16 +1882,6 @@
     background: var(--component-home-progress-fill-bg);
   }
 
-  .home-side-card__storage-label {
-    display: block;
-    margin: 0 0 calc(8px * var(--component-home-scale));
-    color: var(--component-home-label-fg);
-    font-size: calc(11px * var(--component-home-scale));
-    font-weight: 800;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
   .home-source-list,
   .home-tracking-list {
     margin: 0;
@@ -1838,10 +1921,6 @@
     font-weight: 800;
     letter-spacing: 0;
     text-transform: none;
-  }
-
-  .home-tracking-list .is-muted {
-    color: var(--component-home-tracking-muted-fg);
   }
 
   /* Nothing to continue yet: one calm line with a way forward instead of empty cards. */
@@ -1898,6 +1977,31 @@
 
   .home-side-card__blank {
     min-height: calc(88px * var(--component-home-scale));
+  }
+
+  .home-side-card__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(12px * var(--component-home-scale));
+  }
+
+  .home-side-card__head .home-link-btn {
+    min-height: 0;
+    padding: 0;
+  }
+
+  .home-side-card__cta {
+    display: grid;
+    justify-items: start;
+    gap: calc(12px * var(--component-home-scale));
+  }
+
+  .home-side-card__cta p {
+    margin: 0;
+    color: var(--component-home-tracking-muted-fg);
+    font-size: calc(12.5px * var(--component-home-scale));
+    line-height: 1.45;
   }
 
   .home-resume-btn .material-symbols-outlined {

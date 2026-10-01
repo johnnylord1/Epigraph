@@ -316,4 +316,18 @@ describe("Settings (browser)", () => {
     renderSettings("about");
     await expectSettingsScreenshot("settings-advanced-about", "About");
   });
+
+  test("fits the theme preview covers inside the preview strip", () => {
+    renderSettings("appearance");
+    const preview = document.querySelector<HTMLElement>(".settings-theme-preview")!.getBoundingClientRect();
+    const tiles = [...document.querySelectorAll<HTMLElement>(".settings-theme-preview__tile")];
+
+    expect(tiles).toHaveLength(6);
+    for (const tile of tiles) {
+      const box = tile.getBoundingClientRect();
+      expect(box.top).toBeGreaterThanOrEqual(preview.top);
+      expect(box.bottom).toBeLessThanOrEqual(preview.bottom);
+      expect(box.height).toBeGreaterThan(box.width);
+    }
+  });
 });

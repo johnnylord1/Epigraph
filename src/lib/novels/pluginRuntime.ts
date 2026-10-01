@@ -951,6 +951,8 @@ function createRequireShim(storageShim: NovelRuntimeStorageShape) {
     }],
     ["@libs/filterInputs", filterInputs],
     ["@libs/defaultCover", { defaultCover: "about:blank" }],
+    // Upstream plugins import the same default cover from their own source tree (NovelFire and others).
+    ["@/types/constants", { defaultCover: "about:blank" }],
     ["@libs/aes", { gcm }],
     ["@libs/utils", { utf8ToBytes, bytesToUtf8 }],
     ["@libs/storage", {

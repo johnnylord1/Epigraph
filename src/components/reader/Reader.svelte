@@ -1,6 +1,6 @@
 <script lang="ts">
   import { _, translate } from "../../lib/i18n/runtime";
-  import { onMount, onDestroy, untrack, tick } from "svelte";
+  import { onMount, onDestroy, untrack, tick, flushSync } from "svelte";
   import {
     X, CaretLeft, CaretRight, ArrowLeft, ArrowRight,
     Square, Rows, Download, ArrowsLeftRight,
@@ -16,9 +16,10 @@
   import { ENQUEUE_DOWNLOAD, ENQUEUE_CHAPTERS_DOWNLOAD } from "../../lib/queries";
   import { fetchSourceChapterPages } from "../../lib/manga/runtime";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
+  import { classifySourceAccessError } from "../../lib/sourceAccess";
   import { store, closeReader, openReader, addHistory, updateSettings, checkAndMarkCompleted, setSettingsOpen, addBookmark, removeBookmark, addToast } from "../../store/state.svelte";
   import { matchesKeybind, toggleFullscreen, DEFAULT_KEYBINDS } from "../../lib/keybinds";
-  import { loadOfflineMangaChapter, revokeOfflineMangaPages } from "../../lib/reader/offlineManga";
+  import { loadOfflineMangaChapter } from "../../lib/reader/offlineManga";
   import { isReaderControlKeyboardTarget, registerReaderCommandHandler } from "../../lib/reader/commands";
   import { registerReaderCloseGuard } from "../../lib/reader/runtime";
   import type { MangaChapterProgress } from "../../lib/reader/mangaProgress";
@@ -56,12 +57,6 @@
   const inflight  = new Map<number, Promise<string[]>>();
   // Used by the first load only; every later load fetches its own page list.
   let handedOverPages = untrack(() => initialPages);
-  let offlinePageUrls: string[] = [];
-
-  function clearOfflinePages() {
-    revokeOfflineMangaPages(offlinePageUrls);
-    offlinePageUrls = [];
-  }
 
   function isCloudflareLikeError(message: string | null): boolean {
     if (!message) return false;
@@ -73,9 +68,55 @@
       || normalized.includes("bypass");
   }
 
+  // The overlay speaks the user's language; the raw source/Suwayomi error only goes to the console.
+  function readerErrorBody(message: string) {
+    if (message === translate("reader_progressSaveFailed")) return message;
+    if (isCloudflareLikeError(message)) return translate("detail_errors_sourceMayNeedFlareSolverr");
+    const kind = classifySourceAccessError(message).errorType;
+    if (kind === "network" || kind === "timeout") return translate("reader_sourceUnreachable");
+    return translate("detail_errors_checkSourceRetry");
+  }
+
+  async function retryChapter() {
+    const chapter = store.activeChapter;
+    if (!chapter) return;
+    clearChapterPageCache(chapter.id);
+    await loadChapter(chapter.id);
+  }
+
   function clearChapterPageCache(chapterId: number) {
     pageCache.delete(chapterId);
     inflight.delete(chapterId);
+  }
+
+  function downloadedChapterInput(chapterId: number) {
+    const chapter = store.activeChapterList.find((entry) => entry.id === chapterId)
+      ?? (store.activeChapter?.id === chapterId ? store.activeChapter : null);
+    const manga = store.activeManga;
+    if (!chapter?.isDownloaded || !manga?.source?.displayName) return null;
+    return {
+      downloadsPath: store.settings.serverDownloadsPath ?? "",
+      sourceName: manga.source.displayName,
+      mangaTitle: manga.title,
+      chapterName: chapter.name,
+      scanlator: chapter.scanlator,
+      profileId: store.runtimeResolvedLocalProfileId ?? null,
+    };
+  }
+
+  // Downloaded chapters are read from disk first, as Mihon does, so opening one never waits on the server, which
+  // is asked only when the chapter's archive is not found. Pages are read one by one as the reader shows them.
+  function loadChapterPages(chapterId: number): Promise<string[]> {
+    const downloaded = downloadedChapterInput(chapterId);
+    const local = downloaded
+      ? loadOfflineMangaChapter(downloaded).catch((error) => {
+        console.warn("Downloaded chapter could not be opened:", error);
+        return [] as string[];
+      })
+      : Promise.resolve([] as string[]);
+    return local.then((urls) => urls.length
+      ? urls
+      : fetchSourceChapterPages({ chapterId }).then((d) => d.fetchChapterPages.pages.map(thumbUrl)));
   }
 
   function fetchPages(chapterId: number, signal?: AbortSignal): Promise<string[]> {
@@ -84,9 +125,8 @@
     if (cached && cached.length === 0) pageCache.delete(chapterId);
     if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
     if (!inflight.has(chapterId)) {
-      const p = fetchSourceChapterPages({ chapterId })
-        .then(d => {
-          const urls = d.fetchChapterPages.pages.map(thumbUrl);
+      const p = loadChapterPages(chapterId)
+        .then(urls => {
           if (urls.length) {
             void preloadBlobUrls(urls.slice(0, 2), 0).catch(() => {});
             pageCache.set(chapterId, urls);
@@ -595,7 +635,6 @@
     resetReaderSessionCaches();
     if (handedOverPages?.chapterId === id && handedOverPages.urls.length) pageCache.set(id, handedOverPages.urls);
     handedOverPages = null;
-    clearOfflinePages();
     store.pageUrls   = [];
     fadingOut        = false;
     closeReaderWebView().catch(() => {});
@@ -624,23 +663,7 @@
 
     store.pageNumber = 1;
     try {
-      let urls: string[];
-      try {
-        urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
-      } catch (networkError) {
-        const chapter = store.activeChapter;
-        const manga = store.activeManga;
-        if (!chapter?.isDownloaded || chapter.id !== id || !manga?.source?.displayName) throw networkError;
-        urls = await loadOfflineMangaChapter({
-          downloadsPath: store.settings.serverDownloadsPath ?? "",
-          sourceName: manga.source.displayName,
-          mangaTitle: manga.title,
-          chapterName: chapter.name,
-          scanlator: chapter.scanlator,
-        });
-        if (urls.length === 0) throw networkError;
-        offlinePageUrls = urls;
-      }
+      const urls = await fetchPagesWithEmptyRetry(id, ctrl.signal);
       if (ctrl.signal.aborted) return;
       store.pageUrls = urls;
       if (resumeTo > 1) store.pageNumber = Math.min(resumeTo, urls.length || resumeTo);
@@ -649,6 +672,7 @@
     } catch (e: any) {
       if (ctrl.signal.aborted) return;
       error   = e instanceof Error ? e.message : String(e);
+      console.warn("Chapter pages could not be loaded:", error);
       loading = false;
     }
   }
@@ -922,29 +946,52 @@
   function setupScrollTracking(): () => void {
     if (!containerEl || style !== "longstrip") return () => {};
     const scrollEl = containerEl;
+    // The page under the read line and how far into it the line falls. Entering or leaving fullscreen
+    // reflows the strip; putting the same spot back under the line keeps the page and its counter.
+    let anchor: { img: HTMLElement; fraction: number; width: number; height: number } | null = null;
+
+    function readLineY() {
+      return scrollEl.getBoundingClientRect().top + scrollEl.clientHeight * READ_LINE_PCT;
+    }
+
+    function restoreAnchor() {
+      if (!anchor) return;
+      if (anchor.img.isConnected) {
+        const box = anchor.img.getBoundingClientRect();
+        scrollEl.scrollTop += box.top + anchor.fraction * box.height - readLineY();
+      }
+      anchor.width  = scrollEl.clientWidth;
+      anchor.height = scrollEl.clientHeight;
+    }
+
+    function resized() {
+      return !!anchor && (anchor.width !== scrollEl.clientWidth || anchor.height !== scrollEl.clientHeight);
+    }
 
     function processScroll() {
       scrollTrackingRafId = null;
-      if (loading || !hasNavigated) return;
+      if (resized()) restoreAnchor();
       const imgs = scrollEl.querySelectorAll<HTMLElement>("img[data-local-page]");
       if (!imgs.length) return;
-      const containerTop = scrollEl.getBoundingClientRect().top;
-      const readLineY    = containerTop + scrollEl.clientHeight * READ_LINE_PCT;
-      let activePage: number | null = null;
-      let activeChId: number | null = null;
+      const lineY = readLineY();
+      let activeImg = imgs[0];
       for (const img of imgs) {
-        if (img.getBoundingClientRect().top <= readLineY) {
-          activePage = Number(img.dataset.localPage);
-          activeChId = Number(img.dataset.chapter);
-        } else break;
+        if (img.getBoundingClientRect().top <= lineY) activeImg = img;
+        else break;
       }
-      if (activePage === null) {
-        activePage = Number(imgs[0].dataset.localPage);
-        activeChId = Number(imgs[0].dataset.chapter);
-      }
-      if (activePage !== null) store.pageNumber = activePage;
+      const box = activeImg.getBoundingClientRect();
+      anchor = {
+        img: activeImg,
+        fraction: box.height > 0 ? (lineY - box.top) / box.height : 0,
+        width: scrollEl.clientWidth,
+        height: scrollEl.clientHeight,
+      };
+      if (loading || !hasNavigated) return;
+      const activePage = Number(activeImg.dataset.localPage);
+      const activeChId = Number(activeImg.dataset.chapter);
+      store.pageNumber = activePage;
       if (activeChId && activeChId !== visibleChapterId) visibleChapterId = activeChId;
-      if (store.settings.autoMarkRead && activePage !== null && activeChId) {
+      if (store.settings.autoMarkRead && activeChId) {
         const chunk = stripChaptersRef.find(c => c.chapterId === activeChId);
         const total = chunk ? chunk.urls.length : store.pageUrls.length;
         if (total > 0 && activePage >= total) markChapterRead(activeChId);
@@ -964,8 +1011,19 @@
       scrollTrackingRafId = requestAnimationFrame(processScroll);
     }
 
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!resized()) return;
+      // Apply the new width first so the strip is laid out at its final size before the anchor goes back.
+      containerWidth = entries[0].contentRect.width;
+      flushSync();
+      restoreAnchor();
+      onScroll();
+    });
+
     scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    resizeObserver.observe(scrollEl);
     return () => {
+      resizeObserver.disconnect();
       scrollEl.removeEventListener("scroll", onScroll);
       if (scrollTrackingRafId !== null) {
         cancelAnimationFrame(scrollTrackingRafId);
@@ -1361,7 +1419,6 @@
   onDestroy(() => {
     void progressPersister.flushAll().catch(console.error);
     closeReaderWebView().catch(() => {});
-    clearOfflinePages();
     resetReaderSessionCaches();
   });
 </script>
@@ -1621,8 +1678,8 @@
           icon="warning"
           eyebrow={$_("ui_reader")}
           title={$_("ui_couldNotLoadChapterPages")}
-          body={error}
-          actions={canOpenWebView ? [
+          body={readerErrorBody(error)}
+          actions={canOpenWebView && isCloudflareLikeError(error) ? [
             {
               label: webViewWindowOpen ? $_("ui_closeWebView") : $_("ui_tryWebView"),
               kind: "primary",
@@ -1635,7 +1692,10 @@
               icon: "info",
               onClick: openExternalWebView,
             },
-          ] : []}
+          ] : [
+            { label: $_("reader_retryChapter"), kind: "primary", icon: "retry", onClick: () => void retryChapter() },
+            ...(canOpenWebView ? [{ label: $_("ui_tryWebView"), kind: "secondary" as const, icon: "plug" as const, onClick: toggleReaderWebView }] : []),
+          ]}
         />
       </div>
     {/if}

@@ -18,6 +18,7 @@ type FlareSolverrConfigPatch = Partial<{
   fallback: boolean;
 }>;
 let localStart: Promise<void> | null = null;
+let startRelay: (() => Promise<unknown>) | null = null;
 let dockerStart: Promise<void> | null = null;
 
 export function normalizedFlareSolverrEndpoint(rawUrl = store.settings.flareSolverrUrl || "http://localhost:8191") {
@@ -136,7 +137,13 @@ async function startManagedFlareSolverrAndEnable(
   }
 }
 
+/** In a detached reader window the main window starts the service, since only it may run app commands. */
+export function setFlareSolverrStartRelay(next: (() => Promise<unknown>) | null) {
+  startRelay = next;
+}
+
 export function startLocalFlareSolverrAndEnable(configPatch: FlareSolverrConfigPatch = {}): Promise<void> {
+  if (startRelay) return startRelay().then(() => undefined);
   localStart ??= startManagedFlareSolverrAndEnable(
     "start_flaresolverr_local",
     "get_flaresolverr_local_status",

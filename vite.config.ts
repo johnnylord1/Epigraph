@@ -64,6 +64,9 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.replaceAll("\\", "/");
           if (normalizedId.includes("vite/preload-helper")) return "runtime-preload";
+          // Messages are shared by the entry and by lazy chunks; left unassigned, Rollup pulls them into
+          // whichever manual chunk imports them first, and the entry then statically imports that chunk.
+          if (normalizedId.includes("/src/paraglide/") || normalizedId.includes("/src/lib/i18n/")) return "domain-i18n";
           if (
             normalizedId.includes("/src/lib/theme/")
             && /\/(contract|document|provider)\.ts$/.test(normalizedId)

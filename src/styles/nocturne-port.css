@@ -501,6 +501,17 @@
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* The loading line must still read as alive: it breathes in place instead of sweeping across. */
+  .epigraph-port--splash .line span {
+    width: 100%;
+    animation: epigraph-splash-breathe 1.8s ease-in-out infinite !important;
+  }
+}
+
+@keyframes epigraph-splash-breathe {
+  0%, 100% { opacity: 0.22; }
+  50% { opacity: 1; }
 }
 
 .epigraph-app-shell {
@@ -1319,13 +1330,6 @@ html[data-epigraph-motion="idle"] .n-topbar {
   font-size: calc(13px * var(--hud-scale));
 }
 
-.n-btn--lg {
-  min-height: calc(44px * var(--hud-scale));
-  padding: 0 calc(22px * var(--hud-scale));
-  font-size: calc(14px * var(--hud-scale));
-  border-radius: calc(12px * var(--hud-scale));
-}
-
 /* The one filled action: an accent fill with a sheen that sweeps across on hover. */
 .n-btn-primary {
   color: var(--color-on-accent-strong);
@@ -1574,49 +1578,6 @@ html[data-epigraph-motion="idle"] .n-topbar {
   text-transform: none;
 }
 
-.n-density-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  padding: 0 12px;
-  border-radius: 9999px;
-  background: color-mix(in srgb, var(--color-deep-neutral-surface-source) 60%, transparent);
-  border: 0;
-  color: var(--component-soft-control-fg-source);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-  text-transform: none;
-  transition: background 250ms ease, color 250ms ease, transform 450ms var(--ui-spring);
-  cursor: pointer;
-  user-select: none;
-}
-
-.n-density-chip:hover {
-  background: color-mix(in srgb, var(--accent-bright) 8%, transparent);
-  border-color: color-mix(in srgb, var(--accent-bright) 20%, transparent);
-  color: var(--accent-bright);
-  transform: translateY(-1px);
-}
-
-.n-density-chip.is-active,
-.n-density-chip.is-selected {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-bright) 20%, transparent), color-mix(in srgb, var(--accent) 10%, transparent));
-  color: var(--color-text-tab-active);
-  border-color: color-mix(in srgb, var(--accent) 14%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-highlight-source) 6%, transparent),
-    0 0 14px color-mix(in srgb, var(--accent-bright) 8%, transparent),
-    0 2px 8px color-mix(in srgb, var(--color-shadow-source) 12%, transparent);
-}
-
-.n-density-chip:active {
-  transform: scale(0.95) translateY(0);
-  transition-duration: 60ms;
-}
-
 .n-library-card {
   display: flex;
   flex-direction: column;
@@ -1857,65 +1818,6 @@ html[data-epigraph-motion="idle"] .n-topbar {
   box-shadow: var(--component-settings-modal-shadow);
 }
 
-.epigraph-port--settings .content.settings-content-shell {
-  position: relative;
-  min-width: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.epigraph-port--settings .content-header.n-topbar.settings-modal-topbar {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: var(--shell-topbar-height);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 18px;
-  background: var(--component-settings-topbar-bg);
-  backdrop-filter: var(--component-settings-topbar-blur);
-  border-bottom: 1px solid transparent;
-  border-image: var(--component-settings-topbar-border-image);
-  box-shadow: var(--component-settings-topbar-shadow);
-  z-index: 20;
-}
-
-html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-topbar.settings-modal-topbar {
-  backdrop-filter: var(--component-settings-topbar-idle-blur);
-  box-shadow: var(--component-settings-topbar-idle-shadow);
-}
-
-.epigraph-port--settings .content-header.n-topbar.settings-modal-topbar::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--component-settings-topbar-noise-bg);
-  pointer-events: none;
-}
-
-.epigraph-port--settings .settings-topbar-spacer,
-.epigraph-port--settings .settings-topbar-center,
-.epigraph-port--settings .settings-topbar-actions {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  flex: 1;
-}
-
-.epigraph-port--settings .settings-topbar-center {
-  justify-content: center;
-}
-
-.epigraph-port--settings .settings-topbar-actions {
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.epigraph-port--settings .n-search.settings-search,
 .epigraph-port--settings .n-search--settings {
   position: relative;
   width: var(--shell-search-width);
@@ -1979,13 +1881,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   box-shadow: var(--component-toolbar-icon-shadow-hover);
 }
 
-.epigraph-port--settings .settings-stage {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  padding-top: var(--shell-topbar-height);
-}
-
 .epigraph-port--settings #settingsGroupRail.sidebar,
 .epigraph-port--settings .settings-group-rail {
   width: var(--settings-group-rail-width);
@@ -2005,18 +1900,12 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   display: none;
 }
 
-.epigraph-port--settings .nav.settings-group-nav,
 .epigraph-port--settings .settings-group-rail__nav {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.epigraph-port--settings .modal-title.settings-rail-heading {
-  display: none;
-}
-
-.epigraph-port--settings .nav-item.cat-btn,
 .epigraph-port--settings .cat-btn {
   display: flex;
   align-items: center;
@@ -2041,26 +1930,22 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   cursor: pointer;
 }
 
-.epigraph-port--settings .nav-item.cat-btn:hover,
 .epigraph-port--settings .cat-btn:hover {
   background: var(--component-settings-nav-hover-bg);
   color: var(--component-settings-nav-hover-fg);
 }
 
-.epigraph-port--settings .nav-item.cat-btn:active,
 .epigraph-port--settings .cat-btn:active {
   transform: scale(0.97);
   transition-duration: 60ms;
 }
 
-.epigraph-port--settings .nav-item.cat-btn.active,
 .epigraph-port--settings .cat-btn.is-active {
   background: var(--component-settings-nav-active-bg);
   border-color: var(--component-settings-nav-active-border);
   color: var(--component-settings-nav-active-fg);
 }
 
-.epigraph-port--settings .nav-item.cat-btn .material-symbols-outlined,
 .epigraph-port--settings .cat-btn__icon {
   display: inline-flex;
   align-items: center;
@@ -2071,7 +1956,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   line-height: 1;
 }
 
-.epigraph-port--settings .nav-item.cat-btn .cat-btn__label,
 .epigraph-port--settings .cat-btn__label {
   display: -webkit-box;
   flex: 1 1 auto;
@@ -2086,12 +1970,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   -webkit-box-orient: vertical;
 }
 
-.epigraph-port--settings .settings-about-btn .material-symbols-outlined {
-  font-size: calc(20px * var(--hud-scale));
-  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
-}
-
-.epigraph-port--settings .settings-rail-footer,
 .epigraph-port--settings .settings-group-rail__footer {
   margin-top: auto;
   padding-top: var(--settings-shell-gap);
@@ -2100,50 +1978,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   flex-direction: column;
   align-items: center;
   box-sizing: border-box;
-}
-
-.epigraph-port--settings .settings-rail-card {
-  padding: calc(12px * var(--hud-scale));
-  border-radius: calc(16px * var(--hud-scale));
-  border: 1px solid var(--component-settings-border-dim);
-  background: var(--component-settings-rail-bg);
-}
-
-.epigraph-port--settings .settings-rail-card__head {
-  display: flex;
-  align-items: center;
-  gap: calc(8px * var(--hud-scale));
-  margin-bottom: calc(10px * var(--hud-scale));
-}
-
-.epigraph-port--settings .settings-rail-card__mark {
-  width: calc(28px * var(--hud-scale));
-  height: calc(28px * var(--hud-scale));
-  border-radius: calc(10px * var(--hud-scale));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent);
-  color: var(--color-on-accent-strong);
-}
-
-.epigraph-port--settings .settings-rail-card__title {
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.15;
-  color: var(--component-settings-text-primary);
-}
-
-.epigraph-port--settings .settings-rail-card__meta {
-  font-size: 8px;
-  color: var(--component-settings-text-faint);
-  font-family: var(--font-ui);
-  letter-spacing: 0.04em;
-}
-
-.epigraph-port--settings .settings-rail-card__actions {
-  display: flex;
-  gap: calc(6px * var(--hud-scale));
 }
 
 .epigraph-port--settings .n-btn.n-btn-ghost.settings-rail-action {
@@ -2174,19 +2008,12 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   box-shadow: var(--component-settings-button-shadow-hover);
 }
 
-.epigraph-port--settings .settings-panel-root {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
 .epigraph-port--settings .settings-workbench {
   display: grid;
   grid-template-columns: var(--settings-subnav-width) minmax(0, 1fr);
   min-height: 100%;
 }
 
-.epigraph-port--settings .content-subnav.settings-subnav,
 .epigraph-port--settings .settings-subnav {
   padding: var(--settings-subnav-padding-y) calc(6px * var(--hud-scale));
   display: flex;
@@ -2196,7 +2023,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   background: var(--component-settings-surface-raised);
 }
 
-.epigraph-port--settings .subnav-label.settings-subnav__eyebrow,
 .epigraph-port--settings .settings-subnav__eyebrow {
   padding: 0 calc(4px * var(--hud-scale));
   font-size: calc(10px * var(--hud-scale));
@@ -2206,14 +2032,12 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   color: var(--component-settings-text-faint);
 }
 
-.epigraph-port--settings .subnav-list.settings-subnav__list,
 .epigraph-port--settings .settings-subnav__list {
   display: flex;
   flex-direction: column;
   gap: calc(4px * var(--hud-scale));
 }
 
-.epigraph-port--settings .subnav-item.settings-subnav-btn,
 .epigraph-port--settings .settings-subnav-btn {
   display: flex;
   align-items: center;
@@ -2236,26 +2060,22 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   cursor: pointer;
 }
 
-.epigraph-port--settings .subnav-item.settings-subnav-btn:hover,
 .epigraph-port--settings .settings-subnav-btn:hover {
   background: var(--component-settings-nav-hover-bg);
   color: var(--component-settings-text-primary);
 }
 
-.epigraph-port--settings .subnav-item.settings-subnav-btn:active,
 .epigraph-port--settings .settings-subnav-btn:active {
   transform: scale(0.97);
   transition-duration: 60ms;
 }
 
-.epigraph-port--settings .subnav-item.settings-subnav-btn.active,
 .epigraph-port--settings .settings-subnav-btn.is-active {
   background: var(--component-settings-nav-active-bg);
   border-color: var(--component-settings-nav-active-border);
   color: var(--component-settings-nav-active-fg);
 }
 
-.epigraph-port--settings .subnav-item.settings-subnav-btn .material-symbols-outlined,
 .epigraph-port--settings .settings-subnav-btn__icon {
   width: calc(17px * var(--hud-scale));
   min-width: calc(17px * var(--hud-scale));
@@ -2296,14 +2116,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   background: transparent;
   box-shadow: none;
   isolation: isolate;
-}
-
-.epigraph-port--settings .settings-search-overlay {
-  display: none;
-}
-
-.epigraph-port--settings.settings-page.is-search-engaged .settings-search-overlay {
-  display: none;
 }
 
 .epigraph-port--settings.settings-page.is-search-engaged .n-search--settings {
@@ -2646,10 +2458,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: calc(12px * var(--hud-scale));
-}
-
-.epigraph-port--settings .settings-card__embed {
-  min-width: 0;
 }
 
 .epigraph-port--settings .settings-meta-card {
@@ -3059,63 +2867,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   flex: 0 0 calc(56px * var(--hud-scale));
 }
 
-.epigraph-port--settings .settings-switch-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: calc(54px * var(--hud-scale));
-  min-width: calc(54px * var(--hud-scale));
-  height: calc(54px * var(--hud-scale));
-  min-height: calc(54px * var(--hud-scale));
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid var(--component-settings-border-dim);
-  background: var(--component-settings-surface-raised);
-  backdrop-filter: blur(12px);
-  color: var(--text-secondary);
-  font-family: var(--component-settings-font);
-  font-size: calc(12px * var(--hud-scale));
-  font-weight: 800;
-  letter-spacing: 0;
-  text-transform: none;
-  box-shadow: none;
-  transition:
-    background 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    color 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    border-color 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 250ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    transform 110ms ease;
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
-}
-
-.epigraph-port--settings .settings-switch-pill:hover:not(:disabled) {
-  background: var(--component-settings-nav-hover-bg);
-  color: var(--component-settings-button-fg-hover);
-}
-
-.epigraph-port--settings .settings-switch-pill:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.epigraph-port--settings .settings-switch-pill:focus-visible {
-  outline: none;
-  box-shadow: var(--component-focus-ring);
-}
-
-.epigraph-port--settings .settings-switch-pill.is-selected {
-  color: var(--color-on-accent-strong);
-  border-color: transparent;
-  background: var(--accent);
-  box-shadow:
-    0 calc(4px * var(--hud-scale)) calc(14px * var(--hud-scale)) var(--component-settings-accent-dim);
-}
-
-.epigraph-port--settings .settings-switch-pill:disabled {
-  cursor: default;
-}
-
 .epigraph-port--settings .settings-zoom-controls {
   min-width: min(460px, 100%);
   flex-direction: column;
@@ -3201,11 +2952,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   box-shadow: var(--component-focus-ring);
 }
 
-.epigraph-port--settings .settings-inline-field {
-  min-width: min(240px, 100%);
-  flex: 1 1 240px;
-}
-
 .epigraph-port--settings .settings-text-input {
   width: 200px;
 }
@@ -3237,85 +2983,12 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   min-width: 0;
 }
 
-.epigraph-port--settings .settings-input-line__error {
-  font-family: var(--component-settings-font);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--component-settings-danger-fg-hover);
-}
-
-.epigraph-port--settings .settings-range {
-  width: 112px;
-  height: 20px;
-  appearance: none;
-  background: transparent;
-  cursor: pointer;
-  accent-color: var(--accent-bright);
-}
-
-.epigraph-port--settings .settings-range::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--component-settings-toggle-bg);
-}
-
-.epigraph-port--settings .settings-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  margin-top: -3px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent-bright);
-  box-shadow: var(--component-focus-ring);
-}
-
-.epigraph-port--settings .settings-range::-moz-range-track {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--component-settings-toggle-bg);
-}
-
-.epigraph-port--settings .settings-range::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border: none;
-  border-radius: 50%;
-  background: var(--accent-bright);
-  box-shadow: var(--component-focus-ring);
-}
-
 .epigraph-port--settings .settings-card__surface {
   padding: 16px 18px;
   border-radius: 16px;
   border: 1px solid var(--component-settings-border-dim);
   background: var(--component-settings-surface-raised);
   box-shadow: var(--component-settings-card-shadow);
-}
-
-.epigraph-port--settings .settings-card__notice {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--component-settings-border-base);
-  background: var(--component-settings-button-bg);
-  font-family: var(--component-settings-font);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.55;
-  color: var(--component-settings-text-muted);
-}
-
-.epigraph-port--settings .settings-card__notice--error {
-  border-color: var(--component-settings-danger-border-hover);
-  background: var(--component-settings-danger-bg-hover);
-  color: var(--component-settings-danger-fg-hover);
-}
-
-.epigraph-port--settings .settings-card__notice--info {
-  border-color: var(--component-settings-border-strong);
-  background: var(--component-settings-info-bg);
-  color: var(--component-settings-text-secondary);
 }
 
 .epigraph-port--settings .settings-theme-preview {
@@ -3363,16 +3036,18 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
 
 .epigraph-port--settings .settings-theme-preview__grid {
   position: absolute;
-  right: 12px;
+  top: 28px;
   bottom: 12px;
   left: 12px;
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-rows: 100%;
   gap: 8px;
 }
 
 .epigraph-port--settings .settings-theme-preview__tile {
   display: block;
+  height: 100%;
   aspect-ratio: 3 / 4;
   border-radius: 7px;
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
@@ -3548,7 +3223,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
   border: 0;
 }
 
-.epigraph-port--settings .settings-search[aria-disabled="true"],
 .epigraph-port--settings [data-inert-control][aria-disabled="true"] {
   pointer-events: none;
 }
@@ -3624,18 +3298,15 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
 
   .epigraph-port--settings .settings-group-rail__footer,
   .epigraph-port--settings .settings-brand-card,
-  .epigraph-port--settings .cat-btn__label,
-  .epigraph-port--settings .settings-group-btn__label {
+  .epigraph-port--settings .cat-btn__label {
     display: none;
   }
 
-  .epigraph-port--settings .nav.settings-group-nav,
   .epigraph-port--settings .settings-group-rail__nav {
     width: 100%;
     align-items: center;
   }
 
-  .epigraph-port--settings .nav-item.cat-btn,
   .epigraph-port--settings .cat-btn {
     justify-content: center;
     width: calc(42px * var(--hud-scale));
@@ -3653,7 +3324,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
     grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .epigraph-port--settings .content-subnav.settings-subnav,
   .epigraph-port--settings .settings-subnav {
     min-width: 0;
     padding: calc(10px * var(--hud-scale)) calc(12px * var(--hud-scale));
@@ -3666,13 +3336,11 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
     border-bottom: 1px solid color-mix(in srgb, var(--border-strong) 12%, transparent);
   }
 
-  .epigraph-port--settings .subnav-label.settings-subnav__eyebrow,
   .epigraph-port--settings .settings-subnav__eyebrow {
     flex: 0 0 auto;
     white-space: nowrap;
   }
 
-  .epigraph-port--settings .subnav-list.settings-subnav__list,
   .epigraph-port--settings .settings-subnav__list {
     min-width: 0;
     flex: 1 1 auto;
@@ -3681,12 +3349,10 @@ html[data-epigraph-motion="idle"] .epigraph-port--settings .content-header.n-top
     scrollbar-width: none;
   }
 
-  .epigraph-port--settings .subnav-list.settings-subnav__list::-webkit-scrollbar,
   .epigraph-port--settings .settings-subnav__list::-webkit-scrollbar {
     display: none;
   }
 
-  .epigraph-port--settings .subnav-item.settings-subnav-btn,
   .epigraph-port--settings .settings-subnav-btn {
     width: auto;
     flex: 0 0 auto;

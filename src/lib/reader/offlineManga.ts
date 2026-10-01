@@ -1,5 +1,5 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { invoke } from "../tauri/invoke";
-import JSZip from "jszip";
 
 type OfflineMangaChapterInput = {
   downloadsPath: string;
@@ -7,13 +7,17 @@ type OfflineMangaChapterInput = {
   mangaTitle: string;
   chapterName: string;
   scanlator?: string | null;
+  /** The profile whose default downloads folder applies when `downloadsPath` is blank. */
+  profileId?: string | null;
 };
 
-/** A detached reader window reads downloaded chapters through the main window, one page per message, instead
- * of receiving the whole archive as a single base64 message. */
+/** A downloaded chapter the app opened: only its pages are listed, each is read when the reader shows it. */
+type OpenedOfflineChapter = { id: string; pages: number };
+
+/** A detached reader window cannot run app commands, so the main window opens the chapter for it. The window
+ * then reads the pages itself through the `offline-page` protocol, like the main window does. */
 export interface OfflineMangaRelay {
   open(input: OfflineMangaChapterInput): Promise<unknown>;
-  page(id: string, index: number): Promise<unknown>;
 }
 
 let relay: OfflineMangaRelay | null = null;
@@ -22,126 +26,45 @@ export function setOfflineMangaRelay(next: OfflineMangaRelay | null) {
   relay = next;
 }
 
-function encodeBase64(bytes: Uint8Array) {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  }
-  return btoa(binary);
-}
-
-function decodeBase64(value: string) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function naturalPageOrder(left: string, right: string) {
-  return left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" });
-}
-
-function imageMimeType(path: string) {
-  const extension = path.split(".").pop()?.toLowerCase();
-  if (extension === "png") return "image/png";
-  if (extension === "webp") return "image/webp";
-  if (extension === "gif") return "image/gif";
-  if (extension === "avif") return "image/avif";
-  return "image/jpeg";
-}
-
-async function readOfflineMangaPages(input: OfflineMangaChapterInput) {
-  const archive = await invoke<string | null>("read_downloaded_chapter_archive", {
+function openChapter(input: OfflineMangaChapterInput) {
+  return invoke<OpenedOfflineChapter | null>("open_downloaded_chapter", {
     downloadsPath: input.downloadsPath,
     sourceName: input.sourceName,
     mangaTitle: input.mangaTitle,
     chapterName: input.chapterName,
     scanlator: input.scanlator ?? null,
+    profileId: input.profileId ?? null,
   });
-  if (!archive) return [];
-
-  const zip = await JSZip.loadAsync(decodeBase64(archive));
-  const entries = Object.values(zip.files)
-    .filter((entry) => !entry.dir && /\.(avif|gif|jpe?g|png|webp)$/i.test(entry.name))
-    .sort((left, right) => naturalPageOrder(left.name, right.name));
-  const pages: Array<{ type: string; bytes: Uint8Array }> = [];
-  for (const entry of entries) pages.push({ type: imageMimeType(entry.name), bytes: await entry.async("uint8array") });
-  return pages;
 }
 
-function pageUrl(type: string, bytes: Uint8Array) {
-  return URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type }));
-}
-
-async function loadRelayedChapter(link: OfflineMangaRelay, input: OfflineMangaChapterInput) {
-  const opened = await link.open(input) as { id?: unknown; types?: unknown } | null;
-  if (!opened) return [];
-  const { id, types } = opened;
-  if (typeof id !== "string" || !Array.isArray(types) || types.some((type) => typeof type !== "string")) {
+function pageUrls(opened: unknown): string[] {
+  if (opened == null) return [];
+  const { id, pages } = opened as Partial<OpenedOfflineChapter>;
+  if (typeof id !== "string" || !/^[0-9a-f]{32}$/.test(id) || !Number.isSafeInteger(pages) || (pages as number) < 1) {
     throw new Error("Downloaded chapter could not be read.");
   }
-  const urls: string[] = [];
-  try {
-    for (let index = 0; index < types.length; index += 1) {
-      const page = await link.page(id, index);
-      if (typeof page !== "string") throw new Error("Downloaded chapter could not be read.");
-      urls.push(pageUrl(types[index], decodeBase64(page)));
-    }
-  } catch (error) {
-    revokeOfflineMangaPages(urls);
-    throw error;
-  }
-  return urls;
+  return Array.from({ length: pages as number }, (_, index) => convertFileSrc(`${id}/${index}`, "offline-page"));
 }
 
+/** Page URLs of a downloaded chapter, or none when it is not on disk. Opening reads no page. */
 export async function loadOfflineMangaChapter(input: OfflineMangaChapterInput) {
-  if (relay) return loadRelayedChapter(relay, input);
-  return (await readOfflineMangaPages(input)).map((page) => pageUrl(page.type, page.bytes));
+  return pageUrls(relay ? await relay.open(input) : await openChapter(input));
 }
 
-const HANDOVER_TTL_MS = 120_000;
-const handovers = new Map<string, { pages: Array<Uint8Array | null>; timer: ReturnType<typeof setTimeout> }>();
-
-function expireHandover(id: string) {
-  const handover = handovers.get(id);
-  if (handover) clearTimeout(handover.timer);
-  handovers.delete(id);
-}
-
-/** Main window: reads a downloaded chapter for a detached reader window, which then takes it page by page. */
+/** Main window: opens a downloaded chapter for a detached reader window. */
 export async function openOfflineMangaChapterForWindow(input: unknown) {
   const record = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const fields = ["downloadsPath", "sourceName", "mangaTitle", "chapterName"] as const;
-  if (fields.some((field) => typeof record[field] !== "string") || (record.scanlator != null && typeof record.scanlator !== "string")) {
+  const optional = ["scanlator", "profileId"] as const;
+  if (fields.some((field) => typeof record[field] !== "string") || optional.some((field) => record[field] != null && typeof record[field] !== "string")) {
     throw new Error("OFFLINE_CHAPTER_INVALID");
   }
-  const pages = await readOfflineMangaPages({
+  return openChapter({
     downloadsPath: record.downloadsPath as string,
     sourceName: record.sourceName as string,
     mangaTitle: record.mangaTitle as string,
     chapterName: record.chapterName as string,
     scanlator: (record.scanlator as string | null | undefined) ?? null,
+    profileId: (record.profileId as string | null | undefined) ?? null,
   });
-  if (pages.length === 0) return null;
-  const id = crypto.randomUUID();
-  // A window that closes midway never asks for the rest, so the pages it left behind expire.
-  handovers.set(id, { pages: pages.map((page) => page.bytes), timer: setTimeout(() => expireHandover(id), HANDOVER_TTL_MS) });
-  return { id, types: pages.map((page) => page.type) };
-}
-
-/** Main window: hands over one page and forgets it; the chapter is dropped once every page was taken. */
-export function readOfflineMangaPageForWindow(id: unknown, index: unknown) {
-  const handover = typeof id === "string" ? handovers.get(id) : undefined;
-  if (!handover) throw new Error("OFFLINE_CHAPTER_EXPIRED");
-  const bytes = Number.isSafeInteger(index) ? handover.pages[index as number] : undefined;
-  if (!bytes) throw new Error("OFFLINE_CHAPTER_PAGE_INVALID");
-  handover.pages[index as number] = null;
-  if (handover.pages.every((page) => page === null)) expireHandover(id as string);
-  return encodeBase64(bytes);
-}
-
-export function revokeOfflineMangaPages(urls: string[]) {
-  for (const url of urls) URL.revokeObjectURL(url);
 }

@@ -16,7 +16,7 @@
 
 - Install: `pnpm install`
 - Web dev: `pnpm dev`
-- Desktop dev: `pnpm tauri:dev`
+- Desktop dev: `pnpm tauri:dev` (debug builds use `%LOCALAPPDATA%\Epigraph-dev` and Core port 4787 unless `--local-app-data-dir` or `EPIGRAPH_DEV_DATA_DIR` is given)
 - Managed desktop gate: `pnpm tauri:dev:gate`
 - Build frontend: `pnpm build`
 - Test all Vitest projects: `pnpm test`

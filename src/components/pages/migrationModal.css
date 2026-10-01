@@ -1,6 +1,6 @@
-/* Shared shell for the manga, novel and mass migration modals. It follows the first-run language:
-   a stepper with a pill on the current step, filled fields with an accent underline, quiet rows,
-   text buttons that gain a soft pill, and one filled primary action in the footer.
+/* Shared shell for the manga, novel, book-to-novel and mass migration modals: a header with the work,
+   one step of content at a time, and a footer with back on the left and one filled action on the
+   right. Rows stay quiet (no boxes or rings), status is a coloured word, never a capsule.
    Every visual value comes from the --component-migration-* / --component-migrate-modal-* tokens. */
 
 .mg-overlay {
@@ -33,12 +33,15 @@
   animation: mg-rise var(--component-migration-animation-scale) both;
 }
 .mg-modal:focus { outline: none; }
-.mg-modal--novel { z-index: var(--component-novel-migrate-modal-z-index); width: var(--component-novel-migrate-modal-width); max-height: var(--component-novel-migrate-modal-height); }
+.mg-modal--novel { z-index: var(--component-novel-migrate-modal-z-index); }
 .mg-backdrop { position: absolute; inset: 0; border: 0; background: transparent; cursor: pointer; }
 .mg-backdrop:disabled { cursor: default; }
 .mg-modal--wide { width: var(--component-migration-mass-width); max-height: var(--component-migration-mass-height); }
+/* A short list of choices (the library update picker): narrower, and the hints wrap instead of clipping. */
+.mg-modal--compact { width: var(--component-migration-compact-width); }
+.mg-modal--compact .mg-row-copy small { white-space: normal; }
 
-/* Header: eyebrow, title and a muted line, with the work cover when there is one. */
+/* Header: the work cover, its title and one muted line. */
 .mg-header {
   display: flex;
   align-items: center;
@@ -57,14 +60,6 @@
 .mg-header-cover img { width: 100%; height: 100%; object-fit: cover; }
 .mg-modal img[data-broken="true"] { visibility: hidden; }
 .mg-heading { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.mg-eyebrow {
-  margin: 0;
-  color: var(--component-migration-eyebrow-fg);
-  font-size: var(--text-2xs);
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 .mg-title {
   margin: 0;
   overflow: hidden;
@@ -102,58 +97,7 @@
 .mg-close:active:not(:disabled) { transform: scale(0.92); }
 .mg-close:disabled { opacity: var(--component-migration-disabled-opacity); cursor: not-allowed; }
 
-/* Stepper: same anatomy as the first-run progress bar. */
-.mg-steps { padding: 0 20px 14px; border-bottom: 1px solid var(--component-migration-divider); }
-.mg-steps ol { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.mg-steps li {
-  min-width: 0;
-  flex: 1 1 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--component-migration-step-pending-fg);
-  font-size: var(--text-sm);
-  font-weight: 650;
-  white-space: nowrap;
-  transition: color var(--component-migration-transition-normal);
-}
-.mg-steps li:last-child { flex: 0 0 auto; }
-.mg-step-chip {
-  min-width: 0;
-  min-height: 30px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 12px 0 8px;
-  border-radius: var(--component-migration-pill-radius);
-  transition: background var(--component-migration-transition-normal), box-shadow var(--component-migration-transition-normal);
-}
-.mg-step-chip span:last-child { overflow: hidden; text-overflow: ellipsis; }
-.mg-step-icon { width: 18px; height: 18px; flex: none; display: grid; place-items: center; }
-.mg-steps li[aria-current="step"] { color: var(--component-migration-strong-fg); }
-.mg-steps li[aria-current="step"] .mg-step-chip { background: var(--component-migration-step-current-bg); box-shadow: var(--component-migration-step-current-ring); }
-.mg-steps li[aria-current="step"] .mg-step-icon { color: var(--component-migration-accent-fg); }
-.mg-steps li.is-complete { color: var(--component-migration-body-fg); }
-.mg-steps li.is-complete .mg-step-icon { color: var(--component-migration-step-done-fg); }
-.mg-step-line {
-  min-width: 12px;
-  height: 2px;
-  flex: 1 1 auto;
-  overflow: hidden;
-  border-radius: var(--component-migration-pill-radius);
-  background: var(--component-migration-step-line);
-}
-.mg-step-line i {
-  display: block;
-  height: 100%;
-  background: var(--component-migration-step-done-fg);
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform var(--component-migration-transition-slow);
-}
-.mg-steps li.is-complete .mg-step-line i { transform: scaleX(1); }
-
-/* Body scrolls once the dialog reaches its cap; header, stepper and footer stay put. Each step's
+/* Body scrolls once the dialog reaches its cap; header and footer stay put. Each step's
    content sits in one .mg-step that arrives as a whole when the step changes. */
 .mg-body {
   flex: 1 1 auto;
@@ -167,16 +111,6 @@
 }
 .mg-modal.is-gliding .mg-body { overflow-y: hidden; }
 .mg-step { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
-.mg-lede { margin: 0; color: var(--component-migration-muted-fg); font-size: var(--text-sm); line-height: 1.55; }
-.mg-lede strong { color: var(--component-migration-strong-fg); font-weight: 650; }
-.mg-section-label {
-  margin: 4px 8px 0;
-  color: var(--component-migration-muted-fg);
-  font-size: var(--text-2xs);
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
 .mg-toolbar { display: flex; align-items: center; gap: 8px; }
 .mg-toolbar > .mg-field { flex: 1; min-width: 0; }
 
@@ -247,8 +181,8 @@
 }
 .mg-row:hover:not(:disabled) { background: var(--component-migration-surface); }
 .mg-row:disabled { cursor: default; }
-.mg-row.is-selected { background: var(--component-migration-row-selected-bg); box-shadow: var(--component-migration-row-selected-ring); }
-.mg-row.is-best { background: var(--component-migration-best-bg); box-shadow: var(--component-migration-best-ring); }
+.mg-row.is-selected .mg-row-copy strong,
+.mg-row.is-best .mg-row-copy strong { color: var(--component-migration-accent-fg); }
 .mg-row-copy { flex: 1; min-width: 0; display: grid; gap: 3px; }
 .mg-row-copy strong {
   overflow: hidden;
@@ -281,7 +215,7 @@
   overflow: hidden;
   border-radius: var(--component-migration-tile-radius);
   color: var(--component-migration-tile-fg);
-  background: var(--component-migration-tile-bg);
+  background: var(--component-migration-surface);
 }
 .mg-mark img { width: 100%; height: 100%; object-fit: cover; }
 .mg-cover {
@@ -297,100 +231,70 @@
 }
 .mg-cover img { width: 100%; height: 100%; object-fit: cover; }
 
-/* Match meter and pills. */
-.mg-meter { width: 54px; height: 4px; flex: none; overflow: hidden; border-radius: var(--component-migration-pill-radius); background: var(--component-migration-surface-strong); }
-.mg-meter i { display: block; height: 100%; border-radius: inherit; background: var(--component-migration-accent-fg); }
+/* Status text: a coloured word, led by a dot, never a capsule. */
 .mg-pill {
   min-height: 20px;
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  border-radius: var(--component-migration-pill-radius);
+  gap: 5px;
   color: var(--component-migration-body-fg);
-  background: var(--component-migration-surface-strong);
-  font-size: var(--text-2xs);
-  font-weight: 700;
+  font-size: var(--text-xs);
+  font-weight: 650;
   white-space: nowrap;
 }
-.mg-pill--accent { color: var(--component-migration-accent-fg); background: var(--component-migration-step-current-bg); }
-.mg-pill--good { color: var(--component-migration-good-fg); background: var(--component-migration-good-bg); }
-.mg-pill--warn { color: var(--component-migration-warn-fg); background: var(--component-migration-warn-bg); }
-.mg-pill--bad { color: var(--component-migration-bad-fg); background: var(--component-migration-error-bg); }
-
-/* Current source / target context line above a search. */
-.mg-context {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 6px 6px 8px;
-  border-radius: var(--component-migration-field-radius);
-  background: var(--component-migration-surface);
+.mg-pill--accent { color: var(--component-migration-accent-fg); }
+.mg-pill--good { color: var(--component-migration-good-fg); }
+.mg-pill--warn { color: var(--component-migration-warn-fg); }
+.mg-pill--bad { color: var(--component-migration-bad-fg); }
+.mg-pill--good::before,
+.mg-pill--warn::before,
+.mg-pill--bad::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--component-migration-pill-radius);
+  background: currentColor;
 }
-.mg-context .mg-mark { width: 28px; height: 28px; }
-.mg-context .mg-row-copy strong { font-size: var(--text-sm); }
 
-/* Comparison of the current entry and the chosen match. */
-.mg-compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+/* Comparison of the current entry and the chosen match: two covers and a plain arrow between them. */
+.mg-compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 4px 0; }
 .mg-compare-card {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px;
-  border-radius: var(--component-migration-panel-radius);
-  background: var(--component-migration-surface);
+  gap: 14px;
 }
-.mg-compare-card .mg-cover { width: 56px; }
-.mg-compare-card.is-new { background: var(--component-migration-best-bg); box-shadow: var(--component-migration-best-ring); }
+.mg-compare-card .mg-cover { width: 64px; }
 .mg-compare-arrow {
-  width: 34px;
-  height: 34px;
   display: grid;
   place-items: center;
-  border-radius: var(--component-migration-pill-radius);
-  color: var(--component-migration-accent-fg);
-  background: var(--component-migration-step-current-bg);
+  color: var(--component-migration-muted-fg);
 }
 .mg-compare-card .mg-row-copy strong { white-space: normal; display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .mg-compare-card .mg-row-copy small { flex-wrap: wrap; white-space: normal; }
 
-.mg-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-.mg-metric {
-  min-width: 0;
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: var(--component-migration-panel-radius);
-  background: var(--component-migration-surface);
-}
-.mg-metric span { overflow: hidden; color: var(--component-migration-muted-fg); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
-.mg-metric strong { color: var(--component-migration-strong-fg); font-size: var(--text-lg); font-weight: 750; font-variant-numeric: tabular-nums; }
-.mg-metric small { color: var(--component-migration-muted-fg); font-size: var(--text-2xs); }
-.mg-metric .is-good { color: var(--component-migration-good-fg); }
-.mg-metric .is-warn { color: var(--component-migration-warn-fg); }
-.mg-metric .is-bad { color: var(--component-migration-bad-fg); }
+.mg-summary { margin: 0; color: var(--component-migration-body-fg); font-size: var(--text-sm); line-height: 1.5; }
 .mg-note { margin: 0; color: var(--component-migration-muted-fg); font-size: var(--text-xs); line-height: 1.5; }
 .mg-note svg { vertical-align: -2px; }
+.mg-note.is-warn { color: var(--component-migration-warn-fg); }
 
-/* Segmented control (single / mass). */
+/* Single / mass switch: text tabs with the accent underline of the fields. */
 .mg-segmented {
   align-self: flex-start;
   display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--component-migration-pill-radius);
-  background: var(--component-migration-surface);
+  gap: 18px;
 }
 .mg-segmented button {
-  min-height: 28px;
+  position: relative;
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
+  padding: 0 2px;
   border: 0;
-  border-radius: var(--component-migration-pill-radius);
+  border-radius: var(--component-migration-button-radius);
   color: var(--component-migration-muted-fg);
   background: transparent;
   font: inherit;
@@ -400,7 +304,20 @@
   transition: color var(--component-migration-transition-fast), background var(--component-migration-transition-fast);
 }
 .mg-segmented button:hover { color: var(--component-migration-strong-fg); }
-.mg-segmented button[aria-pressed="true"] { color: var(--component-migration-accent-fg); background: var(--component-migration-step-current-bg); box-shadow: var(--component-migration-step-current-ring); }
+.mg-segmented button::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: var(--component-migration-pill-radius);
+  background: var(--component-migration-field-underline);
+  transform: scaleX(0);
+  transition: transform var(--component-migration-transition-slow);
+}
+.mg-segmented button[aria-pressed="true"] { color: var(--component-migration-strong-fg); }
+.mg-segmented button[aria-pressed="true"]::after { transform: scaleX(1); }
 
 /* Empty, loading and progress states. */
 .mg-empty {
@@ -421,7 +338,7 @@
   background-size: 300% 100%;
   animation: mg-shimmer 1.3s linear infinite;
 }
-.mg-progress { display: grid; gap: 8px; padding: 12px; border-radius: var(--component-migration-panel-radius); background: var(--component-migration-surface); }
+.mg-progress { display: grid; gap: 8px; padding: 4px 0; }
 .mg-progress-head { display: flex; justify-content: space-between; gap: 12px; color: var(--component-migration-body-fg); font-size: var(--text-sm); font-weight: 650; }
 .mg-progress-head span:last-child { color: var(--component-migration-muted-fg); font-variant-numeric: tabular-nums; }
 .mg-progress-bar { height: 4px; overflow: hidden; border-radius: var(--component-migration-pill-radius); background: var(--component-migration-surface-strong); }
@@ -461,19 +378,18 @@
 .mg-btn:disabled { opacity: var(--component-migration-disabled-opacity); cursor: not-allowed; }
 .mg-btn--primary { padding: 0 18px; color: var(--component-migration-primary-ink); background: var(--component-migration-primary-bg); font-weight: 700; }
 .mg-btn--primary:hover:not(:disabled) { color: var(--component-migration-primary-ink); background: var(--component-migration-primary-bg); filter: var(--component-migration-primary-hover-filter); }
-.mg-btn--small { min-height: 30px; padding: 0 11px; font-size: var(--text-sm); }
 .mg-btn .mg-arrow-back,
 .mg-btn .mg-arrow-next { transition: transform var(--component-migration-transition-spring); }
 .mg-btn:hover:not(:disabled) .mg-arrow-back { transform: translateX(-3px); }
 .mg-btn:hover:not(:disabled) .mg-arrow-next { transform: translateX(3px); }
 
-/* Mass migration queue: one compact line per work, origin on the left and match on the right. */
+/* Mass migration queue: one compact line per work, its match under the title. */
 .mg-queue { display: grid; align-content: start; gap: 2px; }
 .mg-queue-item {
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 8px;
@@ -481,16 +397,14 @@
   transition: background var(--component-migration-transition-fast);
 }
 .mg-queue-item:hover { background: var(--component-migration-surface); }
-.mg-queue-item.is-selected { background: var(--component-migration-row-selected-bg); }
 .mg-queue-item.is-muted { opacity: var(--component-migration-item-muted-opacity); }
-.mg-queue-side { min-width: 0; display: flex; align-items: center; gap: 10px; }
-.mg-queue-side .mg-cover { width: 34px; }
-.mg-queue-arrow { display: grid; place-items: center; color: var(--component-migration-muted-fg); }
-.mg-queue-note { grid-column: 2 / -1; color: var(--component-migration-muted-fg); font-size: var(--text-xs); }
+.mg-queue-item .mg-cover { width: 34px; }
+.mg-queue-note { grid-column: 3 / -1; color: var(--component-migration-muted-fg); font-size: var(--text-xs); }
 .mg-queue-note.is-error { color: var(--component-migration-bad-fg); }
 .mg-check {
   width: 22px;
   height: 22px;
+  flex: none;
   display: grid;
   place-items: center;
   padding: 0;
@@ -523,9 +437,8 @@
 .mg-icon-btn:hover,
 .mg-icon-btn[aria-expanded="true"] { color: var(--component-migration-icon-hover-fg); background: var(--component-migration-surface-strong); }
 .mg-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
+  /* Placed by floatMenu over the dialog, so it never takes room in the queue. */
+  position: fixed;
   z-index: var(--component-migration-menu-z-index);
   min-width: 160px;
   display: grid;
@@ -536,6 +449,7 @@
   box-shadow: var(--component-migration-menu-shadow);
   transform-origin: top right;
 }
+.mg-menu[data-side="top"] { transform-origin: bottom right; }
 .mg-menu button {
   width: 100%;
   padding: 8px 10px;
@@ -572,7 +486,7 @@
 .mg-segmented button:focus-visible { outline: 2px solid var(--component-migration-focus-border); outline-offset: 2px; }
 
 /* Arrivals. Rows and queue lines cascade in by their --mg-i index (capped, so a long list never
-   waits on its tail); icons that swap in (a step turning done, a check) pop; the confirm cards and
+   waits on its tail); icons that swap in (a check) pop; the confirm cards and
    the footer actions of a new step rise in order. Backwards fill only, so settled state styles such
    as a muted queue line keep their own opacity. */
 .mg-list > .mg-row,
@@ -583,20 +497,14 @@
 .mg-list > .mg-skeleton { animation: mg-shimmer 1.3s linear infinite, mg-fade var(--component-migration-animation-scale) backwards; }
 .mg-empty,
 .mg-progress,
-.mg-context,
 .mg-compare > *,
-.mg-metric,
+.mg-summary,
 .mg-footer > .mg-btn { animation: mg-item-in var(--component-migration-animation-scale) backwards; }
 .mg-compare > :nth-child(2) { animation-delay: 70ms; }
 .mg-compare > :nth-child(3) { animation-delay: 140ms; }
-.mg-metric:nth-child(1) { animation-delay: 180ms; }
-.mg-metric:nth-child(2) { animation-delay: 230ms; }
-.mg-metric:nth-child(3) { animation-delay: 280ms; }
-.mg-metric:nth-child(4) { animation-delay: 330ms; }
+.mg-summary { animation-delay: 180ms; }
 .mg-footer > .mg-btn + .mg-spacer + .mg-btn { animation-delay: 60ms; }
-.mg-step-icon > svg,
 .mg-row.is-selected .mg-row-end > svg,
-.mg-row.is-selected .mg-mark > svg,
 .mg-check > svg { animation: mg-pop var(--component-migration-transition-spring) backwards; }
 
 @keyframes mg-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -606,14 +514,11 @@
 @keyframes mg-shimmer { from { background-position: 100% 0; } to { background-position: -200% 0; } }
 
 @media (max-width: 640px) {
-  .mg-steps li:not([aria-current="step"]) .mg-step-chip > span:last-child { display: none; }
   .mg-compare { grid-template-columns: minmax(0, 1fr); }
   .mg-compare-arrow { justify-self: center; transform: rotate(90deg); }
   .mg-field--select { width: 120px; }
-  .mg-queue-item { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .mg-queue-arrow,
-  .mg-queue-item > .mg-queue-side:nth-of-type(2) { display: none; }
-  .mg-queue-item > .mg-pill { grid-column: 2; justify-self: start; }
+  .mg-queue-item { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+  .mg-queue-item > .mg-pill { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -625,13 +530,10 @@
   .mg-queue > .mg-queue-item,
   .mg-empty,
   .mg-progress,
-  .mg-context,
   .mg-compare > *,
-  .mg-metric,
+  .mg-summary,
   .mg-footer > .mg-btn,
-  .mg-step-icon > svg,
   .mg-row.is-selected .mg-row-end > svg,
-  .mg-row.is-selected .mg-mark > svg,
   .mg-check > svg { animation: none; }
   .mg-modal *,
   .mg-modal *::before,

@@ -1,3 +1,8 @@
+// Settings, Sources and the restore flows import these statically, so a lazy import could not split them out.
+import * as novelsStateBridge from "../backup/novelsStateBridge";
+import * as novelsRestoreProvisioning from "../backup/novelsRestoreProvisioning";
+import * as novelPackages from "../novels/packages";
+
 export const SETTINGS_EPIGRAPH_BACKUP_EXTENSION = ".epigraphbk" as const;
 
 export type SettingsStorageRuntime = {
@@ -59,8 +64,6 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
     import("../backup/novelsBackup"),
     import("../backup/lnreaderBackup"),
     import("../backup/mangaNativeFormat"),
-    import("../backup/novelsStateBridge"),
-    import("../backup/novelsRestoreProvisioning"),
     import("../backup/novelsProfileState"),
     import("../reconciliation/sourceInventory"),
     import("../reconciliation/overlay"),
@@ -69,7 +72,6 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
     import("../books/storage"),
     import("../books/libraryState"),
     import("../novels/repositoryState"),
-    import("../novels/packages"),
     import("../novels/libraryState"),
   ]).then(
     ([
@@ -82,8 +84,6 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       novelsBackup,
       lnreaderBackup,
       mangaNativeFormat,
-      novelsStateBridge,
-      novelsRestoreProvisioning,
       novelsProfileState,
       sourceInventory,
       overlay,
@@ -92,7 +92,6 @@ export function loadSettingsStorageRuntime(): Promise<SettingsStorageRuntime> {
       booksStorage,
       booksLibraryState,
       novelRepositoryState,
-      novelPackages,
       novelLibraryState,
     ]) => ({
       parseMihonBackup: mihonBackup.parseMihonBackup,

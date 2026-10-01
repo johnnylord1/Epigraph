@@ -22,6 +22,7 @@ export default defineWorkspace([
     test: {
       name: "unit",
       environment: "node",
+      setupFiles: ["src/test/messageCatalogs.ts"],
       include: [
         "src/lib/**/*.test.ts",
         "src/store/**/*.test.ts",
@@ -40,6 +41,7 @@ export default defineWorkspace([
     test: {
       name: "shell-jsdom",
       environment: "jsdom",
+      setupFiles: ["src/test/messageCatalogs.ts"],
       include: [
         "src/components/library/LibraryShell.test.ts",
         "src/components/library/LibraryHeader.test.ts",
@@ -56,6 +58,7 @@ export default defineWorkspace([
         "src/components/layout/SplashScreen.test.ts",
         "src/components/shared/baseThemeComponents.test.ts",
         "src/components/shared/NocturneStateThemeTokens.test.ts",
+        "src/components/shared/NocturneState.test.ts",
         "src/components/shared/MangaPreviewThemeTokens.test.ts",
         "src/components/pages/Downloads.test.ts",
         "src/components/pages/DownloadsThemeTokens.test.ts",
@@ -67,12 +70,16 @@ export default defineWorkspace([
         "src/components/pages/TasteInsightsThemeTokens.test.ts",
         "src/components/pages/MassMigrationThemeTokens.test.ts",
         "src/components/pages/MigrateModal.test.ts",
+        "src/components/pages/NovelMigrateModal.test.ts",
         "src/components/pages/MigrationModalsAccessibility.test.ts",
         "src/components/pages/MigrationModalsThemeTokens.test.ts",
         "src/components/pages/SourcesThemeTokens.test.ts",
         "src/components/pages/SourcePreferences.test.ts",
         "src/components/shared/SeriesDetailV3Shell.test.ts",
         "src/components/shared/DetailSurfacesThemeTokens.test.ts",
+        "src/components/shared/DetailDownloadMenu.test.ts",
+        "src/components/pages/SeriesDetail.test.ts",
+        "src/components/library/LibraryRefreshModal.test.ts",
         "src/components/settings/SyncdConnectionThemeTokens.test.ts",
         "src/components/settings/SyncdConnectionPanel.test.ts",
         "src/components/settings/ThemeEditorThemeTokens.test.ts",
@@ -91,6 +98,7 @@ export default defineWorkspace([
         "src/components/firstRun/FirstRunSyncStep.test.ts",
         "src/components/reader/ReaderHud.test.ts",
         "src/components/reader/BookReader.test.ts",
+        "src/components/reader/DetachedReaderApp.test.ts",
         "src/components/reader/ReaderCoreThemeTokens.test.ts",
         "src/components/reader/TtsControls.test.ts",
         "src/lib/reader/tts.test.ts",
@@ -118,6 +126,7 @@ export default defineWorkspace([
       fileParallelism: false,
       setupFiles: [
         "src/test/browser/setup.ts",
+        "src/test/messageCatalogs.ts",
       ],
       include: [
         "src/components/layout/SplashScreen.browser.test.ts",
@@ -133,6 +142,7 @@ export default defineWorkspace([
         "src/lib/theme/hudRuntimeOwnership.browser.test.ts",
         "src/lib/theme/builtinThemeMatrix.browser.test.ts",
         "src/lib/theme/nocturnePortCompatibility.browser.test.ts",
+        "src/components/shared/DetailDownloadMenu.browser.test.ts",
       ],
       browser: {
         enabled: true,

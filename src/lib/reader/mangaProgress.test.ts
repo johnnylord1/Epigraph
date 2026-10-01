@@ -111,4 +111,75 @@ describe("manga reading progress persistence", () => {
     expect(write).toHaveBeenCalledWith({ chapterId: 19, lastPageRead: 10, isRead: true });
     vi.useRealTimers();
   });
+
+  it("saves progress read while the server was away once it answers again, backing off in between", async () => {
+    vi.useFakeTimers();
+    try {
+      let online = false;
+      const write = vi.fn(async () => { if (!online) throw new Error("offline"); });
+      const persister = createMangaProgressPersister({ delayMs: 100, retryDelayMs: 1000, write });
+
+      persister.record(5, 3, false);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(write).toHaveBeenCalledTimes(1);
+      // The reader closing offline fails too, and does not give up on the chapter.
+      await expect(persister.flushAll()).rejects.toThrow("offline");
+      expect(write).toHaveBeenCalledTimes(2);
+
+      // Two failures in a row: the next try waits 2 s, then 4 s.
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(write).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(write).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(3999);
+      expect(write).toHaveBeenCalledTimes(3);
+
+      online = true;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(write).toHaveBeenCalledTimes(4);
+      expect(write).toHaveBeenLastCalledWith({ chapterId: 5, lastPageRead: 3, isRead: false });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(write).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still saves within 15 s of the server coming back after a long time away", async () => {
+    vi.useFakeTimers();
+    try {
+      let online = false;
+      const write = vi.fn(async () => { if (!online) throw new Error("offline"); });
+      const persister = createMangaProgressPersister({ delayMs: 100, retryDelayMs: 5000, write });
+
+      persister.record(7, 12, true);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      const triesWhileAway = write.mock.calls.length;
+
+      online = true;
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(write).toHaveBeenCalledTimes(triesWhileAway + 1);
+      expect(write).toHaveBeenLastCalledWith({ chapterId: 7, lastPageRead: 12, isRead: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("saves progress an earlier offline session left in the journal without waiting for another page turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const data = new Map<string, string>();
+      const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } };
+      const journal = createMangaProgressJournal("profile:test", storage);
+      journal.save([{ chapterId: 8, lastPageRead: 6, isRead: true }]);
+      const write = vi.fn(async () => {});
+      createMangaProgressPersister({ retryDelayMs: 1000, journal, write });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(write).toHaveBeenCalledWith({ chapterId: 8, lastPageRead: 6, isRead: true });
+      expect(journal.load()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

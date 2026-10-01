@@ -29,7 +29,7 @@ export interface DetachedReaderClient {
   notify(method: string, args: unknown[]): void;
   /** Relays a store call and resolves with the main window's result. */
   request(method: string, args: unknown[]): Promise<unknown>;
-  /** Resolves once every relayed message has been handed to the main window and answered. */
+  /** Resolves once the main window has received every relayed message; replies still being worked on are not awaited. */
   drain(): Promise<void>;
 }
 
@@ -117,12 +117,10 @@ export async function connectDetachedReader(): Promise<DetachedReaderClient> {
     },
     async drain() {
       await sendChain;
-      const waiting = [...pending.keys()];
-      const deadline = Date.now() + DRAIN_TIMEOUT_MS;
-      await new Promise<void>((resolve) => {
-        const check = () => (waiting.some((id) => pending.has(id)) && Date.now() < deadline ? setTimeout(check, 25) : resolve());
-        check();
-      });
+      // The main window takes this window's messages in order, so its answer here means it has every earlier one.
+      // Work those messages started (a Suwayomi write, say) finishes there after this window is gone, so closing
+      // does not wait for it.
+      await call({ kind: "hello" }, DRAIN_TIMEOUT_MS).catch(() => {});
     },
   };
 }

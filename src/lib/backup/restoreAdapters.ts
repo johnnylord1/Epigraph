@@ -1,5 +1,6 @@
 import { mergeRestoredNovelsSnapshot, mergeNovelCategories } from "./novelsStateBridge";
 import { novelRestoreRuntimeState, planNovelRestoreDependencies } from "./novelsRestoreProvisioning";
+import { loadSettingsStorageRuntime } from "./storageRuntime";
 import type { RestoredEpigraphNovelsSnapshot } from "./novelsBackup";
 import type { PersistedNovelLibraryState } from "../novels/domain";
 import { prepareNovelReaderForRestore, type ReaderPreparationResult } from "../reader/restorePreparation";
@@ -48,7 +49,6 @@ export function createNovelRestoreAdapter(deps: {
 /** Both presentation surfaces use this same Novel service and readiness policy. */
 export async function prepareProductionNovels(bytes: ArrayBuffer, format: "epigraph" | "lnreader", assertOperationTarget = () => {}) {
   const { store } = await import("../../store/state.svelte");
-  const { loadSettingsStorageRuntime } = await import("./storageRuntime");
   assertOperationTarget();
   const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
   const validateTarget = () => {

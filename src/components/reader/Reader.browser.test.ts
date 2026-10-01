@@ -1,6 +1,7 @@
 /// <reference types="@vitest/browser/matchers" />
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { page } from "@vitest/browser/context";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import type { Chapter, Manga } from "../../lib/types";
 import { resetMangaProgressRuntimeForTests } from "../../lib/reader/mangaProgressRuntime";
@@ -121,6 +122,43 @@ describe("manga reader progress lifecycle", () => {
     expect(viewer.scrollTop).toBe(savedTop);
   });
 
+  test("keeps the longstrip page under the read line when the viewer is resized, as fullscreen does", async () => {
+    store.settings.pageStyle = "longstrip";
+    store.settings.fitMode = "width";
+    store.settings.autoNextChapter = false;
+    const { container } = render(Reader);
+    await waitFor(() => expect(container.querySelectorAll("img[data-local-page]")).toHaveLength(10));
+    const images = [...container.querySelectorAll<HTMLImageElement>("img[data-local-page]")];
+    await waitFor(() => expect(images.slice(0, 5).every((img) => img.complete && img.naturalHeight > 0)).toBe(true));
+    const viewer = container.querySelector<HTMLElement>(".viewer")!;
+    const readLine = () => viewer.getBoundingClientRect().top + viewer.clientHeight * 0.2;
+    const pageUnderLine = () => images.findLast((img) => img.getBoundingClientRect().top <= readLine())!;
+    const depthIntoPage = (img: HTMLElement) => {
+      const box = img.getBoundingClientRect();
+      return (readLine() - box.top) / box.height;
+    };
+
+    await fireEvent.pointerDown(viewer);
+    const page4 = images[3].getBoundingClientRect();
+    viewer.scrollTop += page4.top + page4.height * 0.6 - readLine();
+    await waitFor(() => expect(store.pageNumber).toBe(4));
+
+    try {
+      // Leaving and entering fullscreen: the strip reflows to the new width and height.
+      for (const [width, height] of [[900, 600], [1280, 800]]) {
+        const before = viewer.clientWidth;
+        await page.viewport(width, height);
+        await waitFor(() => expect(viewer.clientWidth).not.toBe(before));
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        expect(pageUnderLine()).toBe(images[3]);
+        expect(depthIntoPage(images[3])).toBeCloseTo(0.6, 1);
+        expect(store.pageNumber).toBe(4);
+      }
+    } finally {
+      await page.viewport(1280, 800);
+    }
+  });
+
   test("opening an unread chapter at its saved final page does not complete it", async () => {
     store.activeChapter = { ...store.activeChapter!, lastPageRead: 9 };
     store.activeChapterList = [store.activeChapter];
@@ -158,5 +196,17 @@ describe("manga reader progress lifecycle", () => {
     render(Reader, { props: { initialPages: { chapterId: 999, urls: handedOver } } });
     await waitFor(() => expect(store.pageUrls).toHaveLength(10));
     expect(fetchPages).toHaveBeenCalledTimes(1);
+  });
+
+  test("a chapter the source cannot reach is explained without the raw exception and retried on request", async () => {
+    fetchPages.mockRejectedValueOnce(new Error("Exception while fetching data (/fetchChapterPages) : Connection refused: getsockopt\r\n\r\njava.io.IOException: Connection refused: getsockopt"));
+    const { container, getByRole } = render(Reader);
+    await waitFor(() => expect(container.textContent).toContain("The source did not respond."));
+    expect(container.textContent).not.toContain("java.io.IOException");
+
+    await fireEvent.click(getByRole("button", { name: "Retry chapter" }));
+    await waitFor(() => expect(store.pageUrls).toHaveLength(10));
+    expect(fetchPages).toHaveBeenCalledTimes(2);
+    expect(container.textContent).not.toContain("The source did not respond.");
   });
 });

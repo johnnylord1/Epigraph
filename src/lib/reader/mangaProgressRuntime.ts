@@ -93,6 +93,41 @@ export function getMangaProgressForScope(scope: string, storage: ProgressStorage
   return persister;
 }
 
+/** Opens the main window's queue for the connection it just attached to, so progress an earlier session could not
+ * save (including what closed detached windows left) is retried without waiting for a reader to open. */
+export function resumePendingMangaProgress(profileId: string | null | undefined, storage: ProgressStorage = localStorage) {
+  if (journalWindowSuffix !== null) return;
+  getMangaProgressForScope(profileId ? `profile:${profileId}` : `server:${getServerUrl()}`, storage);
+}
+
+/** Takes over the journal a detached window left when it closed while Suwayomi was away, so this window's queue
+ * retries that progress at once instead of waiting for the next reader to open. */
+export function adoptClosedWindowMangaProgress(windowLabel: string, storage: ProgressStorage = localStorage) {
+  if (journalWindowSuffix !== null || typeof storage.key !== "function" || typeof storage.removeItem !== "function") return;
+  const entries = scopes.get(storage);
+  if (!entries) return;
+  const suffix = `${DETACHED_JOURNAL_SEPARATOR}${encodeURIComponent(windowLabel)}`;
+  const keys: string[] = [];
+  for (let index = 0; index < (storage.length ?? 0); index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(JOURNAL_PREFIX) && key.endsWith(suffix)) keys.push(key);
+  }
+  for (const key of keys) {
+    const scope = decodeURIComponent(key.slice(JOURNAL_PREFIX.length, key.length - suffix.length));
+    // Without a queue for this scope yet, the journal is adopted when that queue is created.
+    const persister = entries.get(`${scope}|${getServerUrl()}`);
+    if (!persister) continue;
+    let pending: MangaChapterProgress[];
+    try {
+      pending = createMangaProgressJournal(`${scope}${DETACHED_JOURNAL_SEPARATOR}${windowLabel}`, storage).load();
+    } catch {
+      continue;
+    }
+    for (const progress of pending) persister.record(progress.chapterId, progress.lastPageRead, progress.isRead);
+    storage.removeItem(key);
+  }
+}
+
 /** Saves every queued chapter this window recorded, for a detached reader that is about to close. */
 export async function flushAllMangaProgress(): Promise<void> {
   await Promise.allSettled([...created].map((persister) => persister.flushAll()));

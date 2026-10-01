@@ -81,6 +81,7 @@ describe("release bundle architecture", () => {
       "vendor-pdf",
     ]);
     expect(vite).toContain('return "runtime-preload"');
+    expect(vite).toContain('return "domain-i18n"');
     expect(vite).toContain('return "domain-theme-core"');
     expect(vite).toContain('return "domain-books-storage"');
     expect(vite).toContain('return "domain-books-import"');

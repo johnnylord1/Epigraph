@@ -42,7 +42,7 @@ export interface DetachedReaderContext extends DetachedReaderConnection {
 export interface DetachedReaderMainBridge {
   connection(): DetachedReaderConnection;
   applyStore(method: string, args: unknown[]): unknown;
-  readerClosed(): void;
+  readerClosed(label: string): void;
 }
 
 export interface DetachedReaderHostDeps {
@@ -177,7 +177,7 @@ export function createDetachedReaderHost(deps: DetachedReaderHostDeps) {
         releaseLease(session, token);
         void deps.invokeCommand(END_LEASE_COMMAND, { token }).catch(() => {});
       }
-      deps.bridge.readerClosed();
+      deps.bridge.readerClosed(label);
     },
   };
 }
@@ -187,7 +187,8 @@ let hostPromise: Promise<DetachedReaderHost> | null = null;
 
 async function createStoreBridge(): Promise<DetachedReaderMainBridge> {
   const state = await import("../../store/state.svelte");
-  const { getMangaProgressForScope } = await import("./mangaProgressRuntime");
+  const { adoptClosedWindowMangaProgress, getMangaProgressForScope } = await import("./mangaProgressRuntime");
+  const { getServerUrl } = await import("../client");
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   const methods: Record<string, (...args: any[]) => unknown> = {
     addHistory: state.addHistory,
@@ -214,15 +215,19 @@ async function createStoreBridge(): Promise<DetachedReaderMainBridge> {
       await novels.saveNovelReaderChanges(novels.readNovelReaderScope(scope), novels.readNovelReaderChanges(changes));
       state.bumpContentSetupVersion();
     },
+    // A novel window asks for FlareSolverr when its source shows a challenge; the saved setting reaches it as usual.
+    startFlareSolverr: async () => {
+      const { startLocalFlareSolverrAndEnable } = await import("../flaresolverr");
+      await startLocalFlareSolverrAndEnable();
+    },
     // Page lists come from here so windows opening the same chapter share one request (see fetchSourceChapterPages).
     fetchChapterPages: async (chapterId: unknown, mangaId: unknown) => {
       if (!Number.isSafeInteger(chapterId) || !Number.isSafeInteger(mangaId)) throw new Error("DETACHED_READER_CHAPTER_INVALID");
       const { fetchSourceChapterPages } = await import("../manga/runtime/sourceOperations");
       return (await fetchSourceChapterPages({ chapterId: chapterId as number, mangaId: mangaId as number })).fetchChapterPages.pages;
     },
-    // Downloaded chapters go over page by page; a whole archive in one message costs several copies of it.
+    // Only the page count crosses over; the window reads each downloaded page itself through `offline-page`.
     openOfflineMangaChapter: async (input: unknown) => (await import("./offlineManga")).openOfflineMangaChapterForWindow(input),
-    readOfflineMangaPage: async (id: unknown, index: unknown) => (await import("./offlineManga")).readOfflineMangaPageForWindow(id, index),
     mangaProgressSaved: (scope: string, progress: { chapterId: number; lastPageRead: number; isRead: boolean }) => {
       if (typeof scope !== "string" || !progress || !Number.isSafeInteger(progress.chapterId)) return;
       getMangaProgressForScope(scope).seed(progress.chapterId, progress.lastPageRead, progress.isRead === true);
@@ -236,7 +241,14 @@ async function createStoreBridge(): Promise<DetachedReaderMainBridge> {
       runtimeResolvedLocalProfileMeta: state.store.runtimeResolvedLocalProfileMeta,
     }),
     applyStore: (method, args) => methods[method]?.(...args),
-    readerClosed: () => state.store.noteDetachedReaderClosed(),
+    readerClosed: (label) => {
+      state.store.noteDetachedReaderClosed();
+      // A window closes without waiting for Suwayomi, so this window's queue for the same connection takes over the
+      // progress it left and keeps retrying it, even when no reader ran here yet.
+      const profileId = state.store.runtimeResolvedLocalProfileId;
+      getMangaProgressForScope(profileId ? `profile:${profileId}` : `server:${getServerUrl()}`);
+      adoptClosedWindowMangaProgress(label);
+    },
   };
 }
 
@@ -281,9 +293,47 @@ export function detachedWindowPlacement(monitor: Pick<Monitor, "scaleFactor" | "
   };
 }
 
+const REMEMBERED_PLACEMENT_KEY = "epigraph-detached-reader-placement";
+
+/** The size and position the last reader window had, if its centre is still on a monitor. It is kept inside
+ * that monitor's work area, so a window saved on a larger or since rearranged monitor stays reachable. */
+export function rememberedWindowPlacement(
+  saved: unknown,
+  monitors: ReadonlyArray<Pick<Monitor, "workArea">>,
+): DetachedWindowPlacement | null {
+  if (!saved || typeof saved !== "object") return null;
+  const { x, y, width, height } = saved as Record<string, unknown>;
+  if (![x, y, width, height].every(Number.isSafeInteger) || (width as number) < 1 || (height as number) < 1) return null;
+  const centreX = (x as number) + (width as number) / 2;
+  const centreY = (y as number) + (height as number) / 2;
+  const area = monitors.map((monitor) => monitor.workArea).find(({ position, size }) =>
+    centreX >= position.x && centreX < position.x + size.width && centreY >= position.y && centreY < position.y + size.height);
+  if (!area) return null;
+  const fitWidth = Math.min(width as number, area.size.width);
+  const fitHeight = Math.min(height as number, area.size.height);
+  const clamp = (value: number, start: number, room: number) => Math.min(Math.max(value, start), start + room);
+  return {
+    x: clamp(x as number, area.position.x, area.size.width - fitWidth),
+    y: clamp(y as number, area.position.y, area.size.height - fitHeight),
+    width: fitWidth,
+    height: fitHeight,
+  };
+}
+
+function readRememberedPlacement(): unknown {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_PLACEMENT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function mainWindowPlacement(): Promise<DetachedWindowPlacement | null> {
   try {
-    const { currentMonitor } = await import("@tauri-apps/api/window");
+    const { availableMonitors, currentMonitor } = await import("@tauri-apps/api/window");
+    const remembered = rememberedWindowPlacement(readRememberedPlacement(), await availableMonitors().catch(() => []));
+    if (remembered) return remembered;
     const monitor = await currentMonitor();
     return monitor && monitor.workArea.size.width > 0 && monitor.workArea.size.height > 0
       ? detachedWindowPlacement(monitor)
@@ -293,7 +343,33 @@ async function mainWindowPlacement(): Promise<DetachedWindowPlacement | null> {
   }
 }
 
-/** Moves a window created hidden onto the main window's monitor, then shows it. A window that cannot be shown
+/** Keeps the size and position a reader window was last left at, so the next one opens there. Fullscreen,
+ * maximized and minimized states are skipped; the window returns to its normal bounds from them. */
+async function rememberPlacement(windowHandle: WebviewWindow): Promise<() => void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const save = async () => {
+    try {
+      const states = await Promise.all([windowHandle.isFullscreen(), windowHandle.isMaximized(), windowHandle.isMinimized()]);
+      if (states.some(Boolean)) return;
+      const [position, size] = await Promise.all([windowHandle.outerPosition(), windowHandle.innerSize()]);
+      const placement: DetachedWindowPlacement = { x: position.x, y: position.y, width: size.width, height: size.height };
+      localStorage.setItem(REMEMBERED_PLACEMENT_KEY, JSON.stringify(placement));
+    } catch {
+      // The window is closing, or storage is unavailable; the last saved placement stays.
+    }
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => void save(), 300);
+  };
+  const unlisten = await Promise.all([windowHandle.onMoved(schedule), windowHandle.onResized(schedule)]).catch(() => []);
+  return () => {
+    clearTimeout(timer);
+    for (const stop of unlisten) stop();
+  };
+}
+
+/** Moves a window created hidden to its place, then shows it. A window that cannot be shown
  * is destroyed rather than left open and invisible. */
 async function showAt(windowHandle: WebviewWindow, placement: DetachedWindowPlacement): Promise<void> {
   try {
@@ -346,6 +422,14 @@ export async function openDetachedReader(target: DetachedReaderTarget, title: st
     host.sessions.delete(label);
     throw error;
   }
-  void windowHandle.once("tauri://destroyed", () => host.forget(label));
+  let destroyed = false;
+  let stopRemembering = () => {};
+  void windowHandle.once("tauri://destroyed", () => {
+    destroyed = true;
+    stopRemembering();
+    host.forget(label);
+  });
   if (placement) await showAt(windowHandle, placement);
+  stopRemembering = await rememberPlacement(windowHandle);
+  if (destroyed) stopRemembering();
 }

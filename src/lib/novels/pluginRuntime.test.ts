@@ -753,6 +753,39 @@ exports.default = new DefaultCoverPlugin();
     expect(details.cover).toBe("https://novels.example/covers/recovered.webp");
   });
 
+  it("loads plugins that import the default cover from @/types/constants and rejects unknown modules", () => {
+    const pluginSource = (moduleId: string) => `
+Object.defineProperty(exports, "__esModule", { value: true });
+const constants = require("${moduleId}");
+class ConstantsPlugin {
+  constructor() {
+    this.id = "constants.plugin";
+    this.name = "Constants Plugin";
+    this.site = "https://novels.example/";
+    this.fallbackCover = constants.defaultCover;
+  }
+  async parseNovel(path) {
+    return { path, name: "Story", cover: this.fallbackCover, chapters: [] };
+  }
+}
+exports.default = new ConstantsPlugin();
+`;
+
+    const loaded = loadNovelPluginBoundary({
+      pluginId: "constants.plugin",
+      artifactUrl: "https://example.com/constants.js",
+      pluginSource: pluginSource("@/types/constants"),
+    });
+    expect(loaded.summary).toMatchObject({ pluginId: "constants.plugin", hasParseNovel: true });
+    expect((loaded.plugin as { fallbackCover?: string }).fallbackCover).toBe("about:blank");
+
+    expect(() => loadNovelPluginBoundary({
+      pluginId: "constants.plugin",
+      artifactUrl: "https://example.com/constants.js",
+      pluginSource: pluginSource("@/types/not-a-module"),
+    })).toThrow(/does not expose module @\/types\/not-a-module/);
+  });
+
   it("uses FlareSolverr for LNReader source challenge responses when enabled", async () => {
     tauriFetchMock.mockReset();
     vi.stubGlobal("localStorage", {

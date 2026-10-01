@@ -141,7 +141,7 @@ Fullscreen, TTS e atalhos dependem das permissões e capacidades disponíveis no
 2. O leitor passa para uma janela própria e a janela principal volta para a tela anterior, livre para navegar, baixar ou abrir outra obra.
 3. Repita para ler vários capítulos ao mesmo tempo, da mesma obra ou de obras diferentes.
 
-Cada janela tem o próprio fullscreen (Esc sai dele) e salva o progresso normalmente. Fechar a janela principal fecha o Epigraph e todas as janelas de leitura. Os capítulos de novel continuam sendo carregados pela janela principal, então ela precisa ficar aberta.
+Cada janela tem o próprio fullscreen (Esc sai dele) e salva o progresso normalmente: ao reabrir o capítulo, na janela principal ou em outra janela, a leitura continua de onde parou. Uma nova janela abre no tamanho e na posição em que a última foi deixada. Se a fonte de uma novel pedir o FlareSolverr, o botão **Iniciar FlareSolverr** também funciona na janela separada. Fechar a janela principal fecha o Epigraph e todas as janelas de leitura. Os capítulos de novel continuam sendo carregados pela janela principal, então ela precisa ficar aberta.
 
 ## Regras de conteúdo
 

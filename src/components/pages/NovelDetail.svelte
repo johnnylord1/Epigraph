@@ -9,10 +9,12 @@
     bumpContentSetupVersion,
     setActiveNovelDetail,
     setActiveNovelReader,
+    setNovelDownload,
     setSettingsOpen,
     store,
     updateSettings,
   } from "../../store/state.svelte";
+  import type { NovelDownloadProgress } from "../../store/state.svelte";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelBookmarkEntries,
@@ -29,6 +31,7 @@
   } from "../../lib/novels/libraryState";
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
   import { getNovelMigrationBlockerKind } from "../../lib/novels/migrationSafe";
+  import { classifyUnclassifiedNovelSources } from "../../lib/novels/automaticClassification";
   import { loadInstalledNovelSources } from "../../lib/novels/sources";
   import {
     deleteCachedNovelChapters,
@@ -40,6 +43,7 @@
   import { refreshNovelDetailFromSource } from "../../lib/novels/libraryRefresh";
   import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import { NOVEL_READER_CHANGES_SAVED_EVENT } from "../../lib/novels/readerData";
+  import { nextChaptersInReadingOrder } from "../../lib/library/nextChapters";
   import {
     createBooksCategory,
     sortBooksCategories,
@@ -49,6 +53,7 @@
   import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
+  import DetailDownloadMenu from "../shared/DetailDownloadMenu.svelte";
 
   const CHAPTERS_PER_PAGE = 25;
 
@@ -68,17 +73,19 @@
   let linkPickerOpen = $state(false);
   let linkSearch = $state("");
   let dlOpen = $state(false);
-  let downloadingNovel = $state(false);
-  let downloadingIds = $state(new Set<string>());
-  let downloadProgress = $state<{ done: number; total: number } | null>(null);
+  // Kept in the store, so leaving this page neither hides a running download nor allows starting it twice.
+  const novelDownload = $derived.by(() => {
+    const novelId = activeDetail?.novel.id;
+    return novelId === undefined ? null : store.novelDownloads.find((entry) => entry.novelId === novelId) ?? null;
+  });
+  const downloadingNovel = $derived(novelDownload !== null);
+  const downloadingIds = $derived(new Set(novelDownload?.pendingIds ?? []));
+  const downloadProgress = $derived(novelDownload ? { done: novelDownload.done, total: novelDownload.total } : null);
   let deletingAll = $state(false);
   let refreshing = $state(false);
   // Keys of this source's chapters saved for offline reading (see lib/novels/offlineChapters).
   let cachedKeys = $state(new Set<string>());
   let sourceSite = $state<string | null>(null);
-  let showRange = $state(false);
-  let rangeFrom = $state("");
-  let rangeTo = $state("");
   let sourceClassificationState = $state<PersistedNovelSourceClassificationState>(peekNovelSourceClassificationState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
@@ -399,19 +406,24 @@
 
     const sourceId = activeDetail.novel.sourceId;
     const title = displayedNovel.title;
-    downloadingNovel = true;
-    downloadingIds = new Set(pending.map((chapter) => chapter.id));
-    downloadProgress = { done: 0, total: pending.length };
+    const novelId = activeDetail.novel.id;
+    let progress: NovelDownloadProgress = {
+      novelId,
+      title,
+      coverUrl: displayedNovel.coverUrl ?? null,
+      pendingIds: pending.map((chapter) => chapter.id),
+      done: 0,
+      total: pending.length,
+    };
+    setNovelDownload(novelId, progress);
     try {
       const result = await downloadNovelChaptersForOffline(scopeInput, {
         sourceId,
-        novelId: activeDetail.novel.id,
+        novelId,
         chapters: pending.map((chapter) => ({ id: chapter.id, path: chapter.path, title: chapter.title || null })),
       }, (chapterId, ok) => {
-        if (downloadProgress) downloadProgress = { ...downloadProgress, done: downloadProgress.done + 1 };
-        const remaining = new Set(downloadingIds);
-        remaining.delete(chapterId);
-        downloadingIds = remaining;
+        progress = { ...progress, done: progress.done + 1, pendingIds: progress.pendingIds.filter((id) => id !== chapterId) };
+        setNovelDownload(novelId, progress);
         const chapter = pending.find((entry) => entry.id === chapterId);
         if (ok && chapter && activeDetail?.novel.sourceId === sourceId) {
           cachedKeys = new Set([...cachedKeys, novelChapterCacheKey(chapter.path)]);
@@ -434,9 +446,7 @@
     } catch (error) {
       addToast({ kind: "error", title: translate("ui_novelDownloadFailed"), body: errorMessage(error) });
     } finally {
-      downloadingNovel = false;
-      downloadingIds = new Set();
-      downloadProgress = null;
+      setNovelDownload(novelId, null);
       void reloadCachedKeys();
     }
   }
@@ -445,9 +455,11 @@
     if (!activeDetail || chaptersToDelete.length === 0) return;
     try {
       await deleteCachedNovelChapters(scopeInput, activeDetail.novel.sourceId, chaptersToDelete.map((chapter) => chapter.path));
-      if (chaptersToDelete.length > 1) {
-        addToast({ kind: "info", title: translate("novelDetail_download_deletedTitle"), body: displayedNovel?.title ?? activeDetail.novel.title });
-      }
+      addToast({
+        kind: "info",
+        title: translate("novelDetail_download_deletedTitle"),
+        body: chaptersToDelete.length === 1 ? chapterPrimaryLabel(chaptersToDelete[0]) : displayedNovel?.title ?? activeDetail.novel.title,
+      });
     } catch (error) {
       addToast({ kind: "error", title: translate("novelDetail_download_deleteFailed"), body: errorMessage(error) });
     } finally {
@@ -540,9 +552,9 @@
   }
 
   function chaptersFromResume(count: number) {
-    const startChapter = resumeChapter ?? sortedNovelChapters[0] ?? null;
-    const startIndex = startChapter ? sortedNovelChapters.findIndex((chapter) => chapter.id === startChapter.id) : 0;
-    return sortedNovelChapters.slice(Math.max(0, startIndex), Math.max(0, startIndex) + count);
+    const readingOrder = [...(displayedNovel?.chapters ?? [])].sort((left, right) => left.order - right.order);
+    const start = readingOrder.find((chapter) => chapter.id === resumeChapter?.id) ?? readingOrder[0];
+    return nextChaptersInReadingOrder(readingOrder, start, count);
   }
 
   function downloadNext(count: number) {
@@ -557,10 +569,22 @@
     void downloadChapters(sortedNovelChapters);
   }
 
-  function downloadRange() {
-    const from = Number(rangeFrom.trim());
-    const to = Number(rangeTo.trim());
-    if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+  const downloadNextOptions = $derived(
+    resumeChapter
+      ? [5, 10, 25].map((amount) => ({
+          amount,
+          available: chaptersFromResume(amount).filter((chapter) => !isChapterDownloaded(chapter)).length,
+        }))
+      : [],
+  );
+
+  function downloadRange(fromText: string, toText: string) {
+    const from = Number(fromText.trim());
+    const to = Number(toText.trim());
+    if (!Number.isFinite(from) || !Number.isFinite(to)) {
+      addToast({ kind: "info", title: translate("ui_noChaptersToDownload"), body: displayedNovel?.title });
+      return;
+    }
     const lo = Math.min(from, to);
     const hi = Math.max(from, to);
     const selected = sortedNovelChapters.filter((chapter) => {
@@ -568,9 +592,6 @@
       return number >= lo && number <= hi;
     });
     void downloadChapters(selected);
-    rangeFrom = "";
-    rangeTo = "";
-    showRange = false;
   }
 
   function setSortDir(next: "asc" | "desc") {
@@ -587,6 +608,16 @@
       sourceClassificationState = classificationState;
       libraryState = nextLibraryState;
     });
+  });
+
+  // Sources that were installed or updated since the last check get their migration-safety smoke
+  // here, so the Migrate button leaves its "still checking" state instead of waiting forever.
+  $effect(() => {
+    const scope = scopeInput;
+    void classifyUnclassifiedNovelSources(scope)
+      .then((wrote) => (wrote ? loadNovelSourceClassificationState(scope) : null))
+      .then((state) => { if (state) sourceClassificationState = state; })
+      .catch(() => {});
   });
 
   $effect(() => {
@@ -730,66 +761,29 @@
           <span class="dl-unified-count" class:dl-unified-count-empty={!downloadingNovel && downloadedCount === 0}>{downloadingNovel ? downloadingIds.size : downloadedCount}</span>
         </button>
         {#if dlOpen}
-          {@const unreadToSave = sortedNovelChapters.filter((chapter) => chapter.unread && !isChapterDownloaded(chapter)).length}
-          <div class="dl-dropdown">
-            <div class="dl-pop-head">
-              <div>
-                <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
-                <strong>{downloadedCount} / {novelCounts.total}</strong>
-              </div>
-              <span class="dl-state-label">{downloadProgress ? $_("novelDetail_download_progress", { done: downloadProgress.done, total: downloadProgress.total }) : $_("detail.downloadsReady")}</span>
-            </div>
-            {#if resumeChapter}
-              <div class="dl-section">
-                <p class="dl-section-label">{$_("ui_fromCh")}{resumeChapter.order + 1}</p>
-                <div class="dl-next-row">
-                  {#each [5, 10, 25] as amount}
-                    {@const available = chaptersFromResume(amount).filter((chapter) => !isChapterDownloaded(chapter)).length}
-                    <button class="dl-next-btn" type="button" disabled={available === 0 || downloadingNovel} onclick={() => downloadNext(amount)}>
-                      <span>{$_("library_pagination_next")} {amount}</span>
-                      <span class="dl-next-sub">{$_("detail_download_newCount", { count: available })}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-            <div class="dl-section dl-section-compact">
-              {#if !showRange}
-                <button class="dl-item dl-range-trigger" type="button" onclick={() => showRange = true}>
-                  <span>{$_("ui_customRange")}</span>
-                  <span class="dl-item-sub">{$_("ui_chooseChapters")}</span>
-                </button>
-              {:else}
-                <div class="dl-range-row">
-                  <button class="dl-range-back" type="button" onclick={() => showRange = false} aria-label={$_("ui_closeCustomRange")}>&lt;</button>
-                  <input class="dl-range-input" placeholder={$_("ui_from")} bind:value={rangeFrom} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
-                  <span class="dl-range-sep">-</span>
-                  <input class="dl-range-input" placeholder={$_("ui_to")} bind:value={rangeTo} onkeydown={(event) => event.key === "Enter" && downloadRange()} />
-                  <button class="dl-range-go" type="button" disabled={!rangeFrom.trim() || !rangeTo.trim() || downloadingNovel} onclick={downloadRange}>{$_("ui_go")}</button>
-                </div>
-              {/if}
-            </div>
-            <div class="dl-section dl-actions">
-              <button class="dl-item" type="button" onclick={downloadUnread} disabled={unreadToSave === 0 || downloadingNovel}>
-                <span>{$_("library_sort_unreadChapters")}</span>
-                <span class="dl-item-sub">{$_("detail_download_remainingCount", { count: unreadToSave })}</span>
-              </button>
-              <button class="dl-item dl-item-primary" type="button" onclick={downloadAll} disabled={novelCounts.total - downloadedCount <= 0 || downloadingNovel}>
-                <span>{$_("ui_downloadAll")}</span>
-                <span class="dl-item-sub">{$_("detail_download_notDownloadedCount", { count: Math.max(0, novelCounts.total - downloadedCount) })}</span>
-              </button>
-              <button class="dl-item" type="button" onclick={exportDownloadedAsHtml} disabled={downloadedCount === 0 || downloadingNovel}>
-                <span>{$_("novelDetail_download_exportHtml")}</span>
-                <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
-              </button>
-            </div>
-            <div class="dl-section dl-danger-zone" class:dl-danger-zone-empty={downloadedCount === 0}>
-              <button class="dl-item dl-item-danger" type="button" onclick={deleteAllDownloads} disabled={downloadedCount === 0 || deletingAll || downloadingNovel}>
-                <span>{deletingAll ? $_("detail_download_deleting") : $_("ui_deleteAllDownloads")}</span>
-                <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
-              </button>
-            </div>
-          </div>
+          <DetailDownloadMenu
+            downloaded={downloadedCount}
+            total={novelCounts.total}
+            status={downloadProgress ? $_("novelDetail_download_progress", { done: downloadProgress.done, total: downloadProgress.total }) : null}
+            nextFrom={resumeChapter ? resumeChapter.order + 1 : null}
+            nextOptions={downloadNextOptions}
+            unreadCount={sortedNovelChapters.filter((chapter) => chapter.unread && !isChapterDownloaded(chapter)).length}
+            notDownloadedCount={Math.max(0, novelCounts.total - downloadedCount)}
+            busy={downloadingNovel}
+            deleting={deletingAll}
+            extraActions={[{
+              label: $_("novelDetail_download_exportHtml"),
+              count: downloadedCount,
+              disabled: downloadedCount === 0 || downloadingNovel,
+              onSelect: () => void exportDownloadedAsHtml(),
+            }]}
+            onNext={downloadNext}
+            onRange={downloadRange}
+            onUnread={downloadUnread}
+            onAll={downloadAll}
+            onDeleteAll={() => void deleteAllDownloads()}
+            onClose={() => dlOpen = false}
+          />
         {/if}
       </div>
       <button class="series-utility" disabled={!activeDetail.inLibrary || Boolean(migrationBlocker)} title={migrationBlocker ?? $_("novelDetail_migrateTitle")} aria-label={$_("ui_migrateThisNovelToAnotherSource")} onclick={() => migrateOpen = true}>
@@ -865,12 +859,14 @@
               {@const isDownloaded = isChapterDownloaded(chapter)}
               <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={!chapter.unread} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} onkeydown={(event) => event.key === "Enter" && openChapter(chapter.id, chapter.path, chapter.title)}>
                 <div class="ch-left">
-                  <span class="ch-name">{chapterPrimaryLabel(chapter)}</span>
-                  {#if chapterSecondaryLabel(chapter) || isCurrent || isBookmarked}
+                  <span class="ch-title">
+                    <span class="ch-name">{chapterPrimaryLabel(chapter)}</span>
+                    {#if isBookmarked}<span class="ch-bookmark" role="img" title={$_("bookDetail_filter_bookmarked")} aria-label={$_("bookDetail_filter_bookmarked")}><BookmarkSimple size={12} weight="fill" /></span>{/if}
+                  </span>
+                  {#if chapterSecondaryLabel(chapter) || isCurrent}
                     <div class="ch-meta">
                       {#if chapterSecondaryLabel(chapter)}<span class="ch-meta-item">{chapterSecondaryLabel(chapter)}</span>{/if}
                       {#if isCurrent}<span class="ch-meta-item">{$_("bookDetail_filter_current")}</span>{/if}
-                      {#if isBookmarked}<span class="ch-meta-item"><BookmarkSimple size={10} weight="fill" /> {$_("bookDetail_filter_bookmarked")}</span>{/if}
                     </div>
                   {/if}
                   <div class="chapter-progress" class:is-empty={chapter.unread}><div class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></div></div>
@@ -1002,256 +998,6 @@
     position: relative;
   }
 
-  .dl-dropdown {
-    position: absolute;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    z-index: var(--component-detail-dl-dropdown-z-index);
-    right: 0;
-    top: calc(100% + 12px);
-    width: min(360px, calc(100vw - 42px));
-    padding: 10px;
-    color: var(--component-detail-dl-dropdown-color);
-    border: var(--component-detail-dl-dropdown-border);
-    border-radius: var(--component-detail-dl-dropdown-border-radius);
-    background: var(--component-detail-dl-dropdown-background);
-    box-shadow: var(--component-detail-dl-dropdown-box-shadow);
-  }
-
-  .dl-pop-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 42px;
-    padding: 2px 2px 9px;
-    border-bottom: var(--component-detail-dl-pop-head-border-bottom);
-    background: transparent;
-  }
-
-  .dl-pop-head > div {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .dl-pop-head strong {
-    color: var(--component-detail-dl-pop-head-strong-color);
-    font: var(--component-detail-dl-pop-head-strong-font);
-    letter-spacing: 0.01em;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .dl-kicker,
-  .dl-state-label {
-    color: var(--component-detail-dl-state-label-color);
-    font: var(--component-detail-dl-state-label-font);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-
-  .dl-state-label {
-    flex: 0 0 auto;
-    width: 76px;
-    padding: 5px 9px;
-    border: var(--component-detail-dl-state-label-border);
-    border-radius: var(--component-detail-dl-state-label-border-radius);
-    background: var(--component-detail-dl-state-label-background);
-    color: var(--component-detail-dl-state-label-color-2);
-    text-align: center;
-    white-space: nowrap;
-  }
-
-  .dl-section {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 9px 0 0;
-    border: 0;
-    border-radius: var(--component-detail-dl-section-border-radius);
-    background: transparent;
-  }
-
-  .dl-section-compact {
-    padding-top: 9px;
-    border-top: var(--component-detail-dl-section-compact-border-top);
-  }
-
-  .dl-actions {
-    gap: 4px;
-    border-top: var(--component-detail-dl-actions-border-top);
-  }
-
-  .dl-danger-zone {
-    border-top: var(--component-detail-dl-danger-zone-border-top);
-  }
-
-  .dl-danger-zone-empty {
-    border-top-color: var(--component-detail-dl-danger-zone-empty-border-top-color);
-  }
-
-  .dl-item,
-  .dl-next-btn {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-height: 34px;
-    width: 100%;
-    padding: 0 10px;
-    border: 0;
-    border-radius: var(--component-detail-dl-next-btn-border-radius);
-    color: var(--component-detail-dl-next-btn-color);
-    background: transparent;
-    font: var(--component-detail-dl-next-btn-font);
-    letter-spacing: 0.03em;
-    text-align: left;
-    cursor: pointer;
-    transition: background 140ms ease, color 140ms ease, transform 140ms ease;
-  }
-
-  .dl-item:hover,
-  .dl-next-btn:hover:not(:disabled) {
-    color: var(--component-detail-dl-next-btn-color-2);
-    background: var(--component-detail-dl-next-btn-background);
-  }
-
-  .dl-item:active,
-  .dl-next-btn:active:not(:disabled) {
-    transform: scale(0.985);
-  }
-
-  .dl-item:disabled,
-  .dl-next-btn:disabled {
-    opacity: var(--component-detail-dl-next-btn-opacity);
-    cursor: default;
-  }
-
-  .dl-section-label,
-  .dl-item-sub,
-  .dl-next-sub {
-    margin: 5px 8px;
-    color: var(--component-detail-dl-next-sub-color);
-    font: var(--component-detail-dl-next-sub-font);
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-  }
-
-  .dl-section-label {
-    margin: 0 2px 3px;
-  }
-
-  .dl-next-row {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    align-items: center;
-    gap: 6px;
-    padding: 0;
-  }
-
-  .dl-next-btn {
-    min-height: 46px;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 4px;
-    padding: 0 10px;
-    border: var(--component-detail-dl-next-btn-border);
-    background: var(--component-detail-dl-next-btn-background-2);
-  }
-
-  .dl-next-sub {
-    margin: 0;
-    color: var(--component-detail-dl-next-sub-color-2);
-    font-size: 8px;
-  }
-
-  .dl-item {
-    min-height: 36px;
-    padding: 0 8px;
-  }
-
-  .dl-item-sub {
-    margin: 0;
-    flex: 0 0 auto;
-    color: var(--component-detail-dl-item-sub-color);
-    font-size: 8px;
-  }
-
-  .dl-range-trigger {
-    border: 1px solid transparent;
-  }
-
-  .dl-item-primary {
-    color: var(--component-detail-dl-item-primary-color);
-  }
-
-  .dl-item-primary .dl-item-sub {
-    color: var(--component-detail-dl-item-primary-dl-item-sub-color);
-  }
-
-  .dl-range-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px;
-    border-radius: var(--component-detail-dl-range-row-border-radius);
-    background: var(--component-detail-dl-range-row-background);
-  }
-
-  .dl-range-input {
-    min-width: 0;
-    height: 32px;
-    padding: 0 10px;
-    border: var(--component-detail-dl-range-input-border);
-    border-radius: var(--component-detail-dl-range-input-border-radius);
-    color: var(--component-detail-dl-range-input-color);
-    background: var(--component-detail-dl-range-input-background);
-    font-size: 11px;
-    outline: none;
-  }
-
-  .dl-range-input:focus {
-    border-color: var(--component-detail-dl-range-input-border-color);
-    box-shadow: var(--component-detail-dl-range-input-box-shadow);
-  }
-
-  .dl-range-sep {
-    color: var(--component-detail-dl-range-sep-color);
-    font-size: 12px;
-    font-weight: 800;
-  }
-
-  .dl-range-back,
-  .dl-range-go {
-    min-height: 32px;
-    padding: 0 10px;
-    border: var(--component-detail-dl-range-go-border);
-    border-radius: var(--component-detail-dl-range-go-border-radius);
-    color: var(--component-detail-dl-range-go-color);
-    background: var(--component-detail-dl-range-go-background);
-    cursor: pointer;
-    transition: background 140ms ease, color 140ms ease, transform 140ms ease;
-  }
-
-  .dl-range-back:hover,
-  .dl-range-go:hover:not(:disabled) {
-    color: var(--component-detail-dl-range-go-color-2);
-    background: var(--component-detail-dl-range-go-background-2);
-  }
-
-  .dl-range-back:active,
-  .dl-range-go:active:not(:disabled) {
-    transform: scale(0.97);
-  }
-
-  .dl-range-go:disabled {
-    opacity: var(--component-detail-dl-range-go-opacity);
-    cursor: default;
-  }
-
   .dl-unified-btn {
     min-width: 0;
   }
@@ -1271,21 +1017,6 @@
 
   .dl-unified-count-empty {
     display: none;
-  }
-
-  .dl-item-danger {
-    color: var(--component-detail-dl-item-danger-color-3);
-    border: 1px solid transparent;
-    background: transparent;
-  }
-
-  .dl-item-danger:disabled {
-    color: var(--component-detail-dl-item-danger-color);
-    cursor: default;
-  }
-
-  .dl-item-danger:disabled .dl-item-sub {
-    color: var(--component-detail-dl-item-danger-dl-item-sub-color);
   }
 
   .link-backdrop {

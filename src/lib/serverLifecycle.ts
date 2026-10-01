@@ -49,6 +49,34 @@ export function notifyServerReady(serverUrl: string | null | undefined) {
   }));
 }
 
+/**
+ * A start that opened the saved library stops waiting for Suwayomi, but the pages that need it should still
+ * load as soon as it answers, so keep probing in the background and announce it once.
+ */
+export function announceServerWhenReady(
+  serverUrl: string | null | undefined,
+  isReady: () => Promise<boolean>,
+  { intervalMs = 2000, giveUpAfterMs = 10 * 60_000 } = {},
+) {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const deadline = Date.now() + giveUpAfterMs;
+  const check = async () => {
+    timer = null;
+    if (stopped || !serverUrl) return;
+    if (await isReady().catch(() => false)) {
+      if (!stopped) notifyServerReady(serverUrl);
+      return;
+    }
+    if (!stopped && Date.now() < deadline) timer = setTimeout(check, intervalMs);
+  };
+  void check();
+  return () => {
+    stopped = true;
+    if (timer !== null) clearTimeout(timer);
+  };
+}
+
 export function isLoopbackServerUrl(serverUrl: string | null | undefined) {
   if (!serverUrl) return false;
   try {
@@ -69,12 +97,28 @@ export async function probeServerHealth(serverUrl: string | null | undefined) {
   }
 }
 
-export async function ensureServerAwakeFor(
+// Callers that ask while a wake is already running for the same server share it instead of probing on their own.
+const wakesInFlight = new Map<string, Promise<boolean>>();
+
+export function ensureServerAwakeFor(
   reason: ServerWakeReason,
   input: ServerLifecycleInput,
 ) {
   const serverUrl = input.serverUrl ?? null;
-  if (!serverUrl) return false;
+  if (!serverUrl) return Promise.resolve(false);
+  const key = `${serverUrl}|${input.profileId ?? ""}`;
+  const running = wakesInFlight.get(key);
+  if (running) return running;
+  const wake = wakeServer(reason, serverUrl, input).finally(() => wakesInFlight.delete(key));
+  wakesInFlight.set(key, wake);
+  return wake;
+}
+
+async function wakeServer(
+  reason: ServerWakeReason,
+  serverUrl: string,
+  input: ServerLifecycleInput,
+) {
   if (await probeServerHealth(serverUrl)) {
     notifyServerReady(serverUrl);
     return true;

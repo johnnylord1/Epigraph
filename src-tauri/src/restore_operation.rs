@@ -326,8 +326,12 @@ fn journal_path_digest(path: &Path) -> Result<String, String> {
 
 /// Ordinary writers hold this across their complete read-modify-write boundary.
 /// A shared lock admits other ordinary writers; domain CAS still prevents stale writes.
+/// No production writer takes it yet, so it only exists for the tests that prove an operation or unresolved
+/// marker keeps writers out; wire a writer to it before dropping the cfg.
+#[cfg(test)]
 pub struct WriterLease { _scope: File, _maintenance: super::SharedFileLease }
 
+#[cfg(test)]
 pub fn try_writer(runtime_root: &Path, scope: &str) -> Result<WriterLease, String> {
     if scope.is_empty() { return Err("RESTORE_SCOPE_MISSING".into()); }
     let maintenance = super::try_acquire_shared_file_lease(runtime_root)?;

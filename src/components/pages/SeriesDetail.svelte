@@ -12,6 +12,8 @@
   import { dedupeMangaById, dedupeMangaByTitle } from "../../lib/util";
   import { buildReaderChapterList, effectiveScanlator, listScanlators, normalizeMangaReaderPreference, resolveReaderChapterTarget } from "../../lib/reader/scanlator";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { hasSettledSeriesDownload } from "../../lib/manga/downloadQueue";
+  import { nextChaptersInReadingOrder } from "../../lib/library/nextChapters";
   import { store, addToast, updateSettings, openReader, setActiveManga, setSettingsOpen, openSearchBrowseFeatured, linkManga, unlinkManga, checkAndMarkCompleted as storeCheckAndMarkCompleted, syncLibraryMangaFromDetail } from "../../store/state.svelte";
   import type { Manga, Chapter, Category, DownloadStatus } from "../../lib/types";
   import ContextMenu from "../shared/ContextMenu.svelte";
@@ -19,6 +21,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import TrackingPanel from "../shared/TrackingPanel.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
+  import DetailDownloadMenu from "../shared/DetailDownloadMenu.svelte";
   import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
 
@@ -30,11 +33,14 @@
   const DOWNLOAD_POLL_ATTEMPTS = 10;
   const DOWNLOAD_POLL_MS = 800;
 
-  const mangaStore:   Map<number, { data: Manga;     fetchedAt: number }> = new Map();
-  const chapterStore: Map<number, { data: Chapter[]; fetchedAt: number }> = new Map();
+  const CHAPTER_RECONNECT_MS = 5000;
 
   let manga:           Manga | null     = $state(null);
   let chapters:        Chapter[]        = $state([]);
+  // Set while Suwayomi cannot list the chapters. The list keeps its last known chapters (or offers a retry when it has
+  // none) and reloads on its own once Suwayomi answers again.
+  let chaptersUnavailable = $state(false);
+  let chapterReconnect: ReturnType<typeof setTimeout> | null = null;
   let loadingManga:    boolean          = $state(false);
   let loadingChapters: boolean          = $state(true);
   let enqueueing:      Set<number>      = $state(new Set());
@@ -59,17 +65,14 @@
   let mangaCategories: Category[]       = $state([]);
   let allCategories:   Category[]       = $state([]);
   let catsLoading:     boolean          = $state(false);
-  let rangeFrom:       string           = $state("");
-  let rangeTo:         string           = $state("");
-  let showRange:       boolean          = $state(false);
   let migrateOpen:     boolean          = $state(false);
-  let dlDropRef:       HTMLDivElement | undefined = $state();
   let folderPickerRef: HTMLDivElement | undefined = $state();
   // Series link
   let linkPickerOpen:   boolean   = $state(false);
   let linkSearch:       string    = $state("");
   let allMangaForLink:  Manga[]   = $state([]);
   let loadingLinkList:  boolean   = $state(false);
+  let linkListError:    string | null = $state(null);
 
   // Tracking modal
   let trackingOpen: boolean = $state(false);
@@ -87,13 +90,27 @@
 
   function clearSelection() { selectedIds = new Set(); }
 
+  // Chapters stay marked as downloaded unless Suwayomi deleted them, and either outcome is shown.
+  async function deleteDownloadedChapters(ids: number[]) {
+    try {
+      await gql(DELETE_DOWNLOADED_CHAPTERS, { ids });
+    } catch (error) {
+      console.error(error);
+      addToast({ kind: "error", title: translate("detail_download_deleteFailed"), body: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    const single = ids.length === 1 ? chapters.find(c => c.id === ids[0]) : undefined;
+    chapters = chapters.map(c => ids.includes(c.id) ? { ...c, isDownloaded: false } : c);
+    if (store.activeManga) chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
+    // The Library card counts this series' downloads too.
+    const currentManga = manga ?? store.activeManga;
+    if (currentManga) syncLibraryMangaFromDetail(currentManga, chapters);
+    addToast({ kind: "info", title: translate("detail_download_deletedTitle"), body: single?.name ?? store.activeManga?.title ?? "" });
+  }
+
   async function deleteSelected() {
     const ids = [...selectedIds].filter(id => chapters.find(c => c.id === id)?.isDownloaded);
-    if (ids.length) {
-      await gql(DELETE_DOWNLOADED_CHAPTERS, { ids }).catch(console.error);
-      chapters = chapters.map(c => ids.includes(c.id) ? { ...c, isDownloaded: false } : c);
-      if (store.activeManga) chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
-    }
+    if (ids.length) await deleteDownloadedChapters(ids);
     clearSelection();
   }
 
@@ -227,7 +244,7 @@
   }
 
   function queuedLabel(count: number, fallback?: string) {
-    if (count === 1) return fallback ?? $_("detail.chapterCount", { count });
+    if (count === 1) return fallback ?? $_("preview_chapterCountOne");
     return $_("detail.chapterCount", { count });
   }
 
@@ -249,12 +266,20 @@
     }, delayMs);
   }
 
+  // A chapter of this series that stops downloading has finished or was dropped, so the list reloads to show
+  // what is on disk; the enqueue only waits a few seconds, and a longer download would otherwise stay stale.
+  function applyDownloadQueue(queue: DownloadStatus["queue"]) {
+    const settled = hasSettledSeriesDownload(downloadQueueItems, queue, currentChapterIds);
+    downloadQueueItems = queue;
+    if (settled && store.activeManga) void reloadChapters(store.activeManga.id).catch(() => {});
+  }
+
   async function refreshDownloadQueue(options: { reschedule?: boolean } = {}) {
     if (downloadStatusRefreshInFlight) return;
     downloadStatusRefreshInFlight = true;
     try {
       const status = await gql<{ downloadStatus: DownloadStatus }>(GET_DOWNLOAD_STATUS).catch(() => null);
-      if (status) downloadQueueItems = status.downloadStatus.queue ?? [];
+      if (status) applyDownloadQueue(status.downloadStatus.queue ?? []);
     } finally {
       downloadStatusRefreshInFlight = false;
       if (options.reschedule) scheduleDownloadQueueRefresh();
@@ -267,7 +292,7 @@
       await sleep(DOWNLOAD_POLL_MS);
       const status = await gql<{ downloadStatus: DownloadStatus }>(GET_DOWNLOAD_STATUS).catch(() => null);
       const queue = status?.downloadStatus.queue ?? [];
-      downloadQueueItems = queue;
+      applyDownloadQueue(queue);
       const watchedItems = queue.filter(item => watched.has(item.chapter.id));
       if (watchedItems.some(item => item.state === "ERROR")) return true;
       if (watchedItems.length === 0) return false;
@@ -334,6 +359,8 @@
   });
   const filteredChaptersAsc = $derived(buildReaderChapterList(chapters, mangaReaderPrefs, sourceScanlatorFallback));
 
+  // Chapters with a page marker placed in the reader, shown as a bookmark glyph beside the title.
+  const bookmarkedChapterIds = $derived(new Set(store.bookmarks.filter((entry) => entry.mangaId === manga?.id).map((entry) => entry.chapterId)));
   const sortedChapters = $derived.by(() => {
     const base = [...filteredChaptersAsc];
     if (sortMode === "chapterNumber") {
@@ -365,6 +392,11 @@
 
   function resolveDisplayedManga(loadedManga: Manga | null, activeManga: Manga | null): Manga | null {
     return loadedManga ?? activeManga;
+  }
+
+  // Without chapters or a summary from Suwayomi the counts are unknown, not zero.
+  function metricValue(count: number): string {
+    return chaptersUnavailable && chapters.length === 0 && count === 0 ? "—" : String(count);
   }
 
   const summaryChapterCount = $derived(countValue(displayedManga?.chapterCount));
@@ -482,28 +514,64 @@
     }).catch(() => {}).finally(() => { if (!ctrl.signal.aborted && loadingFor === id) loadingManga = false; });
   }
 
+  function clearChapterReconnect() {
+    if (chapterReconnect) clearTimeout(chapterReconnect);
+    chapterReconnect = null;
+  }
+
+  // Suwayomi restarting or dropping out is transient: check quietly until it answers, then reload the list.
+  function scheduleChapterReconnect(id: number) {
+    clearChapterReconnect();
+    chapterReconnect = setTimeout(async () => {
+      chapterReconnect = null;
+      if (store.activeManga?.id !== id) return;
+      const ready = await waitForSuwayomiGraphqlReady("graphql", { attempts: 1, timeoutMs: 4000 }).catch(() => false);
+      if (store.activeManga?.id !== id || chapterReconnect || !chaptersUnavailable) return;
+      if (ready) loadChapters(id); else scheduleChapterReconnect(id);
+    }, CHAPTER_RECONNECT_MS);
+  }
+
   function loadChapters(id: number) {
     chapterAbort?.abort();
+    clearChapterReconnect();
     const ctrl = new AbortController();
     chapterAbort = ctrl;
+    if (loadingChaptersFor !== id) chaptersUnavailable = false;
     loadingChaptersFor = id;
+    const loadCachedChapters = () => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal);
+    const markUnavailable = () => {
+      if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+      loadingChapters = false;
+      chaptersUnavailable = true;
+      scheduleChapterReconnect(id);
+    };
     const cached = chapterStore.get(id);
     if (cached) {
-      applyChapters(cached.data); loadingChapters = false;
-      if (Date.now() - cached.fetchedAt < CHAPTER_TTL_MS) return;
-      fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, ctrl.signal)
-        .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
-        .then(d => {
-          if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
-          chapterStore.set(id, { data: d.chapters.nodes, fetchedAt: Date.now() });
-          applyChapters(d.chapters.nodes);
-        }).catch(() => {});
+      // The reader replaces this page, so coming back shows the cached list at once. Suwayomi's copy is read again
+      // because the reader changed read state behind the cache; only the source fetch waits for the TTL.
+      chapters = cached.data; loadingChapters = false;
+      loadCachedChapters().then(d => {
+        if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+        chaptersUnavailable = false;
+        chapterStore.set(id, { data: d.chapters.nodes, fetchedAt: cached.fetchedAt });
+        applyChapters(d.chapters.nodes);
+        if (Date.now() - cached.fetchedAt < CHAPTER_TTL_MS) return;
+        return fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, ctrl.signal)
+          .then(() => loadCachedChapters())
+          .then(fresh => {
+            if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+            chapterStore.set(id, { data: fresh.chapters.nodes, fetchedAt: Date.now() });
+            applyChapters(fresh.chapters.nodes);
+          }).catch(() => {});
+      }, markUnavailable);
       return;
     }
     chapters = []; loadingChapters = true;
-    const loadCachedChapters = () => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal);
     loadCachedChapters().then(d => {
       if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+      chaptersUnavailable = false;
+      // Kept even when the source fetch below fails, so a later outage still has this list to show.
+      chapterStore.set(id, { data: d.chapters.nodes, fetchedAt: 0 });
       applyChapters(d.chapters.nodes); loadingChapters = false;
       return fetchSourceMangaChapters({ mangaId: id, sourceId: manga?.source?.id }, ctrl.signal)
         .then(() => gql<{ chapters: { nodes: Chapter[] } }>(GET_CHAPTERS, { mangaId: id }, ctrl.signal))
@@ -520,16 +588,16 @@
         timeoutMs: 5000,
         signal: ctrl.signal,
       }).catch(() => false);
-      if (!ready || ctrl.signal.aborted || loadingChaptersFor !== id) {
-        if (!ctrl.signal.aborted && loadingChaptersFor === id) loadingChapters = false;
-        return;
-      }
+      if (!ready) { markUnavailable(); return; }
+      if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
       try {
         const retry = await loadCachedChapters();
         if (ctrl.signal.aborted || loadingChaptersFor !== id) return;
+        chapterStore.set(id, { data: retry.chapters.nodes, fetchedAt: 0 });
         applyChapters(retry.chapters.nodes);
       } catch {
         // Summary counts remain visible if Suwayomi still cannot read chapters.
+        markUnavailable();
       } finally {
         if (!ctrl.signal.aborted && loadingChaptersFor === id) loadingChapters = false;
       }
@@ -557,6 +625,18 @@
     const wasOpen = prevChapterId !== null;
     prevChapterId = store.activeChapter?.id ?? null;
     if (wasOpen && !store.activeChapter && store.activeManga) {
+      const id = store.activeManga.id;
+      untrack(() => { loadChapters(id); });
+    }
+  });
+
+  // A reader in its own window leaves this page open; its closing is when the chapters it read are read again.
+  let seenDetachedClosures = store.detachedReaderClosures;
+  $effect(() => {
+    const closures = store.detachedReaderClosures;
+    if (closures === seenDetachedClosures) return;
+    seenDetachedClosures = closures;
+    if (store.activeManga) {
       const id = store.activeManga.id;
       untrack(() => { loadChapters(id); });
     }
@@ -614,19 +694,18 @@
   const markBelowUnread = (i: number) => markBulk(sortedChapters.slice(i).filter(c => c.isRead).map(c => c.id), false);
 
   async function deleteDownloaded(chapterId: number) {
-    await gql(DELETE_DOWNLOADED_CHAPTERS, { ids: [chapterId] }).catch(console.error);
-    chapters = chapters.map(c => c.id === chapterId ? { ...c, isDownloaded: false } : c);
-    if (store.activeManga) chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
+    await deleteDownloadedChapters([chapterId]);
   }
 
   async function deleteAllDownloads() {
     const ids = chapters.filter(c => c.isDownloaded).map(c => c.id);
     if (!ids.length) return;
     deletingAll = true;
-    await gql(DELETE_DOWNLOADED_CHAPTERS, { ids }).catch(console.error);
-    chapters = chapters.map(c => ({ ...c, isDownloaded: false }));
-    if (store.activeManga) chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
-    deletingAll = false;
+    try {
+      await deleteDownloadedChapters(ids);
+    } finally {
+      deletingAll = false;
+    }
   }
 
   async function refreshChapters() {
@@ -669,15 +748,15 @@
       { separator: true },
       { label: translate("ui_downloadNext5FromHere"), icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx, idx + 5).filter(c => !c.isDownloaded).map(c => c.id)) },
       { label: translate("ui_downloadAllFromHere"),    icon: DownloadSimple, onClick: () => enqueueMultiple(sortedChapters.slice(idx).filter(c => !c.isDownloaded).map(c => c.id)) },
+      { separator: true },
+      // The row checkboxes only show once something is selected, so this is where a selection starts.
+      { label: translate("detail_selection_select"), icon: CheckCircle, onClick: () => { selectedIds = new Set([...selectedIds, ch.id]); } },
     ];
   }
 
-  function handleDlOutside(e: MouseEvent) { if (dlDropRef && !dlDropRef.contains(e.target as Node)) dlOpen = false; }
   function handleFolderOutside(e: MouseEvent) { if (folderPickerRef && !folderPickerRef.contains(e.target as Node)) { folderPickerOpen = false; folderCreating = false; folderNewName = ""; } }
 
   $effect(() => {
-    if (dlOpen) { setTimeout(() => document.addEventListener("mousedown", handleDlOutside, true), 0); }
-    else document.removeEventListener("mousedown", handleDlOutside, true);
     if (dlOpen) scheduleDownloadQueueRefresh(0);
   });
   $effect(() => {
@@ -686,14 +765,20 @@
   });
 
   function enqueueNext(n: number) {
-    if (!continueChapter) return;
-    const idx = sortedChapters.indexOf(continueChapter.chapter);
-    if (idx < 0) return;
-    enqueueMultiple(sortedChapters.slice(idx, idx + n).filter(c => !c.isDownloaded).map(c => c.id));
+    const next = nextChaptersInReadingOrder(chaptersAsc, continueChapter?.chapter, n);
+    if (next.length) enqueueMultiple(next.filter(c => !c.isDownloaded).map(c => c.id));
   }
 
-  function enqueueRange() {
-    const from = parseFloat(rangeFrom), to = parseFloat(rangeTo);
+  const downloadNextOptions = $derived.by(() => {
+    if (!continueChapter || !chaptersAsc.includes(continueChapter.chapter)) return [];
+    return [5, 10, 25].map((amount) => ({
+      amount,
+      available: nextChaptersInReadingOrder(chaptersAsc, continueChapter.chapter, amount).filter(c => !c.isDownloaded).length,
+    }));
+  });
+
+  function enqueueRange(fromText: string, toText: string) {
+    const from = parseFloat(fromText), to = parseFloat(toText);
     if (isNaN(from) || isNaN(to)) return;
     const lo = Math.min(from, to), hi = Math.max(from, to);
     enqueueMultiple(sortedChapters.filter(c => c.chapterNumber >= lo && c.chapterNumber <= hi && !c.isDownloaded).map(c => c.id));
@@ -734,6 +819,7 @@
     return () => {
       mangaAbort?.abort();
       chapterAbort?.abort();
+      clearChapterReconnect();
       clearDownloadQueuePoll();
     };
   });
@@ -756,11 +842,17 @@
 
   async function openLinkPicker() {
     linkPickerOpen = true; linkSearch = "";
-    if (allMangaForLink.length) return;
+    if (allMangaForLink.length || loadingLinkList) return;
+    loadLinkList();
+  }
+
+  function loadLinkList() {
     loadingLinkList = true;
+    linkListError = null;
     gql<{ mangas: { nodes: Manga[] } }>(GET_ALL_MANGA)
       .then(d => { allMangaForLink = d.mangas.nodes; })
-      .catch(console.error)
+      // A failed load is not an empty library: say so and let the user retry.
+      .catch((error) => { linkListError = error instanceof Error ? error.message : String(error); })
       .finally(() => { loadingLinkList = false; });
   }
 
@@ -797,9 +889,9 @@
     onTagClick={(g) => { openSearchBrowseFeatured(g); setActiveManga(null); }}
     onDetailsToggle={() => detailsOpen = !detailsOpen}
     metrics={[
-      { label: $_("detail.stats.chapters"), value: String(totalCount) },
-      { label: $_("detail.stats.unread"), value: String(unreadCount) },
-      { label: $_("detail.stats.downloaded"), value: String(downloadedCount) },
+      { label: $_("detail.stats.chapters"), value: metricValue(totalCount) },
+      { label: $_("detail.stats.unread"), value: metricValue(unreadCount) },
+      { label: $_("detail.stats.downloaded"), value: metricValue(downloadedCount) },
     ]}
   >
     {#snippet topbarActions()}
@@ -818,7 +910,7 @@
         <Play size={13} weight="fill" />
         {#if continueChapter}
           {continueChapter.type === "continue"
-            ? $_("detail.actions.continueChapter", { chapter: continueChapter.chapter.chapterNumber, page: (continueChapter.chapter.lastPageRead ?? 0) > 0 ? ` p.${continueChapter.chapter.lastPageRead}` : "" })
+            ? $_("detail.actions.continueChapter", { chapter: continueChapter.chapter.chapterNumber, page: (continueChapter.chapter.lastPageRead ?? 0) > 0 ? ` p.${(continueChapter.chapter.lastPageRead ?? 0) + 1}` : "" })
             : continueChapter.type === "reread" ? $_("detail.actions.readAgain") : $_("detail.actions.startReading")}
         {:else}
           {$_("detail.empty.noChapters")}
@@ -863,7 +955,7 @@
         {$_("ui_link")}{linkedIds.length > 0 ? ` (${linkedIds.length})` : ""}
       </button>
       {#if chapters.length > 0}
-        <div class="dl-wrap" bind:this={dlDropRef}>
+        <div class="dl-wrap">
           <button class="series-utility dl-unified-btn" class:active={dlOpen} class:dl-has-count={downloadedCount > 0} class:dl-downloading={downloadButtonState === "active"} class:dl-error={downloadButtonState === "error"} onclick={() => dlOpen = !dlOpen} title={$_("detail.download.options")}>
             {#if downloadButtonState === "active"}<CircleNotch size={13} weight="light" class="anim-spin" />{:else}<Download size={13} weight={downloadedCount > 0 ? "fill" : "light"} />{/if}
             {$_("detail.actions.download")}
@@ -872,64 +964,22 @@
             </span>
           </button>
           {#if dlOpen}
-            <div class="dl-dropdown">
-              <div class="dl-pop-head">
-                <div>
-                  <span class="dl-kicker">{$_("downloads_eyebrow")}</span>
-                  <strong>{downloadedCount} / {totalCount}</strong>
-                </div>
-                <span class="dl-state-label">{activeSeriesDownloadCount > 0 ? $_("detail.downloadsActive", { count: activeSeriesDownloadCount }) : $_("detail.downloadsReady")}</span>
-              </div>
-              {#if continueChapter}
-                {@const contIdx = sortedChapters.indexOf(continueChapter.chapter)}
-                {#if contIdx >= 0}
-                  <div class="dl-section">
-                    <p class="dl-section-label">{$_("ui_fromCh")}{continueChapter.chapter.chapterNumber}</p>
-                    <div class="dl-next-row">
-                      {#each [5, 10, 25] as n}
-                        {@const avail = sortedChapters.slice(contIdx, contIdx + n).filter(c => !c.isDownloaded).length}
-                        <button class="dl-next-btn" disabled={avail === 0} onclick={() => { enqueueNext(n); dlOpen = false; }}>
-                          <span>{$_("library_pagination_next")} {n}</span>
-                          <span class="dl-next-sub">{$_("detail_download_newCount", { count: avail })}</span>
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
-              {/if}
-              <div class="dl-section dl-section-compact">
-                {#if !showRange}
-                  <button class="dl-item dl-range-trigger" onclick={() => showRange = true}>
-                    <span>{$_("ui_customRange")}</span>
-                    <span class="dl-item-sub">{$_("ui_chooseChapters")}</span>
-                  </button>
-                {:else}
-                  <div class="dl-range-row">
-                    <button class="dl-range-back" onclick={() => showRange = false} aria-label={$_("ui_closeCustomRange")}>&lt;</button>
-                    <input class="dl-range-input" placeholder={$_("ui_from")} bind:value={rangeFrom} onkeydown={(e) => e.key === "Enter" && enqueueRange()} use:focusOnMount />
-                    <span class="dl-range-sep">-</span>
-                    <input class="dl-range-input" placeholder={$_("ui_to")} bind:value={rangeTo} onkeydown={(e) => e.key === "Enter" && enqueueRange()} />
-                    <button class="dl-range-go" disabled={!rangeFrom.trim() || !rangeTo.trim()} onclick={enqueueRange}>{$_("ui_go")}</button>
-                  </div>
-                {/if}
-              </div>
-              <div class="dl-section dl-actions">
-                <button class="dl-item" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isRead && !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
-                  <span>{$_("library_sort_unreadChapters")}</span>
-                  <span class="dl-item-sub">{$_("detail_download_remainingCount", { count: sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length })}</span>
-                </button>
-                <button class="dl-item dl-item-primary" onclick={() => { enqueueMultiple(sortedChapters.filter(c => !c.isDownloaded).map(c => c.id)); dlOpen = false; }}>
-                  <span>{$_("ui_downloadAll")}</span>
-                  <span class="dl-item-sub">{$_("detail_download_notDownloadedCount", { count: sortedChapters.filter(c => !c.isDownloaded).length })}</span>
-                </button>
-              </div>
-              <div class="dl-section dl-danger-zone" class:dl-danger-zone-empty={downloadedCount === 0}>
-                <button class="dl-item dl-item-danger" onclick={() => { deleteAllDownloads(); dlOpen = false; }} disabled={downloadedCount === 0 || deletingAll}>
-                  <span>{deletingAll ? $_("detail_download_deleting") : $_("ui_deleteAllDownloads")}</span>
-                  <span class="dl-item-sub">{$_("detail_download_downloadedCount", { count: downloadedCount })}</span>
-                </button>
-              </div>
-            </div>
+            <DetailDownloadMenu
+              downloaded={downloadedCount}
+              total={totalCount}
+              status={activeSeriesDownloadCount > 0 ? $_("detail.downloadsActive", { count: activeSeriesDownloadCount }) : null}
+              nextFrom={continueChapter?.chapter.chapterNumber ?? null}
+              nextOptions={downloadNextOptions}
+              unreadCount={sortedChapters.filter(c => !c.isRead && !c.isDownloaded).length}
+              notDownloadedCount={sortedChapters.filter(c => !c.isDownloaded).length}
+              deleting={deletingAll}
+              onNext={enqueueNext}
+              onRange={enqueueRange}
+              onUnread={() => enqueueMultiple(sortedChapters.filter(c => !c.isRead && !c.isDownloaded).map(c => c.id))}
+              onAll={() => enqueueMultiple(sortedChapters.filter(c => !c.isDownloaded).map(c => c.id))}
+              onDeleteAll={() => void deleteAllDownloads()}
+              onClose={() => dlOpen = false}
+            />
           {/if}
         </div>
       {/if}
@@ -1013,9 +1063,14 @@
     {/snippet}
 
     {#snippet chapterList()}
+      {#if chaptersUnavailable && chapters.length > 0}
+        <NocturneState layout="compact" tone="warning" icon="plug" eyebrow={$_("detail.stats.chapters")} title={$_("setup.serverOfflineTitle")} body={$_("detail.chapters.showingLastKnown")} actions={[{ label: $_("shell.detailState.retry"), kind: "secondary", icon: "retry", onClick: () => { if (store.activeManga) loadChapters(store.activeManga.id); } }]} />
+      {/if}
       <div class={viewMode === "grid" ? "ch-grid v3-ch-grid" : "ch-list v3-ch-list"}>
         {#if loadingChapters && chapters.length === 0}
           {#if viewMode === "grid"}{#each Array(24) as _}<div class="grid-cell-skeleton skeleton"></div>{/each}{:else}{#each Array(8) as _}<div class="row-skeleton"><div class="skeleton sk-line" style="width:55%;height:12px"></div><div class="skeleton sk-line" style="width:25%;height:11px"></div></div>{/each}{/if}
+        {:else if chaptersUnavailable && chapters.length === 0}
+          <NocturneState layout="compact" tone="warning" icon="plug" eyebrow={$_("detail.stats.chapters")} title={$_("detail.empty.chaptersUnavailable")} body={$_("detail.errors.couldNotReachSuwayomi")} actions={[{ label: $_("shell.detailState.retry"), kind: "primary", icon: "retry", onClick: () => { if (store.activeManga) loadChapters(store.activeManga.id); } }]} />
         {:else if sortedChapters.length === 0}
           <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("detail.stats.chapters")} title={$_("detail.empty.noChaptersMatch")} body={$_("detail.empty.tryAnotherScanlator")} />
         {:else if viewMode === "grid"}
@@ -1043,7 +1098,10 @@
             <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={ch.isRead} class:ch-selected={isSelected} onclick={(e) => hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch)} onkeydown={(e) => e.key === "Enter" && (hasSelection ? toggleSelect(ch.id, e) : openChapterReader(ch))} oncontextmenu={(e) => { e.preventDefault(); ctx = { x: e.clientX, y: e.clientY, chapter: ch, idx: idxInSorted }; }}>
               <div class="ch-left">
                 <button class="ch-check" class:ch-check-visible={hasSelection} onclick={(e) => toggleSelect(ch.id, e)} title={$_("detail.selection.select")}>{#if isSelected}<CheckCircle size={15} weight="fill" />{:else}<Circle size={15} weight="light" />{/if}</button>
-                <span class="ch-name">{mangaChapterPrimaryLabel(ch)}</span>
+                <span class="ch-title">
+                  <span class="ch-name">{mangaChapterPrimaryLabel(ch)}</span>
+                  {#if ch.isBookmarked || bookmarkedChapterIds.has(ch.id)}<span class="ch-bookmark" role="img" title={$_("bookDetail_filter_bookmarked")} aria-label={$_("bookDetail_filter_bookmarked")}><BookmarkSimple size={12} weight="fill" /></span>{/if}
+                </span>
                 {#if mangaChapterSecondaryLabel(ch)}
                   <div class="ch-meta">
                     <span class="ch-meta-item">{mangaChapterSecondaryLabel(ch)}</span>
@@ -1051,7 +1109,7 @@
                 {/if}
                 {#if ch.lastPageRead && ch.lastPageRead > 0 && !ch.isRead}
                   <div class="ch-meta">
-                    <span class="ch-meta-item">{$_("bookDetail_page")} {ch.lastPageRead}</span>
+                    <span class="ch-meta-item">{$_("bookDetail_page")} {ch.lastPageRead + 1}</span>
                   </div>
                 {/if}
                 <div class="chapter-progress" class:is-empty={rowProgress <= 0}><div class="chapter-progress__fill" style={`width: ${rowProgress}%`}></div></div>
@@ -1092,10 +1150,10 @@
 
   {#if linkPickerOpen}
     <div class="link-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) closeLinkPicker(); }} onkeydown={(e) => e.key === "Escape" && closeLinkPicker()}>
-      <div class="link-modal">
+      <div class="link-modal" role="dialog" aria-modal="true" aria-label={$_("ui_linkAsSameSeries")}>
         <div class="link-header">
           <span class="link-title">{$_("ui_linkAsSameSeries")}</span>
-          <button class="link-close" onclick={closeLinkPicker}><X size={14} weight="light" /></button>
+          <button class="link-close" type="button" onclick={closeLinkPicker} aria-label={$_("ui_closeLinkPicker")}><X size={14} weight="light" /></button>
         </div>
         <p class="link-hint">{$_("ui_markTwoMangaAsTheSameSeriesSo")}</p>
         <div class="link-search-wrap">
@@ -1104,12 +1162,14 @@
         <div class="link-list">
           {#if loadingLinkList}
             <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_loadingLibrary")} />
+          {:else if linkListError}
+            <NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("feedback.links")} title={$_("library.error.title")} body={linkListError} actions={[{ label: $_("library.error.retry"), icon: "retry", onClick: loadLinkList }]} />
           {:else if linkPickerResults.length === 0}
             <NocturneState layout="compact" tone="info" icon="search" eyebrow={$_("feedback.links")} title={$_("ui_noMatchingSeries")} body={$_("feedback.tryAnotherLibraryTitle")} />
           {:else}
             {#each linkPickerResults as m (m.id)}
               {@const isLinked = linkedIds.includes(m.id)}
-              <button class="link-row" class:link-row-linked={isLinked} onclick={() => handleLink(m)}>
+              <button class="link-row" type="button" class:link-row-linked={isLinked} aria-pressed={isLinked} onclick={() => handleLink(m)}>
                 <img src={resolveMangaCoverUrl(m, { context: "detail", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={m.title} class="link-thumb" loading="lazy" decoding="async" />
                 <div class="link-info">
                   <span class="link-manga-title">{m.title}</span>
@@ -1126,9 +1186,8 @@
 {/if}
 <style>
   .sort-menu,
-  .fp-menu,
-  .dl-dropdown { display: flex; flex-direction: column; gap: 6px; color: var(--component-detail-dl-dropdown-color); }
-  .sort-option, .fp-item, .fp-new, .dl-item, .dl-next-btn {
+  .fp-menu { display: flex; flex-direction: column; gap: 6px; color: var(--component-detail-dl-dropdown-color); }
+  .sort-option, .fp-item, .fp-new {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1146,129 +1205,21 @@
     cursor: pointer;
     transition: background 140ms ease, color 140ms ease, transform 140ms ease;
   }
-  .dl-pop-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 42px;
-    padding: 2px 2px 9px;
-    border-bottom: var(--component-detail-dl-pop-head-border-bottom);
-    background: transparent;
-  }
-  .dl-pop-head > div {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .dl-pop-head strong {
-    color: var(--component-detail-dl-pop-head-strong-color);
-    font: var(--component-detail-dl-pop-head-strong-font);
-    letter-spacing: 0.01em;
-    font-variant-numeric: tabular-nums;
-  }
-  .dl-kicker,
-  .dl-state-label {
-    color: var(--component-detail-dl-state-label-color);
-    font: var(--component-detail-dl-state-label-font);
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-  }
-  .dl-state-label {
-    flex: 0 0 auto;
-    width: 76px;
-    padding: 5px 9px;
-    border: var(--component-detail-dl-state-label-border);
-    border-radius: var(--component-detail-dl-state-label-border-radius);
-    background: var(--component-detail-dl-state-label-background);
-    color: var(--component-detail-dl-state-label-color-2);
-    text-align: center;
-    white-space: nowrap;
-  }
-  .dl-section {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    padding: 9px 0 0;
-    border: 0;
-    border-radius: var(--component-detail-dl-section-border-radius);
-    background: transparent;
-  }
-  .dl-section-compact {
-    padding-top: 9px;
-    border-top: var(--component-detail-dl-section-compact-border-top);
-  }
-  .dl-actions {
-    gap: 4px;
-    border-top: var(--component-detail-dl-actions-border-top);
-  }
-  .dl-danger-zone {
-    border-top: var(--component-detail-dl-danger-zone-border-top);
-  }
-  .dl-danger-zone-empty {
-    border-top-color: var(--component-detail-dl-danger-zone-empty-border-top-color);
-  }
-  .sort-option:hover, .sort-option.active, .fp-item:hover, .fp-item-active, .fp-new:hover, .dl-item:hover, .dl-next-btn:hover:not(:disabled) {
+  .sort-option:hover, .sort-option.active, .fp-item:hover, .fp-item-active, .fp-new:hover {
     color: var(--component-detail-dl-next-btn-color-2);
     background: var(--component-detail-dl-next-btn-background);
   }
-  .sort-option:active, .fp-item:active, .fp-new:active, .dl-item:active, .dl-next-btn:active:not(:disabled) { transform: scale(0.985); }
-  .sort-section-label, .dl-section-label, .dl-item-sub, .dl-next-sub {
+  .sort-option:active, .fp-item:active, .fp-new:active { transform: scale(0.985); }
+  .sort-section-label {
     margin: 5px 8px;
     color: var(--component-detail-dl-next-sub-color);
     font: var(--component-detail-dl-next-sub-font);
     letter-spacing: 0.12em;
     text-transform: uppercase;
   }
-  .dl-section-label {
-    margin: 0 2px 3px;
-  }
   .sort-divider, .fp-div { height: 1px; margin: 7px 2px; background: var(--component-detail-fp-div-background); }
-  .fp-create, .dl-range-row, .dl-next-row { display: flex; align-items: center; gap: 6px; padding: 0; }
-  .dl-next-row {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .dl-next-btn {
-    min-height: 46px;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
-    gap: 4px;
-    padding: 0 10px;
-    border: var(--component-detail-dl-next-btn-border);
-    background: var(--component-detail-dl-next-btn-background-2);
-  }
-  .dl-next-btn:disabled {
-    opacity: var(--component-detail-dl-next-btn-opacity);
-    cursor: default;
-  }
-  .dl-next-sub {
-    margin: 0;
-    color: var(--component-detail-dl-next-sub-color-2);
-    font-size: 8px;
-  }
-  .dl-item {
-    min-height: 36px;
-    padding: 0 8px;
-  }
-  .dl-item-sub {
-    margin: 0;
-    flex: 0 0 auto;
-    color: var(--component-detail-dl-item-sub-color);
-    font-size: 8px;
-  }
-  .dl-range-trigger {
-    border: 1px solid transparent;
-  }
-  .dl-item-primary {
-    color: var(--component-detail-dl-item-primary-color);
-  }
-  .dl-item-primary .dl-item-sub {
-    color: var(--component-detail-dl-item-primary-dl-item-sub-color);
-  }
-  .fp-input, .dl-range-input {
+  .fp-create { display: flex; align-items: center; gap: 6px; padding: 0; }
+  .fp-input {
     min-width: 0;
     height: 32px;
     padding: 0 10px;
@@ -1279,18 +1230,8 @@
     font-size: 11px;
     outline: none;
   }
-  .fp-input:focus, .dl-range-input:focus { border-color: var(--component-detail-dl-range-input-border-color); box-shadow: var(--component-detail-dl-range-input-box-shadow); }
-  .dl-range-row {
-    padding: 3px;
-    border-radius: var(--component-detail-dl-range-row-border-radius);
-    background: var(--component-detail-dl-range-row-background);
-  }
-  .dl-range-sep {
-    color: var(--component-detail-dl-range-sep-color);
-    font-size: 12px;
-    font-weight: 800;
-  }
-  .fp-confirm, .fp-cancel, .dl-range-back, .dl-range-go {
+  .fp-input:focus { border-color: var(--component-detail-dl-range-input-border-color); box-shadow: var(--component-detail-dl-range-input-box-shadow); }
+  .fp-confirm, .fp-cancel {
     min-height: 32px;
     padding: 0 10px;
     border: var(--component-detail-dl-range-go-border);
@@ -1300,28 +1241,12 @@
     cursor: pointer;
     transition: background 140ms ease, color 140ms ease, transform 140ms ease;
   }
-  .fp-confirm:hover, .fp-cancel:hover, .dl-range-back:hover, .dl-range-go:hover:not(:disabled) { color: var(--component-detail-dl-range-go-color-2); background: var(--component-detail-dl-range-go-background-2); }
-  .fp-confirm:active, .fp-cancel:active, .dl-range-back:active, .dl-range-go:active:not(:disabled) { transform: scale(0.97); }
-  .dl-range-go:disabled { opacity: var(--component-detail-dl-range-go-opacity); cursor: default; }
+  .fp-confirm:hover, .fp-cancel:hover { color: var(--component-detail-dl-range-go-color-2); background: var(--component-detail-dl-range-go-background-2); }
+  .fp-confirm:active, .fp-cancel:active { transform: scale(0.97); }
   .dl-unified-btn { min-width: 0; }
   .dl-unified-count { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--component-detail-dl-unified-count-border-radius); background: var(--component-detail-dl-unified-count-background); font-size: 9px; font-variant-numeric: tabular-nums; }
   .dl-unified-count-empty { display: none; }
-  .dl-unified-alert, .dl-item-danger, .sel-action-danger { color: var(--component-detail-sel-action-danger-color); }
-  .dl-item-danger {
-    border: 1px solid transparent;
-    background: transparent;
-  }
-  .dl-item-danger:disabled {
-    color: var(--component-detail-dl-item-danger-color);
-    cursor: default;
-  }
-  .dl-item-danger:disabled .dl-item-sub {
-    color: var(--component-detail-dl-item-danger-dl-item-sub-color);
-  }
-  .dl-item-danger:hover:not(:disabled) {
-    color: var(--component-detail-dl-item-danger-color-2);
-    background: var(--component-detail-dl-item-danger-background);
-  }
+  .dl-unified-alert, .sel-action-danger { color: var(--component-detail-sel-action-danger-color); }
   .grid-cell, .grid-cell-skeleton { cursor: pointer; }
   .grid-cell-skeleton { min-height: 74px; border: var(--component-detail-grid-cell-skeleton-border); border-radius: var(--component-detail-grid-cell-skeleton-border-radius); background: var(--component-detail-grid-cell-skeleton-background); }
   .grid-cell-dl, .grid-cell-dot { width: 5px; height: 5px; border-radius: var(--component-detail-grid-cell-dot-border-radius); background: var(--component-detail-grid-cell-dot-background); }
@@ -1378,5 +1303,24 @@
   @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
 </style>
 <script module lang="ts">
+  import type { Chapter as CachedChapter, Manga as CachedManga } from "../../lib/types";
+
+  // The reader replaces the detail page while it is open, so these caches outlive the component: coming back while
+  // Suwayomi is unreachable still shows the last known series and chapters. The oldest series drop out past the limit.
+  const DETAIL_CACHE_LIMIT = 30;
+  class RecentCache extends Map {
+    set(key: number, value: unknown) {
+      super.delete(key);
+      super.set(key, value);
+      if (this.size > DETAIL_CACHE_LIMIT) super.delete(this.keys().next().value);
+      return this;
+    }
+  }
+  const mangaStore: Map<number, { data: CachedManga; fetchedAt: number }> = new RecentCache();
+  const chapterStore: Map<number, { data: CachedChapter[]; fetchedAt: number }> = new RecentCache();
+
+  /** Test hook: forgets every cached series between cases. */
+  export function resetSeriesDetailCacheForTests() { mangaStore.clear(); chapterStore.clear(); }
+
   function focusOnMount(node: HTMLElement) { node.focus(); }
 </script>

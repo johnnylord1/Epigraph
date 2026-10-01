@@ -156,7 +156,8 @@
     Hiatus: "library.status.hiatus",
     Unknown: "library.status.unknown",
     Finished: "library.status.finished",
-    "Not started": "library.status.unopened",
+    "Not started": "library.status.notStarted",
+    "In progress": "library.status.inProgress",
     "Missing file": "library.card.missingFile",
     "Metadata only": "library.card.metadataOnly",
   };

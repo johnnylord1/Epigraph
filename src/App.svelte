@@ -9,6 +9,7 @@
   import { getServerAuthHeader, gql } from "./lib/startupClient";
   import { getServerTargetInfo } from "./lib/serverTarget";
   import {
+    SNAPSHOT_BOOT_FALLBACK_MS,
     shouldAutoStartManagedServer,
     shouldBootFromLibrarySnapshot,
   } from "./lib/serverBootPolicy";
@@ -71,6 +72,7 @@
   import { observeMotionWake } from "./lib/motionWake";
   import { hasActiveReaderCommandScope } from "./lib/reader/commands";
   import {
+    announceServerWhenReady,
     configureLocalServerRuntime,
     ensureServerAwakeFor,
     isLoopbackServerUrl,
@@ -1603,6 +1605,7 @@
 
   let cancelProbe = false;
   let startupProbeRun = 0;
+  let stopSnapshotServerWatch = () => {};
   let pendingAuditOpen: LaunchTargetProfileOverrides["auditOpenOverride"] = null;
   let pendingAuditMangaId: number | null = null;
   let pendingAuditChapterId: number | null = null;
@@ -2237,14 +2240,14 @@
     }
   }
 
-  async function finishStartupAfterProbe() {
+  async function finishStartupAfterProbe(serverReady = true) {
     clearStartupFailsafe();
     failed = false;
     serverProbeOk = true;
     shellReady = true;
     shellReadyAt = Date.now();
     releaseStartupSplash();
-    notifyServerReady(store.runtimeServerUrl);
+    if (serverReady) notifyServerReady(store.runtimeServerUrl);
     applyStartupLandingPage();
     await applyPendingAuditEpigraphBackupPlan().catch((error) => {
       console.warn("Unified backup planning audit failed:", error);
@@ -2359,6 +2362,7 @@
       standbyEnabled: store.settings.localServerStandbyEnabled,
       attachOnly: runtimeAttachOnly,
       updateDue: nextLibraryUpdateDue(),
+      waitedMs: Date.now() - bootStartedAt,
       hasSnapshot: hasLibrarySnapshot({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
@@ -2372,17 +2376,28 @@
     failed      = false;
     shellReadyAt = null;
     bootStartedAt = Date.now();
+    stopSnapshotServerWatch();
     setStartupStatusCopy();
     armStartupFailsafe();
 
+    async function bootFromLibrarySnapshot() {
+      if (cancelProbe || run !== startupProbeRun || shellReady || !canBootFromLibrarySnapshot()) return false;
+      cancelProbe = true;
+      await finishStartupAfterProbe(false);
+      void preloadLibrarySnapshot();
+      // Suwayomi is still starting or asleep; pages that need it load as soon as it answers.
+      stopSnapshotServerWatch = announceServerWhenReady(store.runtimeServerUrl, async () => {
+        for (const base of getProbeBases()) {
+          if (await probeServerReady(base)) return true;
+        }
+        return false;
+      });
+      return true;
+    }
+
     async function probe() {
       if (cancelProbe || run !== startupProbeRun) return;
-      if (canBootFromLibrarySnapshot()) {
-        cancelProbe = true;
-        await finishStartupAfterProbe();
-        void preloadLibrarySnapshot();
-        return;
-      }
+      if (await bootFromLibrarySnapshot()) return;
       for (const base of getProbeBases()) {
         const healthy = await probeServerReady(base);
         if (healthy && !cancelProbe && run === startupProbeRun) {
@@ -2395,6 +2410,8 @@
     }
 
     setTimeout(probe, 1250);
+    // One probe round can take seconds while Suwayomi hangs, so the fallback keeps its own clock.
+    setTimeout(() => void bootFromLibrarySnapshot(), SNAPSHOT_BOOT_FALLBACK_MS + 50);
   }
 
   onMount(() => {
@@ -2633,6 +2650,7 @@
     return () => {
       cancelled = true;
       cancelProbe = true;
+      stopSnapshotServerWatch();
       clearStartupFailsafe();
       stopMotionWake();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -2670,6 +2688,12 @@
     }).catch((error) => {
       console.warn("Could not apply local Suwayomi runtime profile:", error);
     });
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow || !store.runtimeServerUrl) return;
+    const profileId = store.runtimeResolvedLocalProfileId;
+    void import("./lib/reader/mangaProgressRuntime").then(({ resumePendingMangaProgress }) => resumePendingMangaProgress(profileId));
   });
 
   $effect(() => {
@@ -3224,7 +3248,7 @@
     animation-play-state: paused !important;
   }
 
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette)) {
+  :global([data-epigraph-motion="idle"] .epigraph-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette):not(.epigraph-port--splash):not(.epigraph-port--splash *)) {
     animation-play-state: paused !important;
   }
 

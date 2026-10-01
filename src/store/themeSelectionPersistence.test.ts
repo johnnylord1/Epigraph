@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 const STORE_KEY = "epigraph-store";
 const STORE_VERSION = 7;
@@ -18,6 +18,13 @@ async function loadSettingsTheme(settings: Record<string, unknown>) {
 }
 
 describe("theme selection persistence", () => {
+  // The first import transforms the whole store graph; do it once here so a busy run does not
+  // charge that to the first test's timeout. Each test still re-imports a fresh module.
+  beforeAll(async () => {
+    await loadSettings({});
+    vi.unstubAllGlobals();
+  }, 60_000);
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();

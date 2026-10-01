@@ -1953,19 +1953,27 @@ mod tests {
             .unwrap();
 
         let body = tokio::spawn(response.into_body().collect());
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        assert!(!body.is_finished(), "an active device must keep its live stream");
-        body.abort();
-
-        let token = crate::syncd::db::load_token_state(&state.pool, &token_hash("secret-token"))
-            .await
-            .unwrap()
-            .expect("token");
+        let extended = nearly_expired + state.config.token_inactivity_window.as_millis() as i64 / 2;
+        // Wait for a ping to extend the window rather than a fixed delay a busy machine can outlast.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        let token = loop {
+            let token = crate::syncd::db::load_token_state(&state.pool, &token_hash("secret-token"))
+                .await
+                .unwrap()
+                .expect("token");
+            if token.inactivity_expires_at_ms > extended || tokio::time::Instant::now() >= deadline {
+                break token;
+            }
+            tokio::time::sleep(state.config.ping_interval).await;
+        };
         assert!(
-            token.inactivity_expires_at_ms
-                > nearly_expired + state.config.token_inactivity_window.as_millis() as i64 / 2,
+            token.inactivity_expires_at_ms > extended,
             "the open stream must extend the inactivity window"
         );
+        // Later pings keep the stream open too.
+        tokio::time::sleep(state.config.ping_interval * 4).await;
+        assert!(!body.is_finished(), "an active device must keep its live stream");
+        body.abort();
     }
 
     #[tokio::test]

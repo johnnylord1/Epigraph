@@ -37,6 +37,7 @@ export type SearchResultAction =
   | { kind: "novel-source"; source: InstalledNovelSourceDescriptor; novel: NovelSourceSearchResult }
   | { kind: "setting"; tab: RuntimeSettingsTab; targetId?: string }
   | { kind: "download"; chapterId: number }
+  | { kind: "download"; novelId: string }
   | { kind: "browse"; query: string; contentType?: "manga" | "novels"; sourceId?: string };
 
 export interface SearchResult {
@@ -66,14 +67,14 @@ export interface SearchSettingsEntry {
   value?: string;
 }
 
-export interface SearchDownloadEntry {
-  chapterId: number;
+// A manga chapter in Suwayomi's queue, or a novel whose chapters are being saved.
+export type SearchDownloadEntry = {
   mangaTitle: string;
   chapterName: string;
   progress: number;
   status: string;
   image?: string | null;
-}
+} & ({ chapterId: number } | { novelId: string });
 
 export interface SearchPageEntry {
   id: string;
