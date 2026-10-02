@@ -3,6 +3,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { operationError, restoreNote } from "../../lib/i18n/operationPresentation";
   import { createProductionMangaDependencySession, type MangaDependencyPlan, type MangaRestoreChoices } from "../../lib/backup/mangaRestoreDependencies";
+  import { extensionStoreBaseUrl } from "../../lib/manga/runtime";
   let { file, format, disabled = false, choices = {}, onChoices = () => {}, onBusy = () => {}, onChanged = () => {} }: {
     file: File; format: "native" | "epigraph"; disabled?: boolean; choices?: MangaRestoreChoices;
     onChoices?: (choices: MangaRestoreChoices) => void; onBusy?: (busy: boolean) => void;
@@ -37,7 +38,7 @@
   <button type="button" disabled={disabled || busy} onclick={() => run()}>{$_("restoreDeps.mangaReview")}</button>
   {#if plan}
     <p>{$_("restoreDeps.mangaPreserveHint")}</p>
-    {#each plan.requiredRepositories.filter(url => !plan!.repositories.some(repo => repo.indexUrl === url)) as url}
+    {#each plan.requiredRepositories.filter(url => !plan!.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) as url}
       <div class="dependency"><span>{url}</span><button type="button" disabled={disabled || busy} onclick={() => run(session => session.addRepository(url))}>{$_("restoreDeps.approveRepository")}</button></div>
     {/each}
     {#each plan.sources as source (source.orphanSourceId)}

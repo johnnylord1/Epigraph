@@ -44,4 +44,36 @@ describe("extension repository catalogs", () => {
       sources: [{ id: "123", name: "Example Source", lang: "en" }],
     }]);
   });
+  test("resolves a github.com store URL to the raw catalog", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([{ pkg: "p", name: "P", apk: "p.apk", lang: "en", sources: [{ id: "1", name: "S", lang: "en" }] }]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchRepoEntries(["https://github.com/keiyoushi/extensions/raw/repo/index.pb"]);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json");
+    expect(result.failedRepos).toEqual([]);
+  });
+  test("falls back to index.min.json for a repo.json store URL", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/index.json")) return new Response("Not Found", { status: 404 });
+      return new Response(JSON.stringify([{ pkg: "p", name: "P", apk: "p.apk", lang: "en", sources: [{ id: "1", name: "S", lang: "en" }] }]), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchRepoEntries(["https://raw.githubusercontent.com/a/b/repo/repo.json"]);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://raw.githubusercontent.com/a/b/repo/index.json");
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://raw.githubusercontent.com/a/b/repo/index.min.json");
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].pkg).toBe("p");
+    expect(result.failedRepos).toEqual([]);
+  });
+  test("reports a store whose catalogs are all missing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("Not Found", { status: 404 })));
+
+    const result = await fetchRepoEntries(["https://raw.githubusercontent.com/a/b/repo/index.json"]);
+
+    expect(result.failedRepos).toEqual(["https://raw.githubusercontent.com/a/b/repo/index.json"]);
+    expect(result.entries).toEqual([]);
+  });
 });

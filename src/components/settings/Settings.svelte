@@ -1336,8 +1336,24 @@
         return translate("settings_inline_novels");
       case "app":
         return translate("settings_inline_appMetadata");
+      case "repositories":
+        return translate("settings_backup_repositoriesFound");
       default:
         return kind;
+    }
+  }
+
+  // "https://raw.githubusercontent.com/owner/repo/branch" -> "owner/repo"; other hosts -> host + path.
+  function backupRepositoryShortName(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      if (parsed.hostname === "raw.githubusercontent.com" || parsed.hostname === "github.com") {
+        return parts.slice(0, 2).join("/") || parsed.hostname;
+      }
+      return `${parsed.hostname}${parsed.pathname.replace(/\/+$/, "")}`;
+    } catch {
+      return url;
     }
   }
 
@@ -2441,6 +2457,10 @@
     } finally {
       backupRestoring = false;
       activeRestoreWorkflow = null;
+      if (backupRestoreResults || backupError) {
+        await tick();
+        backupSectionEl?.querySelector("[data-backup-results], .backup-error")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
     }
   }
 
@@ -6543,9 +6563,6 @@
             <h2 id="backup-modal-title" class="mg-title">
               {backupViewMode === "create" ? $_("settings_backup_createTitle") : $_("settings_backup_restoreTitle")}
             </h2>
-            {#if backupViewMode === "restore" && backupSelectedFileLabel}
-              <p class="mg-subtitle" title={backupSelectedFileLabel}>{backupSelectedFileLabel}</p>
-            {/if}
           </div>
           {#if firstRunPane !== "backup"}
             <button class="mg-close" type="button" onclick={closeStorageBackupPanel}>
@@ -7116,14 +7133,23 @@
                 </details>
               {/if}
               {#if backupRestoreResults}
-                <section class="backup-section">
+                <section class="backup-section" data-backup-results>
                   <p class="backup-section__label">{$_("settings_inline_restoreResults")}</p>
                   <div class="mg-list">
                     {#each backupRestoreResults as result}
                       <div class="mg-row backup-result-row">
                         <span class="mg-row-copy">
                           <strong>{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.outcome === "unknown" ? "unknown" : result.status)}</strong>
-                          <small>{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
+                          {#if result.kind === "repositories"}
+                            <small>{result.summary}</small>
+                            <ul class="backup-names backup-skipped-repos">
+                              {#each result.warnings as url}
+                                <li title={url}><span>{backupRepositoryShortName(url)}</span></li>
+                              {/each}
+                            </ul>
+                          {:else}
+                            <small>{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
+                          {/if}
                         </span>
                       </div>
                     {/each}
@@ -7464,6 +7490,7 @@
   .backup-names { margin: 8px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
   .backup-names li { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text-secondary); font-size: var(--text-xs); }
   .backup-names li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .backup-skipped-repos { margin-top: 6px; }
   .backup-reconciliation .settings-card__surface { border: 0; background: transparent; padding: 0; box-shadow: none; }
   .backup-error { display: grid; gap: 4px; }
   .backup-error strong { color: var(--text-primary); font-size: var(--text-sm); }

@@ -1,4 +1,5 @@
 import type { Extension } from "./types";
+import { extensionStoreBaseUrl } from "./manga/runtime/storeUrl";
 
 export interface MissingSourceRef {
   id: string;
@@ -62,48 +63,63 @@ function sortByPreferredLang<T extends { lang?: string }>(items: T[], preferredL
   );
 }
 
+/** Catalog files to try, in order, for an extension store URL (index.json first: some stores keep a stub index.min.json). */
+export function repoCatalogCandidates(url: string): string[] {
+  const base = extensionStoreBaseUrl(url);
+  const candidates = [`${base}/index.json`, `${base}/index.min.json`];
+  if (/\.json(?:[?#].*)?$/i.test(url) && !/\/repo\.json(?:[?#].*)?$/i.test(url) && !candidates.includes(url)) candidates.push(url);
+  return candidates;
+}
+
+function parseRepoCatalog(parsed: unknown): RepoExtensionEntry[] {
+  if (Array.isArray(parsed)) return parsed as RepoExtensionEntry[];
+  if (typeof parsed !== "object" || parsed === null || !("extensionList" in parsed)) throw new Error("Repo index does not contain an extension catalog");
+  const extensionList = (parsed as { extensionList: unknown }).extensionList;
+  if (typeof extensionList !== "object" || extensionList === null || !("extensions" in extensionList)) throw new Error("Repo index does not contain an extension catalog");
+  const v2Entries = (extensionList as { extensions: unknown }).extensions;
+  if (!Array.isArray(v2Entries)) throw new Error("Repo index does not contain an extension catalog");
+  return v2Entries.flatMap((raw: V2RepoExtensionEntry) => {
+    if (typeof raw?.name !== "string" || typeof raw?.packageName !== "string") return [];
+    const sources = Array.isArray(raw.sources)
+      ? raw.sources.flatMap((source) => (
+        source?.id != null && typeof source.name === "string"
+          ? [{
+              id: String(source.id),
+              name: source.name,
+              lang: typeof source.language === "string" ? source.language : undefined,
+            }]
+          : []
+      ))
+      : [];
+    return [{
+      name: raw.name,
+      pkg: raw.packageName,
+      apk: typeof raw.resources?.apkUrl === "string" ? raw.resources.apkUrl : "",
+      lang: sources[0]?.lang,
+      sources,
+    } satisfies RepoExtensionEntry];
+  });
+}
+
 export async function fetchRepoEntries(urls: string[]): Promise<{ entries: RepoExtensionEntry[]; failedRepos: string[] }> {
   const entries: RepoExtensionEntry[] = [];
   const failedRepos: string[] = [];
 
   for (const url of urls) {
-    try {
-      const catalogUrl = url.replace(/\/index\.pb(?:[?#].*)?$/i, "/index.json");
-      const response = await fetch(catalogUrl);
-      const text = await response.text();
-      if (!response.ok) throw new Error(text.slice(0, 120));
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        entries.push(...parsed);
-        continue;
+    let loaded: RepoExtensionEntry[] | null = null;
+    for (const catalogUrl of repoCatalogCandidates(url)) {
+      try {
+        const response = await fetch(catalogUrl);
+        const text = await response.text();
+        if (!response.ok) throw new Error(text.slice(0, 120));
+        loaded = parseRepoCatalog(JSON.parse(text));
+        break;
+      } catch {
+        // try the next catalog file
       }
-
-      const v2Entries = parsed?.extensionList?.extensions;
-      if (!Array.isArray(v2Entries)) throw new Error("Repo index does not contain an extension catalog");
-      entries.push(...v2Entries.flatMap((raw: V2RepoExtensionEntry) => {
-        if (typeof raw?.name !== "string" || typeof raw?.packageName !== "string") return [];
-        const sources = Array.isArray(raw.sources)
-          ? raw.sources.flatMap((source) => (
-            source?.id != null && typeof source.name === "string"
-              ? [{
-                  id: String(source.id),
-                  name: source.name,
-                  lang: typeof source.language === "string" ? source.language : undefined,
-                }]
-              : []
-          ))
-          : [];
-        return [{
-          name: raw.name,
-          pkg: raw.packageName,
-          apk: typeof raw.resources?.apkUrl === "string" ? raw.resources.apkUrl : "",
-          lang: sources[0]?.lang,
-          sources,
-        } satisfies RepoExtensionEntry];
-      }));
-    } catch {
-      failedRepos.push(url);
     }
+    if (loaded) entries.push(...loaded);
+    else failedRepos.push(url);
   }
 
   return { entries, failedRepos };
