@@ -91,6 +91,14 @@ class TrackerRecommendationGatherer(
         Result(trending.await(), scores.await(), failed.distinct())
     }
 
+    /** Desktop `loadSearchTrackerTrendingMore` fetch: one more AniList catalog page. */
+    suspend fun fetchTrendingPage(page: Int): List<TrackerCatalogInput> =
+        runCatching { fetchAniListCatalog(page) }.getOrDefault(emptyList())
+
+    /** Desktop `loadSearchTrackerScoresForTitles` (AniList part) for titles loaded later. */
+    suspend fun fetchScores(titles: List<String>): List<TrackerCatalogInput> =
+        runCatching { fetchAniListScoresByTitles(trackerScoreTitles(titles).take(TRACKER_SCORE_BATCH_SIZE)) }.getOrDefault(emptyList())
+
     /**
      * Desktop `fetchAniListTrackerCatalog` (BrowseV3 4179): comics only
      * (`format_not_in: [NOVEL]`), sorted by [anilistSortForFeed].

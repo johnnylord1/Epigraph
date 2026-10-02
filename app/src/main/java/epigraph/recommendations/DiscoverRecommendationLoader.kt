@@ -38,12 +38,35 @@ data class DiscoverResult(
 
 /** Everything [DiscoverRecommendationLoader.gather] collects, so [DiscoverRecommendationLoader.rank] can re-run without network. */
 data class DiscoverPool(
+    val mode: DiscoverMode,
     val candidates: List<RecommendationCandidate>,
     val profile: TasteProfile,
     val seedCount: Int,
     val knownTitleKeys: Set<String>,
     val knownProviderKeys: Set<String>,
     val failedProviders: List<String>,
+    /** Library entries and local books, already converted. */
+    val libraryCandidates: List<RecommendationCandidate> = emptyList(),
+    /** Comics: tracker records of titles that are not in the library. */
+    val trackerRecordCandidates: List<RecommendationCandidate> = emptyList(),
+    /** Comics: source entries, paired with `true` when they came from a Latest feed. */
+    val comicEntries: List<Pair<RecommendationEntryInput, Boolean>> = emptyList(),
+    /** Novels: source entries. */
+    val novelEntries: List<RecommendationEntryInput> = emptyList(),
+    val trackerTrending: List<TrackerCatalogInput> = emptyList(),
+    val trackerScores: List<TrackerCatalogInput> = emptyList(),
+    /** Last AniList catalog page already fetched for trending. */
+    val trackerTrendingPage: Int = 4,
+    /** Novels: Hardcover provider signal per novel title key. */
+    val hardcoverScores: Map<String, RecommendationProviderSignal> = emptyMap(),
+    /** Novels: Hardcover discovery + Hardcover user-book candidates. */
+    val hardcoverCandidates: List<RecommendationCandidate> = emptyList(),
+    val nsfwSourceIds: Set<Long> = emptySet(),
+    val gatheredAtMs: Long = 0L,
+    /** Desktop `searchRecommendationMorePages`: last source page loaded per section (absent = 1). */
+    val morePages: Map<RecommendationSectionKey, Int> = emptyMap(),
+    /** Desktop `searchRecommendationExhausted`. */
+    val exhausted: Set<RecommendationSectionKey> = emptySet(),
 )
 
 /** Desktop BrowseV3 constants for the For you rails. */
@@ -60,6 +83,48 @@ internal fun nextVisibleLimit(current: Int?, sectionSize: Int): Int? {
     if (limit >= sectionSize || limit >= SEARCH_RECOMMENDATION_MAX_LIMIT) return null
     return minOf(SEARCH_RECOMMENDATION_MAX_LIMIT, limit + SEARCH_RECOMMENDATION_LIMIT_STEP)
 }
+
+/** Raw parts returned by the source-gathering job in [DiscoverRecommendationLoader.gather]. */
+private data class SourceParts(
+    val comicEntries: List<Pair<RecommendationEntryInput, Boolean>> = emptyList(),
+    val novelEntries: List<RecommendationEntryInput> = emptyList(),
+    val trackerTrending: List<TrackerCatalogInput> = emptyList(),
+    val trackerScores: List<TrackerCatalogInput> = emptyList(),
+    val hardcoverScores: Map<String, RecommendationProviderSignal> = emptyMap(),
+    val hardcoverCandidates: List<RecommendationCandidate> = emptyList(),
+)
+
+/** Rebuilds the pool's candidates from its parts, exactly as [DiscoverRecommendationLoader.gather] does. */
+internal fun assembleDiscoverCandidates(pool: DiscoverPool): List<RecommendationCandidate> {
+    val sourceCandidates = when (pool.mode) {
+        DiscoverMode.COMICS -> {
+            val comicCandidates = pool.comicEntries.map { (entry, fromLatest) ->
+                var candidate = entryToRecommendationCandidate(entry, pool.gatheredAtMs)
+                if (fromLatest) candidate = applyLatestFeedRank(listOf(candidate)).single()
+                // Adult extensions rarely tag their entries, so the extension flag is the safety signal.
+                if (entry.sourceId in pool.nsfwSourceIds) candidate = candidate.asAdult()
+                candidate
+            }
+            comicCandidates + (pool.trackerTrending + pool.trackerScores).map { trackerCatalogToRecommendationCandidate(it, pool.gatheredAtMs) }
+        }
+        DiscoverMode.NOVELS -> {
+            val novelCandidates = pool.novelEntries.map { entry ->
+                var candidate = entryToRecommendationCandidate(entry, pool.gatheredAtMs, novelSourceResult = true)
+                if (entry.sourceId in pool.nsfwSourceIds) candidate = candidate.asAdult()
+                candidate
+            }
+            val scored = novelCandidates.map { candidate ->
+                val provider = pool.hardcoverScores[recommendationTitleKey(candidate.title, RecommendationContentType.NOVEL)]
+                if (provider == null) candidate else candidate.copy(providers = candidate.providers + provider)
+            }
+            scored + pool.hardcoverCandidates
+        }
+    }
+    return mergeRecommendationCandidates(pool.libraryCandidates + sourceCandidates + pool.trackerRecordCandidates)
+}
+
+private fun RecommendationCandidate.asAdult(): RecommendationCandidate =
+    if (safety.ordinal < RecommendationSafetyLevel.ADULT.ordinal) copy(safety = RecommendationSafetyLevel.ADULT) else this
 
 /**
  * Builds the Discover sections the way the desktop Browse page does: the library (plus tracker
@@ -146,54 +211,53 @@ class DiscoverRecommendationLoader(
             if (mode == DiscoverMode.COMICS) {
                 val gathered = ComicRecommendationGatherer(sourceManager).gather(libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get())
                 synchronized(failures) { failures += gathered.failedSources }
-                val comicCandidates = gathered.entries.map { (entry, fromLatest) ->
-                    var candidate = entryToRecommendationCandidate(entry, nowMs)
-                    if (fromLatest) candidate = applyLatestFeedRank(listOf(candidate)).single()
-                    // Adult extensions rarely tag their entries, so the extension flag is the safety signal.
-                    if (entry.sourceId in nsfwSourceIds) candidate = candidate.asAdult()
-                    candidate
-                }
                 val trackerResult = trackerGatherer.gather(gathered.entries.map { it.first.title })
                 synchronized(failures) { failures += trackerResult.failed }
-                comicCandidates + (trackerResult.trending + trackerResult.scores).map { trackerCatalogToRecommendationCandidate(it, nowMs) }
+                SourceParts(
+                    comicEntries = gathered.entries,
+                    trackerTrending = trackerResult.trending,
+                    trackerScores = trackerResult.scores,
+                )
             } else {
                 val gathered = NovelRecommendationGatherer(sourceManager).gather(
                     libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get(),
                 )
                 synchronized(failures) { failures += gathered.failedSources }
-                val novelCandidates = gathered.entries.map { entry ->
-                    var candidate = entryToRecommendationCandidate(entry, nowMs, novelSourceResult = true)
-                    if (entry.sourceId in nsfwSourceIds) candidate = candidate.asAdult()
-                    candidate
-                }
                 val hardcover = hardcoverBooks?.let { userBooks ->
                     withTimeoutOrNull(HARDCOVER_LOADER_BUDGET_MS) {
                         hardcoverGatherer.enrich(gathered.entries.map { it.title }, profile.topTags, userBooks)
                     }
                 }
                 if (hardcover?.failed == true) synchronized(failures) { failures += "Hardcover" }
-                val scored = novelCandidates.map { candidate ->
-                    val provider = hardcover?.scoresByTitleKey?.get(recommendationTitleKey(candidate.title, RecommendationContentType.NOVEL))
-                    if (provider == null) candidate else candidate.copy(providers = candidate.providers + provider)
-                }
-                scored + hardcover?.discovery.orEmpty() + hardcoverBooks?.books.orEmpty().map(::hardcoverBookToRecommendationCandidate)
+                SourceParts(
+                    novelEntries = gathered.entries,
+                    hardcoverScores = hardcover?.scoresByTitleKey.orEmpty(),
+                    hardcoverCandidates = hardcover?.discovery.orEmpty() + hardcoverBooks?.books.orEmpty().map(::hardcoverBookToRecommendationCandidate),
+                )
             }
         }
 
-        val candidates = mergeRecommendationCandidates(
-            libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } +
-                books.map { bookToRecommendationCandidate(it, nowMs) } +
-                sourceJobs.await() +
-                trackerRecordCandidates,
-        )
-        DiscoverPool(
-            candidates = candidates,
+        val parts = sourceJobs.await()
+        val pool = DiscoverPool(
+            mode = mode,
+            candidates = emptyList(),
             profile = profile,
             seedCount = seeds.size,
             knownTitleKeys = knownTitleKeys(seeds),
             knownProviderKeys = knownProviderKeys(libraryEntries) + trackerRemoteKeys + hardcoverBooks?.books.orEmpty().mapNotNull { recommendationTrackerRemoteKey("hardcover", it.bookId.toString()) },
             failedProviders = failures.toList(),
+            libraryCandidates = libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } + books.map { bookToRecommendationCandidate(it, nowMs) },
+            trackerRecordCandidates = trackerRecordCandidates,
+            comicEntries = parts.comicEntries,
+            novelEntries = parts.novelEntries,
+            trackerTrending = parts.trackerTrending,
+            trackerScores = parts.trackerScores,
+            hardcoverScores = parts.hardcoverScores,
+            hardcoverCandidates = parts.hardcoverCandidates,
+            nsfwSourceIds = nsfwSourceIds,
+            gatheredAtMs = nowMs,
         )
+        pool.copy(candidates = assembleDiscoverCandidates(pool))
     }
 
     /** Pure ranking over a gathered pool; safe to re-run for filter toggles without network. */
@@ -299,9 +363,6 @@ class DiscoverRecommendationLoader(
             updatedAtMs = updatedAt,
         )
     }
-
-    private fun RecommendationCandidate.asAdult(): RecommendationCandidate =
-        if (safety.ordinal < RecommendationSafetyLevel.ADULT.ordinal) copy(safety = RecommendationSafetyLevel.ADULT) else this
 
     private fun statusText(status: Int): String? = when (status) {
         SManga.ONGOING -> "ongoing"

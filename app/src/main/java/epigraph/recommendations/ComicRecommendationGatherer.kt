@@ -102,6 +102,23 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager) {
         return Result(entries, failed.toList())
     }
 
+    /**
+     * Desktop `loadMoreSearchRecommendations` fetch: popular or latest entries for one
+     * round-robin source batch; `null` when there are no sources at all.
+     */
+    suspend fun fetchMore(
+        nsfwSourceIds: Set<Long>,
+        includeNsfw: Boolean,
+        logicalPage: Int,
+        latest: Boolean,
+    ): List<RecommendationEntryInput>? {
+        val (batch, sourcePage) = sourceBatch(browseSources(nsfwSourceIds, includeNsfw), logicalPage, SEARCH_SEED_SOURCE_LIMIT_MANGA)
+        if (batch.isEmpty()) return null
+        return runConcurrentLimited(batch, RECOMMENDATION_SOURCE_CONCURRENCY) {
+            fetchSourcePage(it, latest = latest, page = sourcePage)
+        }.flatten()
+    }
+
     /** All visible non-novel sources; NSFW sources only when the user opted in. */
     private fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
         return sourceManager.getVisibleCatalogueSources()

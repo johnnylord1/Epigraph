@@ -132,6 +132,25 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
         return Result(enrichDetails(seeds, pool), failed.toList())
     }
 
+    /**
+     * Desktop `loadMoreSearchRecommendations` novel fetch (`fetchNovelRecommendationSourcePage`
+     * for one round-robin source batch); `null` when there are no sources at all.
+     */
+    suspend fun fetchMore(
+        profile: TasteProfile,
+        nsfwSourceIds: Set<Long>,
+        includeNsfw: Boolean,
+        logicalPage: Int,
+    ): List<RecommendationEntryInput>? {
+        val (batch, sourcePage) = sourceBatch(browseSources(nsfwSourceIds, includeNsfw), logicalPage, SEARCH_SEED_SOURCE_LIMIT_NOVELS)
+        if (batch.isEmpty()) return null
+        val fallbackTerms = novelRecommendationFallbackTerms(profile)
+        val throwaway = mutableSetOf<String>()
+        return runConcurrentLimited(batch, RECOMMENDATION_SOURCE_CONCURRENCY) {
+            fetchNovelSourcePage(it, sourcePage, fallbackTerms, throwaway)
+        }.flatten()
+    }
+
     /** All visible novel sources, interleaved by normalized name; NSFW only when opted in. */
     private fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
         val visible = sourceManager.getVisibleCatalogueSources()
