@@ -1,7 +1,6 @@
 package epigraph.recommendations.ui
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
@@ -12,19 +11,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -87,6 +87,7 @@ import kotlinx.coroutines.launch
 import yokai.domain.manga.models.MangaCover as CoverData
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
+import yokai.presentation.core.enterAlwaysCollapsedAppBarScrollBehavior
 import yokai.presentation.YokaiScaffold
 import yokai.presentation.manga.components.MangaCover
 import yokai.util.Screen
@@ -107,7 +108,8 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             onNavigationIconClicked = backPress::invoke,
             title = stringResource(MR.strings.discover_card_title),
             navigationIcon = Icons.AutoMirrored.Outlined.ArrowBack,
-            appBarType = AppBarType.SMALL,
+            appBarType = AppBarType.LARGE,
+            scrollBehavior = enterAlwaysCollapsedAppBarScrollBehavior(),
             actions = {
                 IconButton(onClick = { showFilterSheet = true }) {
                     Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
@@ -116,9 +118,11 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                     Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
                 }
             },
+            // Inside the app bar so the tabs take its scrolled tone too.
+            appBarBottomContent = { ModeSelector(state.mode, onSelect = screenModel::setMode) },
         ) { contentPadding ->
             Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-                ModeSelector(state.mode, onSelect = screenModel::setMode)
+                Spacer(Modifier.height(4.dp))
                 if (state.loading && state.result != null) {
                     LinearProgressIndicator(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(2.dp)),
@@ -198,52 +202,49 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
 @Composable
 private fun ModeSelector(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
     val modes = listOf(DiscoverMode.COMICS to MR.strings.discover_comics, DiscoverMode.NOVELS to MR.strings.novels)
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-            .height(40.dp)
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
-            .padding(3.dp),
-    ) {
-        val segmentWidth = maxWidth / modes.size
-        val selectedIndex = modes.indexOfFirst { it.first == mode }.coerceAtLeast(0)
-        val indicatorOffset by animateDpAsState(
-            targetValue = segmentWidth * selectedIndex,
-            animationSpec = spring(dampingRatio = 0.72f, stiffness = 420f),
-            label = "discover-mode-indicator",
-        )
-        Box(
-            modifier = Modifier
-                .offset(x = indicatorOffset)
-                .width(segmentWidth)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.16f), RoundedCornerShape(9.dp)),
-        )
-        Row(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
             modes.forEach { (value, label) ->
                 val selected = value == mode
-                val color by animateColorAsState(
-                    if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    label = "discover-mode-color",
+                val textColor by animateColorAsState(
+                    if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    label = "discover-tab-text",
                 )
-                Box(
+                val barColor by animateColorAsState(
+                    if (selected) MaterialTheme.colorScheme.secondary else Color.Transparent,
+                    label = "discover-tab-bar",
+                )
+                Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(9.dp))
-                        .clickable { onSelect(value) },
-                    contentAlignment = Alignment.Center,
+                        .width(IntrinsicSize.Max)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(value) }
+                        .padding(top = 8.dp),
                 ) {
                     Text(
                         text = stringResource(label),
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        color = color,
+                        color = textColor,
+                        modifier = Modifier.padding(bottom = 10.dp),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .background(barColor, RoundedCornerShape(1.dp)),
                     )
                 }
             }
         }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)),
+        )
     }
 }
 
@@ -255,9 +256,10 @@ private fun DiscoverSections(
     onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
 ) {
+    val hero = sections.firstOrNull()?.items?.firstOrNull()
     LazyColumn(
-        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
         if (failedProviders.isNotEmpty()) {
             item(key = "summary") {
@@ -270,13 +272,93 @@ private fun DiscoverSections(
                 }
             }
         }
-        items(sections, key = { it.key.key }) { section ->
+        if (hero != null) {
+            item(key = "hero") { HeroPick(hero, onClick = { onClick(hero) }) }
+        }
+        itemsIndexed(sections, key = { _, s -> s.key.key }) { index, section ->
             SectionRow(
                 section,
                 visibleLimit = visibleLimits[section.key] ?: SEARCH_RECOMMENDATION_BASE_LIMIT,
                 onNearEnd = { onNearEnd(section.key) },
                 onClick = onClick,
+                skipFirst = index == 0 && hero != null,
             )
+        }
+    }
+}
+
+@Composable
+private fun HeroPick(item: RecommendationItem, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 600f),
+        label = "hero-press",
+    )
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        val coverWidth = maxWidth * 0.42f
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        ) {
+            MangaCover(
+                data = item.candidate.coverData(),
+                contentDescription = item.candidate.title,
+                modifier = Modifier.width(coverWidth),
+                ratio = 2f / 3f,
+                shape = RoundedCornerShape(12.dp),
+                contentScale = ContentScale.Crop,
+            )
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f).padding(bottom = 4.dp)) {
+                Text(
+                    stringResource(MR.strings.discover_top_pick),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    item.candidate.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        item.candidate.contentType.label(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    item.badge?.let { badge ->
+                        Text(
+                            "  ·  ",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Icon(
+                            Icons.Rounded.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(3.dp))
+                        Text(
+                            badge.displayScore,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -287,6 +369,7 @@ private fun SectionRow(
     visibleLimit: Int,
     onNearEnd: () -> Unit,
     onClick: (RecommendationItem) -> Unit,
+    skipFirst: Boolean,
 ) {
     val (title, _) = section.key.labels()
     val listState = rememberLazyListState()
@@ -301,21 +384,24 @@ private fun SectionRow(
             .filter { it }
             .collect { currentOnNearEnd() }
     }
+    val visibleItems = (if (skipFirst) section.items.drop(1) else section.items).take(visibleLimit)
+    if (visibleItems.isEmpty()) return
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = stringResource(title),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+        Spacer(Modifier.height(12.dp))
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val cardWidth = (maxWidth - 16.dp * 4) / 3
+            val cardWidth = (maxWidth - 16.dp - 12.dp * 3) / 3.3f
             LazyRow(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(section.items.take(visibleLimit), key = { it.candidate.id }) { item ->
+                items(visibleItems, key = { it.candidate.id }) { item ->
                     RecommendationCard(item, cardWidth = cardWidth, onClick = { onClick(item) })
                 }
             }
@@ -373,17 +459,18 @@ private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick:
         }
         Text(
             text = candidate.title,
-            modifier = Modifier.padding(top = 6.dp),
+            modifier = Modifier.padding(top = 8.dp),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
         )
         Text(
             text = candidate.contentType.label(),
+            modifier = Modifier.padding(top = 2.dp),
             maxLines = 1,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
         )
     }
 }

@@ -1255,6 +1255,7 @@
     <string name="discover_card_subtitle_comics">Sugestões com base na sua biblioteca</string>
     <string name="discover_card_subtitle_novels">Novels com base na sua biblioteca</string>
     <string name="discover_comics">Quadrinhos</string>
+    <string name="discover_top_pick">Escolha principal</string>
     <string name="discover_error">Não foi possível carregar o Descobrir</string>
     <string name="discover_partial_failure">Alguns provedores não responderam: %1$s</string>
     <string name="discover_seed_count">Com base em %1$d obras da sua biblioteca</string>
