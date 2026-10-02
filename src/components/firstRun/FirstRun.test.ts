@@ -316,8 +316,10 @@ describe("FirstRun", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Restore all" }));
     expect(screen.getByRole("heading", { name: "Add repositories" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Install Novels test extension" }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(screen.getByRole("button", { name: "Comics" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Install Comics test extension" }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
   });
@@ -369,7 +371,8 @@ describe("FirstRun", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(false));
     await fireEvent.click(await screen.findByRole("button", { name: "Install Comics test extension" }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
-    await fireEvent.click(screen.getByRole("button", { name: "Install Novels test extension" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Install Novels test extension" }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
   });
 

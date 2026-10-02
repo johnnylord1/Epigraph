@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use anyhow::Context;
-use serde_json::Value;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::FromRow;
 
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
@@ -17,14 +18,40 @@ const MAX_BATCH: usize = 8;
 const LEASE_MS: i64 = 60_000;
 const BASE_RETRY_MS: i64 = 30_000;
 const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
+/// Attempts after which a command the runtime rejected as non-retryable (for example a GraphQL
+/// error on an id Suwayomi no longer has) stops retrying. Retrying rows count as pending in
+/// `/v1/sync/status`, and mobile defers its catalog reconciliation while anything is pending, so a
+/// permanent failure must end in `blocked` instead of retrying forever.
+const MAX_NON_RETRYABLE_ATTEMPTS: i64 = 3;
+/// Attempts after which a command Suwayomi accepted but whose answer does not show the expected
+/// state stops retrying. The commands are idempotent, so a few retries cover a lost race; a
+/// mismatch that survives them is deterministic (for example a chapter id Suwayomi dropped on a
+/// source refresh, or a category position it clamps) and would otherwise retry forever.
+const MAX_CONFIRMATION_ATTEMPTS: i64 = 5;
+/// Blocked codes that may succeed later without a new user edit (Suwayomi state or the runtime
+/// changed). They get one fresh bounded cycle each time the daemon starts. Codes caused by the
+/// command itself (`command_rejected`, `invalid_variables`, `unsupported_operation`) stay blocked
+/// until a newer version supersedes them.
+const RECOVERABLE_BLOCKED_CODES: [&str; 2] = ["confirmation_mismatch", "command_failed"];
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
+const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
+const MAX_CATEGORY_ASSIGNMENT_PAGES: usize = 20;
 
 const PORTABLE_CHAPTER_LOOKUP_QUERY: &str = r#"
   query EpigraphResolvePortableChapter($mangaId: Int!, $first: Int!, $offset: Int!) {
     chapters(condition: { mangaId: $mangaId }, first: $first, offset: $offset) {
       pageInfo { hasNextPage }
       nodes { id mangaId url }
+    }
+  }
+"#;
+
+const CATEGORY_ASSIGNMENT_LOOKUP_QUERY: &str = r#"
+  query EpigraphResolveCategoryAssignment($first: Int!, $offset: Int!) {
+    categories(first: $first, offset: $offset) {
+      pageInfo { hasNextPage }
+      nodes { id mangas { nodes { id } } }
     }
   }
 "#;
@@ -43,6 +70,18 @@ pub fn spawn_projection_task(
     mut shutdown: tokio::sync::watch::Receiver<Option<ShutdownRequest>>,
 ) {
     tokio::spawn(async move {
+        {
+            let _writer_guard = state.mutation_gate.lock().await;
+            match requeue_recoverable_blocked(&state.pool, super::db::now_ms()).await {
+                Ok(0) => {}
+                Ok(count) => {
+                    tracing::info!(count, "requeued recoverable blocked Suwayomi projections")
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
+                }
+            }
+        }
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -179,11 +218,22 @@ async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> Projec
         Ok(value) => value,
         Err(_) => return ProjectionOutcome::Blocked("invalid_variables"),
     };
+    let (operation_name, variables) =
+        if row.operation_name == db::REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION {
+            match resolve_category_assignment_removal(state, &row.profile_id, &variables).await {
+                Ok(Some(variables)) => ("UpdateMangaCategories", variables),
+                // Suwayomi no longer has the pair, so the delete already holds there.
+                Ok(None) => return ProjectionOutcome::Applied,
+                Err(outcome) => return outcome,
+            }
+        } else {
+            (row.operation_name.as_str(), variables)
+        };
     let variables = match resolve_portable_projection_identity(state, row, variables).await {
         Ok(variables) => variables,
         Err(outcome) => return outcome,
     };
-    let operation = match row.operation_name.as_str() {
+    let operation = match operation_name {
         "UpdateManga" => CommandOperation::UpdateManga,
         "UpdateMangaCategories" => CommandOperation::UpdateMangaCategories,
         "UpdateChaptersProgress" => CommandOperation::UpdateChaptersProgress,
@@ -214,13 +264,47 @@ async fn apply_projection(state: &SharedAppState, row: &ProjectionRow) -> Projec
         Err(AppError::BadRequest(_) | AppError::Forbidden(_)) => {
             return ProjectionOutcome::Blocked("command_rejected")
         }
-        Err(_) => return ProjectionOutcome::Retry("runtime_unavailable"),
+        Err(error) => return failed_command_outcome(&error, row.attempt_count),
     };
-    if projection_confirmed(operation, &variables, &data) {
+    confirmation_outcome(
+        projection_confirmed(operation, &variables, &data),
+        row.attempt_count,
+    )
+}
+
+/// Applies a confirmed command, retries a mismatch, and blocks it once it has mismatched
+/// [MAX_CONFIRMATION_ATTEMPTS] times. `attempt_count` already includes the current attempt.
+fn confirmation_outcome(confirmed: bool, attempt_count: i64) -> ProjectionOutcome {
+    if confirmed {
         ProjectionOutcome::Applied
+    } else if attempt_count >= MAX_CONFIRMATION_ATTEMPTS {
+        ProjectionOutcome::Blocked("confirmation_mismatch")
     } else {
         ProjectionOutcome::Retry("confirmation_mismatch")
     }
+}
+
+/// Gives rows blocked by a [RECOVERABLE_BLOCKED_CODES] failure one new bounded cycle. Runs once at
+/// daemon start; running it again only re-arms the same rows, so it is idempotent. A blocked row
+/// is always the newest version of its entity (a newer version deletes it), so re-sending it
+/// cannot overwrite a later edit.
+async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
+            updated_at_ms = ?
+        WHERE status = 'blocked' AND last_error IN (?, ?)
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(RECOVERABLE_BLOCKED_CODES[0])
+    .bind(RECOVERABLE_BLOCKED_CODES[1])
+    .execute(pool)
+    .await
+    .context("failed to requeue recoverable blocked Suwayomi projections")?;
+    Ok(result.rows_affected())
 }
 
 async fn resolve_portable_projection_identity(
@@ -344,13 +428,7 @@ async fn resolve_chapter_id(
     manga_id: i64,
     chapter_key: &str,
 ) -> Result<i64, ProjectionOutcome> {
-    let session = AuthenticatedSession {
-        token_id: "epigraph-core-projection".to_string(),
-        device_id: "epigraph-core".to_string(),
-        profile_id: profile_id.to_string(),
-        scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),
-        mutation_receipt: None,
-    };
+    let session = projection_session(profile_id);
     for page in 0..MAX_PORTABLE_CHAPTER_PAGES {
         let offset = (page as i64).saturating_mul(PORTABLE_CHAPTER_PAGE_SIZE);
         let data = suwayomi_catalog::execute_graphql_document(
@@ -396,6 +474,135 @@ async fn resolve_chapter_id(
     Err(ProjectionOutcome::Retry("portable_chapter_lookup_limit"))
 }
 
+/// Retries a failed command unless the runtime marked it non-retryable and it already failed
+/// [MAX_NON_RETRYABLE_ATTEMPTS] times. `attempt_count` already includes the current attempt.
+fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOutcome {
+    let non_retryable =
+        matches!(error, AppError::ServiceUnavailable(detail) if detail.retryable == Some(false));
+    if non_retryable && attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
+        ProjectionOutcome::Blocked("command_failed")
+    } else {
+        ProjectionOutcome::Retry("runtime_unavailable")
+    }
+}
+
+fn projection_session(profile_id: &str) -> AuthenticatedSession {
+    AuthenticatedSession {
+        token_id: "epigraph-core-projection".to_string(),
+        device_id: "epigraph-core".to_string(),
+        profile_id: profile_id.to_string(),
+        scopes: BTreeSet::from([format!("comics:profile:{profile_id}")]),
+        mutation_receipt: None,
+    }
+}
+
+async fn resolve_category_assignment_removal(
+    state: &SharedAppState,
+    profile_id: &str,
+    variables: &Value,
+) -> Result<Option<Value>, ProjectionOutcome> {
+    let assignment_id = variables
+        .get("assignmentId")
+        .and_then(Value::as_str)
+        .ok_or(ProjectionOutcome::Blocked("invalid_variables"))?;
+    let server_id = db::load_server_identity(&state.pool)
+        .await
+        .map_err(|_| ProjectionOutcome::Retry("server_identity_unavailable"))?
+        .server_id;
+    let session = projection_session(profile_id);
+    for page in 0..MAX_CATEGORY_ASSIGNMENT_PAGES {
+        let offset = (page as i64).saturating_mul(CATEGORY_ASSIGNMENT_PAGE_SIZE);
+        let data = suwayomi_catalog::execute_graphql_document(
+            state,
+            &session,
+            CATEGORY_ASSIGNMENT_LOOKUP_QUERY,
+            json!({ "first": CATEGORY_ASSIGNMENT_PAGE_SIZE, "offset": offset }),
+            false,
+        )
+        .await
+        .map_err(|_| ProjectionOutcome::Retry("runtime_unavailable"))?;
+        let categories = data
+            .get("categories")
+            .ok_or(ProjectionOutcome::Retry("category_assignment_lookup_invalid"))?;
+        if let Some((manga_id, category_id)) =
+            find_category_assignment_pair(assignment_id, profile_id, &server_id, categories)
+        {
+            return Ok(Some(json!({
+                "mangaId": manga_id,
+                "addTo": [],
+                "removeFrom": [category_id],
+            })));
+        }
+        let has_next = categories
+            .get("pageInfo")
+            .and_then(|value| value.get("hasNextPage"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !has_next {
+            return Ok(None);
+        }
+    }
+    Err(ProjectionOutcome::Retry("category_assignment_lookup_limit"))
+}
+
+/// Matches the mobile id `comic-category-assignment:` + hex(sha256(comicId NUL categoryId))
+/// against every legacy id form (with or without `server:S:`) of each assigned pair.
+fn find_category_assignment_pair(
+    assignment_id: &str,
+    profile_id: &str,
+    server_id: &str,
+    categories: &Value,
+) -> Option<(i64, i64)> {
+    let prefixes = [
+        format!("suwayomi:profile:{profile_id}"),
+        format!("suwayomi:server:{server_id}:profile:{profile_id}"),
+    ];
+    let valid_id = |value: &Value| {
+        value
+            .get("id")
+            .and_then(Value::as_i64)
+            .filter(|id| *id > 0 && *id <= i32::MAX as i64)
+    };
+    for category in categories.get("nodes").and_then(Value::as_array)? {
+        let Some(category_id) = valid_id(category) else {
+            continue;
+        };
+        let mangas = category
+            .get("mangas")
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten();
+        for manga_id in mangas.filter_map(valid_id) {
+            for comic_prefix in &prefixes {
+                for category_prefix in &prefixes {
+                    let candidate = comic_category_assignment_id(
+                        &format!("{comic_prefix}:manga:{manga_id}"),
+                        &format!("{category_prefix}:category:{category_id}"),
+                    );
+                    if candidate == assignment_id {
+                        return Some((manga_id, category_id));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn comic_category_assignment_id(comic_id: &str, category_id: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(comic_id.as_bytes());
+    digest.update([0u8]);
+    digest.update(category_id.as_bytes());
+    let hex: String = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("{}{hex}", db::COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX)
+}
+
 fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &Value) -> bool {
     match operation {
         CommandOperation::UpdateManga => {
@@ -439,13 +646,26 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
                         == Some(expected)
                 })
         }
+        CommandOperation::CreateCategory => variables
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| suwayomi_commands::created_category(name, data).is_some()),
         CommandOperation::DeleteCategory => {
             let expected_id = variables.get("id").and_then(Value::as_i64);
-            data.get("deleteCategory")
+            match data
+                .get("deleteCategory")
                 .and_then(|value| value.get("category"))
-                .and_then(|value| value.get("id"))
-                .and_then(Value::as_i64)
-                == expected_id
+            {
+                // Suwayomi answers a null category when the id is already gone: a retry after a
+                // lost response, or the same category deleted on the desktop meanwhile.
+                Some(Value::Null) => true,
+                category => {
+                    category
+                        .and_then(|value| value.get("id"))
+                        .and_then(Value::as_i64)
+                        == expected_id
+                }
+            }
         }
         CommandOperation::UpdateCategoryOrder => {
             let expected_id = variables.get("id").and_then(Value::as_i64);
@@ -515,6 +735,141 @@ mod tests {
     use super::*;
 
     #[test]
+    fn permanent_command_failures_block_after_bounded_attempts() {
+        let permanent = AppError::service_unavailable("SUWAYOMI_CATALOG_QUERY_FAILED", "x", false);
+        let transient = AppError::service_unavailable("SUWAYOMI_CATALOG_UNAVAILABLE", "x", true);
+        assert!(matches!(
+            failed_command_outcome(&permanent, 1),
+            ProjectionOutcome::Retry(_)
+        ));
+        assert!(matches!(
+            failed_command_outcome(&permanent, MAX_NON_RETRYABLE_ATTEMPTS - 1),
+            ProjectionOutcome::Retry(_)
+        ));
+        assert!(matches!(
+            failed_command_outcome(&permanent, MAX_NON_RETRYABLE_ATTEMPTS),
+            ProjectionOutcome::Blocked("command_failed")
+        ));
+        // A runtime that is down or busy keeps retrying with backoff no matter how long it takes.
+        assert!(matches!(
+            failed_command_outcome(&transient, 1_000),
+            ProjectionOutcome::Retry(_)
+        ));
+        assert!(matches!(
+            failed_command_outcome(&AppError::Internal("x".to_string()), 1_000),
+            ProjectionOutcome::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn confirmation_mismatch_blocks_after_bounded_attempts() {
+        assert!(matches!(
+            confirmation_outcome(true, 1),
+            ProjectionOutcome::Applied
+        ));
+        assert!(matches!(
+            confirmation_outcome(true, 1_000),
+            ProjectionOutcome::Applied
+        ));
+        assert!(matches!(
+            confirmation_outcome(false, 1),
+            ProjectionOutcome::Retry("confirmation_mismatch")
+        ));
+        assert!(matches!(
+            confirmation_outcome(false, MAX_CONFIRMATION_ATTEMPTS - 1),
+            ProjectionOutcome::Retry("confirmation_mismatch")
+        ));
+        assert!(matches!(
+            confirmation_outcome(false, MAX_CONFIRMATION_ATTEMPTS),
+            ProjectionOutcome::Blocked("confirmation_mismatch")
+        ));
+    }
+
+    #[tokio::test]
+    async fn startup_requeues_only_recoverable_blocked_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, status, error) in [
+            ("mismatch", "blocked", Some("confirmation_mismatch")),
+            ("failed", "blocked", Some("command_failed")),
+            ("rejected", "blocked", Some("command_rejected")),
+            ("invalid", "blocked", Some("invalid_variables")),
+            ("waiting", "retry", Some("confirmation_mismatch")),
+            ("fresh", "pending", None),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7}', 'comic.library', ?, 1, ?, 5, 99, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(status)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(requeue_recoverable_blocked(&pool, 500).await.unwrap(), 2);
+        // Idempotent: nothing recoverable is left blocked.
+        assert_eq!(requeue_recoverable_blocked(&pool, 600).await.unwrap(), 0);
+
+        let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+            "SELECT operation_id, status, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("failed".to_string(), "retry".to_string(), 0, 500),
+                ("fresh".to_string(), "pending".to_string(), 5, 99),
+                ("invalid".to_string(), "blocked".to_string(), 5, 99),
+                ("mismatch".to_string(), "retry".to_string(), 0, 500),
+                ("rejected".to_string(), "blocked".to_string(), 5, 99),
+                ("waiting".to_string(), "retry".to_string(), 5, 99),
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_category_confirms_when_suwayomi_no_longer_has_it() {
+        let variables = serde_json::json!({ "id": 7 });
+        assert!(projection_confirmed(
+            CommandOperation::DeleteCategory,
+            &variables,
+            &serde_json::json!({ "deleteCategory": { "category": null, "mangas": [] } }),
+        ));
+        assert!(projection_confirmed(
+            CommandOperation::DeleteCategory,
+            &variables,
+            &serde_json::json!({ "deleteCategory": { "category": { "id": 7 }, "mangas": [] } }),
+        ));
+        assert!(!projection_confirmed(
+            CommandOperation::DeleteCategory,
+            &variables,
+            &serde_json::json!({ "deleteCategory": { "category": { "id": 8 }, "mangas": [] } }),
+        ));
+        assert!(!projection_confirmed(
+            CommandOperation::DeleteCategory,
+            &variables,
+            &serde_json::json!({ "deleteCategory": null }),
+        ));
+        assert!(!projection_confirmed(
+            CommandOperation::DeleteCategory,
+            &variables,
+            &serde_json::json!({ "deleteCategory": {} }),
+        ));
+    }
+
+    #[test]
     fn confirms_each_allowlisted_projection_shape() {
         assert!(projection_confirmed(
             CommandOperation::UpdateManga,
@@ -565,6 +920,51 @@ mod tests {
                 "updateCategoryOrder": { "categories": [{ "id": 3, "order": 2 }] }
             }),
         ));
+    }
+
+    #[test]
+    fn category_assignment_id_matches_mobile_derivation() {
+        assert_eq!(
+            comic_category_assignment_id(
+                "suwayomi:profile:main:manga:42",
+                "suwayomi:profile:main:category:3",
+            ),
+            "comic-category-assignment:00c5f18254b2162d827bffb3f61ce9d9d3169ad7ff94970b101ad7273800251f"
+        );
+    }
+
+    #[test]
+    fn resolves_hashed_category_assignment_for_both_legacy_id_forms() {
+        let categories = serde_json::json!({
+            "nodes": [
+                { "id": 0, "mangas": { "nodes": [{ "id": 42 }] } },
+                { "id": 3, "mangas": { "nodes": [{ "id": 41 }, { "id": 42 }] } },
+                { "id": 5, "mangas": { "nodes": [{ "id": 42 }] } }
+            ]
+        });
+        for prefix in ["suwayomi:profile:main", "suwayomi:server:desktop-a:profile:main"] {
+            let assignment_id = comic_category_assignment_id(
+                &format!("{prefix}:manga:42"),
+                &format!("{prefix}:category:3"),
+            );
+            assert_eq!(
+                find_category_assignment_pair(&assignment_id, "main", "desktop-a", &categories),
+                Some((42, 3)),
+                "{prefix}"
+            );
+            assert_eq!(
+                find_category_assignment_pair(&assignment_id, "other", "desktop-a", &categories),
+                None
+            );
+        }
+        let foreign_server = comic_category_assignment_id(
+            "suwayomi:server:desktop-b:profile:main:manga:42",
+            "suwayomi:server:desktop-b:profile:main:category:3",
+        );
+        assert_eq!(
+            find_category_assignment_pair(&foreign_server, "main", "desktop-a", &categories),
+            None
+        );
     }
 
     #[test]

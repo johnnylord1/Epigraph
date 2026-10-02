@@ -5387,7 +5387,7 @@
                           {:else}
                             <div class="settings-mini-row__body">
                               <p class="settings-mini-row__label">{cat.name}</p>
-                              <p class="settings-mini-row__hint">{cat.mangas?.nodes.length ?? 0} manga{(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? " / default" : ""}{(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? " / hidden from Saved" : ""}{cat.includeInUpdate === "EXCLUDE" ? " / skipped by updates" : ""}</p>
+                              <p class="settings-mini-row__hint">{cat.mangas?.nodes.filter((manga) => manga.inLibrary).length ?? 0} manga{(store.settings.defaultLibraryCategoryId ?? null) === cat.id ? " / default" : ""}{(store.settings.hiddenCategoryIds ?? []).includes(cat.id) ? " / hidden from Saved" : ""}{cat.includeInUpdate === "EXCLUDE" ? " / skipped by updates" : ""}</p>
                             </div>
                             <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
                               <button

@@ -1,0 +1,2 @@
+# syncd records a checksum of each migration's bytes; a CRLF checkout would change it for the same SQL.
+src-tauri/migrations-syncd/*.sql text eol=lf

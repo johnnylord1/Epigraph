@@ -131,6 +131,7 @@
     if (state.status === "rejected") stage = "rejected";
     else if (state.status === "approved" || state.status === "connected") stage = "syncing";
     else if (state.status === "expired") {
+      digits = Array(PIN_LENGTH).fill("");
       stage = "code";
       pinError = $_("firstRun.sync.errorExpired");
     }
@@ -245,6 +246,14 @@
     void tick().then(() => focusSlot(0));
   }
 
+  function retryAfterRejection() {
+    connectState = null;
+    digits = Array(PIN_LENGTH).fill("");
+    pinError = null;
+    stage = "code";
+    void tick().then(() => focusSlot(0));
+  }
+
   function closeOtherWays() {
     otherWaysOpen = false;
     otherWaysReturnFocus?.focus();
@@ -329,7 +338,7 @@
         </div>
         <div class="fr-field-error" class:is-visible={pinError} role="alert">{pinError ?? ""}</div>
         <div class="stage-actions">
-          <button class="fr-link fr-link--quiet" type="button" disabled={connecting} onclick={() => { stage = "scan"; target = null; }}><ArrowLeft size={13} />{$_("firstRun.sync.pickOther")}</button>
+          <button class="fr-link fr-link--quiet" type="button" disabled={connecting} onclick={() => { connectState = null; stage = "scan"; target = null; }}><ArrowLeft size={13} />{$_("firstRun.sync.pickOther")}</button>
           <span class="fr-spacer"></span>
           <button class="fr-btn fr-btn--primary fr-sync-submit" type="button" disabled={connecting || pin.length !== PIN_LENGTH} onclick={submitPin}>
             {#if connecting}<span class="fr-dots"><i></i><i></i><i></i></span>{$_("firstRun.sync.connecting")}{:else}{$_("firstRun.sync.connect")}<ArrowRight class="fr-arrow-next" size={16} />{/if}
@@ -347,7 +356,7 @@
       {:else if stage === "rejected"}
         <strong class="stage-title">{$_("firstRun.sync.rejectedTitle", { name: targetName })}</strong>
         <p class="help">{$_("firstRun.sync.rejectedHelp")}</p>
-        <div><button class="fr-btn fr-btn--primary" type="button" onclick={() => { connectState = null; stage = "code"; }}>{$_("firstRun.sync.tryAgain")}<ArrowsClockwise class="fr-arrow-next" size={16} /></button></div>
+        <div><button class="fr-btn fr-btn--primary" type="button" onclick={retryAfterRejection}>{$_("firstRun.sync.tryAgain")}<ArrowsClockwise class="fr-arrow-next" size={16} /></button></div>
 
       {:else}
         <strong class="stage-title">{stage === "done" ? $_("firstRun.sync.doneTitle") : $_("firstRun.sync.syncingTitle", { name: targetName })}</strong>

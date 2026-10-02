@@ -253,15 +253,32 @@ async fn serve_cached_thumbnail(manga_id: u64, head_only: bool) -> Response {
 }
 
 async fn find_cached_thumbnail(root: &FilePath, manga_id: u64) -> Option<PathBuf> {
+    // Library covers live in the profile downloads; everything else Suwayomi caches in
+    // `java.io.tmpdir/Tachidesk`, which the managed spawn points at a per-profile folder.
+    // The shared system temp is never read: other instances reuse the same manga ids.
+    find_thumbnail_in(&thumbnail_directories(root), manga_id).await
+}
+
+fn thumbnail_directories(root: &FilePath) -> [PathBuf; 2] {
+    [
+        root.join("downloads").join("thumbnails"),
+        crate::suwayomi_runtime::managed_java_temp_dir(root)
+            .join("Tachidesk")
+            .join("thumbnails"),
+    ]
+}
+
+async fn find_thumbnail_in(directories: &[PathBuf], manga_id: u64) -> Option<PathBuf> {
     const EXTENSIONS: &[&str] = &["webp", "jpg", "jpeg", "png", "gif", "avif"];
-    let directory = root.join("downloads").join("thumbnails");
-    for extension in EXTENSIONS {
-        let candidate = directory.join(format!("{manga_id}.{extension}"));
-        if tokio::fs::metadata(&candidate)
-            .await
-            .is_ok_and(|metadata| metadata.is_file())
-        {
-            return Some(candidate);
+    for directory in directories {
+        for extension in EXTENSIONS {
+            let candidate = directory.join(format!("{manga_id}.{extension}"));
+            if tokio::fs::metadata(&candidate)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
+            {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -976,6 +993,40 @@ mod tests {
         let found = find_cached_thumbnail(temp.path(), 12).await.unwrap();
         assert_eq!(found, thumbnails.join("12.webp"));
         assert_eq!(thumbnail_content_type(&found), "image/webp");
+    }
+
+    #[tokio::test]
+    async fn cached_thumbnail_lookup_reads_the_profile_java_temp_cache() {
+        let root = PathBuf::from(r"C:\Data\epigraph-main");
+        let directories = thumbnail_directories(&root);
+        assert_eq!(directories[0], root.join("downloads").join("thumbnails"));
+        assert_eq!(
+            directories[1],
+            crate::suwayomi_runtime::managed_java_temp_dir(&root)
+                .join("Tachidesk")
+                .join("thumbnails")
+        );
+        assert!(!directories
+            .iter()
+            .any(|directory| *directory == std::env::temp_dir().join("Tachidesk").join("thumbnails")));
+
+        let temp = tempdir().unwrap();
+        let downloads = temp.path().join("downloads");
+        let cache = temp.path().join("cache");
+        std::fs::create_dir_all(&downloads).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        let directories = [downloads.clone(), cache.clone()];
+        std::fs::write(cache.join("12.jpg"), b"cached").unwrap();
+        assert_eq!(
+            find_thumbnail_in(&directories, 12).await,
+            Some(cache.join("12.jpg"))
+        );
+        std::fs::write(downloads.join("12.png"), b"library").unwrap();
+        assert_eq!(
+            find_thumbnail_in(&directories, 12).await,
+            Some(downloads.join("12.png"))
+        );
+        assert!(find_thumbnail_in(&directories, 13).await.is_none());
     }
 
     #[test]

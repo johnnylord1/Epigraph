@@ -330,4 +330,25 @@ describe("Settings (browser)", () => {
       expect(box.height).toBeGreaterThan(box.width);
     }
   });
+
+  test("counts only library titles in each comics folder", async () => {
+    // A Mihon backup keeps folder links for titles removed from the library; Suwayomi restores those links too.
+    store.categories = [{
+      id: 1,
+      name: "Lendo",
+      order: 1,
+      default: false,
+      includeInUpdate: "UNSET",
+      includeInDownload: "UNSET",
+      mangas: { nodes: [{ id: 10, inLibrary: true }, { id: 11, inLibrary: false }, { id: 12, inLibrary: false }] },
+    }] as unknown as typeof store.categories;
+    renderSettings("folders");
+    document.querySelector<HTMLElement>('[data-settings-pane="categories"] .settings-card__stack .n-btn')!.click();
+
+    await waitFor(() => {
+      const row = [...document.querySelectorAll<HTMLElement>(".settings-mini-row--category")]
+        .find((entry) => entry.querySelector(".settings-mini-row__label")?.textContent === "Lendo");
+      expect(row?.querySelector(".settings-mini-row__hint")?.textContent).toBe("1 manga");
+    });
+  });
 });

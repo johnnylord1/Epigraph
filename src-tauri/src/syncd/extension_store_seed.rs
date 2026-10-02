@@ -11,9 +11,12 @@ const CONF_KEY: &str = "server.extensionStores";
 
 /// Resolves the active managed profile root. Mirrors the layout used by the owned
 /// Suwayomi supervisor (`%APPDATA%\<profile>`), overridable for tests and unusual
-/// deployments through `EPIGRAPH_SYNCD_SUWAYOMI_ROOT`.
+/// deployments through `EPIGRAPH_SYNCD_SUWAYOMI_ROOT`, then follows the root the Core
+/// spawns its main instance with (`EPIGRAPH_LOCAL_SERVER_MAIN_ROOT`).
 pub fn active_profile_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("EPIGRAPH_SYNCD_SUWAYOMI_ROOT") {
+    if let Some(root) = std::env::var_os("EPIGRAPH_SYNCD_SUWAYOMI_ROOT")
+        .or_else(|| std::env::var_os("EPIGRAPH_LOCAL_SERVER_MAIN_ROOT"))
+    {
         return PathBuf::from(root);
     }
     let base = std::env::var_os("APPDATA")

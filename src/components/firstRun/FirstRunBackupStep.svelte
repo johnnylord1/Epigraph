@@ -107,6 +107,7 @@
 
   function reviewImport() {
     if (working || dependenciesWorking || readyFiles.length === 0) return;
+    restoreError = null;
     view = "review";
   }
 

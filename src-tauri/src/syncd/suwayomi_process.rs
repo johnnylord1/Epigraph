@@ -230,6 +230,15 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     }
 
     ensure_port_available(MAIN_SERVER_PORT)?;
+    // Release builds start the main profile here rather than through the desktop spawn, so the copy taken
+    // before Suwayomi opens (and may upgrade) its database has to be made here as well.
+    match crate::suwayomi_runtime::backup_local_server_files(&root) {
+        Ok(Some(backup_dir)) => {
+            tracing::info!(path = %backup_dir.display(), "preflight backup created")
+        }
+        Ok(None) => {}
+        Err(error) => tracing::warn!(error = %error, "preflight backup skipped"),
+    }
     seed_headless_server_conf(&root)?;
     let invocation = resolve_headless_runtime(&std::env::current_exe().map_err(|error| {
         format!("failed to resolve Epigraph Core executable for Suwayomi startup: {error}")
@@ -594,6 +603,7 @@ fn spawn_hidden_runtime(root: &Path, invocation: &RuntimeInvocation) -> Result<C
     );
     let mut command = Command::new(&invocation.java);
     command.arg(root_argument);
+    command.arg(crate::suwayomi_runtime::managed_java_temp_dir_flag(root));
     command.args([
         "-Djava.awt.headless=true",
         "-Xms256m",

@@ -74,6 +74,7 @@ const GZIP_MAGIC_2 = 0x8b;
 
 export const BACKUP_TOP_LEVEL_MANGA_FIELD = 1;
 export const BACKUP_TOP_LEVEL_SOURCES_FIELD = 101;
+export const BACKUP_TOP_LEVEL_PREFERENCES_FIELD = 104;
 export const BACKUP_TOP_LEVEL_EXTENSION_STORES_FIELD = 106;
 
 function toUint8Array(input: ArrayBuffer | Uint8Array): Uint8Array {
@@ -333,6 +334,7 @@ function parseTopLevelChunks(bytes: Uint8Array): {
   const sourceMessages: unknown[] = [];
   const extensionStoreMessages: unknown[] = [];
   const preservedTopLevelChunks: Uint8Array[] = [];
+  const preferenceRepoUrls: string[] = [];
 
   while (reader.pos < reader.len) {
     const start = reader.pos;
@@ -364,11 +366,76 @@ function parseTopLevelChunks(bytes: Uint8Array): {
       continue;
     }
 
+    if (wireType === 2 && fieldNo === BACKUP_TOP_LEVEL_PREFERENCES_FIELD) {
+      const chunk = extractDelimitedMessage(reader);
+      preferenceRepoUrls.push(...extensionReposFromPreference(chunk));
+      preservedTopLevelChunks.push(bytes.subarray(start, reader.pos));
+      continue;
+    }
+
     reader.skipType(wireType);
     preservedTopLevelChunks.push(bytes.subarray(start, reader.pos));
   }
 
+  // Yokai, J2K and pre-1.0 Mihon keep repositories only in the `extension_repos` app
+  // preference. Promote them to native store entries so review and restore see them.
+  const knownStores = new Set(
+    (extensionStoreMessages as any[])
+      .map((store) => normalizedStoreUrl(typeof store?.indexUrl === "string" ? store.indexUrl : ""))
+      .filter(Boolean),
+  );
+  for (const rawUrl of preferenceRepoUrls) {
+    const indexUrl = normalizedStoreUrl(rawUrl);
+    if (!/^https?:\/\//i.test(indexUrl) || knownStores.has(indexUrl)) continue;
+    knownStores.add(indexUrl);
+    const store = { indexUrl, name: storeNameFromUrl(indexUrl) };
+    extensionStoreMessages.push(store);
+    preservedTopLevelChunks.push(
+      encodeFieldChunk(BACKUP_TOP_LEVEL_EXTENSION_STORES_FIELD, BackupExtensionStoreType.encode(store).finish()),
+    );
+  }
+
   return { mangaMessages, sourceMessages, extensionStoreMessages, preservedTopLevelChunks };
+}
+
+/** Reads the repository URLs of an `extension_repos` BackupPreference; any other preference yields none. */
+function extensionReposFromPreference(chunk: Uint8Array): string[] {
+  const fields = readLengthDelimitedFields(chunk);
+  const key = fields.get(1)?.[0];
+  const wrapper = fields.get(2)?.[0];
+  if (!key || !wrapper || decodeUtf8(key) !== "extension_repos") return [];
+  // kotlinx.serialization writes the polymorphic value as { 1: class name, 2: value message }.
+  const value = readLengthDelimitedFields(wrapper);
+  const type = value.get(1)?.[0];
+  const set = value.get(2)?.[0];
+  if (!type || !set || !decodeUtf8(type).endsWith("StringSetPreferenceValue")) return [];
+  return (readLengthDelimitedFields(set).get(1) ?? []).map(decodeUtf8);
+}
+
+function readLengthDelimitedFields(bytes: Uint8Array): Map<number, Uint8Array[]> {
+  const fields = new Map<number, Uint8Array[]>();
+  const reader = protobuf.Reader.create(bytes);
+  while (reader.pos < reader.len) {
+    const tag = reader.uint32();
+    if ((tag & 7) !== 2) {
+      reader.skipType(tag & 7);
+      continue;
+    }
+    const values = fields.get(tag >>> 3) ?? [];
+    values.push(extractDelimitedMessage(reader));
+    fields.set(tag >>> 3, values);
+  }
+  return fields;
+}
+
+/** `https://raw.githubusercontent.com/keiyoushi/extensions/repo` → `keiyoushi`. */
+function storeNameFromUrl(indexUrl: string): string {
+  try {
+    const url = new URL(indexUrl);
+    return url.pathname.split("/").filter(Boolean)[0] || url.hostname;
+  } catch {
+    return "Extension repository";
+  }
 }
 
 function toParsedBackupManga(message: any): ParsedBackupManga {

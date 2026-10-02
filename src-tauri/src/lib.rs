@@ -3756,31 +3756,6 @@ fn unix_now_millis() -> u128 {
         .as_millis()
 }
 
-fn backup_local_server_files(data_dir: &Path) -> std::io::Result<Option<PathBuf>> {
-    let candidates = ["server.conf", "database.mv.db", "database.trace.db"];
-    let existing: Vec<PathBuf> = candidates
-        .iter()
-        .map(|name| data_dir.join(name))
-        .filter(|path| path.exists())
-        .collect();
-
-    if existing.is_empty() {
-        return Ok(None);
-    }
-
-    let backup_dir = data_dir
-        .join("epigraph-backups")
-        .join(format!("preflight-{}", unix_now_secs()));
-    std::fs::create_dir_all(&backup_dir)?;
-    for source in existing {
-        if let Some(name) = source.file_name() {
-            let _ = std::fs::copy(&source, backup_dir.join(name));
-        }
-    }
-
-    Ok(Some(backup_dir))
-}
-
 fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
     if let Some(override_path) = local_server_profile_root_override(profile) {
         return override_path;
@@ -6115,7 +6090,7 @@ fn spawn_server_unlocked(
         ));
     }
 
-    match backup_local_server_files(&data_dir) {
+    match suwayomi_runtime::backup_local_server_files(&data_dir) {
         Ok(Some(backup_dir)) => do_log(
             &mut log,
             &format!(
@@ -6154,6 +6129,9 @@ fn spawn_server_unlocked(
     );
 
     invocation.args.insert(0, rootdir_flag);
+    invocation
+        .args
+        .insert(1, suwayomi_runtime::managed_java_temp_dir_flag(&data_dir));
 
     let working_dir = invocation
         .working_dir

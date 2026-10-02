@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[path = "process_ownership.rs"]
 pub mod ownership;
@@ -197,6 +197,29 @@ pub fn command_line_hash(args: &[String]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// JVM temp directory owned by one managed Suwayomi profile. Suwayomi keeps its thumbnail
+/// and page caches under `java.io.tmpdir/Tachidesk`; with the shared system temp every
+/// instance writes `thumbnails/{mangaId}` into the same folder and ids collide.
+pub fn managed_java_temp_dir(data_dir: &Path) -> PathBuf {
+    let mut key = data_dir.to_string_lossy().replace('/', "\\");
+    while key.ends_with('\\') {
+        key.pop();
+    }
+    if cfg!(windows) {
+        key = key.to_lowercase();
+    }
+    let digest = Sha256::digest(key.as_bytes());
+    let suffix: String = digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    std::env::temp_dir().join("epigraph-suwayomi").join(suffix)
+}
+
+/// `-Djava.io.tmpdir` flag for a managed Suwayomi spawn, creating the folder first.
+pub fn managed_java_temp_dir_flag(data_dir: &Path) -> String {
+    let temp_dir = managed_java_temp_dir(data_dir);
+    let _ = std::fs::create_dir_all(&temp_dir);
+    format!("-Djava.io.tmpdir={}", temp_dir.display())
+}
+
 pub fn sanitize_log_line(line: &str, private_paths: &[&Path]) -> String {
     let mut sanitized = line.replace(['\r', '\n'], " ");
     for path in private_paths {
@@ -238,9 +261,136 @@ pub fn sanitize_log_line(line: &str, private_paths: &[&Path]) -> String {
     sanitized
 }
 
+/// Every start adds a full copy of the database, so only the newest automatic copies are kept.
+const LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT: usize = 10;
+
+pub fn backup_local_server_files(data_dir: &Path) -> std::io::Result<Option<PathBuf>> {
+    let candidates = ["server.conf", "database.mv.db", "database.trace.db"];
+    let existing: Vec<PathBuf> = candidates
+        .iter()
+        .map(|name| data_dir.join(name))
+        .filter(|path| path.exists())
+        .collect();
+
+    if existing.is_empty() {
+        return Ok(None);
+    }
+
+    let backups_root = data_dir.join("epigraph-backups");
+    let backup_dir = backups_root.join(format!(
+        "preflight-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    ));
+    std::fs::create_dir_all(&backup_dir)?;
+    for source in existing {
+        if let Some(name) = source.file_name() {
+            // An incomplete copy must not count as a backup, or rotation would drop a good one for it.
+            if let Err(error) = std::fs::copy(&source, backup_dir.join(name)) {
+                let _ = std::fs::remove_dir_all(&backup_dir);
+                return Err(error);
+            }
+        }
+    }
+    prune_local_server_preflight_backups(&backups_root, LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT);
+
+    Ok(Some(backup_dir))
+}
+
+fn prune_local_server_preflight_backups(backups_root: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(backups_root) else {
+        return;
+    };
+    let mut preflights: Vec<(u64, PathBuf)> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let stamp = entry
+                .file_name()
+                .to_str()?
+                .strip_prefix("preflight-")?
+                .parse::<u64>()
+                .ok()?;
+            Some((stamp, entry.path()))
+        })
+        .collect();
+    preflights.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+    for (_, path) in preflights.into_iter().skip(keep) {
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn managed_java_temp_dir_is_stable_and_distinct_per_profile_root() {
+        let main = super::managed_java_temp_dir(std::path::Path::new(r"C:\Data\epigraph-main"));
+        assert_eq!(
+            main,
+            super::managed_java_temp_dir(std::path::Path::new(r"C:\Data\epigraph-main\"))
+        );
+        assert_ne!(
+            main,
+            super::managed_java_temp_dir(std::path::Path::new(r"C:\Other\epigraph-main"))
+        );
+        assert!(main.starts_with(std::env::temp_dir().join("epigraph-suwayomi")));
+    }
+
     use super::*;
+
+    #[test]
+    fn preflight_backup_copies_the_database_and_keeps_only_the_newest_copies() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("server.conf"), b"server.port = 4567\n").unwrap();
+        std::fs::write(temp.path().join("database.mv.db"), b"h2").unwrap();
+        let backups_root = temp.path().join("epigraph-backups");
+        for stamp in 1..=LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT as u64 + 2 {
+            std::fs::create_dir_all(backups_root.join(format!("preflight-{stamp}"))).unwrap();
+        }
+        std::fs::create_dir_all(backups_root.join("manual")).unwrap();
+
+        let backup_dir = backup_local_server_files(temp.path()).unwrap().unwrap();
+
+        assert_eq!(
+            std::fs::read(backup_dir.join("database.mv.db")).unwrap(),
+            b"h2"
+        );
+        let mut remaining: Vec<String> = std::fs::read_dir(&backups_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        remaining.sort();
+        assert_eq!(remaining.len(), LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT + 1);
+        assert!(remaining.contains(&"manual".to_string()));
+        let created = backup_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(remaining.contains(&created));
+        assert!(!remaining.contains(&"preflight-1".to_string()));
+        assert!(!remaining.contains(&"preflight-3".to_string()));
+        assert!(remaining.contains(&"preflight-4".to_string()));
+    }
+
+    #[test]
+    fn failed_preflight_backup_leaves_existing_copies_in_place() {
+        let temp = tempfile::tempdir().unwrap();
+        // A directory named like the database makes the copy fail.
+        std::fs::create_dir_all(temp.path().join("database.mv.db")).unwrap();
+        let backups_root = temp.path().join("epigraph-backups");
+        for stamp in 1..=LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT as u64 + 2 {
+            std::fs::create_dir_all(backups_root.join(format!("preflight-{stamp}"))).unwrap();
+        }
+
+        assert!(backup_local_server_files(temp.path()).is_err());
+
+        assert_eq!(
+            std::fs::read_dir(&backups_root).unwrap().count(),
+            LOCAL_SERVER_PREFLIGHT_BACKUPS_KEPT + 2
+        );
+    }
 
     #[test]
     fn b1_stop_receipts_never_delete_or_confirm_replacement_evidence() {

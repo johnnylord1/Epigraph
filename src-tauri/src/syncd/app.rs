@@ -914,6 +914,8 @@ mod tests {
         assert_eq!(payload["comicAuthorityMode"], "suwayomi-confirmed-v1");
         assert_eq!(payload["supportsConfirmedSuwayomiCommandsV1"], true);
         assert_eq!(payload["supportsSyncStatusV1"], true);
+        assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
+        assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 3);
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
         assert_eq!(entity_types.len(), 25);

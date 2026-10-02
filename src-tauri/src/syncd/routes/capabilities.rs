@@ -44,6 +44,8 @@ pub async fn get_capabilities(
         comic_authority_mode: "suwayomi-confirmed-v1".to_string(),
         supports_confirmed_suwayomi_commands_v1: true,
         supports_sync_status_v1: true,
+        supports_comic_delete_projection_without_record: true,
+        supports_suwayomi_category_create: true,
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()

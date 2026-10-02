@@ -141,5 +141,8 @@ describe("FirstRunSyncStep", () => {
     expect(await screen.findByText("OFFICE-PC declined the request")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("Enter the code from OFFICE-PC")).toBeTruthy();
+    const inputs = screen.queryAllByLabelText(/^Digit \d+$/);
+    expect(inputs.length).toBe(6);
+    expect(inputs.every((input) => (input as HTMLInputElement).value === "")).toBe(true);
   });
 });

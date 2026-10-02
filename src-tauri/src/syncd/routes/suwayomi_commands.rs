@@ -11,6 +11,8 @@ use crate::syncd::routes::suwayomi_catalog;
 
 const COMMAND_SCHEMA_VERSION: u32 = 1;
 const MAX_CHAPTER_IDS: usize = 250;
+const CATEGORY_LOOKUP_PAGE_SIZE: i64 = 100;
+const MAX_CATEGORY_LOOKUP_PAGES: usize = 20;
 
 const UPDATE_MANGA_QUERY: &str = r#"
   mutation UpdateManga($id: Int!, $inLibrary: Boolean) {
@@ -67,6 +69,23 @@ const DELETE_CATEGORY_QUERY: &str = r#"
   }
 "#;
 
+const CREATE_CATEGORY_QUERY: &str = r#"
+  mutation CreateCategory($name: String!) {
+    createCategory(input: { name: $name }) {
+      category { id name order }
+    }
+  }
+"#;
+
+const CATEGORY_LOOKUP_QUERY: &str = r#"
+  query EpigraphLookupCategories($first: Int!, $offset: Int!) {
+    categories(first: $first, offset: $offset) {
+      pageInfo { hasNextPage }
+      nodes { id name order }
+    }
+  }
+"#;
+
 const UPDATE_CATEGORY_ORDER_QUERY: &str = r#"
   mutation UpdateCategoryOrder($id: Int!, $position: Int!) {
     updateCategoryOrder(input: { id: $id, position: $position }) {
@@ -89,6 +108,8 @@ pub enum CommandOperation {
     DeleteCategory,
     #[serde(rename = "UpdateCategoryOrder")]
     UpdateCategoryOrder,
+    #[serde(rename = "CreateCategory")]
+    CreateCategory,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +168,12 @@ struct UpdateCategoryVariables {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateCategoryVariables {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DeleteCategoryVariables {
     id: i64,
 }
@@ -177,9 +204,12 @@ pub async fn post_command(
     }
 
     let (document, variables) = normalized_command(&request.operation, request.variables)?;
-    let data =
+    let data = if request.operation == CommandOperation::CreateCategory {
+        create_category_confirmed(&state, &session, document, variables).await?
+    } else {
         suwayomi_catalog::execute_graphql_document(&state, &session, document, variables, true)
-            .await?;
+            .await?
+    };
 
     Ok(Json(CommandResponse {
         schema_version: COMMAND_SCHEMA_VERSION,
@@ -205,6 +235,77 @@ pub(crate) async fn execute_internal_command(
         mutation_receipt: None,
     };
     suwayomi_catalog::execute_graphql_document(state, &session, document, variables, true).await
+}
+
+/// Creates a category and answers only with a confirmed `{ id, name, order }`. A retried
+/// request whose category already exists returns that category instead of a duplicate.
+async fn create_category_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    document: &'static str,
+    variables: Value,
+) -> Result<Value, AppError> {
+    let name = variables
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    for page in 0..MAX_CATEGORY_LOOKUP_PAGES {
+        let offset = (page as i64).saturating_mul(CATEGORY_LOOKUP_PAGE_SIZE);
+        let data = suwayomi_catalog::execute_graphql_document(
+            state,
+            session,
+            CATEGORY_LOOKUP_QUERY,
+            json!({ "first": CATEGORY_LOOKUP_PAGE_SIZE, "offset": offset }),
+            false,
+        )
+        .await?;
+        let categories = data.get("categories");
+        if let Some(category) = categories
+            .and_then(|value| value.get("nodes"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|category| confirmed_category(category, &name))
+        {
+            return Ok(json!({
+                "createCategory": { "category": category, "created": false }
+            }));
+        }
+        let has_next = categories
+            .and_then(|value| value.get("pageInfo"))
+            .and_then(|value| value.get("hasNextPage"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !has_next {
+            break;
+        }
+    }
+    let data =
+        suwayomi_catalog::execute_graphql_document(state, session, document, variables, true)
+            .await?;
+    let category = created_category(&name, &data).ok_or_else(|| {
+        AppError::service_unavailable(
+            "SUWAYOMI_CATEGORY_NOT_CONFIRMED",
+            "The comics runtime did not confirm the new category.",
+            true,
+        )
+    })?;
+    Ok(json!({ "createCategory": { "category": category, "created": true } }))
+}
+
+pub(crate) fn created_category<'a>(name: &str, data: &'a Value) -> Option<&'a Value> {
+    data.get("createCategory")
+        .and_then(|value| value.get("category"))
+        .filter(|category| confirmed_category(category, name))
+}
+
+fn confirmed_category(category: &Value, name: &str) -> bool {
+    category
+        .get("id")
+        .and_then(Value::as_i64)
+        .is_some_and(|id| (1..=i32::MAX as i64).contains(&id))
+        && category.get("name").and_then(Value::as_str) == Some(name)
 }
 
 fn normalized_command(
@@ -299,18 +400,19 @@ fn normalized_command(
                     )
                 })?;
             ensure_int(variables.id, "id")?;
-            let name = variables.name.trim();
-            if name.is_empty() || name != variables.name || name.len() > 256 || name.contains('\0')
-            {
-                return Err(AppError::BadRequest(
-                    "Category name must be trimmed, non-empty, at most 256 bytes, and contain no NUL."
-                        .to_string(),
-                ));
-            }
+            ensure_category_name(&variables.name)?;
             Ok((
                 UPDATE_CATEGORY_QUERY,
                 json!({ "id": variables.id, "name": variables.name }),
             ))
+        }
+        CommandOperation::CreateCategory => {
+            let variables: CreateCategoryVariables =
+                serde_json::from_value(variables).map_err(|_| {
+                    AppError::BadRequest("CreateCategory requires only a name variable.".to_string())
+                })?;
+            ensure_category_name(&variables.name)?;
+            Ok((CREATE_CATEGORY_QUERY, json!({ "name": variables.name })))
         }
         CommandOperation::DeleteCategory => {
             let variables: DeleteCategoryVariables =
@@ -339,6 +441,24 @@ fn normalized_command(
             ))
         }
     }
+}
+
+fn ensure_category_name(value: &str) -> Result<(), AppError> {
+    let name = value.trim();
+    if name.is_empty() || name != value || name.len() > 256 || name.contains('\0') {
+        return Err(AppError::BadRequest(
+            "Category name must be trimmed, non-empty, at most 256 bytes, and contain no NUL."
+                .to_string(),
+        ));
+    }
+    // Suwayomi reserves "Default" in any letter case for its system category; createCategory
+    // rejects it and a rename to it would leave two categories the clients cannot tell apart.
+    if name.eq_ignore_ascii_case("default") {
+        return Err(AppError::BadRequest(
+            "Category name \"Default\" is reserved by Suwayomi.".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_int(value: i64, name: &str) -> Result<(), AppError> {
@@ -427,12 +547,67 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_create_category_and_confirms_only_matching_result() {
+        let (document, variables) = normalized_command(
+            &CommandOperation::CreateCategory,
+            json!({ "name": "Reading" }),
+        )
+        .unwrap();
+        assert!(document.contains("mutation CreateCategory"));
+        assert_eq!(variables, json!({ "name": "Reading" }));
+        for invalid in [
+            json!({ "name": "" }),
+            json!({ "name": " Reading" }),
+            json!({ "name": "Rea\u{0}ding" }),
+            json!({ "name": "x".repeat(257) }),
+            json!({ "name": "Reading", "order": 1 }),
+        ] {
+            assert!(
+                normalized_command(&CommandOperation::CreateCategory, invalid.clone()).is_err(),
+                "{invalid}"
+            );
+        }
+
+        let data = json!({
+            "createCategory": { "category": { "id": 9, "name": "Reading", "order": 4 } }
+        });
+        assert_eq!(
+            created_category("Reading", &data),
+            Some(&json!({ "id": 9, "name": "Reading", "order": 4 }))
+        );
+        assert!(created_category("Other", &data).is_none());
+        assert!(created_category(
+            "Reading",
+            &json!({ "createCategory": { "category": { "id": 0, "name": "Reading" } } })
+        )
+        .is_none());
+        assert!(created_category("Reading", &json!({ "createCategory": null })).is_none());
+    }
+
+    #[test]
     fn rejects_invalid_category_lifecycle_values() {
         assert!(normalized_command(
             &CommandOperation::UpdateCategory,
             json!({ "id": 3, "name": "  Reading" }),
         )
         .is_err());
+        for reserved in ["Default", "default", "DEFAULT"] {
+            assert!(normalized_command(
+                &CommandOperation::CreateCategory,
+                json!({ "name": reserved }),
+            )
+            .is_err());
+            assert!(normalized_command(
+                &CommandOperation::UpdateCategory,
+                json!({ "id": 3, "name": reserved }),
+            )
+            .is_err());
+        }
+        assert!(normalized_command(
+            &CommandOperation::CreateCategory,
+            json!({ "name": "Defaults" }),
+        )
+        .is_ok());
         assert!(
             normalized_command(&CommandOperation::DeleteCategory, json!({ "id": 0 }),).is_err()
         );

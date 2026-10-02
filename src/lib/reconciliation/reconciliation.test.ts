@@ -179,6 +179,37 @@ describe("backup parser", () => {
     expect(parsed.backupManga).toHaveLength(1);
   });
 
+  it("reads Yokai and J2K repositories from the extension_repos preference", async () => {
+    const message = (build: (writer: protobuf.Writer) => void) => { const writer = protobuf.Writer.create(); build(writer); return writer.finish(); };
+    const preference = (key: string, type: string, values: string[]) => message((writer) => writer
+      .uint32((1 << 3) | 2).string(key)
+      .uint32((2 << 3) | 2).bytes(message((wrapper) => wrapper
+        .uint32((1 << 3) | 2).string(type)
+        .uint32((2 << 3) | 2).bytes(message((set) => values.forEach((value) => set.uint32((1 << 3) | 2).string(value)))))));
+    const stringSet = "eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue";
+    const payload = Uint8Array.from([
+      ...BackupType.encode({
+        backupManga: [{ source: "123", url: "/library", title: "Library title" }],
+        backupExtensionStores: [{ indexUrl: "https://raw.githubusercontent.com/keiyoushi/extensions/repo", name: "Keiyoushi" }],
+      }).finish(),
+      ...message((writer) => writer.uint32((104 << 3) | 2).bytes(preference("extension_repos", stringSet, [
+        "https://raw.githubusercontent.com/keiyoushi/extensions/repo/",
+        "https://raw.githubusercontent.com/yuzono/tachiyomi-extensions/repo",
+      ]))),
+      ...message((writer) => writer.uint32((104 << 3) | 2).bytes(preference("trusted_extensions", stringSet, ["https://not-a-repo.test"]))),
+    ]);
+
+    const parsed = await parseMihonBackup(pako.gzip(payload), []);
+    expect(parsed.extensionStores.map((store) => [store.indexUrl, store.name])).toEqual([
+      ["https://raw.githubusercontent.com/keiyoushi/extensions/repo", "Keiyoushi"],
+      ["https://raw.githubusercontent.com/yuzono/tachiyomi-extensions/repo", "yuzono"],
+    ]);
+
+    // The restore payload carries the promoted stores as native entries, once.
+    const reparsed = await parseMihonBackup(createReconciledBackupPayload(parsed, {}), []);
+    expect(reparsed.extensionStores).toEqual(parsed.extensionStores);
+  });
+
   it("counts only library favorites while preserving read entries outside the library", async () => {
     const payload = BackupType.encode({
       backupManga: [

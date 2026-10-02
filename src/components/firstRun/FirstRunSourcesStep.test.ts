@@ -89,3 +89,19 @@ it("shows installation progress while blocking navigation, then exposes a retry 
   expect(await screen.findByText("Installed")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
 });
+
+it("filters repositories by the selected kind tab", async () => {
+  const workflow = createFirstRunSourcesWorkflow({
+    addRepository: vi.fn(), installExtension: vi.fn(),
+    loadRepositories: async () => [
+      { id: "comics", kind: "manga", name: "Comics Repo", url: "https://comics.test", extensions: [] },
+      { id: "novels", kind: "novels", name: "Novel Repo", url: "https://novels.test", extensions: [] },
+    ],
+  });
+  render(FirstRunSourcesStep, { props: { workflow, requiredKinds: ["manga", "novels"] } });
+  expect(await screen.findByText("Comics Repo")).toBeTruthy();
+  expect(screen.queryByText("Novel Repo")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
+  expect(await screen.findByText("Novel Repo")).toBeTruthy();
+  expect(screen.queryByText("Comics Repo")).toBeNull();
+});

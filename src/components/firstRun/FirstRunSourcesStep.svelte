@@ -168,7 +168,8 @@
   }
 
   const showNsfw = $derived(store.settings.showNsfw === true);
-  const hasNsfwExtensions = $derived(repositories.some((repository) => repository.extensions.some((extension) => extension.nsfw)));
+  const visibleRepositories = $derived(repositories.filter((repository) => repository.kind === kind));
+  const hasNsfwExtensions = $derived(visibleRepositories.some((repository) => repository.extensions.some((extension) => extension.nsfw)));
 
   function filteredExtensions(repository: FirstRunRepository) {
     const query = extensionQuery.trim().toLowerCase();
@@ -207,9 +208,9 @@
 {#if error}<div class="fr-error" role="alert"><WarningCircle size={18} /><span>{operationError(error.cause, error.fallback, $_)}</span><button class="fr-link" type="button" disabled={working || loading} onclick={retryLoad}>{$_("firstRun.sources.reload")}</button></div>{/if}
 {#each warnings as warning}<div class="fr-notice" role="status"><Info size={18} /><span>{restoreNote(warning, $_)}</span><button class="fr-link" type="button" disabled={working || loading} onclick={retryLoad}>{$_("firstRun.sources.retry")}</button></div>{/each}
 
-{#if repositories.length > 0 || hasNsfwExtensions}
+{#if visibleRepositories.length > 0 || hasNsfwExtensions}
   <div class="catalog-tools" data-enter>
-    {#if repositories.length > 0}
+    {#if visibleRepositories.length > 0}
       <label class="fr-field extension-search"><MagnifyingGlass size={16} /><input type="search" value={extensionQuery} aria-label={$_("firstRun.sources.search")} placeholder={$_("firstRun.sources.searchPlaceholder")} oninput={(event) => { extensionQuery = event.currentTarget.value; visibleCounts = {}; }} /></label>
     {/if}
     {#if hasNsfwExtensions}
@@ -224,7 +225,7 @@
   {#if loading}
     <div class="fr-skeleton"></div><div class="fr-skeleton" style:opacity=".75"></div><div class="fr-skeleton" style:opacity=".5"></div>
   {/if}
-  {#each repositories as repository (`${repository.kind}:${repository.id}`)}
+  {#each visibleRepositories as repository (`${repository.kind}:${repository.id}`)}
     {@const filtered = filteredExtensions(repository)}
     {@const visibleCount = visibleCounts[repository.id] ?? 12}
     <section class="repository" in:arrive>

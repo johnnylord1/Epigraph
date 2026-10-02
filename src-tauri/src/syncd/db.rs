@@ -332,11 +332,57 @@ pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
         .await
         .context("failed to connect to syncd sqlite database")?;
 
+    reconcile_line_ending_checksums(&pool)
+        .await
+        .context("failed to reconcile syncd migration checksums")?;
     MIGRATOR
         .run(&pool)
         .await
         .context("failed to run syncd migrations")?;
     Ok(pool)
+}
+
+/// The migration checksum hashes the script bytes as they were in the build checkout, so a build from a CRLF
+/// checkout (0.0.1) recorded different checksums for the same SQL. Re-record those that differ only by line
+/// endings; any other difference is left for the migrator to reject.
+async fn reconcile_line_ending_checksums(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    let has_table: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    if has_table.is_none() {
+        return Ok(());
+    }
+
+    let applied: Vec<(i64, Vec<u8>)> =
+        sqlx::query_as("SELECT version, checksum FROM _sqlx_migrations")
+            .fetch_all(pool)
+            .await?;
+    for (version, recorded) in applied {
+        let Some(migration) = MIGRATOR
+            .iter()
+            .find(|migration| migration.version == version)
+        else {
+            continue;
+        };
+        if recorded.as_slice() == migration.checksum.as_ref() {
+            continue;
+        }
+        let lf = migration.sql.replace("\r\n", "\n");
+        let crlf = lf.replace('\n', "\r\n");
+        let same_script = [lf, crlf]
+            .iter()
+            .any(|sql| sha2::Sha384::digest(sql.as_bytes()).as_slice() == recorded.as_slice());
+        if same_script {
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+                .bind(migration.checksum.as_ref())
+                .bind(version)
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn upsert_server_identity(
@@ -4566,7 +4612,7 @@ async fn enqueue_comic_history_projection_in_tx(
         r#"
         DELETE FROM suwayomi_projection_outbox
         WHERE profile_id = ? AND entity_type = 'comic.history' AND entity_id = ?
-          AND status IN ('pending', 'retry') AND source_server_version < ?
+          AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
         "#,
     )
     .bind(profile_id)
@@ -5853,7 +5899,9 @@ pub async fn delete_comic_sync_state_mutation(
         "client_delete",
     )
     .await?;
-    if let Some(record) = previous_record.as_ref() {
+    let projection_record = previous_record
+        .or_else(|| comic_delete_projection_record_from_id(entity_type, entity_id));
+    if let Some(record) = projection_record.as_ref() {
         enqueue_comic_state_projection_in_tx(
             &mut tx,
             scope_id,
@@ -5896,6 +5944,23 @@ pub async fn delete_comic_sync_state_mutation(
     }))
 }
 
+pub(crate) const COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX: &str = "comic-category-assignment:";
+/// Outbox operation for an assignment delete whose comic/category pair is only known by
+/// its hashed id; the projection worker resolves the pair against Suwayomi.
+pub(crate) const REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION: &str =
+    "RemoveComicCategoryAssignment";
+
+/// `comic_sync_state` is only written by client merges, so deleting an item that already
+/// existed in Suwayomi has no stored record. Rebuild the projection input from the id.
+fn comic_delete_projection_record_from_id(entity_type: &str, entity_id: &str) -> Option<Value> {
+    match entity_type {
+        "comic.entry" => Some(json!({ "comicId": entity_id })),
+        "comic.category" => Some(json!({ "categoryId": entity_id })),
+        "comic.category_assignment" => Some(json!({ "assignmentId": entity_id })),
+        _ => None,
+    }
+}
+
 async fn enqueue_comic_state_projection_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -5931,6 +5996,21 @@ async fn enqueue_comic_state_projection_in_tx(
         }
         "comic.category_assignment" => {
             let Some(comic_id) = record.get("comicId").and_then(Value::as_str) else {
+                if deleting && entity_id.starts_with(COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX) {
+                    return enqueue_comic_projections_in_tx(
+                        tx,
+                        profile_id,
+                        entity_type,
+                        entity_id,
+                        vec![(
+                            REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION,
+                            json!({ "assignmentId": entity_id }),
+                        )],
+                        server_version,
+                        now,
+                    )
+                    .await;
+                }
                 return Ok(());
             };
             let Some(category_id) = record.get("categoryId").and_then(Value::as_str) else {
@@ -6035,6 +6115,27 @@ async fn enqueue_comic_state_projection_in_tx(
         }
         _ => Vec::new(),
     };
+    enqueue_comic_projections_in_tx(
+        tx,
+        profile_id,
+        entity_type,
+        entity_id,
+        projections,
+        server_version,
+        now,
+    )
+    .await
+}
+
+async fn enqueue_comic_projections_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    profile_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    projections: Vec<(&str, Value)>,
+    server_version: i64,
+    now: i64,
+) -> anyhow::Result<()> {
     if projections.is_empty() {
         return Ok(());
     }
@@ -6042,7 +6143,7 @@ async fn enqueue_comic_state_projection_in_tx(
         r#"
         DELETE FROM suwayomi_projection_outbox
         WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
-          AND status IN ('pending', 'retry') AND source_server_version < ?
+          AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
         "#,
     )
     .bind(profile_id)
@@ -8751,6 +8852,50 @@ mod tests {
     use super::*;
     use crate::syncd::config::SyncdConfig;
 
+    async fn record_checksum(pool: &sqlx::SqlitePool, version: i64, sql: &str) {
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+            .bind(sha2::Sha384::digest(sql.as_bytes()).to_vec())
+            .bind(version)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn database_migrated_from_a_crlf_build_still_opens() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        let first = MIGRATOR.iter().next().unwrap();
+        let crlf = first.sql.replace("\r\n", "\n").replace('\n', "\r\n");
+        record_checksum(&pool, first.version, &crlf).await;
+        pool.close().await;
+
+        let pool = connect(&config).await.unwrap();
+
+        let recorded: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+                .bind(first.version)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(recorded.as_slice(), first.checksum.as_ref());
+    }
+
+    #[tokio::test]
+    async fn edited_migration_is_still_rejected() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        let first = MIGRATOR.iter().next().unwrap();
+        record_checksum(&pool, first.version, &format!("{}\n-- edited", first.sql)).await;
+        pool.close().await;
+
+        let error = connect(&config).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("previously applied but has been modified"));
+    }
+
     #[tokio::test]
     async fn portable_bindings_preserve_opaque_provider_keys() {
         let temp = tempdir().unwrap();
@@ -9722,6 +9867,270 @@ mod tests {
         assert_eq!(variables["inLibrary"], true);
         assert!(variables.get("id").is_none());
         assert!(variables.get("mangaId").is_none());
+    }
+
+    #[tokio::test]
+    async fn comic_delete_without_prior_record_projects_legacy_ids() {
+        for prefix in ["suwayomi:profile:main", "suwayomi:server:desktop-a:profile:main"] {
+            let temp = tempdir().unwrap();
+            let config = SyncdConfig::for_test(temp.path().to_path_buf());
+            let pool = connect(&config).await.unwrap();
+            upsert_server_identity(&pool, &config, "fingerprint")
+                .await
+                .unwrap();
+            let session = AuthenticatedSession {
+                token_id: "token-main".to_string(),
+                device_id: "device-main".to_string(),
+                profile_id: "main".to_string(),
+                scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+                mutation_receipt: None,
+            };
+            let comic_id = format!("{prefix}:manga:42");
+            let category_id = format!("{prefix}:category:3");
+            let assignment_id = "comic-category-assignment:".to_string() + &"ab".repeat(32);
+            for (entity_type, entity_id) in [
+                ("comic.category_assignment", assignment_id.as_str()),
+                ("comic.entry", comic_id.as_str()),
+                ("comic.category", category_id.as_str()),
+            ] {
+                assert!(matches!(
+                    delete_comic_sync_state_mutation(
+                        &pool,
+                        &session,
+                        "comics:profile:main",
+                        entity_type,
+                        entity_id,
+                        1,
+                        None,
+                        config.retention_window,
+                    )
+                    .await
+                    .unwrap(),
+                    CausalMutationWriteOutcome::Applied(_)
+                ));
+            }
+
+            let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+                r#"
+                SELECT entity_type, entity_id, operation_name, variables_json
+                FROM suwayomi_projection_outbox
+                WHERE profile_id = 'main'
+                ORDER BY source_server_version
+                "#,
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            let rows: Vec<(String, String, String, Value)> = rows
+                .into_iter()
+                .map(|(entity_type, entity_id, operation, variables)| {
+                    (
+                        entity_type,
+                        entity_id,
+                        operation,
+                        serde_json::from_str(&variables).unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                rows,
+                vec![
+                    (
+                        "comic.category_assignment".to_string(),
+                        assignment_id.clone(),
+                        REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION.to_string(),
+                        json!({ "assignmentId": assignment_id }),
+                    ),
+                    (
+                        "comic.entry".to_string(),
+                        comic_id.clone(),
+                        "UpdateManga".to_string(),
+                        json!({ "id": 42, "inLibrary": false }),
+                    ),
+                    (
+                        "comic.category".to_string(),
+                        category_id.clone(),
+                        "DeleteCategory".to_string(),
+                        json!({ "id": 3 }),
+                    ),
+                ],
+                "{prefix}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn comic_delete_without_prior_record_ignores_foreign_profile_ids() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        for (entity_type, entity_id) in [
+            ("comic.entry", "suwayomi:profile:other:manga:42"),
+            ("comic.category", "suwayomi:server:desktop-a:profile:other:category:3"),
+            ("comic.category_assignment", "not-an-assignment-id"),
+        ] {
+            delete_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                entity_type,
+                entity_id,
+                1,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+        }
+        let projection_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM suwayomi_projection_outbox")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(projection_count, 0);
+    }
+
+    #[tokio::test]
+    async fn comic_category_merges_without_prior_record_project_legacy_ids() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let category_id = "suwayomi:server:desktop-a:profile:main:category:7";
+        let mutations = [
+            (
+                "comic.category_assignment",
+                "comic-category-assignment:merge",
+                json!({
+                    "comicId": "suwayomi:profile:main:manga:42",
+                    "categoryId": category_id,
+                }),
+            ),
+            (
+                "comic.category",
+                category_id,
+                json!({ "categoryId": category_id, "name": "Reading", "order": 2 }),
+            ),
+        ];
+        for (entity_type, entity_id, record) in &mutations {
+            apply_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                entity_type,
+                entity_id,
+                record,
+                1,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+        }
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT operation_name, variables_json FROM suwayomi_projection_outbox \n             ORDER BY source_server_version, operation_name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let rows: Vec<(String, Value)> = rows
+            .into_iter()
+            .map(|(name, variables)| (name, serde_json::from_str(&variables).unwrap()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "UpdateMangaCategories".to_string(),
+                    json!({ "mangaId": 42, "addTo": [7], "removeFrom": [] }),
+                ),
+                (
+                    "UpdateCategory".to_string(),
+                    json!({ "id": 7, "name": "Reading" }),
+                ),
+                (
+                    "UpdateCategoryOrder".to_string(),
+                    json!({ "id": 7, "position": 2 }),
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn newer_comic_merge_supersedes_blocked_projection() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let category_id = "suwayomi:server:desktop-a:profile:main:category:7";
+        for (name, lamport) in [("Default", 1), ("Reading", 2)] {
+            apply_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                "comic.category",
+                category_id,
+                &json!({ "categoryId": category_id, "name": name }),
+                lamport,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+            if lamport == 1 {
+                // Suwayomi rejected the first rename permanently, so its projection ended blocked.
+                sqlx::query(
+                    "UPDATE suwayomi_projection_outbox SET status = 'blocked', last_error = 'command_rejected'",
+                )
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT status, variables_json FROM suwayomi_projection_outbox ORDER BY source_server_version",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let rows: Vec<(String, Value)> = rows
+            .into_iter()
+            .map(|(status, variables)| (status, serde_json::from_str(&variables).unwrap()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![("pending".to_string(), json!({ "id": 7, "name": "Reading" }))]
+        );
     }
 
     #[tokio::test]

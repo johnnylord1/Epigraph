@@ -280,6 +280,11 @@ pub struct CapabilitiesResponse {
     /// Reserved for the aggregate sync-status endpoint.  It remains false
     /// until that endpoint is available so clients never infer readiness.
     pub supports_sync_status_v1: bool,
+    /// Comic entry/category/assignment deletes reach Suwayomi even when the Core never
+    /// stored a record for that legacy id.
+    pub supports_comic_delete_projection_without_record: bool,
+    /// The confirmed command bridge accepts `CreateCategory` (name -> new id).
+    pub supports_suwayomi_category_create: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
