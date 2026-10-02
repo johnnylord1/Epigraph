@@ -2,6 +2,7 @@ import pako from "pako";
 import Long from "long";
 import protobuf from "protobufjs";
 import { MIHON_BACKUP_PROTO } from "./mihonProto";
+import { normalizeMihonMemoFields } from "./mihonMemo";
 import type { ParsedBackup, ParsedBackupExtensionStore, ParsedBackupManga, ParsedBackupSource, SourceInventoryEntry } from "../reconciliation/types";
 
 protobuf.util.Long = Long;
@@ -634,7 +635,7 @@ export function createReconciledBackupPayload(
     ),
   ];
 
-  const payload = concatChunks(encodedChunks);
+  const payload = normalizeMihonMemoFields(concatChunks(encodedChunks));
   return parsedBackup.wasGzipped ? pako.gzip(payload) : payload;
 }
 
