@@ -3091,6 +3091,7 @@
   "settings_backup_resultUnresolved": "サーバーの結果を確認できませんでした。この送信は再実行されません。",
   "settings_backup_resultCancelled": "キャンセルが要求されたため開始されませんでした。",
   "settings_backup_resultFailed": "復元は完了しませんでした。",
+  "settings_backup_repositoriesUnavailable": "バックアップ内の {count} 個のリポジトリにアクセスできないためスキップしました。拡張機能とリポジトリで新しいアドレスを追加してください。",
   "settings_backup_createTitle": "バックアップを作成",
   "settings_backup_restoreTitle": "バックアップを復元",
   "settings_backup_repositoriesFound": "バックアップ内のリポジトリ",

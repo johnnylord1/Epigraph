@@ -3091,6 +3091,7 @@
   "settings_backup_resultUnresolved": "服务器结果尚未确认。此提交不会再次发送。",
   "settings_backup_resultCancelled": "由于已请求取消，未开始执行。",
   "settings_backup_resultFailed": "恢复未完成。",
+  "settings_backup_repositoriesUnavailable": "备份中有 {count} 个仓库已无法访问，已跳过。请在“扩展与仓库”中添加其新地址。",
   "settings_backup_createTitle": "创建备份",
   "settings_backup_restoreTitle": "恢复备份",
   "settings_backup_repositoriesFound": "备份中的仓库",

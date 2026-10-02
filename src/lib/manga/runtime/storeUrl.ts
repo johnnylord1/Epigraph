@@ -60,3 +60,26 @@ export function resolveExtensionStoreInputUrl(value: string): string {
     "Use the GitHub repository root or a direct index.pb/index.json/index.min.json URL.",
   );
 }
+
+const INDEX_FILE = /\/(?:index(?:\.min)?\.(?:json|pb)|repo\.json)$/i;
+
+/** Repository identity that ignores which index file a URL names, so ".../repo" and ".../repo/index.pb" match. */
+export function extensionStoreBaseUrl(value: string): string {
+  let url: string;
+  try {
+    url = resolveExtensionStoreInputUrl(value);
+  } catch {
+    url = value.trim();
+  }
+  return url.replace(/\/+$/, "").replace(INDEX_FILE, "");
+}
+
+/**
+ * Index URLs to try, in order, for a repository URL as stored in a backup (usually the bare base URL).
+ * Works for any host; a URL that already names an index file is used as is.
+ */
+export function extensionStoreIndexCandidates(value: string): string[] {
+  const resolved = resolveExtensionStoreInputUrl(value);
+  if (INDEX_FILE.test(new URL(resolved).pathname)) return [resolved];
+  return [`${resolved}/index.min.json`, `${resolved}/index.pb`];
+}

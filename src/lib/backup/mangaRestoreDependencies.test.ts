@@ -3,7 +3,7 @@ import { createMangaRestoreDependencySession } from "./mangaRestoreDependencies"
 
 function fixture() {
   let target = "profile-a";
-  const plan = { repositories: [{ id: "repo", indexUrl: "https://repo.test" }], requiredRepositories: [],
+  const plan = { repositories: [{ id: "repo", indexUrl: "https://repo.test" }], requiredRepositories: [] as string[],
     extensions: [{ packageName: "one", storeId: "repo", isInstalled: false }], sources: [], warnings: [] };
   const inspect = vi.fn(async () => structuredClone(plan));
   const install = vi.fn(async () => {}), add = vi.fn(async () => {}), release = vi.fn(async () => {});
@@ -37,5 +37,19 @@ describe("Manga dependency approval", () => {
     await expect(f.session.install({ packageName: "one", storeId: "repo" })).rejects.toThrow("RESTORE_CONFLICT");
     expect(f.release).not.toHaveBeenCalled(); finish(); await pending;
     expect(f.release).toHaveBeenCalledOnce();
+  });
+  it("a repository already present under another index file name is not added again", async () => {
+    const f = fixture();
+    f.plan.repositories = [{ id: "repo", indexUrl: "https://repo.test/r/index.pb" }];
+    f.plan.requiredRepositories = ["https://repo.test/r"];
+    await f.session.addRepository("https://repo.test/r");
+    expect(f.add).not.toHaveBeenCalled();
+  });
+  it("a missing required repository is added once", async () => {
+    const f = fixture();
+    f.plan.requiredRepositories = ["https://other.test/r"];
+    await f.session.addRepository("https://other.test/r");
+    expect(f.add).toHaveBeenCalledOnce();
+    expect(f.add).toHaveBeenCalledWith("https://other.test/r");
   });
 });

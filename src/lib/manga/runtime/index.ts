@@ -40,6 +40,8 @@ export { runExplicitCompatibilityProbe } from "./observedCompatibility";
 export type { ExplicitCompatibilityProbeInput } from "./observedCompatibility";
 export {
   canonicalizeExtensionStoreUrl,
+  extensionStoreBaseUrl,
+  extensionStoreIndexCandidates,
   resolveExtensionStoreInputUrl,
 } from "./storeUrl";
 export {

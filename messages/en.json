@@ -3091,6 +3091,7 @@
   "settings_backup_resultUnresolved": "The server result is unresolved. This submission will not be sent again.",
   "settings_backup_resultCancelled": "Not started because cancellation was requested.",
   "settings_backup_resultFailed": "Restore did not complete.",
+  "settings_backup_repositoriesUnavailable": "{count} backup repositories are no longer reachable and were skipped. Add their new address in Extensions & Repos.",
   "settings_backup_createTitle": "Create backup",
   "settings_backup_restoreTitle": "Restore backup",
   "settings_backup_repositoriesFound": "Repositories found in backup",

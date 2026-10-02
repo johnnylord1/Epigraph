@@ -3091,6 +3091,7 @@
   "settings_backup_resultUnresolved": "El resultado del servidor no está confirmado. Este envío no se repetirá.",
   "settings_backup_resultCancelled": "No se inició porque se solicitó la cancelación.",
   "settings_backup_resultFailed": "La restauración no se completó.",
+  "settings_backup_repositoriesUnavailable": "{count} repositorios de la copia ya no están disponibles y se omitieron. Agrega su nueva dirección en Extensiones y repositorios.",
   "settings_backup_createTitle": "Crear copia de seguridad",
   "settings_backup_restoreTitle": "Restaurar copia de seguridad",
   "settings_backup_repositoriesFound": "Repositorios encontrados en la copia",

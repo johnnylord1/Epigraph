@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   canonicalizeExtensionStoreUrl,
+  extensionStoreBaseUrl,
+  extensionStoreIndexCandidates,
   resolveExtensionStoreInputUrl,
 } from "./storeUrl";
 
@@ -44,5 +46,27 @@ describe("extension store URL canonicalization", () => {
       .toBe("https://example.com/extensions/index.min.json");
     expect(() => resolveExtensionStoreInputUrl("https://github.com/keiyoushi/extensions/issues"))
       .toThrow(/repository root or a direct index/i);
+  });
+});
+
+describe("backup repository URLs", () => {
+  test("expands a bare base URL into index file candidates", () => {
+    expect(extensionStoreIndexCandidates("https://raw.githubusercontent.com/a/b/repo"))
+      .toEqual(["https://raw.githubusercontent.com/a/b/repo/index.min.json", "https://raw.githubusercontent.com/a/b/repo/index.pb"]);
+  });
+
+  test("expands a non-GitHub host base URL", () => {
+    expect(extensionStoreIndexCandidates("https://repo.example.org/mihon/"))
+      .toEqual(["https://repo.example.org/mihon/index.min.json", "https://repo.example.org/mihon/index.pb"]);
+  });
+
+  test("keeps a URL that already names an index file", () => {
+    expect(extensionStoreIndexCandidates("https://repo.example.org/x/index.pb"))
+      .toEqual(["https://repo.example.org/x/index.pb"]);
+  });
+
+  test("baseUrl matches across index file names", () => {
+    expect(extensionStoreBaseUrl("https://raw.githubusercontent.com/a/b/repo/index.pb"))
+      .toBe(extensionStoreBaseUrl("https://raw.githubusercontent.com/a/b/repo/"));
   });
 });

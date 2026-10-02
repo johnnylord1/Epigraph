@@ -1,4 +1,5 @@
 import type { NativeSourceRestoreChoice, ReconciliationClusterResult } from "../reconciliation/types";
+import { extensionStoreBaseUrl, extensionStoreIndexCandidates } from "../manga/runtime/storeUrl";
 import { loadSettingsStorageRuntime } from "./storageRuntime";
 
 export interface MangaDependencyPlan {
@@ -43,7 +44,7 @@ export function createMangaRestoreDependencySession(deps: {
     addRepository(url: string) {
       return prepare(async plan => {
         if (!plan.requiredRepositories.includes(url)) throw Error("RESTORE_REPOSITORY_NOT_REQUESTED");
-        if (!plan.repositories.some(repo => repo.indexUrl === url)) await deps.add(url);
+        if (!plan.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) await deps.add(url);
       });
     },
   };
@@ -81,7 +82,22 @@ export async function createProductionMangaDependencySession(file: File, format:
       return () => invoke<void>("restore_session_release", { token });
     },
     install: async packageName => { validate(); await runtime.installExtension({ packageName, assertTarget: validate }); validate(); bumpContentSetupVersion(); },
-    add: async indexUrl => { validate(); await runtime.addStore({ indexUrl, assertTarget: validate }); validate(); await runtime.refreshExtensions(undefined, validate); validate(); bumpContentSetupVersion(); },
+    add: async url => {
+      validate();
+      let lastError: unknown = null;
+      for (const indexUrl of extensionStoreIndexCandidates(url)) {
+        try {
+          await runtime.addStore({ indexUrl, assertTarget: validate });
+          lastError = null;
+          break;
+        } catch (error) {
+          validate();
+          lastError = error;
+        }
+      }
+      if (lastError) throw lastError;
+      validate(); await runtime.refreshExtensions(undefined, validate); validate(); bumpContentSetupVersion();
+    },
   });
 }
 
