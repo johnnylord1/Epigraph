@@ -55,9 +55,7 @@ internal class HardcoverApi(
 
         val search = data["search"]?.jsonObject ?: return@withIOContext emptyList()
         val ids = search["ids"]?.jsonArray.orEmpty().mapNotNull { it.longOrNullValue() }
-        val results = search["results"].asJsonArrayOrNull()
-        results.mapIndexedNotNull { index, element ->
-            val result = element as? JsonObject ?: return@mapIndexedNotNull null
+        search["results"].searchDocuments().mapIndexedNotNull { index, result ->
             val bookId = result.longValue("id")
                 ?: result.longValue("book_id")
                 ?: ids.getOrNull(index)
@@ -103,24 +101,7 @@ internal class HardcoverApi(
 
         val data = execute(RECOMMENDATION_SEARCH_QUERY, variables)
 
-        val resultsElement = data["search"].obj?.get("results")
-            ?: return@withIOContext emptyList()
-
-        val documents: List<JsonObject> = when (resultsElement) {
-            is JsonPrimitive -> {
-                val parsed = runCatching { json.parseToJsonElement(resultsElement.content) }.getOrNull()
-                when (parsed) {
-                    is JsonObject -> parsed["hits"].arr.orEmpty()
-                        .mapNotNull { it.obj?.get("document").obj }
-                    is JsonArray -> parsed.mapNotNull { it.obj }
-                    else -> emptyList()
-                }
-            }
-            is JsonObject -> resultsElement["hits"].arr.orEmpty()
-                .mapNotNull { it.obj?.get("document").obj }
-            is JsonArray -> resultsElement.mapNotNull { it.obj }
-            else -> emptyList()
-        }
+        val documents = data["search"].obj?.get("results").searchDocuments()
 
         val books = documents.mapNotNull { it.toBookResult() }.take(limit)
         if (books.isEmpty()) return@withIOContext books
@@ -334,10 +315,17 @@ internal class HardcoverApi(
 
     private fun JsonObject.textValue(key: String): String = this[key].textValue()
 
-    private fun JsonElement?.asJsonArrayOrNull(): JsonArray = when (this) {
-        is JsonArray -> this
-        is JsonPrimitive -> runCatching { json.parseToJsonElement(content).jsonArray }.getOrDefault(JsonArray(emptyList()))
-        else -> JsonArray(emptyList())
+    /**
+     * Book documents from a search `results` value. Hardcover returns a Typesense object
+     * (`hits[].document`), sometimes as a JSON string; a plain array is accepted too.
+     */
+    private fun JsonElement?.searchDocuments(): List<JsonObject> = when (this) {
+        is JsonPrimitive -> runCatching { json.parseToJsonElement(content) }.getOrNull()
+            ?.takeUnless { it is JsonPrimitive }
+            .searchDocuments()
+        is JsonObject -> this["hits"].arr.orEmpty().mapNotNull { it.obj?.get("document").obj }
+        is JsonArray -> mapNotNull { it.obj }
+        else -> emptyList()
     }
 
     private fun JsonElement?.textValue(): String = when (this) {
