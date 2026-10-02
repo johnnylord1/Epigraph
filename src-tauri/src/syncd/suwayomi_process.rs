@@ -289,7 +289,9 @@ pub async fn stop_owned_instances(timeout: Duration) -> Result<Vec<AttachedSuway
     let root = main_profile_root();
     let owner = root.join("server.owner.json");
     if owner.exists() && !crate::suwayomi_runtime::has_confirmed_stop(&owner)
-        && !instances.iter().any(|instance| instance.root_dir == root) {
+        && !instances.iter().any(|instance| instance.root_dir == root)
+        // A record left by a reboot or crash must not block every later update.
+        && remove_stale_owner(&root).is_err() {
         return Err("Managed runtime ownership is legacy, foreign or unretained; reconcile gracefully/manual first".into());
     }
     for instance in &instances {

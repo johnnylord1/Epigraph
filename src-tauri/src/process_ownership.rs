@@ -111,9 +111,20 @@ pub mod windows {
         fn WaitForSingleObject(handle: Handle, timeout: u32) -> u32;
         fn LocalFree(memory: Handle) -> Handle;
         fn GetLastError() -> u32;
+        fn GetTickCount64() -> u64;
     }
     const ERROR_INVALID_PARAMETER: u32 = 87;
     const WAIT_OBJECT_0: u32 = 0;
+
+    /// Wall-clock time (Unix seconds) of the current boot, from the uptime counter.
+    pub fn boot_time_unix_secs() -> Option<u64> {
+        let uptime = unsafe { GetTickCount64() } / 1000;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_secs();
+        now.checked_sub(uptime)
+    }
 
     /// Proves whether the process recorded with `pid` (and, when known, its creation FILETIME)
     /// is gone. `Some(true)`: no process has that PID, it has exited, or the PID now belongs to a

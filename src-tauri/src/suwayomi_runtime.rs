@@ -176,16 +176,41 @@ fn recorded_process_has_exited(pid: u32, identity: Option<&RuntimeProcessIdentit
     }
     #[cfg(windows)]
     {
-        ownership::windows::recorded_process_exited(
+        match ownership::windows::recorded_process_exited(
             pid,
             identity.and_then(|identity| identity.creation_filetime),
-        ) == Some(true)
+        ) {
+            Some(exited) => exited,
+            // The OS cannot verify the PID (after a restart it is often reused by a protected
+            // system process, or the record has no birth to compare). No process survives a
+            // restart, so a record born before the current boot is gone.
+            None => identity
+                .and_then(recorded_birth_unix_secs)
+                .zip(ownership::windows::boot_time_unix_secs())
+                .is_some_and(|(born, boot)| born_before_boot(born, boot)),
+        }
     }
     #[cfg(not(windows))]
     {
         let _ = (pid, identity);
         false
     }
+}
+
+/// Slack for wall-clock adjustments between the record and the uptime-based boot time.
+const BOOT_PROOF_MARGIN_SECS: u64 = 300;
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn born_before_boot(born: u64, boot: u64) -> bool {
+    born.saturating_add(BOOT_PROOF_MARGIN_SECS) < boot
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn recorded_birth_unix_secs(identity: &RuntimeProcessIdentity) -> Option<u64> {
+    identity
+        .creation_filetime
+        .and_then(|created| (created / 10_000_000).checked_sub(11_644_473_600))
+        .or(identity.process_creation_time)
 }
 
 pub fn command_line_hash(args: &[String]) -> String {
@@ -502,5 +527,31 @@ mod tests {
         assert!(!sanitized.contains("secret"));
         assert!(!sanitized.contains("abc123"));
         assert!(sanitized.contains("<redacted>"));
+    }
+
+    #[test]
+    fn record_born_before_boot_is_gone_only_beyond_margin() {
+        let boot = 1_790_900_000;
+        assert!(born_before_boot(boot - 3_600, boot));
+        assert!(!born_before_boot(boot - 60, boot));
+        assert!(!born_before_boot(boot + 60, boot));
+    }
+
+    #[test]
+    fn recorded_birth_prefers_filetime_and_falls_back_to_seconds() {
+        let seconds = 1_790_886_887u64;
+        let mut identity = RuntimeProcessIdentity {
+            pid: 1212,
+            process_creation_time: Some(seconds),
+            executable_path: None,
+            command_line_hash: None,
+            creation_filetime: None,
+        };
+        assert_eq!(recorded_birth_unix_secs(&identity), Some(seconds));
+        identity.creation_filetime = Some((seconds + 10 + 11_644_473_600) * 10_000_000);
+        assert_eq!(recorded_birth_unix_secs(&identity), Some(seconds + 10));
+        identity.creation_filetime = None;
+        identity.process_creation_time = None;
+        assert_eq!(recorded_birth_unix_secs(&identity), None);
     }
 }

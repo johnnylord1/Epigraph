@@ -64,7 +64,8 @@
   } from "../../lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { buildBackupDependencyPreview, type BackupDependencyPreview } from "../../lib/backup/dependencyPreview";
-  import { getManagedSourceRuntime, resolveExtensionStoreInputUrl } from "../../lib/manga/runtime";
+  import { getManagedSourceRuntime } from "../../lib/manga/runtime";
+  import { createProductionMangaDependencySession } from "../../lib/backup/mangaRestoreDependencies";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
   import { GET_CATEGORIES, CREATE_CATEGORY, UPDATE_CATEGORY, UPDATE_CATEGORY_UPDATE_RULE, DELETE_CATEGORY, UPDATE_CATEGORY_ORDER, GET_LIBRARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES } from "../../lib/queries";
@@ -2083,20 +2084,15 @@
     await invoke("relaunch_with_args", { args });
   }
 
-  async function ensureMangaRestoreRepositories(repositoryUrls: readonly string[]) {
-    if (repositoryUrls.length === 0) return 0;
-    const runtime = await getManagedSourceRuntime();
-    const current = new Set((await runtime.listStores()).map((entry) => entry.indexUrl.replace(/\/+$/, "")));
-    let added = 0;
-    for (const rawUrl of repositoryUrls) {
-      const url = resolveExtensionStoreInputUrl(rawUrl).replace(/\/+$/, "");
-      if (!url || current.has(url)) continue;
-      await runtime.addStore({ indexUrl: url });
-      current.add(url);
-      added += 1;
+  // The "approve dependencies" consent adds the backup's own Mihon repositories before restoring,
+  // through the same target-checked session the per-repository buttons use.
+  async function addApprovedMangaRepositories(file: File) {
+    const session = await createProductionMangaDependencySession(file, backupImportKind === "epigraph" ? "epigraph" : "native");
+    const plan = await session.inspect();
+    const present = new Set(plan.repositories.map((repository) => repository.indexUrl));
+    for (const url of plan.requiredRepositories) {
+      if (!present.has(url)) await session.addRepository(url);
     }
-    if (added > 0) await runtime.refreshExtensions();
-    return added;
   }
 
   async function waitForInstalledRestoreSources(file: File, maxAttempts = 7) {
@@ -2393,6 +2389,9 @@
     const file = backupSelectedFilePath
       ? new File([await runtime.readFileAsArrayBuffer(backupSelectedFilePath)], backupPathLabel(backupSelectedFilePath) ?? "backup.epigraphbk")
       : backupSelectedFile!;
+    if (backupDependenciesConfirmed && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))) {
+      await addApprovedMangaRepositories(file);
+    }
     const candidate = createProductionRestoreWorkflow({
       selection: backupImportKind === "epigraph" ? backupUnifiedSelection : undefined,
       mangaChoices: backupReviewSelections,
