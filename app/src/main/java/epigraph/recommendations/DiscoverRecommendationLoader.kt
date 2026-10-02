@@ -11,35 +11,17 @@ import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.extension.ExtensionManager
-import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.SManga
 import exh.source.EH_SOURCE_ID
 import exh.source.EXH_SOURCE_ID
-import java.time.LocalDate
-import java.time.ZoneOffset
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.doubleOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
-import okhttp3.RequestBody.Companion.toRequestBody
+import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.GetLibraryManga
 import yokai.domain.track.interactor.GetTrack
 import yokai.util.koin.get
@@ -51,6 +33,16 @@ data class DiscoverResult(
     val sections: List<RecommendationSection>,
     val seedCount: Int,
     /** Providers that failed; the screen still shows whatever the others returned. */
+    val failedProviders: List<String>,
+)
+
+/** Everything [DiscoverRecommendationLoader.gather] collects, so [DiscoverRecommendationLoader.rank] can re-run without network. */
+data class DiscoverPool(
+    val candidates: List<RecommendationCandidate>,
+    val profile: TasteProfile,
+    val seedCount: Int,
+    val knownTitleKeys: Set<String>,
+    val knownProviderKeys: Set<String>,
     val failedProviders: List<String>,
 )
 
@@ -66,63 +58,149 @@ class DiscoverRecommendationLoader(
     private val trackManager: TrackManager = get(),
     private val sourceManager: SourceManager = get(),
     private val localBooks: LocalBookRepository = get(),
-    private val network: NetworkHelper = get(),
+    private val getManga: GetManga = get(),
     private val preferences: PreferencesHelper = get(),
     private val extensionManager: ExtensionManager = get(),
+    private val trackerGatherer: TrackerRecommendationGatherer = TrackerRecommendationGatherer(),
+    private val hardcoverGatherer: HardcoverRecommendationGatherer = HardcoverRecommendationGatherer(),
 ) {
-    suspend fun load(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverResult = coroutineScope {
+    /**
+     * Network + library reads only; ranking happens in [rank] so the UI can re-rank the cached
+     * pool (library/NSFW toggles) without touching the sources again.
+     */
+    suspend fun gather(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverPool = coroutineScope {
         val library = getLibraryManga.await().distinctBy { it.manga.id }
         val tracksByManga = runCatching { getTrack.awaitAllGroupedByMangaId() }.getOrDefault(emptyMap())
         val libraryEntries = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
             .filter { it.isNovel == (mode == DiscoverMode.NOVELS) }
         val books = if (mode == DiscoverMode.NOVELS) loadBooks() else emptyList()
 
-        val seeds = libraryEntries.map(::entryToTasteProfileSeed) + books.map(::bookToTasteProfileSeed)
-        val profile = buildTasteProfile(seeds)
+        val libraryIds = library.mapTo(mutableSetOf()) { it.manga.id }
+        val trackerGroups = if (mode == DiscoverMode.COMICS) {
+            tracksByManga.entries
+                .filter { (mangaId, _) -> mangaId !in libraryIds }
+        } else emptyList()
+        val trackerRecordSeeds = mutableListOf<TasteProfileSeedItem>()
+        val trackerRecordCandidates = mutableListOf<RecommendationCandidate>()
+        for ((mangaId, tracks) in trackerGroups) {
+            val manga = runCatching { getManga.awaitById(mangaId) }.getOrNull()
+            if (manga != null && sourceManager.get(manga.source)?.isNovelSource() == true) continue
+            for (track in tracks) {
+                trackerRecordSeeds += track.toTasteSeed(manga)
+            }
+            if (manga != null) {
+                val source = sourceManager.get(manga.source)
+                val entry = RecommendationEntryInput(
+                    mangaId = manga.id,
+                    url = manga.url,
+                    title = manga.title,
+                    description = manga.description,
+                    genres = manga.getGenres().orEmpty(),
+                    publicationStatus = statusText(manga.status),
+                    sourceId = manga.source,
+                    sourceName = source?.name.orEmpty(),
+                    sourceLang = (source as? CatalogueSource)?.lang,
+                    coverUrl = manga.thumbnail_url,
+                    isNovel = false,
+                    inLibrary = false,
+                    tracks = tracks.mapNotNull { it.toInput() },
+                )
+                trackerRecordCandidates += entryToRecommendationCandidate(entry, nowMs)
+            }
+        }
+        val trackerRemoteKeys = tracksByManga.values.flatten()
+            .mapNotNull { recommendationTrackerRemoteKey(it.sync_id.toString(), it.media_id.toString()) }
+            .toSet()
+
         val failures = mutableListOf<String>()
+        val hardcoverBooks = if (mode == DiscoverMode.NOVELS) {
+            runCatching { hardcoverGatherer.userBooks() }.getOrNull() ?: run {
+                failures += "Hardcover"
+                null
+            }
+        } else null
+        val hardcoverSeeds = hardcoverBooks?.books.orEmpty().map(::hardcoverBookToTasteProfileSeed)
+        val seeds = libraryEntries.map(::entryToTasteProfileSeed) + books.map(::bookToTasteProfileSeed) + trackerRecordSeeds + hardcoverSeeds
+        val profile = buildTasteProfile(seeds)
 
         val nsfwSourceIds = extensionManager.installedExtensionsFlow.value
             .filter { it.isNsfw }
             .flatMapTo(HashSet()) { ext -> ext.sources.map { it.id } }
             .apply { add(EH_SOURCE_ID); add(EXH_SOURCE_ID) }
-        val sources = topSources(libraryEntries, mode, nsfwSourceIds)
-        val sourceJobs = sources.map { source ->
-            async {
-                val popular = fetchSource(source, latest = false)
-                val latest = if (mode == DiscoverMode.COMICS && source.supportsLatest) fetchSource(source, latest = true) else emptyList()
-                if (popular == null) synchronized(failures) { failures += source.name }
-                val found = popular.orEmpty().map { entryToRecommendationCandidate(it, nowMs, novelSourceResult = mode == DiscoverMode.NOVELS) } +
-                    applyLatestFeedRank(latest.orEmpty().map { entryToRecommendationCandidate(it, nowMs) })
-                // Adult extensions rarely tag their entries, so the extension flag is the safety signal.
-                if (source.id in nsfwSourceIds) found.map { it.asAdult() } else found
+        val sourceJobs = async {
+            if (mode == DiscoverMode.COMICS) {
+                val gathered = ComicRecommendationGatherer(sourceManager).gather(libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get())
+                synchronized(failures) { failures += gathered.failedSources }
+                val comicCandidates = gathered.entries.map { (entry, fromLatest) ->
+                    var candidate = entryToRecommendationCandidate(entry, nowMs)
+                    if (fromLatest) candidate = applyLatestFeedRank(listOf(candidate)).single()
+                    // Adult extensions rarely tag their entries, so the extension flag is the safety signal.
+                    if (entry.sourceId in nsfwSourceIds) candidate = candidate.asAdult()
+                    candidate
+                }
+                val trackerResult = trackerGatherer.gather(gathered.entries.map { it.first.title })
+                synchronized(failures) { failures += trackerResult.failed }
+                comicCandidates + (trackerResult.trending + trackerResult.scores).map { trackerCatalogToRecommendationCandidate(it, nowMs) }
+            } else {
+                val gathered = NovelRecommendationGatherer(sourceManager).gather(
+                    libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get(),
+                )
+                synchronized(failures) { failures += gathered.failedSources }
+                val novelCandidates = gathered.entries.map { entry ->
+                    var candidate = entryToRecommendationCandidate(entry, nowMs, novelSourceResult = true)
+                    if (entry.sourceId in nsfwSourceIds) candidate = candidate.asAdult()
+                    candidate
+                }
+                val hardcover = hardcoverBooks?.let { userBooks ->
+                    withTimeoutOrNull(HARDCOVER_LOADER_BUDGET_MS) {
+                        hardcoverGatherer.enrich(gathered.entries.map { it.title }, profile.topTags, userBooks)
+                    }
+                }
+                if (hardcover?.failed == true) synchronized(failures) { failures += "Hardcover" }
+                val scored = novelCandidates.map { candidate ->
+                    val provider = hardcover?.scoresByTitleKey?.get(recommendationTitleKey(candidate.title, RecommendationContentType.NOVEL))
+                    if (provider == null) candidate else candidate.copy(providers = candidate.providers + provider)
+                }
+                scored + hardcover?.discovery.orEmpty() + hardcoverBooks?.books.orEmpty().map(::hardcoverBookToRecommendationCandidate)
             }
-        }
-        val trending = async {
-            runCatching { fetchAniListTrending(mode) }
-                .onFailure { synchronized(failures) { failures += "AniList" } }
-                .getOrDefault(emptyList())
-                .map { trackerCatalogToRecommendationCandidate(it, nowMs) }
         }
 
         val candidates = mergeRecommendationCandidates(
             libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } +
                 books.map { bookToRecommendationCandidate(it, nowMs) } +
-                sourceJobs.awaitAll().flatten() +
-                trending.await(),
+                sourceJobs.await() +
+                trackerRecordCandidates,
         )
+        DiscoverPool(
+            candidates = candidates,
+            profile = profile,
+            seedCount = seeds.size,
+            knownTitleKeys = knownTitleKeys(seeds),
+            knownProviderKeys = knownProviderKeys(libraryEntries) + trackerRemoteKeys + hardcoverBooks?.books.orEmpty().mapNotNull { recommendationTrackerRemoteKey("hardcover", it.bookId.toString()) },
+            failedProviders = failures.toList(),
+        )
+    }
+
+    /** Pure ranking over a gathered pool; safe to re-run for filter toggles without network. */
+    fun rank(pool: DiscoverPool, includeInLibrary: Boolean, includeNsfw: Boolean, nowMs: Long): DiscoverResult {
         val sections = buildRecommendationSections(
-            candidates,
-            profile,
+            pool.candidates,
+            pool.profile,
             BuildRecommendationSectionsOptions(
-                knownTitleKeys = knownTitleKeys(seeds),
-                knownProviderKeys = knownProviderKeys(libraryEntries),
-                includeNsfw = preferences.showNsfwSources().get(),
+                includeInLibrary = includeInLibrary,
+                knownTitleKeys = pool.knownTitleKeys,
+                knownProviderKeys = pool.knownProviderKeys,
+                includeNsfw = includeNsfw,
+                blockedTags = if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList(),
                 nowMs = nowMs,
                 limitPerSection = SECTION_LIMIT,
             ),
         )
-        DiscoverResult(withoutRepeats(sections), seeds.size, failures.toList())
+        return DiscoverResult(sections.filter { it.items.isNotEmpty() }, pool.seedCount, pool.failedProviders)
     }
+
+    suspend fun load(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverResult =
+        rank(gather(mode, nowMs), includeInLibrary = false, includeNsfw = preferences.showNsfwSources().get(), nowMs = nowMs)
 
     private fun LibraryManga.toInput(tracks: List<Track>): RecommendationEntryInput? {
         val id = manga.id ?: return null
@@ -165,6 +243,21 @@ class DiscoverRecommendationLoader(
         )
     }
 
+    private fun Track.toTasteSeed(manga: SManga?): TasteProfileSeedItem {
+        val trackInput = toInput()
+        return TasteProfileSeedItem(
+            id = "tracker:$sync_id:$media_id",
+            title = manga?.title ?: title,
+            tags = manga?.getGenres().orEmpty(),
+            contentType = RecommendationContentType.MANGA,
+            sourceId = "tracker:$sync_id",
+            userRating = score.takeIf { it > 0f }?.toDouble(),
+            userRatingMax = if (score > 10f) 100.0 else 10.0,
+            implicitWeight = if (score > 0f) null else 0.42,
+            status = trackInput?.let { trackRecordSeedStatus(it) },
+        )
+    }
+
     private fun TrackService.displayName(): String = runCatching { context.getString(nameRes()) }.getOrDefault("Tracker $id")
 
     private suspend fun loadBooks(): List<RecommendationBookInput> {
@@ -192,144 +285,8 @@ class DiscoverRecommendationLoader(
         )
     }
 
-    /**
-     * The installed sources the library uses most, falling back to any visible source. Adult
-     * extensions are only queried when the library already reads from them.
-     */
-    private fun topSources(
-        entries: List<RecommendationEntryInput>,
-        mode: DiscoverMode,
-        nsfwSourceIds: Set<Long>,
-    ): List<CatalogueSource> {
-        val wantNovel = mode == DiscoverMode.NOVELS
-        val visible = sourceManager.getVisibleCatalogueSources()
-            .filter { it.isNovelSource() == wantNovel && it.id != LOCAL_SOURCE_ID }
-        val byId = visible.associateBy { it.id }
-        val used = entries.groupingBy { it.sourceId }.eachCount()
-            .entries.sortedByDescending { it.value }
-            .mapNotNull { byId[it.key] }
-        val fallback = visible.filterNot { it.id in nsfwSourceIds }
-        val limit = if (wantNovel) NOVEL_SOURCE_LIMIT else COMIC_SOURCE_LIMIT
-        return (used + fallback).distinctBy { it.id }.take(limit)
-    }
-
     private fun RecommendationCandidate.asAdult(): RecommendationCandidate =
         if (safety.ordinal < RecommendationSafetyLevel.ADULT.ordinal) copy(safety = RecommendationSafetyLevel.ADULT) else this
-
-    /** On a phone the sections stack vertically, so a title is shown only in its first section. */
-    private fun withoutRepeats(sections: List<RecommendationSection>): List<RecommendationSection> {
-        val shown = HashSet<String>()
-        return sections.mapNotNull { section ->
-            val items = section.items.filter { item ->
-                val keys = item.candidate.identityKeys()
-                if (keys.any { it in shown }) false else { shown += keys; true }
-            }
-            section.copy(items = items).takeIf { items.isNotEmpty() }
-        }
-    }
-
-    private suspend fun fetchSource(source: CatalogueSource, latest: Boolean): List<RecommendationEntryInput>? {
-        val page = runCatching {
-            withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
-                if (latest) source.getLatestUpdates(1) else source.getPopularManga(1)
-            }
-        }.getOrNull() ?: return null
-        return page.mangas.take(SOURCE_RESULT_LIMIT).map { it.toInput(source) }
-    }
-
-    private fun SManga.toInput(source: CatalogueSource) = RecommendationEntryInput(
-        mangaId = null,
-        url = url,
-        title = title,
-        description = description,
-        genres = getGenres().orEmpty(),
-        publicationStatus = statusText(status),
-        sourceId = source.id,
-        sourceName = source.name,
-        sourceLang = source.lang,
-        coverUrl = thumbnail_url,
-        isNovel = source.isNovelSource(),
-        inLibrary = false,
-    )
-
-    private suspend fun fetchAniListTrending(mode: DiscoverMode): List<TrackerCatalogInput> {
-        val formatFilter = if (mode == DiscoverMode.NOVELS) ", format_in: [NOVEL]" else ", format_not_in: [NOVEL]"
-        val query = """
-            query(${'$'}page: Int!, ${'$'}perPage: Int!) {
-              Page(page: ${'$'}page, perPage: ${'$'}perPage) {
-                media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC], isAdult: false$formatFilter) {
-                  id title { romaji english native } coverImage { large extraLarge } status format
-                  countryOfOrigin averageScore meanScore popularity trending genres startDate { year month day }
-                }
-              }
-            }
-        """.trimIndent()
-        val payload = buildJsonObject {
-            put("query", query)
-            putJsonObject("variables") {
-                put("page", 1)
-                put("perPage", ANILIST_PAGE_SIZE)
-            }
-        }
-        val body = withTimeoutOrNull(SOURCE_TIMEOUT_MS) {
-            network.client.newCall(POST(ANILIST_URL, body = payload.toString().toRequestBody(jsonMime)))
-                .awaitSuccess()
-                .use { it.body.string() }
-        } ?: error("AniList timed out")
-        val media = Json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
-            ?.get("Page")?.jsonObject?.get("media") as? JsonArray ?: return emptyList()
-        val trackerName = runCatching { trackManager.aniList.displayName() }.getOrDefault("AniList")
-        return media.mapNotNull { (it as? JsonObject)?.toAniListInput(trackerName) }
-    }
-
-    private fun JsonObject.toAniListInput(trackerName: String): TrackerCatalogInput? {
-        val id = this["id"]?.primitiveInt() ?: return null
-        val titles = this["title"] as? JsonObject
-        val english = titles?.get("english")?.primitiveString()
-        val romaji = titles?.get("romaji")?.primitiveString()
-        val native = titles?.get("native")?.primitiveString()
-        val title = english ?: romaji ?: native ?: return null
-        val cover = (this["coverImage"] as? JsonObject)?.let {
-            it["extraLarge"]?.primitiveString() ?: it["large"]?.primitiveString()
-        }
-        val format = this["format"]?.primitiveString()
-        val publishingType = when (this["countryOfOrigin"]?.primitiveString()) {
-            "KR" -> "MANHWA"
-            "CN", "TW" -> "MANHUA"
-            "JP" -> if (format == "NOVEL") "NOVEL" else "MANGA"
-            else -> format
-        }.let { if (format == "NOVEL") "NOVEL" else it }
-        val start = this["startDate"] as? JsonObject
-        val startMs = start?.get("year")?.primitiveInt()?.let { year ->
-            runCatching {
-                LocalDate.of(year, start["month"]?.primitiveInt() ?: 1, start["day"]?.primitiveInt() ?: 1)
-                    .atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
-            }.getOrNull()
-        }
-        return TrackerCatalogInput(
-            trackerId = TrackManager.ANILIST,
-            trackerName = trackerName,
-            remoteId = id.toString(),
-            title = title,
-            alternativeTitles = listOfNotNull(english, romaji, native),
-            coverUrl = cover,
-            genres = (this["genres"] as? JsonArray)?.mapNotNull { it.primitiveString() }.orEmpty(),
-            publishingType = publishingType,
-            publishingStatus = this["status"]?.primitiveString(),
-            score = (this["averageScore"]?.primitiveDouble() ?: this["meanScore"]?.primitiveDouble()),
-            scoreMax = 100.0,
-            popularity = this["popularity"]?.primitiveDouble(),
-            trending = this["trending"]?.primitiveDouble(),
-            startDateMs = startMs,
-        )
-    }
-
-    private fun JsonElement.primitiveString(): String? =
-        runCatching { jsonPrimitive.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() } }.getOrNull()
-
-    private fun JsonElement.primitiveInt(): Int? = runCatching { jsonPrimitive.intOrNull }.getOrNull()
-
-    private fun JsonElement.primitiveDouble(): Double? = runCatching { jsonPrimitive.doubleOrNull }.getOrNull()
 
     private fun statusText(status: Int): String? = when (status) {
         SManga.ONGOING -> "ongoing"
@@ -340,13 +297,8 @@ class DiscoverRecommendationLoader(
     }
 
     companion object {
-        private const val ANILIST_URL = "https://graphql.anilist.co"
-        private const val ANILIST_PAGE_SIZE = 40
-        private const val LOCAL_SOURCE_ID = 0L
-        private const val COMIC_SOURCE_LIMIT = 3
-        private const val NOVEL_SOURCE_LIMIT = 2
-        private const val SOURCE_RESULT_LIMIT = 40
         private const val SOURCE_TIMEOUT_MS = 20_000L
+        private const val HARDCOVER_LOADER_BUDGET_MS = 15_000L
         private const val SECTION_LIMIT = 24
     }
 }

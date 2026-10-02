@@ -1,7 +1,15 @@
 package epigraph.recommendations
 
+import eu.kanade.tachiyomi.data.track.hardcover.Hardcover
+import eu.kanade.tachiyomi.data.track.hardcover.HardcoverBookResult
+import eu.kanade.tachiyomi.data.track.hardcover.HardcoverLibraryBook
+
+import java.util.Calendar
 import java.util.Locale
+import kotlin.math.log10
 import kotlin.math.max
+import kotlin.math.min
+
 
 /**
  * Pure adapters from app data to engine inputs, mirroring the desktop `adapters.ts`. The loader
@@ -83,7 +91,7 @@ fun entryToTasteProfileSeed(entry: RecommendationEntryInput): TasteProfileSeedIt
     val bestTrack = entry.tracks
         .filter { (it.score10 ?: 0.0) > 0.0 }
         .maxByOrNull { it.score10 ?: 0.0 }
-    val trackedStatus = entry.tracks.firstNotNullOfOrNull { it.status?.takeIf { s -> s != TasteSeedStatus.UNKNOWN } }
+    val statusTrack = bestTrack ?: entry.tracks.firstOrNull()
     return TasteProfileSeedItem(
         id = entry.recommendationId(),
         title = entry.title,
@@ -93,9 +101,31 @@ fun entryToTasteProfileSeed(entry: RecommendationEntryInput): TasteProfileSeedIt
         userRating = bestTrack?.score10,
         userRatingMax = bestTrack?.let { 10.0 },
         implicitWeight = if (entry.inLibrary) entryImplicitWeight(entry) else 0.0,
-        status = trackedStatus ?: seedStatusFromText(entry.publicationStatus),
+        // The publication status ("ONGOING", "COMPLETED") says nothing about the
+        // reader; only a tracker record knows whether they dropped or finished it.
+        status = if (entry.isNovel) {
+            TasteSeedStatus.UNKNOWN
+        } else {
+            statusTrack?.let { trackRecordSeedStatus(it) } ?: TasteSeedStatus.UNKNOWN
+        },
     )
 }
+
+/**
+ * Reading status of a tracker record. Tracker status values differ per service, so the
+ * status name is preferred; the finish date is only a fallback when the name is unknown.
+ */
+fun trackRecordSeedStatus(record: RecommendationTrackInput): TasteSeedStatus {
+    val normalizedName = record.status?.name?.trim()?.lowercase(Locale.ROOT).orEmpty()
+    if (SEED_STATUS_DROPPED_PATTERN.containsMatchIn(normalizedName)) return TasteSeedStatus.DROPPED
+    if (SEED_STATUS_PLANNING_PATTERN.containsMatchIn(normalizedName)) return TasteSeedStatus.PLANNING
+    if (SEED_STATUS_COMPLETED_PATTERN.containsMatchIn(normalizedName)) return TasteSeedStatus.COMPLETED
+    if (SEED_STATUS_READING_PATTERN.containsMatchIn(normalizedName)) return TasteSeedStatus.READING
+    if (hasTrackRecordDate(record.dateMs)) return TasteSeedStatus.COMPLETED
+    return TasteSeedStatus.PLANNING
+}
+
+private fun hasTrackRecordDate(value: Long?): Boolean = value != null && value > 0
 
 private fun entryImplicitWeight(entry: RecommendationEntryInput): Double = when {
     entry.isNovel -> if (entry.chapterCount > 30) 0.55 else 0.4
@@ -251,15 +281,172 @@ fun trackerCatalogToRecommendationCandidate(input: TrackerCatalogInput, nowMs: L
     ),
 )
 
-private val DEDICATED_MANHWA_SOURCES = listOf("asura", "flame", "reaper", "void scans")
-private val MANHWA_HINTS = listOf(
-    "manhwa", "korean", "webtoon", "regression", "murim", "necromancer", "dungeon", "system",
-    "level up", "hunter", "tower", "gate", "ranker", "player", "constellation",
-)
-private val MANHUA_HINTS = listOf("manhua", "chinese", "cultivation", "wuxia", "xianxia", "xuanhuan")
-private val AGGREGATOR_SOURCES = listOf("mangakakalot", "manganato", "mangadex", "mangalife")
+/**
+ * Hardcover library book to a recommendation candidate, mirroring the desktop
+ * `hardcoverRecordToRecommendationCandidate`. The user's own rating wins over the
+ * community rating for the provider score. Tags are the book's genres (filled from
+ * the linked local work) plus the desktop base tags.
+ */
+fun hardcoverBookToRecommendationCandidate(book: HardcoverLibraryBook): RecommendationCandidate {
+    val rating = book.userRating ?: book.rating
+    return RecommendationCandidate(
+        id = "hardcover:${book.bookId}",
+        title = book.title,
+        cover = book.coverUrl?.takeIf { it.isNotBlank() }?.let { RecommendationCover(it) },
+        tags = (listOf("novel", "book", "hardcover") + book.tags).distinct(),
+        contentType = RecommendationContentType.NOVEL,
+        status = null,
+        inLibrary = true,
+        safety = RecommendationSafetyLevel.SAFE,
+        updatedAtMs = book.updatedAtMs,
+        providers = listOf(
+            RecommendationProviderSignal(
+                providerId = "hardcover",
+                providerName = "Hardcover",
+                kind = RecommendationProviderKind.TRACKER,
+                remoteId = book.bookId.toString(),
+                iconKey = "HC",
+                score = normalizeScore(rating, 5.0, if (rating == null) 0.0 else 0.9),
+            ),
+        ),
+    )
+}
 
-/** Desktop `inferMangaContentType`: dedicated sources, then title/genre hints, then language. */
+/** Desktop `hardcoverBookToProvider` (hardcover.ts 607): tracker signal for a search result. */
+fun hardcoverBookResultToProvider(book: HardcoverBookResult): RecommendationProviderSignal =
+    RecommendationProviderSignal(
+        providerId = "hardcover",
+        providerName = "Hardcover",
+        kind = RecommendationProviderKind.TRACKER,
+        remoteId = book.id.toString(),
+        iconKey = "HC",
+        score = normalizeScore(book.rating, 5.0, if (book.rating == null) 0.0 else 0.84),
+    )
+
+/**
+ * Desktop `hardcoverBookToRecommendationCandidate` (BrowseV3 4524): discovery candidate from a
+ * Hardcover search result. Tags are merged case-insensitively; providers carry rating,
+ * popularity, and trending metrics plus a catalog availability signal.
+ */
+fun hardcoverDiscoveryToRecommendationCandidate(
+    book: HardcoverBookResult,
+    queryTags: List<String>,
+): RecommendationCandidate {
+    val provider = hardcoverBookResultToProvider(book)
+    val ratingConfidence = if (book.rating == null) 0.0 else 0.84
+    val popularityValue = if (book.ratingsCount != null && book.ratingsCount > 0)
+        min(1.0, log10(book.ratingsCount + 1.0) / 5.0)
+    else 0.38
+    val hasRatings = book.ratingsCount != null && book.ratingsCount != 0
+    val publishedAtMs = book.releaseYear?.let { year ->
+        val cal = Calendar.getInstance()
+        cal.clear()
+        cal.set(year, Calendar.JANUARY, 1)
+        cal.timeInMillis
+    }
+    return RecommendationCandidate(
+        id = "hardcover-discovery:${book.id}",
+        title = book.title,
+        alternativeTitles = book.authors,
+        cover = book.coverUrl?.let { RecommendationCover(it) },
+        tags = mergeRecommendationTags(
+            listOf("novel", "book", "hardcover") + book.genres + book.tags + book.moods,
+            queryTags,
+        ),
+        contentType = RecommendationContentType.BOOK,
+        status = book.releaseYear?.toString(),
+        inLibrary = false,
+        safety = RecommendationSafetyLevel.SAFE,
+        publishedAtMs = publishedAtMs,
+        providers = listOf(
+            provider.copy(
+                score = provider.score ?: NormalizedMetric(
+                    value = if (book.rating != null && book.rating > 0) min(1.0, book.rating / 5.0) else 0.0,
+                    confidence = ratingConfidence,
+                    method = "hardcover-rating",
+                ),
+                popularity = NormalizedMetric(
+                    value = popularityValue,
+                    confidence = if (hasRatings) 0.72 else 0.32,
+                    method = "hardcover-ratings-count",
+                    sourceValue = book.ratingsCount?.takeIf { it != 0 }?.let { "$it ratings" },
+                ),
+                trending = NormalizedMetric(
+                    value = max(0.18, min(0.74, popularityValue * 0.72)),
+                    confidence = if (hasRatings) 0.42 else 0.18,
+                    method = "hardcover-discovery",
+                ),
+            ),
+            RecommendationProviderSignal(
+                providerId = "hardcover-catalog",
+                providerName = "Hardcover",
+                kind = RecommendationProviderKind.SOURCE,
+                remoteId = book.id.toString(),
+                availability = NormalizedMetric(0.76, 0.62, "hardcover-catalog"),
+                recency = if (book.releaseYear == null) NormalizedMetric(0.18, 0.16, "hardcover-catalog") else null,
+            ),
+        ),
+    )
+}
+
+/** Desktop `mergeRecommendationTags` (BrowseV3 3994): trim, skip blanks, case-insensitive dedupe keeping first spelling. */
+private fun mergeRecommendationTags(primary: List<String>, secondary: List<String>): List<String> =
+    (primary + secondary)
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinctBy { it.lowercase() }
+
+/**
+ * Hardcover library book to a taste profile seed, mirroring the desktop
+ * `hardcoverRecordToTasteProfileSeed`. Tags are the book's genres (filled from
+ * the linked local work) plus the desktop base tags.
+ */
+fun hardcoverBookToTasteProfileSeed(book: HardcoverLibraryBook): TasteProfileSeedItem {
+    val rating = book.userRating ?: book.rating
+    return TasteProfileSeedItem(
+        id = "hardcover:${book.bookId}",
+        title = book.title,
+        tags = (listOf("novel", "book") + book.tags).distinct(),
+        contentType = RecommendationContentType.NOVEL,
+        sourceId = "hardcover",
+        userRating = rating,
+        userRatingMax = 5.0,
+        implicitWeight = if (rating != null && rating > 0.0) null else 0.45,
+        status = hardcoverStatusToSeedStatus(book.statusId),
+    )
+}
+
+private fun hardcoverStatusToSeedStatus(statusId: Int?): TasteSeedStatus = when (statusId) {
+    Hardcover.READING -> TasteSeedStatus.READING
+    Hardcover.COMPLETED -> TasteSeedStatus.COMPLETED
+    Hardcover.DID_NOT_FINISH -> TasteSeedStatus.DROPPED
+    Hardcover.WANT_TO_READ -> TasteSeedStatus.PLANNING
+    else -> TasteSeedStatus.UNKNOWN
+}
+
+private val MANHWA_SOURCE_MARKERS = listOf("asura", "flame", "reaper", "void scans")
+private val COMIC_AGGREGATOR_MARKERS = listOf("mangakakalot", "manganato", "mangadex", "mangalife")
+private val MANHWA_MARKER_PATTERN = Regex("\\b(manhwa|korean|webtoons?)\\b")
+private val MANHUA_MARKER_PATTERN = Regex("\\b(manhua|chinese)\\b")
+private val MANHWA_GENRES = setOf("murim")
+private val MANHUA_GENRES = setOf("cultivation", "wuxia", "xianxia", "xuanhuan")
+// Tropes common in Korean web novels/comics, but also used by Japanese isekai.
+// They only tip the balance as explicit genre tags and when several co-occur.
+private val MANHWA_TROPE_GENRES = setOf(
+    "regression", "necromancer", "dungeon", "system", "level up", "hunter", "hunters",
+    "tower", "gate", "gates", "ranker", "player", "constellation",
+)
+private val SEED_STATUS_DROPPED_PATTERN = Regex("drop|unfinished|abandon")
+private val SEED_STATUS_PLANNING_PATTERN = Regex("plan|wish|want")
+private val SEED_STATUS_COMPLETED_PATTERN = Regex("complet|finished")
+private val SEED_STATUS_READING_PATTERN = Regex("reading|watching|current|rereading|repeating")
+
+/**
+ * Desktop `inferMangaRecommendationContentType`: dedicated sources, then word-boundary
+ * markers in the title and genre tags, then explicit genre sets. Synopsis text is ignored
+ * on purpose: words like "system", "player" or "gate" appear in ordinary descriptions and
+ * used to mislabel Japanese series as manhwa.
+ */
 fun inferComicContentType(
     title: String,
     description: String?,
@@ -268,13 +455,17 @@ fun inferComicContentType(
     sourceLang: String?,
 ): RecommendationContentType {
     val source = sourceName.orEmpty().lowercase(Locale.ROOT)
-    if (DEDICATED_MANHWA_SOURCES.any { it in source }) return RecommendationContentType.MANHWA
+    if (MANHWA_SOURCE_MARKERS.any { it in source }) return RecommendationContentType.MANHWA
 
-    val haystack = (listOf(title, description.orEmpty()) + genres).joinToString(" ").lowercase(Locale.ROOT)
-    if (MANHWA_HINTS.any { it in haystack }) return RecommendationContentType.MANHWA
-    if (MANHUA_HINTS.any { it in haystack }) return RecommendationContentType.MANHUA
+    val normalizedGenres = genres.map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }
+    val markerText = (listOf(title) + normalizedGenres).joinToString(" ").lowercase(Locale.ROOT)
+    if (MANHWA_MARKER_PATTERN.containsMatchIn(markerText)) return RecommendationContentType.MANHWA
+    if (MANHUA_MARKER_PATTERN.containsMatchIn(markerText)) return RecommendationContentType.MANHUA
+    if (normalizedGenres.any { it in MANHWA_GENRES }) return RecommendationContentType.MANHWA
+    if (normalizedGenres.any { it in MANHUA_GENRES }) return RecommendationContentType.MANHUA
+    if (normalizedGenres.count { it in MANHWA_TROPE_GENRES } >= 2) return RecommendationContentType.MANHWA
 
-    if (AGGREGATOR_SOURCES.none { it in source }) {
+    if (COMIC_AGGREGATOR_MARKERS.none { it in source }) {
         comicTypeFromLanguage(sourceLang)?.let { return it }
     }
     return RecommendationContentType.MANGA

@@ -102,6 +102,10 @@ data class RecommendationScoreBreakdown(
     val recency: Double,
     val sourceAvailability: Double,
     val novelty: Double,
+    /** Strongest dislike among the candidate's tags (0 = none, 1 = strongly disliked). */
+    val negativeTagPenalty: Double,
+    /** Topical tags that meaningfully match a positive taste signal. */
+    val matchedTagCount: Int,
     val finalScore: Double,
     val diversityBucket: RecommendationDiversityBucket,
 )

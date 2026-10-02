@@ -102,6 +102,41 @@ fun isRecommendationMetadataTag(tag: String): Boolean {
         (parts.size == 2 || REGION_CODE.matches(parts[2]))
 }
 
+/**
+ * Sources and trackers name the same genre differently ("Battle / Action",
+ * "Sci-Fi / Fantasy", "Romantic Comedy" vs "Action", "Sci-Fi", "Romance").
+ * Compound labels are split and spellings folded so a reader's taste still
+ * matches titles described by another provider.
+ */
+private val COMPOUND_TAG_SEPARATOR = Regex("\\s*[/,|;]\\s*")
+
+private val TAG_ALIASES = mapOf(
+    "battle" to listOf("action"),
+    "science fiction" to listOf("sci fi"),
+    "scifi" to listOf("sci fi"),
+    "romantic comedy" to listOf("romance", "comedy"),
+    "rom com" to listOf("romance", "comedy"),
+    "romcom" to listOf("romance", "comedy"),
+    "romantic" to listOf("romance"),
+    "shonen" to listOf("shounen"),
+    "shojo" to listOf("shoujo"),
+    "shonen ai" to listOf("shounen ai"),
+    "shojo ai" to listOf("shoujo ai"),
+    "martial art" to listOf("martial arts"),
+    "superpower" to listOf("super power"),
+    "super powers" to listOf("super power"),
+)
+
+fun recommendationTagTokens(tag: String): List<String> {
+    val tokens = LinkedHashSet<String>()
+    for (part in tag.split(COMPOUND_TAG_SEPARATOR)) {
+        val normalized = normalizeToken(part)
+        if (normalized.isEmpty()) continue
+        for (token in TAG_ALIASES[normalized] ?: listOf(normalized)) tokens.add(token)
+    }
+    return tokens.toList()
+}
+
 fun RecommendationContentType.family(): String = if (isProse) "prose" else "comic"
 
 fun recommendationTitleKey(title: String, contentType: RecommendationContentType): String =

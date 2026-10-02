@@ -228,6 +228,10 @@ object PreferenceKeys {
 
     const val showNsfwSource = "show_nsfw_source"
 
+    const val filterBlockedTags = "filter_blocked_tags"
+
+    const val blockedTags = "blocked_tags"
+
     const val themeMangaDetails = "theme_manga_details"
     const val themeMangaDetailsOverrides = "theme_manga_details_overrides"
 

@@ -153,6 +153,16 @@ class Hardcover(private val context: Context, id: Long) : TrackService(id) {
 
     override suspend fun search(query: String): List<TrackSearch> = api.search(query)
 
+    suspend fun recommendationUserBooks(): List<HardcoverLibraryBook> = api.userBooks()
+
+    suspend fun recommendationSearchBooks(
+        query: String,
+        limit: Int,
+        fields: String? = null,
+        weights: String? = null,
+        sort: String? = null,
+    ): List<HardcoverBookResult> = api.searchBooks(query, limit, fields, weights, sort)
+
     override suspend fun refresh(track: Track): Track {
         val remote = api.getUserBook(track.media_id)
             ?: bookId(track)?.let { api.findUserBook(it) }

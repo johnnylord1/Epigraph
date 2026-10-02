@@ -2,10 +2,18 @@ package eu.kanade.tachiyomi.ui.setting.controllers
 
 import android.app.Activity
 import android.content.Intent
+import android.content.Context
 import android.os.Build
 import android.provider.Settings
+import android.view.Gravity
+import android.widget.ImageButton
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.preference.Preference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import epigraph.content.normalizeBlockedTag
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.R
 import yokai.domain.ui.UiPreferences
@@ -34,7 +42,12 @@ import eu.kanade.tachiyomi.ui.setting.summaryMRes as summaryRes
 import eu.kanade.tachiyomi.ui.setting.switchPreference
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
 import eu.kanade.tachiyomi.util.lang.addBetaTag
+import eu.kanade.tachiyomi.util.system.materialAlertDialog
+import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.view.setAction
+import eu.kanade.tachiyomi.util.view.setNeutralButton
+import eu.kanade.tachiyomi.util.view.setPositiveButton
+import eu.kanade.tachiyomi.util.view.setTitle
 import eu.kanade.tachiyomi.util.view.snack
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import yokai.util.koin.injectLazy
@@ -221,11 +234,104 @@ class SettingsBrowseController : SettingsLegacyController() {
                 defaultValue = true
             }
             infoPreference(MR.strings.does_not_prevent_unofficial_nsfw)
+
+            switchPreference {
+                key = PreferenceKeys.filterBlockedTags
+                titleRes = MR.strings.blocked_tags_filter
+                summaryRes = MR.strings.blocked_tags_filter_hint
+                defaultValue = true
+            }
+            preference {
+                key = PreferenceKeys.blockedTags
+                titleRes = MR.strings.blocked_tags
+                summary = blockedTagsSummary(context)
+                blockedTagsPref = this
+                onClick { showBlockedTagsDialog(context) }
+            }
         }
     }
 
     override fun onActivityResumed(activity: Activity) {
         super.onActivityResumed(activity)
         updatedExtNotifPref?.isChecked = Notifications.isNotificationChannelEnabled(activity, Notifications.CHANNEL_EXT_UPDATED)
+    }
+
+    private var blockedTagsPref: Preference? = null
+
+    private fun blockedTagsSummary(context: Context): String {
+        val tags = preferences.blockedTags().get()
+        return if (tags.isEmpty()) context.getString(MR.strings.blocked_tags_empty)
+        else tags.joinToString(", ")
+    }
+
+    private fun updateBlockedTagsSummary() {
+        blockedTagsPref?.let { pref ->
+            pref.summary = blockedTagsSummary(pref.context)
+        }
+    }
+
+    private fun showBlockedTagsDialog(context: Context) {
+        val input = EditText(context)
+        input.hint = context.getString(MR.strings.blocked_tags_add_hint)
+        val list = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (16 * resources.displayMetrics.density).toInt()
+            setPadding(padding, 0, padding, 0)
+        }
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (16 * resources.displayMetrics.density).toInt()
+            setPadding(padding, 0, padding, 0)
+        }
+        container.addView(input)
+        container.addView(list)
+        fun render() {
+            list.removeAllViews()
+            preferences.blockedTags().get().forEach { tag ->
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                row.addView(TextView(context).apply {
+                    text = tag
+                    setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, (8 * resources.displayMetrics.density).toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                row.addView(ImageButton(context).apply {
+                    setImageResource(R.drawable.ic_close_24dp)
+                    contentDescription = context.getString(MR.strings.blocked_tags_remove)
+                    val outValue = android.util.TypedValue()
+                    context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
+                    setBackgroundResource(outValue.resourceId)
+                    imageTintList = android.content.res.ColorStateList.valueOf(context.getResourceColor(android.R.attr.textColorSecondary))
+                    val size = (40 * resources.displayMetrics.density).toInt()
+                    layoutParams = LinearLayout.LayoutParams(size, size)
+                    setOnClickListener {
+                        val current = preferences.blockedTags().get().toMutableList()
+                        current.remove(tag)
+                        preferences.blockedTags().set(current.toSet())
+                        updateBlockedTagsSummary()
+                        render()
+                    }
+                })
+                list.addView(row)
+            }
+        }
+        render()
+        context.materialAlertDialog()
+            .setTitle(MR.strings.blocked_tags)
+            .setView(container)
+            .setPositiveButton(MR.strings.add) { _, _ ->
+                val tag = normalizeBlockedTag(input.text?.toString().orEmpty())
+                if (tag != null && tag !in preferences.blockedTags().get()) {
+                    preferences.blockedTags().set(preferences.blockedTags().get() + tag)
+                    updateBlockedTagsSummary()
+                }
+            }
+            .setNeutralButton(MR.strings.reset) { _, _ ->
+                preferences.blockedTags().set(emptySet())
+                updateBlockedTagsSummary()
+            }
+            .show()
     }
 }

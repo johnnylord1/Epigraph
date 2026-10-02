@@ -1,14 +1,15 @@
 package epigraph.recommendations.ui
-
 import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import epigraph.recommendations.DiscoverMode
+import epigraph.recommendations.DiscoverPool
 import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
 import epigraph.recommendations.RecommendationItem
 import eu.kanade.tachiyomi.data.database.models.create
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
@@ -29,7 +30,8 @@ class DiscoverScreenModel(
     private val sourceManager: SourceManager = get(),
     private val getManga: GetManga = get(),
     private val insertManga: InsertManga = get(),
-) : StateScreenModel<DiscoverScreenModel.State>(State(mode = initialMode)) {
+    private val preferences: PreferencesHelper = get(),
+) : StateScreenModel<DiscoverScreenModel.State>(State(mode = initialMode, includeNsfw = preferences.showNsfwSources().get())) {
 
     @Immutable
     data class State(
@@ -37,6 +39,8 @@ class DiscoverScreenModel(
         val loading: Boolean = true,
         val result: DiscoverResult? = null,
         val error: String? = null,
+        val includeLibrary: Boolean = false,
+        val includeNsfw: Boolean = false,
     )
 
     private var loadJob: Job? = null
@@ -53,17 +57,18 @@ class DiscoverScreenModel(
 
     fun load(force: Boolean) {
         val mode = state.value.mode
-        val cached = cached(mode)
+        val cached = cachedPool(mode)
         if (!force && cached != null) {
-            mutableState.update { it.copy(loading = false, result = cached, error = null) }
+            mutableState.update { it.copy(loading = false, result = rank(cached), error = null) }
             return
         }
         loadJob?.cancel()
         mutableState.update { it.copy(loading = true, result = if (force) it.result else null, error = null) }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
-                val result = loader.load(mode)
-                cache[mode] = CachedResult(result, System.currentTimeMillis())
+                val pool = loader.gather(mode)
+                cache[mode] = CachedPool(pool, System.currentTimeMillis())
+                val result = rank(pool)
                 mutableState.update { if (it.mode == mode) it.copy(loading = false, result = result) else it }
             } catch (e: CancellationException) {
                 throw e
@@ -72,6 +77,25 @@ class DiscoverScreenModel(
             }
         }
     }
+
+    /** Re-ranks the cached pool; no network. No-op until the first successful load. */
+    fun setIncludeLibrary(value: Boolean) {
+        if (value == state.value.includeLibrary) return
+        mutableState.update { it.copy(includeLibrary = value) }
+        val cached = cachedPool(state.value.mode) ?: return
+        mutableState.update { it.copy(result = rank(cached)) }
+    }
+
+    /** Flips the global "show NSFW" setting; source selection depends on it, so reload. */
+    fun setIncludeNsfw(value: Boolean) {
+        if (value == state.value.includeNsfw) return
+        preferences.showNsfwSources().set(value)
+        mutableState.update { it.copy(includeNsfw = value) }
+        load(force = true)
+    }
+
+    private fun rank(pool: DiscoverPool): DiscoverResult =
+        loader.rank(pool, state.value.includeLibrary, state.value.includeNsfw, System.currentTimeMillis())
 
     /**
      * The in-app entry for a recommendation: an installed source result is inserted like a Browse
@@ -95,17 +119,17 @@ class DiscoverScreenModel(
         null
     }
 
-    private class CachedResult(val result: DiscoverResult, val loadedAt: Long)
+    private class CachedPool(val pool: DiscoverPool, val loadedAt: Long)
 
     companion object {
         /**
          * Results are kept per mode for the whole process, so switching modes or reopening For you
          * from Recents or Browse does not hit every source again; refresh forces a new load.
          */
-        private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedResult>()
+        private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L
 
-        private fun cached(mode: DiscoverMode): DiscoverResult? =
-            cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.result
+        private fun cachedPool(mode: DiscoverMode): DiscoverPool? =
+            cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.pool
     }
 }

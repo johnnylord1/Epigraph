@@ -18,10 +18,11 @@ fun buildTasteProfile(items: List<TasteProfileSeedItem>): TasteProfile {
         contentTypeWeights.addWeight(item.contentType, preference)
         item.sourceId?.takeIf { it.isNotEmpty() }?.let { sourceWeights.addWeight(it, preference) }
 
-        for (tag in item.tags) {
-            val normalized = normalizeToken(tag)
-            if (normalized.isEmpty() || isRecommendationMetadataTag(normalized)) continue
-            tagWeights.addWeight(normalized, preference)
+        // "Battle / Action" and "Action" on one title are the same taste once.
+        val tokens = LinkedHashSet(item.tags.flatMap(::recommendationTagTokens))
+        for (token in tokens) {
+            if (isRecommendationMetadataTag(token)) continue
+            tagWeights.addWeight(token, preference)
         }
     }
 

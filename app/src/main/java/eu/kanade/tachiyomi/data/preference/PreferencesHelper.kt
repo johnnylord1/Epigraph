@@ -498,6 +498,10 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
     // TODO: SourcePref
     fun showNsfwSources() = preferenceStore.getBoolean(Keys.showNsfwSource, true)
 
+    fun filterBlockedTags() = preferenceStore.getBoolean(Keys.filterBlockedTags, true)
+
+    fun blockedTags() = preferenceStore.getStringSet(Keys.blockedTags, emptySet())
+
     // Off by default: the desktop Nocturne details page never tints itself from the cover.
     fun themeMangaDetails() = preferenceStore.getBoolean(Keys.themeMangaDetails, false)
 

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -28,20 +29,27 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +59,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.StringResource
@@ -77,6 +86,7 @@ import yokai.util.Screen
 
 class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
 
+@OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
         val backPress = LocalBackPress.currentOrThrow
@@ -84,6 +94,7 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
         val scope = rememberCoroutineScope()
         val screenModel = rememberScreenModel { DiscoverScreenModel(initialMode) }
         val state by screenModel.state.collectAsState()
+        var showFilterSheet by remember { mutableStateOf(false) }
 
         YokaiScaffold(
             onNavigationIconClicked = backPress::invoke,
@@ -91,6 +102,9 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             navigationIcon = Icons.AutoMirrored.Outlined.ArrowBack,
             appBarType = AppBarType.SMALL,
             actions = {
+                IconButton(onClick = { showFilterSheet = true }) {
+                    Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
+                }
                 IconButton(onClick = { screenModel.load(force = true) }, enabled = !state.loading) {
                     Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
                 }
@@ -116,12 +130,13 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                         onRetry = { screenModel.load(force = true) },
                     )
                     result.sections.isEmpty() -> CenteredMessage(
-                        text = stringResource(MR.strings.discover_empty),
+                        text = stringResource(
+                            if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
+                        ),
                         onRetry = { screenModel.load(force = true) },
                     )
                     else -> DiscoverSections(
                         sections = result.sections,
-                        seedCount = result.seedCount,
                         failedProviders = result.failedProviders,
                         onClick = { item ->
                             scope.launch {
@@ -135,6 +150,36 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                             }
                         },
                     )
+                }
+            }
+        }
+        if (showFilterSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showFilterSheet = false },
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp),
+                ) {
+                    DiscoverFilterRows(
+                        mode = state.mode,
+                        includeLibrary = state.includeLibrary,
+                        includeNsfw = state.includeNsfw,
+                        onIncludeLibraryChange = screenModel::setIncludeLibrary,
+                        onIncludeNsfwChange = screenModel::setIncludeNsfw,
+                    )
+                    state.result?.let { result ->
+                        if (result.seedCount > 0) {
+                            Text(
+                                text = stringResource(MR.strings.discover_seed_count, result.seedCount),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -196,24 +241,16 @@ private fun ModeSelector(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
 @Composable
 private fun DiscoverSections(
     sections: List<RecommendationSection>,
-    seedCount: Int,
     failedProviders: List<String>,
     onClick: (RecommendationItem) -> Unit,
 ) {
     LazyColumn(
-        contentPadding = PaddingValues(bottom = 24.dp),
+        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        item(key = "summary") {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                if (seedCount > 0) {
-                    Text(
-                        text = stringResource(MR.strings.discover_seed_count, seedCount),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (failedProviders.isNotEmpty()) {
+        if (failedProviders.isNotEmpty()) {
+            item(key = "summary") {
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Text(
                         text = stringResource(MR.strings.discover_partial_failure, failedProviders.joinToString()),
                         style = MaterialTheme.typography.bodySmall,
@@ -230,7 +267,7 @@ private fun DiscoverSections(
 
 @Composable
 private fun SectionRow(section: RecommendationSection, onClick: (RecommendationItem) -> Unit) {
-    val (title, reason) = section.key.labels()
+    val (title, _) = section.key.labels()
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = stringResource(title),
@@ -238,25 +275,22 @@ private fun SectionRow(section: RecommendationSection, onClick: (RecommendationI
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
-        Text(
-            text = stringResource(reason),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 2.dp, bottom = 10.dp),
-        )
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            items(section.items, key = { it.candidate.id }) { item ->
-                RecommendationCard(item, onClick = { onClick(item) })
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val cardWidth = (maxWidth - 16.dp * 4) / 3
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(section.items, key = { it.candidate.id }) { item ->
+                    RecommendationCard(item, cardWidth = cardWidth, onClick = { onClick(item) })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun RecommendationCard(item: RecommendationItem, onClick: () -> Unit) {
+private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick: () -> Unit) {
     val candidate = item.candidate
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -267,7 +301,7 @@ private fun RecommendationCard(item: RecommendationItem, onClick: () -> Unit) {
     )
     Column(
         modifier = Modifier
-            .width(112.dp)
+            .width(cardWidth)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -317,6 +351,65 @@ private fun RecommendationCard(item: RecommendationItem, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun DiscoverFilterRows(
+    mode: DiscoverMode,
+    includeLibrary: Boolean,
+    includeNsfw: Boolean,
+    onIncludeLibraryChange: (Boolean) -> Unit,
+    onIncludeNsfwChange: (Boolean) -> Unit,
+) {
+    val libraryLabel = if (mode == DiscoverMode.COMICS) MR.strings.discover_include_library_comics else MR.strings.discover_include_library_novels
+    val libraryHelp = when {
+        includeLibrary -> MR.strings.discover_include_library_on_help
+        mode == DiscoverMode.COMICS -> MR.strings.discover_include_library_off_help_comics
+        else -> MR.strings.discover_include_library_off_help_novels
+    }
+    Column {
+        DiscoverSwitchRow(
+            label = stringResource(libraryLabel),
+            help = stringResource(libraryHelp),
+            checked = includeLibrary,
+            onCheckedChange = onIncludeLibraryChange,
+        )
+        DiscoverSwitchRow(
+            label = stringResource(MR.strings.discover_include_nsfw),
+            help = null,
+            checked = includeNsfw,
+            onCheckedChange = onIncludeNsfwChange,
+        )
+    }
+}
+
+@Composable
+private fun DiscoverSwitchRow(
+    label: String,
+    help: String?,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            if (help != null) {
+                Text(
+                    text = help,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.width(16.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

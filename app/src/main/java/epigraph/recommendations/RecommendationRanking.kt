@@ -1,17 +1,48 @@
 package epigraph.recommendations
 
 import java.util.Locale
+import java.util.IdentityHashMap
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
-private const val PROFILE_MATCH_MIN = 0.28
-private const val HIGH_CONFIDENCE_PROFILE_MIN = 0.18
-private const val TRENDING_PROFILE_MIN = 0.12
+private const val PROFILE_MATCH_MIN = 0.3
+private const val HIGH_CONFIDENCE_PROFILE_MIN = 0.2
+private const val TRENDING_PROFILE_MIN = 0.15
 private const val OUTSIDE_PROFILE_OVERLAP_MAX = 0.16
-private const val OUTSIDE_PERSONAL_AFFINITY_MAX = 0.22
+private const val OUTSIDE_PERSONAL_AFFINITY_MAX = 0.2
+// A tag the reader actively dislikes (dropped/low-rated works) keeps a title out
+// of the "like what you read" rows even when other tags match.
+private const val PROFILE_NEGATIVE_MAX = 0.35
+private const val SECTION_NEGATIVE_MAX = 0.5
+private const val NEGATIVE_WEIGHT_SCALE = 1.2
+private const val MATCHED_TAG_MIN = 0.25
+// Maximal Marginal Relevance (Carbonell & Goldstein): trade a little relevance
+// for fewer near-identical titles next to each other inside a row.
+private const val MMR_LAMBDA = 0.8
+private const val MMR_POSITIONS = 36
+private const val MMR_WINDOW = 72
+// Every work appears in at most one row. Rows pick in turns so each keeps its
+// strongest matches instead of the first row taking everything; this order
+// also breaks ties when a work ranks equally well in two rows. Trending goes
+// first because its criterion (momentum) is the narrowest.
+private val SECTION_DRAFT_ORDER = listOf(
+    RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE,
+    RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY,
+    RecommendationSectionKey.HIGH_CONFIDENCE,
+    RecommendationSectionKey.FRESH_IN_YOUR_SOURCES,
+    RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS,
+)
+private val SECTION_DISPLAY_ORDER = listOf(
+    RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY,
+    RecommendationSectionKey.HIGH_CONFIDENCE,
+    RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE,
+    RecommendationSectionKey.FRESH_IN_YOUR_SOURCES,
+    RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS,
+)
 
 private val COMIC_TYPES = listOf(
     RecommendationContentType.MANGA,
@@ -24,13 +55,10 @@ fun scoreRecommendationCandidate(
     profile: TasteProfile,
     nowMs: Long,
 ): RecommendationScoreBreakdown {
-    val normalizedTags = candidate.tags.map(::normalizeToken).filter { it.isNotEmpty() }.distinct()
+    val normalizedTags = candidate.tags.flatMap(::recommendationTagTokens).distinct()
     val topicalTags = normalizedTags.filterNot(::isRecommendationMetadataTag)
-    val tagWeights = normalizedTags.map { profile.tagWeights[it] ?: 0.0 }
-    val positiveWeight = tagWeights.filter { it > 0 }.sum()
-    val negativeWeight = abs(tagWeights.filter { it < 0 }.sum())
-    val maxPositive = max(1.0, profile.tagWeights.values.filter { it > 0 }.sum())
-    val personalRatingAffinity = clamp01((positiveWeight / maxPositive) - (negativeWeight / maxPositive))
+    val tagAffinity = tagTasteAffinity(topicalTags, profile)
+    val personalRatingAffinity = tagAffinity.affinity
 
     val profileTagOverlap = profileTagOverlapRatioForTags(topicalTags, profile)
     val contentTypeFit = clamp01(
@@ -77,10 +105,55 @@ fun scoreRecommendationCandidate(
         recency = recency,
         sourceAvailability = sourceAvailability,
         novelty = novelty,
+        negativeTagPenalty = tagAffinity.negativeTagPenalty,
+        matchedTagCount = tagAffinity.matchedTagCount,
         finalScore = finalScore,
         diversityBucket = diversityBucket(profileTagOverlap, personalRatingAffinity),
     )
 }
+
+/**
+ * How much of this title is made of things the reader likes. Each tag is
+ * scored against the reader's strongest tag (square root so secondary tastes
+ * still count), then averaged over the title's own tags. Unlike a share of the
+ * whole profile, this does not collapse for readers with several distinct
+ * tastes. The strongest disliked tag scales the result down.
+ */
+private fun tagTasteAffinity(
+    topicalTags: List<String>,
+    profile: TasteProfile,
+): TagTasteAffinityResult {
+    if (topicalTags.isEmpty()) return TagTasteAffinityResult(0.0, 0.0, 0)
+    var strongestPositive = 0.0
+    for (weight in profile.tagWeights.values) {
+        if (weight > strongestPositive) strongestPositive = weight
+    }
+    val reference = max(0.35, strongestPositive)
+
+    var positive = 0.0
+    var negativeTagPenalty = 0.0
+    var matchedTagCount = 0
+    for (tag in topicalTags) {
+        val weight = profile.tagWeights[tag] ?: 0.0
+        if (weight > 0) {
+            val match = min(1.0, sqrt(weight / reference))
+            positive += match
+            if (match >= MATCHED_TAG_MIN) matchedTagCount++
+        } else if (weight < 0) {
+            negativeTagPenalty = max(negativeTagPenalty, min(1.0, abs(weight) / NEGATIVE_WEIGHT_SCALE))
+        }
+    }
+    // Long tag lists are common on some sources; damp them so unrelated extra
+    // tags do not erase a strong match, while a single matching tag stays weak.
+    val evidence = max(3.0, sqrt(3.0 * topicalTags.size))
+    return TagTasteAffinityResult(
+        affinity = clamp01((positive / evidence) * (1.0 - negativeTagPenalty)),
+        negativeTagPenalty = negativeTagPenalty,
+        matchedTagCount = matchedTagCount,
+    )
+}
+
+private data class TagTasteAffinityResult(val affinity: Double, val negativeTagPenalty: Double, val matchedTagCount: Int)
 
 fun buildRecommendationSections(
     candidates: List<RecommendationCandidate>,
@@ -94,80 +167,80 @@ fun buildRecommendationSections(
         .filterNot { isAffinityGroupMismatch(it, profile) }
     val seeded = profile.seedCount > 0
 
-    val becauseYouRatedHighly = buildSection(
-        RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY, items, limit, profile,
-        score = { (it.breakdown.personalRatingAffinity * 0.7) + (it.breakdown.profileTagOverlap * 0.26) + (it.breakdown.sourceAffinity * 0.04) },
-        eligible = {
-            seeded &&
+    val ranked = mapOf(
+        RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY to rankSectionItems(
+            items, limit, RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY,
+            score = { (it.breakdown.personalRatingAffinity * 0.7) + (it.breakdown.profileTagOverlap * 0.2) + (it.breakdown.sourceAffinity * 0.05) + (qualityScore(it) * 0.05) },
+            eligible = {
+                seeded && hasExternalProvider(it) && matchesDominantComicFormat(it, profile) &&
+                    it.breakdown.matchedTagCount > 0 &&
+                    it.breakdown.personalRatingAffinity >= PROFILE_MATCH_MIN &&
+                    it.breakdown.negativeTagPenalty < PROFILE_NEGATIVE_MAX
+            },
+            profile,
+        ),
+        RecommendationSectionKey.HIGH_CONFIDENCE to rankSectionItems(
+            items, limit, RecommendationSectionKey.HIGH_CONFIDENCE,
+            score = { (qualityScore(it) * 0.42) + (it.breakdown.trackerConsensus * 0.2) + (providerEvidenceScore(it) * 0.18) + (profileAffinityScore(it) * 0.12) + (it.breakdown.sourceAvailability * 0.08) },
+            eligible = {
                 hasExternalProvider(it) &&
-                matchesDominantComicFormat(it, profile) &&
-                hasMeaningfulProfileSignal(it, profile) &&
-                profileTasteSignalScore(it, profile) >= PROFILE_MATCH_MIN &&
-                it.breakdown.diversityBucket != RecommendationDiversityBucket.DIVERGENT
-        },
-    )
-    val highConfidence = buildSection(
-        RecommendationSectionKey.HIGH_CONFIDENCE, rerankForDiversity(items), limit, profile,
-        score = {
-            (qualityScore(it) * 0.42) + (it.breakdown.trackerConsensus * 0.2) + (providerEvidenceScore(it) * 0.18) +
-                (profileAffinityScore(it) * 0.12) + (it.breakdown.sourceAvailability * 0.08)
-        },
-        eligible = {
-            hasExternalProvider(it) &&
-                (qualityScore(it) >= 0.52 || proseWarmStartCandidate(it, profile)) &&
-                (
-                    !seeded || (
+                    (qualityScore(it) >= 0.52 || proseWarmStartCandidate(it, profile)) &&
+                    (seeded == false || (
                         fitsProfileComicFormat(it, profile) && (
-                            profileTasteSignalScore(it, profile) >= HIGH_CONFIDENCE_PROFILE_MIN ||
+                            (it.breakdown.personalRatingAffinity >= HIGH_CONFIDENCE_PROFILE_MIN && it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX) ||
                                 (!hasTopicalTags(it) && it.breakdown.trackerConsensus >= 0.82 && qualityScore(it) >= 0.72)
-                            )
                         )
-                    )
-        },
-    )
-    val trendingNearYourTaste = buildSection(
-        RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE, items, limit, profile,
-        score = {
-            (momentumScore(it) * 0.52) + (it.breakdown.trendingVelocity * 0.18) + (it.breakdown.recency * 0.1) +
-                (profileAffinityScore(it) * 0.1) + (qualityScore(it) * 0.06) + (it.breakdown.sourceAffinity * 0.04)
-        },
-        eligible = {
-            hasExternalProvider(it) &&
-                (momentumScore(it) >= 0.08 || proseWarmStartCandidate(it, profile)) &&
-                (qualityScore(it) >= 0.42 || proseWarmStartCandidate(it, profile)) &&
-                (!seeded || fitsProfileComicFormat(it, profile)) &&
-                (!seeded || profileTasteSignalScore(it, profile) >= TRENDING_PROFILE_MIN)
-        },
-    )
-    val freshInYourSources = buildSection(
-        RecommendationSectionKey.FRESH_IN_YOUR_SOURCES, items, limit, profile,
-        score = {
-            (freshnessScore(it) * 0.76) + (it.breakdown.sourceAvailability * 0.1) + (it.breakdown.sourceAffinity * 0.06) +
-                (it.breakdown.contentTypeFit * 0.04) + (qualityScore(it) * 0.04)
-        },
-        eligible = {
-            hasExternalProvider(it) &&
-                (freshnessScore(it) >= 0.12 || proseSourceAvailabilityCandidate(it, profile)) &&
-                (!seeded || fitsProfileComicFormat(it, profile))
-        },
-    )
-    val outsideYourUsualReads = buildSection(
-        RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS, items, limit, profile,
-        score = {
-            (it.breakdown.novelty * 0.64) + (qualityScore(it) * 0.18) + (it.breakdown.sourceAvailability * 0.1) +
-                (freshnessScore(it) * 0.08)
-        },
-        eligible = {
-            seeded &&
+                    ))
+            },
+            profile,
+        ),
+        RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE to rankSectionItems(
+            items, limit, RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE,
+            score = { (momentumScore(it) * 0.52) + (it.breakdown.trendingVelocity * 0.18) + (it.breakdown.recency * 0.1) + (profileAffinityScore(it) * 0.1) + (qualityScore(it) * 0.06) + (it.breakdown.sourceAffinity * 0.04) },
+            eligible = {
                 hasExternalProvider(it) &&
-                outsideUsualEligibility(it, profile) &&
-                it.breakdown.diversityBucket == RecommendationDiversityBucket.DIVERGENT &&
-                it.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX &&
-                it.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX
-        },
+                    (momentumScore(it) >= 0.08 || proseWarmStartCandidate(it, profile)) &&
+                    (qualityScore(it) >= 0.42 || proseWarmStartCandidate(it, profile)) &&
+                    (seeded == false || (fitsProfileComicFormat(it, profile) && it.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN && it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX))
+            },
+            profile,
+        ),
+        RecommendationSectionKey.FRESH_IN_YOUR_SOURCES to rankSectionItems(
+            items, limit, RecommendationSectionKey.FRESH_IN_YOUR_SOURCES,
+            score = { (freshnessScore(it) * 0.62) + (it.breakdown.personalRatingAffinity * 0.14) + (it.breakdown.sourceAvailability * 0.1) + (it.breakdown.sourceAffinity * 0.06) + (it.breakdown.contentTypeFit * 0.04) + (qualityScore(it) * 0.04) },
+            eligible = {
+                hasExternalProvider(it) &&
+                    (freshnessScore(it) >= 0.12 || proseSourceAvailabilityCandidate(it, profile)) &&
+                    (seeded == false || fitsProfileComicFormat(it, profile)) &&
+                    it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+            },
+            profile,
+        ),
+        RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS to rankSectionItems(
+            items, limit, RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS,
+            score = { (it.breakdown.novelty * 0.64) + (qualityScore(it) * 0.18) + (it.breakdown.sourceAvailability * 0.1) + (freshnessScore(it) * 0.08) },
+            eligible = {
+                seeded && hasExternalProvider(it) && outsideUsualEligibility(it, profile) &&
+                    it.breakdown.diversityBucket == RecommendationDiversityBucket.DIVERGENT &&
+                    it.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX &&
+                    it.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX &&
+                    // Divergent, not disliked: a tag from dropped or low-rated works only
+                    // passes when the title is exceptionally well regarded.
+                    it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX &&
+                    (it.breakdown.negativeTagPenalty == 0.0 || qualityScore(it) >= 0.7)
+            },
+            profile,
+        ),
     )
-
-    return listOf(becauseYouRatedHighly, highConfidence, trendingNearYourTaste, freshInYourSources, outsideYourUsualReads)
+    val drafted = draftUniqueSectionItems(ranked, limit)
+    return SECTION_DISPLAY_ORDER.map { key ->
+        val sectionItems = if (shouldApplyProfileComicMix(key)) {
+            applyProfileComicMix(drafted.getValue(key), profile, limit).take(limit)
+        } else {
+            drafted.getValue(key)
+        }
+        RecommendationSection(key, sectionItems)
+    }
 }
 
 fun buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge? {
@@ -186,22 +259,137 @@ fun buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadg
     )
 }
 
-/** Interleaves 7 familiar, 2 adjacent and 1 divergent pick to avoid a recommendation loop. */
-fun rerankForDiversity(items: List<RecommendationItem>): List<RecommendationItem> {
-    val sorted = items.sortedByDescending { it.breakdown.finalScore }
-    val buckets = RecommendationDiversityBucket.entries.associateWith { bucket ->
-        ArrayDeque(sorted.filter { it.breakdown.diversityBucket == bucket })
+/**
+ * Reorders a ranked row so near-identical titles (same tag set) do not sit
+ * next to each other. Relevance still dominates; only the first positions are
+ * rearranged and the tail keeps its ranked order.
+ */
+fun rerankForDiversity(entries: List<Pair<RecommendationItem, Double>>): List<RecommendationItem> {
+    if (entries.size <= 2) return entries.map { it.first }
+    val remaining = entries.take(MMR_WINDOW).toMutableList()
+    val tail = entries.drop(MMR_WINDOW)
+    val tagSets = IdentityHashMap<RecommendationItem, Set<String>>()
+    for (entry in remaining) tagSets[entry.first] = topicalTagSet(entry.first)
+    val selected = ArrayList<Pair<RecommendationItem, Double>>()
+
+    while (remaining.isNotEmpty() && selected.size < MMR_POSITIONS) {
+        var bestIndex = 0
+        var bestValue = Double.NEGATIVE_INFINITY
+        for (index in remaining.indices) {
+            val candidateTags = tagSets.getValue(remaining[index].first)
+            var maxSimilarity = 0.0
+            for (chosen in selected) {
+                maxSimilarity = maxOf(maxSimilarity, jaccardSimilarity(candidateTags, tagSets.getValue(chosen.first)))
+            }
+            val value = MMR_LAMBDA * remaining[index].second - (1 - MMR_LAMBDA) * maxSimilarity
+            if (value > bestValue) {
+                bestValue = value
+                bestIndex = index
+            }
+        }
+        selected += remaining.removeAt(bestIndex)
     }
-    val pattern = List(7) { RecommendationDiversityBucket.FAMILIAR } +
-        List(2) { RecommendationDiversityBucket.ADJACENT } +
-        RecommendationDiversityBucket.DIVERGENT
-    val result = ArrayList<RecommendationItem>(sorted.size)
-    while (result.size < sorted.size) {
-        val before = result.size
-        for (bucket in pattern) buckets.getValue(bucket).removeFirstOrNull()?.let(result::add)
-        if (result.size == before) break
+
+    return (selected + remaining + tail).map { it.first }
+}
+
+private fun shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey): Boolean =
+    sectionKey != RecommendationSectionKey.FRESH_IN_YOUR_SOURCES &&
+        sectionKey != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS
+
+private fun topicalTagSet(item: RecommendationItem): Set<String> =
+    item.candidate.tags
+        .flatMap(::recommendationTagTokens)
+        .filter { !isRecommendationMetadataTag(it) }
+        .toSet()
+
+private fun jaccardSimilarity(a: Set<String>, b: Set<String>): Double {
+    if (a.isEmpty() || b.isEmpty()) return 0.0
+    var overlap = 0
+    for (tag in a) if (tag in b) overlap += 1
+    return overlap.toDouble() / (a.size + b.size - overlap)
+}
+
+/**
+ * Page-level uniqueness: every work (by any identity key, so aliases count)
+ * lands in one row only. Rows take turns in SECTION_DRAFT_ORDER claiming their
+ * best remaining work, but skip a work that another row ranks far higher, so a
+ * title that leads "Fresh" is not taken by a row where it is only a filler.
+ * A second pass lets rows with room pick works whose preferred row filled up.
+ */
+private fun draftUniqueSectionItems(
+    ranked: Map<RecommendationSectionKey, List<RecommendationItem>>,
+    limit: Int,
+): Map<RecommendationSectionKey, List<RecommendationItem>> {
+    val identityKeysByItem = IdentityHashMap<RecommendationItem, List<String>>()
+    fun identityKeysOf(item: RecommendationItem): List<String> {
+        identityKeysByItem[item]?.let { return it }
+        val keys = item.candidate.identityKeys()
+        identityKeysByItem[item] = keys
+        return keys
     }
-    return result
+
+    // Best rank of each identity key in each row.
+    val ranksByIdentity = HashMap<String, MutableMap<RecommendationSectionKey, Int>>()
+    for (key in SECTION_DRAFT_ORDER) {
+        ranked.getValue(key).forEachIndexed { rank, item ->
+            for (identityKey in identityKeysOf(item)) {
+                val ranks = ranksByIdentity.getOrPut(identityKey) { HashMap() }
+                val current = ranks[key]
+                if (current == null || rank < current) ranks[key] = rank
+            }
+        }
+    }
+
+    val picked = LinkedHashMap<RecommendationSectionKey, MutableList<RecommendationItem>>()
+    for (key in SECTION_DRAFT_ORDER) picked[key] = mutableListOf()
+
+    // Rows that rank a work similarly share it by taking turns; a row only
+    // yields when another ranks the work at least twice as high.
+    fun rankedFarHigherElsewhere(item: RecommendationItem, key: RecommendationSectionKey, rank: Int): Boolean =
+        identityKeysOf(item).any { identityKey ->
+            (ranksByIdentity[identityKey] ?: emptyMap()).any { (otherKey, otherRank) ->
+                otherKey != key && picked.getValue(otherKey).size < limit && otherRank < rank / 2.0
+            }
+        }
+
+    val claimed = LinkedHashSet<String>()
+
+    fun runPass(respectPreference: Boolean) {
+        val cursors = HashMap<RecommendationSectionKey, Int>()
+        for (key in SECTION_DRAFT_ORDER) cursors[key] = 0
+        var progressed = true
+        while (progressed) {
+            progressed = false
+            for (key in SECTION_DRAFT_ORDER) {
+                if (picked.getValue(key).size >= limit) continue
+                val list = ranked.getValue(key)
+                var cursor = cursors.getValue(key)
+                while (cursor < list.size) {
+                    val rank = cursor
+                    val item = list[cursor]
+                    cursor += 1
+                    val identityKeys = identityKeysOf(item)
+                    if (identityKeys.any { it in claimed }) continue
+                    if (respectPreference && rankedFarHigherElsewhere(item, key, rank)) continue
+                    claimed += identityKeys
+                    picked.getValue(key).add(item)
+                    progressed = true
+                    break
+                }
+                cursors[key] = cursor
+            }
+        }
+    }
+    runPass(true)
+    runPass(false)
+
+    for (key in SECTION_DRAFT_ORDER) {
+        val rankOf = IdentityHashMap<RecommendationItem, Int>()
+        ranked.getValue(key).forEachIndexed { rank, item -> rankOf[item] = rank }
+        picked.getValue(key).sortBy { rankOf[it] ?: 0 }
+    }
+    return picked
 }
 
 fun dedupeRecommendationItems(items: List<RecommendationItem>): List<RecommendationItem> {
@@ -217,27 +405,32 @@ fun dedupeRecommendationItems(items: List<RecommendationItem>): List<Recommendat
     }
 }
 
-private fun buildSection(
-    key: RecommendationSectionKey,
+private fun rankSectionItems(
     items: List<RecommendationItem>,
     limit: Int,
-    profile: TasteProfile,
+    sectionKey: RecommendationSectionKey,
     score: (RecommendationItem) -> Double,
     eligible: (RecommendationItem) -> Boolean,
-): RecommendationSection {
-    if (limit <= 0) return RecommendationSection(key, emptyList())
-    val ranked = items
+    profile: TasteProfile,
+): List<RecommendationItem> {
+    if (limit <= 0) return emptyList()
+    val scored = items
         .map { it to score(it) }
         .filter { (item, value) -> value > 0 && eligible(item) }
         .sortedWith(
             compareByDescending<Pair<RecommendationItem, Double>> { it.second }
-                .thenByDescending { stableSectionJitter(it.first, key) },
+                .thenByDescending { stableSectionJitter(it.first, sectionKey) },
         )
-        .map { it.first }
-    val unique = dedupeRecommendationItems(ranked)
-    val applyMix = key != RecommendationSectionKey.FRESH_IN_YOUR_SOURCES &&
-        key != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS
-    return RecommendationSection(key, (if (applyMix) applyProfileComicMix(unique, profile, limit) else unique).take(limit))
+    val uniqueItems = IdentityHashMap<RecommendationItem, Boolean>()
+    dedupeRecommendationItems(scored.map { it.first }).forEach { uniqueItems[it] = true }
+    val unique = scored.filter { (item, _) -> uniqueItems.containsKey(item) }
+    // Fresh keeps pure recency order; every other row spreads similar titles apart.
+    val ordered = if (sectionKey == RecommendationSectionKey.FRESH_IN_YOUR_SOURCES) {
+        unique.map { it.first }
+    } else {
+        rerankForDiversity(unique)
+    }
+    return if (shouldApplyProfileComicMix(sectionKey)) applyProfileComicMix(ordered, profile, limit) else ordered
 }
 
 private fun hasExternalProvider(item: RecommendationItem) = item.candidate.providers.any {
@@ -261,20 +454,6 @@ private fun profileAffinityScore(item: RecommendationItem) = clamp01(
     (item.breakdown.personalRatingAffinity * 0.58) + (item.breakdown.profileTagOverlap * 0.24) +
         (item.breakdown.contentTypeFit * 0.1) + (item.breakdown.sourceAffinity * 0.08),
 )
-
-/**
- * Content type orders results but is not a personal taste signal: a source result with missing
- * genres must not qualify as a profile recommendation merely because it is a comic or a novel.
- */
-private fun profileTasteSignalScore(item: RecommendationItem, profile: TasteProfile) = maxOf(
-    item.breakdown.personalRatingAffinity,
-    item.breakdown.profileTagOverlap,
-    profileTagOverlapRatio(item, profile),
-)
-
-private fun hasMeaningfulProfileSignal(item: RecommendationItem, profile: TasteProfile) =
-    profileTasteSignalScore(item, profile) > 0 &&
-        (item.breakdown.profileTagOverlap > 0 || item.breakdown.personalRatingAffinity > 0)
 
 private fun sourceAffinityScore(candidate: RecommendationCandidate, profile: TasteProfile): Double {
     val maxSourceWeight = profile.sourceWeights.values.filter { it > 0 }.fold(0.0, ::max)
@@ -368,11 +547,6 @@ private fun applyProfileComicMix(items: List<RecommendationItem>, profile: Taste
     return result
 }
 
-private fun profileTagOverlapRatio(item: RecommendationItem, profile: TasteProfile) = profileTagOverlapRatioForTags(
-    item.candidate.tags.map(::normalizeToken).filter { it.isNotEmpty() && !isRecommendationMetadataTag(it) },
-    profile,
-)
-
 private fun profileTagOverlapRatioForTags(tags: List<String>, profile: TasteProfile): Double {
     val profileTags = profile.topTags.map(::normalizeToken).filter { it.isNotEmpty() }.toSet()
     val candidateTags = tags.map(::normalizeToken).filter { it.isNotEmpty() }.toSet()
@@ -383,8 +557,8 @@ private fun profileTagOverlapRatioForTags(tags: List<String>, profile: TasteProf
 }
 
 private fun hasTopicalTags(item: RecommendationItem) = item.candidate.tags
-    .map(::normalizeToken)
-    .any { it.isNotEmpty() && !isRecommendationMetadataTag(it) }
+    .flatMap(::recommendationTagTokens)
+    .any { !isRecommendationMetadataTag(it) }
 
 private fun outsideUsualEligibility(item: RecommendationItem, profile: TasteProfile): Boolean {
     if (hasTopicalTags(item)) return true
@@ -425,9 +599,11 @@ private enum class AffinityGroup { BOYS_LOVE, MATURE_ROMANCE }
 
 /** Niche groups are only recommended when the reader's own profile already includes them. */
 private fun isAffinityGroupMismatch(item: RecommendationItem, profile: TasteProfile): Boolean {
-    val tokens = (listOf(item.candidate.title) + item.candidate.alternativeTitles + item.candidate.tags + item.candidate.status.orEmpty())
-        .map(::normalizeToken)
-        .filter { it.isNotEmpty() }
+    val tokens = (
+        (listOf(item.candidate.title) + item.candidate.alternativeTitles + item.candidate.tags + item.candidate.status.orEmpty())
+            .map(::normalizeToken) +
+        item.candidate.tags.flatMap(::recommendationTagTokens)
+    ).filter { it.isNotEmpty() }
     val groups = buildSet {
         if (tokens.any(::isBoysLoveTag)) add(AffinityGroup.BOYS_LOVE)
         if (hasMatureRomanceSignal(tokens)) add(AffinityGroup.MATURE_ROMANCE)
@@ -475,7 +651,7 @@ private fun passesFilters(candidate: RecommendationCandidate, options: BuildReco
         return false
     }
     val blocked = options.blockedTags.map(::normalizeToken).filter { it.isNotEmpty() }.toSet()
-    return blocked.isEmpty() || candidate.tags.none { normalizeToken(it) in blocked }
+    return blocked.isEmpty() || candidate.tags.none { normalizeToken(it) in blocked || recommendationTagTokens(it).any { token -> token in blocked } }
 }
 
 private fun isKnownCandidate(candidate: RecommendationCandidate, options: BuildRecommendationSectionsOptions): Boolean {

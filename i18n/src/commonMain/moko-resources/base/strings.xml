@@ -979,6 +979,12 @@
     <string name="nsfw_sources">NSFW (18+) sources</string>
     <string name="show_in_sources_and_extensions">Show in sources and extensions lists</string>
     <string name="does_not_prevent_unofficial_nsfw">This does not prevent unofficial or potentially incorrectly flagged extensions from surfacing NSFW (18+) content within the app.</string>
+    <string name="blocked_tags_filter">Filter by blocked tags</string>
+    <string name="blocked_tags_filter_hint">Hide anything matching your personal blocked tag list.</string>
+    <string name="blocked_tags">Blocked tags</string>
+    <string name="blocked_tags_remove">Remove tag</string>
+    <string name="blocked_tags_empty">No blocked tags</string>
+    <string name="blocked_tags_add_hint">Add tag substring...</string>
 
     <!-- Extension repos -->
     <string name="repos">Repos</string>
@@ -2370,7 +2376,6 @@
     <string name="discover_card_subtitle_novels">Novel picks based on your library</string>
     <string name="discover_comics">Comics</string>
     <string name="discover_error">Could not load Discover</string>
-    <string name="discover_empty">No recommendations yet. Add titles to your library or install sources to get suggestions.</string>
     <string name="discover_partial_failure">Some providers did not respond: %1$s</string>
     <string name="discover_seed_count">Based on %1$d titles in your library</string>
     <string name="discover_opening">Opening %1$s…</string>
@@ -2384,6 +2389,14 @@
     <string name="discover_section_fresh_reason">Recent updates and newly available titles from installed sources.</string>
     <string name="discover_section_outside">Outside your usual reads</string>
     <string name="discover_section_outside_reason">Different, well-rated picks so recommendations do not repeat themselves.</string>
+    <string name="discover_include_library_comics">Include library/tracker titles</string>
+    <string name="discover_include_library_novels">Include saved prose titles</string>
+    <string name="discover_include_library_on_help">Known titles can appear for comparison.</string>
+    <string name="discover_include_library_off_help_comics">Only titles outside your local and tracker libraries are shown.</string>
+    <string name="discover_include_library_off_help_novels">Only novels outside your saved novels and local books are shown.</string>
+    <string name="discover_include_nsfw">Include NSFW extensions</string>
+    <string name="discover_empty_filtered">No new recommendations remain after filtering your library and tracker titles.</string>
+    <string name="discover_empty_filters">No recommendations match the current filters.</string>
     <!-- Memorable moments (DESIGN.md §9) -->
     <string name="moment_work_finished">Work finished</string>
     <string name="moment_reading_milestone">Reading milestone</string>
