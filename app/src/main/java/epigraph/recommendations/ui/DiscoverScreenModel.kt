@@ -8,6 +8,9 @@ import epigraph.recommendations.DiscoverPool
 import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
 import epigraph.recommendations.RecommendationItem
+import epigraph.recommendations.RecommendationSectionKey
+import epigraph.recommendations.SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS
+import epigraph.recommendations.nextVisibleLimit
 import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.domain.manga.models.Manga
@@ -41,9 +44,11 @@ class DiscoverScreenModel(
         val error: String? = null,
         val includeLibrary: Boolean = false,
         val includeNsfw: Boolean = false,
+        val visibleLimits: Map<RecommendationSectionKey, Int> = emptyMap(),
     )
 
     private var loadJob: Job? = null
+    private val moreTriggeredAt = HashMap<RecommendationSectionKey, Long>()
 
     init {
         load(force = false)
@@ -59,17 +64,17 @@ class DiscoverScreenModel(
         val mode = state.value.mode
         val cached = cachedPool(mode)
         if (!force && cached != null) {
-            mutableState.update { it.copy(loading = false, result = rank(cached), error = null) }
+            mutableState.update { it.copy(loading = false, result = rank(cached), error = null, visibleLimits = emptyMap()) }
             return
         }
         loadJob?.cancel()
-        mutableState.update { it.copy(loading = true, result = if (force) it.result else null, error = null) }
+        mutableState.update { it.copy(loading = true, result = if (force) it.result else null, error = null, visibleLimits = emptyMap()) }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
                 val pool = loader.gather(mode)
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 val result = rank(pool)
-                mutableState.update { if (it.mode == mode) it.copy(loading = false, result = result) else it }
+                mutableState.update { if (it.mode == mode) it.copy(loading = false, result = result, visibleLimits = emptyMap()) else it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -83,7 +88,7 @@ class DiscoverScreenModel(
         if (value == state.value.includeLibrary) return
         mutableState.update { it.copy(includeLibrary = value) }
         val cached = cachedPool(state.value.mode) ?: return
-        mutableState.update { it.copy(result = rank(cached)) }
+        mutableState.update { it.copy(result = rank(cached), visibleLimits = emptyMap()) }
     }
 
     /** Flips the global "show NSFW" setting; source selection depends on it, so reload. */
@@ -92,6 +97,16 @@ class DiscoverScreenModel(
         preferences.showNsfwSources().set(value)
         mutableState.update { it.copy(includeNsfw = value) }
         load(force = true)
+    }
+
+    /** Grows one rail by a step when the user scrolls near its end (desktop parity). */
+    fun showMore(key: RecommendationSectionKey) {
+        val now = System.currentTimeMillis()
+        if (now - (moreTriggeredAt[key] ?: 0L) < SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS) return
+        moreTriggeredAt[key] = now
+        val section = state.value.result?.sections?.firstOrNull { it.key == key } ?: return
+        val next = nextVisibleLimit(state.value.visibleLimits[key], section.items.size) ?: return
+        mutableState.update { it.copy(visibleLimits = it.visibleLimits + (key to next)) }
     }
 
     private fun rank(pool: DiscoverPool): DiscoverResult =

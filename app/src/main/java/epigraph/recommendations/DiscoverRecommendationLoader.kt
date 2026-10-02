@@ -46,6 +46,21 @@ data class DiscoverPool(
     val failedProviders: List<String>,
 )
 
+/** Desktop BrowseV3 constants for the For you rails. */
+internal const val SEARCH_RECOMMENDATION_BASE_LIMIT = 18
+internal const val SEARCH_RECOMMENDATION_MAX_LIMIT = 420
+internal const val SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160L
+
+/**
+ * Desktop `loadMoreSearchRecommendations` (local part): the next visible limit for a rail, or
+ * null when every ranked item is already visible.
+ */
+internal fun nextVisibleLimit(current: Int?, sectionSize: Int): Int? {
+    val limit = current ?: SEARCH_RECOMMENDATION_BASE_LIMIT
+    if (limit >= sectionSize || limit >= SEARCH_RECOMMENDATION_MAX_LIMIT) return null
+    return minOf(SEARCH_RECOMMENDATION_MAX_LIMIT, limit + SEARCH_RECOMMENDATION_LIMIT_STEP)
+}
+
 /**
  * Builds the Discover sections the way the desktop Browse page does: the library (plus tracker
  * scores) is the taste profile, and candidates come from the most-used installed sources
@@ -193,7 +208,7 @@ class DiscoverRecommendationLoader(
                 includeNsfw = includeNsfw,
                 blockedTags = if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList(),
                 nowMs = nowMs,
-                limitPerSection = SECTION_LIMIT,
+                limitPerSection = SEARCH_RECOMMENDATION_MAX_LIMIT,
             ),
         )
         return DiscoverResult(sections.filter { it.items.isNotEmpty() }, pool.seedCount, pool.failedProviders)
@@ -299,6 +314,5 @@ class DiscoverRecommendationLoader(
     companion object {
         private const val SOURCE_TIMEOUT_MS = 20_000L
         private const val HARDCOVER_LOADER_BUDGET_MS = 15_000L
-        private const val SECTION_LIMIT = 24
     }
 }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -44,12 +45,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +73,7 @@ import epigraph.recommendations.RecommendationContentType
 import epigraph.recommendations.RecommendationItem
 import epigraph.recommendations.RecommendationSection
 import epigraph.recommendations.RecommendationSectionKey
+import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
 import eu.kanade.tachiyomi.util.compose.LocalBackPress
@@ -76,6 +81,8 @@ import eu.kanade.tachiyomi.util.compose.LocalRouter
 import eu.kanade.tachiyomi.util.compose.currentOrThrow
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import java.io.File
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import yokai.domain.manga.models.MangaCover as CoverData
 import yokai.i18n.MR
@@ -138,6 +145,8 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                     else -> DiscoverSections(
                         sections = result.sections,
                         failedProviders = result.failedProviders,
+                        visibleLimits = state.visibleLimits,
+                        onNearEnd = screenModel::showMore,
                         onClick = { item ->
                             scope.launch {
                                 val manga = runCatching { screenModel.resolveLocalManga(item) }.getOrNull()
@@ -242,6 +251,8 @@ private fun ModeSelector(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
 private fun DiscoverSections(
     sections: List<RecommendationSection>,
     failedProviders: List<String>,
+    visibleLimits: Map<RecommendationSectionKey, Int>,
+    onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
 ) {
     LazyColumn(
@@ -260,14 +271,36 @@ private fun DiscoverSections(
             }
         }
         items(sections, key = { it.key.key }) { section ->
-            SectionRow(section, onClick)
+            SectionRow(
+                section,
+                visibleLimit = visibleLimits[section.key] ?: SEARCH_RECOMMENDATION_BASE_LIMIT,
+                onNearEnd = { onNearEnd(section.key) },
+                onClick = onClick,
+            )
         }
     }
 }
 
 @Composable
-private fun SectionRow(section: RecommendationSection, onClick: (RecommendationItem) -> Unit) {
+private fun SectionRow(
+    section: RecommendationSection,
+    visibleLimit: Int,
+    onNearEnd: () -> Unit,
+    onClick: (RecommendationItem) -> Unit,
+) {
     val (title, _) = section.key.labels()
+    val listState = rememberLazyListState()
+    val currentOnNearEnd by rememberUpdatedState(onNearEnd)
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 2
+        }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { currentOnNearEnd() }
+    }
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = stringResource(title),
@@ -278,10 +311,11 @@ private fun SectionRow(section: RecommendationSection, onClick: (RecommendationI
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
             val cardWidth = (maxWidth - 16.dp * 4) / 3
             LazyRow(
+                state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                items(section.items, key = { it.candidate.id }) { item ->
+                items(section.items.take(visibleLimit), key = { it.candidate.id }) { item ->
                     RecommendationCard(item, cardWidth = cardWidth, onClick = { onClick(item) })
                 }
             }
