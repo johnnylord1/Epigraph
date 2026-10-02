@@ -67,6 +67,8 @@ data class DiscoverPool(
     val morePages: Map<RecommendationSectionKey, Int> = emptyMap(),
     /** Desktop `searchRecommendationExhausted`. */
     val exhausted: Set<RecommendationSectionKey> = emptySet(),
+    /** Per source list (see [sourceCursorKey]): next page cursor, or [SOURCE_CURSOR_END]. */
+    val sourceCursors: Map<String, Long> = emptyMap(),
 )
 
 /** Desktop BrowseV3 constants for the For you rails. */
@@ -126,6 +128,7 @@ private data class SourceParts(
     val trackerScores: List<TrackerCatalogInput> = emptyList(),
     val hardcoverScores: Map<String, RecommendationProviderSignal> = emptyMap(),
     val hardcoverCandidates: List<RecommendationCandidate> = emptyList(),
+    val sourceCursors: Map<String, Long> = emptyMap(),
 )
 
 /** Rebuilds the pool's candidates from its parts, exactly as [DiscoverRecommendationLoader.gather] does. */
@@ -251,6 +254,7 @@ class DiscoverRecommendationLoader(
                     comicEntries = gathered.entries,
                     trackerTrending = trackerResult.trending,
                     trackerScores = trackerResult.scores,
+                    sourceCursors = gathered.cursors,
                 )
             } else {
                 val gathered = NovelRecommendationGatherer(sourceManager).gather(
@@ -283,6 +287,7 @@ class DiscoverRecommendationLoader(
             libraryCandidates = libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } + books.map { bookToRecommendationCandidate(it, nowMs) },
             trackerRecordCandidates = trackerRecordCandidates,
             comicEntries = parts.comicEntries,
+            sourceCursors = parts.sourceCursors,
             novelEntries = parts.novelEntries,
             trackerTrending = parts.trackerTrending,
             trackerScores = parts.trackerScores,
@@ -339,9 +344,10 @@ class DiscoverRecommendationLoader(
         // COMICS + HIGH_CONFIDENCE
         if (pool.mode == DiscoverMode.COMICS && key == RecommendationSectionKey.HIGH_CONFIDENCE) {
             val page = (pool.morePages[key] ?: 1) + 1
-            val incoming = ComicRecommendationGatherer(sourceManager).fetchMore(pool.nsfwSourceIds, includeNsfw, page, latest = false)
+            val gatherer = ComicRecommendationGatherer(sourceManager, pool.sourceCursors)
+            val incoming = gatherer.fetchMore(pool.nsfwSourceIds, includeNsfw, page, latest = false)
             if (incoming == null) return DiscoverMoreResult(pool, false)
-            val next = withPage(pool, key, page)
+            val next = withPage(pool, key, page).copy(sourceCursors = gatherer.cursorSnapshot())
             if (incoming.isEmpty()) {
                 val exhausted = if (page >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) exhaust(next, key) else next
                 return DiscoverMoreResult(exhausted, true)
@@ -359,14 +365,16 @@ class DiscoverRecommendationLoader(
         val startPage = (pool.morePages[key] ?: 1) + 1
         var current = pool
         var added = false
+        val comicGatherer = ComicRecommendationGatherer(sourceManager, pool.sourceCursors)
         for (attemptPage in startPage until startPage + 4) {
             val incoming = if (pool.mode == DiscoverMode.COMICS) {
-                ComicRecommendationGatherer(sourceManager).fetchMore(pool.nsfwSourceIds, includeNsfw, attemptPage, latest)
+                comicGatherer.fetchMore(pool.nsfwSourceIds, includeNsfw, attemptPage, latest)
             } else {
                 NovelRecommendationGatherer(sourceManager).fetchMore(pool.profile, pool.nsfwSourceIds, includeNsfw, attemptPage)
             }
             if (incoming == null) break
             current = withPage(current, key, attemptPage)
+            if (pool.mode == DiscoverMode.COMICS) current = current.copy(sourceCursors = comicGatherer.cursorSnapshot())
             if (incoming.isEmpty()) continue
             val beforeCount = when {
                 pool.mode == DiscoverMode.COMICS && latest -> current.comicEntries.count { it.second }

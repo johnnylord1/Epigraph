@@ -10,6 +10,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.source.model.MetadataMangasPage
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
@@ -41,11 +42,16 @@ private val FALLBACK_TERMS = listOf("action", "fantasy", "adventure", "romance")
  * latest page 1, then autofill pages 2..3 in source batches, with per-source balancing,
  * id/title dedupe, and the 240-entry seed cap applied at every refinement step.
  */
-class ComicRecommendationGatherer(private val sourceManager: SourceManager) {
+class ComicRecommendationGatherer(private val sourceManager: SourceManager, initialCursors: Map<String, Long> = emptyMap()) {
+
+    private val cursors = java.util.concurrent.ConcurrentHashMap(initialCursors)
+
+    fun cursorSnapshot(): Map<String, Long> = HashMap(cursors)
 
     data class Result(
         val entries: List<Pair<RecommendationEntryInput, Boolean /* fromLatestFeed */>>,
         val failedSources: List<String>,
+        val cursors: Map<String, Long> = emptyMap(),
     )
 
     suspend fun gather(
@@ -99,7 +105,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager) {
         val combined = refineSeedEntries(seeds + fresh)
         val freshIds = fresh.toHashSet()
         val entries = combined.map { it to (it in freshIds) }
-        return Result(entries, failed.toList())
+        return Result(entries, failed.toList(), cursorSnapshot())
     }
 
     /**
@@ -132,6 +138,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager) {
         failed: MutableSet<String>,
     ): List<RecommendationEntryInput> {
         val popular = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getPopularManga(1) }
+        remember(source, false, popular)
         if (popular != null && popular.mangas.isNotEmpty()) return popular.mangas.map { it.toInput(source) }
         for (term in FALLBACK_TERMS) {
             val results = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getSearchManga(1, term, source.getFilterList()) }
@@ -147,17 +154,26 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager) {
     ): List<RecommendationEntryInput> {
         if (!source.supportsLatest) return emptyList()
         val latest = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getLatestUpdates(1) }
+        remember(source, true, latest)
         return latest?.mangas.orEmpty().map { it.toInput(source) }
     }
 
     private suspend fun fetchSourcePage(source: CatalogueSource, latest: Boolean, page: Int): List<RecommendationEntryInput> {
         if (latest && !source.supportsLatest) return emptyList()
+        val requestPage = resolveSourcePage(page, cursors[sourceCursorKey(source.id, latest)]) ?: return emptyList()
         val result = if (latest) {
-            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getLatestUpdates(page) }
+            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getLatestUpdates(requestPage) }
         } else {
-            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getPopularManga(page) }
+            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getPopularManga(requestPage) }
         }
+        remember(source, latest, result)
         return result?.mangas.orEmpty().map { it.toInput(source) }
+    }
+
+    private fun remember(source: CatalogueSource, latest: Boolean, result: MangasPage?) {
+        if (result == null) return
+        val cursor = cursorAfter(result) ?: return
+        cursors[sourceCursorKey(source.id, latest)] = cursor
     }
 
 }
@@ -169,6 +185,30 @@ internal fun <T> sourceBatch(pool: List<T>, logicalPage: Int, batchSize: Int): P
     val batchIndex = (safePage - 1) % batchCount
     val sourcePage = (safePage - 1) / batchCount + 1
     return pool.drop(batchIndex * batchSize).take(batchSize) to sourcePage
+}
+
+/** Cursor value meaning the source said there is no next page for that list. */
+internal const val SOURCE_CURSOR_END = -1L
+
+/** Key of one source list inside [DiscoverPool.sourceCursors]. */
+internal fun sourceCursorKey(sourceId: Long, latest: Boolean): String = "$sourceId:${if (latest) "latest" else "popular"}"
+
+/**
+ * The `page` argument for a source request, like the Browse pager: page 1 is always 1; later
+ * pages use the stored cursor when the source gave one. `null` means the list ended; skip the request.
+ */
+internal fun resolveSourcePage(page: Int, cursor: Long?): Int? = when {
+    page <= 1 -> 1
+    cursor == SOURCE_CURSOR_END -> null
+    cursor != null -> cursor.toInt()
+    else -> page
+}
+
+/** What to store after a page arrives: the source's cursor, END when the list ended, or null to store nothing. */
+internal fun cursorAfter(result: MangasPage): Long? = when {
+    !result.hasNextPage || result.mangas.isEmpty() -> SOURCE_CURSOR_END
+    result is MetadataMangasPage -> result.nextKey
+    else -> null
 }
 
 /**
