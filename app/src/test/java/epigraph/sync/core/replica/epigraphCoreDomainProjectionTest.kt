@@ -1022,6 +1022,102 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `a category of each library joins the same-named folder instead of duplicating it`() = runTest {
+        val folder = insertFolder("Reading", sort = 4)
+
+        projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 2))
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "reading", 7))
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", " Reading ", 9))
+
+        val folders = database.categoriesQueries.findAll().executeAsList()
+        assertEquals(listOf(folder), folders.filter { it.name.trim().equals("reading", true) }.map { it._id })
+        assertEquals(
+            mapOf("BOOK" to "book-cat-1", "MANGA" to "comic-cat-1", "NOVEL" to "novel-cat-1"),
+            folderScopes(folder),
+        )
+        // The first library to bind a purely local folder names and orders it; the others only join.
+        val joined = folders.single { it._id == folder }
+        assertEquals("Reading", joined.name)
+        assertEquals(2L, joined.sort)
+    }
+
+    @Test
+    fun `an exact name wins over a different letter case`() = runTest {
+        val lower = insertFolder("reading", sort = 0)
+        val exact = insertFolder("Reading", sort = 1)
+
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Reading", 1))
+
+        assertTrue(folderScopes(lower).isEmpty())
+        assertEquals(mapOf("NOVEL" to "novel-cat-1"), folderScopes(exact))
+    }
+
+    @Test
+    fun `a rename in one library moves the shared folder but a replay does not undo it`() = runTest {
+        val folder = insertFolder("Reading", sort = 0)
+        projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 0))
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Reading", 0))
+
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Now reading", 0))
+        // A snapshot after re-pair replays the comic category with its old name.
+        projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 0))
+
+        assertEquals("Now reading", database.categoriesQueries.findAll().executeAsList().single { it._id == folder }.name)
+    }
+
+    @Test
+    fun `a binding left over from an earlier pairing is replaced by the same-named category`() = runTest {
+        val folder = insertFolder("Reading", sort = 0)
+        bindFolder(folder, "book-category-old", "BOOK", "Reading")
+
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", "Reading", 0))
+
+        assertEquals(mapOf("BOOK" to "book-cat-1"), folderScopes(folder))
+        assertEquals(1, database.categoriesQueries.findAll().executeAsList().size)
+    }
+
+    @Test
+    fun `a live category of the same library and name stays a separate folder`() = runTest {
+        val folder = insertFolder("Reading", sort = 0)
+        bindFolder(folder, "novel-cat-1", "NOVEL", "Reading")
+        database.aethon_syncQueries.upsertCoreReplicaRecord(
+            SCOPE_ID, "novel.category", "novel-cat-1", 1, 1, "{}", "0".repeat(64),
+        )
+
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-2", "Reading", 1))
+
+        assertEquals(mapOf("NOVEL" to "novel-cat-1"), folderScopes(folder))
+        val second = database.aethon_syncQueries.selectCategoryIdentityByEntityId("novel-cat-2").executeAsOne()
+        assertTrue(second.local_category_id != folder)
+    }
+
+    @Test
+    fun `a book category does not join a folder whose books were never published`() = runTest {
+        val folder = insertFolder("Reading", sort = 0)
+        val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
+        bookProjection.upsert(database, bookEntryRecord())
+        database.local_booksQueries.insertCategory(BOOK_ID, folder)
+
+        bookProjection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", "Reading", 0))
+        // The desktop's complete set for the book does not list the new category.
+        bookProjection.upsert(
+            database,
+            CoreConfirmedRecord(
+                key = CoreReplicaKey(BOOK_SCOPE_ID, "book.category_assignment", BOOK_ID),
+                serverVersion = 3,
+                lamport = 3,
+                record = buildJsonObject {
+                    put("bookId", BOOK_ID)
+                    put("categoryIds", JsonArray(emptyList()))
+                },
+            ),
+        )
+
+        assertTrue(folderScopes(folder).isEmpty())
+        assertEquals(listOf(folder), database.local_booksQueries.findCategoryIds(BOOK_ID).executeAsList())
+    }
+
+    @Test
     fun `book snapshot materializes metadata progress category and bookmark without downloading asset`() = runTest {
         val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
         val records = listOf(
@@ -1518,6 +1614,31 @@ class EpigraphCoreDomainProjectionTest {
             put("updatedAtMs", 100)
         },
     )
+
+    private fun categoryRecord(scopeId: String, entityType: String, entityId: String, name: String, order: Long) =
+        CoreConfirmedRecord(
+            key = CoreReplicaKey(scopeId, entityType, entityId),
+            serverVersion = 1,
+            lamport = 1,
+            record = buildJsonObject {
+                put("name", name)
+                put("order", order)
+                put("updatedAtMs", 100)
+            },
+        )
+
+    private fun insertFolder(name: String, sort: Long): Long {
+        database.categoriesQueries.insert(name, sort, 0, "a")
+        return database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+    }
+
+    private fun bindFolder(folder: Long, entityId: String, scope: String, name: String, order: Long = 0) {
+        database.aethon_syncQueries.upsertCategoryIdentity(entityId, folder, scope, name, order, 1)
+    }
+
+    private fun folderScopes(folder: Long): Map<String, String> =
+        database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder).executeAsList()
+            .associate { it.content_scope to it.entity_id }
 
     private fun comicCategoryRecord() = CoreConfirmedRecord(
         key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.category", CATEGORY_ID),

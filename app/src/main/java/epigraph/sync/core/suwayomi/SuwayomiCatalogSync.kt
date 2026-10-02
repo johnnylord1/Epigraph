@@ -564,7 +564,7 @@ class SuwayomiCatalogSync(
 
         /**
          * Drops unbound remote categories whose exact name matches a phone category that
-         * [SuwayomiCategoryCreateHook] will bind to them. Materializing them first would leave two
+         * [SuwayomiCategoryCreateHook] will bind to them (now, or after a re-pair drops its binding). Materializing them first would leave two
          * local categories with the same name, and the hook then refuses the bind for good.
          */
         fun withoutCategoriesAwaitingBind(
@@ -572,9 +572,27 @@ class SuwayomiCatalogSync(
             credentials: CoreCredentialSession,
             categories: List<JsonObject>,
         ): List<JsonObject> {
-            val awaitingNames = database.aethon_syncQueries.selectUnpublishedComicCategories()
+            // After a re-pair, a folder with comics still bound to the previous server loses that
+            // binding in this read's reconcile and is bound by name on the next run, so it waits too.
+            val currentPrefix = "suwayomi:server:${credentials.serverId}:"
+            val rebinding = database.aethon_syncQueries.selectCategoryIdentitiesByContentScope("MANGA")
                 .executeAsList()
+                .filter { identity ->
+                    credentials.serverId != LEGACY_UNBOUND_SERVER_ID &&
+                        identity.entity_id.startsWith("suwayomi:server:") &&
+                        !identity.entity_id.startsWith(currentPrefix) &&
+                        ":profile:${credentials.profileId}:category:" in identity.entity_id &&
+                        database.aethon_syncQueries.folderHoldsComics(identity.local_category_id).executeAsOne()
+                }
+                .map { it.local_category_id }
+                .toSet()
+            val rebindingNames = database.categoriesQueries.findAll().executeAsList()
+                .filter { it._id in rebinding }
                 .map { it.name }
+            val awaitingNames = (
+                database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it.name } +
+                    rebindingNames
+                )
                 .filterTo(HashSet(), SuwayomiCategoryCreateHook::isPublishableName)
             if (awaitingNames.isEmpty()) return categories
             return categories.filterNot { node ->

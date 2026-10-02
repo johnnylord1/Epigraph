@@ -160,7 +160,7 @@ class EpigraphCategoryMutationRouterTest {
         assertEquals("novel.category", envelopes[1].entityType.value)
         assertTrue(envelopes[1].command is SyncCommand.DeleteEntity)
         assertTrue(database.categoriesQueries.findAll().executeAsList().isEmpty())
-        assertNull(database.aethon_syncQueries.selectCategoryIdentityByLocalId(category).executeAsOneOrNull())
+        assertNull(database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(category).executeAsList().singleOrNull())
     }
 
     @Test
@@ -376,7 +376,7 @@ class EpigraphCategoryMutationRouterTest {
 
         assertEquals(0, result.emittedCommandCount)
         assertTrue(queued().isEmpty())
-        assertNull(database.aethon_syncQueries.selectCategoryIdentityByLocalId(category).executeAsOneOrNull())
+        assertNull(database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(category).executeAsList().singleOrNull())
     }
 
     @Test
@@ -394,28 +394,126 @@ class EpigraphCategoryMutationRouterTest {
 
         assertEquals(0, result.emittedCommandCount)
         assertTrue(queued().isEmpty())
-        assertNull(database.aethon_syncQueries.selectCategoryIdentityByLocalId(category).executeAsOneOrNull())
+        assertNull(database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(category).executeAsList().singleOrNull())
         assertEquals("suwayomi:server:desk:profile:main:category:42", identity(other).entity_id)
     }
 
     @Test
-    fun `unpublished comic category query lists only unbound categories with comics`() {
+    fun `unpublished comic category query lists categories with comics but no comic binding`() {
         val listed = insertCategory("Listed", sort = 0)
         val bound = insertCategory("Bound", sort = 1)
         val empty = insertCategory("Empty", sort = 2)
-        val novelScoped = insertCategory("Novels", sort = 3)
+        val sharedWithNovels = insertCategory("Novels", sort = 3)
         bindCategory(bound, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Bound", 1)
-        database.aethon_syncQueries.upsertCategoryScope(categoryId = novelScoped, contentScope = "NOVEL")
+        // A folder first used for novels that now also holds a comic still needs its comic category.
+        database.aethon_syncQueries.upsertCategoryScope(categoryId = sharedWithNovels, contentScope = "NOVEL")
+        bindCategory(sharedWithNovels, "novel-category-local-$sharedWithNovels", "NOVEL", "Novels", 3)
         val manga = insertManga()
         bindWork(manga, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
         database.aethon_syncQueries.insertMangaCategoryAssignment(manga, listed)
         database.aethon_syncQueries.insertMangaCategoryAssignment(manga, bound)
-        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, novelScoped)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, sharedWithNovels)
 
         val rows = database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList()
 
-        assertEquals(listOf(listed), rows.map { it._id })
-        assertEquals("Listed", rows.single().name)
+        assertEquals(listOf(listed, sharedWithNovels), rows.map { it._id })
+        assertFalse(empty in rows.map { it._id })
+    }
+
+    @Test
+    fun `renaming a folder shared by every library publishes the rename to each library`() = runTest {
+        val folder = insertCategory("Favorites", sort = 0)
+        bindCategory(folder, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Favorites", 1)
+        bindCategory(folder, "novel-category-local-$folder", "NOVEL", "Favorites", 0)
+        bindCategory(folder, "book-category-local-$folder", "BOOK", "Favorites", 0)
+
+        val result = router().updateCategories(setOf(folder)) {
+            categoriesQueries.update(id = folder, name = "Best", mangaOrder = null, sort = null, flags = null)
+        }
+
+        assertEquals(3, result.emittedCommandCount)
+        val published = queued().associate { envelope ->
+            val command = envelope.command as SyncCommand.UpsertCategory
+            assertEquals("Best", command.name)
+            envelope.entityType.value to (envelope.scopeId.value to command.entityId.value)
+        }
+        assertEquals(
+            mapOf(
+                "comic.category" to ("comics:profile:main" to "suwayomi:server:desk:profile:main:category:42"),
+                "novel.category" to ("novels:profile:main" to "novel-category-local-$folder"),
+                "book.category" to ("books:global" to "book-category-local-$folder"),
+            ),
+            published,
+        )
+        val names = database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder).executeAsList()
+            .associate { it.content_scope to it.name }
+        assertEquals(mapOf("BOOK" to "Best", "MANGA" to "Best", "NOVEL" to "Best"), names)
+    }
+
+    @Test
+    fun `deleting a shared folder deletes it from every library after its assignments`() = runTest {
+        val folder = insertCategory("Favorites", sort = 0)
+        bindCategory(folder, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Favorites", 1)
+        bindCategory(folder, "novel-category-local-$folder", "NOVEL", "Favorites", 0)
+        bindCategory(folder, "book-category-local-$folder", "BOOK", "Favorites", 0)
+        val comic = insertManga()
+        bindWork(comic, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        val novel = insertManga()
+        bindWork(novel, "novel:source:1", "NOVEL")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(comic, folder)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(novel, folder)
+        insertBook("book-1")
+        database.local_booksQueries.insertCategory("book-1", folder)
+
+        router().deleteCategory(folder) { categoriesQueries.delete(folder) }
+
+        val envelopes = queued()
+        val deleted = envelopes.filter { it.command is SyncCommand.DeleteEntity }
+            .map { (it.command as SyncCommand.DeleteEntity).entityId.value }
+        assertEquals(
+            setOf(
+                "suwayomi:server:desk:profile:main:category:42",
+                "novel-category-local-$folder",
+                "book-category-local-$folder",
+            ),
+            deleted.toSet(),
+        )
+        // Each library's assignments are removed before that library's category.
+        listOf("comic.category", "novel.category", "book.category").forEach { categoryType ->
+            val deleteIndex = envelopes.indexOfFirst { it.entityType.value == categoryType }
+            val assignmentIndex = envelopes.indexOfFirst {
+                it.entityType.value == categoryType.replace(".category", ".category_assignment")
+            }
+            assertTrue(assignmentIndex in 0 until deleteIndex, "$categoryType assignments first")
+        }
+        val bookRewrite = envelopes.single { it.entityType.value == "book.category_assignment" }.command
+            as SyncCommand.SetBookCategoryAssignments
+        assertTrue(bookRewrite.categoryIds.isEmpty())
+        assertTrue(database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder).executeAsList().isEmpty())
+    }
+
+    @Test
+    fun `a novel or book identity does not stop a folder from getting its comic category`() = runTest {
+        val folder = insertCategory("Favorites", sort = 0)
+        bindCategory(folder, "book-category-local-$folder", "BOOK", "Favorites", 0)
+        val manga = insertManga()
+        bindWork(manga, "suwayomi:server:desk:profile:main:manga:7", "MANGA")
+        database.aethon_syncQueries.insertMangaCategoryAssignment(manga, folder)
+
+        val result = router().bindCreatedComicCategory(
+            folder, "Favorites", "suwayomi:server:desk:profile:main:category:42", 3,
+        )
+
+        assertEquals(1, result.emittedCommandCount)
+        val scopes = database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder).executeAsList()
+            .associate { it.content_scope to it.entity_id }
+        assertEquals(
+            mapOf(
+                "BOOK" to "book-category-local-$folder",
+                "MANGA" to "suwayomi:server:desk:profile:main:category:42",
+            ),
+            scopes,
+        )
     }
 
     private fun router(
@@ -440,7 +538,7 @@ class EpigraphCategoryMutationRouterTest {
             .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json) }
 
     private fun identity(categoryId: Long) =
-        database.aethon_syncQueries.selectCategoryIdentityByLocalId(categoryId).executeAsOne()
+        database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(categoryId).executeAsList().single()
 
     private fun insertCategory(name: String, sort: Long): Long {
         database.categoriesQueries.insert(name, sort, flags = 0, mangaOrder = "")

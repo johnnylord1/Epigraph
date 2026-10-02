@@ -1,0 +1,38 @@
+-- A phone folder is one shared category, but the desktop keeps comics (Suwayomi), novels and books
+-- in separate category lists. One identity per folder made the book and novel routers take over a
+-- comic identity (and the reverse), and made same-named desktop categories arrive as duplicate
+-- folders. A folder may now hold one identity per library: UNIQUE(local_category_id, content_scope).
+CREATE TABLE aethon_category_identity_54 (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    local_category_id INTEGER NOT NULL,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(local_category_id, content_scope),
+    FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+-- Repair the library of identities a router re-labelled: the entity id says where it came from.
+-- Ids of any other shape keep their stored library. Each folder had at most one row, so the
+-- repaired rows cannot collide on the new unique key.
+INSERT INTO aethon_category_identity_54(
+    entity_id, local_category_id, content_scope, name, sort_order, updated_at
+)
+SELECT
+    entity_id,
+    local_category_id,
+    CASE
+        WHEN entity_id GLOB 'suwayomi:*:category:*' THEN 'MANGA'
+        WHEN entity_id GLOB 'novel-category-local-*' THEN 'NOVEL'
+        WHEN entity_id GLOB 'book-category-local-*' THEN 'BOOK'
+        ELSE content_scope
+    END,
+    name,
+    sort_order,
+    updated_at
+FROM aethon_category_identity;
+
+DROP TABLE aethon_category_identity;
+
+ALTER TABLE aethon_category_identity_54 RENAME TO aethon_category_identity;

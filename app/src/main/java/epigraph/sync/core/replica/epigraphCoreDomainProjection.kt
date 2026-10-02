@@ -173,9 +173,10 @@ class EpigraphCoreDomainProjection(
     }
 
     /**
-     * Removes only stale category links owned by the fully observed Core scope. Category rows,
-     * local assignments and legacy-unbound identities remain intact because none of them can be
-     * attributed to this server with sufficient evidence.
+     * Removes only stale category links owned by the fully observed Core scope. Local assignments
+     * and legacy-unbound identities remain intact because none of them can be attributed to this
+     * server with sufficient evidence. A folder is only deleted when its comic category was deleted
+     * on this server and nothing else lives in it; a previous server's binding never deletes one.
      */
     fun reconcileSuwayomiCategoryAssignments(
         database: Database,
@@ -209,21 +210,47 @@ class EpigraphCoreDomainProjection(
                     }
             }
 
-        // A complete catalog read is authoritative for Core-owned categories. Remove categories
-        // left by the same profile on a previous Core, plus current-server categories no longer
-        // present after a Suwayomi restore. Purely local categories have no Core identity and are
-        // intentionally untouched.
+        // A complete catalog read is authoritative for Core-owned categories.
         database.aethon_syncQueries.selectCategoryIdentitiesByContentScope("MANGA")
             .executeAsList()
-            .filter { identity ->
+            .forEach { identity ->
                 val id = identity.entity_id
                 val belongsToCurrent = id.startsWith(categoryPrefix)
                 val belongsToPreviousServer = id.startsWith("suwayomi:server:") &&
                     ":profile:$profileId:category:" in id &&
                     !belongsToCurrent
-                belongsToPreviousServer || belongsToCurrent && id !in observedCategoryEntityIds
+                when {
+                    // Re-pairing to another Core (or a reinstalled desktop) says nothing about the
+                    // user's folder: only the binding to the old server is dropped. The folder and its
+                    // assignments stay; a folder holding comics is created on the new server by
+                    // SuwayomiCategoryCreateHook, any other joins a same-named category.
+                    belongsToPreviousServer -> database.aethon_syncQueries.deleteCategoryIdentity(id)
+                    belongsToCurrent && id !in observedCategoryEntityIds -> {
+                        // Deleted on the desktop (or gone after a Suwayomi restore). A folder that also
+                        // belongs to the novel or book library, or holds novels or books, outlives its
+                        // comic category: it only loses the comic binding and the Suwayomi comics.
+                        val local = identity.local_category_id
+                        val sharedWithOtherLibrary = database.aethon_syncQueries
+                            .selectCategoryIdentitiesByLocalId(local)
+                            .executeAsList()
+                            .any { it.entity_id != id } ||
+                            database.aethon_syncQueries.folderHoldsNovelsOrBooks(local).executeAsOne()
+                        if (sharedWithOtherLibrary) {
+                            database.aethon_syncQueries
+                                .selectCoreRemoteIdentitiesByScopeAndType(serverId, profileId, "SUWAYOMI_MANGA")
+                                .executeAsList()
+                                .filterNot { it.entity_id in protectedEntityIds }
+                                .mapNotNull { localMangaId(database, it.entity_id) }
+                                .forEach { mangaId ->
+                                    database.aethon_syncQueries.deleteMangaCategoryAssignment(mangaId, local)
+                                }
+                            database.aethon_syncQueries.deleteCategoryIdentity(id)
+                        } else {
+                            database.categoriesQueries.delete(local)
+                        }
+                    }
+                }
             }
-            .forEach { identity -> database.categoriesQueries.delete(identity.local_category_id) }
     }
 
     override suspend fun delete(
@@ -1357,7 +1384,23 @@ class EpigraphCoreDomainProjection(
     private fun projectCategory(database: Database, entityId: String, record: JsonObject, scope: String) {
         val name = record.string("name")?.takeIf { it.isNotBlank() } ?: return
         val position = record.long("order")?.coerceAtLeast(0) ?: 0
+        val previous = database.aethon_syncQueries.selectCategoryIdentityByEntityId(entityId).executeAsOneOrNull()
         val localId = ensureCategory(database, entityId, name, scope, position, now(record))
+        val shared = database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(localId).executeAsList().size > 1
+        if (shared) {
+            // A folder shared by several libraries follows one library's category only where that
+            // category itself changed. Re-projecting an unchanged record (a snapshot after re-pair,
+            // or a joined same-named category) must not undo the name or order another library set.
+            if (previous == null) return
+            database.categoriesQueries.update(
+                id = localId,
+                name = name.takeIf { it != previous.name },
+                sort = position.takeIf { it != previous.sort_order },
+                flags = null,
+                mangaOrder = null,
+            )
+            return
+        }
         database.categoriesQueries.update(
             id = localId,
             name = name,
@@ -1961,7 +2004,7 @@ class EpigraphCoreDomainProjection(
         updatedAt: Long,
     ): Long {
         val existing = database.aethon_syncQueries.selectCategoryIdentityByEntityId(entityId).executeAsOneOrNull()
-        val localId = existing?.local_category_id ?: run {
+        val localId = existing?.local_category_id ?: joinableFolder(database, entityId, name, scope) ?: run {
             database.categoriesQueries.insert(
                 name = name,
                 sort = position,
@@ -1981,6 +2024,63 @@ class EpigraphCoreDomainProjection(
         )
         return localId
     }
+
+    /**
+     * The phone has one folder list for every library, the desktop one list per library. A category
+     * first seen from another library joins the folder of the same name instead of arriving as a
+     * duplicate. Nothing is merged where it could lose an assignment:
+     * - a folder that already holds comics or books of [scope] without being bound in [scope] keeps
+     *   them local (comics are bound by [epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook],
+     *   books on their next edit);
+     * - a folder bound in [scope] is only taken over when that binding is left over from an earlier
+     *   pairing: a novel or book category neither in the confirmed replica nor queued, or a comic
+     *   category of another server on a folder without comics (with comics, the folder is bound
+     *   by name through the create hook, which also publishes its assignments).
+     */
+    private fun joinableFolder(database: Database, entityId: String, name: String, scope: String): Long? {
+        val entityType = when (scope) {
+            "MANGA" -> "comic.category"
+            "NOVEL" -> "novel.category"
+            "BOOK" -> "book.category"
+            else -> return null
+        }
+        val wanted = name.trim()
+        val folders = database.categoriesQueries.findAll().executeAsList().filter { it._id > 0 }
+        val candidates = folders.filter { it.name.trim() == wanted } +
+            folders.filter { it.name.trim() != wanted && it.name.trim().equals(wanted, ignoreCase = true) }
+        for (folder in candidates) {
+            val bound = database.aethon_syncQueries
+                .selectCategoryIdentityByLocalIdAndScope(folder._id, scope)
+                .executeAsOneOrNull()
+            if (bound == null) {
+                val holdsUnpublished = when (scope) {
+                    "MANGA" -> database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()
+                    "BOOK" -> database.aethon_syncQueries.folderHoldsBooks(folder._id).executeAsOne()
+                    else -> false
+                }
+                if (holdsUnpublished) continue
+                return folder._id
+            }
+            val stale = if (scope == "MANGA") {
+                val boundServer = suwayomiServerOf(bound.entity_id)
+                boundServer != null &&
+                    boundServer != suwayomiServerOf(entityId) &&
+                    !database.aethon_syncQueries.folderHoldsComics(folder._id).executeAsOne()
+            } else {
+                !database.aethon_syncQueries.isCategoryEntityLive(entityType, bound.entity_id).executeAsOne()
+            }
+            if (stale) {
+                database.aethon_syncQueries.deleteCategoryIdentity(bound.entity_id)
+                return folder._id
+            }
+        }
+        return null
+    }
+
+    private fun suwayomiServerOf(entityId: String): String? =
+        entityId.takeIf { it.startsWith("suwayomi:server:") }
+            ?.removePrefix("suwayomi:server:")
+            ?.substringBefore(":profile:")
 
     private fun localMangaId(database: Database, entityId: String): Long? =
         database.aethon_syncQueries.selectIdentityByEntityId(entityId).executeAsOneOrNull()

@@ -134,6 +134,25 @@ class CoreV1OutboxAdapterTest {
     }
 
     @Test
+    fun `novel category assignment sends only the fields the Core accepts`() {
+        val work = PortableWorkRef.Novel("lnreader.plugin", ProviderOwnedKey("/Novel/KeepCase"))
+        val command = SyncCommand.SetCategoryAssignment(WORK_ID, CATEGORY_ID, assigned = true, portableWorkRef = work)
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.NOVEL_CATEGORY_ASSIGNMENT, NOVEL_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.NOVEL_CATEGORY_ASSIGNMENT)).copy(
+                    supportsPortableSyncV3 = true,
+                ),
+                lamport = 7,
+            ),
+        )
+
+        assertEquals(setOf("assignmentId", "novelId", "categoryId"), ready.mutation.patch.orEmpty().keys)
+    }
+
+    @Test
     fun `projects comic library membership when the Core advertises the additive entity`() {
         val command = SyncCommand.SetLibraryMembership(COMIC_ID, true)
         val ready = assertInstanceOf(

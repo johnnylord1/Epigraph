@@ -26,6 +26,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -1118,6 +1119,118 @@ class SuwayomiCatalogSyncTest {
         assertEquals(
             listOf("Remote Favorites"),
             database.categoriesQueries.findAllByMangaId(manga._id).executeAsList().map { it.name },
+        )
+    }
+
+    @Test
+    fun `re-pairing to another desktop keeps the folder and its comics until it is bound by name`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        suspend fun sync(credentials: CoreCredentialSession, now: Long) = SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(credentials, capabilities(categoryCreate = true), now)
+        val previous = session("desktop-zero")
+        try {
+            sync(previous, 1000)
+        } finally {
+            previous.close()
+        }
+        val folder = database.categoriesQueries.findAll().executeAsList().single { it.name == "Remote Favorites" }
+        val held = database.aethon_syncQueries.selectMangaIdsByCategory(folder._id).executeAsList()
+        assertTrue(held.isNotEmpty())
+        database.categoriesQueries.insert("Novels", 2, 0, "a")
+        val novelsFolder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "novel-category-local-$novelsFolder", novelsFolder, "NOVEL", "Novels", 0, 1,
+        )
+
+        val outcome = sync(session, 2000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        // Before, the folder of the previous desktop was deleted with every assignment in it.
+        val folders = database.categoriesQueries.findAll().executeAsList()
+        assertEquals(listOf(folder._id), folders.filter { it.name == "Remote Favorites" }.map { it._id })
+        assertTrue(folders.any { it._id == novelsFolder })
+        assertTrue(database.aethon_syncQueries.selectMangaIdsByCategory(folder._id).executeAsList().containsAll(held))
+        assertTrue(
+            database.aethon_syncQueries
+                .selectCategoryIdentityByEntityId("suwayomi:server:desktop-zero:profile:$PROFILE:category:55")
+                .executeAsOneOrNull() == null,
+        )
+        // The new desktop's same-named category waits for the create hook, which binds this folder.
+        assertNull(
+            database.aethon_syncQueries
+                .selectCategoryIdentityByEntityId("suwayomi:server:$SERVER:profile:$PROFILE:category:55")
+                .executeAsOneOrNull(),
+        )
+        assertEquals(
+            listOf(folder._id),
+            database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it._id },
+        )
+    }
+
+    @Test
+    fun `remote comic category joins a same-named folder that holds no comics`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        database.categoriesQueries.insert("Remote Favorites", 0, 0, "a")
+        val folder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "novel-category-local-$folder", folder, "NOVEL", "Remote Favorites", 0, 1,
+        )
+
+        SuwayomiCatalogSync(
+            pages = FixturePages(),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities(categoryCreate = true), 1000)
+
+        assertEquals(
+            listOf(folder),
+            database.categoriesQueries.findAll().executeAsList().filter { it.name == "Remote Favorites" }.map { it._id },
+        )
+        assertEquals(
+            mapOf(
+                "MANGA" to "suwayomi:server:$SERVER:profile:$PROFILE:category:55",
+                "NOVEL" to "novel-category-local-$folder",
+            ),
+            database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder).executeAsList()
+                .associate { it.content_scope to it.entity_id },
+        )
+        val manga = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        assertEquals(
+            listOf(folder),
+            database.categoriesQueries.findAllByMangaId(manga._id).executeAsList().map { it._id },
+        )
+    }
+
+    @Test
+    fun `a comic category deleted on the desktop keeps a folder shared with novels`() = runTest {
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        suspend fun sync(pages: FixturePages, now: Long) = SuwayomiCatalogSync(
+            pages = pages,
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities(), now)
+        sync(FixturePages(), 1000)
+        val folder = database.categoriesQueries.findAll().executeAsList().single { it.name == "Remote Favorites" }
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "novel-category-local-${folder._id}", folder._id, "NOVEL", "Remote Favorites", 0, 1,
+        )
+
+        // Suwayomi id 55 is gone; the catalog now lists a different category.
+        sync(FixturePages(categoryId = 56), 2000)
+
+        val kept = database.categoriesQueries.findAll().executeAsList().filter { it._id == folder._id }
+        assertEquals(1, kept.size)
+        val manga = database.mangasQueries.findAll().executeAsList().single { it.title == "Suwayomi One" }
+        assertFalse(folder._id in database.categoriesQueries.findAllByMangaId(manga._id).executeAsList().map { it._id })
+        assertEquals(
+            listOf("NOVEL"),
+            database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder._id).executeAsList().map { it.content_scope },
         )
     }
 

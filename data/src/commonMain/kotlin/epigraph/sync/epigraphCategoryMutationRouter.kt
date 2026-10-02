@@ -47,16 +47,23 @@ class EpigraphCategoryMutationRouter(
             apply()
             if (scopes == null) return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
             val locals = categoriesQueries.findAll().executeAsList()
-            val identities = locals.mapNotNull { category ->
-                aethon_syncQueries.selectCategoryIdentityByLocalId(category._id).executeAsOneOrNull()
-            }.associateBy { it.local_category_id }
-            val comicRanks = comicRanks(locals.map { it._id }, identities)
+            // One folder can be published to several libraries (comics, novels, books); each keeps
+            // its own identity, so a rename or reorder is published to all of them.
+            val identities = locals.associate { category ->
+                category._id to aethon_syncQueries.selectCategoryIdentitiesByLocalId(category._id).executeAsList()
+            }
+            val comicRanks = comicRanks(
+                locals.map { it._id },
+                identities.mapNotNull { (localId, rows) ->
+                    rows.firstOrNull { it.content_scope == "MANGA" }?.let { localId to it }
+                }.toMap(),
+            )
             val positions = locals.syncPositions()
 
             val envelopes = locals
                 .filter { it._id > 0 && it._id in touchedCategoryIds }
-                .mapNotNull { category ->
-                    val identity = identities[category._id] ?: return@mapNotNull null
+                .flatMap { category -> identities[category._id].orEmpty().map { category to it } }
+                .mapNotNull { (category, identity) ->
                     val target = identity.target(scopes) ?: return@mapNotNull null
                     val position = if (target.scope == CategoryScope.MANGA) {
                         comicRanks[category._id] ?: return@mapNotNull null
@@ -103,20 +110,19 @@ class EpigraphCategoryMutationRouter(
                 delete()
                 return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
             }
-            val identity = aethon_syncQueries.selectCategoryIdentityByLocalId(localCategoryId).executeAsOneOrNull()
-            val target = identity?.target(scopes)
-            val envelopes = if (identity == null || target == null) {
-                emptyList()
-            } else {
-                val categoryEntity = EpigraphEntityId(identity.entity_id)
-                buildList {
-                    when (target.scope) {
-                        CategoryScope.BOOK -> addAll(bookAssignmentRewrites(localCategoryId, target))
-                        else -> addAll(assignmentTombstones(localCategoryId, categoryEntity, target))
+            // The folder is deleted from every library it was published to.
+            val envelopes = aethon_syncQueries.selectCategoryIdentitiesByLocalId(localCategoryId).executeAsList()
+                .flatMap { identity ->
+                    val target = identity.target(scopes) ?: return@flatMap emptyList()
+                    val categoryEntity = EpigraphEntityId(identity.entity_id)
+                    buildList {
+                        when (target.scope) {
+                            CategoryScope.BOOK -> addAll(bookAssignmentRewrites(localCategoryId, target))
+                            else -> addAll(assignmentTombstones(localCategoryId, categoryEntity, target))
+                        }
+                        add(envelope(target, SyncCommand.DeleteEntity(categoryEntity)))
                     }
-                    add(envelope(target, SyncCommand.DeleteEntity(categoryEntity)))
                 }
-            }
             delete()
             LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
         }
@@ -125,7 +131,7 @@ class EpigraphCategoryMutationRouter(
     /**
      * Binds [localCategoryId] to the Suwayomi category the Core just created ([categoryEntityId]) and
      * publishes the comic assignments the category already holds. Returns 0 and changes nothing when
-     * the category was deleted, renamed away from [expectedName], already bound, or when
+     * the category was deleted, renamed away from [expectedName], already bound to a comic category, or when
      * [categoryEntityId] already belongs to another local category.
      */
     suspend fun bindCreatedComicCategory(
@@ -147,7 +153,7 @@ class EpigraphCategoryMutationRouter(
             if (category.name != expectedName) {
                 return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
             }
-            if (aethon_syncQueries.selectCategoryIdentityByLocalId(localCategoryId).executeAsOneOrNull() != null) {
+            if (aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(localCategoryId, "MANGA").executeAsOneOrNull() != null) {
                 return@mutateLocalBatch LocalMutationResult(CategoryMutationResult(0), emptyList())
             }
             if (aethon_syncQueries.selectCategoryIdentityByEntityId(categoryEntityId).executeAsOneOrNull() != null) {
@@ -247,7 +253,7 @@ class EpigraphCategoryMutationRouter(
                 .distinct()
                 .sorted()
                 .mapNotNull { categoryId ->
-                    aethon_syncQueries.selectCategoryIdentityByLocalId(categoryId).executeAsOneOrNull()
+                    aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(categoryId, "BOOK").executeAsOneOrNull()
                         ?.let { EpigraphEntityId(it.entity_id) }
                 }
             SyncCommandEnvelope(

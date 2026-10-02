@@ -338,7 +338,11 @@ class CoreV1OutboxAdapter(
                     put("comicId", record.entityId)
                 }
                 put("categoryId", command.categoryId.value)
-                command.portableWorkRef?.let { put("portableWorkRef", portableWorkRefJson(it)) }
+                // The Core's novel assignment patch denies unknown fields; an extra key fails the
+                // whole mutation batch with 422. Only the comic patch carries a portable work ref.
+                if (record.entityType == EpigraphCoreEntityType.COMIC_CATEGORY_ASSIGNMENT) {
+                    command.portableWorkRef?.let { put("portableWorkRef", portableWorkRefJson(it)) }
+                }
             },
         )
     }

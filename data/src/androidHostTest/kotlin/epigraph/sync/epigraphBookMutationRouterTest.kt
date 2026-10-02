@@ -119,7 +119,34 @@ class EpigraphBookMutationRouterTest {
             .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
         val category = commands.filterIsInstance<SyncCommand.UpsertCategory>().single()
         assertEquals(1L, category.position)
-        assertEquals(1L, database.aethon_syncQueries.selectCategoryIdentityByLocalId(second).executeAsOne().sort_order)
+        assertEquals(1L, database.aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(second, "BOOK").executeAsOne().sort_order)
+    }
+
+    @Test
+    fun `a book in a folder bound to a comic category gets its own book category`() = runTest {
+        router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
+        val folder = insertCategory("Favorites", 0)
+        val comicCategory = "suwayomi:server:desk:profile:main:category:42"
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            entityId = comicCategory,
+            localCategoryId = folder,
+            contentScope = "MANGA",
+            name = "Favorites",
+            sortOrder = 1,
+            updatedAt = 1,
+        )
+
+        router.setCategory(BOOK_ID.value, folder, enabled = true)
+
+        val commands = database.aethon_syncQueries.selectReadyMutations(2_000, 20).executeAsList()
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        val category = commands.filterIsInstance<SyncCommand.UpsertCategory>().single()
+        assertEquals("book-category-local-$folder", category.entityId.value)
+        val assignment = commands.filterIsInstance<SyncCommand.SetBookCategoryAssignments>().single()
+        assertEquals(listOf("book-category-local-$folder"), assignment.categoryIds.map { it.value })
+        val comic = database.aethon_syncQueries.selectCategoryIdentityByEntityId(comicCategory).executeAsOne()
+        assertEquals("MANGA", comic.content_scope)
+        assertEquals(folder, comic.local_category_id)
     }
 
     @Test

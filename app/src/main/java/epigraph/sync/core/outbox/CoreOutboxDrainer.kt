@@ -272,10 +272,57 @@ class CoreOutboxDrainer(
             return CoreOutboxDrainReport(ordered.size, 0, 0, preSubmitRetries, blocked)
         }
 
+        val batch = submit(ready, authorization, nowEpochMillis, releaseOnRejectedRequest = ready.size == 1)
+        val settled = if (batch.rejectedRequest) {
+            // The Core refused the request as a whole (malformed or oversized), so nothing in it was
+            // applied. Resend each mutation alone: one bad command must not hold back every command
+            // that shared its batch. The bad one stays pending with backoff, never dropped.
+            isolate(ready, authorization, nowEpochMillis)
+        } else {
+            batch
+        }
+        return CoreOutboxDrainReport(
+            ordered.size,
+            settled.submitted,
+            settled.acknowledged,
+            preSubmitRetries + settled.retries,
+            blocked + settled.blocked,
+        )
+    }
+
+    private suspend fun isolate(
+        ready: List<ReadyClaim>,
+        authorization: CoreOutboxAuthorization,
+        nowEpochMillis: Long,
+    ): Settlement {
+        var total = Settlement()
+        ready.forEachIndexed { index, item ->
+            try {
+                total += submit(listOf(item), authorization, nowEpochMillis, releaseOnRejectedRequest = true)
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    ready.drop(index + 1).forEach { it.claim.release("drain_cancelled", nowEpochMillis) }
+                }
+                throw cancelled
+            }
+        }
+        return total
+    }
+
+    /**
+     * Submits [ready] as one request and settles every row. A request the Core rejects as a whole
+     * leaves the rows leased when [releaseOnRejectedRequest] is false, so the caller can isolate them.
+     */
+    private suspend fun submit(
+        ready: List<ReadyClaim>,
+        authorization: CoreOutboxAuthorization,
+        nowEpochMillis: Long,
+        releaseOnRejectedRequest: Boolean,
+    ): Settlement {
         val requestId = runCatching { requestIds.nextRequestId() }.getOrNull()
         if (requestId == null || !requestId.isCanonicalProtocolIdentifier()) {
             ready.forEach { it.claim.release("invalid_request_id", nowEpochMillis) }
-            return CoreOutboxDrainReport(ordered.size, 0, 0, preSubmitRetries + ready.size, blocked)
+            return Settlement(retries = ready.size)
         }
         val request = CoreMutationsRequest(requestId, ready.map(ReadyClaim::mutation))
         val response = try {
@@ -287,26 +334,23 @@ class CoreOutboxDrainer(
             throw cancelled
         } catch (_: Throwable) {
             ready.forEach { it.claim.release("core_transport_failure", nowEpochMillis) }
-            return CoreOutboxDrainReport(ordered.size, ready.size, 0, preSubmitRetries + ready.size, blocked)
+            return Settlement(submitted = ready.size, retries = ready.size)
         }
 
         val body = when (response) {
             is CoreHttpResult.Failure -> {
+                if (response.statusCode in REJECTED_REQUEST_STATUSES && !releaseOnRejectedRequest) {
+                    return Settlement(rejectedRequest = true)
+                }
                 val errorCode = "core_http_${response.statusCode}"
                 ready.forEach { it.claim.release(errorCode, nowEpochMillis) }
-                return CoreOutboxDrainReport(
-                    ordered.size,
-                    ready.size,
-                    0,
-                    preSubmitRetries + ready.size,
-                    blocked,
-                )
+                return Settlement(submitted = ready.size, retries = ready.size)
             }
             is CoreHttpResult.Success -> response.value
         }
         if (!body.matches(request)) {
             ready.forEach { it.claim.release("invalid_core_response", nowEpochMillis) }
-            return CoreOutboxDrainReport(ordered.size, ready.size, 0, preSubmitRetries + ready.size, blocked)
+            return Settlement(submitted = ready.size, retries = ready.size)
         }
 
         val decisions = try {
@@ -316,12 +360,13 @@ class CoreOutboxDrainer(
             )
         } catch (_: IllegalArgumentException) {
             ready.forEach { it.claim.release("invalid_core_response", nowEpochMillis) }
-            return CoreOutboxDrainReport(ordered.size, ready.size, 0, preSubmitRetries + ready.size, blocked)
+            return Settlement(submitted = ready.size, retries = ready.size)
         }
         val readyById = ready.associateBy { it.mutation.clientMutationId }
         val resultById = body.results.associateBy { it.clientMutationId }
         var acknowledged = 0
-        var retries = preSubmitRetries
+        var retries = 0
+        var blocked = 0
         decisions.forEach { decision ->
             val item = readyById.getValue(decision.clientMutationId)
             when (decision.disposition) {
@@ -357,7 +402,22 @@ class CoreOutboxDrainer(
                 }
             }
         }
-        return CoreOutboxDrainReport(ordered.size, ready.size, acknowledged, retries, blocked)
+        return Settlement(ready.size, acknowledged, retries, blocked)
+    }
+
+    private data class Settlement(
+        val submitted: Int = 0,
+        val acknowledged: Int = 0,
+        val retries: Int = 0,
+        val blocked: Int = 0,
+        val rejectedRequest: Boolean = false,
+    ) {
+        operator fun plus(other: Settlement) = Settlement(
+            submitted + other.submitted,
+            acknowledged + other.acknowledged,
+            retries + other.retries,
+            blocked + other.blocked,
+        )
     }
 
     private suspend fun ClaimedCoreOutboxRecord.release(errorCode: String, nowEpochMillis: Long) {
@@ -426,6 +486,9 @@ private fun String?.safeErrorCode(fallback: String): String {
     }
     return candidate ?: fallback
 }
+
+/** Request-level refusals: the Core applied nothing, and resending the same batch fails the same way. */
+private val REJECTED_REQUEST_STATUSES = setOf(400, 413, 422)
 
 private const val MAX_PROTOCOL_IDENTIFIER_LENGTH = 512
 private const val MAX_ERROR_CODE_LENGTH = 256

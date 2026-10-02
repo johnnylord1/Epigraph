@@ -187,7 +187,7 @@ class EpigraphLibraryMutationRouter(
         // categories in the add/remove diff.
         if (isNovel && mutation.origin.emitsOutbox) {
             requestedCategoryIds.forEach { categoryId ->
-                if (aethon_syncQueries.selectCategoryIdentityByLocalId(categoryId).executeAsOneOrNull() == null) {
+                if (aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(categoryId, "NOVEL").executeAsOneOrNull() == null) {
                     val category = availableCategories.getValue(categoryId)
                     val stableId = EpigraphEntityId("novel-category-local-$categoryId")
                     aethon_syncQueries.upsertCategoryScope(categoryId, "NOVEL")
@@ -206,7 +206,7 @@ class EpigraphLibraryMutationRouter(
         val categoryEntities = if (mutation.origin.emitsOutbox) {
             (removedCategoryIds + addedCategoryIds).mapNotNull { categoryId ->
                 val categoryIdentity = aethon_syncQueries
-                    .selectCategoryIdentityByLocalId(categoryId)
+                    .selectCategoryIdentityByLocalIdAndScope(categoryId, if (isNovel) "NOVEL" else "MANGA")
                     .executeAsOneOrNull()
                 if (categoryIdentity != null) {
                     categoryId to EpigraphEntityId(categoryIdentity.entity_id)
@@ -240,7 +240,7 @@ class EpigraphLibraryMutationRouter(
             requestedCategoryIds.sorted().map { categoryId ->
                 val category = availableCategories.getValue(categoryId)
                 val categoryEntity = aethon_syncQueries
-                    .selectCategoryIdentityByLocalId(categoryId)
+                    .selectCategoryIdentityByLocalIdAndScope(categoryId, "NOVEL")
                     .executeAsOneOrNull()
                     ?: error("category $categoryId has no Epigraph identity")
                 SyncCommand.UpsertCategory(

@@ -201,13 +201,16 @@ CREATE TABLE aethon_category_scope (
     FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
 );
 
+-- One identity per folder and library: the desktop keeps separate comic, novel and book categories,
+-- while a phone folder is shared by all libraries.
 CREATE TABLE aethon_category_identity (
     entity_id TEXT NOT NULL PRIMARY KEY,
-    local_category_id INTEGER NOT NULL UNIQUE,
+    local_category_id INTEGER NOT NULL,
     content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
+    UNIQUE(local_category_id, content_scope),
     FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
 );
 
@@ -874,9 +877,55 @@ ON CONFLICT(entity_id) DO UPDATE SET
     sort_order = :sortOrder,
     updated_at = :updatedAt;
 
-selectCategoryIdentityByLocalId:
+selectCategoryIdentityByLocalIdAndScope:
 SELECT * FROM aethon_category_identity
-WHERE local_category_id = :localCategoryId;
+WHERE local_category_id = :localCategoryId AND content_scope = :contentScope;
+
+selectCategoryIdentitiesByLocalId:
+SELECT * FROM aethon_category_identity
+WHERE local_category_id = :localCategoryId
+ORDER BY content_scope;
+
+deleteCategoryIdentity:
+DELETE FROM aethon_category_identity
+WHERE entity_id = :entityId;
+
+-- A category entity is live while the confirmed replica holds it or a local command for it is
+-- still queued. Anything else is left over from a previous pairing or never left the device.
+isCategoryEntityLive:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_core_replica_record
+    WHERE entity_type = :entityType AND entity_id = :entityId
+) OR EXISTS(
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE entity_type = :entityType AND entity_id = :entityId
+);
+
+-- Whether a folder holds novels or books, i.e. content that a comic category change must not touch.
+folderHoldsNovelsOrBooks:
+SELECT EXISTS(
+    SELECT 1 FROM local_books_categories WHERE category_id = :categoryId
+) OR EXISTS(
+    SELECT 1 FROM mangas_categories mc
+    JOIN aethon_content_identity e
+      ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+    WHERE mc.category_id = :categoryId
+);
+
+-- Whether a folder holds synchronized Suwayomi comics or books. Such a folder cannot silently join a
+-- desktop category of that library: the next complete read would drop the unpublished assignments.
+folderHoldsComics:
+SELECT EXISTS(
+    SELECT 1 FROM mangas_categories mc
+    JOIN aethon_content_identity e
+      ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+    WHERE mc.category_id = :categoryId
+);
+
+folderHoldsBooks:
+SELECT EXISTS(
+    SELECT 1 FROM local_books_categories WHERE category_id = :categoryId
+);
 
 selectCategoryIdentityByEntityId:
 SELECT * FROM aethon_category_identity
@@ -1523,16 +1572,16 @@ WHERE server_id = :serverId
     AND profile_id = :profileId
     AND device_id = :deviceId;
 
--- Local comic categories that hold at least one comic but have no Epigraph identity yet. They can only
--- reach Suwayomi through CreateCategory.
+-- Local categories that hold at least one comic but have no comic identity yet (the folder may
+-- already be bound to a novel or book category). They can only reach Suwayomi through CreateCategory.
 selectUnpublishedComicCategories:
 SELECT c._id, c.name
 FROM categories c
 WHERE c._id > 0
-  AND NOT EXISTS (SELECT 1 FROM aethon_category_identity i WHERE i.local_category_id = c._id)
-  AND COALESCE(
-      (SELECT s.content_scope FROM aethon_category_scope s WHERE s.category_id = c._id), 'ALL'
-  ) IN ('ALL', 'MANGA')
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_category_identity i
+      WHERE i.local_category_id = c._id AND i.content_scope = 'MANGA'
+  )
   AND EXISTS (
       SELECT 1 FROM mangas_categories mc
       JOIN aethon_content_identity e

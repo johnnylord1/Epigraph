@@ -172,6 +172,51 @@ class CoreOutboxDrainerTest {
     }
 
     @Test
+    fun `a batch the Core rejects whole is resent one by one so a bad command cannot hold back the rest`() = runTest {
+        val store = FakeStore(listOf(claim(1), claim(2), claim(3)))
+        val requests = mutableListOf<List<String>>()
+        val gateway = FakeGateway { _, request ->
+            requests += request.ids()
+            if (request.mutations.size > 1 || request.ids() == listOf("mutation-2")) {
+                CoreHttpResult.Failure(statusCode = 422, errorEnvelope = null)
+            } else {
+                CoreHttpResult.Success(response(request, result(request, 1)))
+            }
+        }
+        val report = drainer(store, gateway, lamports(1, 2, 3)).drain(authorization(), capabilities(), NOW)
+
+        assertEquals(
+            listOf(listOf("mutation-1", "mutation-2", "mutation-3"), listOf("mutation-1"), listOf("mutation-2"), listOf("mutation-3")),
+            requests,
+        )
+        assertEquals(CoreOutboxDrainReport(3, 3, 2, 1, 0), report)
+        assertEquals(listOf("mutation-1", "mutation-3"), store.acknowledged.map { it.first.clientMutationId })
+        // The bad command is kept and retried with backoff, never dropped or parked forever.
+        val bad = store.failed.single()
+        assertEquals("mutation-2", bad.identity.clientMutationId)
+        assertEquals("core_http_422", bad.errorCode)
+        assertEquals(NOW + RETRY_DELAY, bad.nextAttemptAt)
+    }
+
+    @Test
+    fun `a lone rejected command is released without a second request`() = runTest {
+        val store = FakeStore(listOf(claim(1)))
+        var calls = 0
+        val report = drainer(
+            store,
+            FakeGateway { _, _ ->
+                calls += 1
+                CoreHttpResult.Failure(statusCode = 422, errorEnvelope = null)
+            },
+            lamports(1),
+        ).drain(authorization(), capabilities(), NOW)
+
+        assertEquals(1, calls)
+        assertEquals(CoreOutboxDrainReport(1, 1, 0, 1, 0), report)
+        assertEquals("core_http_422", store.failed.single().errorCode)
+    }
+
+    @Test
     fun `mismatched response request id releases complete batch`() = runTest {
         val store = FakeStore(listOf(claim(1), claim(2)))
         val gateway = FakeGateway { _, request ->

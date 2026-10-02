@@ -27,6 +27,8 @@ import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.InsertCategories
+import yokai.domain.category.interactor.UpdateCategories
+import yokai.domain.category.models.CategoryUpdate
 import yokai.i18n.MR
 import yokai.util.lang.getString
 import android.R as AR
@@ -45,6 +47,7 @@ class ManageCategoryDialog(bundle: Bundle? = null) :
     private val preferences by injectLazy<PreferencesHelper>()
     private val getCategories by injectLazy<GetCategories>()
     private val insertCategories by injectLazy<InsertCategories>()
+    private val updateCategories by injectLazy<UpdateCategories>()
 
     // Process-scope: pending DB writes need to complete even if the dialog is dismissed mid-save.
     private val dialogScope = CoroutineScope(Job() + Dispatchers.Main)
@@ -118,8 +121,10 @@ class ManageCategoryDialog(bundle: Bundle? = null) :
                         updateLibrary?.invoke(category.id)
                     }
                 } else {
-                    // Existing category update — fire and forget on IO; UI doesn't observe the result.
-                    dialogScope.launch(Dispatchers.IO) { insertCategories.awaitOne(category) }
+                    // Existing category rename. An insert here would add a second folder instead of
+                    // renaming this one, and skip the sync router that publishes the new name.
+                    val update = CategoryUpdate(id = category.id!!.toLong(), name = text)
+                    dialogScope.launch(Dispatchers.IO) { updateCategories.awaitOne(update) }
                 }
             } else if (categoryExists) {
                 binding.categoryTextLayout.error =

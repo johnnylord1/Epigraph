@@ -370,7 +370,9 @@ class EpigraphBookMutationRouter(
             val positions = allCategories.syncPositions()
             val categoryCommands = requested.map { localId ->
                 val local = categories[localId] ?: error("Unknown category: $localId")
-                val identity = aethon_syncQueries.selectCategoryIdentityByLocalId(localId).executeAsOneOrNull()
+                // The folder may also be bound to a comic or novel category; books use their own.
+                val identity = aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(localId, "BOOK")
+                    .executeAsOneOrNull()
                 val entityId = identity?.entity_id ?: "book-category-local-$localId"
                 val position = positions[localId] ?: 0L
                 aethon_syncQueries.upsertCategoryScope(localId, "BOOK")
@@ -387,7 +389,8 @@ class EpigraphBookMutationRouter(
             val assignment = SyncCommand.SetBookCategoryAssignments(
                 EpigraphEntityId(bookId),
                 requested.map { localId ->
-                    val identity = aethon_syncQueries.selectCategoryIdentityByLocalId(localId).executeAsOne()
+                    val identity = aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(localId, "BOOK")
+                        .executeAsOne()
                     EpigraphEntityId(identity.entity_id)
                 },
             )
