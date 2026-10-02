@@ -695,8 +695,8 @@ describe("Settings", () => {
 
     await waitFor(() => expect(document.querySelector("[data-backup-review]")).toBeTruthy());
     expect(screen.getByText("24 titles")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Selected" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("Info").closest("details")?.hasAttribute("open")).toBe(false);
+    expect(screen.getByRole("switch", { name: translate("settings_inline_manga") }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByText("Info")).toBeNull();
   });
 
   test("recognizes an LNReader ZIP selected through the restore file input", async () => {
@@ -724,30 +724,30 @@ describe("Settings", () => {
     });
     await fireEvent.change(input!, { target: { files: [backup] } });
 
-    await waitFor(() => expect(screen.getByText(/Detected format: LNReader ZIP/i)).toBeTruthy());
-    expect(screen.getByRole("button", { name: "Review Novel dependencies" })).toBeTruthy();
     await waitFor(() => {
-      const preview = container.querySelector("[data-backup-dependencies]");
-      expect(preview?.textContent).toContain("9 titles");
-      expect(preview?.textContent).toContain("6936 chapters");
-      expect(preview?.textContent).toContain("2 repositories");
-      expect(preview?.textContent).toContain("19 extensions");
+      const fileRow = container.querySelector(".backup-file-row");
+      expect(fileRow?.textContent).toContain("9 titles");
+      expect(fileRow?.textContent).toContain("6936 chapters");
     });
-    await fireEvent.click(screen.getByRole("switch", { name: "Confirm current profile restore" }));
-    expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(true);
-    await fireEvent.click(screen.getByRole("button", { name: "Review & approve" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(await screen.findByRole("button", { name: /Sources and extensions/ }));
+    expect(screen.getByRole("button", { name: "Review Novel dependencies" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 
-    let rejectRestore!: (error: Error) => void;
-    restoreProductionNovelsMock.mockImplementationOnce(() => new Promise((_, reject) => {
-      rejectRestore = reject;
-    }));
-    const restoreButton = screen.getByRole("button", { name: "LNReader novels restore" });
-    await fireEvent.click(restoreButton);
+    const mainButton = screen.getByRole("button", { name: "LNReader novels restore" });
+    expect(mainButton.hasAttribute("disabled")).toBe(false);
+    await fireEvent.click(mainButton);
+    await waitFor(() => expect(screen.getByText("Repositories from the backup will also be added.")).toBeTruthy());
+
+    const { promise: restorePromise, reject: rejectRestore } = Promise.withResolvers<never>();
+    restoreProductionNovelsMock.mockImplementationOnce(() => restorePromise);
+    const confirmButton = screen.getByRole("button", { name: "LNReader novels restore" });
+    await fireEvent.click(confirmButton);
     await waitFor(() => expect(productionWorkflowMock).toHaveBeenCalled());
     await waitFor(() => expect(container.querySelector(".backup-progress")?.textContent).toMatch(/Restoring/i));
-    expect(restoreButton.hasAttribute("disabled")).toBe(true);
-    await waitFor(() => expect(rejectRestore).toBeTypeOf("function"));
+    const mainRestoreButton = container.querySelector<HTMLButtonElement>(".mg-footer .mg-btn--primary")!;
+    expect(mainRestoreButton.textContent).toMatch(/Restoring/i);
+    expect(mainRestoreButton.hasAttribute("disabled")).toBe(true);
+    await waitFor(() => expect(restoreProductionNovelsMock).toHaveBeenCalled());
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(productionWorkflowMock.mock.results.at(-1)?.value.snapshot().cancelled).toBe(true);
     rejectRestore(new Error("Repository is temporarily unavailable. Please retry."));
@@ -767,7 +767,8 @@ describe("Settings", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Restore backup" }));
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
     await fireEvent.change(input, { target: { files: [new File(["fixture"], "backup.tachibk")] } });
-    expect(await screen.findByRole("button", { name: "Review Manga dependencies" })).toBeTruthy();
+    await fireEvent.click(await screen.findByRole("button", { name: /Sources and extensions/ }));
+    expect(await screen.findByRole("region", { name: "Review Manga dependencies" })).toBeTruthy();
     expect(gqlMock.mock.calls.some(([query]) => /updateExtension/i.test(String(query)))).toBe(false);
   });
 

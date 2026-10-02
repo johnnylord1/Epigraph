@@ -47,6 +47,26 @@ export function createMangaRestoreDependencySession(deps: {
         if (!plan.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) await deps.add(url);
       });
     },
+    installMany(approvals: Array<{ packageName: string; storeId: string }>) {
+      return prepare(async plan => {
+        for (const { packageName, storeId } of approvals) {
+          const matches = plan.extensions.filter(extension => extension.packageName === packageName);
+          if (matches.length !== 1 || matches[0].storeId !== storeId || !plan.repositories.some(repo => repo.id === storeId)) throw Error("RESTORE_EXTENSION_ORIGIN_CHANGED");
+          if (!matches[0].isInstalled) await deps.install(packageName);
+        }
+      });
+    },
+    async addRepositories(urls: string[]) {
+      const failed: string[] = [];
+      const plan = await prepare(async current => {
+        for (const url of urls) {
+          if (!current.requiredRepositories.includes(url)) throw Error("RESTORE_REPOSITORY_NOT_REQUESTED");
+          if (current.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) continue;
+          try { await deps.add(url); } catch { failed.push(url); }
+        }
+      });
+      return { plan, failed };
+    },
   };
 }
 

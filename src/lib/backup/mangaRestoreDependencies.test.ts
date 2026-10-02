@@ -52,4 +52,20 @@ describe("Manga dependency approval", () => {
     expect(f.add).toHaveBeenCalledOnce();
     expect(f.add).toHaveBeenCalledWith("https://other.test/r");
   });
+  it("installMany installs only the not-installed packages and inspects exactly twice", async () => {
+    const f = fixture();
+    f.plan.extensions.push({ packageName: "two", storeId: "repo", isInstalled: true });
+    await f.session.installMany([{ packageName: "one", storeId: "repo" }, { packageName: "two", storeId: "repo" }]);
+    expect(f.install).toHaveBeenCalledOnce();
+    expect(f.install).toHaveBeenCalledWith("one");
+    expect(f.inspect).toHaveBeenCalledTimes(2);
+  });
+  it("addRepositories keeps going when one add rejects and returns that URL in failed", async () => {
+    const f = fixture();
+    f.plan.requiredRepositories = ["https://a.test/r", "https://b.test/r"];
+    f.add.mockImplementationOnce(() => Promise.reject(new Error("boom")));
+    const { failed } = await f.session.addRepositories(["https://a.test/r", "https://b.test/r"]);
+    expect(failed).toEqual(["https://a.test/r"]);
+    expect(f.add).toHaveBeenCalledTimes(2);
+  });
 });

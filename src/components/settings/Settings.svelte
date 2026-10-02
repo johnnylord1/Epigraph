@@ -13,7 +13,7 @@
   import "../../lib/i18n/runtime";
   import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
   import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
-  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, GitBranch, X, Check, Warning } from "phosphor-svelte";
+  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -906,6 +906,7 @@
     toggleStorageAdvanced("paths");
   }
   let backupViewMode = $state<"create" | "restore" | null>(null);
+  let backupRestorePage = $state<"main" | "sources" | "confirm">("main");
   function openStorageBackupPanel() {
     backupViewMode = "create";
     advStorageOpen = true;
@@ -924,9 +925,11 @@
     openSearchSources("extensions", "repos");
   }
   function closeStorageBackupPanel() {
+    if (!backupRestoring && backupRestoreResults) resetBackupImportState();
     backupViewMode = null;
     advStorageOpen = false;
     storageAdvancedSource = null;
+    backupRestorePage = "main";
   }
   const storageLimitBytes = $derived.by(() =>
     store.settings.storageLimitGb === null ? null : store.settings.storageLimitGb * 1024 ** 3
@@ -1288,11 +1291,11 @@
     const preview = backupDependencyPreview as BackupDependencyPreview | null;
     return preview?.requiresConfirmation === true && !backupDependenciesConfirmed;
   });
-  const backupExecuteDisabled = $derived.by(() => {
+  function computeBackupRestoreDisabled(ignoreConfirmations: boolean): boolean {
     if (backupDependenciesWorking) return true;
     if (backupResolvedExecutionBlockedReason) return true;
-    if (backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
-    if (backupRestoreTargetMode === "current-profile" && backupDependencyConfirmationRequired) return true;
+    if (!ignoreConfirmations && backupCurrentProfileGateRequired && !backupRestoreCurrentProfileConfirmed) return true;
+    if (!ignoreConfirmations && backupRestoreTargetMode === "current-profile" && backupDependencyConfirmationRequired) return true;
     if (backupRestoreTargetMode === "other-local-profile") {
       return !backupSelectedFilePath || !backupCanUseOtherProfileTarget || backupRestoring || backupValidating;
     }
@@ -1303,7 +1306,9 @@
       return (!backupSelectedFilePath && !backupSelectedFile) || backupRestoring || backupValidating;
     }
     return backupRestoreBlocked;
-  });
+  }
+  const backupExecuteDisabled = $derived(computeBackupRestoreDisabled(false));
+  const backupStartDisabled = $derived(computeBackupRestoreDisabled(true));
 
   function backupPathLabel(path: string | null | undefined): string | null {
     const trimmed = typeof path === "string" ? path.trim() : "";
@@ -1426,6 +1431,7 @@
     backupRestoreTargetMode = "current-profile";
     backupDependencyPreview = null;
     backupDependenciesConfirmed = false;
+    backupRestorePage = "main";
     resetLegacyBackupState();
     resetUnifiedBackupState();
   }
@@ -2074,6 +2080,42 @@
     if (!backupSelectedFile) return;
     backupError = null;
     await analyzeSelectedBackupFile(backupSelectedFile);
+  }
+
+  const backupNeedsConfirmPage = $derived(
+    backupRestoreTargetMode === "current-profile"
+      && (backupCurrentProfileGateRequired || backupDependencyPreview?.requiresConfirmation === true),
+  );
+
+  const backupShowsSourcesRow = $derived(
+    Boolean(backupSelectedFile) && backupRestoreTargetMode === "current-profile" && (
+      backupImportKind === "manga" || backupImportKind === "novels-lnreader"
+      || Boolean(backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga" || payload.kind === "novels"))
+    ),
+  );
+
+  const backupSourcesStatus = $derived.by(() => {
+    if (backupValidating) return translate("settings_inline_inspecting");
+    if (!backupReadiness) return translate("settings_backup_sourcesReview");
+    if (backupReadiness.requiresInstallCount > 0) return translate("settings_backup_sourcesNeedInstall", { count: backupReadiness.requiresInstallCount });
+    if (backupReadiness.unresolvedCount > 0) return translate("settings_backup_sourcesUnmatched", { count: backupReadiness.unresolvedCount });
+    return translate("settings_backup_sourcesReady");
+  });
+
+  async function startSelectedRestore() {
+    if (backupNeedsConfirmPage) {
+      backupRestorePage = "confirm";
+      return;
+    }
+    await executeSelectedRestore();
+  }
+
+  async function confirmSelectedRestore() {
+    backupRestoreCurrentProfileConfirmed = true;
+    if (backupDependencyPreview?.requiresConfirmation) backupDependenciesConfirmed = true;
+    backupRestorePage = "main";
+    await tick();
+    await executeSelectedRestore();
   }
 
   async function reviewMangaDependencies() {
@@ -6559,9 +6601,22 @@
     >
       <div class="mg-modal backup-modal" role="dialog" aria-modal="true" aria-labelledby="backup-modal-title" tabindex="-1" bind:this={backupSectionEl}>
         <header class="mg-header">
-          <div class="mg-heading">
+          <div class="mg-heading backup-heading">
+            {#if backupViewMode === "restore" && backupRestorePage !== "main"}
+              <button class="mg-close" type="button" disabled={backupRestoring} onclick={() => (backupRestorePage = "main")}>
+                <CaretLeft size={16} weight="bold" /><span class="mg-sr-only">{$_("ui_back")}</span>
+              </button>
+            {/if}
             <h2 id="backup-modal-title" class="mg-title">
-              {backupViewMode === "create" ? $_("settings_backup_createTitle") : $_("settings_backup_restoreTitle")}
+              {#if backupViewMode === "create"}
+                {$_("settings_backup_createTitle")}
+              {:else if backupRestorePage === "sources"}
+                {$_("settings_backup_sourcesTitle")}
+              {:else if backupRestorePage === "confirm"}
+                {$_("settings_backup_confirmTitle")}
+              {:else}
+                {$_("settings_backup_restoreTitle")}
+              {/if}
             </h2>
           </div>
           {#if firstRunPane !== "backup"}
@@ -6642,526 +6697,184 @@
             {/if}
           {:else if backupViewMode === "restore"}
             <div class="backup-restore">
-                <div class="mg-row backup-file-row">
-                  <span class="mg-row-copy">
-                    <strong>{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</strong>
-                    <small>{#if backupImportKind}{$_("settings_inline_detectedFormat", {
-                          format: backupImportKind === "epigraph"
-                            ? ".epigraphbk"
-                            : backupImportKind === "novels-lnreader"
-                              ? "LNReader ZIP"
-                              : $_("settings_inline_nativeMangaBackup"),
-                        })}{:else}{$_("settings_inline_restorePickHint")}{/if}</small>
-                  </span>
-                  <button class="mg-btn" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
-                    {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_chooseFile")}
-                  </button>
-                </div>
-                {#if backupRestoreHandoffSession}
-                  <p class="mg-note">{$_("settings_inline_restoreHandoffActive")}</p>
-                {:else if backupRestoreSourceProfileId}
-                  <p class="mg-note">{$_("settings_inline_originSession", { session: getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase() })}</p>
-                {/if}
-                {#if backupImportKind === "epigraph" && backupUnifiedPlan}
-                  <section class="backup-section" data-backup-review>
-                    {#if backupUnifiedPlan.executionBlockedReason}
-                      <p class="mg-note is-warn" role="alert"><Warning size={14} weight="bold" /> {$_("settings_inline_restoreBlocked")}</p>
+              <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
+              {#if backupRestorePage === "sources"}
+                <div class="backup-page">
+                    {#if backupSelectedFile && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))}
+                      {#key backupSelectedFile}
+                        <RestoreMangaDependencies bind:this={mangaDependencyPanel} file={backupSelectedFile}
+                          format={backupImportKind === "epigraph" ? "epigraph" : "native"} choices={backupReviewSelections}
+                          disabled={backupRestoring || backupValidating || backupDependenciesWorking || backupRestoreTargetMode !== "current-profile"}
+                          onBusy={busy => backupDependenciesWorking = busy}
+                          onChoices={choices => backupReviewSelections = choices}
+                          onChanged={async () => {
+                            if (backupImportKind === "manga") await refreshBackupReadiness();
+                            else if (backupSelectedFile) {
+                              const selection = { ...backupUnifiedSelection };
+                              await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
+                              backupUnifiedSelection = selection;
+                            }
+                          }} />
+                      {/key}
                     {/if}
+                    {#if backupSelectedFile && (backupImportKind === "novels-lnreader" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "novels"))}
+                      {#key backupSelectedFile}
+                        <RestoreNovelDependencies file={backupSelectedFile} format={backupImportKind === "novels-lnreader" ? "lnreader" : "epigraph"}
+                          disabled={backupRestoring || backupValidating || backupRestoreTargetMode !== "current-profile"}
+                          onBusy={busy => backupDependenciesWorking = busy}
+                          onChanged={async () => {
+                            if (backupImportKind === "epigraph" && backupSelectedFile) {
+                              const selection = { ...backupUnifiedSelection };
+                              await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
+                              backupUnifiedSelection = selection;
+                            }
+                          }} />
+                      {/key}
+                    {/if}
+                </div>
+              {:else if backupRestorePage === "confirm"}
+                <div class="backup-page backup-confirm">
+                  <p>{$_("settings_backup_confirmTarget", { target: backupCurrentTargetSummary })}</p>
+                  {#if backupDependencyPreview?.requiresConfirmation}
+                    <p class="mg-note">{$_("settings_backup_confirmRepositories")}</p>
+                  {/if}
+                </div>
+              {:else if backupRestoreResults && !backupRestoring && !backupError}
+                <div class="backup-page">
+                  <section data-backup-results>
                     <div class="mg-list">
-                      {#each backupUnifiedPlan.payloads as payload}
-                        <div class="mg-row backup-payload-row">
+                      {#each backupRestoreResults as result}
+                        <div class="mg-row backup-result-row">
                           <span class="mg-row-copy">
-                            <strong>{backupPayloadKindLabel(payload.kind)} <em class:has-warning={payload.status === "warning-only" || payload.status === "blocked"}>{backupPayloadStatusLabel(payload.status)}</em></strong>
-                            <small>{backupPayloadCount(payload) ?? restorePayloadSummary(payload, $_)}</small>
+                            <strong>{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.outcome === "unknown" ? "unknown" : result.status)}</strong>
+                            {#if result.kind === "repositories"}
+                              <small>{result.summary}</small>
+                              <ul class="backup-names backup-skipped-repos">
+                                {#each result.warnings as url}
+                                  <li title={url}><span>{backupRepositoryShortName(url)}</span></li>
+                                {/each}
+                              </ul>
+                            {:else}
+                              <small>{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
+                            {/if}
                           </span>
-                          {#if isPayloadExecutable(payload)}
-                            <button
-                              class="mg-btn"
-                              class:is-active={Boolean(backupUnifiedSelection[payload.kind])}
-                              type="button"
-                              aria-pressed={Boolean(backupUnifiedSelection[payload.kind])}
-                              onclick={() => {
-                                backupUnifiedSelection = {
-                                  ...backupUnifiedSelection,
-                                  [payload.kind]: !Boolean(backupUnifiedSelection[payload.kind]),
-                                };
-                              }}
-                              disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
-                            >
-                              {#if backupUnifiedSelection[payload.kind]}<CheckCircle size={15} weight="fill" />{/if}
-                              {backupUnifiedSelection[payload.kind] ? $_("settings_inline_selected") : $_("settings_inline_select")}
-                            </button>
-                          {:else}
-                            <span class="backup-payload__unavailable">{$_("settings_inline_preview")}</span>
-                          {/if}
                         </div>
                       {/each}
                     </div>
-                    <details class="backup-technical-details">
-                      <summary>{$_("settings_inline_info")}</summary>
-                      {#each backupUnifiedPlan.containerIssues as issue}<p>{restoreNote(issue, $_)}</p>{/each}
-                      {#each backupUnifiedPlan.payloads as payload}
-                        {#each [...payload.reasons, ...payload.warnings] as note}<p><strong>{backupPayloadKindLabel(payload.kind)}:</strong> {restoreNote(note, $_)}</p>{/each}
-                      {/each}
-                    </details>
                   </section>
-                {:else if backupImportKind === "manga"}
-                  {#if !backupDependencyPreview && backupParsed?.backupManga?.length != null}
-                    <p class="mg-summary" data-backup-title-count><strong>{backupParsed.backupManga.length}</strong> {$_("ui_titles")}</p>
-                  {/if}
-                  {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
-                    <p class="mg-note">{$_("outcomes.restoreHandoff", { profile: profileName(otherLocalProfileMeta.label) })}</p>
-                  {/if}
-                {/if}
-                {#if backupDependencyPreview && (backupDependencyPreview.titleCount !== null || backupDependencyPreview.repositories.length > 0 || backupDependencyPreview.plugins.length > 0)}
-                  <section class="backup-section" data-backup-dependencies>
-                    <p class="mg-summary backup-metrics">
-                      {#if backupDependencyPreview.titleCount !== null}<span><strong>{backupDependencyPreview.titleCount}</strong> {$_("ui_titles")}</span>{/if}
-                      {#if backupDependencyPreview.chapterCount !== null}<span><strong>{backupDependencyPreview.chapterCount}</strong> {$_("ui_chapters")}</span>{/if}
-                      <span><strong>{backupDependencyPreview.repositories.length}</strong> {$_("ui_repositories")}</span>
-                      <span><strong>{backupDependencyPreview.plugins.length}</strong> {$_("ui_extensions").toLocaleLowerCase()}</span>
-                    </p>
-                    {#if backupDependencyPreview.repositories.length > 0 || backupDependencyPreview.plugins.length > 0}
-                      <details class="backup-details">
-                        <summary>{$_("settings_backup_repositoriesFound")}</summary>
-                        <ul class="backup-names">
-                          {#each backupDependencyPreview.repositories as repository}
-                            <li><GitBranch size={14} weight="duotone" />{repository.name}</li>
-                          {/each}
-                          {#each backupDependencyPreview.plugins as plugin}
-                            <li><PuzzlePiece size={14} weight="duotone" />{plugin.name}</li>
-                          {/each}
-                        </ul>
-                      </details>
-                    {/if}
-                    {#if backupDependencyPreview.requiresConfirmation}
-                      <div class="mg-row backup-consent-row">
-                        <span class="mg-row-copy">
-                          <strong>{$_("settings_inline_allowRestoreDependencies")}</strong>
-                        </span>
-                        <button
-                          class="mg-btn"
-                          class:is-active={backupDependenciesConfirmed}
-                          type="button"
-                          aria-pressed={backupDependenciesConfirmed}
-                          onclick={() => (backupDependenciesConfirmed = !backupDependenciesConfirmed)}
-                        >
-                          {#if backupDependenciesConfirmed}<CheckCircle size={15} weight="fill" /> {$_("settings_inline_approved")}{:else}{$_("settings_inline_reviewAndApprove")}{/if}
-                        </button>
-                      </div>
-                    {/if}
-                  </section>
-                {/if}
-                {#if backupImportKind}
-                  {#if backupSelectedFile && (backupImportKind === "manga" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "manga"))}
-                    {#key backupSelectedFile}
-                      <RestoreMangaDependencies bind:this={mangaDependencyPanel} file={backupSelectedFile}
-                        format={backupImportKind === "epigraph" ? "epigraph" : "native"} choices={backupReviewSelections}
-                        disabled={backupRestoring || backupValidating || backupDependenciesWorking || backupRestoreTargetMode !== "current-profile"}
-                        onBusy={busy => backupDependenciesWorking = busy}
-                        onChoices={choices => backupReviewSelections = choices}
-                        onChanged={async () => {
-                          if (backupImportKind === "manga") await refreshBackupReadiness();
-                          else if (backupSelectedFile) {
-                            const selection = { ...backupUnifiedSelection };
-                            await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
-                            backupUnifiedSelection = selection;
-                          }
-                        }} />
-                    {/key}
-                  {/if}
-                  {#if backupSelectedFile && (backupImportKind === "novels-lnreader" || backupUnifiedPlan?.payloads.some(payload => payload.kind === "novels"))}
-                    {#key backupSelectedFile}
-                      <RestoreNovelDependencies file={backupSelectedFile} format={backupImportKind === "novels-lnreader" ? "lnreader" : "epigraph"}
-                        disabled={backupRestoring || backupValidating || backupRestoreTargetMode !== "current-profile"}
-                        onBusy={busy => backupDependenciesWorking = busy}
-                        onChanged={async () => {
-                          if (backupImportKind === "epigraph" && backupSelectedFile) {
-                            const selection = { ...backupUnifiedSelection };
-                            await loadUnifiedBackupPlanBytes(await backupSelectedFile.arrayBuffer());
-                            backupUnifiedSelection = selection;
-                          }
-                        }} />
-                    {/key}
-                  {/if}
-                  <section class="backup-section">
-                    {#if backupCanUseOtherProfileTarget}
-                      <div class="mg-segmented" role="group" aria-label={$_("settings_inline_restoreTarget")}>
-                        <button type="button" aria-pressed={backupRestoreTargetMode === "other-local-profile"}
-                          onclick={() => {
-                            backupRestoreTargetMode = "other-local-profile";
-                            backupRestoreCurrentProfileConfirmed = false;
-                          }}>
-                          {otherLocalProfileMeta ? $_("settings_inline_restoreIntoProfile", { profile: profileName(otherLocalProfileMeta.label) }) : $_("settings_inline_otherLocalProfile")}
-                        </button>
-                        <button type="button" aria-pressed={backupRestoreTargetMode === "current-profile"}
-                          onclick={() => (backupRestoreTargetMode = "current-profile")}>
-                          {$_("settings_inline_currentProfile")}
-                        </button>
-                      </div>
-                    {:else if backupRestoreHandoffSession}
-                      <p class="mg-note">{$_("settings_inline_handoffScopedHint")}</p>
-                    {/if}
-                    {#if backupCurrentProfileGateRequired}
-                      <div class="mg-row backup-switch-row">
-                        <span class="mg-row-copy">
-                          <strong>{$_("settings_inline_confirmCurrentProfileRestore")}</strong>
-                          <small>{backupCurrentTargetSummary}</small>
-                        </span>
-                        <button
-                          role="switch"
-                          aria-checked={backupRestoreCurrentProfileConfirmed}
-                          aria-label={$_("settings_inline_confirmCurrentProfileRestore2")}
-                          class="mg-check"
-                          class:is-checked={backupRestoreCurrentProfileConfirmed}
-                          type="button"
-                          onclick={() => (backupRestoreCurrentProfileConfirmed = !backupRestoreCurrentProfileConfirmed)}
-                        >
-                          {#if backupRestoreCurrentProfileConfirmed}<Check size={13} weight="bold" />{/if}
-                        </button>
-                      </div>
-                    {:else}
-                      <p class="mg-note">{backupCurrentTargetSummary}</p>
-                    {/if}
-                    {#if backupResolvedExecutionBlockedReason}
-                      <p class="mg-note is-warn" role="alert"><Warning size={14} weight="bold" /> {$_("settings_inline_restoreTargetNeedsAttention")}</p>
-                    {/if}
-                  </section>
-                {/if}
-                {#if backupValidating || backupRestoring}
-                  <div class="backup-progress" role="status" aria-live="polite">
-                    <div class="backup-progress__line">
-                      <span
-                        class:is-determinate={Boolean(backupRestoring && backupRestoreStatus?.totalManga)}
-                        style={backupRestoring && backupRestoreStatus?.totalManga
-                          ? `width:${Math.min(100, Math.round((backupRestoreStatus.mangaProgress / backupRestoreStatus.totalManga) * 100))}%`
-                          : undefined}
-                      ></span>
+                </div>
+              {:else}
+                <div class="backup-page">
+                  {#if backupSelectedFile}
+                    <div class="mg-row backup-file-row">
+                      <span class="mg-row-copy">
+                        <strong>{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</strong>
+                        <small>{#if backupDependencyPreview?.titleCount != null}{backupDependencyPreview.titleCount} {$_("ui_titles")}{#if backupDependencyPreview.chapterCount != null} · {backupDependencyPreview.chapterCount} {$_("ui_chapters")}{/if}{:else if backupValidating}{$_("settings_inline_inspecting")}{:else if backupImportKind === "epigraph"}.epigraphbk{/if}</small>
+                      </span>
+                      <button class="mg-btn" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                        {$_("settings_backup_change")}
+                      </button>
                     </div>
-                    <p>
-                      {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_restoring")}
-                      {#if backupRestoring && backupRestoreStatus?.totalManga}
-                        · {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga}
+                  {:else}
+                    <button class="backup-pick" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
+                      <FileArrowUp size={28} weight="duotone" />
+                      <strong>{backupValidating ? $_("settings_inline_inspecting") : $_("settings_backup_pickTitle")}</strong>
+                      <small>.tachibk · .epigraphbk · LNReader .zip</small>
+                    </button>
+                  {/if}
+                  {#if backupRestoreHandoffSession}
+                    <p class="mg-note">{$_("settings_inline_restoreHandoffActive")}</p>
+                  {:else if backupRestoreSourceProfileId}
+                    <p class="mg-note">{$_("settings_inline_originSession", { session: getLocalProfileMeta(backupRestoreSourceProfileId)?.label ?? backupRestoreSourceProfileId.toUpperCase() })}</p>
+                  {/if}
+                  {#if backupImportKind === "epigraph" && backupUnifiedPlan}
+                    <div class="backup-page" data-backup-review>
+                      {#if backupUnifiedPlan.executionBlockedReason}
+                        <p class="mg-note is-warn" role="alert"><Warning size={14} weight="bold" /> {$_("settings_inline_restoreBlocked")}</p>
                       {/if}
-                    </p>
-                    {#if backupRestoring && activeRestoreWorkflow}
-                      <button class="n-btn n-btn--sm n-btn-ghost" type="button" disabled={restoreCancellationRequested} onclick={cancelRestore}>{$_("ui_cancel")}</button>
-                    {/if}
-                  </div>
-                {/if}
-                <input bind:this={backupFileInput} type="file" accept=".epigraphbk,.aethonbk,.tachibk,.proto.gz,.proto,.zip,*/*" style="display:none" onchange={onBackupFileSelected} />
-              </div>
-              {#if backupImportKind === "manga" && backupAnalysis && backupRestoreTargetMode === "current-profile"}
-                <details class="backup-details backup-reconciliation" open={backupAnalysis.needsReview.length > 0 || backupAnalysis.unresolved.length > 0}>
-                  <summary>{$_("settings_inline_reconciliationSummary")}</summary>
-                  <p class="settings-card__intro">
-                    {#if backupAnalysis.exactMatches.length === 0 && backupAnalysis.autoReconciled.length === 0 && backupAnalysis.needsReview.length === 0 && backupAnalysis.unresolved.length === 0}
-                      {$_("settings_inline_noSourceReconciliationNeeded")}
-                    {:else}
-                      {$_("settings_inline_sourceReconciliationSummary")}
-                    {/if}
-                  </p>
-                  {#if backupReadiness}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_restoreReadiness")}</p>
+                      <div class="mg-list">
+                        {#each backupUnifiedPlan.payloads as payload}
+                          <div class="mg-row backup-switch-row">
+                            <span class="mg-row-copy">
+                              <strong>{backupPayloadKindLabel(payload.kind)}</strong>
+                              <small>{backupPayloadCount(payload) ?? restorePayloadSummary(payload, $_)}</small>
+                            </span>
+                            {#if isPayloadExecutable(payload)}
+                              <button role="switch" aria-checked={Boolean(backupUnifiedSelection[payload.kind])} aria-label={backupPayloadKindLabel(payload.kind)}
+                                class="mg-check" class:is-checked={Boolean(backupUnifiedSelection[payload.kind])} type="button"
+                                disabled={!payload.canExecuteRestore || !payload.canRestoreNow || backupRestoring}
+                                onclick={() => { backupUnifiedSelection = { ...backupUnifiedSelection, [payload.kind]: !Boolean(backupUnifiedSelection[payload.kind]) }; }}>
+                                {#if backupUnifiedSelection[payload.kind]}<Check size={13} weight="bold" />{/if}
+                              </button>
+                            {/if}
+                          </div>
+                        {/each}
                       </div>
-                      <p class="settings-card__intro">
-                        {$_("settings_inline_restoreReadinessCounts", { ready: backupReadiness.readyNowCount, install: backupReadiness.requiresInstallCount, unavailable: backupReadiness.unavailableCount, unresolved: backupReadiness.unresolvedCount })}
-                      </p>
-                      {#if backupReadiness.requiresInstallCount > 0}
-                        <p class="settings-card__intro">{$_("settings_inline_restoreBlockedExtensionsHint")}</p>
-                        {#if backupReadiness.installableExtensions.length > 0}
-                          <div class="backup-extension-list">
-                            {#each backupReadiness.installableExtensions as extension}
-                              <div class="backup-extension">
-                                {#if extension.iconUrl}
-                                  <img src={extension.iconUrl} alt="" />
-                                {:else}
-                                  <span><PuzzlePiece size={17} weight="duotone" /></span>
-                                {/if}
-                                <div><strong>{extension.name}</strong><small>{extension.lang?.toUpperCase() ?? extension.pkgName}</small></div>
-                                {#if backupInstalling.has(extension.pkgName)}<CircleNotch size={14} weight="bold" class="anim-spin" />{/if}
-                              </div>
-                            {/each}
-                          </div>
-                          <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
-                            <button
-                              class="n-btn n-btn--sm n-btn-ghost"
-                              onclick={reviewMangaDependencies}
-                              disabled={backupRestoring || backupValidating || backupReadiness.installableExtensions.every((extension) => backupInstalling.has(extension.pkgName))}
-                            >
-                              {$_("restoreDeps.mangaReview")}
-                            </button>
-                            <button class="n-btn n-btn--sm n-btn-ghost" onclick={openRestoreRepositories}>
-                              {$_("settings_inline_openExtensionsRepos")}
-                            </button>
-                          </div>
+                    </div>
+                  {:else if backupImportKind === "manga"}
+                    {#if backupRestoreTargetMode === "other-local-profile" && otherLocalProfileMeta}
+                      <p class="mg-note">{$_("outcomes.restoreHandoff", { profile: profileName(otherLocalProfileMeta.label) })}</p>
+                    {/if}
+                  {/if}
+                  {#if backupShowsSourcesRow}
+                    <div class="mg-list">
+                      <button class="mg-row backup-nav-row" type="button" onclick={() => (backupRestorePage = "sources")} disabled={backupRestoring}>
+                        <span class="mg-row-copy">
+                          <strong>{$_("settings_backup_sourcesTitle")}</strong>
+                          <small>{backupSourcesStatus}</small>
+                        </span>
+                        <CaretRight size={14} weight="bold" />
+                      </button>
+                    </div>
+                  {/if}
+                  {#if backupImportKind && backupCanUseOtherProfileTarget}
+                    <div class="mg-segmented" role="group" aria-label={$_("settings_inline_restoreTarget")}>
+                      <button type="button" aria-pressed={backupRestoreTargetMode === "other-local-profile"}
+                        onclick={() => {
+                          backupRestoreTargetMode = "other-local-profile";
+                          backupRestoreCurrentProfileConfirmed = false;
+                        }}>
+                        {otherLocalProfileMeta ? $_("settings_inline_restoreIntoProfile", { profile: profileName(otherLocalProfileMeta.label) }) : $_("settings_inline_otherLocalProfile")}
+                      </button>
+                      <button type="button" aria-pressed={backupRestoreTargetMode === "current-profile"}
+                        onclick={() => (backupRestoreTargetMode = "current-profile")}>
+                        {$_("settings_inline_currentProfile")}
+                      </button>
+                    </div>
+                  {/if}
+                  {#if backupImportKind && backupResolvedExecutionBlockedReason}
+                    <p class="mg-note is-warn" role="alert"><Warning size={14} weight="bold" /> {$_("settings_inline_restoreTargetNeedsAttention")}</p>
+                  {/if}
+                  {#if backupValidating || backupRestoring}
+                    <div class="backup-progress" role="status" aria-live="polite">
+                      <div class="backup-progress__line">
+                        <span
+                          class:is-determinate={Boolean(backupRestoring && backupRestoreStatus?.totalManga)}
+                          style={backupRestoring && backupRestoreStatus?.totalManga
+                            ? `width:${Math.min(100, Math.round((backupRestoreStatus.mangaProgress / backupRestoreStatus.totalManga) * 100))}%`
+                            : undefined}
+                        ></span>
+                      </div>
+                      <p>
+                        {backupValidating ? $_("settings_inline_inspecting") : $_("settings_inline_restoring")}
+                        {#if backupRestoring && backupRestoreStatus?.totalManga}
+                          · {backupRestoreStatus.mangaProgress}/{backupRestoreStatus.totalManga}
                         {/if}
-                      {/if}
-                      {#if backupReadiness.unavailableCount > 0}
-                        <p class="settings-card__intro">{$_("settings_inline_restoreNoCandidateHint")}</p>
-                      {/if}
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.exactMatches.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_exactMatches")}</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.exactMatches as cluster}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
-                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
-                              {#if clusterReadinessDetail(cluster)}
-                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
-                              {/if}
-                            </div>
-                            {#if cluster.selectedCandidate && cluster.selectedCandidate.sourceId !== cluster.orphanSourceId}
-                              <button
-                                class="settings-chip"
-                                class:is-active={isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)}
-                                type="button"
-                                disabled={backupRestoring || backupValidating}
-                                onclick={() => setBackupClusterSelection(cluster.orphanSourceId,
-                                  isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate!.sourceId)
-                                    ? { mode: "preserve" }
-                                    : { mode: "map", sourceId: cluster.selectedCandidate!.sourceId, name: cluster.selectedCandidate!.sourceName, lang: cluster.selectedCandidate!.sourceLang })}
-                              >
-                                {isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
-                              </button>
-                            {/if}
-                            {#if cluster.selectedCandidate?.requiresInstall && (cluster.selectedCandidate.sourceId === cluster.orphanSourceId || isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={reviewMangaDependencies}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
-                              >
-                                {$_("restoreDeps.mangaReview")}
-                              </button>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.autoReconciled.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_autoReconciled")}</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.autoReconciled as cluster}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{cluster.sourceName}</p>
-                              <p class="settings-mini-row__hint">{cluster.selectedCandidate?.displayName} · {clusterConfidenceLabel(cluster)} · {clusterReasonLabel(cluster)}</p>
-                              {#if clusterReadinessDetail(cluster)}
-                                <p class="settings-mini-row__hint">{clusterReadinessLabel(cluster)} · {clusterReadinessDetail(cluster)}</p>
-                              {/if}
-                            </div>
-                            {#if cluster.selectedCandidate}
-                              <button
-                                class="settings-chip"
-                                class:is-active={isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId)}
-                                type="button"
-                                onclick={() => setBackupClusterSelection(cluster.orphanSourceId, {
-                                  mode: "map",
-                                  sourceId: cluster.selectedCandidate!.sourceId,
-                                  name: cluster.selectedCandidate!.sourceName,
-                                  lang: cluster.selectedCandidate!.sourceLang,
-                                })}
-                              >
-                                {isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
-                              </button>
-                            {/if}
-                            {#if cluster.selectedCandidate?.requiresInstall && isBackupSourceMapped(cluster.orphanSourceId, cluster.selectedCandidate.sourceId) && extensionForPkg(cluster.selectedCandidate.extensionPkgName)}
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={reviewMangaDependencies}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(cluster.selectedCandidate.extensionPkgName!)}
-                              >
-                                {$_("restoreDeps.mangaReview")}
-                              </button>
-                            {/if}
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.needsReview.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_needsReview")}</p>
-                      </div>
-                      <p class="settings-card__intro">{$_("settings_inline_needsReviewHint")}</p>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.needsReview as cluster}
-                          <div class="settings-card__surface">
-                            <div class="settings-card__head">
-                              <p class="settings-card__title">{cluster.sourceName}</p>
-                            </div>
-                            <p class="settings-card__intro">{$_("settings_inline_backupSourceId", { id: cluster.orphanSourceId })}</p>
-                            <div class="settings-card__stack">
-                              {#if cluster.sampleManga.length > 0}
-                                <p class="settings-card__intro">{$_("settings_inline_sampleTitles", { titles: cluster.sampleManga.map((manga) => manga.title).join(", ") })}</p>
-                              {/if}
-                              {#each cluster.candidates as candidate}
-                                <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                                  <div class="settings-mini-row__body">
-                                    <p class="settings-mini-row__label">{candidate.displayName}</p>
-                                    <p class="settings-mini-row__hint">{Math.round(candidate.confidence * 100)}% · {$_("restoreDeps.mangaPreserveHint")}</p>
-                                  </div>
-                                  <button
-                                    class="settings-chip"
-                                    class:is-active={isBackupSourceMapped(cluster.orphanSourceId, candidate.sourceId)}
-                                    type="button"
-                                    onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "map", sourceId: candidate.sourceId, name: candidate.sourceName, lang: candidate.sourceLang })}
-                                  >
-                                    {isBackupSourceMapped(cluster.orphanSourceId, candidate.sourceId) ? $_("settings_inline_selected") : $_("settings_inline_choose")}
-                                  </button>
-                                </div>
-                              {/each}
-                              <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                                <div class="settings-mini-row__body">
-                                  <p class="settings-mini-row__label">{$_("settings_inline_skipRemap")}</p>
-                                  <p class="settings-mini-row__hint">{$_("settings_inline_skipRemapHint")}</p>
-                                </div>
-                                <button
-                                  class="settings-chip"
-                                  class:is-active={!backupReviewSelections[cluster.orphanSourceId] || backupReviewSelections[cluster.orphanSourceId]?.mode === "preserve"}
-                                  type="button"
-                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "preserve" })}
-                                >
-                                  {!backupReviewSelections[cluster.orphanSourceId] || backupReviewSelections[cluster.orphanSourceId]?.mode === "preserve" ? $_("settings_inline_selected") : $_("settings_inline_choose")}
-                                </button>
-                                <button
-                                  class="settings-chip"
-                                  class:is-active={backupReviewSelections[cluster.orphanSourceId]?.mode === "skip"}
-                                  type="button"
-                                  title={$_("ui_exclude")}
-                                  onclick={() => setBackupClusterSelection(cluster.orphanSourceId, { mode: "skip" })}
-                                >
-                                  {backupReviewSelections[cluster.orphanSourceId]?.mode === "skip" ? $_("settings_inline_selected") : $_("ui_exclude")}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-                  {#if backupAnalysis.unresolved.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_unresolved")}</p>
-                      </div>
-                      <p class="settings-card__intro">{$_("settings_inline_unresolvedHint")}</p>
-                      <p class="settings-card__intro">{backupAnalysis.unresolved.map((cluster) => cluster.sourceName).join(", ")}</p>
-                    </div>
-                  {/if}
-                  {#if backupMissingTrackers.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_missingTrackers")}</p>
-                      </div>
-                      <p class="settings-card__intro">{backupMissingTrackers.map((tracker) => tracker.name).join(", ")}</p>
-                    </div>
-                  {/if}
-                  {#if backupSuggestedExtensions.length > 0 || backupExtensionLookupLoading || backupExtensionLookupError}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_extensionRecovery")}</p>
-                      </div>
-                      {#if backupExtensionLookupLoading}
-                        <p class="settings-card__intro">{$_("settings_inline_checkingAvailableExtensions")}</p>
-                      {:else if backupSuggestedExtensions.length > 0}
-                        <div class="settings-card__stack">
-                          <p class="settings-card__intro">{$_("settings_inline_extensionMatchesHint")}</p>
-                          {#each backupSuggestedExtensions as suggestion}
-                            <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                              <div class="settings-mini-row__body">
-                                <p class="settings-mini-row__label">{suggestion.extension.name}</p>
-                                <p class="settings-mini-row__hint">{$_("settings_inline_matchesBackupSource", { source: suggestion.missingSource.name, reason: suggestion.matchedBy === "source-id" ? $_("settings_inline_matchedBySourceId") : $_("settings_inline_matchedBySourceName") })}</p>
-                              </div>
-                              <button
-                                class="n-btn n-btn--sm n-btn-ghost"
-                                onclick={reviewMangaDependencies}
-                                disabled={backupRestoring || backupValidating || backupInstalling.has(suggestion.extension.pkgName)}
-                              >
-                                {$_("restoreDeps.mangaReview")}
-                              </button>
-                            </div>
-                          {/each}
-                        </div>
-                      {:else}
-                        <div class="settings-section-actions settings-inline-actions" style="margin-top:12px;flex-wrap:wrap">
-                          <p class="settings-card__intro" style="margin:0">{$_("settings_inline_noConfidentMatches")}</p>
-                          <button class="n-btn n-btn--sm n-btn-ghost" onclick={openRestoreRepositories}>
-                            {$_("settings_inline_openExtensionsRepos")}
-                          </button>
-                        </div>
-                      {/if}
-                      {#if backupExtensionLookupError}
-                        <div class="settings-state settings-state--spaced">
-                          <NocturneState layout="compact" tone="warning" icon="warning" eyebrow={$_("ui_extensions")} title={$_("settings_inline_couldNotInspectExtensionMatches")} body={presentOperationFailure(backupExtensionLookupError, $_)} />
-                        </div>
+                      </p>
+                      {#if backupRestoring && activeRestoreWorkflow}
+                        <button class="n-btn n-btn--sm n-btn-ghost" type="button" disabled={restoreCancellationRequested} onclick={cancelRestore}>{$_("ui_cancel")}</button>
                       {/if}
                     </div>
                   {/if}
-                  {#if backupAnalysis.warnings.length > 0}
-                    <div class="settings-card__surface" style="margin-top:16px">
-                      <div class="settings-card__head">
-                        <p class="settings-card__title">{$_("settings_inline_warnings")}</p>
-                      </div>
-                      <div class="settings-card__stack">
-                        {#each backupAnalysis.warnings as warning}
-                          <div class="settings-row settings-mini-row settings-mini-row--stretch">
-                            <div class="settings-mini-row__body">
-                              <p class="settings-mini-row__label">{restoreNote(warning, $_)}</p>
-                              {#if warning.details}
-                                <details><summary>{$_("settings_inline_info")}</summary><p class="settings-mini-row__hint">{warning.details}</p></details>
-                              {/if}
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
+                  {#if backupError}
+                    <div class="mg-note is-warn backup-error" role="alert">
+                      <strong>{$_("settings_inline_backupActionFailed")}</strong>
+                      <span>{presentOperationFailure(backupError, $_)}</span>
                     </div>
                   {/if}
-                </details>
-              {/if}
-              {#if backupRestoreResults}
-                <section class="backup-section" data-backup-results>
-                  <p class="backup-section__label">{$_("settings_inline_restoreResults")}</p>
-                  <div class="mg-list">
-                    {#each backupRestoreResults as result}
-                      <div class="mg-row backup-result-row">
-                        <span class="mg-row-copy">
-                          <strong>{backupPayloadKindLabel(result.kind)} - {backupPayloadStatusLabel(result.outcome === "unknown" ? "unknown" : result.status)}</strong>
-                          {#if result.kind === "repositories"}
-                            <small>{result.summary}</small>
-                            <ul class="backup-names backup-skipped-repos">
-                              {#each result.warnings as url}
-                                <li title={url}><span>{backupRepositoryShortName(url)}</span></li>
-                              {/each}
-                            </ul>
-                          {:else}
-                            <small>{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
-                          {/if}
-                        </span>
-                      </div>
-                    {/each}
-                  </div>
-                </section>
-              {/if}
-              {#if backupError}
-                <div class="mg-note is-warn backup-error" role="alert">
-                  <strong>{$_("settings_inline_backupActionFailed")}</strong>
-                  <span>{presentOperationFailure(backupError, $_)}</span>
                 </div>
               {/if}
+            </div>
           {/if}
         </div>
         {#if backupViewMode === "create"}
@@ -7171,17 +6884,34 @@
               {backupExporting ? $_("settings_inline_exporting") : $_("settings_inline_exportBackup")}
             </button>
           </footer>
-        {:else if backupViewMode === "restore" && backupImportKind}
+        {:else if backupViewMode === "restore" && !(firstRunPane === "backup" && backupRestoreResults && !backupRestoring && !backupError && backupRestorePage === "main")}
           <footer class="mg-footer">
-            {#if backupImportKind === "manga" && backupRestoreTargetMode === "current-profile"}
-              <button class="mg-btn" type="button" onclick={refreshBackupReadiness} disabled={!backupSelectedFile || backupValidating || backupRestoring}>
-                {$_("settings_inline_refreshReadiness")}
+            {#if backupRestorePage === "confirm"}
+              <button class="mg-btn" type="button" onclick={() => (backupRestorePage = "main")}>
+                {$_("ui_back")}
               </button>
+              <span class="mg-spacer"></span>
+              <button class="mg-btn mg-btn--primary" type="button" onclick={confirmSelectedRestore} disabled={backupStartDisabled}>
+                {backupRestoreButtonLabel()}
+              </button>
+            {:else if backupRestorePage === "sources"}
+              <span class="mg-spacer"></span>
+              <button class="mg-btn mg-btn--primary" type="button" disabled={backupDependenciesWorking} onclick={() => (backupRestorePage = "main")}>
+                {$_("settings_backup_done")}
+              </button>
+            {:else if backupRestoreResults && !backupRestoring && !backupError}
+              <span class="mg-spacer"></span>
+              <button class="mg-btn mg-btn--primary" type="button" onclick={closeStorageBackupPanel}>
+                {$_("settings_backup_done")}
+              </button>
+            {:else}
+              {#if backupImportKind}
+                <span class="mg-spacer"></span>
+                <button class="mg-btn mg-btn--primary" type="button" onclick={startSelectedRestore} disabled={backupStartDisabled}>
+                  {backupRestoreButtonLabel()}
+                </button>
+              {/if}
             {/if}
-            <span class="mg-spacer"></span>
-            <button class="mg-btn mg-btn--primary" type="button" onclick={executeSelectedRestore} disabled={backupExecuteDisabled}>
-              {backupRestoreButtonLabel()}
-            </button>
           </footer>
         {/if}
       </div>
@@ -7476,39 +7206,27 @@
   .backup-progress__line span { display: block; width: 38%; height: 100%; border-radius: inherit; background: var(--accent-fg); animation: backupProgress 1.2s ease-in-out infinite; }
   .backup-progress__line span.is-determinate { animation: none; transition: width var(--t-base); }
   .backup-restore { display: grid; gap: 14px; }
-  .backup-section { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--border-dim); }
-  .backup-section__label { margin: 0; color: var(--text-muted); font-size: var(--text-xs); font-weight: var(--weight-semibold); }
   .backup-file-row .mg-row-copy small,
   .backup-result-row .mg-row-copy small { white-space: normal; overflow-wrap: anywhere; }
-  .backup-payload-row em { margin-left: 6px; font-style: normal; font-size: var(--text-2xs); color: var(--color-success); }
-  .backup-payload-row em.has-warning { color: var(--color-warning); }
-  .mg-btn.is-active { color: var(--accent-fg); }
-  .backup-metrics span + span::before { content: "·"; margin: 0 6px; color: var(--text-faint); }
-  .backup-file-row, .backup-consent-row, .backup-payload-row, .backup-result-row { cursor: default; }
-  .backup-details { margin-top: 4px; }
-  .backup-details summary { cursor: pointer; color: var(--text-muted); font-size: var(--text-xs); }
+  .backup-file-row, .backup-result-row { cursor: default; }
   .backup-names { margin: 8px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 4px 12px; }
   .backup-names li { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--text-secondary); font-size: var(--text-xs); }
   .backup-names li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .backup-skipped-repos { margin-top: 6px; }
-  .backup-reconciliation .settings-card__surface { border: 0; background: transparent; padding: 0; box-shadow: none; }
   .backup-error { display: grid; gap: 4px; }
   .backup-error strong { color: var(--text-primary); font-size: var(--text-sm); }
   .backup-error span { color: var(--text-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   @keyframes backupProgress { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
-  .backup-payload__unavailable { color: var(--text-faint); font-size: var(--text-xs); }
-  .backup-technical-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-dim); color: var(--text-faint); font-size: var(--text-xs); }
-  .backup-technical-details summary { cursor: pointer; color: var(--text-muted); }
-  .backup-technical-details p { margin: 8px 0 0; line-height: 1.45; }
-  .backup-extension-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 12px; }
-  .backup-extension { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-raised); }
-  .backup-extension img,
-  .backup-extension > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-sm); background: var(--bg-overlay); object-fit: cover; }
-  .backup-extension div { min-width: 0; }
-  .backup-extension strong,
-  .backup-extension small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .backup-extension strong { color: var(--text-primary); font-size: var(--text-xs); }
-  .backup-extension small { margin-top: 2px; color: var(--text-faint); font-size: var(--text-2xs); }
+  .backup-page { display: grid; gap: 14px; }
+  .backup-heading { display: flex; align-items: center; gap: 8px; }
+  .backup-pick { display: grid; justify-items: center; gap: 6px; width: 100%; padding: 36px 16px; border: 1px dashed var(--border-base); border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; }
+  .backup-pick:hover:not(:disabled) { border-color: var(--border-strong); color: var(--text-primary); }
+  .backup-pick strong { color: var(--text-primary); font-size: var(--text-sm); }
+  .backup-pick small { color: var(--text-muted); font-size: var(--text-xs); }
+  .backup-nav-row { width: 100%; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .backup-nav-row:disabled { cursor: default; opacity: .6; }
+  .backup-confirm p { margin: 0; color: var(--text-primary); }
+  .backup-file-row .mg-row-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 
 
