@@ -455,7 +455,18 @@ internal class HardcoverApi(
             ?: extractImageUrl(record["default_cover_edition"].obj?.get("image"))
             ?: extractImageUrl(record["cover"])
             ?: extractImageUrl(record["assets"])
-            // TODO(hardcover-covers): OpenLibrary ISBN cover fallback
+            ?: extractIsbnCoverUrl(record["isbns"])
+            ?: extractIsbnCoverUrl(record["default_cover_edition"].obj?.get("isbn_13"))
+            ?: extractIsbnCoverUrl(record["default_cover_edition"].obj?.get("isbn_10"))
+    }
+
+    /** Desktop `extractIsbnCoverUrl`: first 10- or 13-digit ISBN as an OpenLibrary cover. */
+    private fun extractIsbnCoverUrl(value: JsonElement?): String? {
+        val isbn = extractStringList(value)
+            .map { entry -> entry.filter { it.isDigit() || it == 'X' || it == 'x' }.uppercase() }
+            .firstOrNull { it.length == 10 || it.length == 13 }
+            ?: return null
+        return "https://covers.openlibrary.org/b/isbn/$isbn-L.jpg?default=false"
     }
 
     private fun extractImageUrl(value: JsonElement?, depth: Int = 0): String? {
