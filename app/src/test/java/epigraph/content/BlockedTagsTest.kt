@@ -63,4 +63,39 @@ class BlockedTagsTest {
         assertEquals(emptyList<String>(), splitGenreString(""))
         assertEquals(emptyList<String>(), splitGenreString(null))
     }
+
+    @Test
+    fun `activeBlockedTags returns empty set when filter is off`() {
+        assertEquals(emptySet<String>(), activeBlockedTags(false, setOf("gore")))
+    }
+
+    @Test
+    fun `activeBlockedTags returns tags when filter is on`() {
+        assertEquals(setOf("gore"), activeBlockedTags(true, setOf("gore")))
+    }
+
+    @Test
+    fun `isBlockedGenreString matches blocked genre`() {
+        assertTrue(isBlockedGenreString("Action, Gore", setOf("gore")))
+    }
+
+    @Test
+    fun `isBlockedGenreString no match`() {
+        assertFalse(isBlockedGenreString("Action, Romance", setOf("gore")))
+    }
+
+    @Test
+    fun `isBlockedGenreString null genre returns false`() {
+        assertFalse(isBlockedGenreString(null, setOf("gore")))
+    }
+
+    @Test
+    fun `isBlockedGenreString substring match`() {
+        assertTrue(isBlockedGenreString("Erotica", setOf("erotic")))
+    }
+
+    @Test
+    fun `isBlockedGenreString empty blocked set returns false`() {
+        assertFalse(isBlockedGenreString("Gore", emptySet()))
+    }
 }

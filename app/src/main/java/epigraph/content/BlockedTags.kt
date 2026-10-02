@@ -38,3 +38,11 @@ fun splitGenreString(genre: String?): List<String> {
     if (genre.isNullOrBlank()) return emptyList()
     return genre.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 }
+
+/** The tags to hide right now: the user's list when the filter switch is on, otherwise none. */
+fun activeBlockedTags(filterEnabled: Boolean, tags: Set<String>): Set<String> =
+    if (filterEnabled) tags else emptySet()
+
+/** True when a manga with this comma-separated [genre] field must be hidden. */
+fun isBlockedGenreString(genre: String?, blocked: Collection<String>): Boolean =
+    blocked.isNotEmpty() && matchesBlockedTags(splitGenreString(genre), blocked)

@@ -30,6 +30,8 @@ import yokai.util.koin.injectLazy
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
 import yokai.domain.manga.interactor.UpdateManga
+import epigraph.content.activeBlockedTags
+import epigraph.content.isBlockedGenreString
 
 /**
  * Presenter of [GlobalSearchController]
@@ -173,6 +175,7 @@ open class GlobalSearchPresenter(
 
         fetchSourcesJob?.cancel()
         fetchSourcesJob = presenterScope.launch {
+            val blocked = activeBlockedTags(preferences.filterBlockedTags().get(), preferences.blockedTags().get())
             sources.map { source ->
                 launch mainLaunch@{
                     semaphore.withPermit {
@@ -186,6 +189,7 @@ open class GlobalSearchPresenter(
                         }
                             .mangas.take(10)
                             .mapNotNull { networkToLocalManga(it, source.id) }
+                            .filterNot { isBlockedGenreString(it.genre, blocked) }
                         fetchImage(mangas, source)
                         if (mangas.isNotEmpty() && !loadTime.containsKey(source.id)) {
                             loadTime[source.id] = Date().time

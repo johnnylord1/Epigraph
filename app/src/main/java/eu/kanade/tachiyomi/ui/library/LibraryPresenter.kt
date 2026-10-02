@@ -45,6 +45,8 @@ import eu.kanade.tachiyomi.util.lang.chopByWords
 import eu.kanade.tachiyomi.util.lang.removeArticles
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
 import eu.kanade.tachiyomi.util.mapStatus
+import epigraph.content.activeBlockedTags
+import epigraph.content.isBlockedGenreString
 import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.system.launchNonCancellableIO
 import eu.kanade.tachiyomi.util.system.withIOContext
@@ -418,6 +420,7 @@ class LibraryPresenter(
         refreshTrackMap()
 
         val filterTrackers = FilterBottomSheet.FILTER_TRACKER
+        val blockedTags = activeBlockedTags(preferences.filterBlockedTags().get(), preferences.blockedTags().get())
 
         val filtersOff = view?.isSubClass != true &&
             (
@@ -437,6 +440,7 @@ class LibraryPresenter(
 
             items.filter f@{ item ->
                 if (item is LibraryMangaItem) {
+                    if (isBlockedGenreString(item.manga.manga.genre, blockedTags)) return@f false
                     return@f matchesFilters(
                         item,
                         filterPrefs,

@@ -31,6 +31,8 @@ import kotlinx.serialization.json.Json
 import yokai.util.koin.injectLazy
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
+import epigraph.content.activeBlockedTags
+import epigraph.content.isBlockedGenreString
 import yokai.domain.manga.interactor.UpdateManga
 import yokai.domain.manga.models.MangaUpdate
 import yokai.domain.source.browse.filter.FilterSerializer
@@ -208,9 +210,11 @@ open class BrowseSourcePresenter(
         pagerJob = presenterScope.launchIO {
             pager.asFlow()
                 .map { (first, second) ->
+                    val blocked = activeBlockedTags(preferences.filterBlockedTags().get(), preferences.blockedTags().get())
                     first to second
                         .map { networkToLocalManga(it, sourceId) }
                         .filter { !preferences.hideInLibraryItems().get() || !it.favorite }
+                        .filterNot { isBlockedGenreString(it.genre, blocked) }
                 }
                 .onEach { initializeMangas(it.second) }
                 .map { (first, second) ->
