@@ -9,6 +9,9 @@ import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
 import epigraph.recommendations.RecommendationItem
 import epigraph.recommendations.RecommendationSectionKey
+import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
+import epigraph.recommendations.SEARCH_RECOMMENDATION_LIMIT_STEP
+import epigraph.recommendations.SEARCH_RECOMMENDATION_MAX_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS
 import epigraph.recommendations.nextVisibleLimit
 import eu.kanade.tachiyomi.data.database.models.create
@@ -49,6 +52,7 @@ class DiscoverScreenModel(
 
     private var loadJob: Job? = null
     private val moreTriggeredAt = HashMap<RecommendationSectionKey, Long>()
+    private val moreLoading = java.util.concurrent.ConcurrentHashMap.newKeySet<RecommendationSectionKey>()
 
     init {
         load(force = false)
@@ -99,14 +103,46 @@ class DiscoverScreenModel(
         load(force = true)
     }
 
-    /** Grows one rail by a step when the user scrolls near its end (desktop parity). */
+    /** Grows one rail by a step when the user scrolls near its end; fetches more pages when it ran out (desktop parity). */
     fun showMore(key: RecommendationSectionKey) {
+        if (key in moreLoading) return
         val now = System.currentTimeMillis()
         if (now - (moreTriggeredAt[key] ?: 0L) < SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS) return
         moreTriggeredAt[key] = now
         val section = state.value.result?.sections?.firstOrNull { it.key == key } ?: return
-        val next = nextVisibleLimit(state.value.visibleLimits[key], section.items.size) ?: return
-        mutableState.update { it.copy(visibleLimits = it.visibleLimits + (key to next)) }
+        val current = state.value.visibleLimits[key] ?: SEARCH_RECOMMENDATION_BASE_LIMIT
+        val next = nextVisibleLimit(current, section.items.size)
+        if (next != null) {
+            mutableState.update { it.copy(visibleLimits = it.visibleLimits + (key to next)) }
+            return
+        }
+        if (current >= SEARCH_RECOMMENDATION_MAX_LIMIT) return
+        val mode = state.value.mode
+        val cached = cache[mode] ?: return
+        if (!moreLoading.add(key)) return
+        screenModelScope.launch(Dispatchers.IO) {
+            try {
+                val more = loader.loadMore(cached.pool, key, state.value.includeNsfw) { pool ->
+                    rank(pool).sections.firstOrNull { it.key == key }?.items?.size ?: 0
+                }
+                // A reload replaced the pool meanwhile; drop this page.
+                if (cache[mode] !== cached) return@launch
+                // Keep the original load time: more pages do not make the whole pool fresh.
+                cache[mode] = CachedPool(more.pool, cached.loadedAt)
+                val result = rank(more.pool)
+                val grown = minOf(SEARCH_RECOMMENDATION_MAX_LIMIT, current + SEARCH_RECOMMENDATION_LIMIT_STEP)
+                mutableState.update { s ->
+                    if (s.mode != mode) s
+                    else s.copy(result = result, visibleLimits = if (more.grew) s.visibleLimits + (key to grown) else s.visibleLimits)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Load-more is best effort; the rail simply stops growing.
+            } finally {
+                moreLoading.remove(key)
+            }
+        }
     }
 
     private fun rank(pool: DiscoverPool): DiscoverResult =

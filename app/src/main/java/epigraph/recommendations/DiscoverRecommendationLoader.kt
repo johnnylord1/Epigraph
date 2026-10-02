@@ -74,6 +74,40 @@ internal const val SEARCH_RECOMMENDATION_BASE_LIMIT = 18
 internal const val SEARCH_RECOMMENDATION_MAX_LIMIT = 420
 internal const val SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160L
 
+/** Desktop BrowseV3: a section is exhausted after an unproductive load-more at this page. */
+internal const val SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT = 18
+
+/** One [DiscoverRecommendationLoader.loadMore] step. */
+data class DiscoverMoreResult(
+    val pool: DiscoverPool,
+    /** Desktop `addedVisibleItems`: the rail may grow by one step. */
+    val grew: Boolean,
+)
+
+/** Desktop manga merge for load-more: POPULAR pages go into the seeds, LATEST pages into the fresh list too. */
+internal fun mergeComicMore(
+    entries: List<Pair<RecommendationEntryInput, Boolean>>,
+    incoming: List<RecommendationEntryInput>,
+    latest: Boolean,
+): List<Pair<RecommendationEntryInput, Boolean>> {
+    val seeds = entries.map { it.first }
+    var fresh = entries.filter { it.second }.map { it.first }
+    val combined = if (latest) {
+        fresh = refineSeedEntries(fresh + incoming)
+        refineSeedEntries(seeds + fresh)
+    } else {
+        refineSeedEntries(seeds + incoming)
+    }
+    val freshSet = fresh.toHashSet()
+    return combined.map { it to (it in freshSet) }
+}
+
+/** Desktop novel merge for load-more. */
+internal fun mergeNovelMore(
+    entries: List<RecommendationEntryInput>,
+    incoming: List<RecommendationEntryInput>,
+): List<RecommendationEntryInput> = capNovelSeeds(balanceBySource(dedupeNovelEntries(entries + incoming)))
+
 /**
  * Desktop `loadMoreSearchRecommendations` (local part): the next visible limit for a rail, or
  * null when every ranked item is already visible.
@@ -277,6 +311,98 @@ class DiscoverRecommendationLoader(
         )
         return DiscoverResult(sections.filter { it.items.isNotEmpty() }, pool.seedCount, pool.failedProviders)
     }
+
+    /**
+     * Desktop `loadMoreSearchRecommendations`: fetches the next source page for a section that has
+     * no more hidden ranked items, merges it into the pool, and reports whether the rail may grow.
+     */
+    suspend fun loadMore(
+        pool: DiscoverPool,
+        key: RecommendationSectionKey,
+        includeNsfw: Boolean,
+        sectionSizeOf: (DiscoverPool) -> Int,
+    ): DiscoverMoreResult {
+        if (key in pool.exhausted) return DiscoverMoreResult(pool, false)
+
+        // COMICS + TRENDING_NEAR_YOUR_TASTE
+        if (pool.mode == DiscoverMode.COMICS && key == RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE) {
+            val page = pool.trackerTrendingPage + 1
+            val incoming = trackerGatherer.fetchTrendingPage(page)
+            if (incoming.isEmpty()) return DiscoverMoreResult(pool, true)
+            val next = pool.copy(
+                trackerTrending = capProviderResults(dedupeTrackSearches(pool.trackerTrending + incoming)),
+                trackerTrendingPage = page,
+            )
+            return DiscoverMoreResult(reassembled(next), true)
+        }
+
+        // COMICS + HIGH_CONFIDENCE
+        if (pool.mode == DiscoverMode.COMICS && key == RecommendationSectionKey.HIGH_CONFIDENCE) {
+            val page = (pool.morePages[key] ?: 1) + 1
+            val incoming = ComicRecommendationGatherer(sourceManager).fetchMore(pool.nsfwSourceIds, includeNsfw, page, latest = false)
+            if (incoming == null) return DiscoverMoreResult(pool, false)
+            val next = withPage(pool, key, page)
+            if (incoming.isEmpty()) {
+                val exhausted = if (page >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) exhaust(next, key) else next
+                return DiscoverMoreResult(exhausted, true)
+            }
+            val comicEntries = mergeComicMore(pool.comicEntries, incoming, latest = false)
+            val scores = trackerGatherer.fetchScores(incoming.map { it.title })
+            val trackerScores = capProviderResults(dedupeTrackSearches(pool.trackerScores + scores))
+            val updated = next.copy(comicEntries = comicEntries, trackerScores = trackerScores)
+            return DiscoverMoreResult(reassembled(updated), true)
+        }
+
+        // Every other case
+        val startingSize = sectionSizeOf(pool)
+        val latest = pool.mode == DiscoverMode.COMICS && key == RecommendationSectionKey.FRESH_IN_YOUR_SOURCES
+        val startPage = (pool.morePages[key] ?: 1) + 1
+        var current = pool
+        var added = false
+        for (attemptPage in startPage until startPage + 4) {
+            val incoming = if (pool.mode == DiscoverMode.COMICS) {
+                ComicRecommendationGatherer(sourceManager).fetchMore(pool.nsfwSourceIds, includeNsfw, attemptPage, latest)
+            } else {
+                NovelRecommendationGatherer(sourceManager).fetchMore(pool.profile, pool.nsfwSourceIds, includeNsfw, attemptPage)
+            }
+            if (incoming == null) break
+            current = withPage(current, key, attemptPage)
+            if (incoming.isEmpty()) continue
+            val beforeCount = when {
+                pool.mode == DiscoverMode.COMICS && latest -> current.comicEntries.count { it.second }
+                pool.mode == DiscoverMode.COMICS -> current.comicEntries.size
+                else -> current.novelEntries.size
+            }
+            current = if (pool.mode == DiscoverMode.COMICS) {
+                current.copy(comicEntries = mergeComicMore(current.comicEntries, incoming, latest))
+            } else {
+                current.copy(novelEntries = mergeNovelMore(current.novelEntries, incoming))
+            }
+            current = reassembled(current)
+            val afterCount = when {
+                pool.mode == DiscoverMode.COMICS && latest -> current.comicEntries.count { it.second }
+                pool.mode == DiscoverMode.COMICS -> current.comicEntries.size
+                else -> current.novelEntries.size
+            }
+            if (afterCount > beforeCount || sectionSizeOf(current) > startingSize) {
+                added = true
+                break
+            }
+        }
+        if (!added && (current.morePages[key] ?: startPage) >= SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT) {
+            current = exhaust(current, key)
+        }
+        return DiscoverMoreResult(current, added)
+    }
+
+    private fun withPage(pool: DiscoverPool, key: RecommendationSectionKey, page: Int): DiscoverPool =
+        pool.copy(morePages = pool.morePages + (key to page))
+
+    private fun exhaust(pool: DiscoverPool, key: RecommendationSectionKey): DiscoverPool =
+        pool.copy(exhausted = pool.exhausted + key)
+
+    private fun reassembled(pool: DiscoverPool): DiscoverPool =
+        pool.copy(candidates = assembleDiscoverCandidates(pool))
 
     suspend fun load(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverResult =
         rank(gather(mode, nowMs), includeInLibrary = false, includeNsfw = preferences.showNsfwSources().get(), nowMs = nowMs)
