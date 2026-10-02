@@ -124,12 +124,13 @@ android {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-d${commitCount}"
         }
-        // Internal emulator/device build: keeps debug tooling and fast packaging while using the
-        // production application id. This updates the user-facing Epigraph installation in place
-        // without paying the R8 cost of a release build on every local verification cycle.
+        // Internal emulator/device build: keeps debug tooling and fast packaging without the R8 cost
+        // of a release build. It installs beside the release under its own application id, so local
+        // verification never reads or writes the release installation's library, pairing or settings
+        // (the desktop debug build keeps the same rule with its own data folder and Core port).
         create("local") {
             initWith(getByName("debug"))
-            applicationIdSuffix = null
+            applicationIdSuffix = ".local"
             versionNameSuffix = "-local${commitCount}"
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks.add("debug")
