@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -256,7 +255,14 @@ private fun DiscoverSections(
     onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
 ) {
-    val hero = sections.firstOrNull()?.items?.firstOrNull()
+    // Top pick: the best overall match. "Outside your usual reads" is off-taste on purpose, so it never leads.
+    val hero = remember(sections) {
+        sections
+            .filter { it.key != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS }
+            .flatMap { it.items }
+            .maxByOrNull { it.breakdown.finalScore }
+            ?: sections.firstOrNull()?.items?.firstOrNull()
+    }
     LazyColumn(
         contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(32.dp),
@@ -275,13 +281,13 @@ private fun DiscoverSections(
         if (hero != null) {
             item(key = "hero") { HeroPick(hero, onClick = { onClick(hero) }) }
         }
-        itemsIndexed(sections, key = { _, s -> s.key.key }) { index, section ->
+        items(sections, key = { it.key.key }) { section ->
             SectionRow(
                 section,
                 visibleLimit = visibleLimits[section.key] ?: SEARCH_RECOMMENDATION_BASE_LIMIT,
                 onNearEnd = { onNearEnd(section.key) },
                 onClick = onClick,
-                skipFirst = index == 0 && hero != null,
+                heroId = hero?.candidate?.id,
             )
         }
     }
@@ -369,7 +375,7 @@ private fun SectionRow(
     visibleLimit: Int,
     onNearEnd: () -> Unit,
     onClick: (RecommendationItem) -> Unit,
-    skipFirst: Boolean,
+    heroId: String?,
 ) {
     val (title, _) = section.key.labels()
     val listState = rememberLazyListState()
@@ -384,7 +390,7 @@ private fun SectionRow(
             .filter { it }
             .collect { currentOnNearEnd() }
     }
-    val visibleItems = (if (skipFirst) section.items.drop(1) else section.items).take(visibleLimit)
+    val visibleItems = section.items.filter { it.candidate.id != heroId }.take(visibleLimit)
     if (visibleItems.isEmpty()) return
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
