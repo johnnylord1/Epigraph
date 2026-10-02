@@ -78,6 +78,68 @@ class SyncPolicyResolverTest {
         assertTrue(policy.reconcileComicExtensions)
     }
 
+    @Test
+    fun `legacy selection is adopted when server id upgrades`() {
+        val srv1Session = CoreCredentialSession(
+            origin = "https://core.test/",
+            tlsCertSha256 = "a".repeat(64),
+            pairingSessionId = "pairing",
+            profileId = "main",
+            tokenId = "token",
+            scopes = listOf("comics:profile:main", "novels:profile:main", "books:global"),
+            inactivityExpiresAtMs = Long.MAX_VALUE,
+            serverId = "srv1",
+            accessTokenUtf8 = byteArrayOf(1),
+        )
+        try {
+            val store = InMemorySelectionStore().apply {
+                upsert(
+                    DeviceSyncSelectionV1.defaults("legacy_unbound", "main", "device").copy(
+                        enabledDomains = setOf(SyncDomain.NOVELS, SyncDomain.BOOKS),
+                    ),
+                )
+            }
+            val policy = SyncPolicyResolver(store).resolve(srv1Session, capabilities(), "device")
+
+            assertFalse(policy.syncComics)
+            assertTrue(policy.syncNovels)
+            val adopted = store.load("srv1", "main", "device")
+            org.junit.jupiter.api.Assertions.assertNotNull(adopted)
+            assertEquals("srv1", adopted!!.serverId)
+            assertFalse(SyncDomain.COMICS in adopted.enabledDomains)
+        } finally {
+            srv1Session.close()
+        }
+    }
+
+    @Test
+    fun `defaults are used when no selection exists at all`() {
+        val srv1Session = CoreCredentialSession(
+            origin = "https://core.test/",
+            tlsCertSha256 = "a".repeat(64),
+            pairingSessionId = "pairing",
+            profileId = "main",
+            tokenId = "token",
+            scopes = listOf("comics:profile:main", "novels:profile:main", "books:global"),
+            inactivityExpiresAtMs = Long.MAX_VALUE,
+            serverId = "srv1",
+            accessTokenUtf8 = byteArrayOf(1),
+        )
+        try {
+            val store = InMemorySelectionStore()
+            val policy = SyncPolicyResolver(store).resolve(srv1Session, capabilities(), "device")
+
+            assertTrue(policy.syncComics)
+            assertTrue(policy.syncNovels)
+            assertTrue(policy.syncBooks)
+            val persisted = store.load("srv1", "main", "device")
+            org.junit.jupiter.api.Assertions.assertNotNull(persisted)
+            assertEquals(SyncDomain.entries.toSet(), persisted!!.enabledDomains)
+        } finally {
+            srv1Session.close()
+        }
+    }
+
     private fun capabilities() = CoreCapabilities(
         serverProtocolVersion = 1,
         minClientVersion = "0.1.0",

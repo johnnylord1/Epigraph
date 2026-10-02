@@ -160,6 +160,38 @@ class ExtensionReconciliationCoordinator(
         }
     }
 
+    /** Every repository the desktop inventory uses, plus the recommended fallback, with this phone's state. */
+    suspend fun desktopRepositories(report: ExtensionParityReport): List<ComicRepositoryRow> {
+        val configuredBases = getExtensionRepo.getAll()
+            .mapTo(mutableSetOf()) { ExtensionParityResolver.repositoryBaseUrl(it.baseUrl) }
+        val candidates = (
+            report.items.mapNotNull { it.repositoryHintUrl ?: it.storeIndexUrl } +
+                recommendedMobileRepositoryIndexUrls(report)
+        )
+            .map(ExtensionParityResolver::repositoryIndexUrl)
+            .distinct()
+        return candidates
+            .map { indexUrl ->
+                ComicRepositoryRow(
+                    indexUrl = indexUrl,
+                    name = repositoryLabel(indexUrl),
+                    added = ExtensionParityResolver.repositoryBaseUrl(indexUrl) in configuredBases,
+                )
+            }
+            .sortedBy { it.added }
+    }
+
+    private fun repositoryLabel(indexUrl: String): String = try {
+        val uri = java.net.URI(indexUrl)
+        when (uri.host) {
+            "raw.githubusercontent.com", "github.com" ->
+                uri.path.orEmpty().split('/').firstOrNull(String::isNotBlank) ?: indexUrl
+            else -> uri.host?.removePrefix("www.") ?: indexUrl
+        }
+    } catch (_: Exception) {
+        indexUrl
+    }
+
     suspend fun refreshRepositories(): Boolean {
         extensionManager.isInitialized.first { it }
         return extensionManager.findAvailableExtensions()

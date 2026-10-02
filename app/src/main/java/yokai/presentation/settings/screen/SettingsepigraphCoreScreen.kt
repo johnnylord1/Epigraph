@@ -2,9 +2,10 @@ package yokai.presentation.settings.screen
 
 import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
-import epigraph.sync.core.extensions.ExtensionReconciliationActivity
+import epigraph.sync.core.extensions.ComicRepositoryRow
+import epigraph.sync.core.setup.CoreDependencySetupActivity
+import epigraph.sync.core.setup.coreDependencySetupCounts
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
-import epigraph.sync.core.novels.LnReaderDependencyActivity
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyInventory
 import epigraph.sync.core.pairing.CoreHostDiscoveryState
@@ -109,6 +110,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var compareNovelPlugins by remember { mutableStateOf(true) }
         var showSelectionEditor by remember { mutableStateOf(false) }
         var novelInventory by remember { mutableStateOf<LnReaderDependencyInventory?>(null) }
+        var comicRepositories by remember { mutableStateOf(emptyList<ComicRepositoryRow>()) }
+        var openSetupAfterSync by remember { mutableStateOf(false) }
+        var sawSyncRunning by remember { mutableStateOf(false) }
 
         LaunchedEffect(controller) { controller.refresh() }
         LaunchedEffect(extensionReconciliation) { extensionReconciliation.refreshFromStore() }
@@ -118,6 +122,31 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 null
             } else {
                 novelDependencies.inventory(selection.serverId, selection.profileId)
+            }
+        }
+        LaunchedEffect(extensionState.report) {
+            comicRepositories = extensionState.report?.let { extensionReconciliation.desktopRepositories(it) }.orEmpty()
+        }
+        LaunchedEffect(syncStatus, openSetupAfterSync) {
+            if (!openSetupAfterSync) return@LaunchedEffect
+            val status = syncStatus ?: return@LaunchedEffect
+            if (status is CoreSyncStatus.Syncing || status is CoreSyncStatus.Queued) {
+                sawSyncRunning = true
+                return@LaunchedEffect
+            }
+            if (!sawSyncRunning) return@LaunchedEffect
+            openSetupAfterSync = false
+            sawSyncRunning = false
+            val selection = persistedSelection ?: return@LaunchedEffect
+            extensionReconciliation.refreshFromStore()
+            val report = extensionReconciliation.state.value.report
+            val rows = report?.let { extensionReconciliation.desktopRepositories(it) }.orEmpty()
+            val novels = novelDependencies.inventory(selection.serverId, selection.profileId)
+            novelInventory = novels
+            if (coreDependencySetupCounts(rows, report, novels).hasPending) {
+                context.startActivity(
+                    CoreDependencySetupActivity.intent(context, selection.serverId, selection.profileId),
+                )
             }
         }
         LaunchedEffect((state as? CorePairingUiState.Selecting)?.serverId, showSelectionEditor) {
@@ -236,7 +265,13 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 compareNovelRepositories = compareNovelRepositories,
                                 compareNovelPlugins = compareNovelPlugins,
                             )
-                            if (selectingPairing) controller.confirmPairing(selection) else controller.updateSelection(selection)
+                            if (selectingPairing) {
+                                openSetupAfterSync = true
+                                sawSyncRunning = false
+                                controller.confirmPairing(selection)
+                            } else {
+                                controller.updateSelection(selection)
+                            }
                             showSelectionEditor = false
                         },
                     ) {
@@ -448,46 +483,28 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         onClick = { controller.startDisconnect() },
                     ),
                     Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_extensions_title),
-                        subtitle = extensionState.report?.let { report ->
-                            stringResource(
-                                MR.strings.epigraph_core_extensions_summary,
-                                report.installedCount,
-                                report.availableToInstallCount,
-                                report.unavailableCount,
-                            )
-                        } ?: stringResource(MR.strings.epigraph_core_extensions_no_inventory),
-                        enabled = extensionState.report != null,
-                        onClick = {
-                            context.startActivity(ExtensionReconciliationActivity.intent(context))
+                        title = stringResource(MR.strings.epigraph_core_setup_entry_title),
+                        subtitle = run {
+                            val counts = coreDependencySetupCounts(comicRepositories, extensionState.report, novelInventory)
+                            when {
+                                counts.hasPending -> stringResource(
+                                    MR.strings.epigraph_core_setup_entry_summary,
+                                    counts.repositoriesToAdd,
+                                    counts.extensionsToInstall,
+                                )
+                                extensionState.report != null || novelInventory != null ->
+                                    stringResource(MR.strings.epigraph_core_setup_entry_synced)
+                                else -> stringResource(MR.strings.epigraph_core_extensions_no_inventory)
+                            }
                         },
-                    ),
-                    Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.epigraph_core_novel_dependencies_title),
-                        subtitle = novelInventory?.let { inventory ->
-                            stringResource(
-                                MR.strings.epigraph_core_novel_dependencies_summary,
-                                pluralStringResource(
-                                    MR.plurals.epigraph_core_novel_repository_count,
-                                    inventory.repositories.size,
-                                    inventory.repositories.size,
-                                ),
-                                pluralStringResource(
-                                    MR.plurals.epigraph_core_novel_plugin_count,
-                                    inventory.plugins.size,
-                                    inventory.plugins.size,
-                                ),
-                            )
-                        } ?: stringResource(MR.strings.epigraph_core_novel_dependencies_no_inventory),
                         enabled = state is CorePairingUiState.Paired &&
-                            persistedSelection?.novelRepositories == DependencyInventoryMode.INVENTORY_ONLY,
+                            (extensionState.report != null || novelInventory != null),
                         onClick = {
-                            val selection = persistedSelection ?: return@TextPreference
                             context.startActivity(
-                                LnReaderDependencyActivity.intent(
+                                CoreDependencySetupActivity.intent(
                                     context,
-                                    selection.serverId,
-                                    selection.profileId,
+                                    persistedSelection?.serverId,
+                                    persistedSelection?.profileId,
                                 ),
                             )
                         },
@@ -507,6 +524,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         subtitle = stringResource(MR.strings.epigraph_core_sync_now_summary),
                         enabled = state is CorePairingUiState.Paired && syncStatus !is CoreSyncStatus.Syncing,
                         onClick = {
+                            openSetupAfterSync = true
+                            sawSyncRunning = false
                             coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
                         },
                     ),

@@ -28,6 +28,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import tachiyomi.data.Aethon_category_identity
 import yokai.data.Database
 import yokai.data.DatabaseHandler
 import yokai.data.memoColumnAdapter
@@ -109,7 +110,7 @@ class SuwayomiCatalogSync(
         val categoryEntityIds = database.await(inTransaction = true) {
             categories.mapNotNull { node ->
                 node.long("id")?.let { categoryId ->
-                    categoryId to resolveCategoryEntityId(this, credentials, categoryId)
+                    categoryId to resolveCategoryEntityId(this, credentials, categoryId, node.string("name"))
                 }
             }.toMap()
         }
@@ -394,7 +395,7 @@ class SuwayomiCatalogSync(
         OFFSET,
     }
 
-    private companion object {
+    internal companion object {
         const val SUPPORTED_SCHEMA_VERSION = 1
         const val DEFAULT_PAGE_SIZE = 100L
         const val MAX_PAGE_SIZE = 250L
@@ -600,7 +601,7 @@ class SuwayomiCatalogSync(
                 val name = node.string("name") ?: return@filterNot false
                 name in awaitingNames &&
                     database.aethon_syncQueries
-                        .selectCategoryIdentityByEntityId(resolveCategoryEntityId(database, credentials, categoryId))
+                        .selectCategoryIdentityByEntityId(resolveCategoryEntityId(database, credentials, categoryId, name))
                         .executeAsOneOrNull() == null
             }
         }
@@ -609,15 +610,66 @@ class SuwayomiCatalogSync(
             database: yokai.data.Database,
             credentials: CoreCredentialSession,
             categoryId: Long,
+            remoteName: String? = null,
         ): String {
             val serverScoped = serverCategoryEntityId(credentials, categoryId)
             if (credentials.serverId == LEGACY_UNBOUND_SERVER_ID) return serverScoped
-            if (database.aethon_syncQueries.selectCategoryIdentityByEntityId(serverScoped).executeAsOneOrNull() != null) {
+            val legacyId = "suwayomi:profile:${credentials.profileId}:category:$categoryId"
+            val legacy = database.aethon_syncQueries.selectCategoryIdentityByEntityId(legacyId).executeAsOneOrNull()
+            val current = database.aethon_syncQueries.selectCategoryIdentityByEntityId(serverScoped).executeAsOneOrNull()
+            if (current != null) {
+                mergeLegacyCategoryDuplicate(database, legacy, current)
                 return serverScoped
             }
-            // V1 category identities contain no server proof. Keep them as legacy_unbound instead
-            // of silently assigning a category from another paired desktop with the same profile.
+            if (legacy != null &&
+                legacy.content_scope == "MANGA" &&
+                remoteName != null &&
+                legacy.name.trim().equals(remoteName.trim(), ignoreCase = true)
+            ) {
+                // The table is unique on (local_category_id, content_scope), so the legacy row must
+                // go before the server-scoped row takes its place.
+                database.aethon_syncQueries.deleteCategoryIdentity(legacyId)
+                database.aethon_syncQueries.upsertCategoryIdentity(
+                    entityId = serverScoped,
+                    localCategoryId = legacy.local_category_id,
+                    contentScope = legacy.content_scope,
+                    name = legacy.name,
+                    sortOrder = legacy.sort_order,
+                    updatedAt = legacy.updated_at,
+                )
+                return serverScoped
+            }
+            // A legacy identity is adopted only when the same remote category id carries the same
+            // name, the same proof `joinableFolder` uses to join folders by name.
             return serverScoped
+        }
+
+        private fun mergeLegacyCategoryDuplicate(
+            database: yokai.data.Database,
+            legacy: Aethon_category_identity?,
+            current: Aethon_category_identity,
+        ) {
+            if (legacy == null) return
+            if (legacy.content_scope != "MANGA" || current.content_scope != "MANGA") return
+            if (legacy.local_category_id == current.local_category_id) return
+            if (!legacy.name.trim().equals(current.name.trim(), ignoreCase = true)) return
+            val from = legacy.local_category_id
+            val to = current.local_category_id
+            for (mangaId in database.aethon_syncQueries.selectMangaIdsByCategory(from).executeAsList()) {
+                val kept = database.categoriesQueries.findAllByMangaId(mangaId).executeAsList()
+                    .filter { it._id != from }
+                    .map { it._id }
+                    .distinct()
+                database.mangas_categoriesQueries.delete(mangaId)
+                kept.forEach { categoryId -> database.mangas_categoriesQueries.insert(mangaId, categoryId) }
+                if (to !in kept) {
+                    database.mangas_categoriesQueries.insert(mangaId, to)
+                }
+            }
+            database.aethon_syncQueries.deleteCategoryIdentity(legacy.entity_id)
+            if (database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(from).executeAsList().isEmpty()) {
+                database.categoriesQueries.delete(from)
+            }
         }
 
         fun JsonObject.connectionNodes(operation: SuwayomiCatalogOperation): List<JsonObject> {

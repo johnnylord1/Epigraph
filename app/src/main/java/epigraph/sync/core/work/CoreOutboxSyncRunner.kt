@@ -618,6 +618,12 @@ class CoreOutboxSyncRunner(
     suspend fun run(
         nowEpochMillis: Long,
         synchronizeReplica: Boolean = true,
+    ): CoreOutboxSyncOutcome = run(nowEpochMillis, synchronizeReplica, restartAfterLegacyUpgrade = true)
+
+    private suspend fun run(
+        nowEpochMillis: Long,
+        synchronizeReplica: Boolean,
+        restartAfterLegacyUpgrade: Boolean,
     ): CoreOutboxSyncOutcome {
         require(nowEpochMillis >= 0) { "sync timestamp must be epoch milliseconds" }
         val pendingBefore = pendingOutbox.unsettledCount().also { require(it >= 0) }
@@ -706,6 +712,16 @@ class CoreOutboxSyncRunner(
                             if (value.effectiveBaseUrl == connection.openedOrigin) 0 else 1,
                     ).use(credentials::replace)
                     effectiveGrantedScopes = value.scopes
+                    if (
+                        restartAfterLegacyUpgrade &&
+                        session.serverId == epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID &&
+                        value.serverId != epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
+                    ) {
+                        // The credential was just bound to the real desktop id. Restart with it so
+                        // nothing in this run is written under legacy_unbound ids (that duplicated
+                        // every comic folder).
+                        return run(nowEpochMillis, synchronizeReplica, restartAfterLegacyUpgrade = false)
+                    }
                 }
                 is CoreHttpResult.Failure -> {
                     if (BuildConfig.DEBUG) {

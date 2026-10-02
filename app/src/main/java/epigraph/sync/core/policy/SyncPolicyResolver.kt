@@ -26,11 +26,23 @@ class SyncPolicyResolver(
         grantedScopes: Collection<String> = credentials.scopes,
     ): EffectiveSyncPolicy {
         val selection = selections.load(credentials.serverId, credentials.profileId, deviceId)
-            ?: DeviceSyncSelectionV1.defaults(
-                credentials.serverId,
-                credentials.profileId,
-                deviceId,
-            ).also(selections::upsert)
+            ?: run {
+                val legacy = if (
+                    credentials.serverId != epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID
+                ) {
+                    selections.load(
+                        epigraph.sync.core.credentials.LEGACY_UNBOUND_SERVER_ID,
+                        credentials.profileId,
+                        deviceId,
+                    )
+                } else null
+                legacy?.copy(serverId = credentials.serverId)?.also(selections::upsert)
+                    ?: DeviceSyncSelectionV1.defaults(
+                        credentials.serverId,
+                        credentials.profileId,
+                        deviceId,
+                    ).also(selections::upsert)
+            }
         val normalized = selection.normalized()
         val granted = grantedScopes.toSet()
         val comicsScope = "comics:profile:${credentials.profileId}"

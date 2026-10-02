@@ -540,10 +540,10 @@ class SuwayomiCatalogSyncTest {
             .executeAsOne()
         assertEquals(SERVER, binding.server_id)
         assertEquals("BOUND", binding.binding_status)
-        // A V1 category has no server identity. It is retained as legacy-unbound while the V2
-        // server receives a distinct category row, avoiding an unsafe cross-desktop rebind.
+        // The V1 category is rebound to the V2 server together with the proven legacy rows, so
+        // the phone keeps one "Remote Favorites" instead of a duplicate.
         assertEquals(
-            2,
+            1,
             database.categoriesQueries.findAll().executeAsList().count { it.name == "Remote Favorites" },
         )
     }
@@ -1231,6 +1231,144 @@ class SuwayomiCatalogSyncTest {
         assertEquals(
             listOf("NOVEL"),
             database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(folder._id).executeAsList().map { it.content_scope },
+        )
+    }
+
+    @Test
+    fun `legacy category identity is rebound to the server-scoped id when the name matches`() = runTest {
+        database.categoriesQueries.insert("Lendo", 0, 0, "a")
+        val folder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:profile:$PROFILE:category:1", folder, "MANGA", "Lendo", 0, 1,
+        )
+        val credentials = session("srv1")
+        try {
+            val entityId = SuwayomiCatalogSync.resolveCategoryEntityId(database, credentials, 1, "Lendo")
+
+            assertEquals("suwayomi:server:srv1:profile:$PROFILE:category:1", entityId)
+            val rebound = database.aethon_syncQueries.selectCategoryIdentityByEntityId(entityId).executeAsOne()
+            assertEquals(folder, rebound.local_category_id)
+            assertNull(
+                database.aethon_syncQueries
+                    .selectCategoryIdentityByEntityId("suwayomi:profile:$PROFILE:category:1")
+                    .executeAsOneOrNull(),
+            )
+        } finally {
+            credentials.close()
+        }
+    }
+
+    @Test
+    fun `legacy category identity is not rebound when the remote name differs`() = runTest {
+        database.categoriesQueries.insert("Lendo", 0, 0, "a")
+        val folder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:profile:$PROFILE:category:1", folder, "MANGA", "Lendo", 0, 1,
+        )
+        val credentials = session("srv1")
+        try {
+            val entityId = SuwayomiCatalogSync.resolveCategoryEntityId(database, credentials, 1, "Outro")
+
+            assertEquals("suwayomi:server:srv1:profile:$PROFILE:category:1", entityId)
+            val legacy = database.aethon_syncQueries
+                .selectCategoryIdentityByEntityId("suwayomi:profile:$PROFILE:category:1")
+                .executeAsOne()
+            assertEquals(folder, legacy.local_category_id)
+            assertNull(
+                database.aethon_syncQueries.selectCategoryIdentityByEntityId(entityId).executeAsOneOrNull(),
+            )
+        } finally {
+            credentials.close()
+        }
+    }
+
+    @Test
+    fun `legacy category duplicate is merged into the server-scoped folder`() = runTest {
+        database.categoriesQueries.insert("Lendo", 0, 0, "a")
+        val legacyFolder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.categoriesQueries.insert("Lendo", 1, 0, "a")
+        val currentFolder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:profile:$PROFILE:category:1", legacyFolder, "MANGA", "Lendo", 0, 1,
+        )
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:server:srv1:profile:$PROFILE:category:1", currentFolder, "MANGA", "Lendo", 0, 1,
+        )
+        insertManga("Merge One")
+        insertManga("Merge Two")
+        val mangaOne = database.mangasQueries.findAll().executeAsList().single { it.title == "Merge One" }._id
+        val mangaTwo = database.mangasQueries.findAll().executeAsList().single { it.title == "Merge Two" }._id
+        database.mangas_categoriesQueries.insert(mangaOne, legacyFolder)
+        database.mangas_categoriesQueries.insert(mangaTwo, legacyFolder)
+        database.mangas_categoriesQueries.insert(mangaTwo, currentFolder)
+        val credentials = session("srv1")
+        try {
+            val entityId = SuwayomiCatalogSync.resolveCategoryEntityId(database, credentials, 1, "Lendo")
+
+            assertEquals("suwayomi:server:srv1:profile:$PROFILE:category:1", entityId)
+            assertEquals(
+                listOf(currentFolder),
+                database.categoriesQueries.findAllByMangaId(mangaOne).executeAsList().map { it._id },
+            )
+            assertEquals(
+                listOf(currentFolder),
+                database.categoriesQueries.findAllByMangaId(mangaTwo).executeAsList().map { it._id },
+            )
+            assertTrue(database.aethon_syncQueries.selectMangaIdsByCategory(legacyFolder).executeAsList().isEmpty())
+            assertFalse(database.categoriesQueries.findAll().executeAsList().any { it._id == legacyFolder })
+            assertNull(
+                database.aethon_syncQueries
+                    .selectCategoryIdentityByEntityId("suwayomi:profile:$PROFILE:category:1")
+                    .executeAsOneOrNull(),
+            )
+        } finally {
+            credentials.close()
+        }
+    }
+
+    @Test
+    fun `legacy unbound session leaves category identities untouched`() = runTest {
+        database.categoriesQueries.insert("Lendo", 0, 0, "a")
+        val folder = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            "suwayomi:profile:$PROFILE:category:1", folder, "MANGA", "Lendo", 0, 1,
+        )
+        val credentials = session(LEGACY_UNBOUND_SERVER_ID)
+        try {
+            val entityId = SuwayomiCatalogSync.resolveCategoryEntityId(database, credentials, 1, "Lendo")
+
+            assertEquals("suwayomi:profile:$PROFILE:category:1", entityId)
+            val legacy = database.aethon_syncQueries.selectCategoryIdentityByEntityId(entityId).executeAsOne()
+            assertEquals(folder, legacy.local_category_id)
+        } finally {
+            credentials.close()
+        }
+    }
+
+    private fun insertManga(title: String) {
+        database.mangasQueries.insert(
+            source = EpigraphCoreSource.ID,
+            url = "aethon-core://suwayomi/$SERVER/$PROFILE/manga/$title",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = title,
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
         )
     }
 

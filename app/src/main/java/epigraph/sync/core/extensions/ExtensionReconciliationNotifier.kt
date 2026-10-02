@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.Notifications
 import yokai.i18n.MR
+import epigraph.sync.core.setup.CoreDependencySetupActivity
 import yokai.util.lang.getString
 
 class ExtensionReconciliationNotifier(
@@ -27,7 +28,7 @@ class ExtensionReconciliationNotifier(
         val reviewIntent = PendingIntent.getActivity(
             context,
             REVIEW_REQUEST_CODE,
-            ExtensionReconciliationActivity.intent(context),
+            CoreDependencySetupActivity.intent(context, report.serverId, report.profileId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = NotificationCompat.Builder(context, Notifications.CHANNEL_UPDATES_TO_EXTS)
@@ -43,19 +44,6 @@ class ExtensionReconciliationNotifier(
                 context.getString(MR.strings.epigraph_core_extensions_review),
                 reviewIntent,
             )
-        if (report.installableCount > 0) {
-            val installAllIntent = PendingIntent.getActivity(
-                context,
-                INSTALL_ALL_REQUEST_CODE,
-                ExtensionReconciliationActivity.intent(context, installAll = true),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
-            builder.addAction(
-                0,
-                context.getString(MR.strings.epigraph_core_extensions_download_all),
-                installAllIntent,
-            )
-        }
         return runCatching {
             NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, builder.build())
             true
@@ -76,6 +64,5 @@ class ExtensionReconciliationNotifier(
     private companion object {
         const val NOTIFICATION_ID = -405
         const val REVIEW_REQUEST_CODE = 72_301
-        const val INSTALL_ALL_REQUEST_CODE = 72_302
     }
 }

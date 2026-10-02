@@ -44,6 +44,105 @@ class CoreOutboxSyncRunnerStalePairingTest {
         )
         session.close()
     }
+
+    @Test
+    fun `legacy credential is upgraded and run restarts with real server id`() = runTest {
+        val session = CoreCredentialSession(
+            origin = "https://core.test/",
+            tlsCertSha256 = "a".repeat(64),
+            pairingSessionId = "pairing",
+            profileId = "main",
+            tokenId = "token",
+            scopes = listOf("comics:profile:main"),
+            inactivityExpiresAtMs = Long.MAX_VALUE,
+            serverId = "legacy_unbound",
+            accessTokenUtf8 = byteArrayOf(1, 2, 3),
+        )
+        var stored: CoreCredentialSession = session
+        var replaced: String? = null
+        var loads = 0
+        val runner = CoreOutboxSyncRunner(
+            credentials = object : CoreCredentialStore {
+                override fun load(): CoreCredentialSession? {
+                    loads++
+                    return stored.copyWithServerMetadata()
+                }
+                override fun replace(replacement: CoreCredentialSession) {
+                    stored = replacement.copyWithServerMetadata()
+                    replaced = stored.serverId
+                }
+                override fun delete() = Unit
+            },
+            devices = CoreDeviceIdentityProvider { "device-one" },
+            connections = CoreOutboxSyncConnectionFactory {
+                object : CoreOutboxSyncConnection {
+                    override val openedOrigin = "https://core.test/"
+                    override suspend fun sessionMetadata() =
+                        epigraph.sync.core.http.CoreHttpResult.Success(
+                            epigraph.sync.core.protocol.CoreSessionResponse(
+                                schemaVersion = 1,
+                                serverId = "srv1",
+                                profileId = "main",
+                                tokenId = "token",
+                                scopes = listOf("comics:profile:main"),
+                                inactivityExpiresAtMs = Long.MAX_VALUE,
+                                effectiveBaseUrl = "https://core.test/",
+                                tlsCertSha256 = "a".repeat(64),
+                                mdnsServiceName = "_epigraph-sync._tcp.local.",
+                            )
+                        )
+                    override suspend fun capabilities() =
+                        epigraph.sync.core.http.CoreHttpResult.Success(
+                            epigraph.sync.core.protocol.CoreCapabilities(
+                                serverProtocolVersion = 1,
+                                minClientVersion = "0.1.0",
+                                supportedScopes = listOf("comics:profile:*"),
+                                supportsSseReplay = true,
+                                supportsManualIpFallback = true,
+                                supportsOwnerTransfer = false,
+                                supportsSnapshot = true,
+                                supportsAssets = true,
+                                supportsNovelChapterAssets = true,
+                                supportsNovelPluginSync = true,
+                                supportsSuwayomiProxy = true,
+                                supportsCausalMutationsV3 = true,
+                                supportsSuwayomiCatalog = true,
+                                supportsSuwayomiContent = true,
+                                supportsSuwayomiExtensionInventory = true,
+                                supportsSuwayomiWebsocketProxy = false,
+                                suwayomiProxyPathTemplate = "/v1/suwayomi/{profileId}/graphql",
+                                snapshotSchemaVersion = 3,
+                                snapshotEntityTypes = emptySet(),
+                                tlsCertSha256 = "a".repeat(64),
+                                mdnsServiceName = "_epigraph-sync._tcp.local.",
+                                currentServerVersion = 1,
+                                minReplayableServerVersion = 0,
+                            )
+                        )
+                    override suspend fun drainSuwayomi(
+                        nowEpochMillis: Long,
+                        canonicalProjectionEnabled: Boolean,
+                    ) = epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport(0, 0, 0, 0, 0)
+                    override suspend fun drain(
+                        authorization: epigraph.sync.core.outbox.CoreOutboxAuthorization,
+                        capabilities: epigraph.sync.core.protocol.CoreCapabilities,
+                        nowEpochMillis: Long,
+                    ) = epigraph.sync.core.outbox.CoreOutboxDrainReport(0, 0, 0, 0, 0)
+                }
+            },
+            pendingOutbox = object : CorePendingOutbox {
+                override suspend fun count(): Long = 0
+            },
+            replica = SnapshotCoreReplicaSyncNoop,
+            policies = epigraph.sync.core.policy.SyncPolicyResolver(NoopSelectionStore),
+        )
+
+        runner.run(nowEpochMillis = 1_000)
+
+        assertEquals("srv1", replaced)
+        assertEquals(2, loads)
+        session.close()
+    }
 }
 
 private object NoopSelectionStore : epigraph.sync.core.policy.DeviceSyncSelectionStore {

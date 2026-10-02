@@ -329,6 +329,10 @@
             android:name="epigraph.sync.core.novels.LnReaderDependencyActivity"
             android:exported="false"
             android:theme="@style/Theme.Tachiyomi" />
+        <activity
+            android:name="epigraph.sync.core.setup.CoreDependencySetupActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
 
         <!-- EXH -->
         <activity

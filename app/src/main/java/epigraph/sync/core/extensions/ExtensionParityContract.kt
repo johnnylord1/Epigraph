@@ -78,3 +78,15 @@ internal data class MobileAvailableExtension(
     val versionName: String,
     val sourceIds: Set<Long>,
 )
+
+/**
+ * One row for the "desktop repositories" setup screen: an installable index URL, a short
+ * human-readable label, and whether this phone already has the repository configured.
+ */
+data class ComicRepositoryRow(
+    /** Installable index URL, already normalized with ExtensionParityResolver.repositoryIndexUrl. */
+    val indexUrl: String,
+    /** Short label, e.g. "keiyoushi" for https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json */
+    val name: String,
+    val added: Boolean,
+)
