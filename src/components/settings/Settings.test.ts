@@ -586,11 +586,11 @@ describe("Settings", () => {
     await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
     expect(screen.queryByText("Usage guardrails")).toBeNull();
 
-    expect(screen.queryByText("Export")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Create backup" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-    expect(screen.getByText("Export")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Create backup" })).toBeTruthy();
     await fireEvent.click(screen.getAllByRole("button", { name: "Close" }).find((button) => button.textContent?.trim() === "Close")!);
-    expect(screen.queryByText("Export")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Create backup" })).toBeNull();
   });
 
   test("refuses a downloads folder inside the current one before the server switches to it", async () => {

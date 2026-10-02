@@ -214,8 +214,8 @@ describe("exhaustive component theme inventory", () => {
   test("classifies every definition without inferring dead tokens", () => {
     expect(inventory.entries).toHaveLength(2598);
     expect(scoped).toHaveLength(2598);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2567);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(31);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2566);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(32);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -239,11 +239,12 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2551);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2549);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
-    expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(15);
+    expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(16);
     expect(legacyOnly).toHaveLength(0);
     expect(unconsumed.map(({ token }) => token).sort()).toEqual([
+      "--component-settings-overlay-blur",
       "--component-toast-accent-inset",
       "--component-toast-accent-width",
       "--component-toast-action-padding",

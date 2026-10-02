@@ -70,11 +70,11 @@
 </section>
 
 <style>
-  .restore-dependencies { display: grid; gap: 12px; margin-top: 16px; padding: 16px; border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-secondary); background: var(--bg-surface); }
+  .restore-dependencies { display: grid; gap: 10px; color: var(--text-secondary); font-size: var(--text-sm); }
   .dependency, label { display: grid; gap: 8px; min-width: 0; }
   .dependency { padding-block: 8px; overflow-wrap: anywhere; }
   .consent { display: flex; align-items: center; }
-  button, select { min-height: 38px; max-width: 100%; padding: 8px 12px; border: 1px solid var(--border-dim); border-radius: var(--radius-sm); background: var(--bg-raised); color: var(--text-primary); font: inherit; }
+  button, select { min-height: 34px; max-width: 100%; padding: 6px 12px; border: 0; border-radius: var(--radius-sm); background: var(--bg-overlay); color: var(--text-primary); font: inherit; cursor: pointer; }
   button:disabled { opacity: .5; }
   p { margin: 0; }
 </style>
