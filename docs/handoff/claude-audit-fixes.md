@@ -105,12 +105,13 @@ Pontos de atenção:
   (splash, paleta de busca, bundle, inventário de tema), `motionWake`
   removido (o idle não pausa mais o app inteiro), Toaster segue o switch
   Animações, indentação das regras de reduced motion.
-- **Mobile não foi compilado**: o Android SDK (`dl.google.com`) é bloqueado
-  na rede do ambiente de nuvem. Rode o comando Gradle acima no PC.
+- Mobile: `:app:testDevDebugUnitTest :data:testAndroidHostTest
+  :data:verifySqlDelightMigration assembleDevDebug` passa (824 testes, nenhuma
+  falha), com o Android SDK oficial. Falta só o teste no aparelho.
 
 ## Feito nesta sessão
 
-- Aba **Descobrir** no mobile (ainda não compilada):
+- Aba **Descobrir** no mobile (compilada e com testes; falta testar no aparelho):
   - Barra inferior: Biblioteca · Descobrir · Recentes · Explorar.
   - Sub-abas Para você / Catálogo, com Quadrinhos / Novels.
   - Catálogo: `buildDiscoverCatalog` em `DiscoverCatalog.kt`, rolagem
@@ -120,7 +121,7 @@ Pontos de atenção:
 
 ## Pendente depois da verificação
 
-1. **Aba Descobrir no mobile** (implementada; falta compilar e testar no aparelho)
+1. **Aba Descobrir no mobile** (implementada e compilada; falta testar no aparelho)
    - A aba "For you" passa a se chamar **Descobrir** (en: Discover) e vira
      uma aba da barra inferior: Biblioteca · Descobrir · Recentes · Explorar.
    - **Não** criar aba "Mais": o menu de 3 pontos no topo, que leva às
