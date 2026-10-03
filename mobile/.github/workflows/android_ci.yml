@@ -1,0 +1,92 @@
+name: Android CI
+
+# Release gates from AGENTS.md that can run on a stock GitHub Linux runner: migration
+# verification, unit tests, lint, assembleDevDebug and the syncd contract fixture. The signed
+# assembleStandardRelease and the emulator smoke stay manual (docs/RELEASE_SIGNING.md).
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Release gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Gradle properties for the hosted runner
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties <<'EOF'
+          org.gradle.daemon=false
+          org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          kotlin.daemon.jvmargs=-Xmx3g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.incremental=false
+          EOF
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Migrations and sync tests
+        run: ./gradlew :data:verifySqlDelightMigration :data:testAndroidHostTest
+
+      - name: App unit tests
+        run: ./gradlew :app:testDevDebugUnitTest
+
+      - name: Lint
+        run: ./gradlew :app:lintDevDebug
+
+      - name: Assemble dev debug
+        run: ./gradlew :app:assembleDevDebug
+
+      - name: Publish test report
+        uses: mikepenz/action-junit-report@v5
+        if: success() || failure()
+        with:
+          detailed_summary: true
+          report_paths: '**/build/test-results/test*/TEST-*.xml'
+
+  syncd-contract:
+    name: Syncd contract fixture
+    runs-on: ubuntu-latest
+    # The desktop lives in a separate repository. Set the EPIGRAPH_DESKTOP_REPO variable
+    # (owner/name) and, when it is private, an EPIGRAPH_DESKTOP_TOKEN secret with read access.
+    if: ${{ vars.EPIGRAPH_DESKTOP_REPO != '' }}
+
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+
+      - name: Clone desktop
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.EPIGRAPH_DESKTOP_REPO }}
+          token: ${{ secrets.EPIGRAPH_DESKTOP_TOKEN || github.token }}
+          path: desktop
+
+      - name: Compare capabilities fixture
+        run: python3 scripts/core_contract_fixture.py --desktop desktop --check

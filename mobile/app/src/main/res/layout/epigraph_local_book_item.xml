@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md §10 "Item de lista": cover 40×60 r-xs, title-m, meta body-s text-2, 72dp; actions as 48dp icons. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="?attr/selectableItemBackground"
+    android:gravity="center_vertical"
+    android:minHeight="72dp"
+    android:orientation="horizontal"
+    android:paddingStart="16dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="4dp"
+    android:paddingBottom="6dp">
+
+    <com.google.android.material.imageview.ShapeableImageView
+        android:id="@+id/cover"
+        android:layout_width="40dp"
+        android:layout_height="60dp"
+        android:background="?attr/colorSurfaceVariant"
+        android:importantForAccessibility="no"
+        android:padding="0.5dp"
+        android:scaleType="centerCrop"
+        app:shapeAppearanceOverlay="@style/ShapeAppearance.Epigraph.XS"
+        app:strokeColor="?attr/colorOutlineVariant"
+        app:strokeWidth="1dp" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textAppearance="@style/TextAppearance.Epigraph.TitleM"
+            android:textColor="?attr/colorOnBackground" />
+
+        <TextView
+            android:id="@+id/meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textAppearance="@style/TextAppearance.Epigraph.BodyS"
+            android:textColor="?android:attr/textColorSecondary" />
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/recover"
+        style="@style/Theme.Widget.ImageBorderless"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:contentDescription="@string/download"
+        android:src="@drawable/ic_file_download_24dp"
+        android:visibility="gone" />
+
+    <ImageButton
+        android:id="@+id/remove"
+        android:layout_width="@dimen/touch_target"
+        android:layout_height="@dimen/touch_target"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/remove"
+        android:src="@drawable/ic_delete_24dp"
+        app:tint="?android:attr/textColorSecondary" />
+
+</LinearLayout>

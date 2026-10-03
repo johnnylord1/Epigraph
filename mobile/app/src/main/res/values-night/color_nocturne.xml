@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Nocturne, dark (the app default). Tokens come from DESIGN.md §2 (column "Escuro"): graphite
+  ~ surfaces stepped by tone, one lilac accent (#C9B5FF, desktop accent-interactive) for state only.
+-->
+<resources>
+    <!-- accent / on-accent / accent-soft -->
+    <color name="nocturne_primary">#C9B5FF</color>
+    <color name="nocturne_on_primary">#352660</color>
+    <color name="nocturne_accent_soft">#2B2540</color>
+    <color name="nocturne_primary_inverse">#4A3091</color>
+    <color name="nocturne_secondary">#C9B5FF</color>
+    <color name="nocturne_on_secondary">#352660</color>
+    <color name="nocturne_secondary_variant">#E5E2E1</color>
+    <!-- text at 12%: the "pressed" state overlay -->
+    <color name="nocturne_highlight">#1FE5E2E1</color>
+    <color name="nocturne_tab_bar_icon">#C9B5FF</color>
+    <color name="nocturne_tab_bar_inactive">#A9A5AE</color>
+    <!-- bg / surface / surface-high -->
+    <color name="nocturne_background">#131313</color>
+    <color name="nocturne_surface">#1B1A20</color>
+    <color name="nocturne_primary_variant">#25242A</color>
+    <color name="nocturne_field_surface">#25242A</color>
+    <!-- line / line-strong -->
+    <color name="nocturne_line">#2E2D33</color>
+    <color name="nocturne_line_strong">#4A4851</color>
+    <!-- text / text-2 / text-3 -->
+    <color name="nocturne_on_background">#E5E2E1</color>
+    <color name="nocturne_on_surface">#E5E2E1</color>
+    <color name="nocturne_text_2">#A9A5AE</color>
+    <color name="nocturne_text_3">#827E88</color>
+    <!-- Download badge: surface-high with success text (DESIGN.md §10, Badges). -->
+    <color name="nocturne_tertiary">#25242A</color>
+    <color name="nocturne_on_tertiary">#8FD1A6</color>
+    <color name="nocturne_error">#CF8AA0</color>
+    <color name="nocturne_success">#8FD1A6</color>
+    <color name="nocturne_scrim">#99000000</color>
+</resources>

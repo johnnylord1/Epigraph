@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Rose (dark) — rose-400 primary on a deep rose plum ground,
+  ~ rose-300/200 for secondary/variant chips, rose-500 tertiary for clash.
+-->
+<resources>
+    <color name="rose_primary">#FB7185</color>
+    <color name="rose_on_primary">#4C0519</color>
+    <color name="rose_primary_variant">#2A0815</color>
+    <color name="rose_primary_inverse">#BE123C</color>
+    <color name="rose_secondary">#FDA4AF</color>
+    <color name="rose_on_secondary">#4C0519</color>
+    <color name="rose_secondary_variant">#FECDD3</color>
+    <color name="rose_highlight">#1FFB7185</color>
+    <color name="rose_tertiary">#F43F5E</color>
+    <color name="rose_on_tertiary">#FFFFFF</color>
+    <color name="rose_tab_bar_icon">#FB7185</color>
+    <color name="rose_background">#1F0A12</color>
+    <color name="rose_on_background">#FFE4E6</color>
+    <color name="rose_surface">#1F0A12</color>
+    <color name="rose_on_surface">#FFE4E6</color>
+</resources>

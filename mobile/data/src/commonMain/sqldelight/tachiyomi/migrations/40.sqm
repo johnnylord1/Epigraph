@@ -1,0 +1,63 @@
+CREATE TABLE local_books(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF')),
+    sha256 TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    author TEXT,
+    description TEXT,
+    cover_path TEXT,
+    private_path TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    imported_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX local_books_type_title_index
+ON local_books(content_type, display_name COLLATE NOCASE);
+
+CREATE TABLE local_book_progress(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    locator_json TEXT NOT NULL,
+    progression REAL NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE TABLE local_book_bookmarks(
+    bookmark_id TEXT NOT NULL PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    locator_json TEXT NOT NULL,
+    label TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE INDEX local_book_bookmarks_book_index
+ON local_book_bookmarks(book_id, updated_at DESC);
+
+CREATE TABLE local_book_highlights(
+    highlight_id TEXT NOT NULL PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    start_locator_json TEXT NOT NULL,
+    end_locator_json TEXT NOT NULL,
+    selected_text TEXT NOT NULL,
+    color_argb INTEGER NOT NULL,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE INDEX local_book_highlights_book_index
+ON local_book_highlights(book_id, updated_at DESC);
+
+CREATE TABLE local_books_categories(
+    book_id TEXT NOT NULL,
+    category_id INTEGER NOT NULL,
+    PRIMARY KEY(book_id, category_id),
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE,
+    FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);

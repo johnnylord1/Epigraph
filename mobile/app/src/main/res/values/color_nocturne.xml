@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Nocturne, light. Tokens come from DESIGN.md §2 (column "Claro"): pure white page, neutral
+  ~ surfaces, one deep-lilac accent. values-night holds the dark column; AMOLED lives below.
+-->
+<resources>
+    <!-- accent / on-accent / accent-soft -->
+    <color name="nocturne_primary">#4A3091</color>
+    <color name="nocturne_on_primary">#FFFFFF</color>
+    <color name="nocturne_accent_soft">#ECE6FA</color>
+    <color name="nocturne_primary_inverse">#C9B5FF</color>
+    <color name="nocturne_secondary">#4A3091</color>
+    <color name="nocturne_on_secondary">#FFFFFF</color>
+    <color name="nocturne_secondary_variant">#1C1B1F</color>
+    <!-- text at 12%: the "pressed" state overlay -->
+    <color name="nocturne_highlight">#1F1C1B1F</color>
+    <color name="nocturne_tab_bar_icon">#4A3091</color>
+    <color name="nocturne_tab_bar_inactive">#57535E</color>
+    <!-- bg / surface / surface-high -->
+    <color name="nocturne_background">#FFFFFF</color>
+    <color name="nocturne_surface">#F4F3F6</color>
+    <color name="nocturne_primary_variant">#EAE8EE</color>
+    <color name="nocturne_field_surface">#EAE8EE</color>
+    <!-- line / line-strong -->
+    <color name="nocturne_line">#E2E0E6</color>
+    <color name="nocturne_line_strong">#B9B6C0</color>
+    <!-- text / text-2 / text-3 -->
+    <color name="nocturne_on_background">#1C1B1F</color>
+    <color name="nocturne_on_surface">#1C1B1F</color>
+    <color name="nocturne_text_2">#57535E</color>
+    <color name="nocturne_text_3">#6F6B76</color>
+    <!-- Download badge: surface-high with success text (DESIGN.md §10, Badges). -->
+    <color name="nocturne_tertiary">#EAE8EE</color>
+    <color name="nocturne_on_tertiary">#1E7A43</color>
+    <color name="nocturne_error">#B3261E</color>
+    <color name="nocturne_success">#1E7A43</color>
+    <color name="nocturne_scrim">#66000000</color>
+
+    <!-- AMOLED column; only reachable in night mode, kept here so the overlay resolves everywhere. -->
+    <color name="nocturne_amoled_surface">#0E0E10</color>
+    <color name="nocturne_amoled_surface_high">#1B1A20</color>
+    <color name="nocturne_amoled_line">#232228</color>
+    <color name="nocturne_amoled_accent_soft">#221D33</color>
+    <color name="nocturne_amoled_scrim">#B3000000</color>
+</resources>

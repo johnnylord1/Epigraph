@@ -3,8 +3,7 @@
 ## Project Shape
 
 - Epigraph is a Tauri v2 desktop app, not Electron: Svelte 5 + TypeScript + Vite in `src/`, Rust/Tauri in `src-tauri/`, and WebView2 on Windows.
-- Epigraph Mobile lives only in a separate native Android workspace. It is Kotlin/Compose/SQLDelight-based and is not built, packaged, or branched from this repository. Do not add Android/iOS UI, packaging, or bootstrap code to this desktop repository.
-- The Android workspace is consumed as a working tree chosen by the user. Do not create a branch in its upstream repository or push to it without explicit authorization.
+- Epigraph Mobile, the native Android client (Kotlin/Compose/SQLDelight), lives in `mobile/`. It is a separate Gradle build with its own rules in `mobile/AGENTS.md`; build it from `mobile/` (`./gradlew` there), never from the repository root. Keep Android code inside `mobile/` and desktop code outside it.
 - This desktop repository may keep PC-hosted Core services and contracts used by mobile, including managed Suwayomi, Syncd, pairing, TLS, discovery, and secure LAN exposure.
 - Manga/comics are backed by Suwayomi-Server over GraphQL. Books/novels have separate local/library paths; do not collapse those domains.
 - For comics, Suwayomi is the catalog/library/chapter-state authority. Epigraph Core provides the authenticated, profile-scoped Suwayomi GraphQL proxy; Syncd stores complementary cross-device state such as comic history and page bookmarks. Do not create a second catalog by reading Suwayomi H2 or treating internal Suwayomi IDs as global Epigraph identities.

@@ -1,0 +1,39 @@
+ALTER TABLE aethon_portable_bootstrap_v3 RENAME TO aethon_portable_bootstrap_v3_legacy;
+
+CREATE TABLE aethon_portable_bootstrap_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL CHECK(ecosystem IN ('SUWAYOMI', 'LNREADER')),
+    bootstrap_id TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN (
+        'NEGOTIATING', 'RECEIVING_MANIFEST', 'RESOLVING_DEPENDENCIES', 'WAITING_TRUST',
+        'IMPORTING_REFERENCES', 'HYDRATING_LIBRARY', 'RESOLVING_CHAPTERS', 'APPLYING_STATE',
+        'COMPLETED', 'PARTIAL', 'CANCELLED', 'FAILED'
+    )),
+    manifest_fingerprint TEXT,
+    current_item TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    last_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, ecosystem)
+);
+
+-- The Legacy row did not record its domain. Duplicate only its diagnostic checkpoint; bindings,
+-- memberships and user data remain authoritative and are not duplicated by this migration.
+INSERT INTO aethon_portable_bootstrap_v3(
+    server_id, profile_id, ecosystem, bootstrap_id, phase, manifest_fingerprint,
+    current_item, attempt_count, last_reason, updated_at
+)
+SELECT server_id, profile_id, 'SUWAYOMI', bootstrap_id || ':comics', phase,
+       manifest_fingerprint, current_item, attempt_count, last_reason, updated_at
+FROM aethon_portable_bootstrap_v3_legacy;
+
+INSERT INTO aethon_portable_bootstrap_v3(
+    server_id, profile_id, ecosystem, bootstrap_id, phase, manifest_fingerprint,
+    current_item, attempt_count, last_reason, updated_at
+)
+SELECT server_id, profile_id, 'LNREADER', bootstrap_id || ':novels', phase,
+       manifest_fingerprint, current_item, attempt_count, last_reason, updated_at
+FROM aethon_portable_bootstrap_v3_legacy;
+
+DROP TABLE aethon_portable_bootstrap_v3_legacy;

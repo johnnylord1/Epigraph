@@ -1,0 +1,36 @@
+import kotlin.Boolean;
+
+-- The selection has no foreign key to credentials or paired-Core metadata. It is local,
+-- non-secret user state that survives disconnects and does not own synchronized content.
+CREATE TABLE aethon_device_sync_selection (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    device_id TEXT NOT NULL CHECK(length(device_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    comics_enabled INTEGER AS Boolean NOT NULL,
+    novels_enabled INTEGER AS Boolean NOT NULL,
+    books_enabled INTEGER AS Boolean NOT NULL,
+    comic_extensions TEXT NOT NULL CHECK(comic_extensions IN ('DISABLED', 'INVENTORY_ONLY')),
+    novel_repositories TEXT NOT NULL CHECK(novel_repositories IN ('DISABLED', 'INVENTORY_ONLY')),
+    novel_plugins TEXT NOT NULL CHECK(novel_plugins IN ('DISABLED', 'INVENTORY_ONLY')),
+    book_asset_policy TEXT NOT NULL CHECK(book_asset_policy = 'ON_DEMAND'),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, device_id),
+    CHECK(comics_enabled = 1 OR comic_extensions = 'DISABLED'),
+    CHECK(novels_enabled = 1 OR novel_repositories = 'DISABLED'),
+    CHECK(novels_enabled = 1 OR novel_plugins = 'DISABLED'),
+    CHECK(comics_enabled = 1 OR novels_enabled = 1 OR books_enabled = 1)
+);
+
+-- Inventory only: executable LNReader artifacts are never stored in this table or transported
+-- by Syncd. The JSON is a bounded UI/report cache derived from confirmed Core descriptors.
+CREATE TABLE aethon_core_novel_dependency_inventory_cache (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    inventory_hash TEXT NOT NULL CHECK(length(inventory_hash) = 64 AND inventory_hash NOT GLOB '*[^0-9a-f]*'),
+    inventory_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL CHECK(generated_at >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id)
+);

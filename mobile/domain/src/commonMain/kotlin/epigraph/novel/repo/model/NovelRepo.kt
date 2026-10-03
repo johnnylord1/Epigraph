@@ -1,0 +1,6 @@
+package epigraph.novel.repo.model
+
+data class NovelRepo(
+    val baseUrl: String,
+    val name: String,
+)

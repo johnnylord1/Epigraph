@@ -1,0 +1,265 @@
+import kotlin.Boolean;
+
+CREATE TABLE local_books(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF')),
+    sha256 TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    author TEXT,
+    description TEXT,
+    cover_path TEXT,
+    cover_asset_sha256 TEXT CHECK(
+        cover_asset_sha256 IS NULL OR (
+            length(cover_asset_sha256) = 64 AND cover_asset_sha256 NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cover_asset_byte_size INTEGER CHECK(
+        cover_asset_byte_size IS NULL OR cover_asset_byte_size BETWEEN 1 AND 8388608
+    ),
+    cover_asset_mime_type TEXT CHECK(
+        cover_asset_mime_type IS NULL OR cover_asset_mime_type IN ('image/jpeg', 'image/png', 'image/webp')
+    ),
+    private_path TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    imported_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    -- Display-only structure metadata. It is nullable because older Core records and
+    -- unavailable publications may not have been inspected yet.
+    chapter_count INTEGER,
+    page_count INTEGER,
+    CHECK(
+        (cover_asset_sha256 IS NULL AND cover_asset_byte_size IS NULL AND cover_asset_mime_type IS NULL) OR
+        (cover_asset_sha256 IS NOT NULL AND cover_asset_byte_size IS NOT NULL AND cover_asset_mime_type IS NOT NULL)
+    )
+);
+
+CREATE INDEX local_books_type_title_index
+ON local_books(content_type, display_name COLLATE NOCASE);
+
+CREATE TABLE local_book_progress(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    locator_json TEXT NOT NULL,
+    progression REAL NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE TABLE local_book_bookmarks(
+    bookmark_id TEXT NOT NULL PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    locator_json TEXT NOT NULL,
+    label TEXT,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE INDEX local_book_bookmarks_book_index
+ON local_book_bookmarks(book_id, updated_at DESC);
+
+CREATE TABLE local_book_highlights(
+    highlight_id TEXT NOT NULL PRIMARY KEY,
+    book_id TEXT NOT NULL,
+    start_locator_json TEXT NOT NULL,
+    end_locator_json TEXT NOT NULL,
+    selected_text TEXT NOT NULL,
+    color_argb INTEGER NOT NULL,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE
+);
+
+CREATE INDEX local_book_highlights_book_index
+ON local_book_highlights(book_id, updated_at DESC);
+
+CREATE TABLE local_books_categories(
+    book_id TEXT NOT NULL,
+    category_id INTEGER NOT NULL,
+    PRIMARY KEY(book_id, category_id),
+    FOREIGN KEY(book_id) REFERENCES local_books(book_id) ON DELETE CASCADE,
+    FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+findAll:
+SELECT * FROM local_books
+ORDER BY display_name COLLATE NOCASE;
+
+findAllByType:
+SELECT * FROM local_books
+WHERE content_type = :contentType
+ORDER BY display_name COLLATE NOCASE;
+
+findById:
+SELECT * FROM local_books
+WHERE book_id = :bookId;
+
+findBySha256:
+SELECT * FROM local_books
+WHERE sha256 = :sha256;
+
+insert:
+INSERT INTO local_books(
+    book_id, content_type, sha256, display_name, author, description, cover_path,
+    cover_asset_sha256, cover_asset_byte_size, cover_asset_mime_type,
+    private_path, mime_type, byte_size, chapter_count, page_count, imported_at, updated_at
+)
+VALUES(
+    :bookId, :contentType, :sha256, :displayName, :author, :description, :coverPath,
+    :coverAssetSha256, :coverAssetByteSize, :coverAssetMimeType,
+    :privatePath, :mimeType, :byteSize, :chapterCount, :pageCount, :importedAt, :updatedAt
+);
+
+updateMetadata:
+UPDATE local_books SET
+    display_name = :displayName,
+    author = :author,
+    description = :description,
+    cover_path = :coverPath,
+    updated_at = :updatedAt
+WHERE book_id = :bookId;
+
+updateCover:
+UPDATE local_books SET
+    cover_path = :coverPath,
+    cover_asset_sha256 = :coverAssetSha256,
+    cover_asset_byte_size = :coverAssetByteSize,
+    cover_asset_mime_type = :coverAssetMimeType,
+    updated_at = :updatedAt
+WHERE book_id = :bookId;
+
+publishCoverPath:
+UPDATE local_books SET
+    cover_path = :coverPath
+WHERE book_id = :bookId
+    AND cover_asset_sha256 = :coverAssetSha256
+    AND cover_asset_byte_size = :coverAssetByteSize
+    AND cover_asset_mime_type = :coverAssetMimeType;
+
+updateAsset:
+UPDATE local_books SET
+    private_path = :privatePath,
+    mime_type = :mimeType,
+    byte_size = :byteSize,
+    updated_at = :updatedAt
+WHERE book_id = :bookId;
+
+updateStructure:
+UPDATE local_books SET
+    chapter_count = :chapterCount,
+    page_count = :pageCount,
+    updated_at = :updatedAt
+WHERE book_id = :bookId;
+
+deleteById:
+DELETE FROM local_books
+WHERE book_id = :bookId;
+
+findProgress:
+SELECT * FROM local_book_progress
+WHERE book_id = :bookId;
+
+upsertProgress:
+INSERT INTO local_book_progress(book_id, locator_json, progression, updated_at)
+VALUES(:bookId, :locatorJson, :progression, :updatedAt)
+ON CONFLICT(book_id) DO UPDATE SET
+    locator_json = excluded.locator_json,
+    progression = excluded.progression,
+    updated_at = excluded.updated_at
+WHERE excluded.updated_at >= local_book_progress.updated_at;
+
+-- Used only after the Core replica has passed the causal mutation shield. The server revision,
+-- rather than a device wall clock, establishes authority for this write, so an older timestamp
+-- from another device cannot be mistaken for stale data.
+upsertConfirmedProgress:
+INSERT INTO local_book_progress(book_id, locator_json, progression, updated_at)
+VALUES(:bookId, :locatorJson, :progression, :updatedAt)
+ON CONFLICT(book_id) DO UPDATE SET
+    locator_json = excluded.locator_json,
+    progression = excluded.progression,
+    updated_at = excluded.updated_at;
+
+deleteProgress:
+DELETE FROM local_book_progress
+WHERE book_id = :bookId;
+
+findBookmarks:
+SELECT * FROM local_book_bookmarks
+WHERE book_id = :bookId
+ORDER BY updated_at DESC;
+
+insertBookmark:
+INSERT INTO local_book_bookmarks(
+    bookmark_id, book_id, locator_json, label, note, created_at, updated_at
+)
+VALUES(:bookmarkId, :bookId, :locatorJson, :label, :note, :createdAt, :updatedAt);
+
+upsertBookmark:
+INSERT INTO local_book_bookmarks(
+    bookmark_id, book_id, locator_json, label, note, created_at, updated_at
+)
+VALUES(:bookmarkId, :bookId, :locatorJson, :label, :note, :createdAt, :updatedAt)
+ON CONFLICT(bookmark_id) DO UPDATE SET
+    book_id = excluded.book_id,
+    locator_json = excluded.locator_json,
+    label = excluded.label,
+    note = excluded.note,
+    created_at = excluded.created_at,
+    updated_at = excluded.updated_at;
+
+deleteBookmark:
+DELETE FROM local_book_bookmarks
+WHERE bookmark_id = :bookmarkId;
+
+findHighlights:
+SELECT * FROM local_book_highlights
+WHERE book_id = :bookId
+ORDER BY updated_at DESC;
+
+insertHighlight:
+INSERT INTO local_book_highlights(
+    highlight_id, book_id, start_locator_json, end_locator_json, selected_text,
+    color_argb, note, created_at, updated_at
+)
+VALUES(:highlightId, :bookId, :startLocatorJson, :endLocatorJson, :selectedText,
+    :colorArgb, :note, :createdAt, :updatedAt);
+
+upsertHighlight:
+INSERT INTO local_book_highlights(
+    highlight_id, book_id, start_locator_json, end_locator_json, selected_text,
+    color_argb, note, created_at, updated_at
+)
+VALUES(:highlightId, :bookId, :startLocatorJson, :endLocatorJson, :selectedText,
+    :colorArgb, :note, :createdAt, :updatedAt)
+ON CONFLICT(highlight_id) DO UPDATE SET
+    book_id = excluded.book_id,
+    start_locator_json = excluded.start_locator_json,
+    end_locator_json = excluded.end_locator_json,
+    selected_text = excluded.selected_text,
+    color_argb = excluded.color_argb,
+    note = excluded.note,
+    created_at = excluded.created_at,
+    updated_at = excluded.updated_at;
+
+deleteHighlight:
+DELETE FROM local_book_highlights
+WHERE highlight_id = :highlightId;
+
+findCategoryIds:
+SELECT category_id FROM local_books_categories
+WHERE book_id = :bookId
+ORDER BY category_id;
+
+insertCategory:
+INSERT OR IGNORE INTO local_books_categories(book_id, category_id)
+VALUES(:bookId, :categoryId);
+
+deleteCategory:
+DELETE FROM local_books_categories
+WHERE book_id = :bookId AND category_id = :categoryId;
+
+deleteCategories:
+DELETE FROM local_books_categories
+WHERE book_id = :bookId;

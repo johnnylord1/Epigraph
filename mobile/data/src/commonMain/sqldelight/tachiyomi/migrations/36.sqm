@@ -1,0 +1,4 @@
+-- Repair databases that already ran the historical nullable migration 9.
+UPDATE categories
+SET manga_order = ''
+WHERE manga_order IS NULL;

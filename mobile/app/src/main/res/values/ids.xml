@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <item name="reader_pager" type="id"/>
+    <item name="predictive_back_outline" type="id"/>
+    <item name="list_entry_played" type="id"/>
+    <item name="moment_overlay" type="id"/>
+</resources>

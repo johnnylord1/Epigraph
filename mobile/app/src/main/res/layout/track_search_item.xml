@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_marginTop="6dp"
+    android:layout_marginEnd="16dp"
+    android:layout_marginBottom="6dp"
+    android:clickable="true"
+    android:focusable="true"
+    android:foreground="?attr/selectableItemBackground"
+    app:cardBackgroundColor="?attr/colorSurface"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="0dp"
+    app:strokeColor="?attr/colorOutlineVariant"
+    app:strokeWidth="1dp">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/track_search_cover"
+            android:layout_width="68dp"
+            android:layout_height="92dp"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="@string/cover_of_image"
+            android:scaleType="centerCrop"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:src="@mipmap/ic_launcher" />
+
+        <TextView
+            android:id="@+id/track_search_title"
+            style="?textAppearanceTitleMedium"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="12dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            app:layout_constraintEnd_toStartOf="@id/link_button"
+            app:layout_constraintStart_toEndOf="@id/track_search_cover"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:text="One Piece" />
+
+        <ImageButton
+            android:id="@+id/link_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?selectableItemBackgroundBorderless"
+            android:contentDescription="@string/open_in_browser"
+            android:padding="12dp"
+            android:tooltipText="@string/open_in_browser"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:srcCompat="@drawable/ic_open_in_new_24dp"
+            app:tint="?android:textColorSecondary" />
+
+        <TextView
+            android:id="@+id/track_search_type"
+            style="?textAppearanceLabelMedium"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="7dp"
+            android:text="@string/type"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintStart_toEndOf="@id/track_search_cover"
+            app:layout_constraintTop_toBottomOf="@id/track_search_title" />
+
+        <TextView
+            android:id="@+id/track_search_type_result"
+            style="?textAppearanceBodySmall"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            app:layout_constraintBaseline_toBaselineOf="@id/track_search_type"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/track_search_type"
+            tools:text="Manga" />
+
+        <TextView
+            android:id="@+id/track_search_start"
+            style="?textAppearanceLabelMedium"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="4dp"
+            android:text="@string/started"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintStart_toEndOf="@id/track_search_cover"
+            app:layout_constraintTop_toBottomOf="@id/track_search_type" />
+
+        <TextView
+            android:id="@+id/track_search_start_result"
+            style="?textAppearanceBodySmall"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            app:layout_constraintBaseline_toBaselineOf="@id/track_search_start"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/track_search_start"
+            tools:text="2018-10-01" />
+
+        <TextView
+            android:id="@+id/track_search_status"
+            style="?textAppearanceLabelMedium"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="4dp"
+            android:text="@string/status"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintStart_toEndOf="@id/track_search_cover"
+            app:layout_constraintTop_toBottomOf="@id/track_search_start" />
+
+        <TextView
+            android:id="@+id/track_search_status_result"
+            style="?textAppearanceBodySmall"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            app:layout_constraintBaseline_toBaselineOf="@id/track_search_status"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/track_search_status"
+            tools:text="Ongoing" />
+
+        <androidx.constraintlayout.widget.Barrier
+            android:id="@+id/cover_barrier"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:barrierDirection="bottom"
+            app:constraint_referenced_ids="track_search_cover,track_search_status" />
+
+        <TextView
+            android:id="@+id/track_search_summary"
+            style="?textAppearanceBodySmall"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="12dp"
+            android:layout_marginBottom="12dp"
+            android:ellipsize="end"
+            android:maxLines="3"
+            android:textColor="?android:attr/textColorSecondary"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/cover_barrier"
+            tools:text="A pirate adventure across the Grand Line." />
+
+        <ImageView
+            android:id="@+id/checkbox"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/oval"
+            android:backgroundTint="?colorOnSecondary"
+            android:contentDescription="@string/selection"
+            android:src="@drawable/ic_check_circle_24dp"
+            app:layout_constraintStart_toStartOf="@id/track_search_cover"
+            app:layout_constraintTop_toTopOf="@id/track_search_cover"
+            app:tint="?attr/colorSecondary" />
+
+        <View
+            android:id="@+id/end_view"
+            android:layout_width="1dp"
+            android:layout_height="1dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</com.google.android.material.card.MaterialCardView>

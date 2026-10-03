@@ -6,7 +6,7 @@
 
 <img src="docs/assets/epigraph-readme-cover.webp" alt="Epigraph, read across formats" width="100%">
 
-[Download for Windows](https://github.com/johnnylord1/Epigraph/releases/latest) | [Desktop documentation](docs/desktop-features.md) | [Android client](https://github.com/johnnylord1/Epigraph/tree/mobile)
+[Download for Windows](https://github.com/johnnylord1/Epigraph/releases/latest) | [Desktop documentation](docs/desktop-features.md) | [Android client](mobile/)
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-a995cf)](LICENSE)
 
@@ -78,8 +78,8 @@ its SHA-256, so a fresh checkout does not depend on an ignored local bundle.
 
 ## Project map
 
-- [`main`](https://github.com/johnnylord1/Epigraph/tree/main) contains the Tauri desktop app, Epigraph Core, Syncd, and desktop documentation.
-- [`mobile`](https://github.com/johnnylord1/Epigraph/tree/mobile) contains the native Android client.
+- The repository root contains the Tauri desktop app, Epigraph Core, Syncd, and desktop documentation.
+- [`mobile/`](mobile/) contains Epigraph Mobile, the native Android client (a separate Gradle build).
 - [`docs/desktop-features.md`](docs/desktop-features.md) documents implemented desktop capabilities and their boundaries.
 - [`docs/screenshots`](docs/screenshots) contains the current desktop interface gallery.
 - [`docs/roadmap.md`](docs/roadmap.md) tracks planned work.

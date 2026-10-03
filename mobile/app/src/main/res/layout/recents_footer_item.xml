@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "View history / View all updates": a quiet text link under its section, aligned with the
+     covers above it, with the arrow trailing the label. -->
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/recent_item"
+    android:background="@drawable/list_item_selector"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="@dimen/touch_target"
+    android:paddingBottom="@dimen/space_1">
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/space_2"
+        android:textAppearance="?textAppearanceLabelLarge"
+        android:textColor="?attr/colorSecondary"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        tools:text="@string/view_all_updates" />
+
+    <ImageView
+        android:id="@+id/arrow"
+        android:layout_width="@dimen/space_2"
+        android:layout_height="@dimen/space_2"
+        android:layout_marginStart="@dimen/space_half"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_arrow_forward_24dp"
+        app:tint="?attr/colorSecondary"
+        app:layout_constraintTop_toTopOf="@id/title"
+        app:layout_constraintBottom_toBottomOf="@id/title"
+        app:layout_constraintStart_toEndOf="@id/title" />
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,0 +1,580 @@
+package eu.kanade.tachiyomi.data.preference
+
+import android.content.Context
+import androidx.appcompat.app.AppCompatDelegate
+import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.core.preference.Preference
+import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.core.preference.getEnum
+import eu.kanade.tachiyomi.core.storage.preference.asDateFormat
+import eu.kanade.tachiyomi.data.updater.AppDownloadInstallJob
+import eu.kanade.tachiyomi.domain.manga.models.Manga
+import eu.kanade.tachiyomi.extension.model.InstalledExtensionsOrder
+import eu.kanade.tachiyomi.ui.library.LibraryItem
+import eu.kanade.tachiyomi.ui.library.filter.FilterBottomSheet
+import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
+import eu.kanade.tachiyomi.ui.reader.settings.PageLayout
+import eu.kanade.tachiyomi.ui.reader.settings.ReaderBottomButton
+import eu.kanade.tachiyomi.ui.reader.settings.ReadingModeType
+import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation
+import eu.kanade.tachiyomi.ui.recents.RecentsPresenter
+import eu.kanade.tachiyomi.util.system.Themes
+import java.text.DateFormat
+import java.util.Locale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
+import eu.kanade.tachiyomi.data.preference.PreferenceValues as Values
+
+fun <T> Preference<T>.changesIn(scope: CoroutineScope, block: (value: T) -> Unit): Job {
+    block(get())
+    return changes()
+        .onEach { block(it) }
+        .launchIn(scope)
+}
+
+fun Preference<Boolean>.toggle() = set(!get())
+
+operator fun <T> Preference<Set<T>>.plusAssign(item: T) {
+    set(get() + item)
+}
+
+operator fun <T> Preference<Set<T>>.minusAssign(item: T) {
+    set(get() - item)
+}
+
+operator fun <T> Preference<Set<T>>.plusAssign(item: Collection<T>) {
+    set(get() + item)
+}
+
+operator fun <T> Preference<Set<T>>.minusAssign(item: Collection<T>) {
+    set(get() - item)
+}
+
+class PreferencesHelper(val context: Context, val preferenceStore: PreferenceStore) {
+
+    fun getInt(key: String, default: Int) = preferenceStore.getInt(key, default)
+    fun getStringPref(key: String, default: String = "") = preferenceStore.getString(key, default)
+    fun getStringSet(key: String, default: Set<String>) = preferenceStore.getStringSet(key, default)
+
+    fun startingTab() = preferenceStore.getInt(Keys.startingTab, -1)
+    fun backReturnsToStart() = preferenceStore.getBoolean(Keys.backToStart, true)
+
+    fun hasShownNotifPermission() = preferenceStore.getBoolean("has_shown_notification_permission", false)
+
+    fun hasDeniedA11FilePermission() = preferenceStore.getBoolean(Keys.deniedA11FilePermission, false)
+
+    // Dark Nocturne by default, matching the desktop's default theme.
+    fun nightMode() = preferenceStore.getInt(Keys.nightMode, AppCompatDelegate.MODE_NIGHT_YES)
+
+    fun themeDarkAmoled() = preferenceStore.getBoolean(Keys.themeDarkAmoled, false)
+
+    fun lightTheme() = preferenceStore.getEnum(Keys.lightTheme, Themes.NOCTURNE)
+    fun darkTheme() = preferenceStore.getEnum(Keys.darkTheme, Themes.NOCTURNE)
+
+    fun pageTransitions() = preferenceStore.getBoolean(Keys.enableTransitions, true)
+
+    fun doubleTapAnimSpeed() = preferenceStore.getInt(Keys.doubleTapAnimationSpeed, 500)
+
+    fun showPageNumber() = preferenceStore.getBoolean(Keys.showPageNumber, true)
+
+    fun fullscreen() = preferenceStore.getBoolean(Keys.fullscreen, true)
+
+    fun keepScreenOn() = preferenceStore.getBoolean(Keys.keepScreenOn, true)
+
+    fun customBrightness() = preferenceStore.getBoolean(Keys.customBrightness, false)
+
+    fun customBrightnessValue() = preferenceStore.getInt(Keys.customBrightnessValue, 0)
+
+    fun colorFilter() = preferenceStore.getBoolean(Keys.colorFilter, false)
+
+    fun colorFilterValue() = preferenceStore.getInt(Keys.colorFilterValue, 0)
+
+    fun colorFilterMode() = preferenceStore.getInt(Keys.colorFilterMode, 0)
+
+    fun defaultReadingMode() = preferenceStore.getInt(Keys.defaultReadingMode, ReadingModeType.RIGHT_TO_LEFT.flagValue)
+
+    fun defaultOrientationType() = preferenceStore.getInt(Keys.defaultOrientationType, OrientationType.FREE.flagValue)
+
+    fun imageScaleType() = preferenceStore.getInt(Keys.imageScaleType, 1)
+
+    fun zoomStart() = preferenceStore.getInt(Keys.zoomStart, 1)
+
+    fun readerTheme() = preferenceStore.getInt(Keys.readerTheme, 2)
+
+    fun cropBorders() = preferenceStore.getBoolean(Keys.cropBorders, false)
+
+    fun cropBordersWebtoon() = preferenceStore.getBoolean(Keys.cropBordersWebtoon, false)
+
+    fun navigateToPan() = preferenceStore.getBoolean("navigate_pan", true)
+
+    fun landscapeZoom() = preferenceStore.getBoolean("landscape_zoom", false)
+
+    fun grayscale() = preferenceStore.getBoolean("pref_grayscale", false)
+
+    fun invertedColors() = preferenceStore.getBoolean("pref_inverted_colors", false)
+
+    fun webtoonSidePadding() = preferenceStore.getInt(Keys.webtoonSidePadding, 0)
+
+    fun webtoonEnableZoomOut() = preferenceStore.getBoolean(Keys.webtoonEnableZoomOut, false)
+
+    fun readWithLongTap() = preferenceStore.getBoolean(Keys.readWithLongTap, true)
+
+    fun readWithVolumeKeys() = preferenceStore.getBoolean(Keys.readWithVolumeKeys, false)
+
+    fun readWithVolumeKeysInverted() = preferenceStore.getBoolean(Keys.readWithVolumeKeysInverted, false)
+
+    fun navigationModePager() = preferenceStore.getInt(Keys.navigationModePager, 0)
+
+    fun navigationModeWebtoon() = preferenceStore.getInt(Keys.navigationModeWebtoon, 0)
+
+    fun pagerNavInverted() = preferenceStore.getEnum(Keys.pagerNavInverted, ViewerNavigation.TappingInvertMode.NONE)
+
+    fun webtoonNavInverted() = preferenceStore.getEnum(Keys.webtoonNavInverted, ViewerNavigation.TappingInvertMode.NONE)
+
+    fun pageLayout() = preferenceStore.getInt(Keys.pageLayout, PageLayout.AUTOMATIC.value)
+
+    fun automaticSplitsPage() = preferenceStore.getBoolean(Keys.automaticSplitsPage, false)
+
+    fun invertDoublePages() = preferenceStore.getBoolean(Keys.invertDoublePages, false)
+
+    fun webtoonPageLayout() = preferenceStore.getInt(Keys.webtoonPageLayout, PageLayout.SINGLE_PAGE.value)
+
+    fun webtoonReaderHideThreshold() = preferenceStore.getEnum("reader_hide_threshold", Values.ReaderHideThreshold.LOW)
+
+    fun webtoonInvertDoublePages() = preferenceStore.getBoolean(Keys.webtoonInvertDoublePages, false)
+
+    fun readerBottomButtons() = preferenceStore.getStringSet(
+        Keys.readerBottomButtons,
+        ReaderBottomButton.BUTTONS_DEFAULTS,
+    )
+
+    fun readerVerticalSeekbarModes() = preferenceStore.getStringSet(
+        Keys.readerVerticalSeekbarModes,
+        ReadingModeType.entries.filter { it != ReadingModeType.DEFAULT && it != ReadingModeType.NOVEL }
+            .map { it.prefValue.toString() }.toSet(),
+    )
+
+    fun novelVerticalSeekbar() = preferenceStore.getBoolean(Keys.novelVerticalSeekbar, true)
+
+    fun bookVerticalSeekbarFormats() = preferenceStore.getStringSet(Keys.bookVerticalSeekbarFormats, setOf("epub", "pdf"))
+
+    fun readerVerticalSeekbarDockLeft() = preferenceStore.getBoolean(Keys.readerVerticalSeekbarDockLeft, false)
+
+    fun readerVerticalSeekbarHeightPercent() = preferenceStore.getInt(Keys.readerVerticalSeekbarHeightPercent, 65)
+
+    /**
+     * Restores reader-only preferences to Epigraph's documented defaults.  This intentionally
+     * writes values instead of clearing the store: progress, library, downloads and unrelated
+     * app settings must never be affected by the reader reset action.
+     */
+    fun resetReaderSettingsToDefaults() {
+        pageTransitions().set(true)
+        showPageNumber().set(true)
+        fullscreen().set(true)
+        keepScreenOn().set(true)
+        customBrightness().set(false)
+        customBrightnessValue().set(0)
+        colorFilter().set(false)
+        colorFilterValue().set(0)
+        colorFilterMode().set(0)
+        defaultReadingMode().set(ReadingModeType.RIGHT_TO_LEFT.flagValue)
+        defaultOrientationType().set(OrientationType.FREE.flagValue)
+        imageScaleType().set(1)
+        zoomStart().set(1)
+        readerTheme().set(2) // Smart (by page)
+        cropBorders().set(false)
+        cropBordersWebtoon().set(false)
+        navigateToPan().set(true)
+        landscapeZoom().set(false)
+        grayscale().set(false)
+        invertedColors().set(false)
+        webtoonSidePadding().set(0)
+        webtoonEnableZoomOut().set(false)
+        readWithLongTap().set(true)
+        readWithVolumeKeys().set(false)
+        readWithVolumeKeysInverted().set(false)
+        navigationModePager().set(0)
+        navigationModeWebtoon().set(0)
+        pagerNavInverted().set(ViewerNavigation.TappingInvertMode.NONE)
+        webtoonNavInverted().set(ViewerNavigation.TappingInvertMode.NONE)
+        pageLayout().set(PageLayout.AUTOMATIC.value)
+        automaticSplitsPage().set(false)
+        invertDoublePages().set(false)
+        webtoonPageLayout().set(PageLayout.SINGLE_PAGE.value)
+        webtoonInvertDoublePages().set(false)
+        readerBottomButtons().set(ReaderBottomButton.BUTTONS_DEFAULTS)
+        readerVerticalSeekbarModes().set(
+            ReadingModeType.entries
+                .filter { it != ReadingModeType.DEFAULT && it != ReadingModeType.NOVEL }
+                .map { it.prefValue.toString() }
+                .toSet(),
+        )
+        novelVerticalSeekbar().set(true)
+        bookVerticalSeekbarFormats().set(setOf("epub", "pdf"))
+        readerVerticalSeekbarDockLeft().set(false)
+        readerVerticalSeekbarHeightPercent().set(65)
+        alwaysShowChapterTransition().set(true)
+    }
+
+    fun showNavigationOverlayNewUser() = preferenceStore.getBoolean(Keys.showNavigationOverlayNewUser, true)
+
+    fun showNavigationOverlayNewUserWebtoon() = preferenceStore.getBoolean(Keys.showNavigationOverlayNewUserWebtoon, true)
+
+    fun preloadSize() = preferenceStore.getInt(Keys.preloadSize, 6)
+
+    fun autoUpdateTrack() = preferenceStore.getBoolean(Keys.autoUpdateTrack, true)
+
+    fun trackMarkedAsRead() = preferenceStore.getBoolean(Keys.trackMarkedAsRead, false)
+
+    fun trackingsToAddOnline() = preferenceStore.getStringSet(Keys.trackingsToAddOnline, emptySet())
+
+    // TODO: SourcePref
+    fun lastUsedCatalogueSource() = preferenceStore.getLong(Keys.lastUsedCatalogueSource, -1)
+
+    fun lastUsedCategory() = preferenceStore.getInt(Keys.lastUsedCategory, 0)
+
+    // TODO: SourcePref
+    fun lastUsedSources() = preferenceStore.getStringSet("last_used_sources", emptySet())
+
+    fun lastVersionCode() = preferenceStore.getInt("last_version_code", 0)
+
+    fun browseAsList() = preferenceStore.getBoolean(Keys.catalogueAsList, false)
+
+    // TODO: SourcePref
+    fun enabledLanguages() = preferenceStore.getStringSet(
+        Keys.enabledLanguages,
+        setOfNotNull("all", "en", Locale.getDefault().language.takeIf { !it.startsWith("en") }),
+    )
+
+    // TODO: SourcePref
+    fun sourceSorting() = preferenceStore.getInt(Keys.sourcesSort, 0)
+
+    fun anilistScoreType() = preferenceStore.getString("anilist_score_type", "POINT_10")
+
+    fun dateFormatRaw() = preferenceStore.getString(Keys.dateFormat, "")
+
+    @Deprecated("Use dateFormatRaw().get().asDateFormat() instead")
+    fun dateFormat(format: String = dateFormatRaw().get()): DateFormat = format.asDateFormat()
+
+    fun appLanguage() = preferenceStore.getString("app_language", "")
+
+    fun downloadOnlyOverWifi() = preferenceStore.getBoolean(Keys.downloadOnlyOverWifi, true)
+
+    fun folderPerManga() = preferenceStore.getBoolean("create_folder_per_manga", false)
+
+    fun librarySearchSuggestion() = preferenceStore.getString(Keys.librarySearchSuggestion, "")
+
+    fun showLibrarySearchSuggestions() = preferenceStore.getBoolean(Keys.showLibrarySearchSuggestions, false)
+
+    fun lastLibrarySuggestion() = preferenceStore.getLong("last_library_suggestion", 0L)
+
+    fun removeAfterReadSlots() = preferenceStore.getInt(Keys.removeAfterReadSlots, -1)
+
+    fun removeAfterMarkedAsRead() = preferenceStore.getBoolean(Keys.removeAfterMarkedAsRead, false)
+
+    fun libraryUpdateInterval() = preferenceStore.getInt(Keys.libraryUpdateInterval, 24)
+
+    fun libraryUpdateParallelism() = preferenceStore.getInt("library_update_parallelism", 5)
+
+    fun libraryUpdateLastTimestamp() = preferenceStore.getLong("library_update_last_timestamp", 0L)
+
+    fun libraryUpdateDeviceRestriction() = preferenceStore.getStringSet("library_update_restriction", setOf(DEVICE_ONLY_ON_WIFI))
+
+    fun libraryUpdateMangaRestriction() = preferenceStore.getStringSet("library_update_manga_restriction", setOf(MANGA_HAS_UNREAD, MANGA_NON_COMPLETED, MANGA_NON_READ))
+
+    fun libraryUpdateCategories() = preferenceStore.getStringSet("library_update_categories", emptySet())
+    fun libraryUpdateCategoriesExclude() = preferenceStore.getStringSet("library_update_categories_exclude", emptySet())
+
+    // Category IDs whose manga always update, never skipped by MANGA_OUTSIDE_RELEASE_PERIOD.
+    fun libraryUpdateSmartUpdateCategoriesExclude() = preferenceStore.getStringSet("library_update_smart_update_categories_exclude", emptySet())
+
+    fun smartUpdateEnabled() = preferenceStore.getBoolean("library_smart_update_enabled", true)
+
+    fun libraryLayout() = preferenceStore.getInt(Keys.libraryLayout, LibraryItem.LAYOUT_COMFORTABLE_GRID)
+
+    // Browse-scoped grid density. Defaults to the existing library layout so users keep their
+    // look on first read, but the source display picker writes only this key (not libraryLayout).
+    fun sourceGridLayout() = preferenceStore.getInt(Keys.sourceGridLayout, libraryLayout().get())
+
+    fun libraryDisplayMode() = preferenceStore.getInt(Keys.libraryDisplayMode, LibraryItem.DISPLAY_MODE_CONTINUOUS)
+
+    fun librarySearchAcrossTabs() = preferenceStore.getBoolean(Keys.librarySearchAcrossTabs, false)
+
+    fun gridSize() = preferenceStore.getFloat(Keys.gridSize, 1f)
+
+    fun downloadBadge() = preferenceStore.getBoolean(Keys.downloadBadge, false)
+
+    fun languageBadge() = preferenceStore.getBoolean(Keys.languageBadge, false)
+
+    fun filterDownloaded() = preferenceStore.getInt(Keys.filterDownloaded, 0)
+
+    fun filterUnread() = preferenceStore.getInt(Keys.filterUnread, 0)
+
+    fun filterCompleted() = preferenceStore.getInt(Keys.filterCompleted, 0)
+
+    fun filterBookmarked() = preferenceStore.getInt("pref_filter_bookmarked_key", 0)
+
+    fun filterCustomInterval() = preferenceStore.getInt("pref_filter_custom_interval_key", 0)
+
+    fun filterTracked() = preferenceStore.getInt(Keys.filterTracked, 0)
+
+    fun filterMangaType() = preferenceStore.getInt(Keys.filterMangaType, 0)
+
+    fun filterContentType() = preferenceStore.getInt("pref_filter_content_type_key", 0)
+
+    fun showEmptyCategoriesWhileFiltering() = preferenceStore.getBoolean(Keys.showEmptyCategoriesFiltering, false)
+
+    fun librarySortingMode() = preferenceStore.getInt("library_sorting_mode", 0)
+
+    fun librarySortingAscending() = preferenceStore.getBoolean("library_sorting_ascending", true)
+
+    fun automaticExtUpdates() = preferenceStore.getBoolean(Keys.automaticExtUpdates, true)
+
+    // TODO: SourcePref
+    fun installedExtensionsOrder() = preferenceStore.getInt(Keys.installedExtensionsOrder, InstalledExtensionsOrder.Name.value)
+
+    // TODO: SourcePref
+    fun migrationSourceOrder() = preferenceStore.getInt("migration_source_order", Values.MigrationSourceOrder.Alphabetically.value)
+
+    fun collapsedCategories() = preferenceStore.getStringSet("collapsed_categories", mutableSetOf())
+
+    fun collapsedDynamicCategories() = preferenceStore.getStringSet("collapsed_dynamic_categories", mutableSetOf())
+
+    /** Real category ids collapsed in the Books & novels library, kept apart from Comics. */
+    fun collapsedBooksCategories() = preferenceStore.getStringSet("epigraph_books_collapsed_categories", mutableSetOf())
+
+    fun collapsedDynamicAtBottom() = preferenceStore.getBoolean("collapsed_dynamic_at_bottom", false)
+
+    // TODO: SourcePref
+    fun hiddenSources() = preferenceStore.getStringSet("hidden_catalogues", mutableSetOf())
+
+    // TODO: SourcePref
+    fun pinnedCatalogues() = preferenceStore.getStringSet("pinned_catalogues", mutableSetOf())
+
+    /**
+     * Pinned catalogues for the Manga tab in [eu.kanade.tachiyomi.ui.source.BrowseController].
+     * Distinct from [pinnedNovelCatalogues] so each tab keeps its own pinned set; legacy
+     * [pinnedCatalogues] is still read by GlobalSearch and Migration (cross-type features)
+     * and is split into these on the first Browse load via SourcePresenter migration.
+     */
+    fun pinnedMangaCatalogues() = preferenceStore.getStringSet("pinned_manga_catalogues", mutableSetOf())
+
+    /** Pinned catalogues for the Novel tab in [eu.kanade.tachiyomi.ui.source.BrowseController]. */
+    fun pinnedNovelCatalogues() = preferenceStore.getStringSet("pinned_novel_catalogues", mutableSetOf())
+
+    /** Last opened catalogue source id on the Manga tab. -1 if none. */
+    fun lastUsedMangaSource() = preferenceStore.getLong("last_used_manga_source", -1)
+
+    /** Last opened catalogue source id on the Novel tab. -1 if none. */
+    fun lastUsedNovelSource() = preferenceStore.getLong("last_used_novel_source", -1)
+
+    /**
+     * Persisted [eu.kanade.tachiyomi.ui.source.BrowseSourceType] selection across
+     * Browse sessions. Stored as the enum ordinal (0 = Manga, 1 = Novel).
+     */
+    fun lastBrowseSourceType() = preferenceStore.getInt("last_browse_source_type", 0)
+
+    fun saveChaptersAsCBZ() = preferenceStore.getBoolean("save_chapter_as_cbz", true)
+
+    fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)
+
+    fun downloadNewChapters() = preferenceStore.getBoolean(Keys.downloadNew, false)
+
+    fun downloadNewChaptersInCategories() = preferenceStore.getStringSet("download_new_categories", emptySet())
+    fun excludeCategoriesInDownloadNew() = preferenceStore.getStringSet("download_new_categories_exclude", emptySet())
+
+    fun autoDownloadWhileReading() = preferenceStore.getInt("auto_download_while_reading", 0)
+
+    fun defaultCategory() = preferenceStore.getInt(Keys.defaultCategory, -2)
+
+    fun skipRead() = preferenceStore.getBoolean(Keys.skipRead, false)
+
+    fun skipFiltered() = preferenceStore.getBoolean(Keys.skipFiltered, true)
+
+    fun skipDupe() = preferenceStore.getBoolean("skip_dupe", false)
+
+    fun lockAfter() = preferenceStore.getInt(Keys.lockAfter, 0)
+
+    fun lastUnlock() = preferenceStore.getLong(Keys.lastUnlock, 0)
+
+    fun secureScreen() = preferenceStore.getEnum("secure_screen_v2", Values.SecureScreenMode.INCOGNITO)
+
+    fun hideNotificationContent() = preferenceStore.getBoolean(Keys.hideNotificationContent, false)
+
+    fun removeArticles() = preferenceStore.getBoolean(Keys.removeArticles, false)
+
+    fun migrateFlags() = preferenceStore.getInt("migrate_flags", Int.MAX_VALUE)
+
+    // using string instead of set so it is ordered
+    // TODO: SourcePref
+    fun migrationSources() = preferenceStore.getString("migrate_sources", "")
+
+    // TODO: SourcePref
+    fun useSourceWithMost() = preferenceStore.getBoolean("use_source_with_most", false)
+
+    fun skipPreMigration() = preferenceStore.getBoolean(Keys.skipPreMigration, false)
+
+    fun migrationParallelism() = preferenceStore.getInt("migration_parallelism", 1)
+
+    fun defaultMangaOrder() = preferenceStore.getString("default_manga_order", "")
+
+    fun refreshCoversToo() = preferenceStore.getBoolean(Keys.refreshCoversToo, true)
+
+    // TODO: SourcePref
+    fun extensionUpdatesCount() = preferenceStore.getInt("ext_updates_count", 0)
+
+    fun showUpdatedTime() = preferenceStore.getBoolean(Keys.showUpdatedTime, false)
+
+    fun sortFetchedTime() = preferenceStore.getBoolean("sort_fetched_time", false)
+
+    fun collapseGroupedUpdates() = preferenceStore.getBoolean("group_chapters_updates", false)
+
+    fun groupChaptersHistory() = preferenceStore.getEnum("group_chapters_history_type", RecentsPresenter.GroupType.ByWeek)
+
+    fun collapseGroupedHistory() = preferenceStore.getBoolean("collapse_group_history", true)
+
+    fun lastExtCheck() = preferenceStore.getLong("last_ext_check", 0)
+
+    fun lastAppCheck() = preferenceStore.getLong("last_app_check", 0)
+
+    fun checkForBetas() = preferenceStore.getBoolean("check_for_betas", BuildConfig.BETA)
+
+    fun unreadBadgeType() = preferenceStore.getInt("unread_badge_type", 2)
+
+    fun categoryNumberOfItems() = preferenceStore.getBoolean(Keys.categoryNumberOfItems, false)
+
+    fun hideStartReadingButton() = preferenceStore.getBoolean("hide_reading_button", false)
+
+    fun alwaysShowChapterTransition() = preferenceStore.getBoolean(Keys.alwaysShowChapterTransition, true)
+
+    fun deleteRemovedChapters() = preferenceStore.getInt(Keys.deleteRemovedChapters, 0)
+
+    fun removeBookmarkedChapters() = preferenceStore.getBoolean("pref_remove_bookmarked", false)
+
+    fun removeExcludeCategories() = preferenceStore.getStringSet("remove_exclude_categories", emptySet())
+
+    fun showAllCategories() = preferenceStore.getBoolean("show_all_categories", true)
+
+    fun showAllCategoriesWhenSearchingSingleCategory() = preferenceStore.getBoolean("show_all_categories_when_searching_single_category", false)
+
+    fun hopperGravity() = preferenceStore.getInt("hopper_gravity", 1)
+
+    fun filterOrder() = preferenceStore.getString("filter_order", FilterBottomSheet.Filters.DEFAULT_ORDER)
+
+    fun hopperLongPressAction() = preferenceStore.getInt(Keys.hopperLongPress, 0)
+
+    fun hideHopper() = preferenceStore.getBoolean("hide_hopper", false)
+
+    fun autohideHopper() = preferenceStore.getBoolean(Keys.autoHideHopper, true)
+
+    fun groupLibraryBy() = preferenceStore.getInt("group_library_by", 0)
+
+    fun showCategoryInTitle() = preferenceStore.getBoolean("category_in_title", false)
+
+    fun onlySearchPinned() = preferenceStore.getBoolean(Keys.onlySearchPinned, false)
+
+    fun hideInLibraryItems() = preferenceStore.getBoolean("browse_hide_in_library_items", false)
+
+    // Tutorial preferences
+    fun shownFilterTutorial() = preferenceStore.getBoolean("shown_filter_tutorial", false)
+
+    fun shownChapterSwipeTutorial() = preferenceStore.getBoolean("shown_swipe_tutorial", false)
+
+    fun shownDownloadQueueTutorial() = preferenceStore.getBoolean("shown_download_queue", false)
+
+    fun shownLongPressCategoryTutorial() = preferenceStore.getBoolean("shown_long_press_category", false)
+
+    fun shownHopperSwipeTutorial() = preferenceStore.getBoolean("shown_hopper_swipe", false)
+
+    fun shownDownloadSwipeTutorial() = preferenceStore.getBoolean("shown_download_tutorial", false)
+
+    fun hideBottomNavOnScroll() = preferenceStore.getBoolean(Keys.hideBottomNavOnScroll, true)
+
+    fun sideNavIconAlignment() = preferenceStore.getInt(Keys.sideNavIconAlignment, 1)
+
+    // TODO: SourcePref
+    fun showNsfwSources() = preferenceStore.getBoolean(Keys.showNsfwSource, true)
+
+    fun filterBlockedTags() = preferenceStore.getBoolean(Keys.filterBlockedTags, true)
+
+    fun blockedTags() = preferenceStore.getStringSet(Keys.blockedTags, emptySet())
+
+    // Off by default: the desktop Nocturne details page never tints itself from the cover.
+    fun themeMangaDetails() = preferenceStore.getBoolean(Keys.themeMangaDetails, false)
+
+    fun themeMangaDetailsOverrides() = preferenceStore.getStringSet(Keys.themeMangaDetailsOverrides, emptySet())
+
+    fun themeMangaDetailsOverride(mangaId: Long?): Boolean? {
+        mangaId ?: return null
+        val prefix = "$mangaId|"
+        return themeMangaDetailsOverrides().get()
+            .firstOrNull { it.startsWith(prefix) }
+            ?.substringAfter('|')
+            ?.let {
+                when (it) {
+                    "true" -> true
+                    "false" -> false
+                    else -> null
+                }
+            }
+    }
+
+    fun setThemeMangaDetailsOverride(mangaId: Long?, enabled: Boolean?) {
+        mangaId ?: return
+        val prefix = "$mangaId|"
+        val updated = themeMangaDetailsOverrides().get()
+            .filterNot { it.startsWith(prefix) }
+            .toMutableSet()
+        enabled?.let { updated.add("$prefix$it") }
+        themeMangaDetailsOverrides().set(updated)
+    }
+
+    fun themeMangaDetailsFor(mangaId: Long?): Boolean =
+        themeMangaDetailsOverride(mangaId) ?: themeMangaDetails().get()
+
+    fun useLargeToolbar() = preferenceStore.getBoolean("use_large_toolbar", true)
+
+    fun reducedMotion() = preferenceStore.getBoolean("reduced_motion", false)
+
+    fun showSeriesInShortcuts() = preferenceStore.getBoolean(Keys.showSeriesInShortcuts, true)
+    fun showSourcesInShortcuts() = preferenceStore.getBoolean(Keys.showSourcesInShortcuts, true)
+    fun openChapterInShortcuts() = preferenceStore.getBoolean(Keys.openChapterInShortcuts, true)
+
+    fun incognitoMode() = preferenceStore.getBoolean(Keys.incognitoMode, false)
+
+    fun hasPromptedBeforeUpdateAll() = preferenceStore.getBoolean("has_prompted_update_all", false)
+
+    fun sideNavMode() = preferenceStore.getInt(Keys.sideNavMode, 0)
+
+    fun appShouldAutoUpdate() = preferenceStore.getInt(Keys.shouldAutoUpdate, AppDownloadInstallJob.ONLY_ON_UNMETERED)
+
+    // TODO: SourcePref
+    fun autoUpdateExtensions() = preferenceStore.getInt(Keys.autoUpdateExtensions, AppDownloadInstallJob.ONLY_ON_UNMETERED)
+
+    fun filterChapterByRead() = preferenceStore.getInt(Keys.defaultChapterFilterByRead, Manga.SHOW_ALL)
+
+    fun filterChapterByDownloaded() = preferenceStore.getInt(Keys.defaultChapterFilterByDownloaded, Manga.SHOW_ALL)
+
+    fun filterChapterByBookmarked() = preferenceStore.getInt(Keys.defaultChapterFilterByBookmarked, Manga.SHOW_ALL)
+
+    fun sortChapterOrder() = preferenceStore.getInt(Keys.defaultChapterSortBySourceOrNumber, Manga.CHAPTER_SORTING_SOURCE)
+
+    fun hideChapterTitlesByDefault() = preferenceStore.getBoolean(Keys.hideChapterTitles, false)
+
+    fun chaptersDescAsDefault() = preferenceStore.getBoolean(Keys.chaptersDescAsDefault, true)
+
+    fun sortChapterByAscendingOrDescending() = preferenceStore.getInt(Keys.defaultChapterSortByAscendingOrDescending, Manga.CHAPTER_SORT_DESC)
+
+    fun coverRatios() = preferenceStore.getStringSet(Keys.coverRatios, emptySet())
+
+    fun coverColors() = preferenceStore.getStringSet(Keys.coverColors, emptySet())
+
+    fun useStaggeredGrid() = preferenceStore.getBoolean("use_staggered_grid", false)
+
+    // NOVEL: legacy accessors removed — see yokai.domain.ui.settings.ReaderPreferences.novelFontSize
+    // and friends. NovelReaderPrefsMigration translates the old keys (novel_font_size etc.) to the
+    // Tsundoku-compatible pref_novel_* namespace once on upgrade.
+}

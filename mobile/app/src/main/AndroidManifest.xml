@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Internet -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!-- For background jobs -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Novel reader text-to-speech background playback -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- For managing extensions -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <!-- To view extension packages in API 30+. Extensions are discovered by a <meta-data> tag
+         in arbitrary third-party packages, which a <queries> intent filter cannot express. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:supportsRtl="true"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:localeConfig="@xml/locales_config"
+        android:theme="@style/Theme.Tachiyomi"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <activity
+            android:process=":error_handler"
+            android:name=".ui.crash.CrashActivity"
+            android:exported="true" />
+
+        <activity
+            android:name=".ui.main.MainActivity"
+            android:windowSoftInputMode="adjustNothing"
+            android:theme="@style/Theme.Tachiyomi.SplashScreen"
+            android:exported="true">
+
+            <!-- Deep link to add repos -->
+            <intent-filter android:label="@string/action_add_repo">
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="epigraph" />
+                <!-- Legacy links remain accepted for repository migration. -->
+                <data android:scheme="aethon" />
+                <data android:scheme="hayai" />
+                <data android:scheme="tachiyomi" />
+                <data android:host="add-repo" />
+            </intent-filter>
+            <meta-data android:name="android.app.searchable" android:resource="@xml/searchable"/>
+        </activity>
+
+        <!--#region MainActivity aliases for App Icon switcher -->
+        <activity-alias
+            android:name="${applicationId}.MainActivityDefaultDummy"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="true"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="${applicationId}.MainActivityDefault"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="false"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="${applicationId}.MainActivityBlue"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="false"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="${applicationId}.MainActivityOrange"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="false"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="${applicationId}.MainActivityGray"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="false"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name="${applicationId}.MainActivityClassic"
+            android:targetActivity=".ui.main.MainActivity"
+            android:enabled="false"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <!--#endregion MainActivity aliases for App Icon switcher -->
+
+        <activity
+            android:name=".ui.main.SearchActivity"
+            android:theme="@style/Theme.Tachiyomi.SplashScreen"
+            android:label="@string/label_global_search"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEARCH" />
+                <action android:name="com.google.android.gms.actions.SEARCH_ACTION"/>
+
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="eu.kanade.tachiyomi.SEARCH" />
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <meta-data android:name="android.app.searchable" android:resource="@xml/searchable"/>
+        </activity>
+        <activity android:name=".ui.reader.ReaderActivity"
+            android:theme="@style/Theme.Tachiyomi.SplashScreen"
+            android:configChanges="uiMode|orientation|screenSize|keyboardHidden|locale|fontScale|density|smallestScreenSize|screenLayout|navigation"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.samsung.android.support.REMOTE_ACTION" />
+            </intent-filter>
+
+            <meta-data
+                android:name="com.samsung.android.support.REMOTE_ACTION"
+                android:resource="@xml/s_pen_actions" />
+        </activity>
+        <activity
+            android:name="epigraph.books.ui.LocalBookReaderActivity"
+            android:configChanges="uiMode|orientation|screenSize|keyboardHidden|locale|fontScale|density|smallestScreenSize|screenLayout|navigation"
+            android:exported="false" />
+        <activity
+            android:name=".ui.webview.WebViewActivity"
+            android:configChanges="uiMode|orientation|screenSize"/>
+        <activity
+            android:name=".ui.security.BiometricActivity" />
+        <activity
+            android:name=".ui.setting.track.MyAnimeListLoginActivity"
+            android:label="MyAnimeList"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="hayai" />
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="myanimelist-auth"
+                    android:scheme="tachiyomi" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.setting.track.AnilistLoginActivity"
+            android:label="Anilist"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="hayai" />
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="anilist-auth"
+                    android:scheme="tachiyomi" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.setting.track.ShikimoriLoginActivity"
+            android:label="Shikimori"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="hayai" />
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="shikimori-auth"
+                    android:scheme="tachiyomi" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.setting.track.BangumiLoginActivity"
+            android:label="Bangumi"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="hayai" />
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="bangumi-auth"
+                    android:scheme="tachiyomi" />
+            </intent-filter>
+        </activity>
+
+        <!-- WebView-based login for cookie/JWT trackers (NovelUpdates, NovelList) -->
+        <activity
+            android:name=".ui.setting.track.TrackerWebViewLoginActivity"
+            android:configChanges="uiMode|orientation|screenSize"
+            android:exported="false" />
+
+        <activity
+            android:name=".extension.util.ExtensionInstallActivity"
+            android:icon="@mipmap/ic_launcher"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
+
+        <activity
+            android:name="epigraph.sync.core.extensions.ExtensionReconciliationActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
+
+        <activity
+            android:name="epigraph.sync.core.novels.LnReaderDependencyActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
+        <activity
+            android:name="epigraph.sync.core.setup.CoreDependencySetupActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Tachiyomi" />
+
+        <!-- EXH -->
+        <activity
+            android:name="exh.ui.login.EhLoginActivity"
+            android:label="EHentaiLogin"
+            android:exported="false"/>
+
+        <activity
+            android:name="exh.ui.intercept.InterceptActivity"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.Tachiyomi"
+            android:exported="true">
+            <!-- E-Hentai -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="e-hentai.org" />
+                <data android:host="www.e-hentai.org" />
+                <data android:host="g.e-hentai.org" />
+                <data android:pathPattern="/g/..*" />
+            </intent-filter>
+            <!-- ExHentai -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="exhentai.org" />
+                <data android:host="www.exhentai.org" />
+                <data android:pathPattern="/g/..*" />
+            </intent-filter>
+            <!-- NHentai -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="nhentai.net" />
+                <data android:host="www.nhentai.net" />
+                <data android:pathPattern="/g/..*" />
+            </intent-filter>
+            <!-- Tsumino -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="tsumino.com" />
+                <data android:host="www.tsumino.com" />
+                <data android:pathPattern="/Read/View/..*" />
+                <data android:pathPattern="/Book/Info/..*" />
+            </intent-filter>
+            <!-- Pururin -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="pururin.me" />
+                <data android:pathPattern="/gallery/..*" />
+            </intent-filter>
+            <!-- HBrowse -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:scheme="http" />
+                <data android:host="hbrowse.com" />
+                <data android:host="www.hbrowse.com" />
+            </intent-filter>
+            <!-- MangaDex -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="mangadex.org" />
+                <data android:host="mangadex.cc" />
+                <data android:host="www.mangadex.org" />
+                <data android:host="www.mangadex.cc" />
+                <data android:pathPattern="/manga/..*" />
+                <data android:pathPattern="/title/..*" />
+                <data android:pathPattern="/chapter/..*" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="exh.md.MangaDexLoginActivity"
+            android:label="MangaDexLogin"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="epigraph" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="hayai" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="aethon" />
+                <data
+                    android:host="mangadex-auth"
+                    android:scheme="tachiyomi" />
+            </intent-filter>
+        </activity>
+        <!-- EXH -->
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths" />
+        </provider>
+
+        <receiver
+            android:name=".data.notification.NotificationReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".extension.util.ExtensionInstallBroadcast"
+            android:exported="false" />
+
+        <receiver
+            android:name=".data.updater.AppUpdateBroadcast"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".appwidget.UpdatesGridGlanceReceiver"
+            android:enabled="@bool/glance_appwidget_available"
+            android:exported="false"
+            android:label="@string/updates">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/updates_grid_glance_widget_info" />
+        </receiver>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <service
+            android:name="epigraph.novel.reader.service.NovelTtsPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name="epigraph.books.tts.BookTtsPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
+
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- Load the global exception handler before the rest of app startup. -->
+        <provider
+            android:name="eu.kanade.tachiyomi.AppProvider"
+            android:authorities="${applicationId}.epigraph"
+            android:exported="false"
+            android:initOrder="101" />
+
+        <!-- Disable WorkManager's auto-init so workers do not try to instantiate
+             before App.onCreate has started Koin. WorkManager initializes lazily
+             via App's Configuration.Provider implementation. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <meta-data android:name="android.webkit.WebView.EnableSafeBrowsing"
+            android:value="false" />
+        <meta-data android:name="android.webkit.WebView.MetricsOptOut"
+            android:value="true" />
+
+    </application>
+
+    <uses-sdk tools:overrideLibrary="rikka.shizuku.api"
+        tools:ignore="ManifestOrder" />
+
+</manifest>

@@ -1,0 +1,35 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+  ],
+  labels: [
+    'dependencies',
+  ],
+  packageRules: [
+    {
+      groupName: 'Compose BOM (Alpha)',
+      matchPackageNames: [
+        'dev.chrisbanes.compose:compose-bom',
+      ],
+      ignoreUnstable: false,
+    },
+    {
+      matchPackageNames: [
+        'com.github.arkon.FlexibleAdapter:flexible-adapter-ui',
+        'com.github.arkon.FlexibleAdapter:flexible-adapter',
+        'com.github.CarlosEsco:ViewTooltip',
+        'com.github.null2264:subsampling-scale-image-view',
+        'com.github.tachiyomiorg:image-decoder',
+        'com.github.tachiyomiorg:unifile',
+        'com.github.tachiyomiorg:conductor-support-preference',
+        'com.github.chrisbanes:PhotoView',
+        'com.github.PhilJay:MPAndroidChart',
+      ],
+      enabled: false,
+    },
+  ],
+  dependencyDashboardApproval: true,
+  semanticCommits: 'enabled',
+  commitMessageLowerCase: 'never',
+}

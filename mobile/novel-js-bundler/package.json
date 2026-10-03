@@ -1,0 +1,29 @@
+{
+  "name": "novel-js-bundler",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "bundle": "node bundle.mjs",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@noble/ciphers": "^2.1.1",
+    "buffer": "^6.0.3",
+    "cheerio": "1.0.0",
+    "crypto-js": "^4.2.0",
+    "dayjs": "^1.11.13",
+    "domhandler": "^5.0.3",
+    "domutils": "^3.1.0",
+    "esbuild": "^0.24.0",
+    "htmlparser2": "^9.1.0",
+    "pako": "^2.1.0",
+    "protobufjs": "^7.4.0",
+    "react-native-url-polyfill": "^3.0.0",
+    "text-encoding": "^0.7.0",
+    "urlencode": "^2.0.0"
+  }
+}

@@ -1,0 +1,1591 @@
+import kotlin.Boolean;
+
+CREATE TABLE aethon_content_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK(content_type IN ('MANGA', 'NOVEL', 'EPUB', 'PDF')),
+    local_reference TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(content_type, local_reference)
+);
+
+CREATE TABLE aethon_source_binding (
+    binding_id TEXT NOT NULL PRIMARY KEY,
+    entity_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL,
+    repository TEXT NOT NULL,
+    plugin_package TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    normalized_url TEXT NOT NULL,
+    is_primary INTEGER AS Boolean NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    UNIQUE(ecosystem, repository, plugin_package, source_id, normalized_url)
+);
+
+CREATE INDEX aethon_source_binding_entity_index ON aethon_source_binding(entity_id);
+CREATE UNIQUE INDEX aethon_source_binding_primary_index
+ON aethon_source_binding(entity_id) WHERE is_primary = 1;
+
+-- V3 portable identities coexist with V2 bindings during the dual-read migration. Provider-owned
+-- keys remain opaque; local references are optional until the provider resolves the entity.
+CREATE TABLE aethon_portable_work_binding (
+    portable_id TEXT NOT NULL PRIMARY KEY,
+    ecosystem TEXT NOT NULL CHECK(ecosystem IN ('SUWAYOMI', 'LNREADER')),
+    source_id TEXT,
+    plugin_id TEXT,
+    provider_key TEXT NOT NULL CHECK(length(provider_key) BETWEEN 1 AND 4096),
+    dependency_key TEXT,
+    local_reference TEXT,
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    title_hint TEXT,
+    provider_label_hint TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    CHECK(
+        (ecosystem = 'SUWAYOMI' AND source_id IS NOT NULL AND plugin_id IS NULL) OR
+        (ecosystem = 'LNREADER' AND source_id IS NULL AND plugin_id IS NOT NULL)
+    ),
+    CHECK(source_id IS NULL OR (
+        length(source_id) > 0 AND
+        ((source_id NOT GLOB '*[^0-9]*' AND (source_id = '0' OR source_id NOT LIKE '0%')) OR
+         (source_id LIKE '-%' AND substr(source_id, 2) NOT GLOB '*[^0-9]*' AND
+          length(source_id) > 1 AND substr(source_id, 2, 1) <> '0'))
+    )),
+    CHECK(resolution_state <> 'BOUND' OR (local_reference IS NOT NULL AND resolution_reason IS NULL)),
+    UNIQUE(ecosystem, source_id, plugin_id, provider_key)
+);
+
+CREATE INDEX aethon_portable_work_resolution_index
+ON aethon_portable_work_binding(resolution_state, ecosystem, updated_at);
+
+CREATE TABLE aethon_portable_chapter_binding (
+    portable_chapter_id TEXT NOT NULL PRIMARY KEY,
+    portable_work_id TEXT NOT NULL,
+    provider_key TEXT NOT NULL CHECK(length(provider_key) BETWEEN 1 AND 4096),
+    local_reference TEXT,
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    FOREIGN KEY(portable_work_id) REFERENCES aethon_portable_work_binding(portable_id) ON DELETE CASCADE,
+    CHECK(resolution_state <> 'BOUND' OR (local_reference IS NOT NULL AND resolution_reason IS NULL)),
+    UNIQUE(portable_work_id, provider_key)
+);
+
+CREATE INDEX aethon_portable_chapter_resolution_index
+ON aethon_portable_chapter_binding(resolution_state, portable_work_id, updated_at);
+
+CREATE TABLE aethon_portable_manifest_work (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    portable_id TEXT NOT NULL,
+    observed_at INTEGER NOT NULL CHECK(observed_at >= 0),
+    PRIMARY KEY(server_id, profile_id, portable_id),
+    FOREIGN KEY(portable_id) REFERENCES aethon_portable_work_binding(portable_id) ON DELETE CASCADE
+);
+
+CREATE INDEX aethon_portable_manifest_work_scope_index
+ON aethon_portable_manifest_work(server_id, profile_id, observed_at);
+
+CREATE TABLE aethon_comic_dependency_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    required_source_ids_json TEXT NOT NULL,
+    observed_version_code TEXT,
+    extension_store_index_url TEXT,
+    observed_manifest_sha256 TEXT,
+    display_name_hint TEXT,
+    trust_state TEXT NOT NULL CHECK(trust_state IN ('TRUSTED', 'APPROVAL_REQUIRED', 'REJECTED')),
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, package_name)
+);
+
+CREATE TABLE aethon_novel_dependency_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    plugin_id TEXT NOT NULL,
+    observed_version TEXT,
+    repository_index_url TEXT,
+    observed_manifest_sha256 TEXT,
+    observed_artifact_sha256 TEXT,
+    display_name_hint TEXT,
+    trust_state TEXT NOT NULL CHECK(trust_state IN ('TRUSTED', 'APPROVAL_REQUIRED', 'REJECTED')),
+    resolution_state TEXT NOT NULL CHECK(resolution_state IN (
+        'PENDING_DEPENDENCY', 'PENDING_PROVIDER', 'RESOLVING', 'READY', 'BOUND',
+        'RETRYABLE_FAILURE', 'REQUIRES_USER_ACTION', 'LEGACY_UNBOUND', 'CONFLICT'
+    )),
+    resolution_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, plugin_id)
+);
+
+CREATE TABLE aethon_portable_bootstrap_v3 (
+    server_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    ecosystem TEXT NOT NULL CHECK(ecosystem IN ('SUWAYOMI', 'LNREADER')),
+    bootstrap_id TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN (
+        'NEGOTIATING', 'RECEIVING_MANIFEST', 'RESOLVING_DEPENDENCIES', 'WAITING_TRUST',
+        'IMPORTING_REFERENCES', 'HYDRATING_LIBRARY', 'RESOLVING_CHAPTERS', 'APPLYING_STATE',
+        'COMPLETED', 'PARTIAL', 'CANCELLED', 'FAILED'
+    )),
+    manifest_fingerprint TEXT,
+    current_item TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+    last_reason TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id, ecosystem)
+);
+
+CREATE TABLE aethon_core_remote_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    remote_type TEXT NOT NULL CHECK(length(remote_type) > 0),
+    remote_id TEXT NOT NULL CHECK(length(remote_id) > 0),
+    binding_status TEXT NOT NULL CHECK(binding_status IN ('BOUND', 'LEGACY_UNBOUND', 'PENDING', 'CONFLICT')),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    UNIQUE(server_id, profile_id, remote_type, remote_id)
+);
+
+CREATE INDEX aethon_core_remote_identity_scope_index
+ON aethon_core_remote_identity(server_id, profile_id, remote_type);
+
+CREATE TABLE aethon_core_extension_inventory_cache (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version >= 1),
+    inventory_hash TEXT NOT NULL CHECK(length(inventory_hash) = 64 AND inventory_hash NOT GLOB '*[^0-9a-f]*'),
+    report_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL CHECK(generated_at >= 0),
+    notified_inventory_hash TEXT,
+    acknowledged_inventory_hash TEXT,
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id),
+    CHECK(notified_inventory_hash IS NULL OR (length(notified_inventory_hash) = 64 AND notified_inventory_hash NOT GLOB '*[^0-9a-f]*')),
+    CHECK(acknowledged_inventory_hash IS NULL OR (length(acknowledged_inventory_hash) = 64 AND acknowledged_inventory_hash NOT GLOB '*[^0-9a-f]*'))
+);
+
+CREATE INDEX aethon_core_extension_inventory_latest_index
+ON aethon_core_extension_inventory_cache(updated_at DESC);
+
+CREATE TABLE aethon_core_novel_dependency_inventory_cache (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    inventory_hash TEXT NOT NULL CHECK(length(inventory_hash) = 64 AND inventory_hash NOT GLOB '*[^0-9a-f]*'),
+    inventory_json TEXT NOT NULL,
+    generated_at INTEGER NOT NULL CHECK(generated_at >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    PRIMARY KEY(server_id, profile_id)
+);
+
+CREATE TABLE aethon_category_scope (
+    category_id INTEGER NOT NULL PRIMARY KEY,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+-- One identity per folder and library: the desktop keeps separate comic, novel and book categories,
+-- while a phone folder is shared by all libraries.
+CREATE TABLE aethon_category_identity (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    local_category_id INTEGER NOT NULL,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(local_category_id, content_scope),
+    FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+CREATE TABLE aethon_chapter_binding (
+    chapter_entity_id TEXT NOT NULL PRIMARY KEY,
+    work_entity_id TEXT NOT NULL,
+    local_chapter_id INTEGER NOT NULL,
+    normalized_url TEXT NOT NULL,
+    ordinal REAL NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(work_entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(local_chapter_id) REFERENCES chapters(_id) ON DELETE CASCADE,
+    UNIQUE(work_entity_id, local_chapter_id),
+    UNIQUE(work_entity_id, normalized_url)
+);
+
+CREATE INDEX aethon_chapter_binding_work_index ON aethon_chapter_binding(work_entity_id, ordinal);
+
+CREATE TABLE aethon_reader_progress (
+    entity_id TEXT NOT NULL PRIMARY KEY,
+    chapter_entity_id TEXT,
+    locator_json TEXT NOT NULL,
+    chapter_ordinal REAL,
+    progression REAL NOT NULL CHECK(progression >= 0 AND progression <= 1),
+    server_revision INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(chapter_entity_id) REFERENCES aethon_chapter_binding(chapter_entity_id) ON DELETE SET NULL
+);
+
+CREATE TABLE aethon_sync_outbox (
+    sequence INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'IN_FLIGHT', 'ERROR')),
+    last_error TEXT,
+    in_flight_at INTEGER,
+    lease_until INTEGER,
+    UNIQUE(device_id, client_mutation_id)
+);
+
+CREATE INDEX aethon_sync_outbox_ready_index
+ON aethon_sync_outbox(status, next_attempt_at, created_at);
+
+CREATE TABLE aethon_sync_receipt (
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    canonical_entity_id TEXT,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY(device_id, client_mutation_id)
+);
+
+CREATE TABLE aethon_sync_replica_wait (
+    device_id TEXT NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    canonical_entity_id TEXT,
+    result_status TEXT NOT NULL CHECK(result_status IN ('APPLIED', 'SUPERSEDED')),
+    required_server_version INTEGER NOT NULL CHECK(required_server_version >= 0),
+    applied_lamport INTEGER CHECK(applied_lamport IS NULL OR applied_lamport >= 0),
+    event_clock_json TEXT,
+    canonical_record_sha256 TEXT CHECK(
+        canonical_record_sha256 IS NULL OR (
+            length(canonical_record_sha256) = 64 AND canonical_record_sha256 NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    received_at INTEGER NOT NULL CHECK(received_at >= 0),
+    PRIMARY KEY(device_id, client_mutation_id),
+    FOREIGN KEY(device_id, client_mutation_id)
+        REFERENCES aethon_sync_receipt(device_id, client_mutation_id) ON DELETE CASCADE
+);
+
+CREATE INDEX aethon_sync_replica_wait_entity_index
+ON aethon_sync_replica_wait(scope_id, entity_type, entity_id, required_server_version);
+
+CREATE TABLE aethon_sync_checkpoint (
+    scope_id TEXT NOT NULL PRIMARY KEY,
+    cursor TEXT,
+    schema_version INTEGER NOT NULL,
+    snapshot_at INTEGER,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE aethon_sync_inbox (
+    scope_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    server_revision INTEGER NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    applied_at INTEGER NOT NULL,
+    PRIMARY KEY(scope_id, event_id)
+);
+
+CREATE TABLE aethon_sync_tombstone (
+    scope_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    deleted_at INTEGER NOT NULL,
+    client_mutation_id TEXT NOT NULL,
+    server_revision INTEGER NOT NULL,
+    PRIMARY KEY(scope_id, entity_id, entity_type)
+);
+
+CREATE TABLE aethon_asset_manifest (
+    sha256 TEXT NOT NULL PRIMARY KEY CHECK(length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF', 'NOVEL_CHAPTER', 'BOOK_COVER')),
+    byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+    mime_type TEXT NOT NULL,
+    local_uri TEXT,
+    remote_available INTEGER AS Boolean NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK(state IN ('LOCAL_ONLY', 'PENDING_UPLOAD', 'AVAILABLE', 'PENDING_DOWNLOAD', 'ERROR')),
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE aethon_entity_asset (
+    entity_id TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    role TEXT NOT NULL,
+    relative_path TEXT NOT NULL DEFAULT '',
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(entity_id, sha256, role, relative_path),
+    FOREIGN KEY(entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE,
+    FOREIGN KEY(sha256) REFERENCES aethon_asset_manifest(sha256) ON DELETE RESTRICT
+);
+
+CREATE TABLE aethon_paired_core (
+    core_id TEXT NOT NULL PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    certificate_sha256 TEXT NOT NULL CHECK(length(certificate_sha256) = 64 AND certificate_sha256 NOT GLOB '*[^0-9a-f]*'),
+    capabilities_json TEXT NOT NULL,
+    is_active INTEGER AS Boolean NOT NULL DEFAULT 0,
+    paired_at INTEGER NOT NULL,
+    last_seen_at INTEGER
+);
+
+CREATE UNIQUE INDEX aethon_paired_core_active_index
+ON aethon_paired_core(is_active) WHERE is_active = 1;
+
+-- Per-device behavior policy is deliberately independent from credentials and paired-Core
+-- metadata. Disconnecting or replacing credentials must not delete offline data or the user's
+-- previous selection for the same server/profile/device identity.
+CREATE TABLE aethon_device_sync_selection (
+    server_id TEXT NOT NULL CHECK(length(server_id) > 0),
+    profile_id TEXT NOT NULL CHECK(length(profile_id) > 0),
+    device_id TEXT NOT NULL CHECK(length(device_id) > 0),
+    schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+    comics_enabled INTEGER AS Boolean NOT NULL,
+    novels_enabled INTEGER AS Boolean NOT NULL,
+    books_enabled INTEGER AS Boolean NOT NULL,
+    comic_extensions TEXT NOT NULL CHECK(comic_extensions IN ('DISABLED', 'INVENTORY_ONLY')),
+    novel_repositories TEXT NOT NULL CHECK(novel_repositories IN ('DISABLED', 'INVENTORY_ONLY')),
+    novel_plugins TEXT NOT NULL CHECK(novel_plugins IN ('DISABLED', 'INVENTORY_ONLY')),
+    book_asset_policy TEXT NOT NULL CHECK(book_asset_policy = 'ON_DEMAND'),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    comic_repositories TEXT NOT NULL DEFAULT 'INVENTORY_ONLY'
+        CHECK(comic_repositories IN ('DISABLED', 'INVENTORY_ONLY')),
+    PRIMARY KEY(server_id, profile_id, device_id),
+    CHECK(comics_enabled = 1 OR comic_extensions = 'DISABLED'),
+    CHECK(novels_enabled = 1 OR novel_repositories = 'DISABLED'),
+    CHECK(novels_enabled = 1 OR novel_plugins = 'DISABLED'),
+    CHECK(comics_enabled = 1 OR novels_enabled = 1 OR books_enabled = 1)
+);
+
+CREATE TABLE aethon_entity_alias (
+    alias_entity_id TEXT NOT NULL PRIMARY KEY,
+    canonical_entity_id TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    FOREIGN KEY(canonical_entity_id) REFERENCES aethon_content_identity(entity_id) ON DELETE CASCADE
+);
+
+-- Confirmed, protocol-v1 state received from the Core service. These tables deliberately do not
+-- project into the Hayai manga/novel tables: projection is a later, entity-specific operation.
+CREATE TABLE aethon_core_replica_record (
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    server_version INTEGER NOT NULL CHECK(server_version >= 0),
+    lamport INTEGER NOT NULL CHECK(lamport >= 0),
+    record_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY(scope_id, entity_type, entity_id)
+);
+
+CREATE INDEX aethon_core_replica_record_version_index
+ON aethon_core_replica_record(scope_id, server_version);
+
+CREATE TABLE aethon_core_replica_tombstone (
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    server_version INTEGER NOT NULL CHECK(server_version >= 0),
+    lamport INTEGER NOT NULL CHECK(lamport >= 0),
+    deleted_at INTEGER NOT NULL CHECK(deleted_at >= 0),
+    reason_code TEXT,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY(scope_id, entity_type, entity_id)
+);
+
+CREATE INDEX aethon_core_replica_tombstone_version_index
+ON aethon_core_replica_tombstone(scope_id, server_version);
+
+CREATE TABLE aethon_core_replica_inbox (
+    global_event_id INTEGER NOT NULL PRIMARY KEY CHECK(global_event_id >= 0),
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK(operation IN ('merge', 'delete')),
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    applied_at INTEGER NOT NULL CHECK(applied_at >= 0)
+);
+
+CREATE TABLE aethon_core_replica_checkpoint (
+    coverage_key TEXT NOT NULL PRIMARY KEY,
+    coverage_type TEXT NOT NULL CHECK(coverage_type IN ('ALL', 'FILTERED')),
+    scope_id TEXT,
+    last_global_event_id INTEGER NOT NULL CHECK(last_global_event_id >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    CHECK(
+        (coverage_type = 'ALL' AND scope_id IS NULL)
+        OR (coverage_type = 'FILTERED' AND scope_id IS NOT NULL AND length(scope_id) > 0)
+    )
+);
+
+CREATE TABLE aethon_core_lamport (
+    singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 0),
+    last_lamport INTEGER NOT NULL CHECK(last_lamport >= 0)
+);
+
+selectIdentityByEntityId:
+SELECT * FROM aethon_content_identity WHERE entity_id = :entityId;
+
+selectIdentityByLocalReference:
+SELECT * FROM aethon_content_identity
+WHERE content_type = :contentType AND local_reference = :localReference;
+
+selectNovelSourceIds:
+SELECT DISTINCT mangas.source FROM aethon_content_identity AS identity
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE identity.content_type = 'NOVEL';
+
+deleteIdentityByEntityId:
+DELETE FROM aethon_content_identity WHERE entity_id = :entityId;
+
+selectEntityIdsByContentTypeAndPrefix:
+SELECT entity_id FROM aethon_content_identity
+WHERE content_type = :contentType AND entity_id LIKE :entityPrefix;
+
+upsertIdentity:
+INSERT INTO aethon_content_identity(entity_id, content_type, local_reference, created_at, updated_at)
+VALUES (:entityId, :contentType, :localReference, :createdAt, :updatedAt)
+ON CONFLICT(entity_id) DO UPDATE SET
+    content_type = :contentType,
+    local_reference = :localReference,
+    updated_at = :updatedAt;
+
+selectBindingsByEntityId:
+SELECT * FROM aethon_source_binding
+WHERE entity_id = :entityId
+ORDER BY is_primary DESC, created_at ASC;
+
+upsertPortableWorkBinding:
+INSERT INTO aethon_portable_work_binding(
+    portable_id, ecosystem, source_id, plugin_id, provider_key, dependency_key, local_reference,
+    resolution_state, resolution_reason, title_hint, provider_label_hint,
+    attempt_count, updated_at
+) VALUES (
+    :portableId, :ecosystem, :sourceId, :pluginId, :providerKey, :dependencyKey, :localReference,
+    :resolutionState, :resolutionReason, :titleHint, :providerLabelHint,
+    :attemptCount, :updatedAt
+)
+ON CONFLICT(portable_id) DO UPDATE SET
+    dependency_key = COALESCE(:dependencyKey, aethon_portable_work_binding.dependency_key),
+    local_reference = COALESCE(:localReference, aethon_portable_work_binding.local_reference),
+    resolution_state = :resolutionState,
+    resolution_reason = :resolutionReason,
+    title_hint = COALESCE(:titleHint, aethon_portable_work_binding.title_hint),
+    provider_label_hint = COALESCE(:providerLabelHint, aethon_portable_work_binding.provider_label_hint),
+    attempt_count = :attemptCount,
+    updated_at = :updatedAt;
+
+selectPortableWorkBinding:
+SELECT * FROM aethon_portable_work_binding WHERE portable_id = :portableId;
+
+selectPortableWorkBindingByComicRef:
+SELECT * FROM aethon_portable_work_binding
+WHERE ecosystem = 'SUWAYOMI' AND source_id = :sourceId AND provider_key = :providerKey;
+
+selectPortableWorkBindingByNovelRef:
+SELECT * FROM aethon_portable_work_binding
+WHERE ecosystem = 'LNREADER' AND plugin_id = :pluginId AND provider_key = :providerKey;
+
+selectPortableWorkBindingByLocalReference:
+SELECT * FROM aethon_portable_work_binding
+WHERE local_reference = :localReference AND resolution_state = 'BOUND'
+ORDER BY updated_at DESC
+LIMIT 1;
+
+selectBoundNovelWorkBindings:
+SELECT * FROM aethon_portable_work_binding
+WHERE ecosystem = 'LNREADER'
+  AND resolution_state = 'BOUND'
+  AND local_reference IS NOT NULL
+ORDER BY updated_at DESC;
+
+upsertPortableManifestWork:
+INSERT INTO aethon_portable_manifest_work(server_id, profile_id, portable_id, observed_at)
+VALUES (:serverId, :profileId, :portableId, :observedAt)
+ON CONFLICT(server_id, profile_id, portable_id) DO UPDATE SET observed_at = :observedAt;
+
+selectPendingPortableWorkIdsForManifest:
+SELECT binding.portable_id
+FROM aethon_portable_work_binding AS binding
+JOIN aethon_portable_manifest_work AS membership USING(portable_id)
+WHERE membership.server_id = :serverId
+  AND membership.profile_id = :profileId
+  AND (
+      binding.resolution_state <> 'BOUND'
+      OR (
+          binding.ecosystem = 'SUWAYOMI'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM mangas
+              WHERE mangas._id = CAST(binding.local_reference AS INTEGER)
+                AND CAST(mangas.source AS TEXT) = binding.source_id
+          )
+      )
+      OR (
+          binding.ecosystem = 'LNREADER'
+          AND (
+              NOT EXISTS (
+                  SELECT 1
+                  FROM mangas
+                  WHERE mangas._id = CAST(binding.local_reference AS INTEGER)
+              )
+              OR NOT EXISTS (
+                  SELECT 1
+                  FROM chapters
+                  WHERE chapters.manga_id = CAST(binding.local_reference AS INTEGER)
+              )
+          )
+      )
+  )
+ORDER BY binding.updated_at, binding.portable_id
+LIMIT :limit;
+
+selectPendingPortableChapterIdsForManifest:
+SELECT chapter.portable_chapter_id
+FROM aethon_portable_chapter_binding AS chapter
+JOIN aethon_portable_manifest_work AS membership
+  ON membership.portable_id = chapter.portable_work_id
+WHERE membership.server_id = :serverId
+  AND membership.profile_id = :profileId
+  AND chapter.resolution_state <> 'BOUND'
+ORDER BY chapter.updated_at, chapter.portable_chapter_id
+LIMIT :limit;
+
+upsertPortableChapterBinding:
+INSERT INTO aethon_portable_chapter_binding(
+    portable_chapter_id, portable_work_id, provider_key, local_reference,
+    resolution_state, resolution_reason, attempt_count, updated_at
+) VALUES (
+    :portableChapterId, :portableWorkId, :providerKey, :localReference,
+    :resolutionState, :resolutionReason, :attemptCount, :updatedAt
+)
+ON CONFLICT(portable_chapter_id) DO UPDATE SET
+    local_reference = COALESCE(:localReference, aethon_portable_chapter_binding.local_reference),
+    resolution_state = :resolutionState,
+    resolution_reason = :resolutionReason,
+    attempt_count = :attemptCount,
+    updated_at = :updatedAt;
+
+selectPortableChapterBinding:
+SELECT * FROM aethon_portable_chapter_binding WHERE portable_chapter_id = :portableChapterId;
+
+selectPortableChapterBindingByLocalReference:
+SELECT * FROM aethon_portable_chapter_binding
+WHERE local_reference = :localReference AND resolution_state = 'BOUND'
+ORDER BY updated_at DESC
+LIMIT 1;
+
+selectPortableChaptersForWork:
+SELECT * FROM aethon_portable_chapter_binding
+WHERE portable_work_id = :portableWorkId
+ORDER BY updated_at, portable_chapter_id;
+
+upsertComicDependencyV3:
+INSERT INTO aethon_comic_dependency_v3(
+    server_id, profile_id, package_name, required_source_ids_json,
+    observed_version_code, extension_store_index_url, observed_manifest_sha256,
+    display_name_hint, trust_state, resolution_state, resolution_reason, updated_at
+) VALUES (
+    :serverId, :profileId, :packageName, :requiredSourceIdsJson,
+    :observedVersionCode, :extensionStoreIndexUrl, :observedManifestSha256,
+    :displayNameHint, :trustState, :resolutionState, :resolutionReason, :updatedAt
+)
+ON CONFLICT(server_id, profile_id, package_name) DO UPDATE SET
+    required_source_ids_json = :requiredSourceIdsJson,
+    observed_version_code = :observedVersionCode,
+    extension_store_index_url = :extensionStoreIndexUrl,
+    observed_manifest_sha256 = :observedManifestSha256,
+    display_name_hint = :displayNameHint,
+    trust_state = :trustState,
+    resolution_state = :resolutionState,
+    resolution_reason = :resolutionReason,
+    updated_at = :updatedAt;
+
+selectComicDependenciesV3:
+SELECT * FROM aethon_comic_dependency_v3
+WHERE server_id = :serverId AND profile_id = :profileId
+ORDER BY package_name;
+
+upsertNovelDependencyV3:
+INSERT INTO aethon_novel_dependency_v3(
+    server_id, profile_id, plugin_id, observed_version, repository_index_url,
+    observed_manifest_sha256, observed_artifact_sha256, display_name_hint,
+    trust_state, resolution_state, resolution_reason, updated_at
+) VALUES (
+    :serverId, :profileId, :pluginId, :observedVersion, :repositoryIndexUrl,
+    :observedManifestSha256, :observedArtifactSha256, :displayNameHint,
+    :trustState, :resolutionState, :resolutionReason, :updatedAt
+)
+ON CONFLICT(server_id, profile_id, plugin_id) DO UPDATE SET
+    observed_version = :observedVersion,
+    repository_index_url = :repositoryIndexUrl,
+    observed_manifest_sha256 = :observedManifestSha256,
+    observed_artifact_sha256 = :observedArtifactSha256,
+    display_name_hint = :displayNameHint,
+    trust_state = :trustState,
+    resolution_state = :resolutionState,
+    resolution_reason = :resolutionReason,
+    updated_at = :updatedAt;
+
+selectNovelDependenciesV3:
+SELECT * FROM aethon_novel_dependency_v3
+WHERE server_id = :serverId AND profile_id = :profileId
+ORDER BY plugin_id;
+
+upsertPortableBootstrapV3:
+INSERT INTO aethon_portable_bootstrap_v3(
+    server_id, profile_id, ecosystem, bootstrap_id, phase, manifest_fingerprint,
+    current_item, attempt_count, last_reason, updated_at
+) VALUES (
+    :serverId, :profileId, :ecosystem, :bootstrapId, :phase, :manifestFingerprint,
+    :currentItem, :attemptCount, :lastReason, :updatedAt
+)
+ON CONFLICT(server_id, profile_id, ecosystem) DO UPDATE SET
+    bootstrap_id = :bootstrapId,
+    phase = :phase,
+    manifest_fingerprint = COALESCE(:manifestFingerprint, aethon_portable_bootstrap_v3.manifest_fingerprint),
+    current_item = :currentItem,
+    attempt_count = :attemptCount,
+    last_reason = :lastReason,
+    updated_at = :updatedAt;
+
+selectPortableBootstrapV3:
+SELECT * FROM aethon_portable_bootstrap_v3
+WHERE server_id = :serverId AND profile_id = :profileId AND ecosystem = :ecosystem;
+
+deleteStalePortableManifestMembershipsForEcosystem:
+DELETE FROM aethon_portable_manifest_work
+WHERE server_id = :serverId
+  AND profile_id = :profileId
+  AND observed_at < :observedAt
+  AND EXISTS (
+      SELECT 1
+      FROM aethon_portable_work_binding AS binding
+      WHERE binding.portable_id = aethon_portable_manifest_work.portable_id
+        AND binding.ecosystem = :ecosystem
+  );
+
+insertBinding:
+INSERT INTO aethon_source_binding(
+    binding_id, entity_id, ecosystem, repository, plugin_package,
+    source_id, normalized_url, is_primary, created_at
+) VALUES (
+    :bindingId, :entityId, :ecosystem, :repository, :pluginPackage,
+    :sourceId, :normalizedUrl, :isPrimary, :createdAt
+)
+ON CONFLICT(binding_id) DO UPDATE SET
+    plugin_package = CASE
+        WHEN excluded.plugin_package <> 'unknown' THEN excluded.plugin_package
+        ELSE aethon_source_binding.plugin_package
+    END,
+    source_id = excluded.source_id,
+    normalized_url = excluded.normalized_url;
+
+resolveUnknownSuwayomiBindingPackage:
+UPDATE aethon_source_binding
+SET plugin_package = :pluginPackage
+WHERE ecosystem = 'SUWAYOMI'
+  AND source_id = :sourceId
+  AND plugin_package = 'unknown'
+  AND EXISTS (
+      SELECT 1
+      FROM aethon_core_remote_identity AS remote
+      WHERE remote.entity_id = aethon_source_binding.entity_id
+        AND remote.server_id = :serverId
+        AND remote.profile_id = :profileId
+        AND remote.binding_status = 'BOUND'
+  );
+
+selectSuwayomiRelinkCandidates:
+SELECT
+    binding.entity_id,
+    binding.plugin_package,
+    binding.source_id,
+    binding.normalized_url,
+    identity.local_reference
+FROM aethon_source_binding AS binding
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+WHERE binding.ecosystem = 'SUWAYOMI'
+  AND binding.plugin_package <> 'unknown'
+ORDER BY binding.created_at, binding.entity_id;
+
+-- A Core-backed row may be the only local representation until its exact native source is
+-- available. Reuse it during portable hydration instead of inserting a second favorite.
+selectAethonCoreMangaBySourceBinding:
+SELECT DISTINCT mangas._id AS manga_id
+FROM aethon_source_binding AS binding
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE binding.ecosystem = 'SUWAYOMI'
+  AND binding.source_id = :sourceId
+  AND binding.normalized_url = :providerKey
+  AND mangas.source = :coreSourceId;
+
+selectMangaByExactSourceBinding:
+SELECT mangas.*
+FROM aethon_source_binding AS binding
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE binding.ecosystem = 'SUWAYOMI'
+  AND binding.source_id = :sourceId
+  AND binding.normalized_url = :providerKey
+  AND binding.entity_id <> :excludedEntityId
+ORDER BY mangas.favorite DESC, binding.created_at, mangas._id;
+
+upsertCoreRemoteIdentity:
+INSERT INTO aethon_core_remote_identity(
+    entity_id, server_id, profile_id, remote_type, remote_id, binding_status, updated_at
+) VALUES (
+    :entityId, :serverId, :profileId, :remoteType, :remoteId, :bindingStatus, :updatedAt
+)
+ON CONFLICT(entity_id) DO UPDATE SET
+    server_id = :serverId,
+    profile_id = :profileId,
+    remote_type = :remoteType,
+    remote_id = :remoteId,
+    binding_status = :bindingStatus,
+    updated_at = :updatedAt;
+
+selectCoreRemoteIdentityByEntityId:
+SELECT * FROM aethon_core_remote_identity WHERE entity_id = :entityId;
+
+selectCoreRemoteIdentity:
+SELECT * FROM aethon_core_remote_identity
+WHERE server_id = :serverId
+    AND profile_id = :profileId
+    AND remote_type = :remoteType
+    AND remote_id = :remoteId;
+
+selectStaleSuwayomiMangaBindings:
+SELECT remote.entity_id AS entity_id,
+       remote.server_id AS stale_server_id,
+       identity.local_reference AS local_reference
+FROM aethon_core_remote_identity AS remote
+JOIN aethon_content_identity AS identity ON identity.entity_id = remote.entity_id
+WHERE remote.profile_id = :profileId
+    AND remote.remote_type = 'SUWAYOMI_MANGA'
+    AND remote.remote_id = :remoteId
+    AND remote.server_id != :currentServerId
+    AND identity.content_type = 'MANGA'
+ORDER BY remote.updated_at DESC;
+
+selectCoreRemoteIdentitiesByScopeAndType:
+SELECT * FROM aethon_core_remote_identity
+WHERE server_id = :serverId
+    AND profile_id = :profileId
+    AND remote_type = :remoteType;
+
+upsertCoreExtensionInventoryCache:
+INSERT INTO aethon_core_extension_inventory_cache(
+    server_id, profile_id, schema_version, inventory_hash, report_json,
+    generated_at, updated_at
+) VALUES (
+    :serverId, :profileId, :schemaVersion, :inventoryHash, :reportJson,
+    :generatedAt, :updatedAt
+)
+ON CONFLICT(server_id, profile_id) DO UPDATE SET
+    schema_version = :schemaVersion,
+    inventory_hash = :inventoryHash,
+    report_json = :reportJson,
+    generated_at = :generatedAt,
+    updated_at = :updatedAt;
+
+selectCoreExtensionInventoryCache:
+SELECT * FROM aethon_core_extension_inventory_cache
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+selectLatestCoreExtensionInventoryCache:
+SELECT * FROM aethon_core_extension_inventory_cache
+ORDER BY updated_at DESC, server_id, profile_id
+LIMIT 1;
+
+selectAllCoreExtensionInventoryCaches:
+SELECT * FROM aethon_core_extension_inventory_cache
+ORDER BY updated_at DESC, server_id, profile_id;
+
+markCoreExtensionInventoryNotified:
+UPDATE aethon_core_extension_inventory_cache
+SET notified_inventory_hash = :inventoryHash
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+acknowledgeCoreExtensionInventory:
+UPDATE aethon_core_extension_inventory_cache
+SET notified_inventory_hash = :inventoryHash,
+    acknowledged_inventory_hash = :inventoryHash
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+upsertCoreNovelDependencyInventoryCache:
+INSERT INTO aethon_core_novel_dependency_inventory_cache(
+    server_id, profile_id, schema_version, inventory_hash, inventory_json,
+    generated_at, updated_at
+) VALUES (
+    :serverId, :profileId, :schemaVersion, :inventoryHash, :inventoryJson,
+    :generatedAt, :updatedAt
+)
+ON CONFLICT(server_id, profile_id) DO UPDATE SET
+    schema_version = :schemaVersion,
+    inventory_hash = :inventoryHash,
+    inventory_json = :inventoryJson,
+    generated_at = :generatedAt,
+    updated_at = :updatedAt;
+
+selectCoreNovelDependencyInventoryCache:
+SELECT * FROM aethon_core_novel_dependency_inventory_cache
+WHERE server_id = :serverId AND profile_id = :profileId;
+
+upsertCategoryScope:
+INSERT INTO aethon_category_scope(category_id, content_scope)
+VALUES (:categoryId, :contentScope)
+ON CONFLICT(category_id) DO UPDATE SET content_scope = :contentScope;
+
+upsertCategoryIdentity:
+INSERT INTO aethon_category_identity(
+    entity_id, local_category_id, content_scope, name, sort_order, updated_at
+) VALUES (
+    :entityId, :localCategoryId, :contentScope, :name, :sortOrder, :updatedAt
+)
+ON CONFLICT(entity_id) DO UPDATE SET
+    local_category_id = :localCategoryId,
+    content_scope = :contentScope,
+    name = :name,
+    sort_order = :sortOrder,
+    updated_at = :updatedAt;
+
+selectCategoryIdentityByLocalIdAndScope:
+SELECT * FROM aethon_category_identity
+WHERE local_category_id = :localCategoryId AND content_scope = :contentScope;
+
+selectCategoryIdentitiesByLocalId:
+SELECT * FROM aethon_category_identity
+WHERE local_category_id = :localCategoryId
+ORDER BY content_scope;
+
+deleteCategoryIdentity:
+DELETE FROM aethon_category_identity
+WHERE entity_id = :entityId;
+
+-- A category entity is live while the confirmed replica holds it or a local command for it is
+-- still queued. Anything else is left over from a previous pairing or never left the device.
+isCategoryEntityLive:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_core_replica_record
+    WHERE entity_type = :entityType AND entity_id = :entityId
+) OR EXISTS(
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE entity_type = :entityType AND entity_id = :entityId
+);
+
+-- Whether a folder holds novels or books, i.e. content that a comic category change must not touch.
+folderHoldsNovelsOrBooks:
+SELECT EXISTS(
+    SELECT 1 FROM local_books_categories WHERE category_id = :categoryId
+) OR EXISTS(
+    SELECT 1 FROM mangas_categories mc
+    JOIN aethon_content_identity e
+      ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+    WHERE mc.category_id = :categoryId
+);
+
+-- Whether a folder holds synchronized Suwayomi comics or books. Such a folder cannot silently join a
+-- desktop category of that library: the next complete read would drop the unpublished assignments.
+folderHoldsComics:
+SELECT EXISTS(
+    SELECT 1 FROM mangas_categories mc
+    JOIN aethon_content_identity e
+      ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+    WHERE mc.category_id = :categoryId
+);
+
+folderHoldsBooks:
+SELECT EXISTS(
+    SELECT 1 FROM local_books_categories WHERE category_id = :categoryId
+);
+
+selectCategoryIdentityByEntityId:
+SELECT * FROM aethon_category_identity
+WHERE entity_id = :entityId;
+
+selectCategoryIdentitiesByEntityPrefix:
+SELECT * FROM aethon_category_identity
+WHERE entity_id LIKE :entityPrefix || '%';
+
+selectCategoryIdentitiesByContentScope:
+SELECT * FROM aethon_category_identity
+WHERE content_scope = :contentScope;
+
+rebindCategoryIdentity:
+UPDATE aethon_category_identity
+SET entity_id = :newEntityId, updated_at = :updatedAt
+WHERE entity_id = :oldEntityId
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_category_identity WHERE entity_id = :newEntityId
+  );
+
+deleteMangaCategoryAssignment:
+DELETE FROM mangas_categories
+WHERE manga_id = :mangaId AND category_id = :categoryId;
+
+selectMangaIdsByCategory:
+SELECT DISTINCT manga_id FROM mangas_categories
+WHERE category_id = :categoryId
+ORDER BY manga_id;
+
+selectBookIdsByCategory:
+SELECT DISTINCT book_id FROM local_books_categories
+WHERE category_id = :categoryId
+ORDER BY book_id;
+
+insertMangaCategoryAssignment:
+INSERT INTO mangas_categories(manga_id, category_id)
+SELECT :mangaId, :categoryId
+WHERE NOT EXISTS (
+    SELECT 1 FROM mangas_categories
+    WHERE manga_id = :mangaId AND category_id = :categoryId
+);
+
+selectChapterBindingByEntityId:
+SELECT * FROM aethon_chapter_binding
+WHERE chapter_entity_id = :chapterEntityId;
+
+selectChapterBindingByWorkAndUrl:
+SELECT * FROM aethon_chapter_binding
+WHERE work_entity_id = :workEntityId AND normalized_url = :normalizedUrl;
+
+selectChapterBindingByLocalChapterId:
+SELECT * FROM aethon_chapter_binding
+WHERE local_chapter_id = :localChapterId;
+
+deleteChapterBindingByEntityId:
+DELETE FROM aethon_chapter_binding
+WHERE chapter_entity_id = :chapterEntityId;
+
+deleteReaderProgress:
+DELETE FROM aethon_reader_progress
+WHERE entity_id = :entityId;
+
+upsertChapterBinding:
+INSERT INTO aethon_chapter_binding(
+    chapter_entity_id, work_entity_id, local_chapter_id, normalized_url, ordinal, updated_at
+) VALUES (
+    :chapterEntityId, :workEntityId, :localChapterId, :normalizedUrl, :ordinal, :updatedAt
+)
+ON CONFLICT(chapter_entity_id) DO UPDATE SET
+    work_entity_id = :workEntityId,
+    local_chapter_id = :localChapterId,
+    normalized_url = :normalizedUrl,
+    ordinal = :ordinal,
+    updated_at = :updatedAt;
+
+upsertLocalReaderProgress:
+INSERT INTO aethon_reader_progress(
+    entity_id, chapter_entity_id, locator_json, chapter_ordinal, progression,
+    server_revision, updated_at
+) VALUES (
+    :entityId, :chapterEntityId, :locatorJson, :chapterOrdinal, :progression,
+    0, :updatedAt
+)
+ON CONFLICT(entity_id) DO UPDATE SET
+    chapter_entity_id = :chapterEntityId,
+    locator_json = :locatorJson,
+    chapter_ordinal = :chapterOrdinal,
+    progression = :progression,
+    updated_at = :updatedAt;
+
+upsertRemoteReaderProgress:
+INSERT INTO aethon_reader_progress(
+    entity_id, chapter_entity_id, locator_json, chapter_ordinal, progression,
+    server_revision, updated_at
+) VALUES (
+    :entityId, :chapterEntityId, :locatorJson, :chapterOrdinal, :progression,
+    :serverRevision, :updatedAt
+)
+ON CONFLICT(entity_id) DO UPDATE SET
+    chapter_entity_id = :chapterEntityId,
+    locator_json = :locatorJson,
+    chapter_ordinal = :chapterOrdinal,
+    progression = :progression,
+    server_revision = :serverRevision,
+    updated_at = :updatedAt
+WHERE :serverRevision >= aethon_reader_progress.server_revision;
+
+selectReaderProgress:
+SELECT * FROM aethon_reader_progress WHERE entity_id = :entityId;
+
+selectRemoteReaderProgressEntityIds:
+SELECT entity_id FROM aethon_reader_progress
+WHERE server_revision > 0;
+
+enqueueMutation:
+INSERT INTO aethon_sync_outbox(
+    client_mutation_id, device_id, scope_id, entity_type, entity_id,
+    operation, payload_json, created_at, next_attempt_at
+) VALUES (
+    :clientMutationId, :deviceId, :scopeId, :entityType, :entityId,
+    :operation, :payloadJson, :createdAt, :nextAttemptAt
+);
+
+deleteUnattemptedMutationForEntity:
+DELETE FROM aethon_sync_outbox
+WHERE device_id = :deviceId
+  AND scope_id = :scopeId
+  AND entity_type = :entityType
+  AND entity_id = :entityId
+  AND status = 'PENDING'
+  AND attempt_count = 0;
+
+selectReadyMutations:
+SELECT * FROM aethon_sync_outbox
+WHERE (
+    (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
+    OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
+)
+ORDER BY sequence ASC
+LIMIT :limit;
+
+selectReadyMutationsForScopes:
+SELECT * FROM aethon_sync_outbox
+WHERE scope_id IN :scopeIds
+  AND (
+    (status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now)
+    OR (status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now)
+  )
+ORDER BY sequence ASC
+LIMIT :limit;
+
+hasPendingMutationForEntity:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE scope_id = :scopeId
+      AND entity_type = :entityType
+      AND entity_id = :entityId
+);
+
+pendingMutationCount:
+SELECT COUNT(*) FROM aethon_sync_outbox;
+
+pendingMutationCountForScopes:
+SELECT COUNT(*) FROM aethon_sync_outbox
+WHERE scope_id IN :scopeIds;
+
+nextMutationAttemptAt:
+SELECT MIN(
+    CASE
+        WHEN status = 'IN_FLIGHT' THEN COALESCE(lease_until, next_attempt_at)
+        ELSE next_attempt_at
+    END
+)
+FROM aethon_sync_outbox
+WHERE status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
+unsettledMutationCount:
+SELECT
+    (SELECT COUNT(*) FROM aethon_sync_outbox) +
+    (SELECT COUNT(*) FROM aethon_sync_replica_wait);
+
+unsettledMutationCountForScopes:
+SELECT
+    (SELECT COUNT(*) FROM aethon_sync_outbox WHERE scope_id IN :scopeIds) +
+    (SELECT COUNT(*) FROM aethon_sync_replica_wait WHERE scope_id IN :scopeIds);
+
+blockedMutationCount:
+SELECT COUNT(*) FROM aethon_sync_outbox
+WHERE status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+releaseMutationBackoff:
+UPDATE aethon_sync_outbox
+SET next_attempt_at = :now
+WHERE status = 'ERROR'
+  AND next_attempt_at > :now
+  AND (last_error IS NULL OR last_error NOT LIKE 'blocked:%');
+
+hasUnsettledMutationForEntity:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE scope_id = :scopeId
+      AND entity_type = :entityType
+      AND entity_id = :entityId
+    UNION ALL
+    SELECT 1 FROM aethon_sync_replica_wait
+    WHERE scope_id = :scopeId
+      AND entity_type = :entityType
+      AND (entity_id = :entityId OR canonical_entity_id = :entityId)
+);
+
+-- Comic ids whose library bit or category links still have local work in flight. A catalog
+-- read cannot prove these are stale, so the Suwayomi reconcile leaves them untouched.
+selectUnsettledSuwayomiComicEntityIds:
+SELECT entity_id FROM aethon_sync_outbox
+WHERE scope_id = :scopeId
+  AND entity_type IN ('comic.entry', 'comic.category_assignment')
+UNION
+SELECT entity_id FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId
+  AND entity_type IN ('comic.entry', 'comic.category_assignment')
+UNION
+SELECT entity_id FROM aethon_suwayomi_mutation_queue
+WHERE profile_id = :profileId
+  AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
+hasBlockingMutationForObservedVersion:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_sync_outbox
+    WHERE scope_id = :scopeId
+      AND entity_type = :entityType
+      AND entity_id = :entityId
+    UNION ALL
+    SELECT 1 FROM aethon_sync_replica_wait
+    WHERE scope_id = :scopeId
+      AND entity_type = :entityType
+      AND (entity_id = :entityId OR canonical_entity_id = :entityId)
+      AND required_server_version > :observedServerVersion
+);
+
+markMutationInFlight:
+UPDATE aethon_sync_outbox
+SET status = 'IN_FLIGHT',
+    attempt_count = attempt_count + 1,
+    last_error = NULL,
+    in_flight_at = :inFlightAt,
+    lease_until = :leaseUntil
+WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+markMutationFailed:
+UPDATE aethon_sync_outbox
+SET status = 'ERROR',
+    next_attempt_at = :nextAttemptAt,
+    last_error = :lastError,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+recoverExpiredMutations:
+UPDATE aethon_sync_outbox
+SET status = 'PENDING', in_flight_at = NULL, lease_until = NULL
+WHERE status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now;
+
+deleteAcknowledgedMutation:
+DELETE FROM aethon_sync_outbox
+WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+upsertReceipt:
+INSERT INTO aethon_sync_receipt(device_id, client_mutation_id, canonical_entity_id, received_at)
+VALUES (:deviceId, :clientMutationId, :canonicalEntityId, :receivedAt)
+ON CONFLICT(device_id, client_mutation_id) DO UPDATE SET
+    canonical_entity_id = :canonicalEntityId,
+    received_at = :receivedAt;
+
+selectReceipt:
+SELECT * FROM aethon_sync_receipt
+WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+upsertReplicaWait:
+INSERT INTO aethon_sync_replica_wait(
+    device_id, client_mutation_id, scope_id, entity_type, entity_id,
+    canonical_entity_id, result_status, required_server_version, applied_lamport,
+    event_clock_json, canonical_record_sha256, received_at
+) VALUES (
+    :deviceId, :clientMutationId, :scopeId, :entityType, :entityId,
+    :canonicalEntityId, :resultStatus, :requiredServerVersion, :appliedLamport,
+    :eventClockJson, :canonicalRecordSha256, :receivedAt
+)
+ON CONFLICT(device_id, client_mutation_id) DO UPDATE SET
+    scope_id = :scopeId,
+    entity_type = :entityType,
+    entity_id = :entityId,
+    canonical_entity_id = :canonicalEntityId,
+    result_status = :resultStatus,
+    required_server_version = :requiredServerVersion,
+    applied_lamport = :appliedLamport,
+    event_clock_json = :eventClockJson,
+    canonical_record_sha256 = :canonicalRecordSha256,
+    received_at = :receivedAt;
+
+selectReplicaWait:
+SELECT * FROM aethon_sync_replica_wait
+WHERE device_id = :deviceId AND client_mutation_id = :clientMutationId;
+
+replicaWaitCount:
+SELECT COUNT(*) FROM aethon_sync_replica_wait;
+
+reconcileReplicaWaitForEntity:
+DELETE FROM aethon_sync_replica_wait
+WHERE scope_id = :scopeId
+  AND entity_type = :entityType
+  AND (entity_id = :entityId OR canonical_entity_id = :entityId)
+  AND required_server_version <= :observedServerVersion;
+
+-- The replica may apply the change (live event or pull) before the POST acknowledgement is
+-- stored; that apply reconciled nothing, so the new wait must be settled against it here.
+reconcileReplicaWaitWithApplied:
+DELETE FROM aethon_sync_replica_wait
+WHERE device_id = :deviceId
+  AND client_mutation_id = :clientMutationId
+  AND (
+    EXISTS(
+        SELECT 1 FROM aethon_core_replica_record AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+    OR EXISTS(
+        SELECT 1 FROM aethon_core_replica_tombstone AS applied
+        WHERE applied.scope_id = aethon_sync_replica_wait.scope_id
+          AND applied.entity_type = aethon_sync_replica_wait.entity_type
+          AND (applied.entity_id = aethon_sync_replica_wait.entity_id
+              OR applied.entity_id = aethon_sync_replica_wait.canonical_entity_id)
+          AND applied.server_version >= aethon_sync_replica_wait.required_server_version
+    )
+  );
+
+upsertCheckpoint:
+INSERT INTO aethon_sync_checkpoint(scope_id, cursor, schema_version, snapshot_at, updated_at)
+VALUES (:scopeId, :cursor, :schemaVersion, :snapshotAt, :updatedAt)
+ON CONFLICT(scope_id) DO UPDATE SET
+    cursor = :cursor,
+    schema_version = :schemaVersion,
+    snapshot_at = :snapshotAt,
+    updated_at = :updatedAt;
+
+recordInboxEvent:
+INSERT OR IGNORE INTO aethon_sync_inbox(
+    scope_id, event_id, server_revision, payload_sha256, applied_at
+) VALUES (
+    :scopeId, :eventId, :serverRevision, :payloadSha256, :appliedAt
+);
+
+isInboxEventApplied:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_sync_inbox WHERE scope_id = :scopeId AND event_id = :eventId
+);
+
+upsertTombstone:
+INSERT INTO aethon_sync_tombstone(
+    scope_id, entity_id, entity_type, deleted_at, client_mutation_id, server_revision
+) VALUES (
+    :scopeId, :entityId, :entityType, :deletedAt, :clientMutationId, :serverRevision
+)
+ON CONFLICT(scope_id, entity_id, entity_type) DO UPDATE SET
+    deleted_at = :deletedAt,
+    client_mutation_id = :clientMutationId,
+    server_revision = :serverRevision
+WHERE :serverRevision > aethon_sync_tombstone.server_revision;
+
+insertAssetManifest:
+INSERT INTO aethon_asset_manifest(
+    sha256, content_type, byte_size, mime_type, local_uri,
+    remote_available, state, updated_at
+) VALUES (
+    :sha256, :contentType, :byteSize, :mimeType, :localUri,
+    :remoteAvailable, :state, :updatedAt
+)
+ON CONFLICT(sha256) DO UPDATE SET
+    content_type = :contentType,
+    byte_size = :byteSize,
+    mime_type = :mimeType,
+    local_uri = COALESCE(:localUri, aethon_asset_manifest.local_uri),
+    remote_available = :remoteAvailable,
+    state = :state,
+    updated_at = :updatedAt;
+
+selectAssetManifest:
+SELECT * FROM aethon_asset_manifest WHERE sha256 = :sha256;
+
+selectPendingAssetUploads:
+SELECT * FROM aethon_asset_manifest
+WHERE state = 'PENDING_UPLOAD'
+    AND local_uri IS NOT NULL
+    AND remote_available = 0
+ORDER BY updated_at ASC, sha256 ASC
+LIMIT :limit;
+
+pendingAssetUploadCount:
+SELECT COUNT(*) FROM aethon_asset_manifest
+WHERE state = 'PENDING_UPLOAD'
+    AND local_uri IS NOT NULL
+    AND remote_available = 0;
+
+selectPendingBookCoverDownloads:
+SELECT aethon_asset_manifest.*, aethon_content_identity.local_reference AS book_id
+FROM aethon_asset_manifest
+JOIN aethon_entity_asset USING(sha256)
+JOIN aethon_content_identity USING(entity_id)
+WHERE aethon_asset_manifest.content_type = 'BOOK_COVER'
+    AND aethon_entity_asset.role = 'COVER'
+    AND aethon_asset_manifest.state = 'PENDING_DOWNLOAD'
+    AND aethon_asset_manifest.remote_available = 1
+ORDER BY aethon_asset_manifest.updated_at ASC, aethon_asset_manifest.sha256 ASC
+LIMIT :limit;
+
+pendingBookCoverDownloadCount:
+SELECT COUNT(*)
+FROM aethon_asset_manifest
+JOIN aethon_entity_asset USING(sha256)
+WHERE aethon_asset_manifest.content_type = 'BOOK_COVER'
+    AND aethon_entity_asset.role = 'COVER'
+    AND aethon_asset_manifest.state = 'PENDING_DOWNLOAD'
+    AND aethon_asset_manifest.remote_available = 1;
+
+selectEntityAssets:
+SELECT aethon_asset_manifest.*, aethon_entity_asset.role, aethon_entity_asset.relative_path,
+       aethon_entity_asset.ordinal
+FROM aethon_entity_asset
+JOIN aethon_asset_manifest USING(sha256)
+WHERE aethon_entity_asset.entity_id = :entityId
+ORDER BY aethon_entity_asset.role, aethon_entity_asset.ordinal, aethon_entity_asset.sha256;
+
+updateAssetMaterialization:
+UPDATE aethon_asset_manifest SET
+    local_uri = :localUri,
+    remote_available = :remoteAvailable,
+    state = :state,
+    updated_at = :updatedAt
+WHERE sha256 = :sha256
+    AND content_type = :contentType
+    AND byte_size = :byteSize
+    AND mime_type = :mimeType;
+
+updateAssetDownloadState:
+UPDATE aethon_asset_manifest SET
+    local_uri = :localUri,
+    state = :state,
+    updated_at = :updatedAt
+WHERE sha256 = :sha256
+    AND content_type = :contentType
+    AND byte_size = :byteSize
+    AND mime_type = :mimeType;
+
+linkEntityAsset:
+INSERT INTO aethon_entity_asset(entity_id, sha256, role, relative_path, ordinal)
+VALUES (:entityId, :sha256, :role, :relativePath, :ordinal)
+ON CONFLICT(entity_id, sha256, role, relative_path) DO UPDATE SET ordinal = :ordinal;
+
+deleteEntityAssetsByRole:
+DELETE FROM aethon_entity_asset
+WHERE entity_id = :entityId AND role = :role;
+
+upsertEntityAlias:
+INSERT INTO aethon_entity_alias(alias_entity_id, canonical_entity_id, received_at)
+VALUES (:aliasEntityId, :canonicalEntityId, :receivedAt)
+ON CONFLICT(alias_entity_id) DO UPDATE SET
+    canonical_entity_id = :canonicalEntityId,
+    received_at = :receivedAt;
+
+deleteCoreReplicaRecordsByScope:
+DELETE FROM aethon_core_replica_record WHERE scope_id = :scopeId;
+
+deleteCoreReplicaTombstonesByScope:
+DELETE FROM aethon_core_replica_tombstone WHERE scope_id = :scopeId;
+
+selectCoreReplicaRecordVersion:
+SELECT server_version FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+selectCoreReplicaRecord:
+SELECT * FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+selectCoreReplicaTombstoneVersion:
+SELECT server_version FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+upsertCoreReplicaRecord:
+INSERT INTO aethon_core_replica_record(
+    scope_id, entity_type, entity_id, server_version, lamport, record_json, payload_sha256
+) VALUES (
+    :scopeId, :entityType, :entityId, :serverVersion, :lamport, :recordJson, :payloadSha256
+)
+ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET
+    server_version = :serverVersion,
+    lamport = :lamport,
+    record_json = :recordJson,
+    payload_sha256 = :payloadSha256
+WHERE :serverVersion >= aethon_core_replica_record.server_version;
+
+deleteCoreReplicaRecord:
+DELETE FROM aethon_core_replica_record
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+upsertCoreReplicaTombstone:
+INSERT INTO aethon_core_replica_tombstone(
+    scope_id, entity_type, entity_id, server_version, lamport,
+    deleted_at, reason_code, payload_sha256
+) VALUES (
+    :scopeId, :entityType, :entityId, :serverVersion, :lamport,
+    :deletedAt, :reasonCode, :payloadSha256
+)
+ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET
+    server_version = :serverVersion,
+    lamport = :lamport,
+    deleted_at = :deletedAt,
+    reason_code = :reasonCode,
+    payload_sha256 = :payloadSha256
+WHERE :serverVersion >= aethon_core_replica_tombstone.server_version;
+
+deleteCoreReplicaTombstone:
+DELETE FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+isCoreReplicaInboxEventApplied:
+SELECT EXISTS(
+    SELECT 1 FROM aethon_core_replica_inbox WHERE global_event_id = :globalEventId
+);
+
+insertCoreReplicaInboxEvent:
+INSERT INTO aethon_core_replica_inbox(
+    global_event_id, scope_id, entity_type, entity_id, operation, payload_sha256, applied_at
+) VALUES (
+    :globalEventId, :scopeId, :entityType, :entityId, :operation, :payloadSha256, :appliedAt
+);
+
+upsertCoreReplicaCheckpoint:
+INSERT INTO aethon_core_replica_checkpoint(
+    coverage_key, coverage_type, scope_id, last_global_event_id, updated_at
+) VALUES (
+    :coverageKey, :coverageType, :scopeId, :lastGlobalEventId, :updatedAt
+)
+ON CONFLICT(coverage_key) DO UPDATE SET
+    coverage_type = :coverageType,
+    scope_id = :scopeId,
+    last_global_event_id = :lastGlobalEventId,
+    updated_at = :updatedAt
+WHERE :lastGlobalEventId >= aethon_core_replica_checkpoint.last_global_event_id;
+
+selectCoreReplicaRecordsByScope:
+SELECT * FROM aethon_core_replica_record
+WHERE scope_id = :scopeId
+ORDER BY entity_type, entity_id;
+
+selectCoreReplicaRecordsByType:
+SELECT entity_id, record_json FROM aethon_core_replica_record
+WHERE entity_type = :entityType
+ORDER BY entity_id;
+
+countCoreReplicaCheckpoints:
+SELECT count(*) FROM aethon_core_replica_checkpoint;
+
+selectCoreReplicaTombstonesByScope:
+SELECT * FROM aethon_core_replica_tombstone
+WHERE scope_id = :scopeId
+ORDER BY entity_type, entity_id;
+
+selectCoreReplicaInboxEvent:
+SELECT * FROM aethon_core_replica_inbox WHERE global_event_id = :globalEventId;
+
+selectCoreReplicaCheckpoint:
+SELECT * FROM aethon_core_replica_checkpoint WHERE coverage_key = :coverageKey;
+
+deleteAllCoreReplicaCheckpoints:
+DELETE FROM aethon_core_replica_checkpoint;
+
+deleteAllCoreReplicaInboxEvents:
+DELETE FROM aethon_core_replica_inbox;
+
+selectCoreLamport:
+SELECT last_lamport FROM aethon_core_lamport WHERE singleton_id = 0;
+
+advanceCoreLamport:
+INSERT INTO aethon_core_lamport(singleton_id, last_lamport)
+VALUES (0, :lamport)
+ON CONFLICT(singleton_id) DO UPDATE SET last_lamport = :lamport
+WHERE :lamport > aethon_core_lamport.last_lamport;
+
+deactivatePairedCores:
+UPDATE aethon_paired_core SET is_active = 0 WHERE is_active = 1;
+
+upsertPairedCore:
+INSERT INTO aethon_paired_core(
+    core_id, display_name, endpoint, certificate_sha256,
+    capabilities_json, is_active, paired_at, last_seen_at
+) VALUES (
+    :coreId, :displayName, :endpoint, :certificateSha256,
+    :capabilitiesJson, :isActive, :pairedAt, :lastSeenAt
+)
+ON CONFLICT(core_id) DO UPDATE SET
+    display_name = :displayName,
+    endpoint = :endpoint,
+    certificate_sha256 = :certificateSha256,
+    capabilities_json = :capabilitiesJson,
+    is_active = :isActive,
+    last_seen_at = :lastSeenAt;
+
+selectDeviceSyncSelection:
+SELECT * FROM aethon_device_sync_selection
+WHERE server_id = :serverId
+    AND profile_id = :profileId
+    AND device_id = :deviceId;
+
+upsertDeviceSyncSelection:
+INSERT INTO aethon_device_sync_selection(
+    server_id, profile_id, device_id, schema_version,
+    comics_enabled, novels_enabled, books_enabled,
+    comic_repositories, comic_extensions, novel_repositories, novel_plugins,
+    book_asset_policy, updated_at
+) VALUES (
+    :serverId, :profileId, :deviceId, :schemaVersion,
+    :comicsEnabled, :novelsEnabled, :booksEnabled,
+    :comicRepositories, :comicExtensions, :novelRepositories, :novelPlugins,
+    :bookAssetPolicy, :updatedAt
+)
+ON CONFLICT(server_id, profile_id, device_id) DO UPDATE SET
+    schema_version = :schemaVersion,
+    comics_enabled = :comicsEnabled,
+    novels_enabled = :novelsEnabled,
+    books_enabled = :booksEnabled,
+    comic_repositories = :comicRepositories,
+    comic_extensions = :comicExtensions,
+    novel_repositories = :novelRepositories,
+    novel_plugins = :novelPlugins,
+    book_asset_policy = :bookAssetPolicy,
+    updated_at = :updatedAt;
+
+deleteDeviceSyncSelection:
+DELETE FROM aethon_device_sync_selection
+WHERE server_id = :serverId
+    AND profile_id = :profileId
+    AND device_id = :deviceId;
+
+-- Local categories that hold at least one comic but have no comic identity yet (the folder may
+-- already be bound to a novel or book category). They can only reach Suwayomi through CreateCategory.
+selectUnpublishedComicCategories:
+SELECT c._id, c.name
+FROM categories c
+WHERE c._id > 0
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_category_identity i
+      WHERE i.local_category_id = c._id AND i.content_scope = 'MANGA'
+  )
+  AND EXISTS (
+      SELECT 1 FROM mangas_categories mc
+      JOIN aethon_content_identity e
+        ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+      WHERE mc.category_id = c._id
+  )
+ORDER BY c.sort, c._id;

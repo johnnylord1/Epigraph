@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<eu.kanade.tachiyomi.ui.reader.ReaderNavView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/reader_nav"
+    android:background="@drawable/chapter_nav"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_gravity="top"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="6dp"
+    android:paddingTop="6dp"
+    android:clickable="true"
+    android:focusable="false"
+    android:descendantFocusability="afterDescendants"
+    android:gravity="center"
+    android:layoutDirection="ltr"
+    android:orientation="horizontal">
+
+    <com.google.android.material.progressindicator.CircularProgressIndicator
+        android:id="@+id/left_progress"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:indeterminate="true"
+        android:visibility="gone"
+        app:indicatorSize="16dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:trackThickness="3dp" />
+
+    <ImageButton
+        android:id="@+id/left_chapter"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:background="?selectableItemBackgroundBorderless"
+        android:contentDescription="@string/previous_chapter"
+        android:padding="@dimen/material_layout_keylines_screen_edge_margin"
+        android:visibility="visible"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:srcCompat="@drawable/ic_skip_previous_24"
+        app:tint="?actionBarTintColor" />
+
+    <LinearLayout
+        android:id="@+id/reader_seekbar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="horizontal"
+        app:layout_constraintBottom_toTopOf="@id/right_chapter"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/left_chapter">
+
+        <TextView
+            android:id="@+id/left_page_text"
+            android:layout_width="32sp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:textColor="?actionBarTintColor"
+            android:textSize="15sp"
+            tools:text="1-2" />
+
+        <eu.kanade.tachiyomi.ui.reader.ReaderSlider
+            android:id="@+id/page_seekbar"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:maxHeight="?attr/actionBarSize"
+            android:minHeight="?attr/actionBarSize"
+            android:stepSize="1"
+            tools:ignore="SpeakableTextPresentCheck"
+            tools:value="4"
+            tools:valueTo="10" />
+
+        <TextView
+            android:id="@+id/right_page_text"
+            android:layout_width="32sp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:textColor="?actionBarTintColor"
+            android:textSize="15sp"
+            tools:text="15" />
+
+    </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/right_chapter"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:background="?selectableItemBackgroundBorderless"
+        android:contentDescription="@string/next_chapter"
+        android:padding="@dimen/material_layout_keylines_screen_edge_margin"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:srcCompat="@drawable/ic_skip_next_24"
+        app:tint="?actionBarTintColor" />
+
+    <com.google.android.material.progressindicator.CircularProgressIndicator
+        android:id="@+id/right_progress"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="center"
+        android:indeterminate="true"
+        android:visibility="gone"
+        app:indicatorSize="16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:trackThickness="3dp" />
+
+</eu.kanade.tachiyomi.ui.reader.ReaderNavView>

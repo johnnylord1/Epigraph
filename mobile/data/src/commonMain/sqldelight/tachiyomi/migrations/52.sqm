@@ -1,0 +1,4 @@
+-- Local EPUB/PDF structure metadata is display-only and may be absent when a Core
+-- snapshot contains metadata without a downloaded publication.
+ALTER TABLE local_books ADD COLUMN chapter_count INTEGER;
+ALTER TABLE local_books ADD COLUMN page_count INTEGER;

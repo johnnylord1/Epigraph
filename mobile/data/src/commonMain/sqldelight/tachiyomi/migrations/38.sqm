@@ -1,0 +1,59 @@
+-- SQLDelight names a migration after the schema it starts from: 38.sqm upgrades schema 38 to 39.
+-- Rollback is intentionally manual: first export pending outbox work, then drop only the four
+-- aethon_core_replica_* tables, the aethon_core_lamport table and their two indexes in one
+-- maintenance transaction. Never alter
+-- or clear aethon_sync_outbox while rolling back the confirmed replica mirror.
+
+CREATE TABLE aethon_core_replica_record (
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    server_version INTEGER NOT NULL CHECK(server_version >= 0),
+    lamport INTEGER NOT NULL CHECK(lamport >= 0),
+    record_json TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY(scope_id, entity_type, entity_id)
+);
+CREATE INDEX aethon_core_replica_record_version_index
+ON aethon_core_replica_record(scope_id, server_version);
+
+CREATE TABLE aethon_core_replica_tombstone (
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    server_version INTEGER NOT NULL CHECK(server_version >= 0),
+    lamport INTEGER NOT NULL CHECK(lamport >= 0),
+    deleted_at INTEGER NOT NULL CHECK(deleted_at >= 0),
+    reason_code TEXT,
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    PRIMARY KEY(scope_id, entity_type, entity_id)
+);
+CREATE INDEX aethon_core_replica_tombstone_version_index
+ON aethon_core_replica_tombstone(scope_id, server_version);
+
+CREATE TABLE aethon_core_replica_inbox (
+    global_event_id INTEGER NOT NULL PRIMARY KEY CHECK(global_event_id >= 0),
+    scope_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK(operation IN ('merge', 'delete')),
+    payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+    applied_at INTEGER NOT NULL CHECK(applied_at >= 0)
+);
+
+CREATE TABLE aethon_core_replica_checkpoint (
+    coverage_key TEXT NOT NULL PRIMARY KEY,
+    coverage_type TEXT NOT NULL CHECK(coverage_type IN ('ALL', 'FILTERED')),
+    scope_id TEXT,
+    last_global_event_id INTEGER NOT NULL CHECK(last_global_event_id >= 0),
+    updated_at INTEGER NOT NULL CHECK(updated_at >= 0),
+    CHECK(
+        (coverage_type = 'ALL' AND scope_id IS NULL)
+        OR (coverage_type = 'FILTERED' AND scope_id IS NOT NULL AND length(scope_id) > 0)
+    )
+);
+
+CREATE TABLE aethon_core_lamport (
+    singleton_id INTEGER NOT NULL PRIMARY KEY CHECK(singleton_id = 0),
+    last_lamport INTEGER NOT NULL CHECK(last_lamport >= 0)
+);

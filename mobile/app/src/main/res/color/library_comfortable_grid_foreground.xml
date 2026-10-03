@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Selected covers get the 12% pressed state layer in accent, not a wash (DESIGN.md §2 "Estados interativos"). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:alpha="0.12" android:color="?attr/colorSecondary" />
+    <item android:state_activated="true" android:alpha="0.12" android:color="?attr/colorSecondary" />
+    <item android:color="@android:color/transparent" />
+</selector>

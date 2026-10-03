@@ -1,0 +1,576 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!--========-->
+    <!--Toolbars-->
+    <!--========-->
+
+    <style name="Theme.ActionBar.DayNight" parent="ThemeOverlay.Material3.ActionBar">
+        <item name="elevationOverlayEnabled">true</item>
+        <item name="elevationOverlayColor">?colorSecondary</item>
+        <item name="elevation">4dp</item>
+    </style>
+
+    <!--===============-->
+    <!--Text Appearance-->
+    <!--===============-->
+    <style name="TextAppearance" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">?attr/colorOnBackground</item>
+    </style>
+
+    <style name="TextAppearance.BodyMedium.ReducedSpace" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">14sp</item>
+        <item name="lineHeight">19sp</item>
+    </style>
+
+    <style name="TextAppearance.Tachiyomi.BodySecondary" parent="TextAppearance">
+        <item name="android:textColor">?android:attr/textColorSecondary</item>
+    </style>
+
+    <style name="TextAppearance.Tachiyomi.Button" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">?colorSecondary</item>
+    </style>
+
+    <style name="TextAppearance.FloatingTitle" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <!-- DESIGN.md §3 type scale. Outfit weights resolve through textFontWeight (API 28+). -->
+    <style name="TextAppearance.Epigraph.Display" parent="TextAppearance.Material3.HeadlineLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">600</item>
+        <item name="android:textSize">32sp</item>
+        <item name="lineHeight">40sp</item>
+        <item name="android:letterSpacing">-0.008</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.TitleL" parent="TextAppearance.Material3.TitleLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">600</item>
+        <item name="android:textSize">22sp</item>
+        <item name="lineHeight">28sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.TitleM" parent="TextAppearance.Material3.TitleMedium">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">16sp</item>
+        <item name="lineHeight">24sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Body" parent="TextAppearance.Material3.BodyLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">400</item>
+        <item name="android:textSize">16sp</item>
+        <item name="lineHeight">24sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.BodyS" parent="TextAppearance.Material3.BodyMedium">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">400</item>
+        <item name="android:textSize">14sp</item>
+        <item name="lineHeight">20sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Label" parent="TextAppearance.Material3.LabelLarge">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">14sp</item>
+        <item name="lineHeight">20sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.Epigraph.Caption" parent="TextAppearance.Material3.LabelSmall">
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:textFontWeight" tools:targetApi="28">500</item>
+        <item name="android:textSize">12sp</item>
+        <item name="lineHeight">16sp</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <!-- DESIGN.md §5 radius scale for XML components. -->
+    <style name="ShapeAppearance.Epigraph.XS" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_xs</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.S" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_s</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.M" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_m</item>
+    </style>
+
+    <style name="ShapeAppearance.Epigraph.L" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/radius_l</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Tab" parent="TextAppearance.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <!--=======-->
+    <!--Widgets-->
+    <!--=======-->
+    <style name="Theme.Widget" />
+
+    <style name="Theme.Widget.FAB" parent="@style/Widget.Material3.ExtendedFloatingActionButton.Icon.Secondary">
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_gravity">bottom|end</item>
+        <item name="android:layout_margin">@dimen/fab_margin</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="layout_anchorGravity">bottom|right|end</item>
+        <item name="tint">?attr/colorOnSecondary</item>
+        <item name="backgroundTint">?attr/colorSecondary</item>
+        <item name="android:tint">?attr/colorOnSecondary</item>
+        <item name="iconTint">?attr/colorOnSecondary</item>
+        <item name="textAllCaps">false</item>
+        <item name="android:textColor">?attr/colorOnSecondary</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.ActionMode" parent="Widget.Material3.ActionMode">
+        <item name="colorControlHighlight">?colorControlHighlight</item>
+        <item name="background">?colorPrimaryVariant</item>
+        <item name="height">?attr/mainActionBarSize</item>
+        <item name="android:minHeight">?attr/mainActionBarSize</item>
+    </style>
+
+    <style name="Tachiyomi.PreferenceTheme" parent="@style/PreferenceThemeOverlay">
+        <item name="switchPreferenceCompatStyle">@style/Widget.Tachiyomi.SwitchPreferenceCompat</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.SwitchPreferenceCompat" parent="Preference.SwitchPreferenceCompat.Material">
+        <item name="widgetLayout">@layout/preference_widget_material_switch</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CardView.Elevated" parent="Widget.Material3.CardView.Elevated">
+        <item name="shapeAppearance">?attr/shapeAppearanceCornerSmall</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CardView.Outlined" parent="Widget.Material3.CardView.Outlined">
+        <item name="shapeAppearance">?attr/shapeAppearanceCornerSmall</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CardView.Filled" parent="Widget.Material3.CardView.Filled">
+        <item name="shapeAppearance">?attr/shapeAppearanceCornerSmall</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CardView.Tracker" parent="Widget.Material3.CardView.Outlined">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:padding">@dimen/material_component_cards_top_and_bottom_padding</item>
+        <item name="android:layout_marginTop">@dimen/space_between_cards</item>
+        <item name="android:layout_marginBottom">@dimen/space_between_cards</item>
+        <item name="android:layout_marginStart">
+            @dimen/material_component_cards_space_between_cards
+        </item>
+        <item name="android:layout_marginEnd">@dimen/material_component_cards_space_between_cards
+        </item>
+        <item name="cardCornerRadius">@dimen/rounded_radius</item>
+        <item name="cardBackgroundColor">?background</item>
+        <item name="cardElevation">4dp</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CardView.Draggable" parent="Widget.Material3.CardView.Elevated">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="cardCornerRadius">0dp</item>
+        <item name="cardBackgroundColor">?background</item>
+        <item name="cardForegroundColor">@color/draggable_card_foreground</item>
+        <item name="cardElevation">0dp</item>
+    </style>
+
+    <style name="Theme.Widget.GridView">
+        <item name="android:smoothScrollbar">true</item>
+        <item name="android:numColumns">auto_fit</item>
+        <item name="android:stretchMode">columnWidth</item>
+        <item name="android:scrollbarStyle">outsideOverlay</item>
+    </style>
+
+    <style name="Theme.Widget.GridView.Catalogue">
+        <item name="android:gravity">top|left</item>
+        <item name="android:smoothScrollbar">true</item>
+        <item name="android:cacheColorHint">@color/material_on_background_disabled</item>
+        <item name="android:fastScrollEnabled">true</item>
+        <item name="android:horizontalSpacing">0dp</item>
+        <item name="android:verticalSpacing">0dp</item>
+    </style>
+
+
+    <style name="Theme.Widget.SpinnerItem" parent="Widget.AppCompat.DropDownItem.Spinner">
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="android:background">@drawable/list_item_selector</item>
+    </style>
+
+    <style name="FloatingTextView" parent="TextAppearance.AppCompat">
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">12dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:background">@drawable/bubble_drawable</item>
+        <item name="android:textColor">?actionBarTintColor</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:elevation">5dp</item>
+    </style>
+
+    <style name="BottomSheetDialogTheme" parent="@style/ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/BottomSheet.Modal</item>
+        <item name="android:backgroundDimAmount">@dimen/scrim_alpha</item>
+        <item name="android:windowSoftInputMode">adjustPan</item>
+    </style>
+
+    <style name="BottomSheet.Modal" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="paddingBottomSystemWindowInsets">false</item>
+        <item name="paddingLeftSystemWindowInsets">false</item>
+        <item name="paddingRightSystemWindowInsets">false</item>
+    </style>
+
+    <style name="OverflowDialogTheme" parent="BottomSheetDialogTheme">
+        <item name="android:windowAnimationStyle">@style/Theme.Widget.Animation.DropFromAbove</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <!-- A menu, not a modal: no blur or dim behind it (DESIGN.md §6, no glow/blur effects). -->
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
+    <style name="Theme.Widget.Animation.DropFromAbove" parent="android:Animation">
+        <item name="android:windowEnterAnimation">@anim/fade_in_grow_from_top</item>
+        <item name="android:windowExitAnimation">@anim/fade_out_short</item>
+    </style>
+
+    <style name="FullCoverDialogTheme" parent="BottomSheetDialogTheme">
+        <item name="android:windowAnimationStyle">@style/Theme.Widget.Animation.Static</item>
+    </style>
+
+    <style name="Theme.Widget.Animation.Static" parent="android:Animation">
+        <item name="android:windowEnterAnimation">@null</item>
+        <item name="android:windowExitAnimation">@null</item>
+        <item name="android:exitFadeDuration">0</item>
+    </style>
+
+    <style name="Theme.Widget.TextInputLayout.OutlinedBox.Dense" parent="Widget.Material3.TextInputLayout.OutlinedBox.Dense">
+        <item name="boxStrokeColor">@color/text_input_stroke</item>
+        <item name="hintTextColor">?attr/colorSecondary</item>
+        <item name="android:textColorHint">@color/material_on_background_disabled</item>
+    </style>
+
+    <!-- DESIGN.md §10 Diálogo: layer 3 (surface over scrim), r-l, title-l, r-s text buttons, token window motion. -->
+    <style name="Theme.Widget.Epigraph.AlertDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="alertDialogStyle">@style/Widget.Epigraph.AlertDialog</item>
+        <item name="elevationOverlayEnabled">false</item>
+        <item name="android:windowAnimationStyle">@style/Animation.Epigraph.Modal</item>
+        <item name="android:backgroundDimAmount">@dimen/scrim_alpha</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/MaterialAlertDialog.Epigraph.Title.Text</item>
+        <item name="materialAlertDialogBodyTextStyle">@style/MaterialAlertDialog.Epigraph.Body.Text</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.Epigraph.Button.Dialog</item>
+    </style>
+
+    <style name="Widget.Epigraph.AlertDialog" parent="MaterialAlertDialog.Material3">
+        <item name="backgroundTint">?attr/colorSurfaceContainerLow</item>
+    </style>
+
+    <style name="MaterialAlertDialog.Epigraph.Title.Text" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.TitleL</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
+    </style>
+
+    <style name="MaterialAlertDialog.Epigraph.Body.Text" parent="MaterialAlertDialog.Material3.Body.Text">
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Body</item>
+        <item name="android:textColor">?android:attr/textColorSecondary</item>
+    </style>
+
+    <style name="Widget.Epigraph.Button.Dialog" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
+        <item name="android:letterSpacing">0.0</item>
+    </style>
+
+    <style name="Animation.Epigraph.Modal" parent="android:Animation">
+        <item name="android:windowEnterAnimation">@anim/epigraph_modal_enter</item>
+        <item name="android:windowExitAnimation">@anim/epigraph_modal_exit</item>
+    </style>
+
+    <!-- DESIGN.md §10 Popup menu: layer 2. The platform enter transition already reveals from the anchor. -->
+    <style name="Widget.Epigraph.PopupMenu" parent="Widget.Material3.PopupMenu">
+        <item name="android:popupBackground">@drawable/epigraph_popup_background</item>
+        <item name="android:popupElevation">@dimen/elevation_level_2</item>
+    </style>
+
+    <!--=================-->
+    <!--Widgets.TabLayout-->
+    <!--=================-->
+    <style name="Theme.Widget.Tabs" parent="Widget.Material3.TabLayout.Secondary">
+        <item name="tabGravity">center</item>
+        <item name="tabIndicator">@drawable/tab_indicator</item>
+        <item name="tabIndicatorColor">?attr/colorSecondary</item>
+        <item name="tabTextColor">@color/tabs_selector</item>
+        <item name="tabRippleColor">?colorControlHighlight</item>
+        <item name="tabIndicatorFullWidth">false</item>
+        <item name="tabInlineLabel">true</item>
+        <item name="tabMinWidth">75dp</item>
+        <item name="tabMode">scrollable</item>
+        <item name="tabPaddingStart">20dp</item>
+        <item name="tabPaddingEnd">20dp</item>
+        <item name="tabTextAppearance">@style/TextAppearance.Widget.Tab</item>
+    </style>
+
+    <!-- Segment tabs (Recents, Browse, Extensions). Selection is text + a short accent
+         underline, like the desktop Nocturne tabs, instead of a filled pill. -->
+    <style name="Theme.Widget.Tabs.Highlight" parent="Theme.Widget.Tabs">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="tabIndicatorGravity">bottom</item>
+        <item name="tabTextColor">@color/tabs_selector_alt</item>
+        <item name="tabRippleColor">@android:color/transparent</item>
+        <item name="tabIndicator">@drawable/tab_indicator</item>
+        <item name="tabIndicatorColor">?attr/colorSecondary</item>
+        <item name="tabIndicatorHeight">2dp</item>
+        <item name="tabMaxWidth">0dp</item>
+        <item name="tabMode">fixed</item>
+        <item name="tabIndicatorAnimationMode">elastic</item>
+        <item name="tabIndicatorFullWidth">false</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Slider" parent="Widget.Material3.Slider">
+        <item name="trackColorInactive">@color/slider_inactive_track_color</item>
+        <item name="trackColorActive">@color/slider_active_track_color</item>
+        <item name="thumbColor">@color/slider_active_track_color</item>
+        <item name="labelStyle">@style/Theme.Tachiyomi.Tooltip</item>
+        <item name="tickColorActive">?colorOnSecondary</item>
+        <item name="tickColorInactive">@color/slider_tick_inactive</item>
+        <item name="haloColor">?colorControlHighlight</item>
+    </style>
+
+
+    <style name="Theme.Tachiyomi.Tooltip" parent="Widget.Material3.Tooltip">
+        <item name="backgroundTint">?colorSecondary</item>
+        <item name="android:textColor">?colorOnSecondary</item>
+    </style>
+
+    <!--==============-->
+    <!--Widgets.Button-->
+    <!--==============-->
+    <style name="Widget.Tachiyomi.Button.ActionButton" parent="Widget.Material3.Button.TextButton.Icon">
+        <item name="iconGravity">top</item>
+        <item name="iconTint">@color/button_action_selector</item>
+        <item name="iconPadding">4dp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">@color/button_action_selector</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Button.ActionButton.White.Landscape">
+        <item name="iconGravity">start</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Button.ActionButton.White">
+        <item name="iconTint">@android:color/white</item>
+        <item name="android:textColor">@android:color/white</item>
+    </style>
+
+    <style name="Theme.Widget.Button" parent="Widget.AppCompat.Button" />
+
+    <style name="Widget.Tachiyomi.Button.Small" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textColor">?attr/colorSecondary</item>
+        <item name="rippleColor">?colorControlHighlight</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CompoundButton.Switch" parent="Widget.Material3.CompoundButton.Switch">
+        <item name="thumbTint">@color/switch_thumb_tint</item>
+        <item name="trackTint">@null</item>
+    </style>
+    <style name="Widget.Tachiyomi.CompoundButton.CheckBox" parent="Base.Widget.Material3.CompoundButton.CheckBox">
+        <item name="buttonTint">@null</item>
+        <item name="buttonIconTint">@null</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.CompoundButton.RadioButton" parent="Base.Widget.Material3.CompoundButton.RadioButton">
+        <item name="buttonTint">@null</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.BottomNavigationView" parent="Widget.Material3.BottomNavigationView">
+        <item name="itemPaddingBottom">@dimen/space_1</item>
+        <item name="itemPaddingTop">@dimen/space_1</item>
+        <item name="android:minHeight">64dp</item>
+        <item name="itemTextAppearanceActive">@style/TextAppearance.Epigraph.Label</item>
+        <item name="itemTextAppearanceInactive">@style/TextAppearance.Epigraph.Label</item>
+        <item name="itemIconTint">@color/bottom_nav_item_selector</item>
+        <item name="itemRippleColor">@color/ripple_nav</item>
+        <item name="itemTextColor">@color/bottom_nav_text_selector</item>
+        <item name="labelVisibilityMode">labeled</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
+        <item name="android:background">?colorSurfaceContainer</item>
+        <item name="tabBarIconColor">?tabBarIconColor</item>
+        <item name="tabRippleColor">?colorControlHighlight</item>
+    </style>
+
+    <!-- DESIGN.md §10: accent-soft indicator with r-s corners; never a pill. -->
+    <style name="Widget.Tachiyomi.NavActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">?attr/colorSecondaryContainer</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.NavigationRail" parent="Widget.Material3.NavigationRailView">
+        <item name="android:minHeight">68dp</item>
+        <item name="itemIconTint">@color/bottom_nav_item_selector</item>
+        <item name="itemRippleColor">@color/ripple_nav</item>
+        <item name="itemTextColor">@color/bottom_nav_text_selector</item>
+        <item name="labelVisibilityMode">labeled</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.Tachiyomi.NavActiveIndicator</item>
+        <item name="android:background">?colorSurfaceContainer</item>
+        <item name="tabBarIconColor">?tabBarIconColor</item>
+        <item name="tabRippleColor">?colorControlHighlight</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Button.OutlinedButton.Icon" parent="Widget.Material3.Button.OutlinedButton.Icon">
+        <item name="android:paddingStart">12dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:letterSpacing">0.0</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="iconTint">?attr/colorSecondary</item>
+        <item name="rippleColor">?colorControlHighlight</item>
+        <item name="android:stateListAnimator">@animator/icon_btn_state_list_anim</item>
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+    </style>
+
+    <!-- DESIGN.md §10 Botão secundário: r-s, 1dp line-strong outline, text colour. Never a pill. -->
+    <style name="Widget.Epigraph.Button.Secondary" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
+        <item name="android:letterSpacing">0.0</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+        <item name="strokeColor">?attr/colorOutline</item>
+        <item name="iconTint">?attr/colorSecondary</item>
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+    </style>
+
+    <!-- Connected groups keep the small radius outside and a tighter one between buttons, never pill ends. -->
+    <style name="Widget.Tachiyomi.MaterialButtonGroup.Connected" parent="Widget.Material3.MaterialButtonGroup.Connected">
+        <item name="shapeAppearance">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="innerCornerSize">@dimen/radius_xs</item>
+    </style>
+
+    <!-- Reader settings buttons shared by novels, EPUB and PDF. Keep the same outline,
+         accent and ripple tokens as the manga reader while avoiding the stock square button
+         surface that slipped into the novel-only layouts. -->
+    <style name="Widget.Tachiyomi.Button.ReaderOutlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:layout_height">40dp</item>
+        <item name="android:minHeight">40dp</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+        <item name="strokeColor">?attr/colorOutlineVariant</item>
+        <item name="iconTint">?attr/colorSecondary</item>
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Button.OutlinedButton" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="backgroundTint">@color/ext_bg_selector</item>
+        <item name="android:textColor">@color/ext_button_text_selector</item>
+        <item name="rippleColor">?colorControlHighlight</item>
+        <item name="strokeWidth">0dp</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Button.Primary" parent="Widget.Material3.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="backgroundTint">@color/epigraph_primary_button_bg</item>
+        <item name="android:textColor">@color/epigraph_primary_button_text</item>
+        <item name="android:textAppearance">@style/TextAppearance.Epigraph.Label</item>
+        <item name="android:letterSpacing">0.0</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+        <item name="rippleColor">?attr/colorControlHighlight</item>
+        <item name="android:stateListAnimator">@animator/epigraph_press_scale</item>
+    </style>
+
+    <style name="Theme.Widget.Button.TextButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">?attr/colorSecondary</item>
+        <item name="android:minHeight">@dimen/touch_target</item>
+        <item name="cornerRadius">@dimen/radius_s</item>
+    </style>
+
+    <style name="Theme.Widget.ImageBorderless" parent="Widget.AppCompat.ImageButton">
+        <item name="android:background">?selectableItemBackgroundBorderless</item>
+        <item name="android:tint">?attr/colorSecondary</item>
+        <item name="rippleColor">?colorControlHighlight</item>
+    </style>
+
+    <style name="Theme.Widget.ImageBorderless.Secondary">
+        <item name="android:background">@drawable/item_background_borderless_on_secondary</item>
+        <item name="android:tint">?attr/colorOnSecondary</item>
+        <item name="rippleColor">@color/on_secondary_highlight</item>
+    </style>
+
+    <style name="Theme.Widget.CustomImageButton">
+        <item name="android:background">@drawable/round_ripple</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:tint">?attr/colorSecondary</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Chip.Genre" parent="Widget.Material3.Chip.Suggestion.Elevated">
+        <item name="chipBackgroundColor">@color/secondary_alpha</item>
+        <item name="chipMinHeight">28dp</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
+        <item name="android:textAppearance">@style/Theme.TextAppearance.Chip</item>
+        <item name="chipStrokeWidth">0dp</item>
+        <item name="android:checkable">false</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Chip.Stat" parent="Widget.Material3.Chip.Assist">
+        <item name="android:textColor">?attr/colorOnBackground</item>
+        <item name="android:checkable">false</item>
+        <item name="checkedIconEnabled">false</item>
+        <item name="chipIconVisible">false</item>
+        <item name="chipIconEnabled">false</item>
+        <item name="chipIconTint">?attr/colorOnBackground</item>
+        <item name="chipStrokeColor">?attr/colorSecondary</item>
+        <item name="chipStrokeWidth">1dp</item>
+        <item name="closeIconEnabled">true</item>
+        <item name="closeIconVisible">true</item>
+        <item name="closeIcon">@drawable/ic_arrow_drop_down_24dp</item>
+        <item name="closeIconTint">?attr/colorOnBackground</item>
+    </style>
+
+    <style name="Widget.Tachiyomi.Chip.AddTag" parent="Widget.Material3.Chip.Suggestion">
+        <item name="chipBackgroundColor">@android:color/transparent</item>
+        <item name="chipMinHeight">28dp</item>
+        <item name="android:textColor">?colorOnSurface</item>
+        <item name="android:textAppearance">@style/Theme.TextAppearance.Chip</item>
+        <item name="chipStrokeColor">?colorOnSurface</item>
+        <item name="chipStrokeWidth">1dp</item>
+        <item name="android:checkable">false</item>
+    </style>
+
+
+    <style name="Theme.TextAppearance.Chip" parent="TextAppearance.MaterialComponents.Chip">
+        <item name="android:textSize">13sp</item>
+    </style>
+
+</resources>

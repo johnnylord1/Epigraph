@@ -1,0 +1,7 @@
+ALTER TABLE aethon_device_sync_selection
+ADD COLUMN comic_repositories TEXT NOT NULL DEFAULT 'INVENTORY_ONLY'
+CHECK(comic_repositories IN ('DISABLED', 'INVENTORY_ONLY'));
+
+UPDATE aethon_device_sync_selection
+SET comic_repositories = 'DISABLED'
+WHERE comics_enabled = 0;

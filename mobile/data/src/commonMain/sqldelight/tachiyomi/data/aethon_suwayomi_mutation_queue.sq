@@ -1,0 +1,100 @@
+CREATE TABLE aethon_suwayomi_mutation_queue (
+    sequence INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    operation_id TEXT NOT NULL UNIQUE,
+    profile_id TEXT NOT NULL,
+    operation_name TEXT NOT NULL,
+    variables_json TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'IN_FLIGHT', 'ERROR', 'BLOCKED')),
+    last_error TEXT,
+    in_flight_at INTEGER,
+    lease_until INTEGER
+);
+
+CREATE INDEX aethon_suwayomi_mutation_queue_ready_index
+ON aethon_suwayomi_mutation_queue(status, next_attempt_at, sequence);
+
+enqueue:
+INSERT OR IGNORE INTO aethon_suwayomi_mutation_queue(
+    operation_id, profile_id, operation_name, variables_json, entity_id,
+    created_at, next_attempt_at
+) VALUES (
+    :operationId, :profileId, :operationName, :variablesJson, :entityId,
+    :createdAt, :nextAttemptAt
+);
+
+selectReady:
+SELECT * FROM aethon_suwayomi_mutation_queue
+WHERE status IN ('PENDING', 'ERROR') AND next_attempt_at <= :now
+ORDER BY sequence ASC
+LIMIT :limit;
+
+selectReadyForProfile:
+SELECT * FROM aethon_suwayomi_mutation_queue
+WHERE profile_id = :profileId
+  AND status IN ('PENDING', 'ERROR')
+  AND next_attempt_at <= :now
+ORDER BY sequence ASC
+LIMIT :limit;
+
+pendingCount:
+SELECT COUNT(*) FROM aethon_suwayomi_mutation_queue
+WHERE status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
+pendingCountForProfile:
+SELECT COUNT(*) FROM aethon_suwayomi_mutation_queue
+WHERE profile_id = :profileId
+  AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
+nextAttemptAt:
+SELECT MIN(
+    CASE
+        WHEN status = 'IN_FLIGHT' THEN COALESCE(lease_until, next_attempt_at)
+        ELSE next_attempt_at
+    END
+)
+FROM aethon_suwayomi_mutation_queue
+WHERE status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
+
+markInFlight:
+UPDATE aethon_suwayomi_mutation_queue
+SET status = 'IN_FLIGHT',
+    attempt_count = attempt_count + 1,
+    last_error = NULL,
+    in_flight_at = :inFlightAt,
+    lease_until = :leaseUntil
+WHERE operation_id = :operationId;
+
+recoverExpired:
+UPDATE aethon_suwayomi_mutation_queue
+SET status = 'ERROR',
+    next_attempt_at = :now,
+    last_error = 'lease_expired',
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE status = 'IN_FLIGHT' AND lease_until IS NOT NULL AND lease_until <= :now;
+
+markFailed:
+UPDATE aethon_suwayomi_mutation_queue
+SET status = 'ERROR',
+    next_attempt_at = :nextAttemptAt,
+    last_error = :lastError,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE operation_id = :operationId;
+
+markBlocked:
+UPDATE aethon_suwayomi_mutation_queue
+SET status = 'BLOCKED',
+    next_attempt_at = 9223372036854775807,
+    last_error = :lastError,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE operation_id = :operationId;
+
+deleteSucceeded:
+DELETE FROM aethon_suwayomi_mutation_queue
+WHERE operation_id = :operationId;

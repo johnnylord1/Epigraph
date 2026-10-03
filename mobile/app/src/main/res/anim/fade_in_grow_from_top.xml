@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md §9: the ⋮ menu grows out of its top-end anchor. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android" android:shareInterpolator="false">
+    <scale
+        android:duration="@integer/dur_standard"
+        android:fromXScale="0.9" android:toXScale="1.0"
+        android:fromYScale="0.9" android:toYScale="1.0"
+        android:interpolator="@interpolator/ease_overshoot"
+        android:pivotX="100%" android:pivotY="0%" />
+    <alpha
+        android:duration="@integer/dur_quick"
+        android:fromAlpha="0.0" android:toAlpha="1.0"
+        android:interpolator="@interpolator/ease_enter" />
+</set>

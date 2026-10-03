@@ -1,0 +1,27 @@
+.gradle
+/.gradle-user-home/
+/local.properties
+/.idea/workspace.xml
+.DS_Store
+/build
+.idea/
+*iml
+*.iml
+*/build
+*/*/build
+.kotlin/
+kls_database.db
+weblate.conf
+.claude/worktrees/
+.claude
+.perf/
+
+# Local release-signing material (the production key lives outside the repository).
+*.jks
+*.keystore
+*.p12
+*-keystore.properties
+*-signing.properties
+
+# Scratch extraction of the QuickJS AAR; never part of the build.
+/.tmp_qjs/

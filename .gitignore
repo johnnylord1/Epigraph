@@ -52,3 +52,13 @@ src-tauri/target-local/
 
 # --- Staged sidecar binaries (platform-specific, never commit) ---
 src-tauri/binaries/
+
+# --- Epigraph Mobile ---
+# mobile/ is a separate Gradle build with its own mobile/.gitignore; the desktop
+# patterns above must not hide Android sources such as extension/repo/ packages.
+!mobile/**/repo/
+!mobile/**/bin/
+!mobile/**/out/
+!mobile/**/tmp/
+!mobile/**/dist/
+!mobile/**/target/

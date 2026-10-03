@@ -1,0 +1,887 @@
+package eu.kanade.tachiyomi.data.download
+
+import yokai.util.koin.get
+import android.content.Context
+import co.touchlab.kermit.Logger
+import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.database.models.Chapter
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.domain.manga.models.Manga
+import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.source.UnmeteredSource
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.chapter.ChapterUtil.Companion.preferredChapterName
+import eu.kanade.tachiyomi.util.storage.DiskUtil
+import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
+import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.tachiyomi.util.system.ImageUtil
+import eu.kanade.tachiyomi.util.system.e
+import eu.kanade.tachiyomi.util.system.launchIO
+import eu.kanade.tachiyomi.util.system.launchNow
+import eu.kanade.tachiyomi.util.system.withIOContext
+import eu.kanade.tachiyomi.util.system.withUIContext
+import eu.kanade.tachiyomi.util.system.writeText
+import java.io.File
+import java.util.*
+import java.util.zip.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapMerge
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.retryWhen
+import kotlinx.coroutines.flow.transformLatest
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import nl.adaptivity.xmlutil.serialization.XML
+import okhttp3.Response
+import yokai.util.koin.injectLazy
+import yokai.core.archive.ZipWriter
+import yokai.core.metadata.COMIC_INFO_FILE
+import yokai.core.metadata.ComicInfo
+import yokai.core.metadata.getComicInfo
+import yokai.domain.category.interactor.GetCategories
+import yokai.domain.download.DownloadPreferences
+import yokai.i18n.MR
+import yokai.util.lang.getString
+
+/**
+ * Promotes a fully written temporary entry to its final name.
+ *
+ * The rename is the commit point: callers must not delete their source data or publish the
+ * download before this function returns. In particular, a provider returning `false` from
+ * `renameTo` leaves the temporary entry untouched and is treated as a hard failure.
+ */
+internal object DownloadFinalizer {
+    fun finalizeDirectory(
+        parent: UniFile,
+        temporary: UniFile,
+        temporaryName: String,
+        finalName: String,
+        isComplete: (UniFile) -> Boolean,
+    ): UniFile = finalizeEntry(
+        temporary = temporary,
+        temporaryName = temporaryName,
+        finalName = finalName,
+        findSibling = { name -> parent.findFile(name) },
+        rename = { file, name -> file.renameTo(name) },
+        isComplete = { it.isDirectory && isComplete(it) },
+    )
+
+    fun finalizeFile(
+        parent: UniFile,
+        temporary: UniFile,
+        temporaryName: String,
+        finalName: String,
+        isComplete: (UniFile) -> Boolean,
+    ): UniFile = finalizeEntry(
+        temporary = temporary,
+        temporaryName = temporaryName,
+        finalName = finalName,
+        findSibling = { name -> parent.findFile(name) },
+        rename = { file, name -> file.renameTo(name) },
+        isComplete = { it.isFile && isComplete(it) },
+    )
+
+    internal fun <T> finalizeEntry(
+        temporary: T,
+        temporaryName: String,
+        finalName: String,
+        findSibling: (String) -> T?,
+        rename: (T, String) -> Boolean,
+        isComplete: (T) -> Boolean,
+    ): T {
+        require(temporaryName != finalName) { "Temporary and final download names must differ" }
+        check(isComplete(temporary)) { "Temporary download is incomplete: $temporaryName" }
+        check(findSibling(finalName) == null) { "Final download already exists: $finalName" }
+
+        check(rename(temporary, finalName)) {
+            "Unable to finalize download: $temporaryName -> $finalName"
+        }
+
+        val finalized = findSibling(finalName)
+        if (finalized == null || !isComplete(finalized)) {
+            // Some SAF providers invalidate the original handle after rename, while others keep
+            // it usable. Prefer the freshly resolved destination and fall back to the original
+            // handle so a failed post-rename validation has the best chance of restoring the
+            // recoverable `_tmp` entry.
+            val rollbackCandidate = finalized ?: temporary
+            val rollbackSucceeded = runCatching {
+                rename(rollbackCandidate, temporaryName)
+            }.getOrDefault(false)
+            val restored = findSibling(temporaryName)
+            check(rollbackSucceeded && restored != null && isComplete(restored)) {
+                "Finalized download could not be validated and temporary recovery failed: $finalName"
+            }
+            error("Finalized download could not be validated; temporary download was restored: $finalName")
+        }
+        return finalized
+    }
+}
+
+/**
+ * This class is the one in charge of downloading chapters.
+ *
+ * Its queue contains the list of chapters to download.
+ */
+class Downloader(
+    private val context: Context,
+    private val provider: DownloadProvider = get(),
+    private val cache: DownloadCache = get(),
+    private val sourceManager: SourceManager = get(),
+) {
+    private val preferences: PreferencesHelper by injectLazy()
+    private val downloadPreferences: DownloadPreferences by injectLazy()
+    private val chapterCache: ChapterCache by injectLazy()
+    private val xml: XML by injectLazy()
+    private val getCategories: GetCategories by injectLazy()
+    private val exhPreferences: exh.source.ExhPreferences by injectLazy()
+
+    /**
+     * Store for persisting downloads across restarts.
+     */
+    private val store = DownloadStore(context, sourceManager)
+
+    /**
+     * Queue where active downloads are kept.
+     */
+    private val _queueState = MutableStateFlow<List<Download>>(emptyList())
+    val queueState = _queueState.asStateFlow()
+
+    /**
+     * Notifier for the downloader state and progress.
+     */
+    private val notifier by lazy { DownloadNotifier(context) }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var downloaderJob: Job? = null
+
+    /**
+     * Whether the downloader is running.
+     */
+    val isRunning: Boolean
+        get() = downloaderJob?.isActive ?: false
+
+    /**
+     * Whether the downloader is paused
+     */
+    @Volatile
+    var isPaused: Boolean = false
+
+    init {
+        launchNow {
+            val chapters = async { store.restore() }
+            addAllToQueue(chapters.await())
+        }
+    }
+
+    /**
+     * Starts the downloader. It doesn't do anything if it's already running or there isn't anything
+     * to download.
+     *
+     * @return true if the downloader is started, false otherwise.
+     */
+    fun start(): Boolean {
+        if (isRunning || queueState.value.isEmpty()) {
+            return false
+        }
+
+        val pending = queueState.value.filter { it.status != Download.State.DOWNLOADED }
+        pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
+
+        isPaused = false
+        notifier.dismissPaused()
+
+        launchDownloaderJob()
+
+        return pending.isNotEmpty()
+    }
+
+    /**
+     * Stops the downloader.
+     */
+    fun stop(reason: String? = null) {
+        cancelDownloaderJob()
+        queueState.value
+            .filter { it.status == Download.State.DOWNLOADING }
+            .forEach { it.status = Download.State.ERROR }
+
+        if (reason != null) {
+            notifier.onWarning(reason)
+            return
+        }
+
+        if (isPaused && queueState.value.isNotEmpty()) {
+            notifier.onDownloadPaused()
+        } else {
+            notifier.dismiss()
+        }
+
+        isPaused = false
+
+        DownloadJob.stop(context)
+    }
+
+    /**
+     * Pauses the downloader
+     */
+    fun pause() {
+        cancelDownloaderJob()
+        queueState.value
+            .filter { it.status == Download.State.DOWNLOADING }
+            .forEach { it.status = Download.State.QUEUE }
+        isPaused = true
+    }
+
+    fun clearQueue() {
+        cancelDownloaderJob()
+
+        internalClearQueue()
+        notifier.dismiss()
+    }
+
+    private fun launchDownloaderJob() {
+        if (isRunning) return
+
+        downloaderJob = scope.launch {
+            val activeDownloadsFlow = combine(
+                queueState,
+                downloadPreferences.parallelSourceLimit().changes(),
+            ) { queue, sourceLimit -> queue to sourceLimit }.transformLatest { (queue, sourceLimit) ->
+                while (true) {
+                    val activeDownloads = queue.asSequence()
+                        .filter {
+                            val statusValue = it.status.value
+                            Download.State.NOT_DOWNLOADED.value <= statusValue && statusValue <= Download.State.DOWNLOADING.value
+                        }
+                        .groupBy { it.source }
+                        .toList()
+                        .take(sourceLimit)
+                        .map { (_, downloads) -> downloads.first() }
+                    emit(activeDownloads)
+
+                    if (activeDownloads.isEmpty()) break
+                    // Suspend until a download enters the ERROR state
+                    val activeDownloadsErroredFlow =
+                        combine(activeDownloads.map(Download::statusFlow)) { states ->
+                            states.contains(Download.State.ERROR)
+                        }.filter { it }
+                    activeDownloadsErroredFlow.first()
+                }
+            }.distinctUntilChanged()
+
+            // Use supervisorScope to cancel child jobs when the downloader job is cancelled
+            supervisorScope {
+                val downloadJobs = mutableMapOf<Download, Job>()
+
+                activeDownloadsFlow.collectLatest { activeDownloads ->
+                    val downloadJobsToStop = downloadJobs.filter { it.key !in activeDownloads }
+                    downloadJobsToStop.forEach { (download, job) ->
+                        job.cancel()
+                        downloadJobs.remove(download)
+                    }
+
+                    val downloadsToStart = activeDownloads.filter { it !in downloadJobs }
+                    downloadsToStart.forEach { download ->
+                        downloadJobs[download] = launchDownloadJob(download)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun CoroutineScope.launchDownloadJob(download: Download) = launchIO {
+        try {
+            downloadChapter(download)
+
+            // Remove successful download from queue
+            if (download.status == Download.State.DOWNLOADED) {
+                removeFromQueue(download)
+            }
+            if (areAllDownloadsFinished()) {
+                stop()
+            }
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Logger.e(e)
+            notifier.onError(e.message)
+            stop()
+        }
+    }
+
+    /**
+     * Destroys the downloader subscriptions.
+     */
+    private fun cancelDownloaderJob() {
+        downloaderJob?.cancel()
+        downloaderJob = null
+    }
+
+    /**
+     * Creates a download object for every chapter and adds them to the downloads queue.
+     *
+     * @param manga the manga of the chapters to download.
+     * @param chapters the list of chapters to download.
+     * @param autoStart whether to start the downloader after enqueing the chapters.
+     */
+    fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) = launchIO {
+        if (chapters.isEmpty()) {
+            return@launchIO
+        }
+
+        val source = sourceManager.get(manga.source) as? CatalogueSource ?: return@launchIO
+        val wasEmpty = queueState.value.isEmpty()
+        // Called in background thread, the operation can be slow with SAF.
+        val chaptersWithoutDir = async {
+            chapters
+                // Filter out those already downloaded.
+                .filter { provider.findChapterDir(it, manga, source) == null }
+                // Add chapters to queue from the start.
+                .sortedByDescending { it.source_order }
+        }
+
+        // Runs in main thread (synchronization needed).
+        val chaptersToQueue = chaptersWithoutDir.await()
+            // Filter out those already enqueued.
+            .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
+            // Create a download for each one.
+            .map { Download(source, manga, it) }
+
+        if (chaptersToQueue.isNotEmpty()) {
+            addAllToQueue(chaptersToQueue)
+
+            // Start downloader if needed
+            if (autoStart && wasEmpty) {
+                val queuedDownloads = queueState.value.count { it.source !is UnmeteredSource }
+                val maxDownloadsFromSource = queueState.value
+                    .groupBy { it.source }
+                    .filterKeys { it !is UnmeteredSource }
+                    .maxOfOrNull { it.value.size } ?: 0
+                if (
+                    queuedDownloads > DOWNLOADS_QUEUED_WARNING_THRESHOLD ||
+                    maxDownloadsFromSource > CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD
+                ) {
+                    withUIContext {
+                        notifier.massDownloadWarning()
+                    }
+                }
+                DownloadJob.start(context)
+            } else if (!isRunning && !LibraryUpdateJob.isRunning(context)) {
+                notifier.onDownloadPaused()
+            }
+        }
+    }
+
+    /**
+     * Downloads a chapter.
+     *
+     * @param download the chapter to be downloaded.
+     */
+    private suspend fun downloadChapter(download: Download) {
+        val mangaDir = provider.getMangaDir(download.manga, download.source)
+
+        val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
+        val chapName = download.chapter.preferredChapterName(context, download.manga, preferences)
+        if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
+            download.status = Download.State.ERROR
+            notifier.onError(context.getString(MR.strings.couldnt_download_low_space), chapName)
+            return
+        }
+        val chapterDirname = provider.getChapterDirName(download.chapter, includeId = downloadPreferences.downloadWithId().get())
+        val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
+
+        try {
+            val source = download.source
+            when {
+                source.isNovelSource -> downloadNovelChapter(download, tmpDir, chapterDirname, mangaDir)
+                source is HttpSource -> downloadImageChapter(download, tmpDir, chapterDirname, mangaDir)
+                else -> error("Cannot download from unsupported source type: ${source::class.simpleName}")
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            Logger.e(error)
+            download.status = Download.State.ERROR
+            notifier.onError(error.message, chapName, download.manga.title)
+        }
+    }
+
+    // NOVEL -->
+    /**
+     * Downloads a novel chapter's text content through the standard download queue.
+     */
+    private suspend fun downloadNovelChapter(
+        download: Download,
+        tmpDir: UniFile,
+        chapterDirname: String,
+        mangaDir: UniFile,
+    ) {
+        download.status = Download.State.DOWNLOADING
+
+        val source = download.source
+        val html = source.fetchPageText(Page(0, download.chapter.url))
+        check(html.isNotBlank()) { "Source returned an empty novel chapter" }
+
+        val chapterFile = tmpDir.findFile(NOVEL_CHAPTER_FILE)
+            ?: tmpDir.createFile(NOVEL_CHAPTER_FILE)
+            ?: error("Unable to create the novel chapter file")
+        chapterFile.writeText(html)
+
+        // Set single page as complete for progress tracking
+        val page = Page(0).apply {
+            progress = 100
+            status = Page.State.Ready
+        }
+        download.pages = listOf(page)
+        notifier.onProgressChange(download)
+
+        // Write .nomedia BEFORE the rename: UniFile.renameTo invalidates the SAF DocumentFile
+        // handle on many devices, so `tmpDir` cannot be relied on after the rename returns.
+        DiskUtil.createNoMediaFile(tmpDir, context)
+        DownloadFinalizer.finalizeDirectory(
+            parent = mangaDir,
+            temporary = tmpDir,
+            temporaryName = chapterDirname + TMP_DIR_SUFFIX,
+            finalName = chapterDirname,
+        ) { directory ->
+            directory.findFile(NOVEL_CHAPTER_FILE)?.let { it.isFile && it.length() > 0L } == true
+        }
+        cache.addChapter(chapterDirname, mangaDir, download.manga)
+        download.status = Download.State.DOWNLOADED
+    }
+    // NOVEL <--
+
+    /**
+     * Downloads an image-based chapter (manga) through the standard download queue.
+     */
+    private suspend fun downloadImageChapter(
+        download: Download,
+        tmpDir: UniFile,
+        chapterDirname: String,
+        mangaDir: UniFile,
+    ) {
+        val httpSource = download.source as HttpSource
+
+        // If the page list already exists, start from the file
+        val pageList = download.pages ?: run {
+            val pages = httpSource.getPageList(download.chapter)
+
+            if (pages.isEmpty()) {
+                throw Exception(context.getString(MR.strings.no_pages_found))
+            }
+            val reIndexedPages = pages.mapIndexed { index, page ->
+                Page(index, page.url, page.imageUrl, page.uri)
+            }
+            download.pages = reIndexedPages
+            reIndexedPages
+        }
+
+        // Delete all temporary (unfinished) files
+        tmpDir.listFiles().orEmpty()
+            .filter { it.name.orEmpty().endsWith(".tmp") }
+            .forEach { it.delete() }
+
+        download.status = Download.State.DOWNLOADING
+
+        pageList.asFlow()
+            .flatMapMerge(concurrency = downloadPreferences.parallelPageLimit().get()) { page ->
+                flow {
+                    if (page.imageUrl.isNullOrEmpty()) {
+                        page.status = Page.State.LoadPage
+                        try {
+                            page.imageUrl = httpSource.getImageUrl(page)
+                        } catch (e: Throwable) {
+                            page.status = Page.State.Error(e)
+                        }
+                    }
+                    withIOContext { getOrDownloadImage(page, download, tmpDir) }
+                    emit(page)
+                }.flowOn(Dispatchers.IO)
+            }
+            .collect {
+                notifier.onProgressChange(download)
+            }
+
+        if (!isDownloadSuccessful(download, tmpDir)) {
+            download.status = Download.State.ERROR
+            return
+        }
+
+        createComicInfoFile(tmpDir, download.manga, download.chapter, httpSource)
+
+        if (preferences.saveChaptersAsCBZ().get()) {
+            // Files going into a CBZ don't need a sibling .nomedia; the archive itself isn't indexed.
+            archiveChapter(mangaDir, chapterDirname, tmpDir)
+        } else {
+            // Write .nomedia BEFORE rename: UniFile.renameTo invalidates the SAF DocumentFile
+            // handle on many devices, so `tmpDir` cannot be relied on after the rename returns.
+            DiskUtil.createNoMediaFile(tmpDir, context)
+            DownloadFinalizer.finalizeDirectory(
+                parent = mangaDir,
+                temporary = tmpDir,
+                temporaryName = chapterDirname + TMP_DIR_SUFFIX,
+                finalName = chapterDirname,
+            ) { directory ->
+                isDownloadSuccessful(download, directory)
+            }
+        }
+        cache.addChapter(chapterDirname, mangaDir, download.manga)
+        download.status = Download.State.DOWNLOADED
+    }
+
+    private fun isDownloadSuccessful(
+        download: Download,
+        tmpDir: UniFile,
+    ): Boolean {
+        // Page list hasn't been initialized
+        val downloadPageCount = download.pages?.size ?: return false
+
+        // Ensure that all pages has been downloaded
+        if (download.downloadedImages != downloadPageCount) return false
+
+        // Ensure that the chapter folder has all the pages
+        val downloadedImagesCount = tmpDir.listFiles().orEmpty().count {
+            val fileName = it.name.orEmpty()
+            when {
+                fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
+                fileName.endsWith(".tmp") -> false
+                // Only count the first split page and not the others
+                fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
+                else -> true
+            }
+        }
+
+        return downloadedImagesCount == downloadPageCount
+    }
+
+    /**
+     * Returns the observable which gets the image from the filesystem if it exists or downloads it
+     * otherwise.
+     *
+     * @param page the page to download.
+     * @param download the download of the page.
+     * @param tmpDir the temporary directory of the download.
+     */
+    private suspend fun getOrDownloadImage(
+        page: Page,
+        download: Download,
+        tmpDir: UniFile,
+    ) {
+        // If the image URL is empty, do nothing
+        if (page.imageUrl == null) {
+            return
+        }
+
+        val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
+        val filename = String.format("%0${digitCount}d", page.number)
+        val tmpFile = tmpDir.findFile("$filename.tmp")
+
+        // Delete temp file if it exists
+        tmpFile?.delete()
+
+        // Try to find the image file
+        val imageFile = tmpDir.listFiles().orEmpty().find { it.name.orEmpty().startsWith("$filename.") || it.name.orEmpty().startsWith("${filename}__001") }
+
+        val chapName = download.chapter.preferredChapterName(context, download.manga, preferences)
+        try {
+            // If the image is already downloaded, do nothing. Otherwise download from network
+            val file = when {
+                imageFile != null -> imageFile
+                chapterCache.isImageInCache(page.imageUrl!!) -> moveImageFromCache(
+                    chapterCache.getImageFile(
+                        page.imageUrl!!,
+                    ),
+                    tmpDir,
+                    filename,
+                )
+                else -> downloadImage(page, download.source as HttpSource, tmpDir, filename)
+            }
+
+            // When the page is ready, set page path, progress (just in case) and status
+            splitTallImageIfNeeded(page, tmpDir)
+
+            page.uri = file.uri
+            page.progress = 100
+            page.status = Page.State.Ready
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            // Mark this page as error and allow to download the remaining
+            page.progress = 0
+            page.status = Page.State.Error(e)
+            notifier.onError(e.message, chapName, download.manga.title)
+        }
+    }
+
+    /**
+     * Downloads the image from network to a file in tmpDir.
+     *
+     * @param page the page to download.
+     * @param source the source of the page.
+     * @param tmpDir the temporary directory of the download.
+     * @param filename the filename of the image.
+     */
+    private suspend fun downloadImage(
+        page: Page,
+        source: HttpSource,
+        tmpDir: UniFile,
+        filename: String,
+    ): UniFile {
+        page.status = Page.State.DownloadImage
+        page.progress = 0
+        return flow {
+            val dataSaver = exh.util.DataSaver.fromPreferences(exhPreferences)
+            val response = with(exh.util.DataSaver) { source.getImage(page, dataSaver) }
+            val file = tmpDir.createFile("$filename.tmp")
+            try {
+                response.body.source().saveTo(file!!.openOutputStream())
+                val extension = getImageExtension(response, file)
+                file.renameTo("$filename.$extension")
+            } catch (e: Exception) {
+                response.close()
+                file?.delete()
+                throw e
+            }
+            emit(file)
+        }
+            // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
+            .retryWhen { _, attempt ->
+                if (attempt < 3) {
+                    delay((2L shl attempt.toInt()) * 1000)
+                    true
+                } else {
+                    false
+                }
+            }
+            .first()
+    }
+
+    /**
+     * Copies the image from cache to file in tmpDir.
+     *
+     * @param cacheFile the file from cache.
+     * @param tmpDir the temporary directory of the download.
+     * @param filename the filename of the image.
+     */
+    private fun moveImageFromCache(cacheFile: File, tmpDir: UniFile, filename: String): UniFile {
+        val tmpFile = tmpDir.createFile("$filename.tmp")!!
+        cacheFile.inputStream().use { input ->
+            tmpFile.openOutputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        val extension = ImageUtil.findImageType(cacheFile.inputStream()) ?: return tmpFile
+        tmpFile.renameTo("$filename.${extension.extension}")
+        cacheFile.delete()
+        return tmpFile
+    }
+
+    /**
+     * Returns the extension of the downloaded image from the network response, or if it's null,
+     * analyze the file. If everything fails, assume it's a jpg.
+     *
+     * @param response the network response of the image.
+     * @param file the file where the image is already downloaded.
+     */
+    private fun getImageExtension(response: Response, file: UniFile): String {
+        val mime = response.body.contentType()?.let { ct -> if (ct.type == "image") "image/${ct.subtype}" else null }
+
+        return ImageUtil.getExtensionFromMimeType(mime) { file.openInputStream() }
+    }
+
+    private fun splitTallImageIfNeeded(page: Page, tmpDir: UniFile) {
+        if (!preferences.splitTallImages().get()) return
+
+        try {
+            val fileName = "%03d".format(Locale.ENGLISH, page.number)
+            val imageFile = tmpDir.listFiles()?.firstOrNull { it.name.orEmpty().startsWith(fileName) }
+                ?: throw Error(context.getString(MR.strings.download_notifier_split_page_not_found, page.number))
+
+            // Check if the original page was previously split before then skip.
+            if (imageFile.name.orEmpty().startsWith("${fileName}__")) return
+
+            ImageUtil.splitTallImage(tmpDir, imageFile, fileName)
+        } catch (e: Exception) {
+            Logger.e(e) { "Failed to split downloaded image"}
+        }
+    }
+
+    /**
+     * Archive the chapter pages as a CBZ.
+     */
+    private fun archiveChapter(
+        mangaDir: UniFile,
+        dirname: String,
+        tmpDir: UniFile,
+    ) {
+        val temporaryArchiveName = "$dirname.cbz$TMP_DIR_SUFFIX"
+        val finalArchiveName = "$dirname.cbz"
+        mangaDir.findFile(temporaryArchiveName)?.let { staleArchive ->
+            check(staleArchive.delete()) { "Failed to replace stale temporary CBZ archive" }
+        }
+        val zip = mangaDir.createFile(temporaryArchiveName)
+        if (zip?.isFile != true) throw Exception("Failed to create CBZ file for downloaded chapter")
+        ZipWriter(context, zip).use { writer ->
+            tmpDir.listFiles()?.forEach { file ->
+                writer.write(file)
+            }
+        }
+
+        DownloadFinalizer.finalizeFile(
+            parent = mangaDir,
+            temporary = zip,
+            temporaryName = temporaryArchiveName,
+            finalName = finalArchiveName,
+        ) { archive ->
+            archive.length() > 0L
+        }
+
+        // The page directory is retained for every archive creation/finalization failure above.
+        tmpDir.delete()
+    }
+
+    /**
+     * Creates a ComicInfo.xml file inside the given directory.
+     *
+     * @param dir the directory in which the ComicInfo file will be generated.
+     * @param manga the manga.
+     * @param chapter the chapter.
+     * @param chapterUrl the resolved URL for the chapter.
+     */
+    private suspend fun createComicInfoFile(
+        dir: UniFile,
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+    ) {
+        val categories = manga.id?.let { mangaId -> getCategories.awaitByMangaId(mangaId) }
+            .orEmpty()
+            .map { it.name.trim() }
+            .takeUnless { it.isEmpty() }
+        val url = try { source.getChapterUrl(chapter) } catch (_: Exception) { null }
+            ?: source.getChapterUrl(manga, chapter).takeIf { !it.isNullOrBlank() }  // FIXME: Not sure if this is necessary
+
+        val comicInfo = getComicInfo(
+            manga,
+            chapter,
+            url?.let { listOf(it) } ?: listOf(),
+            categories,
+            source.name,
+            source.lang,
+        )
+
+        // Remove the old file
+        dir.findFile(COMIC_INFO_FILE)?.delete()
+        dir.createFile(COMIC_INFO_FILE)?.writeText(xml.encodeToString(ComicInfo.serializer(), comicInfo))
+    }
+
+    /**
+     * Returns true if all the queued downloads are in DOWNLOADED or ERROR state.
+     */
+    private fun areAllDownloadsFinished(): Boolean {
+        return queueState.value.none { it.status <= Download.State.DOWNLOADING }
+    }
+
+    private fun addAllToQueue(downloads: List<Download>) {
+        _queueState.update {
+            downloads.forEach { download ->
+                download.status = Download.State.QUEUE
+            }
+            store.addAll(downloads)
+            it + downloads
+        }
+    }
+
+    fun removeFromQueue(download: Download) {
+        _queueState.update {
+            store.remove(download)
+            if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+                download.status = Download.State.NOT_DOWNLOADED
+            }
+            it - download
+        }
+    }
+
+    private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
+        _queueState.update { queue ->
+            val downloads = queue.filter { predicate(it) }
+            store.removeAll(downloads)
+            downloads.forEach { download ->
+                if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+                    download.status = Download.State.NOT_DOWNLOADED
+                }
+            }
+            queue - downloads
+        }
+    }
+
+    fun removeFromQueue(chapter: Chapter) {
+        removeFromQueueIf { it.chapter.id == chapter.id }
+    }
+
+    fun removeFromQueue(chapters: List<Chapter>) {
+        removeFromQueueIf { it.chapter.id in chapters.map { it.id } }
+    }
+
+    fun removeFromQueue(manga: Manga) {
+        removeFromQueueIf { it.manga.id == manga.id }
+    }
+
+    private fun internalClearQueue() {
+        _queueState.update {
+            it.forEach { download ->
+                if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
+                    download.status = Download.State.NOT_DOWNLOADED
+                }
+            }
+            store.clear()
+            emptyList()
+        }
+    }
+
+    fun updateQueue(downloads: List<Download>) {
+        val wasRunning = isRunning
+
+        if (downloads.isEmpty()) {
+            clearQueue()
+            DownloadJob.stop(context)
+            return
+        }
+
+        pause()
+        internalClearQueue()
+        addAllToQueue(downloads)
+
+        if (wasRunning) {
+            start()
+        }
+    }
+
+    companion object {
+        const val NOVEL_CHAPTER_FILE = "chapter.html"
+        const val TMP_DIR_SUFFIX = "_tmp"
+        const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
+        private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+
+        // Arbitrary minimum required space to start a download: 200 MB
+        const val MIN_DISK_SPACE = 200 * 1024 * 1024
+    }
+}

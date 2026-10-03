@@ -1,0 +1,135 @@
+package eu.kanade.tachiyomi.ui.reader.loader
+
+import android.content.Context
+import co.touchlab.kermit.Logger
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.domain.manga.models.Manga
+import eu.kanade.tachiyomi.source.LocalSource
+import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.isNovelSource
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+// NOVEL -->
+import epigraph.novel.reader.NovelDownloadPageLoader
+import epigraph.novel.reader.NovelPageLoader
+// NOVEL <--
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.util.system.withIOContext
+import yokai.core.archive.util.archiveReader
+import yokai.core.archive.util.epubReader
+import yokai.i18n.MR
+import yokai.util.lang.getString
+
+/**
+ * Loader used to retrieve the [PageLoader] for a given chapter.
+ */
+class ChapterLoader(
+    private val context: Context,
+    private val downloadManager: DownloadManager,
+    private val downloadProvider: DownloadProvider,
+    private val manga: Manga,
+    private val source: Source,
+) {
+
+    private var activePageLoader: PageLoader? = null
+
+    /**
+     * Assigns the chapter's page loader and loads the its pages. Returns immediately if the chapter
+     * is already loaded.
+     *
+     * If [page] is provided, it overrides any read-progress restoration and is used as the
+     * starting page (e.g. when launching the reader from the page-preview grid).
+     */
+    suspend fun loadChapter(chapter: ReaderChapter, page: Int? = null) {
+        if (chapterIsReady(chapter)) {
+            return
+        }
+
+        chapter.state = ReaderChapter.State.Loading
+        withIOContext {
+            Logger.d { "Loading pages for ${chapter.chapter.name}" }
+            try {
+                val loader = getPageLoader(chapter)
+                activePageLoader = loader
+                chapter.pageLoader = loader
+
+                val pages = loader.getPages()
+                    .onEach { it.chapter = chapter }
+
+                if (pages.isEmpty()) {
+                    throw Exception(context.getString(MR.strings.no_pages_found))
+                }
+
+                if (page != null) {
+                    chapter.requestedPage = page
+                } else if (!source.isNovelSource() && !chapter.chapter.read) {
+                    // If the chapter is partially read, set the starting page to the last the user read
+                    chapter.requestedPage = resolveRequestedPage(
+                        storedPageIndex = chapter.chapter.last_page_read,
+                        storedPageCount = chapter.chapter.last_page_read + chapter.chapter.pages_left,
+                        pages = pages,
+                    )
+                }
+
+                chapter.state = ReaderChapter.State.Loaded(pages)
+            } catch (e: Throwable) {
+                chapter.state = ReaderChapter.State.Error(e)
+                throw e
+            }
+        }
+    }
+
+    /**
+     * Checks [chapter] to be loaded based on present pages and loader in addition to state.
+     */
+    private fun chapterIsReady(chapter: ReaderChapter): Boolean {
+        return chapter.state is ReaderChapter.State.Loaded && chapter.pageLoader != null
+    }
+
+    /** Stop workers belonging to a failed initial load before the activity retries it. */
+    fun recycle() {
+        activePageLoader?.recycle()
+        activePageLoader = null
+    }
+
+    /**
+     * Returns the page loader to use for this [chapter].
+     */
+    private fun getPageLoader(chapter: ReaderChapter): PageLoader {
+        val dbChapter = chapter.chapter
+        val isDownloaded = downloadManager.isChapterDownloaded(dbChapter, manga, skipCache = true)
+        return when {
+            // NOVEL -->
+            source.isNovelSource() -> {
+                if (isDownloaded) NovelDownloadPageLoader(chapter, manga, source, downloadProvider)
+                else NovelPageLoader(chapter, source)
+            }
+            // NOVEL <--
+            isDownloaded -> DownloadPageLoader(chapter, manga, source, downloadManager, downloadProvider)
+            source is HttpSource -> HttpPageLoader(chapter, source)
+            source is LocalSource -> source.getFormat(chapter.chapter).let { format ->
+                when (format) {
+                    is LocalSource.Format.Directory -> DirectoryPageLoader(format.file)
+                    is LocalSource.Format.Archive -> ArchivePageLoader(format.file.archiveReader(context))
+                    is LocalSource.Format.Epub -> EpubPageLoader(format.file.epubReader(context))
+                }
+            }
+            else -> error(context.getString(MR.strings.source_not_installed))
+        }
+    }
+}
+
+internal fun resolveRequestedPage(
+    storedPageIndex: Int,
+    storedPageCount: Int,
+    pages: List<ReaderPage>,
+): Int {
+    val sourcePageCount = pages.firstNotNullOfOrNull { it.sourcePageCount }
+    if (sourcePageCount == null || sourcePageCount == pages.size || storedPageCount != sourcePageCount) {
+        return storedPageIndex
+    }
+    return pages.indexOfFirst { it.sourcePageIndex == storedPageIndex }
+        .takeIf { it >= 0 }
+        ?: storedPageIndex
+}

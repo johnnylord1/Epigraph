@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DESIGN.md §9 shared axis X (8%p is about 30dp on a phone). -->
+<set xmlns:android="http://schemas.android.com/apk/res/android" android:shareInterpolator="false">
+    <translate
+        android:duration="@integer/dur_medium"
+        android:fromXDelta="8%p" android:toXDelta="0"
+        android:interpolator="@interpolator/ease_standard" />
+    <alpha
+        android:duration="@integer/dur_medium_in"
+        android:startOffset="@integer/dur_medium_out"
+        android:fromAlpha="0.0" android:toAlpha="1.0"
+        android:interpolator="@interpolator/ease_enter" />
+</set>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Silhouette of the Epigraph drop (ForkMoku/Epigraph/src/assets/epigraph-splash-mark.png), used
+     where Android needs a single-colour mark: notification, monochrome launcher and fallbacks. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+    <path
+        android:fillColor="#B8A7EA"
+        android:fillType="evenOdd"
+        android:pathData="M256,105C276,160 346,215 346,285A90,90 0,0 1,166 285C166,215 236,160 256,105Z M259,160C272,200 321,235 321,280A55,55 0,0 1,211 280C211,235 246,200 259,160Z" />
+</vector>

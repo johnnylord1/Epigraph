@@ -1,0 +1,482 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!--============-->
+    <!-- Base Theme -->
+    <!--============-->
+    <style name="Theme"/>
+
+    <style name="Theme.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- App-wide UI font; reader content/reading-font settings are unaffected. -->
+        <item name="fontFamily">@font/outfit</item>
+        <item name="android:fontFamily">@font/outfit</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
+        <item name="android:enforceNavigationBarContrast" tools:targetApi="29">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <!--Standard Material colors -->
+        <item name="colorPrimary">@color/primaryTachiyomi</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseTachiyomi</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantTachiyomi</item>
+        <item name="colorSurface">@color/background</item> //old colorSecondary
+        <item name="colorSurfaceVariant">?colorPrimaryVariant</item> //old colorSecondary
+        <item name="colorOnSurface">@color/colorOnSurface</item> //old colorOnSecondary
+        <item name="colorSecondary">@color/secondaryTachiyomi</item> //colorAccent
+        <item name="colorOnSecondary">@color/md_white_1000</item>
+        <item name="colorOnPrimary">@color/onPrimaryTachiyomi</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantTachiyomi</item> // much darker / lighter version of colorSecondary
+        <item name="colorPrimaryContainer">@color/primary_container</item>
+        <item name="colorSecondaryContainer">@color/secondary_container</item>
+        <item name="colorSurfaceContainer">?colorPrimaryVariant</item>
+        <item name="background">@color/background</item>
+        <item name="colorOnBackground">@color/colorOnBackground</item>
+        <item name="colorBackgroundFloating">?colorSurface</item>
+
+        <item name="colorTertiary">@color/download_badge</item>
+        <item name="colorOnTertiary">@color/black</item>
+
+        <item name="readerBackground">@color/primaryVariantTachiyomi</item>
+        <item name="android:listSelector">?attr/colorSecondary</item>
+        <item name="android:divider">@color/divider</item>
+        <item name="android:listDivider">@drawable/line_divider</item>
+        <item name="colorControlHighlight">@color/rippleColorTachiyomi</item>
+        <item name="actionModeStyle">@style/Widget.Tachiyomi.ActionMode</item>
+        <item name="materialSwitchStyle">@style/Widget.Material3.CompoundButton.MaterialSwitch</item>
+        <item name="materialCardViewOutlinedStyle">@style/Widget.Tachiyomi.CardView.Outlined</item>
+        <item name="materialCardViewFilledStyle">@style/Widget.Tachiyomi.CardView.Filled</item>
+        <item name="materialCardViewElevatedStyle">@style/Widget.Tachiyomi.CardView.Elevated</item>
+        <item name="switchPreferenceCompatStyle">@style/Widget.Tachiyomi.SwitchPreferenceCompat</item>
+        <item name="android:colorBackground">?background</item>
+        <item name="android:textColorSecondary">@color/text_color_secondary</item>
+        <item name="android:textColorHint">@color/text_color_hint</item>
+        <item name="textAppearanceButton">@style/TextAppearance.Tachiyomi.Button</item>
+        <item name="textAppearanceBodySecondary">@style/TextAppearance.Tachiyomi.BodySecondary</item>
+        <item name="android:textColorPrimaryInverse">@color/textColorPrimaryInverse</item>
+        <item name="switchStyle">@style/Widget.Tachiyomi.CompoundButton.Switch</item>
+        <item name="sliderStyle">@style/Widget.Tachiyomi.Slider</item>
+        <item name="checkboxStyle">@style/Widget.Tachiyomi.CompoundButton.CheckBox</item>
+        <item name="radioButtonStyle">@style/Widget.Tachiyomi.CompoundButton.RadioButton</item>
+        <item name="bottomNavigationStyle">@style/Widget.Tachiyomi.BottomNavigationView</item>
+        <item name="materialButtonStyle">@style/Widget.Tachiyomi.Button.Primary</item>
+        <item name="navigationRailStyle">@style/Widget.Tachiyomi.NavigationRail</item>
+        <item name="elevationOverlayEnabled">false</item>
+
+        <!-- DESIGN.md §3 type scale -->
+        <item name="textAppearanceHeadlineLarge">@style/TextAppearance.Epigraph.Display</item>
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.Epigraph.TitleL</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.Epigraph.TitleM</item>
+        <item name="textAppearanceTitleSmall">@style/TextAppearance.Epigraph.Label</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.Epigraph.Body</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.Epigraph.BodyS</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.Epigraph.Caption</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.Epigraph.Label</item>
+        <item name="textAppearanceLabelMedium">@style/TextAppearance.Epigraph.Caption</item>
+        <item name="textAppearanceLabelSmall">@style/TextAppearance.Epigraph.Caption</item>
+
+        <!-- DESIGN.md §5 radius scale; nothing maps to a full/pill corner. -->
+        <item name="shapeAppearanceCornerExtraSmall">@style/ShapeAppearance.Epigraph.XS</item>
+        <item name="shapeAppearanceCornerSmall">@style/ShapeAppearance.Epigraph.S</item>
+        <item name="shapeAppearanceCornerMedium">@style/ShapeAppearance.Epigraph.M</item>
+        <item name="shapeAppearanceCornerLarge">@style/ShapeAppearance.Epigraph.L</item>
+        <item name="shapeAppearanceCornerExtraLarge">@style/ShapeAppearance.Epigraph.L</item>
+
+        <!-- Handles RTL Text -->
+        <item name="android:textAlignment">gravity</item>
+        <item name="android:textDirection">locale</item>
+
+        <!-- Themes -->
+        <item name="windowActionModeOverlay">true</item>
+        <item name="bottomSheetDialogTheme">@style/BottomSheetDialogTheme</item>
+        <item name="actionBarTheme">@style/Theme.ActionBar.DayNight</item>
+        <item name="preferenceTheme">@style/Tachiyomi.PreferenceTheme</item>
+        <item name="materialAlertDialogTheme">@style/Theme.Widget.Epigraph.AlertDialog</item>
+        <item name="popupMenuStyle">@style/Widget.Epigraph.PopupMenu</item>
+        <item name="android:popupMenuStyle">@style/Widget.Epigraph.PopupMenu</item>
+
+        <!-- Custom Attributes-->
+        <item name="actionBarTintColor">?attr/colorOnBackground</item>
+        <item name="tabBarIconColor">?attr/colorSecondary</item>
+        <item name="tabBarIconInactive">@color/colorPrimaryInactive</item>
+        <item name="android:statusBarColor">@color/status_bar</item>
+        <item name="android:navigationBarColor">#B3000000</item>
+        <item name="android:colorEdgeEffect">?attr/colorSecondary</item>
+        <item name="tabHighlightBackground">@color/secondary_alpha</item>
+        <item name="totalBadgeColor">@color/total_badge</item>
+        <item name="totalBadgeTextColor">@color/total_badge_text</item>
+        <item name="searchFieldSurface">?colorPrimaryVariant</item>
+        <item name="mainActionBarSize">56dp</item>
+
+        <item name="android:windowLightStatusBar">@bool/isLightMode</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">@bool/isLightMode</item>
+    </style>
+
+    <style name="Theme.Tachiyomi" parent="Theme.Base"/>
+
+    <style name="ThemeOverlay.Tachiyomi.Amoled" parent="">
+        <item name="colorSurface">@color/md_black_1000</item>
+        <item name="colorPrimaryVariant">@color/md_black_1000</item>
+        <item name="background">@color/md_black_1000</item>
+        <item name="readerBackground">@color/md_black_1000</item>
+    </style>
+
+    <!-- DESIGN.md §2 AMOLED column: black page, but surfaces keep a tone step so sheets,
+         fields and the navigation bar stay distinguishable. Applied on top of the overlay above. -->
+    <style name="ThemeOverlay.Tachiyomi.Amoled.Nocturne" parent="">
+        <item name="colorSurfaceContainer">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerLowest">@color/md_black_1000</item>
+        <item name="colorSurfaceContainerLow">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/nocturne_amoled_surface</item>
+        <item name="colorSurfaceContainerHighest">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceBright">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceDim">@color/md_black_1000</item>
+        <item name="colorPrimaryVariant">@color/nocturne_amoled_surface_high</item>
+        <item name="colorSurfaceVariant">@color/nocturne_amoled_surface_high</item>
+        <item name="searchFieldSurface">@color/nocturne_amoled_surface_high</item>
+        <item name="colorTertiary">@color/nocturne_amoled_surface_high</item>
+        <item name="colorOutlineVariant">@color/nocturne_amoled_line</item>
+        <item name="colorPrimaryContainer">@color/nocturne_amoled_accent_soft</item>
+        <item name="colorSecondaryContainer">@color/nocturne_amoled_accent_soft</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.FlatLime">
+        <item name="colorPrimary">@color/primaryLime</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantLime</item>
+        <item name="colorOnPrimary">@color/onPrimaryLime</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseLime</item>
+        <item name="colorSecondary">@color/secondaryLime</item>
+        <item name="colorOnSecondary">@color/textColorPrimaryInverse</item>
+        <item name="colorControlHighlight">@color/rippleColorLime</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantLime</item>
+        <item name="colorSurface">@color/backgroundLime</item>
+        <item name="background">@color/backgroundLime</item>
+        <item name="colorTertiary">@color/downloadBadgeLime</item>
+        <item name="colorOnTertiary">@color/colorOnDownloadBadgeDayNight</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.MidnightDusk">
+        <item name="colorPrimary">@color/primaryDuskDawn</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseDuskDawn</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantDuskDawn</item>
+        <item name="colorOnPrimary">@color/onPrimaryDuskDawn</item>
+        <item name="colorSecondary">@color/secondaryDuskDawn</item>
+        <item name="colorControlHighlight">@color/rippleColorDuskDawn</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantDuskDawn</item>
+        <item name="colorSurface">@color/backgroundDuskDawn</item>
+        <item name="background">@color/backgroundDuskDawn</item>
+        <item name="colorOnBackground">@color/colorOnBackgroundDuskDawn</item>
+        <item name="actionBarTintColor">@color/appBarTextDuskDawn</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.SapphireDusk">
+        <item name="colorPrimary">@color/primaryTealSapphire</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseTealSapphire</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantTealSapphire</item>
+        <item name="colorOnPrimary">@color/onPrimaryTealSapphire</item>
+        <item name="colorSecondary">@color/secondaryTealSapphire</item>
+        <item name="colorOnSecondary">@color/colorOnDownloadBadgeDayNight</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantTealSapphire</item>
+        <item name="colorTertiary">@color/downloadBadgeDayNightInverse</item>
+        <item name="colorOnTertiary">?android:textColorPrimaryInverse</item>
+        <item name="colorControlHighlight">@color/rippleColorTealSapphire</item>
+        <item name="tabBarIconColor">@color/tabBarIconColorTealSapphire</item>
+        <item name="background">@color/backgroundTealSapphire</item>
+        <item name="colorOnBackground">@color/colorOnBackgroundTealSapphire</item>
+        <item name="colorSurface">@color/backgroundTealSapphire</item>
+        <item name="actionBarTintColor">@color/appBarTextTealSapphire</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.Lavender">
+        <item name="colorPrimary">@color/lavender_primary</item>
+        <item name="colorPrimaryInverse">@color/lavender_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/lavender_primary_variant</item>
+        <item name="colorOnPrimary">@color/lavender_on_primary</item>
+        <item name="colorSecondary">@color/lavender_secondary</item>
+        <item name="colorOnSecondary">@color/lavender_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/lavender_secondary_variant</item>
+        <item name="colorTertiary">@color/lavender_tertiary</item>
+        <item name="colorOnTertiary">@color/lavender_on_tertiary</item>
+        <item name="colorControlHighlight">@color/lavender_highlight</item>
+        <item name="tabBarIconColor">@color/lavender_tab_bar_icon</item>
+        <item name="background">@color/lavender_background</item>
+        <item name="colorOnBackground">@color/lavender_on_background</item>
+        <item name="colorSurface">@color/lavender_surface</item>
+        <item name="actionBarTintColor">@color/lavender_on_surface</item>
+        <item name="elevationOverlayColor">@color/lavender_elevation_overlay</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.Strawberries">
+        <item name="colorPrimary">@color/primaryStrawberry</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantStrawberry</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseStrawberry</item>
+        <item name="colorOnPrimary">@color/onPrimaryStrawberry</item>
+        <item name="colorSurface">@color/backgroundStrawberries</item>
+        <item name="colorSecondary">@color/secondaryStrawberry</item>
+        <item name="colorControlHighlight">@color/rippleColorStrawberry</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantStrawberry</item>
+        <item name="background">@color/backgroundStrawberries</item>
+    </style>
+
+    <!--== Tako Theme ==-->
+    <style name="Theme.Tachiyomi.Tako">
+        <item name="colorPrimary">@color/primaryTako</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseTako</item>
+        <item name="colorOnPrimary">@color/onPrimaryTako</item>
+        <item name="colorSecondary">@color/secondaryTako</item>
+        <item name="colorOnSecondary">@color/onSecondaryTako</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantTako</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantTako</item>
+        <item name="colorTertiary">@color/downloadBadgeDayNight</item>
+        <item name="colorOnTertiary">@color/colorOnDownloadBadgeDayNight</item>
+        <item name="tabBarIconColor">@color/tabBarIconColorTako</item>
+        <item name="colorControlHighlight">@color/rippleColorTako</item>
+        <item name="colorSurface">@color/backgroundTako</item>
+        <item name="actionBarTintColor">@color/actionTintTako</item>
+        <item name="background">@color/backgroundTako</item>
+        <item name="tabBarIconInactive">@color/inactiveTabTako</item>
+    </style>
+
+    <!--== Yotsuba Theme ==-->
+    <style name="Theme.Tachiyomi.Yotsuba">
+        <item name="colorPrimary">@color/primaryYotsuba</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantYotsuba</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseYotsuba</item>
+        <item name="colorOnPrimary">@color/onPrimaryYotsuba</item>
+        <item name="colorSecondary">@color/secondaryYotsuba</item>
+        <item name="colorControlHighlight">@color/rippleColorYotsuba</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantYotsuba</item>
+    </style>
+
+    <!--== Yin Yang theme ==-->
+    <style name="Theme.Tachiyomi.YinYang">
+        <!-- Theme colors -->
+        <item name="colorPrimary">@color/primaryYinYang</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantYinYang</item>
+        <item name="colorOnPrimary">@color/onPrimaryYinYang</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseYinYang</item>
+        <item name="colorSecondary">@color/secondaryYinYang</item>
+        <item name="colorControlHighlight">@color/rippleColorYinYang</item>
+        <item name="colorOnSecondary">@color/onSecondaryYinYang</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantYinYang</item>
+        <item name="colorTertiary">@color/downloadBadgeDayNight</item>
+        <item name="colorOnTertiary">@color/colorOnDownloadBadgeDayNight</item>
+    </style>
+
+    <!--== Doki Theme ==-->
+    <style name="Theme.Tachiyomi.Doki">
+        <item name="colorPrimary">@color/primaryDoki</item>
+        <item name="colorPrimaryVariant">@color/primaryVariantDoki</item>
+        <item name="colorOnPrimary">@color/onPrimaryDoki</item>
+        <item name="colorPrimaryInverse">@color/primaryInverseDoki</item>
+        <item name="colorSecondary">@color/secondaryDoki</item>
+        <item name="colorOnSecondary">@color/textColorPrimaryInverse</item>
+        <item name="colorControlHighlight">@color/rippleColorDoki</item>
+        <item name="colorSecondaryVariant">@color/secondaryVariantDoki</item>
+        <item name="colorSurface">@color/backgroundDoki</item>
+        <item name="background">@color/backgroundDoki</item>
+        <item name="colorOnTertiary">@color/colorOnDownloadBadgeDayNight</item>
+    </style>
+    <style name="Theme.Tachiyomi.Monet"/>
+
+    <!--== Sakura Theme — cherry blossom pink + sage ==-->
+    <style name="Theme.Tachiyomi.Sakura">
+        <item name="colorPrimary">@color/sakura_primary</item>
+        <item name="colorPrimaryInverse">@color/sakura_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/sakura_primary_variant</item>
+        <item name="colorOnPrimary">@color/sakura_on_primary</item>
+        <item name="colorSecondary">@color/sakura_secondary</item>
+        <item name="colorOnSecondary">@color/sakura_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/sakura_secondary_variant</item>
+        <item name="colorTertiary">@color/sakura_tertiary</item>
+        <item name="colorOnTertiary">@color/sakura_on_tertiary</item>
+        <item name="colorControlHighlight">@color/sakura_highlight</item>
+        <item name="tabBarIconColor">@color/sakura_tab_bar_icon</item>
+        <item name="background">@color/sakura_background</item>
+        <item name="colorOnBackground">@color/sakura_on_background</item>
+        <item name="colorSurface">@color/sakura_surface</item>
+        <item name="actionBarTintColor">@color/sakura_on_surface</item>
+    </style>
+
+    <!--== Pink Romance Theme — rose / pink-red ==-->
+    <style name="Theme.Tachiyomi.PinkRomance">
+        <item name="colorPrimary">@color/pink_romance_primary</item>
+        <item name="colorPrimaryInverse">@color/pink_romance_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/pink_romance_primary_variant</item>
+        <item name="colorOnPrimary">@color/pink_romance_on_primary</item>
+        <item name="colorSecondary">@color/pink_romance_secondary</item>
+        <item name="colorOnSecondary">@color/pink_romance_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/pink_romance_secondary_variant</item>
+        <item name="colorTertiary">@color/pink_romance_tertiary</item>
+        <item name="colorOnTertiary">@color/pink_romance_on_tertiary</item>
+        <item name="colorControlHighlight">@color/pink_romance_highlight</item>
+        <item name="tabBarIconColor">@color/pink_romance_tab_bar_icon</item>
+        <item name="background">@color/pink_romance_background</item>
+        <item name="colorOnBackground">@color/pink_romance_on_background</item>
+        <item name="colorSurface">@color/pink_romance_surface</item>
+        <item name="actionBarTintColor">@color/pink_romance_on_surface</item>
+    </style>
+
+    <!--== Sumi-e Theme — neutral monochrome ink wash ==-->
+    <style name="Theme.Tachiyomi.SumiE">
+        <item name="colorPrimary">@color/sumi_e_primary</item>
+        <item name="colorPrimaryInverse">@color/sumi_e_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/sumi_e_primary_variant</item>
+        <item name="colorOnPrimary">@color/sumi_e_on_primary</item>
+        <item name="colorSecondary">@color/sumi_e_secondary</item>
+        <item name="colorOnSecondary">@color/sumi_e_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/sumi_e_secondary_variant</item>
+        <item name="colorTertiary">@color/sumi_e_tertiary</item>
+        <item name="colorOnTertiary">@color/sumi_e_on_tertiary</item>
+        <item name="colorControlHighlight">@color/sumi_e_highlight</item>
+        <item name="tabBarIconColor">@color/sumi_e_tab_bar_icon</item>
+        <item name="background">@color/sumi_e_background</item>
+        <item name="colorOnBackground">@color/sumi_e_on_background</item>
+        <item name="colorSurface">@color/sumi_e_surface</item>
+        <item name="actionBarTintColor">@color/sumi_e_on_surface</item>
+    </style>
+
+    <!--== Kimono Theme — crimson + gold ==-->
+    <style name="Theme.Tachiyomi.Kimono">
+        <item name="colorPrimary">@color/kimono_primary</item>
+        <item name="colorPrimaryInverse">@color/kimono_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/kimono_primary_variant</item>
+        <item name="colorOnPrimary">@color/kimono_on_primary</item>
+        <item name="colorSecondary">@color/kimono_secondary</item>
+        <item name="colorOnSecondary">@color/kimono_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/kimono_secondary_variant</item>
+        <item name="colorTertiary">@color/kimono_tertiary</item>
+        <item name="colorOnTertiary">@color/kimono_on_tertiary</item>
+        <item name="colorControlHighlight">@color/kimono_highlight</item>
+        <item name="tabBarIconColor">@color/kimono_tab_bar_icon</item>
+        <item name="background">@color/kimono_background</item>
+        <item name="colorOnBackground">@color/kimono_on_background</item>
+        <item name="colorSurface">@color/kimono_surface</item>
+        <item name="actionBarTintColor">@color/kimono_on_surface</item>
+    </style>
+
+    <!--== Wagashi Theme — Japanese pastels ==-->
+    <style name="Theme.Tachiyomi.Wagashi">
+        <item name="colorPrimary">@color/wagashi_primary</item>
+        <item name="colorPrimaryInverse">@color/wagashi_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/wagashi_primary_variant</item>
+        <item name="colorOnPrimary">@color/wagashi_on_primary</item>
+        <item name="colorSecondary">@color/wagashi_secondary</item>
+        <item name="colorOnSecondary">@color/wagashi_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/wagashi_secondary_variant</item>
+        <item name="colorTertiary">@color/wagashi_tertiary</item>
+        <item name="colorOnTertiary">@color/wagashi_on_tertiary</item>
+        <item name="colorControlHighlight">@color/wagashi_highlight</item>
+        <item name="tabBarIconColor">@color/wagashi_tab_bar_icon</item>
+        <item name="background">@color/wagashi_background</item>
+        <item name="colorOnBackground">@color/wagashi_on_background</item>
+        <item name="colorSurface">@color/wagashi_surface</item>
+        <item name="actionBarTintColor">@color/wagashi_on_surface</item>
+    </style>
+
+    <!--== Nocturne Theme — desktop default: lunar graphite + lilac ==-->
+    <!-- Default theme. Every attribute below is a DESIGN.md §2 token (see its mapping table). -->
+    <style name="Theme.Tachiyomi.Nocturne">
+        <item name="colorPrimary">@color/nocturne_primary</item>
+        <item name="colorPrimaryInverse">@color/nocturne_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/nocturne_primary_variant</item>
+        <item name="colorOnPrimary">@color/nocturne_on_primary</item>
+        <item name="colorSecondary">@color/nocturne_secondary</item>
+        <item name="colorOnSecondary">@color/nocturne_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/nocturne_secondary_variant</item>
+        <item name="colorPrimaryContainer">@color/nocturne_accent_soft</item>
+        <item name="colorOnPrimaryContainer">@color/nocturne_primary</item>
+        <item name="colorSecondaryContainer">@color/nocturne_accent_soft</item>
+        <item name="colorOnSecondaryContainer">@color/nocturne_primary</item>
+        <item name="colorTertiary">@color/nocturne_tertiary</item>
+        <item name="colorOnTertiary">@color/nocturne_on_tertiary</item>
+        <item name="colorControlHighlight">@color/nocturne_highlight</item>
+        <item name="tabBarIconColor">@color/nocturne_tab_bar_icon</item>
+        <item name="tabBarIconInactive">@color/nocturne_tab_bar_inactive</item>
+        <item name="searchFieldSurface">@color/nocturne_field_surface</item>
+        <item name="colorError">@color/nocturne_error</item>
+        <item name="background">@color/nocturne_background</item>
+        <item name="colorOnBackground">@color/nocturne_on_background</item>
+        <!-- The app paints pages and the app bar with colorSurface, so it carries bg; the DS
+             surface token lives on colorSurfaceContainer (navigation, sheets, hopper). -->
+        <item name="colorSurface">@color/nocturne_background</item>
+        <item name="colorSurfaceContainer">@color/nocturne_surface</item>
+        <!-- Every M3 surface role maps onto the three DS tones; left unset, menus, dialogs and
+             sheets fell back to Material's baseline violet greys and looked off-theme. -->
+        <item name="colorSurfaceContainerLowest">@color/nocturne_background</item>
+        <item name="colorSurfaceContainerLow">@color/nocturne_surface</item>
+        <item name="colorSurfaceContainerHigh">@color/nocturne_surface</item>
+        <item name="colorSurfaceContainerHighest">@color/nocturne_primary_variant</item>
+        <item name="colorSurfaceBright">@color/nocturne_primary_variant</item>
+        <item name="colorSurfaceDim">@color/nocturne_background</item>
+        <item name="colorSurfaceVariant">@color/nocturne_primary_variant</item>
+        <item name="colorOnSurface">@color/nocturne_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/nocturne_text_2</item>
+        <item name="colorOutline">@color/nocturne_line_strong</item>
+        <item name="colorOutlineVariant">@color/nocturne_line</item>
+        <item name="android:textColorSecondary">@color/nocturne_text_2</item>
+        <item name="android:textColorHint">@color/nocturne_text_3</item>
+        <item name="actionBarTintColor">@color/nocturne_on_surface</item>
+        <item name="totalBadgeColor">?attr/colorTertiary</item>
+        <item name="totalBadgeTextColor">@color/nocturne_text_2</item>
+    </style>
+
+    <!--== Rose Theme — Tailwind rose scale ==-->
+    <style name="Theme.Tachiyomi.Rose">
+        <item name="colorPrimary">@color/rose_primary</item>
+        <item name="colorPrimaryInverse">@color/rose_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/rose_primary_variant</item>
+        <item name="colorOnPrimary">@color/rose_on_primary</item>
+        <item name="colorSecondary">@color/rose_secondary</item>
+        <item name="colorOnSecondary">@color/rose_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/rose_secondary_variant</item>
+        <item name="colorTertiary">@color/rose_tertiary</item>
+        <item name="colorOnTertiary">@color/rose_on_tertiary</item>
+        <item name="colorControlHighlight">@color/rose_highlight</item>
+        <item name="tabBarIconColor">@color/rose_tab_bar_icon</item>
+        <item name="background">@color/rose_background</item>
+        <item name="colorOnBackground">@color/rose_on_background</item>
+        <item name="colorSurface">@color/rose_surface</item>
+        <item name="actionBarTintColor">@color/rose_on_surface</item>
+    </style>
+
+    <!--== Nordic Stone Theme — modern Scandinavian neutral ==-->
+    <style name="Theme.Tachiyomi.Nordic">
+        <item name="colorPrimary">@color/nordic_primary</item>
+        <item name="colorPrimaryInverse">@color/nordic_primary_inverse</item>
+        <item name="colorPrimaryVariant">@color/nordic_primary_variant</item>
+        <item name="colorOnPrimary">@color/nordic_on_primary</item>
+        <item name="colorSecondary">@color/nordic_secondary</item>
+        <item name="colorOnSecondary">@color/nordic_on_secondary</item>
+        <item name="colorSecondaryVariant">@color/nordic_secondary_variant</item>
+        <item name="colorTertiary">@color/nordic_tertiary</item>
+        <item name="colorOnTertiary">@color/nordic_on_tertiary</item>
+        <item name="colorControlHighlight">@color/nordic_highlight</item>
+        <item name="tabBarIconColor">@color/nordic_tab_bar_icon</item>
+        <item name="background">@color/nordic_background</item>
+        <item name="colorOnBackground">@color/nordic_on_background</item>
+        <item name="colorSurface">@color/nordic_surface</item>
+        <item name="actionBarTintColor">@color/nordic_on_surface</item>
+    </style>
+
+    <!--===============-->
+    <!-- Launch Screen -->
+    <!--===============-->
+
+    <!-- Splash -->
+    <style name="Theme.Tachiyomi.SplashScreen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/epigraph_splash_background</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/epigraph_splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_epigraph_splash</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_epigraph_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Tachiyomi</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+
+    <style name="Theme.OSS" parent="Theme.Tachiyomi.Monet">
+        <item name="colorPrimary">?colorPrimaryVariant</item>
+        <item name="android:statusBarColor">?colorPrimaryVariant</item>
+        <item name="windowActionBar">true</item>
+        <item name="windowNoTitle">false</item>
+    </style>
+</resources>

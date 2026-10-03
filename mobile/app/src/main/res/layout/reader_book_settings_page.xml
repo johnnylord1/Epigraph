@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="utf-8"?>
+<epigraph.books.ui.LocalBookReaderSettingsView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_rounded_background"
+    android:clipToPadding="false">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/material_component_dialogs_padding_around_content_area"
+        android:paddingEnd="@dimen/material_component_dialogs_padding_around_content_area"
+        android:paddingBottom="24dp">
+
+        <LinearLayout
+            android:id="@+id/general_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <com.google.android.material.textview.MaterialTextView
+                style="?textAppearanceTitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/epigraph_reader_display"
+                android:textColor="?attr/colorSecondary"
+                android:textSize="15sp" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/orientation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                app:title="@string/epigraph_reader_orientation" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/fullscreen"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_fullscreen" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/keep_screen_on"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_keep_screen_on" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/show_position"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_show_position" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/epub_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <com.google.android.material.textview.MaterialTextView
+                style="?textAppearanceTitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/epigraph_reader_text"
+                android:textColor="?attr/colorSecondary"
+                android:textSize="15sp" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/font_family"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_font_family" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/text_alignment"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_alignment" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/epub_theme"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_theme" />
+
+            <include android:id="@+id/font_size" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/line_spacing" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/paragraph_spacing" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/content_width" layout="@layout/widget_novel_slider_float" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/pdf_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <com.google.android.material.textview.MaterialTextView
+                style="?textAppearanceTitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/epigraph_reader_pages"
+                android:textColor="?attr/colorSecondary"
+                android:textSize="15sp" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/pdf_fit_mode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_fit_mode" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/pdf_reflow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_reflow" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/pdf_horizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_horizontal_paging" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/pdf_two_page"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_two_page" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/navigation_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <com.google.android.material.textview.MaterialTextView
+                style="?textAppearanceTitleSmall"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/epigraph_reader_navigation"
+                android:textColor="?attr/colorSecondary"
+                android:textSize="15sp" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/epub_flow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_flow" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/animate_transitions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_animate_transitions" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/volume_keys"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_volume_keys" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/invert_volume_keys"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_invert_volume_keys" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/vertical_progress"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_vertical_progress" />
+
+            <include android:id="@+id/vertical_height" layout="@layout/widget_novel_slider_float" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/reader_vertical_progress_side" />
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/vertical_side"
+                    style="@style/Widget.Tachiyomi.MaterialButtonGroup.Connected"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/vertical_left"
+                        style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                        android:text="@string/reader_progress_left"
+                        app:toggleCheckedStateOnClick="true" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/vertical_right"
+                        style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                        android:text="@string/reader_progress_right"
+                        app:toggleCheckedStateOnClick="true" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/filter_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/color_filter_enabled"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/epigraph_reader_use_color_filter" />
+
+            <include android:id="@+id/color_alpha" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/color_red" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/color_green" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/color_blue" layout="@layout/widget_novel_slider_float" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/color_filter_mode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_filter_mode" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/custom_brightness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_use_brightness" />
+
+            <include android:id="@+id/brightness" layout="@layout/widget_novel_slider_float" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/grayscale"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_grayscale" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/inverted"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/epigraph_reader_inverted" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/tts_group"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="16dp"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tts_previous"
+                    style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/novel_tts_prev_paragraph"
+                    app:icon="@drawable/ic_skip_previous_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tts_play_pause"
+                    style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:layout_weight="2"
+                    android:text="@string/novel_tts_read_aloud"
+                    app:icon="@drawable/ic_play_arrow_24dp"
+                    app:iconGravity="textStart" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tts_stop"
+                    style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/novel_tts_stop"
+                    app:icon="@drawable/ic_stop_24dp"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/tts_next"
+                    style="@style/Widget.Tachiyomi.Button.ReaderOutlined"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:contentDescription="@string/novel_tts_next_paragraph"
+                    app:icon="@drawable/ic_skip_next_24"
+                    app:iconGravity="textStart"
+                    app:iconPadding="0dp" />
+            </LinearLayout>
+
+            <include android:id="@+id/tts_rate" layout="@layout/widget_novel_slider_float" />
+            <include android:id="@+id/tts_pitch" layout="@layout/widget_novel_slider_float" />
+
+            <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+                android:id="@+id/tts_voice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:title="@string/epigraph_reader_tts_voice" />
+        </LinearLayout>
+    </LinearLayout>
+</epigraph.books.ui.LocalBookReaderSettingsView>

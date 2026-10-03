@@ -1,0 +1,15 @@
+package yokai.domain.history
+
+import eu.kanade.tachiyomi.data.database.models.History
+import eu.kanade.tachiyomi.data.database.models.MangaChapterHistory
+
+interface HistoryRepository {
+    suspend fun upsert(chapterId: Long, lastRead: Long, timeRead: Long): Long?
+    suspend fun bulkUpsert(histories: List<History>)
+    suspend fun getByMangaId(mangaId: Long): History?
+    suspend fun getAllByMangaId(mangaId: Long): List<History>
+
+    suspend fun getRecentsUngrouped(tab: Long, filterScanlators: Boolean, showHidden: Boolean = false, search: String = "", limit: Long = 25L, offset: Long = 0L): List<MangaChapterHistory>
+    suspend fun getRecentsBySeries(tab: Long, filterScanlators: Boolean, showHidden: Boolean = false, search: String = "", limit: Long = 25L, offset: Long = 0L): List<MangaChapterHistory>
+    suspend fun getRecentsAll(includeRead: Boolean, filterScanlators: Boolean, showHiddenHistory: Boolean = false, showHiddenUpdates: Boolean = false, search: String = "", limit: Long = 25L, offset: Long = 0L): List<MangaChapterHistory>
+}

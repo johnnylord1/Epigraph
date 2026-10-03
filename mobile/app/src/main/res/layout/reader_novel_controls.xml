@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<eu.kanade.tachiyomi.ui.reader.settings.NovelControlsView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/novel_controls_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bottom_sheet_rounded_background"
+    android:clipToPadding="false">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/material_component_dialogs_padding_around_content_area"
+        android:paddingEnd="@dimen/material_component_dialogs_padding_around_content_area"
+        android:paddingTop="0dp"
+        android:paddingBottom="16dp">
+
+        <include
+            android:id="@+id/auto_scroll_speed"
+            layout="@layout/widget_novel_slider_int" />
+
+        <!-- Continuous-scroll group -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="4dp"
+            android:text="@string/novel_continuous_scroll_section"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="?attr/colorOnBackground" />
+
+        <include
+            android:id="@+id/auto_load_next_at"
+            layout="@layout/widget_novel_slider_int" />
+
+        <include
+            android:id="@+id/keep_chapters_loaded"
+            layout="@layout/widget_novel_slider_int" />
+
+        <include
+            android:id="@+id/mark_read_threshold"
+            layout="@layout/widget_novel_slider_int" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/mark_short_chapter_read"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_mark_short_chapter_read"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/volume_keys_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_volume_keys_scroll"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/tap_to_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_tap_to_scroll"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/swipe_navigation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_swipe_navigation"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/text_selectable"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_text_selectable"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/show_progress_slider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/novel_show_progress_slider"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/reader_vertical_progress_modes"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/hud_vertical_progress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/reader_vertical_progress_modes"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/hud_vertical_progress_height"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:stepSize="5"
+            android:valueFrom="60"
+            android:valueTo="100" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/hud_vertical_progress_side"
+            style="@style/Widget.Tachiyomi.MaterialButtonGroup.Connected"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layoutDirection="ltr"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/hud_vertical_progress_left"
+                style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                android:text="@string/reader_progress_left"
+                app:toggleCheckedStateOnClick="true" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/hud_vertical_progress_right"
+                style="@style/Widget.Tachiyomi.Button.OutlinedButton.Icon"
+                android:text="@string/reader_progress_right"
+                app:toggleCheckedStateOnClick="true" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <!-- Scrollbar group -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="4dp"
+            android:text="@string/novel_scrollbar_section"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="?attr/colorOnBackground" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/vertical_scrollbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/novel_vertical_scrollbar"
+            android:textColor="?attr/colorOnBackground" />
+
+        <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+            android:id="@+id/scrollbar_position"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:title="@string/novel_scrollbar_position" />
+
+        <eu.kanade.tachiyomi.widget.MaterialSpinnerView
+            android:id="@+id/vertical_slider_size"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            app:title="@string/novel_vertical_slider_size" />
+    </LinearLayout>
+</eu.kanade.tachiyomi.ui.reader.settings.NovelControlsView>

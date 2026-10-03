@@ -1,0 +1,191 @@
+package eu.kanade.tachiyomi.ui.library
+
+import android.content.res.ColorStateList
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
+import coil3.dispose
+import com.google.android.material.R as materialR
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.database.models.isNovel
+import eu.kanade.tachiyomi.databinding.MangaListItemBinding
+import eu.kanade.tachiyomi.util.lang.highlightText
+import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.system.getResourceColor
+import eu.kanade.tachiyomi.util.view.setCards
+import yokai.i18n.MR
+import yokai.util.coil.loadManga
+import yokai.util.lang.getString
+
+/**
+ * Class used to hold the displayed data of a manga in the library, like the cover or the binding.title.
+ * All the elements from the layout file "item_library_list" are available in this class.
+ *
+ * @param view the inflated view for this holder.
+ * @param adapter the adapter handling this holder.
+ * @constructor creates a new library holder.
+ */
+
+class LibraryListHolder(
+    private val view: View,
+    adapter: LibraryCategoryAdapter,
+) : LibraryHolder(view, adapter) {
+
+    private val binding = MangaListItemBinding.bind(view)
+    private var titleLayoutTask: Runnable? = null
+    private var boundSignature: Int? = null
+    private var boundCover: CoverContent? = null
+    private var appliedOutline = adapter.showOutline
+
+    private data class CoverContent(
+        val mangaId: Long?,
+        val sourceId: Long,
+        val url: String?,
+        val lastModified: Long,
+        val inLibrary: Boolean,
+    )
+
+    /**
+     * Method called from [LibraryCategoryAdapter.onBindViewHolder]. It updates the data for this
+     * holder with the given manga.
+     *
+     * @param item the manga item to bind.
+     */
+    override fun onSetValues(item: LibraryItem) {
+        val signature = item.bindingContentSignature()
+        if (signature == boundSignature && appliedOutline == adapter.showOutline) return
+        boundSignature = signature
+        if (appliedOutline != adapter.showOutline) {
+            appliedOutline = adapter.showOutline
+            setCards(appliedOutline, binding.card, binding.unreadDownloadBadge.root)
+        }
+        binding.title.isVisible = true
+        binding.constraintLayout.minHeight = 56.dpToPx
+        if (item is LibraryPlaceholderItem) {
+            binding.constraintLayout.minHeight = 0
+            binding.constraintLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                height = ViewGroup.MarginLayoutParams.WRAP_CONTENT
+            }
+            when (item.type) {
+                is LibraryPlaceholderItem.Type.Blank -> {
+                    binding.title.text = itemView.context.getString(
+                        if (adapter.hasActiveFilters && item.type.mangaCount >= 1) {
+                            MR.strings.no_matches_for_filters_short
+                        } else {
+                            MR.strings.category_is_empty
+                        },
+                    )
+                }
+                is LibraryPlaceholderItem.Type.Hidden -> {
+                    binding.title.text = null
+                    binding.title.isVisible = false
+                }
+            }
+            binding.title.textAlignment = View.TEXT_ALIGNMENT_CENTER
+            // Empty-category note is secondary copy (DESIGN.md §10), not a row title.
+            binding.title.setTextColor(itemView.context.getResourceColor(android.R.attr.textColorSecondary))
+            binding.card.isVisible = false
+            binding.unreadDownloadBadge.badgeView.isVisible = false
+            binding.padding.isVisible = false
+            binding.subtitle.isVisible = false
+            binding.coverThumbnail.dispose()
+            boundCover = null
+            return
+        }
+
+        if (item !is LibraryMangaItem) error("${item::class.qualifiedName} is not a valid item")
+
+        binding.constraintLayout.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+            height = 52.dpToPx
+        }
+        binding.padding.isVisible = true
+        binding.card.isVisible = true
+        binding.title.textAlignment = View.TEXT_ALIGNMENT_TEXT_START
+        binding.title.setTextColor(itemView.context.getResourceColor(materialR.attr.colorOnBackground))
+
+        // Update the binding.title of the manga.
+        binding.title.text = item.manga.manga.title.highlightText(item.filter, color)
+        setUnreadBadge(binding.unreadDownloadBadge.badgeView, item)
+
+        val authorArtist =
+            if (item.manga.manga.author == item.manga.manga.artist || item.manga.manga.artist.isNullOrBlank()) {
+                item.manga.manga.author?.trim() ?: ""
+            } else {
+                listOfNotNull(
+                    item.manga.manga.author?.trim()?.takeIf { it.isNotBlank() },
+                    item.manga.manga.artist?.trim()?.takeIf { it.isNotBlank() },
+                ).joinToString(", ")
+            }
+
+        val subtitle = buildString {
+            if (item.manga.manga.isNovel()) {
+                append(itemView.context.getString(MR.strings.novel))
+                if (authorArtist.isNotBlank()) {
+                    append(" • ")
+                }
+            }
+            append(authorArtist)
+        }
+        binding.subtitle.text = subtitle.highlightText(item.filter, color)
+        binding.title.maxLines = 2
+        titleLayoutTask?.let(binding.title::removeCallbacks)
+        val layoutTask = Runnable {
+            val hasAuthorInFilter =
+                item.filter.isNotBlank() && authorArtist.contains(item.filter, true)
+            binding.subtitle.isVisible = subtitle.isNotBlank() && (binding.title.lineCount <= 1 || hasAuthorInFilter || item.manga.manga.isNovel())
+            binding.title.maxLines = if (hasAuthorInFilter) 1 else 2
+        }
+        titleLayoutTask = layoutTask
+        binding.title.post(layoutTask)
+
+        // Update the cover.
+        val manga = item.manga.manga
+        val cover = CoverContent(
+            mangaId = manga.id,
+            sourceId = manga.source,
+            url = manga.thumbnail_url,
+            lastModified = manga.cover_last_modified,
+            inLibrary = manga.favorite,
+        )
+        if (cover != boundCover) {
+            boundCover = cover
+            binding.coverThumbnail.dispose()
+            binding.coverThumbnail.scaleType = ImageView.ScaleType.CENTER_CROP
+            binding.coverThumbnail.imageTintList = null
+            binding.coverThumbnail.loadManga(manga) {
+                // Without a cover the row would otherwise show an empty square.
+                listener(onError = { _, _ -> showCoverPlaceholder() })
+            }
+        }
+    }
+
+    private fun showCoverPlaceholder() {
+        with(binding.coverThumbnail) {
+            scaleType = ImageView.ScaleType.CENTER
+            setImageResource(R.drawable.ic_book_24dp)
+            imageTintList = ColorStateList.valueOf(context.getResourceColor(android.R.attr.textColorSecondary))
+        }
+    }
+
+    override fun recycle() {
+        titleLayoutTask?.let(binding.title::removeCallbacks)
+        titleLayoutTask = null
+        binding.coverThumbnail.dispose()
+        boundSignature = null
+        boundCover = null
+    }
+
+    override fun onActionStateChanged(position: Int, actionState: Int) {
+        super.onActionStateChanged(position, actionState)
+        if (actionState == 2) {
+            binding.card.isDragged = true
+        }
+    }
+
+    override fun onItemReleased(position: Int) {
+        super.onItemReleased(position)
+        binding.card.isDragged = false
+    }
+}

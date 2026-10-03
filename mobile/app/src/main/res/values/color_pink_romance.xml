@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Pink Romance — hot rose. Vivid pink-red primary on saturated blush,
+  ~ deeper crimson secondary, neon rose tertiary.
+-->
+<resources>
+    <color name="pink_romance_primary">#D4144A</color>
+    <color name="pink_romance_on_primary">#FFFFFF</color>
+    <color name="pink_romance_primary_variant">#FFCCD9</color>
+    <color name="pink_romance_primary_inverse">#FF7090</color>
+    <color name="pink_romance_secondary">#B0103C</color>
+    <color name="pink_romance_on_secondary">#FFFFFF</color>
+    <color name="pink_romance_secondary_variant">#5C0A1A</color>
+    <color name="pink_romance_highlight">#1FD4144A</color>
+    <color name="pink_romance_tertiary">#FF9AB4</color>
+    <color name="pink_romance_on_tertiary">#2B0814</color>
+    <color name="pink_romance_tab_bar_icon">#D4144A</color>
+    <color name="pink_romance_background">#FFE5EB</color>
+    <color name="pink_romance_on_background">#2B0814</color>
+    <color name="pink_romance_surface">#FFE5EB</color>
+    <color name="pink_romance_on_surface">#2B0814</color>
+</resources>

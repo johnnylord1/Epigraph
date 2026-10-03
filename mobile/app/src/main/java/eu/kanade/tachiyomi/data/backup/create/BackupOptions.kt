@@ -1,0 +1,123 @@
+package eu.kanade.tachiyomi.data.backup.create
+
+import dev.icerock.moko.resources.StringResource
+import kotlinx.collections.immutable.persistentListOf
+import yokai.i18n.MR
+
+data class BackupOptions(
+    val libraryEntries: Boolean = true,
+    val categories: Boolean = true,
+    val chapters: Boolean = true,
+    val tracking: Boolean = true,
+    val history: Boolean = true,
+    val appPrefs: Boolean = true,
+    val sourcePrefs: Boolean = true,
+    val customInfo: Boolean = true,
+    val readManga: Boolean = true,
+) {
+    fun asBooleanArray() = booleanArrayOf(
+        libraryEntries,
+        categories,
+        chapters,
+        tracking,
+        history,
+        appPrefs,
+        sourcePrefs,
+        customInfo,
+        readManga,
+    )
+
+    companion object {
+        fun getOptions() = persistentListOf(
+            MR.strings.library_entries,
+            MR.strings.categories,
+            MR.strings.chapters,
+            MR.strings.tracking,
+            MR.strings.history,
+            MR.strings.app_settings,
+            MR.strings.source_settings,
+            MR.strings.custom_manga_info,
+            MR.strings.all_read_manga,
+        )
+
+        fun getEntries() = persistentListOf(
+            Entry(
+                label = MR.strings.library_entries,
+                getter = BackupOptions::libraryEntries,
+                setter = { options, enabled -> options.copy(libraryEntries = enabled) },
+            ),
+            Entry(
+                label = MR.strings.chapters,
+                getter = BackupOptions::chapters,
+                setter = { options, enabled -> options.copy(chapters = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
+                label = MR.strings.tracking,
+                getter = BackupOptions::tracking,
+                setter = { options, enabled -> options.copy(tracking = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
+                label = MR.strings.history,
+                getter = BackupOptions::history,
+                setter = { options, enabled -> options.copy(history = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
+                label = MR.strings.custom_manga_info,
+                getter = BackupOptions::customInfo,
+                setter = { options, enabled -> options.copy(customInfo = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
+                label = MR.strings.all_read_manga,
+                getter = BackupOptions::readManga,
+                setter = { options, enabled -> options.copy(readManga = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
+                label = MR.strings.categories,
+                getter = BackupOptions::categories,
+                setter = { options, enabled -> options.copy(categories = enabled) },
+            ),
+            Entry(
+                label = MR.strings.app_settings,
+                getter = BackupOptions::appPrefs,
+                setter = { options, enabled -> options.copy(appPrefs = enabled) },
+            ),
+            Entry(
+                label = MR.strings.source_settings,
+                getter = BackupOptions::sourcePrefs,
+                setter = { options, enabled -> options.copy(sourcePrefs = enabled) },
+            ),
+        )
+
+        /**
+         * Older builds appended an "include private preferences" flag at index 9. Pending
+         * WorkManager requests may still carry it; it is ignored because secrets never enter a
+         * backup (see [eu.kanade.tachiyomi.data.backup.BackupSecretPolicy]).
+         */
+        fun fromBooleanArray(array: BooleanArray): BackupOptions {
+            val defaults = BackupOptions()
+            return BackupOptions(
+                array.getOrElse(0) { defaults.libraryEntries },
+                array.getOrElse(1) { defaults.categories },
+                array.getOrElse(2) { defaults.chapters },
+                array.getOrElse(3) { defaults.tracking },
+                array.getOrElse(4) { defaults.history },
+                array.getOrElse(5) { defaults.appPrefs },
+                array.getOrElse(6) { defaults.sourcePrefs },
+                array.getOrElse(7) { defaults.customInfo },
+                array.getOrElse(8) { defaults.readManga },
+            )
+        }
+    }
+
+    data class Entry(
+        val label: StringResource,
+        val getter: (BackupOptions) -> Boolean,
+        val setter: (BackupOptions, Boolean) -> BackupOptions,
+        val enabled: (BackupOptions) -> Boolean = { true },
+    )
+}

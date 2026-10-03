@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:background="@android:color/transparent"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <View
+        android:id="@+id/touch_outside"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"/>
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/overflow_card_view"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:layout_constrainedHeight="true"
+        app:layout_constrainedWidth="true"
+        app:strokeWidth="@dimen/line_width"
+        app:strokeColor="?colorOutlineVariant"
+        android:layout_marginStart="@dimen/space_3"
+        android:layout_marginEnd="@dimen/space_1"
+        app:cardBackgroundColor="?colorSurfaceContainer"
+        app:cardCornerRadius="@dimen/radius_m"
+        app:cardElevation="@dimen/elevation_level_2"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="1.0"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintVertical_bias="0.0"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintWidth_min="250dp">
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/scroll_view"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:id="@+id/overflow_menu_layout"
+                android:background="@android:color/transparent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:orientation="vertical"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp">
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/update_library_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintBottom_toTopOf="@id/import_books_item"
+                    android:text="@string/update_library"
+                    app:icon="@drawable/ic_refresh_24dp"
+                    tools:visibility="visible" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/import_books_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone"
+                    app:layout_constraintTop_toBottomOf="@id/update_library_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintBottom_toTopOf="@id/update_library_divider"
+                    android:text="@string/epigraph_import_books"
+                    app:icon="@drawable/ic_file_open_24dp"
+                    tools:visibility="visible" />
+
+                <View
+                    android:id="@+id/update_library_divider"
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:visibility="gone"
+                    app:layout_constraintTop_toBottomOf="@id/import_books_item"
+                    app:layout_constraintBottom_toTopOf="@id/incognito_mode_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:background="?colorOutlineVariant"
+                    tools:visibility="visible" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/incognito_mode_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/update_library_divider"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintBottom_toTopOf="@id/update_report_item"
+                    android:text="@string/incognito_mode"
+                    app:icon="@drawable/ic_glasses_24dp"
+                    tools:text="Turn on Incognito mode" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/update_report_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/incognito_mode_item"
+                    app:layout_constraintBottom_toTopOf="@id/divider"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:text="@string/last_update_report"
+                    app:icon="@drawable/ic_file_open_24dp" />
+
+                <View
+                    android:id="@+id/divider"
+                    android:layout_width="0dp"
+                    app:layout_constraintTop_toBottomOf="@id/update_report_item"
+                    app:layout_constraintBottom_toTopOf="@id/settings_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:layout_height="1dp"
+                    android:background="?colorOutlineVariant" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/settings_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/divider"
+                    app:layout_constraintBottom_toTopOf="@id/stats_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:text="@string/settings"
+                    app:icon="@drawable/ic_outline_settings_24dp" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/stats_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/settings_item"
+                    app:layout_constraintBottom_toTopOf="@+id/about_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:text="@string/stats"
+                    app:icon="@drawable/ic_query_stats_24dp" />
+
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/about_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/stats_item"
+                    app:layout_constraintBottom_toTopOf="@+id/help_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    android:text="@string/about"
+                    app:icon="@drawable/ic_info_outline_24dp" />
+
+                <eu.kanade.tachiyomi.widget.MenuSheetItemView
+                    android:id="@+id/help_item"
+                    android:layout_width="0dp"
+                    app:layout_constraintWidth_min="wrap"
+                    android:layout_height="wrap_content"
+                    app:layout_constraintTop_toBottomOf="@id/about_item"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"
+                    android:text="@string/help"
+                    app:icon="@drawable/ic_help_outline_24dp" />
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+        </androidx.core.widget.NestedScrollView>
+    </com.google.android.material.card.MaterialCardView>
+</androidx.constraintlayout.widget.ConstraintLayout>

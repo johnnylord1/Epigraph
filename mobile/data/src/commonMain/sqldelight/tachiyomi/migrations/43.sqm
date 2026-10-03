@@ -1,0 +1,70 @@
+import kotlin.Boolean;
+
+PRAGMA defer_foreign_keys = 1;
+
+CREATE TABLE local_books_v44(
+    book_id TEXT NOT NULL PRIMARY KEY,
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF')),
+    sha256 TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    author TEXT,
+    description TEXT,
+    cover_path TEXT,
+    cover_asset_sha256 TEXT CHECK(
+        cover_asset_sha256 IS NULL OR (
+            length(cover_asset_sha256) = 64 AND cover_asset_sha256 NOT GLOB '*[^0-9a-f]*'
+        )
+    ),
+    cover_asset_byte_size INTEGER CHECK(
+        cover_asset_byte_size IS NULL OR cover_asset_byte_size BETWEEN 1 AND 8388608
+    ),
+    cover_asset_mime_type TEXT CHECK(
+        cover_asset_mime_type IS NULL OR cover_asset_mime_type IN ('image/jpeg', 'image/png', 'image/webp')
+    ),
+    private_path TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    imported_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    CHECK(
+        (cover_asset_sha256 IS NULL AND cover_asset_byte_size IS NULL AND cover_asset_mime_type IS NULL) OR
+        (cover_asset_sha256 IS NOT NULL AND cover_asset_byte_size IS NOT NULL AND cover_asset_mime_type IS NOT NULL)
+    )
+);
+
+INSERT INTO local_books_v44(
+    book_id, content_type, sha256, display_name, author, description, cover_path,
+    cover_asset_sha256, cover_asset_byte_size, cover_asset_mime_type,
+    private_path, mime_type, byte_size, imported_at, updated_at
+)
+SELECT
+    book_id, content_type, sha256, display_name, author, description, cover_path,
+    NULL, NULL, NULL,
+    private_path, mime_type, byte_size, imported_at, updated_at
+FROM local_books;
+
+DROP TABLE local_books;
+ALTER TABLE local_books_v44 RENAME TO local_books;
+
+CREATE INDEX local_books_type_title_index
+ON local_books(content_type, display_name COLLATE NOCASE);
+
+CREATE TABLE aethon_asset_manifest_v44 (
+    sha256 TEXT NOT NULL PRIMARY KEY CHECK(length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+    content_type TEXT NOT NULL CHECK(content_type IN ('EPUB', 'PDF', 'NOVEL_CHAPTER', 'BOOK_COVER')),
+    byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+    mime_type TEXT NOT NULL,
+    local_uri TEXT,
+    remote_available INTEGER AS Boolean NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK(state IN ('LOCAL_ONLY', 'PENDING_UPLOAD', 'AVAILABLE', 'PENDING_DOWNLOAD', 'ERROR')),
+    updated_at INTEGER NOT NULL
+);
+
+INSERT INTO aethon_asset_manifest_v44(
+    sha256, content_type, byte_size, mime_type, local_uri, remote_available, state, updated_at
+)
+SELECT sha256, content_type, byte_size, mime_type, local_uri, remote_available, state, updated_at
+FROM aethon_asset_manifest;
+
+DROP TABLE aethon_asset_manifest;
+ALTER TABLE aethon_asset_manifest_v44 RENAME TO aethon_asset_manifest;
