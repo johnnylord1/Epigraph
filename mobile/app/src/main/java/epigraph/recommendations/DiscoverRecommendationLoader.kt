@@ -304,18 +304,25 @@ class DiscoverRecommendationLoader(
         val sections = buildRecommendationSections(
             pool.candidates,
             pool.profile,
-            BuildRecommendationSectionsOptions(
-                includeInLibrary = includeInLibrary,
-                knownTitleKeys = pool.knownTitleKeys,
-                knownProviderKeys = pool.knownProviderKeys,
-                includeNsfw = includeNsfw,
-                blockedTags = if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList(),
-                nowMs = nowMs,
-                limitPerSection = SEARCH_RECOMMENDATION_MAX_LIMIT,
-            ),
+            filterOptions(pool, includeInLibrary, includeNsfw, nowMs),
         )
         return DiscoverResult(sections.filter { it.items.isNotEmpty() }, pool.seedCount, pool.failedProviders)
     }
+
+    /** Discover › Catalog over the same pool and filters as [rank]; no network. */
+    fun catalog(pool: DiscoverPool, includeInLibrary: Boolean, includeNsfw: Boolean, nowMs: Long): List<DiscoverCatalogEntry> =
+        buildDiscoverCatalog(pool.candidates, filterOptions(pool, includeInLibrary, includeNsfw, nowMs))
+
+    private fun filterOptions(pool: DiscoverPool, includeInLibrary: Boolean, includeNsfw: Boolean, nowMs: Long) =
+        BuildRecommendationSectionsOptions(
+            includeInLibrary = includeInLibrary,
+            knownTitleKeys = pool.knownTitleKeys,
+            knownProviderKeys = pool.knownProviderKeys,
+            includeNsfw = includeNsfw,
+            blockedTags = if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList(),
+            nowMs = nowMs,
+            limitPerSection = SEARCH_RECOMMENDATION_MAX_LIMIT,
+        )
 
     /**
      * Desktop `loadMoreSearchRecommendations`: fetches the next source page for a section that has

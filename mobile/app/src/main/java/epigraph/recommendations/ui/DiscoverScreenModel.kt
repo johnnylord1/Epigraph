@@ -3,11 +3,12 @@ import android.app.Application
 import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.DiscoverPool
 import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
-import epigraph.recommendations.RecommendationItem
+import epigraph.recommendations.RecommendationCandidate
 import epigraph.recommendations.RecommendationSectionKey
 import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_LIMIT_STEP
@@ -30,6 +31,9 @@ import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
 import yokai.util.koin.get
 
+/** Discover's two sub-tabs: library-based picks, and everything the installed extensions list. */
+enum class DiscoverSection { FOR_YOU, CATALOG }
+
 class DiscoverScreenModel(
     initialMode: DiscoverMode,
     private val loader: DiscoverRecommendationLoader = DiscoverRecommendationLoader(get<Application>()),
@@ -48,14 +52,24 @@ class DiscoverScreenModel(
         val includeLibrary: Boolean = false,
         val includeNsfw: Boolean = false,
         val visibleLimits: Map<RecommendationSectionKey, Int> = emptyMap(),
+        val section: DiscoverSection = DiscoverSection.FOR_YOU,
+        val catalog: List<DiscoverCatalogEntry> = emptyList(),
+        val catalogLoadingMore: Boolean = false,
+        val catalogExhausted: Boolean = false,
     )
 
     private var loadJob: Job? = null
+    private var catalogJob: Job? = null
     private val moreTriggeredAt = HashMap<RecommendationSectionKey, Long>()
     private val moreLoading = java.util.concurrent.ConcurrentHashMap.newKeySet<RecommendationSectionKey>()
 
     init {
         load(force = false)
+    }
+
+    fun setSection(section: DiscoverSection) {
+        if (section == state.value.section) return
+        mutableState.update { it.copy(section = section) }
     }
 
     fun setMode(mode: DiscoverMode) {
@@ -68,17 +82,40 @@ class DiscoverScreenModel(
         val mode = state.value.mode
         val cached = cachedPool(mode)
         if (!force && cached != null) {
-            mutableState.update { it.copy(loading = false, result = rank(cached), error = null, visibleLimits = emptyMap()) }
+            mutableState.update {
+                it.copy(
+                    loading = false,
+                    result = rank(cached),
+                    catalog = catalog(cached),
+                    catalogExhausted = false,
+                    error = null,
+                    visibleLimits = emptyMap(),
+                )
+            }
             return
         }
         loadJob?.cancel()
-        mutableState.update { it.copy(loading = true, result = if (force) it.result else null, error = null, visibleLimits = emptyMap()) }
+        catalogJob?.cancel()
+        mutableState.update {
+            it.copy(
+                loading = true,
+                result = if (force) it.result else null,
+                catalog = if (force) it.catalog else emptyList(),
+                catalogLoadingMore = false,
+                catalogExhausted = false,
+                error = null,
+                visibleLimits = emptyMap(),
+            )
+        }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
                 val pool = loader.gather(mode)
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 val result = rank(pool)
-                mutableState.update { if (it.mode == mode) it.copy(loading = false, result = result, visibleLimits = emptyMap()) else it }
+                val catalogEntries = catalog(pool)
+                mutableState.update {
+                    if (it.mode == mode) it.copy(loading = false, result = result, catalog = catalogEntries, visibleLimits = emptyMap()) else it
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -92,7 +129,7 @@ class DiscoverScreenModel(
         if (value == state.value.includeLibrary) return
         mutableState.update { it.copy(includeLibrary = value) }
         val cached = cachedPool(state.value.mode) ?: return
-        mutableState.update { it.copy(result = rank(cached), visibleLimits = emptyMap()) }
+        mutableState.update { it.copy(result = rank(cached), catalog = catalog(cached), visibleLimits = emptyMap()) }
     }
 
     /** Flips the global "show NSFW" setting; source selection depends on it, so reload. */
@@ -130,10 +167,15 @@ class DiscoverScreenModel(
                 // Keep the original load time: more pages do not make the whole pool fresh.
                 cache[mode] = CachedPool(more.pool, cached.loadedAt)
                 val result = rank(more.pool)
+                val catalogEntries = catalog(more.pool)
                 val grown = minOf(SEARCH_RECOMMENDATION_MAX_LIMIT, current + SEARCH_RECOMMENDATION_LIMIT_STEP)
                 mutableState.update { s ->
                     if (s.mode != mode) s
-                    else s.copy(result = result, visibleLimits = if (more.grew) s.visibleLimits + (key to grown) else s.visibleLimits)
+                    else s.copy(
+                        result = result,
+                        catalog = catalogEntries,
+                        visibleLimits = if (more.grew) s.visibleLimits + (key to grown) else s.visibleLimits,
+                    )
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -145,22 +187,60 @@ class DiscoverScreenModel(
         }
     }
 
+    /**
+     * Catalog infinite scroll: fetches the next popular page of the installed sources (plus tracker
+     * scores for comics) into the shared pool. Stops once a page brings nothing new.
+     */
+    fun loadMoreCatalog() {
+        val current = state.value
+        if (current.loading || current.catalogLoadingMore || current.catalogExhausted) return
+        if (catalogJob?.isActive == true) return
+        val mode = current.mode
+        val cached = cache[mode] ?: return
+        mutableState.update { it.copy(catalogLoadingMore = true) }
+        catalogJob = screenModelScope.launch(Dispatchers.IO) {
+            try {
+                val key = RecommendationSectionKey.HIGH_CONFIDENCE
+                val more = loader.loadMore(cached.pool, key, state.value.includeNsfw) { it.candidates.size }
+                // A reload replaced the pool meanwhile; drop this page.
+                if (cache[mode] !== cached) return@launch
+                cache[mode] = CachedPool(more.pool, cached.loadedAt)
+                val exhausted = key in more.pool.exhausted || (!more.grew && more.pool === cached.pool)
+                val result = rank(more.pool)
+                val catalogEntries = catalog(more.pool)
+                mutableState.update { s ->
+                    if (s.mode != mode) s else s.copy(result = result, catalog = catalogEntries, catalogExhausted = exhausted)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Best effort, like the For you rails: the catalog simply stops growing.
+                mutableState.update { s -> if (s.mode != mode) s else s.copy(catalogExhausted = true) }
+            } finally {
+                mutableState.update { it.copy(catalogLoadingMore = false) }
+            }
+        }
+    }
+
     private fun rank(pool: DiscoverPool): DiscoverResult =
         loader.rank(pool, state.value.includeLibrary, state.value.includeNsfw, System.currentTimeMillis())
+
+    private fun catalog(pool: DiscoverPool): List<DiscoverCatalogEntry> =
+        loader.catalog(pool, state.value.includeLibrary, state.value.includeNsfw, System.currentTimeMillis())
 
     /**
      * The in-app entry for a recommendation: an installed source result is inserted like a Browse
      * result would be; tracker-only picks return null so the caller falls back to global search.
      */
-    suspend fun resolveLocalManga(item: RecommendationItem): Manga? = withContext(Dispatchers.IO) {
-        for (target in item.candidate.targets) {
+    suspend fun resolveLocalManga(candidate: RecommendationCandidate): Manga? = withContext(Dispatchers.IO) {
+        for (target in candidate.targets) {
             if (sourceManager.get(target.sourceId) !is CatalogueSource) continue
             val existing = getManga.awaitByUrlAndSource(target.url, target.sourceId)
             if (existing != null) return@withContext existing
             val sManga = SManga.create().apply {
                 url = target.url
                 title = target.title
-                thumbnail_url = item.candidate.cover?.url
+                thumbnail_url = candidate.cover?.url
             }
             val manga = Manga.create(target.url, target.title, target.sourceId)
             manga.copyFrom(sManga)
@@ -174,8 +254,8 @@ class DiscoverScreenModel(
 
     companion object {
         /**
-         * Results are kept per mode for the whole process, so switching modes or reopening For you
-         * from Recents or Browse does not hit every source again; refresh forces a new load.
+         * Results are kept per mode for the whole process, so switching modes or returning to the
+         * Discover tab does not hit every source again; refresh forces a new load.
          */
         private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L

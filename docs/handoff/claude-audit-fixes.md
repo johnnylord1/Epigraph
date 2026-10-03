@@ -90,9 +90,37 @@ Pontos de atenção:
 - Testes que contam re-renderizações da grade ou dependem de
   `prefers-reduced-motion` podem precisar de ajuste.
 
+## Resultado da verificação (sessão de 3/out, nuvem Linux)
+
+- `pnpm test:unit`: 1866 passam. Falham 4 testes do First Run
+  (`FirstRun.test.ts`, `FirstRunBackupStep.test.ts`), que **já falhavam na
+  `main`**: o commit "Restore modal: short pages and bulk dependency
+  actions" tirou o botão "Review … dependencies" (os painéis agora
+  inspecionam ao abrir) e os testes não foram atualizados.
+- `pnpm build`: ok.
+- `cargo test syncd` (com `pnpm syncd:prepare-sidecar` antes): 362 passam,
+  incluindo os testes novos de `db.rs` e `app.rs`. Falham 3 testes de
+  `syncd::autostart`, que usam caminhos do Windows e só passam no Windows.
+- Regressões dos commits WIP corrigidas: testes de contrato de animação
+  (splash, paleta de busca, bundle, inventário de tema), `motionWake`
+  removido (o idle não pausa mais o app inteiro), Toaster segue o switch
+  Animações, indentação das regras de reduced motion.
+- **Mobile não foi compilado**: o Android SDK (`dl.google.com`) é bloqueado
+  na rede do ambiente de nuvem. Rode o comando Gradle acima no PC.
+
+## Feito nesta sessão
+
+- Aba **Descobrir** no mobile (ainda não compilada):
+  - Barra inferior: Biblioteca · Descobrir · Recentes · Explorar.
+  - Sub-abas Para você / Catálogo, com Quadrinhos / Novels.
+  - Catálogo: `buildDiscoverCatalog` em `DiscoverCatalog.kt`, rolagem
+    infinita via `loadMore(HIGH_CONFIDENCE)` e badges dos trackers.
+  - Cards `DiscoverEntryItem` removidos de Explorar e Recentes.
+  - Menu de 3 pontos (`showOverflowDialog`) no topo da aba.
+
 ## Pendente depois da verificação
 
-1. **Aba Descobrir no mobile**
+1. **Aba Descobrir no mobile** (implementada; falta compilar e testar no aparelho)
    - A aba "For you" passa a se chamar **Descobrir** (en: Discover) e vira
      uma aba da barra inferior: Biblioteca · Descobrir · Recentes · Explorar.
    - **Não** criar aba "Mais": o menu de 3 pontos no topo, que leva às

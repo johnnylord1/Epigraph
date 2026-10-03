@@ -72,6 +72,7 @@ import eu.kanade.tachiyomi.BuildConfig
 import com.google.android.material.R as materialR
 import androidx.appcompat.R as appcompatR
 import eu.kanade.tachiyomi.R
+import epigraph.recommendations.ui.DiscoverController
 import epigraph.ui.moment.MomentEvents
 import epigraph.ui.moment.MomentOverlay
 import epigraph.ui.motion.PredictiveBackPreview
@@ -583,6 +584,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         } ?: run {
             if (topRouter.hasRootController()) {
                 nav.selectedItemId = when (topRouter.backstack.firstOrNull()?.controller) {
+                    is DiscoverController -> R.id.nav_discover
                     is RecentsController -> R.id.nav_recents
                     is BrowseController -> R.id.nav_browse
                     else -> R.id.nav_library
@@ -618,6 +620,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                     setRoot(
                         when (id) {
                             R.id.nav_library -> if (basePreferences.composeLibrary().get()) LibraryComposeController() else LibraryController()
+                            R.id.nav_discover -> DiscoverController()
                             R.id.nav_recents -> RecentsController()
                             else -> BrowseController()
                         },
@@ -1477,6 +1480,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
     private fun setStartingTab() {
         if (this is SearchActivity || !isBindingInitialized) return
         if (nav.selectedItemId != R.id.nav_browse &&
+            nav.selectedItemId != R.id.nav_discover &&
             preferences.startingTab().get() >= 0
         ) {
             preferences.startingTab().set(

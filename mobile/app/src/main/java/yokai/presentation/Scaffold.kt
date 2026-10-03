@@ -85,7 +85,8 @@ fun YokaiScaffold(
     title: String = "",
     scrollBehavior: AppBarScrollBehavior? = null,
     fab: @Composable () -> Unit = {},
-    navigationIcon: ImageVector = Icons.AutoMirrored.Filled.ArrowBack,
+    /** Null for a root screen (a bottom navigation tab), which has nothing to go back to. */
+    navigationIcon: ImageVector? = Icons.AutoMirrored.Filled.ArrowBack,
     navigationIconLabel: String = stringResource(MR.strings.back),
     actions: @Composable RowScope.() -> Unit = {},
     appBarType: AppBarType = AppBarType.LARGE,
@@ -156,7 +157,7 @@ fun YokaiScaffold(
                                             IconButton(onClick = { expanded = false }) {
                                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(MR.strings.back))
                                             }
-                                        } else {
+                                        } else if (navigationIcon != null) {
                                             IconButton(onClick = onNavigationIconClicked) {
                                                 Icon(navigationIcon, contentDescription = navigationIconLabel)
                                             }
@@ -205,13 +206,15 @@ fun YokaiScaffold(
                                         actionIconContentColor = appBarContentColor,
                                     ),
                                     navigationIcon = {
-                                        Box(Modifier.padding(start = 4.dp)) {
-                                            ToolTipButton(
-                                                toolTipLabel = navigationIconLabel,
-                                                icon = navigationIcon,
-                                                enabledTint = appBarContentColor,
-                                                buttonClicked = onNavigationIconClicked,
-                                            )
+                                        if (navigationIcon != null) {
+                                            Box(Modifier.padding(start = 4.dp)) {
+                                                ToolTipButton(
+                                                    toolTipLabel = navigationIconLabel,
+                                                    icon = navigationIcon,
+                                                    enabledTint = appBarContentColor,
+                                                    buttonClicked = onNavigationIconClicked,
+                                                )
+                                            }
                                         }
                                     },
                                     actions = actions,
@@ -237,12 +240,14 @@ fun YokaiScaffold(
                                         actionIconContentColor = appBarContentColor,
                                     ),
                                     navigationIcon = {
-                                        ToolTipButton(
-                                            toolTipLabel = navigationIconLabel,
-                                            icon = navigationIcon,
-                                            enabledTint = appBarContentColor,
-                                            buttonClicked = onNavigationIconClicked,
-                                        )
+                                        if (navigationIcon != null) {
+                                            ToolTipButton(
+                                                toolTipLabel = navigationIconLabel,
+                                                icon = navigationIcon,
+                                                enabledTint = appBarContentColor,
+                                                buttonClicked = onNavigationIconClicked,
+                                            )
+                                        }
                                     },
                                     actions = actions,
                                     scrollBehavior = m3ScrollBehavior,

@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.ui.source
 
-import epigraph.recommendations.DiscoverMode
-import epigraph.recommendations.ui.DiscoverController
 import android.app.Activity
 import android.os.Build
 import android.os.Parcelable
@@ -982,14 +980,6 @@ class BrowseController :
             // "Last used" title until the next refresh. The next updateDataSet rebuilds it once.
             adapter?.addItem(0, item.header)
         }
-        // addScrollableHeader inserts at position 0, so the header added last is on top:
-        // Discover sits above everything, like the desktop Browse page's recommendations.
-        adapter?.addScrollableHeader(DiscoverEntryItem(type, ::openDiscover))
-    }
-
-    private fun openDiscover(type: BrowseSourceType) {
-        val mode = if (type == BrowseSourceType.Novel) DiscoverMode.NOVELS else DiscoverMode.COMICS
-        router.pushController(DiscoverController(mode).withFadeTransaction())
     }
 
     @Parcelize

@@ -1276,8 +1276,8 @@
     <string name="library_books_no_categories">Ainda não há categorias. Crie uma em Configurações › Biblioteca › Categorias.</string>
     <string name="discover">Descobrir</string>
     <string name="discover_card_title">Para você</string>
-    <string name="discover_card_subtitle_comics">Sugestões com base na sua biblioteca</string>
-    <string name="discover_card_subtitle_novels">Novels com base na sua biblioteca</string>
+    <string name="discover_catalog">Catálogo</string>
+    <string name="discover_catalog_empty">As extensões instaladas ainda não listaram nenhuma obra. Instale ou ative fontes em Explorar.</string>
     <string name="discover_comics">Quadrinhos</string>
     <string name="discover_top_pick">Escolha principal</string>
     <string name="discover_error">Não foi possível carregar o Descobrir</string>

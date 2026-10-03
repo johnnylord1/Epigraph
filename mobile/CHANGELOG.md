@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changes
+- Discover is now a bottom navigation tab: Library · Discover · Recents · Browse. It has two sub-tabs, For you (picks from the library and trackers) and Catalog (everything the installed extensions list, with tracker score badges), each for comics or novels. The For you cards at the top of Browse and Recents are gone.
+
 ### Fixes
 - Library categories sync for comics, novels and books. A folder used by several libraries keeps one desktop category per library. A rename, reorder or delete of the folder reaches all of them, and books no longer take over the comic category.
 - A desktop category with the same name as an existing folder joins that folder instead of creating a duplicate, in every library.

@@ -15,6 +15,7 @@ import com.bluelinelabs.conductor.ControllerChangeType
 import com.bluelinelabs.conductor.Router
 import com.bluelinelabs.conductor.RouterTransaction
 import com.bluelinelabs.conductor.changehandler.SimpleSwapChangeHandler
+import epigraph.recommendations.ui.DiscoverController
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.library.compose.LibraryComposeController
@@ -46,7 +47,7 @@ interface RootTabContent {
 }
 
 /**
- * Single persistent root controller that hosts Library / Recents / Browse simultaneously
+ * Single persistent root controller that hosts Library / Discover / Recents / Browse simultaneously
  * in sibling FrameLayouts. Tab swaps just toggle container visibility — the child
  * controllers are never destroyed by switching tabs, so subsequent visits skip the
  * inflate + layout work entirely. Inflation is deferred per tab: the child router for a
@@ -347,6 +348,7 @@ class RootTabsController : Controller() {
     private fun controllerForTab(id: Int): Controller = when (id) {
         R.id.nav_library ->
             if (basePreferences.composeLibrary().get()) LibraryComposeController() else LibraryController()
+        R.id.nav_discover -> DiscoverController()
         R.id.nav_recents -> RecentsController()
         else -> BrowseController()
     }
@@ -364,6 +366,7 @@ class RootTabsController : Controller() {
 
     private fun tabContainerId(navId: Int): Int = when (navId) {
         R.id.nav_library -> CONTAINER_ID_LIBRARY
+        R.id.nav_discover -> CONTAINER_ID_DISCOVER
         R.id.nav_recents -> CONTAINER_ID_RECENTS
         else -> CONTAINER_ID_BROWSE
     }
@@ -375,6 +378,7 @@ class RootTabsController : Controller() {
         private const val CONTAINER_ID_LIBRARY = 0x7E001001
         private const val CONTAINER_ID_RECENTS = 0x7E001002
         private const val CONTAINER_ID_BROWSE = 0x7E001003
-        private val TAB_IDS = listOf(R.id.nav_library, R.id.nav_recents, R.id.nav_browse)
+        private const val CONTAINER_ID_DISCOVER = 0x7E001004
+        private val TAB_IDS = listOf(R.id.nav_library, R.id.nav_discover, R.id.nav_recents, R.id.nav_browse)
     }
 }
