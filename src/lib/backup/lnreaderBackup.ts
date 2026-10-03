@@ -14,6 +14,10 @@ const SETTING_FILE = "Setting.json";
 const NOVEL_DIR = "NovelAndChapters";
 const DOWNLOAD_ZIP = "download.zip";
 const DATA_ZIP = "data.zip";
+const PLUGINS_FILE = "Plugins.json";
+const PLUGINS_ZIP = "plugins.zip";
+const NOVEL_FILES_ZIP = "novel-files.zip";
+const COVERS_DIR = "Covers";
 
 interface LnReaderPluginMetadata {
   id: string;
@@ -40,6 +44,12 @@ function safeJsonParse<T>(text: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function titleFromNovelPath(path: string): string | null {
+  const slug = path.split(/[?#]/, 1)[0]?.split("/").filter(Boolean).pop() ?? "";
+  const words = slug.replace(/[-_]+/g, " ").trim();
+  return words ? words.replace(/(^|\s)(\p{L})/gu, (_match, space: string, letter: string) => space + letter.toUpperCase()) : null;
 }
 
 function stableNovelId(pluginId: string, path: string, fallback: number): string {
@@ -105,13 +115,42 @@ function normalizeBackupAssetPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\/+/, "").split(/[?#]/, 1)[0] ?? "";
 }
 
-async function coverDataUrlFromBackup(downloadZip: JSZip | null, coverPath: string | null): Promise<string | null> {
-  if (!downloadZip || !coverPath) return coverPath;
-  const normalized = normalizeBackupAssetPath(coverPath);
-  const file = normalized ? downloadZip.file(normalized) : null;
+function mimeTypeFromBytes(bytes: Uint8Array, fallbackPath: string): string {
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "image/gif";
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  return mimeTypeFromPath(fallbackPath);
+}
+
+async function coverDataUrlFromBackup(
+  assets: { downloadZip: JSZip | null; novelFilesZip: JSZip | null; root: JSZip },
+  coverPath: string | null,
+  lnreaderNovelId: unknown,
+): Promise<string | null> {
+  const normalized = coverPath ? normalizeBackupAssetPath(coverPath) : "";
+  let file: JSZip.JSZipObject | null = null;
+  let fallbackPath = normalized;
+  if (normalized) {
+    file = assets.downloadZip?.file(normalized) ?? null;
+    if (!file && normalized.startsWith("Novels/")) {
+      file = assets.novelFilesZip?.file(normalized.slice("Novels/".length)) ?? null;
+    }
+  }
+  if (!file) {
+    const id = typeof lnreaderNovelId === "number" || (typeof lnreaderNovelId === "string" && lnreaderNovelId.length > 0)
+      ? String(lnreaderNovelId)
+      : null;
+    if (id) {
+      const coversPath = `${COVERS_DIR}/${id}`;
+      file = assets.root.file(coversPath) ?? null;
+      if (file) fallbackPath = coversPath;
+    }
+  }
   if (!file) return coverPath;
-  const base64 = await file.async("base64");
-  return `data:${mimeTypeFromPath(normalized)};base64,${base64}`;
+  const [bytes, base64] = await Promise.all([file.async("uint8array"), file.async("base64")]);
+  return `data:${mimeTypeFromBytes(bytes, fallbackPath)};base64,${base64}`;
 }
 
 export async function buildLnReaderNovelsBackupZip(snapshot: EpigraphNovelsSnapshot): Promise<Uint8Array> {
@@ -184,10 +223,14 @@ function pluginIdFromDownloadPath(path: string): string | null {
   return normalizeText(match?.[1]);
 }
 
+async function openNestedZip(zip: JSZip, name: string): Promise<JSZip | null> {
+  const entry = zip.file(name);
+  if (!entry) return null;
+  return JSZip.loadAsync(await entry.async("uint8array"));
+}
+
 async function openLnReaderDownloadZip(zip: JSZip): Promise<JSZip | null> {
-  const downloadZip = zip.file(DOWNLOAD_ZIP);
-  if (!downloadZip) return null;
-  return JSZip.loadAsync(await downloadZip.async("uint8array"));
+  return openNestedZip(zip, DOWNLOAD_ZIP);
 }
 
 function parseLnReaderSettingList(value: unknown): unknown[] {
@@ -231,19 +274,28 @@ function toLnReaderPluginMetadata(value: unknown): LnReaderPluginMetadata | null
 
 async function readLnReaderPluginMetadata(zip: JSZip, embeddedPluginIds: readonly string[]): Promise<Map<string, LnReaderPluginMetadata>> {
   const settingsFile = zip.file(SETTING_FILE);
-  if (!settingsFile) return new Map();
-  const settings = safeJsonParse<Record<string, unknown>>(await settingsFile.async("text"), {});
+  const settings = settingsFile
+    ? safeJsonParse<Record<string, unknown>>(await settingsFile.async("text"), {})
+    : {};
   const available = parseLnReaderSettingList(settings.AVAILABLE_PLUGINS)
     .map(toLnReaderPluginMetadata)
     .filter((entry): entry is LnReaderPluginMetadata => Boolean(entry));
   const installed = parseLnReaderSettingList(settings.INSTALL_PLUGINS)
     .map(toLnReaderPluginMetadata)
     .filter((entry): entry is LnReaderPluginMetadata => Boolean(entry));
+  const pluginsFile = zip.file(PLUGINS_FILE);
+  const pluginsJson = pluginsFile
+    ? safeJsonParse<unknown>(await pluginsFile.async("text"), [])
+    : [];
+  const pluginsJsonEntries = (Array.isArray(pluginsJson) ? pluginsJson : [])
+    .map(toLnReaderPluginMetadata)
+    .filter((entry): entry is LnReaderPluginMetadata => Boolean(entry));
   const availableById = new Map(available.map((entry) => [entry.id, entry] as const));
   const installedById = new Map(installed.map((entry) => [entry.id, entry] as const));
-  const pluginIds = [...new Set([...embeddedPluginIds, ...installedById.keys()])];
+  const pluginsJsonById = new Map(pluginsJsonEntries.map((entry) => [entry.id, entry] as const));
+  const pluginIds = [...new Set([...embeddedPluginIds, ...pluginsJsonById.keys(), ...installedById.keys()])];
   return new Map(pluginIds.flatMap((pluginId) => {
-    const metadata = installedById.get(pluginId) ?? availableById.get(pluginId);
+    const metadata = pluginsJsonById.get(pluginId) ?? installedById.get(pluginId) ?? availableById.get(pluginId);
     return metadata ? [[pluginId, metadata] as const] : [];
   }));
 }
@@ -260,12 +312,22 @@ function lnReaderRepositoryName(repositoryUrl: string): string {
 export async function extractLnReaderBackupPluginIds(bytes: Uint8Array | ArrayBuffer): Promise<string[]> {
   const zip = await openLnReaderDataZip(bytes);
   const downloadZip = await openLnReaderDownloadZip(zip);
-  if (!downloadZip) return [];
-
-  return [...new Set(Object.keys(downloadZip.files)
-    .map((path) => pluginIdFromDownloadPath(path))
-    .filter((pluginId): pluginId is string => Boolean(pluginId))
-    .sort((left, right) => left.localeCompare(right)))];
+  const pluginsZip = await openNestedZip(zip, PLUGINS_ZIP);
+  const ids = new Set<string>();
+  if (downloadZip) {
+    for (const path of Object.keys(downloadZip.files)) {
+      const pluginId = pluginIdFromDownloadPath(path);
+      if (pluginId) ids.add(pluginId);
+    }
+  }
+  if (pluginsZip) {
+    for (const path of Object.keys(pluginsZip.files)) {
+      const match = path.replace(/\\/g, "/").match(/^([^/]+)\/index\.js$/i);
+      const pluginId = normalizeText(match?.[1]);
+      if (pluginId) ids.add(pluginId);
+    }
+  }
+  return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
 export async function isLnReaderBackupZip(bytes: Uint8Array | ArrayBuffer): Promise<boolean> {
@@ -282,6 +344,7 @@ export async function isLnReaderBackupZip(bytes: Uint8Array | ArrayBuffer): Prom
 export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer): Promise<EpigraphNovelsSnapshot> {
   const zip = await openLnReaderDataZip(bytes);
   const downloadZip = await openLnReaderDownloadZip(zip);
+  const novelFilesZip = await openNestedZip(zip, NOVEL_FILES_ZIP);
   const embeddedPluginIds = await extractLnReaderBackupPluginIds(bytes);
   const pluginMetadata = await readLnReaderPluginMetadata(zip, embeddedPluginIds);
   const settingsFile = zip.file(SETTING_FILE);
@@ -312,8 +375,8 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
     }
     const plugin = pluginMetadata.get(pluginId) ?? null;
     const novelId = stableNovelId(pluginId, novelPath, index + 1);
-    const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? `Novel ${index + 1}`;
-    const coverUrl = await coverDataUrlFromBackup(downloadZip, normalizeText(raw.cover));
+    const title = normalizeText(raw.name) ?? normalizeText(raw.title) ?? titleFromNovelPath(novelPath) ?? `Novel ${index + 1}`;
+    const coverUrl = await coverDataUrlFromBackup({ downloadZip, novelFilesZip, root: zip }, normalizeText(raw.cover), raw.id);
     const tags = typeof raw.genres === "string"
       ? raw.genres.split(",").map((tag: string) => tag.trim()).filter(Boolean)
       : [];

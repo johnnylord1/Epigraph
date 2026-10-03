@@ -253,6 +253,111 @@ describe("LNReader backup compatibility", () => {
     expect(parsed.entries[0]?.coverUrl).toBe("data:image/png;base64,iVBORw==");
   });
 
+  it("reads LNReader format-2 plugins, repositories and covers", async () => {
+    const root = new JSZip();
+    root.file("Version.json", JSON.stringify({ appVersion: "2.1.4", formatVersion: 2 }));
+    root.file("Setting.json", JSON.stringify({}));
+    root.file("Plugins.json", JSON.stringify([
+      {
+        id: "illusia",
+        name: "Illusia",
+        site: "illusia",
+        lang: "Português",
+        version: "1.0.2",
+        url: "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/portuguese/illusia.js",
+        iconUrl: "",
+      },
+      {
+        id: "mahoureader",
+        name: "Mahou Reader",
+        site: "mahoureader",
+        lang: "Português",
+        version: "1.0.1",
+        url: "https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.js/src/plugins/portuguese/mahoureader.js",
+        iconUrl: "",
+      },
+    ]));
+    const pluginsZip = new JSZip();
+    pluginsZip.file("illusia/index.js", "module.exports = {};");
+    root.file("plugins.zip", await pluginsZip.generateAsync({ type: "uint8array" }));
+    const novelFilesZip = new JSZip();
+    novelFilesZip.file("illusia/1/cover.png", new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]));
+    root.file("novel-files.zip", await novelFilesZip.generateAsync({ type: "uint8array" }));
+    root.file("Covers/2", new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+    root.file("NovelAndChapters/1.json", JSON.stringify({
+      id: 1,
+      pluginId: "illusia",
+      path: "series/1",
+      name: "Illusia novel",
+      cover: "/Novels/illusia/1/cover.png?123",
+      inLibrary: 1,
+      chapters: [],
+    }));
+    root.file("NovelAndChapters/2.json", JSON.stringify({
+      id: 2,
+      pluginId: "mahoureader",
+      path: "series/2",
+      name: "Mahou novel",
+      cover: null,
+      inLibrary: 1,
+      chapters: [],
+    }));
+
+    const parsed = await parseLnReaderNovelsBackup(await root.generateAsync({ type: "uint8array" }));
+
+    expect((parsed.plugins ?? []).map((p) => p.id).sort()).toEqual(["illusia", "mahoureader"]);
+    const illusiaPlugin = parsed.plugins?.find((p) => p.id === "illusia");
+    const mahouPlugin = parsed.plugins?.find((p) => p.id === "mahoureader");
+    expect(illusiaPlugin?.repositoryUrl).toBe("https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json");
+    expect(mahouPlugin?.repositoryUrl).toBe("https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json");
+    expect((parsed.repositories ?? []).map((r) => r.url).sort()).toEqual([
+      "https://raw.githubusercontent.com/johnnylord1/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
+      "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json",
+    ]);
+    const illusiaEntry = parsed.entries.find((e) => e.source?.pluginId === "illusia");
+    const mahouEntry = parsed.entries.find((e) => e.source?.pluginId === "mahoureader");
+    expect(illusiaEntry?.coverUrl).toMatch(/^data:image\/webp;base64,/);
+    expect(mahouEntry?.coverUrl).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it("names a novel from its path when LNReader saved an empty name", async () => {
+    const root = new JSZip();
+    root.file("Version.json", JSON.stringify({ appVersion: "2.1.4", formatVersion: 2 }));
+    root.file("NovelAndChapters/3.json", JSON.stringify({
+      id: 3,
+      pluginId: "illusia",
+      path: "story/advento-das-tres-calamidades",
+      name: "",
+      inLibrary: true,
+      chapters: [],
+    }));
+
+    const parsed = await parseLnReaderNovelsBackup(await root.generateAsync({ type: "uint8array" }));
+
+    expect(parsed.entries.map((entry) => entry.title)).toEqual(["Advento Das Tres Calamidades"]);
+  });
+
+  it("extracts plugin ids from plugins.zip", async () => {
+    const root = new JSZip();
+    root.file("Version.json", JSON.stringify({ appVersion: "2.1.4", formatVersion: 2 }));
+    root.file("NovelAndChapters/1.json", JSON.stringify({
+      id: 1,
+      pluginId: "illusia",
+      path: "series/1",
+      name: "Test",
+      inLibrary: 1,
+      chapters: [],
+    }));
+    const pluginsZip = new JSZip();
+    pluginsZip.file("illusia/index.js", "module.exports = {};");
+    pluginsZip.file("novelbin/index.js", "module.exports = {};");
+    root.file("plugins.zip", await pluginsZip.generateAsync({ type: "uint8array" }));
+
+    const ids = await extractLnReaderBackupPluginIds(await root.generateAsync({ type: "uint8array" }));
+
+    expect(ids).toEqual(["illusia", "novelbin"]);
+  });
+
   it("restores LNReader read progress, resume history, and chapter bookmarks", async () => {
     const root = new JSZip();
     root.file("Version.json", JSON.stringify({ version: "test" }));
