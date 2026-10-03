@@ -313,8 +313,11 @@ describe("FirstRun", () => {
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
     await fireEvent.change(input, { target: { files: [new File(["data"], "test.epigraphbk")] } });
     await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Restore all" }));
-    expect(screen.getByRole("heading", { name: "Add repositories" })).toBeTruthy();
+    // The dependency panels inspect as soon as they open; restoring waits until they are done.
+    const restore = screen.getByRole("button", { name: "Restore all" });
+    await waitFor(() => expect(restore.hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(restore);
+    expect(await screen.findByRole("heading", { name: "Add repositories" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
     await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Install Novels test extension" }));

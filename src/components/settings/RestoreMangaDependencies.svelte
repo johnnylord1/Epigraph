@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { operationError, restoreNote } from "../../lib/i18n/operationPresentation";
   import { createProductionMangaDependencySession, type MangaDependencyPlan, type MangaRestoreChoices } from "../../lib/backup/mangaRestoreDependencies";
@@ -15,7 +15,14 @@
   let failedRepos = $state<string[]>([]);
   let detached = false;
   onDestroy(() => { detached = true; onBusy(false); });
-  onMount(() => { void run(); });
+  // Inspect once on open. Panels share one busy flag, so a panel opened while another is still
+  // inspecting waits for it instead of giving up.
+  let opened = false;
+  $effect(() => {
+    if (opened || disabled || busy) return;
+    opened = true;
+    void run();
+  });
   export async function review() { await run(); }
   async function run(action?: (activeSession: NonNullable<typeof session>) => Promise<MangaDependencyPlan>, notify = true) {
     if (disabled || busy) return;

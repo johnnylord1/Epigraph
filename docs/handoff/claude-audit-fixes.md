@@ -92,11 +92,11 @@ Pontos de atenção:
 
 ## Resultado da verificação (sessão de 3/out, nuvem Linux)
 
-- `pnpm test:unit`: 1866 passam. Falham 4 testes do First Run
-  (`FirstRun.test.ts`, `FirstRunBackupStep.test.ts`), que **já falhavam na
-  `main`**: o commit "Restore modal: short pages and bulk dependency
-  actions" tirou o botão "Review … dependencies" (os painéis agora
-  inspecionam ao abrir) e os testes não foram atualizados.
+- `pnpm test:unit`: 1870 passam, nenhum falha. Os 4 testes do First Run que
+  já falhavam na `main` foram atualizados: desde "Restore modal: short pages
+  and bulk dependency actions" os painéis de dependências inspecionam ao
+  abrir. Isso revelou um bug: com dois backups, o segundo painel desistia de
+  inspecionar enquanto o primeiro estava ocupado. Corrigido.
 - `pnpm build`: ok.
 - `cargo test syncd` (com `pnpm syncd:prepare-sidecar` antes): 362 passam,
   incluindo os testes novos de `db.rs` e `app.rs`. Falham 3 testes de
