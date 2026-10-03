@@ -195,10 +195,9 @@
   }
 
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .n-state--open {
-      animation: none;
-    }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .n-state--open {
+    animation: none;
+  }
 
   .n-state--info {
     --state-accent: var(--component-nocturne-state-info-accent);

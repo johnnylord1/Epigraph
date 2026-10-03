@@ -7106,10 +7106,10 @@
     opacity: 0;
   }
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .skeleton,
-    :global(html[data-epigraph-reduced-motion="true"]) .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
-      animation: none;
-    }
+  :global(html[data-epigraph-reduced-motion="true"]) .skeleton,
+  :global(html[data-epigraph-reduced-motion="true"]) .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
+    animation: none;
+  }
 
   .splitRoot {
     flex: 1;

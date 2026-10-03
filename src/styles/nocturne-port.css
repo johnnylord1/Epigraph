@@ -492,22 +492,21 @@
 }
 
 /* Reduced motion follows the app setting, then the system (motion.ts). */
-  html[data-epigraph-reduced-motion="true"] .epigraph-port--splash,
-  html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *,
-  html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::before,
-  html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::before,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
 
-  html[data-epigraph-reduced-motion="true"] /* The loading line must still read as alive: it breathes in place instead of sweeping across. */
-    .epigraph-port--splash .line span {
-    width: 100%;
-    animation: epigraph-splash-breathe 1.8s ease-in-out infinite !important;
-  }
-
+/* The loading line must still read as alive: it breathes in place instead of sweeping across. */
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash .line span {
+  width: 100%;
+  animation: epigraph-splash-breathe 1.8s ease-in-out infinite !important;
+}
 
 @keyframes epigraph-splash-breathe {
   0%, 100% { opacity: 0.22; }

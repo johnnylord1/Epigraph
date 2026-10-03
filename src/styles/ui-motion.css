@@ -28,15 +28,15 @@
 }
 
 /* Reduced motion follows the app setting, then the system (motion.ts). */
-  html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *,
-  html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *::before,
-  html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *::after {
-    transition-duration: 0.01ms !important;
-  }
+html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *,
+html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *::before,
+html[data-epigraph-reduced-motion="true"] .epigraph-app-shell *::after {
+  transition-duration: 0.01ms !important;
+}
 
-  html[data-epigraph-reduced-motion="true"] .ui-ripple-host {
-    display: none;
-  }
+html[data-epigraph-reduced-motion="true"] .ui-ripple-host {
+  display: none;
+}
 
 /* With animations off, one-shot entrances jump to their end state; spinners keep turning so a
    loading state still reads as alive. */

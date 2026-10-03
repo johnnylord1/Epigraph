@@ -168,9 +168,8 @@
   }
 
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .density-fill,
-    :global(html[data-epigraph-reduced-motion="true"]) .density-thumb {
-      transition-duration: 1ms;
-    }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .density-fill,
+  :global(html[data-epigraph-reduced-motion="true"]) .density-thumb {
+    transition-duration: 1ms;
+  }
 </style>

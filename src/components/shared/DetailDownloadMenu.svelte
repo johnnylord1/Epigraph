@@ -448,7 +448,6 @@
   }
 
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .ddm,
-    :global(html[data-epigraph-reduced-motion="true"]) .ddm-above { animation: none; }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .ddm,
+  :global(html[data-epigraph-reduced-motion="true"]) .ddm-above { animation: none; }
 </style>

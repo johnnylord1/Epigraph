@@ -2081,15 +2081,14 @@
   }
 
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal,
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal-backdrop,
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-pane,
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-disclosure__body,
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-qr-image,
-    :global(html[data-epigraph-reduced-motion="true"]) .syncd-status-dot {
-      animation: none;
-    }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal,
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal-backdrop,
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-pane,
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-disclosure__body,
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-qr-image,
+  :global(html[data-epigraph-reduced-motion="true"]) .syncd-status-dot {
+    animation: none;
+  }
 
   @media (max-width: 620px) {
     .syncd-modal__header,

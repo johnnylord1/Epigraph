@@ -566,9 +566,8 @@
     .complete-summary { grid-template-columns: 1fr; }
   }
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .loading-dot { animation: none; }
-    :global(html[data-epigraph-reduced-motion="true"]) .complete-ring,
-    :global(html[data-epigraph-reduced-motion="true"]) .complete-check { animation: none; stroke-dashoffset: 0; }
-    :global(html[data-epigraph-reduced-motion="true"]) .complete-halo { animation: none; }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .loading-dot { animation: none; }
+  :global(html[data-epigraph-reduced-motion="true"]) .complete-ring,
+  :global(html[data-epigraph-reduced-motion="true"]) .complete-check { animation: none; stroke-dashoffset: 0; }
+  :global(html[data-epigraph-reduced-motion="true"]) .complete-halo { animation: none; }
 </style>

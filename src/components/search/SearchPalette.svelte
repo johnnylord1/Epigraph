@@ -1596,11 +1596,10 @@
     }
   }
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .search-palette,
-    :global(html[data-epigraph-reduced-motion="true"]) .search-palette.is-open,
-    :global(html[data-epigraph-reduced-motion="true"]) .search-palette__result.is-work-card {
-      animation: none;
-      transition: none;
-    }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette,
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette.is-open,
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette__result.is-work-card {
+    animation: none;
+    transition: none;
+  }
 </style>

@@ -437,11 +437,10 @@
   }
 
   /* Reduced motion follows the app setting, then the system (motion.ts). */
-    :global(html[data-epigraph-reduced-motion="true"]) .n-mini-switch-thumb,
-    :global(html[data-epigraph-reduced-motion="true"]) .n-mini-switch button,
-    :global(html[data-epigraph-reduced-motion="true"]) .n-compact-toggle,
-    :global(html[data-epigraph-reduced-motion="true"]) .n-compact-toggle::after {
-      transition-duration: 1ms;
-    }
-
+  :global(html[data-epigraph-reduced-motion="true"]) .n-mini-switch-thumb,
+  :global(html[data-epigraph-reduced-motion="true"]) .n-mini-switch button,
+  :global(html[data-epigraph-reduced-motion="true"]) .n-compact-toggle,
+  :global(html[data-epigraph-reduced-motion="true"]) .n-compact-toggle::after {
+    transition-duration: 1ms;
+  }
 </style>

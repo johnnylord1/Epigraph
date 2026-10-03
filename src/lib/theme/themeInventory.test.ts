@@ -214,8 +214,8 @@ describe("exhaustive component theme inventory", () => {
   test("classifies every definition without inferring dead tokens", () => {
     expect(inventory.entries).toHaveLength(2598);
     expect(scoped).toHaveLength(2598);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2566);
-    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(32);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2564);
+    expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(34);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
   });
@@ -239,7 +239,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2549);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2547);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(16);
     expect(legacyOnly).toHaveLength(0);
@@ -273,6 +273,8 @@ describe("exhaustive component theme inventory", () => {
       "--component-toast-title-font-size",
       "--component-toast-title-font-weight",
       "--component-toast-title-line-height",
+      "--component-topbar-idle-blur",
+      "--component-topbar-idle-shadow",
       "--component-tracking-record-tracker-icon-text-background",
       "--component-tracking-record-tracker-icon-text-border",
       "--component-tracking-record-tracker-icon-text-color",

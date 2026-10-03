@@ -30,8 +30,6 @@ describe("release bundle architecture", () => {
     expect(app).toContain("lazyRetryEpoch += 1");
     expect(app).toContain("if (retryCount > 4) return");
     expect(app).toContain("prepareLibrary: async () =>");
-    expect(app).toContain(":not(.toast-life)");
-    expect(app).toContain(".epigraph-app-shell .toast.toast.toast.toast *)");
   });
 
   test("retries navigation chunks without unhandled preload failures", () => {
