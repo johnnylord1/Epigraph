@@ -75,6 +75,16 @@ val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 android {
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric screenshot tests (Roborazzi) need the merged resources, themes and menus.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            // `./gradlew :app:testDevDebugUnitTest -Proborazzi.record=true` writes the screenshots to
+            // app/build/outputs/roborazzi; without it the screenshot tests only render.
+            test.systemProperty(
+                "roborazzi.test.record",
+                providers.gradleProperty("roborazzi.record").getOrElse("false"),
+            )
+        }
     }
     defaultConfig {
         applicationId = "app.epigraph.mobile"
@@ -359,6 +369,10 @@ dependencies {
     androidTestImplementation(libs.bundles.test.android)
     testImplementation(kotlinx.coroutines.test)
     testImplementation(libs.sqldelight.sqlite.driver)
+    // Screenshot tests on the JVM: Robolectric renders, Roborazzi captures. JUnit 4 runs on the vintage engine.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testRuntimeOnly(libs.junit.vintage)
 
     // For detecting memory leaks
     // REF: https://square.github.io/leakcanary/

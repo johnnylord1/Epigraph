@@ -131,89 +131,19 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             }
         }
 
-        YokaiScaffold(
-            onNavigationIconClicked = {},
-            title = stringResource(MR.strings.discover),
-            // A bottom navigation tab: nothing to go back to.
-            navigationIcon = null,
-            appBarType = AppBarType.LARGE,
-            scrollBehavior = enterAlwaysCollapsedAppBarScrollBehavior(),
-            actions = {
-                IconButton(onClick = { showFilterSheet = true }) {
-                    Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
-                }
-                IconButton(onClick = { screenModel.load(force = true) }, enabled = !state.loading) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
-                }
-                // Same overflow as the other tabs (settings, stats, about…).
-                IconButton(onClick = { mainActivity?.showOverflowDialog() }) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.more))
-                }
-            },
-            // Inside the app bar so the tabs take its scrolled tone too.
-            appBarBottomContent = {
-                UnderlineTabs(
-                    options = listOf(
-                        DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
-                        DiscoverSection.CATALOG to MR.strings.discover_catalog,
-                    ),
-                    selected = state.section,
-                    onSelect = screenModel::setSection,
-                )
-                ModeChips(state.mode, onSelect = screenModel::setMode)
-            },
-        ) { contentPadding ->
-            Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-                Spacer(Modifier.height(4.dp))
-                if (state.loading && state.result != null) {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(2.dp)),
-                        color = MaterialTheme.colorScheme.secondary,
-                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                    )
-                }
-                val result = state.result
-                when {
-                    result == null && state.loading -> CenteredBox {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                    }
-                    result == null -> CenteredMessage(
-                        text = stringResource(MR.strings.discover_error) +
-                            state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
-                        onRetry = { screenModel.load(force = true) },
-                    )
-                    state.section == DiscoverSection.CATALOG -> if (state.catalog.isEmpty()) {
-                        CenteredMessage(
-                            text = stringResource(MR.strings.discover_catalog_empty),
-                            onRetry = { screenModel.load(force = true) },
-                        )
-                    } else {
-                        DiscoverCatalogGrid(
-                            entries = state.catalog,
-                            loadingMore = state.catalogLoadingMore,
-                            exhausted = state.catalogExhausted,
-                            bottomPadding = bottomNavHeight,
-                            onNearEnd = screenModel::loadMoreCatalog,
-                            onClick = openCandidate,
-                        )
-                    }
-                    result.sections.isEmpty() -> CenteredMessage(
-                        text = stringResource(
-                            if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
-                        ),
-                        onRetry = { screenModel.load(force = true) },
-                    )
-                    else -> DiscoverSections(
-                        sections = result.sections,
-                        failedProviders = result.failedProviders,
-                        visibleLimits = state.visibleLimits,
-                        bottomPadding = bottomNavHeight,
-                        onNearEnd = screenModel::showMore,
-                        onClick = { item -> openCandidate(item.candidate) },
-                    )
-                }
-            }
-        }
+        DiscoverContent(
+            state = state,
+            bottomPadding = bottomNavHeight,
+            onFilter = { showFilterSheet = true },
+            onRefresh = { screenModel.load(force = true) },
+            // Same overflow as the other tabs (settings, stats, about…).
+            onOverflow = { mainActivity?.showOverflowDialog() },
+            onSection = screenModel::setSection,
+            onMode = screenModel::setMode,
+            onShowMore = screenModel::showMore,
+            onLoadMoreCatalog = screenModel::loadMoreCatalog,
+            onOpen = openCandidate,
+        )
         if (showFilterSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showFilterSheet = false },
@@ -242,6 +172,108 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The Discover tab without its screen model: app bar, sub-tabs and the For you / Catalog bodies.
+ * [DiscoverScreen] feeds it; screenshot tests render it with fixed states.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DiscoverContent(
+    state: DiscoverScreenModel.State,
+    bottomPadding: Dp,
+    onFilter: () -> Unit,
+    onRefresh: () -> Unit,
+    onOverflow: () -> Unit,
+    onSection: (DiscoverSection) -> Unit,
+    onMode: (DiscoverMode) -> Unit,
+    onShowMore: (RecommendationSectionKey) -> Unit,
+    onLoadMoreCatalog: () -> Unit,
+    onOpen: (RecommendationCandidate) -> Unit,
+) {
+    YokaiScaffold(
+        onNavigationIconClicked = {},
+        title = stringResource(MR.strings.discover),
+        // A bottom navigation tab: nothing to go back to.
+        navigationIcon = null,
+        appBarType = AppBarType.LARGE,
+        scrollBehavior = enterAlwaysCollapsedAppBarScrollBehavior(),
+        actions = {
+            IconButton(onClick = onFilter) {
+                Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
+            }
+            IconButton(onClick = onRefresh, enabled = !state.loading) {
+                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
+            }
+            IconButton(onClick = onOverflow) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.more))
+            }
+        },
+        // Inside the app bar so the tabs take its scrolled tone too.
+        appBarBottomContent = {
+            UnderlineTabs(
+                options = listOf(
+                    DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
+                    DiscoverSection.CATALOG to MR.strings.discover_catalog,
+                ),
+                selected = state.section,
+                onSelect = onSection,
+            )
+            ModeChips(state.mode, onSelect = onMode)
+        },
+    ) { contentPadding ->
+        Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            Spacer(Modifier.height(4.dp))
+            if (state.loading && state.result != null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                )
+            }
+            val result = state.result
+            when {
+                result == null && state.loading -> CenteredBox {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                }
+                result == null -> CenteredMessage(
+                    text = stringResource(MR.strings.discover_error) +
+                        state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
+                    onRetry = onRefresh,
+                )
+                state.section == DiscoverSection.CATALOG -> if (state.catalog.isEmpty()) {
+                    CenteredMessage(
+                        text = stringResource(MR.strings.discover_catalog_empty),
+                        onRetry = onRefresh,
+                    )
+                } else {
+                    DiscoverCatalogGrid(
+                        entries = state.catalog,
+                        loadingMore = state.catalogLoadingMore,
+                        exhausted = state.catalogExhausted,
+                        bottomPadding = bottomPadding,
+                        onNearEnd = onLoadMoreCatalog,
+                        onClick = onOpen,
+                    )
+                }
+                result.sections.isEmpty() -> CenteredMessage(
+                    text = stringResource(
+                        if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
+                    ),
+                    onRetry = onRefresh,
+                )
+                else -> DiscoverSections(
+                    sections = result.sections,
+                    failedProviders = result.failedProviders,
+                    visibleLimits = state.visibleLimits,
+                    bottomPadding = bottomPadding,
+                    onNearEnd = onShowMore,
+                    onClick = { item -> onOpen(item.candidate) },
+                )
             }
         }
     }
