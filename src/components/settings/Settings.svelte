@@ -6755,7 +6755,7 @@
                                 {/each}
                               </ul>
                             {:else}
-                              <small>{restoreNote(result.outcome, $_)}{#each result.warnings as warning}<br />{restoreNote(warning, $_)}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
+                              <small>{restoreNote(result.outcome, $_)}{#each [...new Set(result.warnings.map(warning => restoreNote(warning, $_)))] as note}<br />{note}{/each}{#if result.detail}<br />{restoreNote(result.detail, $_)}{/if}</small>
                             {/if}
                           </span>
                         </div>

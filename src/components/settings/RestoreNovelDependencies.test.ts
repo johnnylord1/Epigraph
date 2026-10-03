@@ -8,39 +8,60 @@ afterEach(() => { cleanup(); applyAppLanguage("en"); });
 beforeEach(() => { vi.clearAllMocks(); });
 describe("shared restore dependency approval", () => {
   it("unmount releases only presentation busy state while the active preparation finishes", async () => {
-    let finish!: (result: unknown) => void;
+    const { promise, resolve: finish } = Promise.withResolvers<unknown>();
     const onBusy = vi.fn(), onChanged = vi.fn();
     f.inspect.mockResolvedValue({ plugins: [{ pluginId: "one", status: "needs-selection", repositoryUrls: ["https://a.test"], selectedRepositoryUrl: "https://a.test", candidates: [{ repositoryUrl: "https://a.test" }] }] });
-    f.apply.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    f.apply.mockImplementationOnce(() => promise);
     f.create.mockResolvedValue({ inspect: f.inspect, apply: f.apply });
     const view = render(RestoreNovelDependencies, { props: { file: new File(["x"], "x.zip"), format: "lnreader", onBusy, onChanged } });
-    await fireEvent.click(screen.getByRole("button", { name: "Review Novel dependencies" }));
-    await screen.findByRole("checkbox"); await fireEvent.click(screen.getByRole("checkbox"));
-    await fireEvent.click(screen.getByRole("button", { name: "Prepare approved dependencies" }));
+    await screen.findByRole("button", { name: "Install all" });
+    await fireEvent.click(screen.getByRole("button", { name: "Install all" }));
     await waitFor(() => expect(f.apply).toHaveBeenCalledOnce());
-    view.unmount(); expect(onBusy).toHaveBeenLastCalledWith(false);
+    view.unmount();
+    expect(onBusy).toHaveBeenLastCalledWith(false);
     finish({ plan: { plugins: [] }, warnings: [] });
-    await Promise.resolve(); expect(onChanged).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(onChanged).not.toHaveBeenCalled();
   });
-  it("inspects without installing and requires explicit origin approval before preparation", async () => {
-    const plugin = { pluginId: "plugin.one", status: "needs-selection", repositoryUrls: [], selectedRepositoryUrl: null,
-      candidates: [{ repositoryUrl: "https://plugins.test/index.json", trusted: false, enabled: true, repositoryId: "one" }] };
+  it("inspects on mount and installs every preselected plugin with one click", async () => {
+    const url1 = "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
+    const url2 = "https://x.test/index.json";
     f.create.mockResolvedValue({ inspect: f.inspect, apply: f.apply });
-    f.inspect.mockResolvedValue({ plugins: [plugin] });
-    f.apply.mockResolvedValue({ plan: { plugins: [{ ...plugin, status: "ready" }] }, warnings: [{ code: "approval-required", message: "raw English dependency warning" }] });
+    f.inspect.mockResolvedValue({ plugins: [
+      { pluginId: "plugin.one", status: "needs-selection", repositoryUrls: [url1], selectedRepositoryUrl: url1, candidates: [{ repositoryUrl: url1 }] },
+      { pluginId: "plugin.two", status: "needs-selection", repositoryUrls: [url2], selectedRepositoryUrl: null, candidates: [{ repositoryUrl: url2 }] },
+      { pluginId: "plugin.ready", status: "ready", repositoryUrls: [], selectedRepositoryUrl: null, candidates: [] },
+    ]});
+    f.apply.mockResolvedValue({ plan: { plugins: [] }, warnings: [{ code: "approval-required", message: "raw English dependency warning" }, { code: "approval-required", message: "raw English dependency warning" }] });
     render(RestoreNovelDependencies, { props: { file: new File(["fixture"], "novels.zip"), format: "lnreader" } });
-    expect(f.create).not.toHaveBeenCalled();
-    await fireEvent.click(screen.getByRole("button", { name: "Review Novel dependencies" }));
-    await screen.findByText("plugin.one");
+    await screen.findByText("2 plugins to install");
+    expect(screen.getByText("lnreader/lnreader-plugins, x.test")).toBeTruthy();
     expect(f.apply).not.toHaveBeenCalled();
-    await fireEvent.change(screen.getByRole("combobox"), { target: { value: "https://plugins.test/index.json" } });
-    expect((screen.getByRole("button", { name: "Prepare approved dependencies" }) as HTMLButtonElement).disabled).toBe(true);
-    await fireEvent.click(screen.getByRole("checkbox"));
-    await fireEvent.click(screen.getByRole("button", { name: "Prepare approved dependencies" }));
-    await waitFor(() => expect(f.apply).toHaveBeenCalledWith({ repositoryUrls: ["https://plugins.test/index.json"], plugins: { "plugin.one": "https://plugins.test/index.json" } }));
-    await screen.findByText(translate("outcomes.approval"));
+    await fireEvent.click(screen.getByRole("button", { name: "Install all" }));
+    await waitFor(() => expect(f.apply).toHaveBeenCalledWith({ repositoryUrls: [url1, url2], plugins: { "plugin.one": url1, "plugin.two": url2 } }));
+    await screen.findByText("Warnings (2)");
+    const notes = screen.getAllByText(translate("outcomes.approval"));
+    expect(notes).toHaveLength(1);
     expect(screen.queryByText("raw English dependency warning")).toBeNull();
     applyAppLanguage("ja");
     await waitFor(() => expect(screen.getByText(translate("outcomes.approval"))).toBeTruthy());
+  });
+  it("asks for a repository only when a plugin has several candidates", async () => {
+    f.create.mockResolvedValue({ inspect: f.inspect, apply: f.apply });
+    f.inspect.mockResolvedValue({ plugins: [{ pluginId: "multi", status: "needs-selection", repositoryUrls: ["https://a.test", "https://b.test"], selectedRepositoryUrl: null, candidates: [{ repositoryUrl: "https://a.test" }, { repositoryUrl: "https://b.test" }] }] });
+    render(RestoreNovelDependencies, { props: { file: new File(["fixture"], "novels.zip"), format: "lnreader" } });
+    await screen.findByRole("combobox");
+    expect(screen.queryByRole("button", { name: "Install all" })).toBeNull();
+    await fireEvent.change(screen.getByRole("combobox"), { target: { value: "https://a.test" } });
+    await screen.findByText("1 plugins to install");
+  });
+  it("collapses conflicts and missing plugins", async () => {
+    f.create.mockResolvedValue({ inspect: f.inspect, apply: f.apply });
+    f.inspect.mockResolvedValue({ plugins: [
+      { pluginId: "conflict.one", status: "conflict", repositoryUrls: [], selectedRepositoryUrl: null, candidates: [] },
+      { pluginId: "missing.one", status: "missing", repositoryUrls: [], selectedRepositoryUrl: null, candidates: [] },
+    ]});
+    render(RestoreNovelDependencies, { props: { file: new File(["fixture"], "novels.zip"), format: "lnreader" } });
+    await screen.findByText("2 plugins need attention");
   });
 });

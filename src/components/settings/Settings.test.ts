@@ -730,7 +730,7 @@ describe("Settings", () => {
       expect(fileRow?.textContent).toContain("6936 chapters");
     });
     await fireEvent.click(await screen.findByRole("button", { name: /Sources and extensions/ }));
-    expect(screen.getByRole("button", { name: "Review Novel dependencies" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Review Novel dependencies" })).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Done" }));
 
     const mainButton = screen.getByRole("button", { name: "LNReader novels restore" });
