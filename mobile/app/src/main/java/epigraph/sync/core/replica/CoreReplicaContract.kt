@@ -136,6 +136,13 @@ interface CoreReplicaTransaction {
 
     suspend fun recordAppliedInboxEvent(event: CoreReplicaInboxEvent)
 
+    /**
+     * Drops inbox deduplication rows at or below every stored cursor. No coverage can receive those
+     * events again (`/v1/changes` and the live stream both resume after their cursor), so keeping them
+     * only grows the database.
+     */
+    suspend fun pruneAppliedInbox() = Unit
+
     /** Written last in the transaction and becomes visible only when that transaction commits. */
     suspend fun saveCheckpoint(checkpoint: CoreReplayCheckpoint)
 }

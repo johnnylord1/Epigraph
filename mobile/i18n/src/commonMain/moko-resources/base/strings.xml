@@ -2312,6 +2312,17 @@
     <string name="epigraph_core_sync_status_idle">No pending changes</string>
     <string name="epigraph_core_sync_now">Sync now</string>
     <string name="epigraph_core_sync_now_summary">Send pending changes and fetch updates from the desktop</string>
+    <string name="epigraph_core_blocked_title">Changes that did not sync</string>
+    <string name="epigraph_core_blocked_summary">%1$d waiting for a decision</string>
+    <string name="epigraph_core_blocked_dialog_body">The desktop refused these changes. Send them again after fixing the cause, or discard them; discarding keeps the change on this phone only.</string>
+    <string name="epigraph_core_blocked_retry">Send again</string>
+    <string name="epigraph_core_blocked_retry_all">Send all again</string>
+    <string name="epigraph_core_blocked_discard">Discard</string>
+    <string name="epigraph_core_blocked_close">Close</string>
+    <string name="epigraph_core_blocked_kind_comic">Comic</string>
+    <string name="epigraph_core_blocked_kind_novel">Novel</string>
+    <string name="epigraph_core_blocked_kind_book">Book</string>
+    <string name="epigraph_core_blocked_kind_other">Item</string>
     <string name="epigraph_core_pairing_waiting_code">Waiting for approval on the desktop… Verification code %1$s</string>
     <string name="epigraph_core_error_pin_not_found">No open pairing matches this PIN. Check the code on the desktop.</string>
     <string name="epigraph_core_error_pin_locked">Too many incorrect PINs. Open Add device again on the desktop.</string>

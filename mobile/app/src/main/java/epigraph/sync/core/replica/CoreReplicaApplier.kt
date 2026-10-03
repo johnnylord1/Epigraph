@@ -119,6 +119,7 @@ class CoreReplicaApplier(
                 }
             }
             saveCheckpoint(checkpoint)
+            pruneAppliedInbox()
             CoreReplicaApplyResult.ChangesApplied(applied, alreadyApplied, checkpoint)
         }
     }

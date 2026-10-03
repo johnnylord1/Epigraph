@@ -343,7 +343,7 @@ fun epigraphSyncModule(app: Application) = module {
             scheduler = get(),
         )
     }
-    single { SnapshotCoreReplicaSync(get(), get(), get(), get()) }
+    single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
     single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
         SuwayomiCatalogSync(get(), get(), get(), get(), projectionStatus = get<CoreSuwayomiProjectionStatusSource>())
     }

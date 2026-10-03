@@ -272,6 +272,10 @@ private class SqlDelightCoreReplicaTransaction(
         )
     }
 
+    override suspend fun pruneAppliedInbox() {
+        queries.pruneCoreReplicaInboxBelowCheckpoints()
+    }
+
     override suspend fun saveCheckpoint(checkpoint: CoreReplayCheckpoint) {
         val (coverageKey, coverageType, scopeId) = when (val coverage = checkpoint.coverage) {
             CoreReplayCoverage.AllGrantedScopes -> Triple(ALL_COVERAGE_KEY, ALL, null)

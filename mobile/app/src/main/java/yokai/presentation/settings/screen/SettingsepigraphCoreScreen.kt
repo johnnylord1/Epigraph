@@ -1,5 +1,8 @@
 package yokai.presentation.settings.screen
 
+import epigraph.contract.ClientMutationId
+import epigraph.sync.BlockedMutation
+import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.extensions.ComicRepositoryRow
@@ -22,6 +25,7 @@ import epigraph.sync.core.work.CoreSyncStatus
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.CoreUserActionReason
 import android.text.format.DateUtils
+import java.util.UUID
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -113,6 +117,14 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var comicRepositories by remember { mutableStateOf(emptyList<ComicRepositoryRow>()) }
         var openSetupAfterSync by remember { mutableStateOf(false) }
         var sawSyncRunning by remember { mutableStateOf(false) }
+        val mutationCoordinator = remember { GlobalContext.get().get<EpigraphMutationCoordinator>() }
+        var blockedMutations by remember { mutableStateOf<List<BlockedMutation>>(emptyList()) }
+        var showBlockedDialog by remember { mutableStateOf(false) }
+        var blockedRefresh by remember { mutableStateOf(0) }
+        LaunchedEffect(syncStatus, blockedRefresh) {
+            blockedMutations = runCatching { mutationCoordinator.blockedMutations() }.getOrDefault(emptyList())
+            if (blockedMutations.isEmpty()) showBlockedDialog = false
+        }
 
         LaunchedEffect(controller) { controller.refresh() }
         LaunchedEffect(extensionReconciliation) { extensionReconciliation.refreshFromStore() }
@@ -430,6 +442,78 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             )
         }
 
+        if (showBlockedDialog && blockedMutations.isNotEmpty()) {
+            fun retry(items: List<BlockedMutation>) {
+                coroutineScope.launch {
+                    val now = System.currentTimeMillis()
+                    items.forEach { item ->
+                        runCatching {
+                            mutationCoordinator.retryBlocked(
+                                item.sequence,
+                                ClientMutationId(UUID.randomUUID().toString()),
+                                now,
+                            )
+                        }
+                    }
+                    blockedRefresh += 1
+                    runCatching { syncMonitor.syncNow() }
+                }
+            }
+            AlertDialog(
+                onDismissRequest = { showBlockedDialog = false },
+                title = { Text(stringResource(MR.strings.epigraph_core_blocked_title)) },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = stringResource(MR.strings.epigraph_core_blocked_dialog_body),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        blockedMutations.forEach { item ->
+                            Spacer(modifier = Modifier.padding(top = 12.dp))
+                            Text(
+                                text = "${stringResource(blockedKindLabel(item.entityType))} · ${item.entityType.substringAfter('.')}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = "${item.errorCode} · ${DateUtils.getRelativeTimeSpanString(item.createdAtEpochMillis)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row {
+                                TextButton(onClick = { retry(listOf(item)) }) {
+                                    Text(stringResource(MR.strings.epigraph_core_blocked_retry))
+                                }
+                                TextButton(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            runCatching { mutationCoordinator.discardBlocked(item.sequence) }
+                                            blockedRefresh += 1
+                                        }
+                                    },
+                                ) {
+                                    Text(
+                                        stringResource(MR.strings.epigraph_core_blocked_discard),
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { retry(blockedMutations) }) {
+                        Text(stringResource(MR.strings.epigraph_core_blocked_retry_all))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showBlockedDialog = false }) {
+                        Text(stringResource(MR.strings.epigraph_core_blocked_close))
+                    }
+                },
+            )
+        }
+
         return persistentListOf(
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.epigraph_core),
@@ -529,6 +613,13 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
                         },
                     ),
+                    blockedMutations.takeIf { it.isNotEmpty() }?.let { blocked ->
+                        Preference.PreferenceItem.TextPreference(
+                            title = stringResource(MR.strings.epigraph_core_blocked_title),
+                            subtitle = stringResource(MR.strings.epigraph_core_blocked_summary, blocked.size),
+                            onClick = { showBlockedDialog = true },
+                        )
+                    },
                     novelsWithoutChapters.takeIf { it.isNotEmpty() }?.let { titles ->
                         Preference.PreferenceItem.TextPreference(
                             title = stringResource(MR.strings.epigraph_core_novels_without_chapters_title),
@@ -542,6 +633,13 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 ).toPersistentList(),
             ),
         )
+    }
+
+    private fun blockedKindLabel(entityType: String): StringResource = when (entityType.substringBefore('.')) {
+        "comic" -> MR.strings.epigraph_core_blocked_kind_comic
+        "novel" -> MR.strings.epigraph_core_blocked_kind_novel
+        "book" -> MR.strings.epigraph_core_blocked_kind_book
+        else -> MR.strings.epigraph_core_blocked_kind_other
     }
 
     /** Never reports synced while anything is unsettled; [CoreSyncStatus.Synced] has no counts. */

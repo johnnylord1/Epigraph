@@ -30,6 +30,7 @@ import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
+import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
 import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
@@ -287,6 +288,7 @@ class SnapshotCoreReplicaSync(
     private val endpoints: epigraph.sync.core.session.CoreEndpointResolver,
     private val applier: CoreReplicaApplier,
     private val checkpoints: CoreReplicaCheckpointReader,
+    private val historyResetter: CoreReplicaCheckpointResetter? = null,
 ) : CoreReplicaSyncPort {
     override suspend fun synchronize(
         credentials: CoreCredentialSession,
@@ -310,9 +312,35 @@ class SnapshotCoreReplicaSync(
                 try {
                     val coverage = CoreReplayCoverage.Filtered(scopeId)
                     val checkpoint = checkpoints.latestCheckpoint(coverage)
-                    when (val response = checkpoint?.let {
+                    val response = checkpoint?.let {
                         http.changes(accessToken, it.lastGlobalEventId, scopeId)
-                    }) {
+                    }
+                    // A Core whose change log was rewound publishes versions below cursors this
+                    // phone already holds. Every new change would then look already applied, so the
+                    // whole replica history is forgotten and each scope is rebuilt from a snapshot.
+                    val publishedVersion = when (response) {
+                        is CoreHttpResult.Success -> response.value.currentServerVersion
+                        is CoreHttpResult.Failure -> response.errorEnvelope?.error?.currentServerVersion
+                        null -> null
+                    }
+                    if (
+                        checkpoint != null &&
+                        publishedVersion != null &&
+                        publishedVersion < checkpoint.lastGlobalEventId &&
+                        historyResetter != null
+                    ) {
+                        historyResetter.reset()
+                        when (val snapshot = http.snapshot(accessToken, scopeId)) {
+                            is CoreHttpResult.Success -> applier.applySnapshot(
+                                snapshot.value,
+                                capabilities,
+                                credentials.serverId,
+                            )
+                            is CoreHttpResult.Failure -> return@withAccessTokenString snapshot.toReplicaOutcome()
+                        }
+                        continue
+                    }
+                    when (response) {
                         is CoreHttpResult.Success -> applier.applyChanges(
                             response.value,
                             coverage,

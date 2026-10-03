@@ -217,6 +217,43 @@ class EpigraphMutationCoordinator(
         aethon_syncQueries.blockedMutationCount().executeAsOne()
     }
 
+    /** The parked rows themselves, oldest first, for the screen that lets the user decide. */
+    suspend fun blockedMutations(): List<BlockedMutation> = databaseHandler.await {
+        aethon_syncQueries.selectBlockedMutations().executeAsList().map { row ->
+            BlockedMutation(
+                sequence = row.sequence,
+                scopeId = row.scope_id,
+                entityType = row.entity_type,
+                entityId = row.entity_id,
+                operation = row.operation,
+                errorCode = row.last_error.orEmpty().removePrefix(BLOCKED_PREFIX),
+                createdAtEpochMillis = row.created_at,
+            )
+        }
+    }
+
+    /**
+     * Sends a parked row again under a new client mutation ID. The Core keeps the receipt of the
+     * rejected attempt under the old ID, so reusing it would only replay the same rejection.
+     */
+    suspend fun retryBlocked(sequence: Long, newClientMutationId: ClientMutationId, nowEpochMillis: Long) {
+        require(nowEpochMillis >= 0) { "retry timestamp must be epoch milliseconds" }
+        databaseHandler.await(inTransaction = true) {
+            aethon_syncQueries.retryBlockedMutation(
+                newClientMutationId = newClientMutationId.value,
+                now = nowEpochMillis,
+                sequence = sequence,
+            )
+        }
+    }
+
+    /** Drops a parked row the user chose not to send. The local change itself stays on this phone. */
+    suspend fun discardBlocked(sequence: Long) {
+        databaseHandler.await(inTransaction = true) {
+            aethon_syncQueries.discardBlockedMutation(sequence)
+        }
+    }
+
     /**
      * A manual "sync now" must not wait out transient exponential backoff. Blocked rows keep their
      * parked schedule because retrying them cannot succeed without a change elsewhere.
@@ -328,3 +365,15 @@ data class EpigraphMutationAcknowledgement(
         require(receivedAtEpochMillis >= 0) { "receipt timestamp must be epoch milliseconds" }
     }
 }
+
+data class BlockedMutation(
+    val sequence: Long,
+    val scopeId: String,
+    val entityType: String,
+    val entityId: String,
+    val operation: String,
+    val errorCode: String,
+    val createdAtEpochMillis: Long,
+)
+
+private const val BLOCKED_PREFIX = "blocked:"
