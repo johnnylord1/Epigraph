@@ -1595,12 +1595,12 @@
       max-height: calc(100vh - var(--sp-6));
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .search-palette,
-    .search-palette.is-open,
-    .search-palette__result.is-work-card {
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .search-palette,
+    :global(html[data-epigraph-reduced-motion="true"]) .search-palette.is-open,
+    :global(html[data-epigraph-reduced-motion="true"]) .search-palette__result.is-work-card {
       animation: none;
       transition: none;
     }
-  }
+
 </style>

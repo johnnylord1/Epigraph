@@ -4,7 +4,7 @@
   import RestoreMangaDependencies from "./RestoreMangaDependencies.svelte";
   import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { enterOnChange } from "../../lib/motion/motion";
+  import { enterOnChange, systemPrefersReducedMotion } from "../../lib/motion/motion";
   import "../pages/migrationModal.css";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
@@ -127,6 +127,11 @@
     startLocalFlareSolverrAndEnable,
   } from "../../lib/flaresolverr";
   import { isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
+
+  // The switch shows what the app does now: the user's choice, or the system setting until one is made.
+  const animationsOn = $derived(
+    typeof store.settings.uiAnimations === "boolean" ? store.settings.uiAnimations : !systemPrefersReducedMotion(),
+  );
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: EpigraphRestorePlan | null;
@@ -4304,6 +4309,18 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_compactSidebarHint")}</p>
                   </div>
                   <button role="switch" aria-checked={store.settings.compactSidebar} aria-label={$_("settings_inline_compactSidebar")} class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_inline_animations")}</p>
+                    <p class="settings-mini-row__hint">
+                      {$_("settings_inline_animationsHint")}
+                      {#if typeof store.settings.uiAnimations !== "boolean"}
+                        {" "}{$_("settings_inline_animationsSystem")}.
+                      {/if}
+                    </p>
+                  </div>
+                  <button role="switch" aria-checked={animationsOn} aria-label={$_("settings_inline_animations")} class="settings-toggle" class:is-on={animationsOn} type="button" onclick={() => updateSettings({ uiAnimations: !animationsOn })}></button>
                 </div>
               </div>
             </div>

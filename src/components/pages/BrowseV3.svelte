@@ -7105,12 +7105,12 @@
   .searchRecommendationCard .n-library-card__cover img[data-cover-state="loading"] {
     opacity: 0;
   }
-  @media (prefers-reduced-motion: reduce) {
-    .skeleton,
-    .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .skeleton,
+    :global(html[data-epigraph-reduced-motion="true"]) .n-library-card__cover:has(> img[data-cover-state="loading"]) > .searchCoverSkeleton {
       animation: none;
     }
-  }
+
   .splitRoot {
     flex: 1;
     display: flex;

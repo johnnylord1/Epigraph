@@ -339,7 +339,53 @@ pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
         .run(&pool)
         .await
         .context("failed to run syncd migrations")?;
+    preserve_change_log_sequence(&pool)
+        .await
+        .context("failed to preserve the change log sequence")?;
     Ok(pool)
+}
+
+/// `server_version` is the `change_log` AUTOINCREMENT key. Migrations that add an entity type rebuild
+/// `change_log` (its CHECK lists the types), and a rebuilt table restarts its sequence at the highest
+/// copied row: after a fully pruned log that is 1, below every cursor clients hold, so they would drop
+/// every new change as already seen. The sequence must never fall below the version already published.
+pub(crate) async fn preserve_change_log_sequence(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    let mut tx = begin_write(pool).await?;
+    let published: Option<i64> = sqlx::query_scalar(
+        "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(published) = published.filter(|version| *version > 0) else {
+        tx.commit().await?;
+        return Ok(());
+    };
+    let max_row: Option<i64> = sqlx::query_scalar("SELECT MAX(server_version) FROM change_log")
+        .fetch_one(&mut *tx)
+        .await?;
+    let floor = published.max(max_row.unwrap_or(0));
+    let updated = sqlx::query(
+        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'change_log' AND seq < ?",
+    )
+    .bind(floor)
+    .bind(floor)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        sqlx::query(
+            r#"
+            INSERT INTO sqlite_sequence (name, seq)
+            SELECT 'change_log', ?
+            WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'change_log')
+            "#,
+        )
+        .bind(floor)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The migration checksum hashes the script bytes as they were in the build checkout, so a build from a CRLF
@@ -1852,6 +1898,9 @@ pub async fn fetch_replay_changes(
     Ok(rows)
 }
 
+/// Ninety days: three times the default change-log replay window.
+pub(crate) const MUTATION_RECEIPT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow::Result<()> {
     let mut tx = begin_write(pool).await?;
 
@@ -1861,6 +1910,13 @@ pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow:
         .await?;
     sqlx::query("DELETE FROM change_log WHERE replay_until_ms < ?")
         .bind(now_ms)
+        .execute(&mut *tx)
+        .await?;
+    // Receipts make a retried mutation idempotent. A phone retries within hours or days; after
+    // MUTATION_RECEIPT_RETENTION_MS a resend is decided again by the entity's event clock, which
+    // supersedes stale writes on its own. Without this bound the table grows with every write.
+    sqlx::query("DELETE FROM mutation_receipts WHERE created_at_ms < ?")
+        .bind(now_ms.saturating_sub(MUTATION_RECEIPT_RETENTION_MS))
         .execute(&mut *tx)
         .await?;
 
@@ -9186,6 +9242,106 @@ mod tests {
             runtime.min_replayable_server_version,
             recent.server_version - 1
         );
+    }
+
+    #[tokio::test]
+    async fn change_log_sequence_never_restarts_below_the_published_version() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let mut last = 0;
+        for index in 0..3 {
+            last = append_change_log_entry(
+                &pool,
+                "books:global",
+                None,
+                "book.progress",
+                &format!("book-{index}"),
+                "merge",
+                index + 1,
+                "device-1",
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap()
+            .server_version;
+        }
+        // A fully pruned log rebuilt the way the entity-type migrations rebuild it.
+        sqlx::raw_sql(
+            r#"
+            DELETE FROM change_log;
+            DELETE FROM sqlite_sequence WHERE name = 'change_log';
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        drop(pool);
+
+        let pool = connect(&config).await.unwrap();
+        let next = append_change_log_entry(
+            &pool,
+            "books:global",
+            None,
+            "book.progress",
+            "book-after-rebuild",
+            "merge",
+            10,
+            "device-1",
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+        assert!(
+            next.server_version > last,
+            "server_version restarted at {} after publishing {last}",
+            next.server_version
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_drops_mutation_receipts_past_their_retention() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let now = now_ms();
+        for (id, created_at) in [
+            ("old", now - MUTATION_RECEIPT_RETENTION_MS - 1),
+            ("fresh", now - 1_000),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO mutation_receipts (
+                    device_id, client_mutation_id, mutation_hash, mutation_json, result_json,
+                    applied_server_version, created_at_ms
+                ) VALUES ('device-1', ?, ?, '{}', '{}', NULL, ?)
+                "#,
+            )
+            .bind(id)
+            .bind("a".repeat(64))
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        prune_expired_rows(&pool, now).await.unwrap();
+
+        let remaining: Vec<String> = sqlx::query_scalar(
+            "SELECT client_mutation_id FROM mutation_receipts ORDER BY client_mutation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, vec!["fresh".to_string()]);
     }
 
     #[tokio::test]

@@ -1063,13 +1063,13 @@
     text-align: right;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .settingsPanel,
-    .settingsBackdrop,
-    .preferenceSpinner {
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .settingsPanel,
+    :global(html[data-epigraph-reduced-motion="true"]) .settingsBackdrop,
+    :global(html[data-epigraph-reduced-motion="true"]) .preferenceSpinner {
       animation: none;
     }
-  }
+
 
   @keyframes spin {
     to { transform: rotate(360deg); }

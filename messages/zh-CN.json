@@ -3492,5 +3492,8 @@
   "home_tracking_emptyBody": "连接 AniList、MyAnimeList 等服务，让阅读进度保持同步。",
   "home_tracking_connect": "连接服务",
   "home_updates_moreChapters": "+{count} 章",
-  "bookToNovel_lowConfidenceBody": "小说标题与书籍不同。添加前请确认是同一部作品。"
+  "bookToNovel_lowConfidenceBody": "小说标题与书籍不同。添加前请确认是同一部作品。",
+  "settings_inline_animations": "动画",
+  "settings_inline_animationsHint": "页面切换、卡片移动到位等界面动效。关闭后所有内容会立即显示。",
+  "settings_inline_animationsSystem": "正在跟随系统设置"
 }

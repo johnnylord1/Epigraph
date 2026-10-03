@@ -2080,16 +2080,16 @@
     40% { box-shadow: var(--component-syncd-pulse-ring); }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .syncd-modal,
-    .syncd-modal-backdrop,
-    .syncd-pane,
-    .syncd-disclosure__body,
-    .syncd-qr-image,
-    .syncd-status-dot {
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal,
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-modal-backdrop,
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-pane,
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-disclosure__body,
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-qr-image,
+    :global(html[data-epigraph-reduced-motion="true"]) .syncd-status-dot {
       animation: none;
     }
-  }
+
 
   @media (max-width: 620px) {
     .syncd-modal__header,

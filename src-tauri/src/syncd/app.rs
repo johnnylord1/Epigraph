@@ -2071,6 +2071,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replay_rejects_a_cursor_ahead_of_the_server_history() {
+        let (_temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["books:global", "novels:profile:main"],
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE server_runtime SET current_server_version = 10, min_replayable_server_version = 5 WHERE singleton_id = 1",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        for (uri, last_event_id) in [
+            ("/v1/events?scopeId=books:global", Some("42")),
+            ("/v1/changes?sinceVersion=42&scopeId=books:global", None),
+        ] {
+            let app = build_test_router(state.clone());
+            let mut request = Request::builder()
+                .uri(uri)
+                .header(CLIENT_VERSION_HEADER, "0.1.0")
+                .header(CLIENT_PROTOCOL_HEADER, "1")
+                .header("authorization", "Bearer secret-token");
+            if let Some(last_event_id) = last_event_id {
+                request = request.header("last-event-id", last_event_id);
+            }
+            let response = app
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::CONFLICT, "{uri}");
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let payload: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(payload["error"]["code"], "REPLAY_WINDOW_EXPIRED", "{uri}");
+            assert_eq!(payload["error"]["requiredAction"], "full_bootstrap", "{uri}");
+            assert_eq!(payload["error"]["currentServerVersion"], 10, "{uri}");
+        }
+    }
+
+    #[tokio::test]
     async fn events_emit_replay_required_when_live_receiver_lags() {
         let (_temp, state) = build_state_for_http_with_channel(2).await;
         ensure_test_token(

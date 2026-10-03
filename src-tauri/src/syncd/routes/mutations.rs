@@ -1894,7 +1894,7 @@ pub async fn post_mutations(
     }
 
     for result in &mut results {
-        if result.status == MutationResultStatus::Applied {
+        if result.status == MutationResultStatus::Applied || is_transient_rejection(result) {
             continue;
         }
         let Some(context) = receipt_contexts.get(&result.client_mutation_id) else {
@@ -3560,6 +3560,24 @@ fn rejected_result(mutation: &MutationInput, error: ErrorDetail) -> MutationResu
     }
 }
 
+/// A rejection caused by a transient Core condition (storage I/O). It is answered as retryable and,
+/// unlike deterministic rejections, never stored as a receipt: the same clientMutationId must be
+/// evaluated again once the condition clears instead of replaying the old failure forever.
+fn retryable_error_detail(code: &str, message: &str) -> ErrorDetail {
+    ErrorDetail {
+        retryable: Some(true),
+        ..error_detail(code, message, None)
+    }
+}
+
+fn is_transient_rejection(result: &MutationResult) -> bool {
+    result
+        .error
+        .as_ref()
+        .and_then(|error| error.retryable)
+        .unwrap_or(false)
+}
+
 fn error_detail(code: &str, message: &str, details: Option<Value>) -> ErrorDetail {
     ErrorDetail {
         code: code.to_string(),
@@ -3599,10 +3617,9 @@ fn novel_chapter_asset_reference_error_detail(error: AssetReferenceError) -> Err
             "Novel chapter asset byteLength does not match the stored blob.",
             None,
         ),
-        AssetReferenceError::Storage => error_detail(
+        AssetReferenceError::Storage => retryable_error_detail(
             "ASSET_VALIDATION_UNAVAILABLE",
             "The Core could not validate the stored chapter archive.",
-            None,
         ),
     }
 }
@@ -3624,10 +3641,9 @@ fn book_asset_reference_error_detail(error: AssetReferenceError) -> ErrorDetail 
             "Book byteSize does not match the stored blob.",
             None,
         ),
-        AssetReferenceError::Storage => error_detail(
+        AssetReferenceError::Storage => retryable_error_detail(
             "ASSET_VALIDATION_UNAVAILABLE",
             "The Core could not validate the stored book file.",
-            None,
         ),
     }
 }
@@ -3649,10 +3665,9 @@ fn book_cover_asset_reference_error_detail(error: AssetReferenceError) -> ErrorD
             "Book cover asset size does not match the published blob.",
             None,
         ),
-        AssetReferenceError::Storage => error_detail(
+        AssetReferenceError::Storage => retryable_error_detail(
             "BOOK_COVER_ASSET_STORAGE_UNAVAILABLE",
             "Book cover asset storage is temporarily unavailable.",
-            None,
         ),
     }
 }

@@ -3492,5 +3492,8 @@
   "home_tracking_emptyBody": "AniList や MyAnimeList などに接続すると、進捗を同期できます。",
   "home_tracking_connect": "サービスに接続",
   "home_updates_moreChapters": "+{count}話",
-  "bookToNovel_lowConfidenceBody": "ノベルのタイトルが本と異なります。同じ作品か確認してから追加してください。"
+  "bookToNovel_lowConfidenceBody": "ノベルのタイトルが本と異なります。同じ作品か確認してから追加してください。",
+  "settings_inline_animations": "アニメーション",
+  "settings_inline_animationsHint": "ページ遷移、カードの移動などのインターフェースの動き。オフにするとすべて即座に表示されます。",
+  "settings_inline_animationsSystem": "システム設定に従っています"
 }

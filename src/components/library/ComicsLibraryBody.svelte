@@ -166,21 +166,12 @@
     const nextWidth = contentEl.clientWidth;
     if (nextWidth > 0 && nextWidth !== contentWidth) contentWidth = nextWidth;
   }
-  const visibleCards = $derived.by(() => {
+  // Card view models are built lazily by the grid; drop cached ones for titles no longer listed.
+  $effect(() => {
     const start = typeof performance !== "undefined" ? performance.now() : Date.now();
-    const cards = mangas.length > lazyVirtualizeAfter
-      ? []
-      : mangas.map((manga) => getComicsCardVm(manga));
     comicsCardVmCache.prune(mangas.map((manga) => manga.id));
     lastVisibleCardsBuildMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - start;
-    lastVisibleCardsCount = cards.length;
-    if (ENABLE_LIBRARY_PERF_LOGS) {
-      console.info("[LibraryPerf] Comics VM build", {
-        cards: cards.length,
-        ms: Number(lastVisibleCardsBuildMs.toFixed(2)),
-      });
-    }
-    return cards;
+    lastVisibleCardsCount = mangas.length;
   });
 
   function getComicsCardVm(manga: Manga) {
@@ -1068,51 +1059,30 @@
       />
     </div>
   {:else}
-    {#if mangas.length > lazyVirtualizeAfter}
-      <VirtualLibraryCardGrid
-        itemCount={mangas.length}
-        getItem={getComicsCardAt}
-        getItemId={getComicsCardIdAt}
-        {viewMode}
-        effectiveColumns={layout.effectiveColumns}
-        scrollElement={contentEl}
-        {showProgress}
-        {showOutline}
-        showSelectableState={selectMode}
-        onOpen={onOpenCard}
-        onContextMenu={openCtx}
-        onPointerDown={onCardPointerDown}
-        onPointerUp={() => clearLongPress()}
-        onPointerLeave={() => clearLongPress()}
-        onCoverLoad={handleCoverLoad}
-        onCoverError={handleCoverError}
-        onVisibleRangeChange={handleVisibleRangeChange}
-        virtualizeAfter={lazyVirtualizeAfter}
-        {active}
-        panelMotionEnabled={!isScrolling}
-      />
-    {:else}
-      <VirtualLibraryCardGrid
-        items={visibleCards}
-        {viewMode}
-        effectiveColumns={layout.effectiveColumns}
-        scrollElement={contentEl}
-        {showProgress}
-        {showOutline}
-        showSelectableState={selectMode}
-        onOpen={onOpenCard}
-        onContextMenu={openCtx}
-        onPointerDown={onCardPointerDown}
-        onPointerUp={() => clearLongPress()}
-        onPointerLeave={() => clearLongPress()}
-        onCoverLoad={handleCoverLoad}
-        onCoverError={handleCoverError}
-        onVisibleRangeChange={handleVisibleRangeChange}
-        virtualizeAfter={lazyVirtualizeAfter}
-        {active}
-        panelMotionEnabled={!isScrolling}
-      />
-    {/if}
+    <!-- One grid instance for every size: crossing the virtualization threshold (a filter going from
+         200 to 30 titles) must not swap components and rebuild every card. -->
+    <VirtualLibraryCardGrid
+      itemCount={mangas.length}
+      getItem={getComicsCardAt}
+      getItemId={getComicsCardIdAt}
+      {viewMode}
+      effectiveColumns={layout.effectiveColumns}
+      scrollElement={contentEl}
+      {showProgress}
+      {showOutline}
+      showSelectableState={selectMode}
+      onOpen={onOpenCard}
+      onContextMenu={openCtx}
+      onPointerDown={onCardPointerDown}
+      onPointerUp={() => clearLongPress()}
+      onPointerLeave={() => clearLongPress()}
+      onCoverLoad={handleCoverLoad}
+      onCoverError={handleCoverError}
+      onVisibleRangeChange={handleVisibleRangeChange}
+      virtualizeAfter={lazyVirtualizeAfter}
+      {active}
+      panelMotionEnabled={!isScrolling}
+    />
   {/if}
 </div>
 

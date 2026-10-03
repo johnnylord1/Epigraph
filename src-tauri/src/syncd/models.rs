@@ -94,6 +94,28 @@ impl AppError {
         })
     }
 
+    /// A cursor beyond the newest published version can only come from an earlier server history
+    /// (for example a rewound change log). The client must rebuild from a snapshot; the code stays
+    /// `REPLAY_WINDOW_EXPIRED` so every client already knows how to recover.
+    pub fn replay_cursor_ahead(
+        cursor: i64,
+        current_server_version: i64,
+        min_replayable_server_version: i64,
+    ) -> Self {
+        Self::Conflict(ErrorDetail {
+            code: "REPLAY_WINDOW_EXPIRED".to_string(),
+            message: format!(
+                "Client cursor {cursor} is ahead of the server history ({current_server_version})."
+            ),
+            retryable: Some(false),
+            min_client_version: None,
+            current_server_version: Some(current_server_version),
+            min_replayable_server_version: Some(min_replayable_server_version),
+            required_action: Some("full_bootstrap".to_string()),
+            details: Some(serde_json::json!({ "reasonCode": "CURSOR_AHEAD_OF_SERVER" })),
+        })
+    }
+
     pub fn upgrade_required(
         code: impl Into<String>,
         message: impl Into<String>,

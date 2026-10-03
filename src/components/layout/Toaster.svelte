@@ -613,19 +613,19 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .toast {
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .toast {
       animation: none;
       transition: none;
     }
 
-    .toast::before {
+    :global(html[data-epigraph-reduced-motion="true"]) .toast::before {
       animation: none;
     }
 
-    .icon,
-    .library-progress-fill {
+    :global(html[data-epigraph-reduced-motion="true"]) .icon,
+    :global(html[data-epigraph-reduced-motion="true"]) .library-progress-fill {
       transition: none;
     }
-  }
+
 </style>

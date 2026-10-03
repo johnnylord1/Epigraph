@@ -18,6 +18,11 @@ const MAX_BATCH: usize = 8;
 const LEASE_MS: i64 = 60_000;
 const BASE_RETRY_MS: i64 = 30_000;
 const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
+/// While an earlier projection of the same profile is in its first retries (a Suwayomi restart,
+/// a brief outage), later ones wait so Suwayomi sees commands in commit order: removing a manga
+/// from a category must not land after the category itself is deleted. After this many attempts
+/// the earlier row stops holding the queue, so one failing command cannot stall a profile.
+const ORDERED_RETRY_ATTEMPTS: i64 = 3;
 /// Attempts after which a command the runtime rejected as non-retryable (for example a GraphQL
 /// error on an id Suwayomi no longer has) stops retrying. Retrying rows count as pending in
 /// `/v1/sync/status`, and mobile defers its catalog reconciliation while anything is pending, so a
@@ -185,13 +190,21 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
     let row = sqlx::query_as::<_, ProjectionRow>(
         r#"
         SELECT operation_id, profile_id, operation_name, variables_json, attempt_count
-        FROM suwayomi_projection_outbox
+        FROM suwayomi_projection_outbox AS candidate
         WHERE status IN ('pending', 'retry') AND next_attempt_at_ms <= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM suwayomi_projection_outbox AS earlier
+            WHERE earlier.profile_id = candidate.profile_id
+              AND earlier.source_server_version < candidate.source_server_version
+              AND earlier.status = 'retry'
+              AND earlier.attempt_count < ?
+          )
         ORDER BY source_server_version ASC
         LIMIT 1
         "#,
     )
     .bind(now)
+    .bind(ORDERED_RETRY_ATTEMPTS)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(row) = &row {

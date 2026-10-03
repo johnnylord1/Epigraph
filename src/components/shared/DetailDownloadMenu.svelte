@@ -447,8 +447,8 @@
     to { opacity: 1; transform: none; }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .ddm,
-    .ddm-above { animation: none; }
-  }
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+    :global(html[data-epigraph-reduced-motion="true"]) .ddm,
+    :global(html[data-epigraph-reduced-motion="true"]) .ddm-above { animation: none; }
+
 </style>

@@ -363,15 +363,15 @@
   40%, 60% { transform: translateX(6px); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .first-run-shell *,
-  .first-run-shell *::before,
-  .first-run-shell *::after {
+/* Reduced motion follows the app setting, then the system (motion.ts). */
+  html[data-epigraph-reduced-motion="true"] .first-run-shell *,
+  html[data-epigraph-reduced-motion="true"] .first-run-shell *::before,
+  html[data-epigraph-reduced-motion="true"] .first-run-shell *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
-}
+
 
 /* Theme choices grow in as a circle from the pointer (see revealThemeChange). */
 ::view-transition-old(root),

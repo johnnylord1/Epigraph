@@ -3492,5 +3492,8 @@
   "home_tracking_emptyBody": "Connect AniList, MyAnimeList and more to keep your progress in sync.",
   "home_tracking_connect": "Connect a service",
   "home_updates_moreChapters": "+{count} ch.",
-  "bookToNovel_lowConfidenceBody": "The novel title differs from the book. Check that it is the same work before adding it."
+  "bookToNovel_lowConfidenceBody": "The novel title differs from the book. Check that it is the same work before adding it.",
+  "settings_inline_animations": "Animations",
+  "settings_inline_animationsHint": "Page transitions, cards that move into place and other interface motion. Off makes everything appear instantly.",
+  "settings_inline_animationsSystem": "Following the system setting"
 }
