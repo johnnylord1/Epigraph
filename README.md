@@ -9,7 +9,7 @@
 <strong>Native Android reading for the Epigraph library.</strong>
 
 <p>
-  <a href="https://github.com/johnnylord1/Epigraph/tree/mobile">Android source</a> ·
+  <a href="https://github.com/johnnylord1/Epigraph/tree/main/mobile">Android source</a> ·
   <a href="https://github.com/johnnylord1/Epigraph/tree/main">Desktop source</a> ·
   <a href="https://github.com/johnnylord1/Epigraph/releases">Releases</a> ·
   <a href="https://github.com/johnnylord1/Epigraph/issues">Issues</a>
@@ -44,7 +44,7 @@ contracts:
 
 | Client | Branch | Package or identity |
 | --- | --- | --- |
-| Android | [mobile](https://github.com/johnnylord1/Epigraph/tree/mobile) | <code>app.epigraph.mobile</code> |
+| Android | [mobile](https://github.com/johnnylord1/Epigraph/tree/main/mobile) | <code>app.epigraph.mobile</code> |
 | Desktop | [main](https://github.com/johnnylord1/Epigraph/tree/main) | <code>dev.epigraph.app</code> · <code>epigraph</code> |
 
 ## Android identity and migration

@@ -22,3 +22,6 @@ weblate.conf
 *.p12
 *-keystore.properties
 *-signing.properties
+
+# Scratch extraction of the QuickJS AAR; never part of the build.
+/.tmp_qjs/
