@@ -6769,7 +6769,7 @@
                     <div class="mg-row backup-file-row">
                       <span class="mg-row-copy">
                         <strong>{backupSelectedFileLabel ?? $_("settings_inline_noBackupSelectedYet")}</strong>
-                        <small>{#if backupDependencyPreview?.titleCount != null}{backupDependencyPreview.titleCount} {$_("ui_titles")}{#if backupDependencyPreview.chapterCount != null} · {backupDependencyPreview.chapterCount} {$_("ui_chapters")}{/if}{:else if backupValidating}{$_("settings_inline_inspecting")}{:else if backupImportKind === "epigraph"}.epigraphbk{/if}</small>
+                        <small>{#if backupDependencyPreview?.titleCount != null}{backupDependencyPreview.titleCount} {$_("ui_titles")}{#if backupDependencyPreview.chapterCount != null}{" · "}{backupDependencyPreview.chapterCount} {$_("ui_chapters")}{/if}{:else if backupValidating}{$_("settings_inline_inspecting")}{:else if backupImportKind === "epigraph"}.epigraphbk{/if}</small>
                       </span>
                       <button class="mg-btn" type="button" onclick={triggerBackupImport} disabled={backupExporting || backupValidating || backupRestoring}>
                         {$_("settings_backup_change")}

@@ -51,6 +51,11 @@ export function buildRestoreReadiness(
       .filter((entry) => entry.kind === "installed")
       .map((entry) => entry.sourceId),
   );
+  const packagesWithUsableSources = new Set(
+    inventory
+      .filter((entry) => entry.kind === "installed" && entry.extensionPkgName)
+      .map((entry) => entry.extensionPkgName as string),
+  );
   const extensionsByPkg = new Map(
     availableExtensions.map((extension) => [extension.pkgName, extension] as const),
   );
@@ -95,6 +100,18 @@ export function buildRestoreReadiness(
     }
 
     if (extension) {
+      if (extension.isInstalled && packagesWithUsableSources.has(extension.pkgName)) {
+        return {
+          orphanSourceId: cluster.orphanSourceId,
+          sourceName: cluster.sourceName,
+          sourceLang: cluster.sourceLang,
+          status: "unavailable",
+          clusterKind: clusterKind(cluster),
+          selectedCandidate: candidate,
+          extension,
+          detail: "The installed extension with this package comes from another repository and does not provide this source.",
+        };
+      }
       return {
         orphanSourceId: cluster.orphanSourceId,
         sourceName: cluster.sourceName,

@@ -2,7 +2,7 @@ import { gql } from "../client";
 import { fetchRepoEntries, type RepoExtensionEntry } from "../extensionSourceMap";
 import { getManagedSourceRuntime } from "../manga/runtime";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "../novels/repositoryState";
-import { FETCH_EXTENSIONS, GET_SOURCES } from "../queries";
+import { FETCH_EXTENSIONS, GET_SOURCES_WITH_EXTENSIONS } from "../queries";
 import type { Extension, Source } from "../types";
 import type {
   AvailableExtensionEntry,
@@ -48,7 +48,7 @@ export async function loadSourceInventory(): Promise<{
 }> {
   const runtime = await getManagedSourceRuntime();
   const [sourcesData, stores, extensionsData] = await Promise.all([
-    gql<{ sources: { nodes: Source[] } }>(GET_SOURCES),
+    gql<{ sources: { nodes: Source[] } }>(GET_SOURCES_WITH_EXTENSIONS),
     runtime.listStores(),
     gql<{ fetchExtensions: { extensions: Extension[] } }>(FETCH_EXTENSIONS),
   ]);
@@ -67,8 +67,8 @@ export async function loadSourceInventory(): Promise<{
     lang: source.lang,
     displayName: source.displayName,
     kind: "installed",
-    extensionPkgName: null,
-    extensionName: null,
+    extensionPkgName: source.extension?.pkgName ?? null,
+    extensionName: source.extension?.name ?? null,
     extensionInstalled: true,
   }));
 

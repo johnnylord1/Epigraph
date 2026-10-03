@@ -934,6 +934,96 @@ describe("restore readiness", () => {
     expect(readiness.blocksRestore).toBe(true);
   });
 
+  it("does not block when an installed package from another repository lacks the source", () => {
+    const analysis: ReconciliationAnalysis = {
+      backupFingerprint: "backup",
+      sourceInventoryFingerprint: "inventory",
+      exactMatches: [
+        {
+          orphanSourceId: "321",
+          sourceName: "Comick",
+          sourceLang: "en",
+          status: "exact_resolved",
+          sampleManga: [],
+          selectedCandidate: {
+            sourceId: "321",
+            sourceName: "Comick",
+            sourceLang: "en",
+            displayName: "Comick",
+            confidence: 1,
+            reasonCode: "repo-source-id",
+            evidenceSummary: "repo",
+            requiresInstall: true,
+            extensionPkgName: "pkg1",
+            extensionName: "Tachiyomi: Comick",
+          },
+          candidates: [],
+        },
+      ],
+      autoReconciled: [],
+      needsReview: [],
+      unresolved: [],
+      warnings: [],
+    };
+
+    const installedExtensions = [{ ...availableExtensions[0], isInstalled: true }];
+    const readiness = buildRestoreReadiness(analysis, {}, [
+      {
+        sourceId: "777",
+        name: "Comick",
+        lang: "en",
+        displayName: "Comick",
+        kind: "installed",
+        extensionPkgName: "pkg1",
+        extensionName: "Tachiyomi: Comick",
+        extensionInstalled: true,
+      },
+    ], installedExtensions);
+
+    expect(readiness.requiresInstallCount).toBe(0);
+    expect(readiness.unavailableCount).toBe(1);
+    expect(readiness.blocksRestore).toBe(false);
+  });
+
+  it("keeps waiting while a just-installed package has no sources yet", () => {
+    const analysis: ReconciliationAnalysis = {
+      backupFingerprint: "backup",
+      sourceInventoryFingerprint: "inventory",
+      exactMatches: [
+        {
+          orphanSourceId: "321",
+          sourceName: "Comick",
+          sourceLang: "en",
+          status: "exact_resolved",
+          sampleManga: [],
+          selectedCandidate: {
+            sourceId: "321",
+            sourceName: "Comick",
+            sourceLang: "en",
+            displayName: "Comick",
+            confidence: 1,
+            reasonCode: "repo-source-id",
+            evidenceSummary: "repo",
+            requiresInstall: true,
+            extensionPkgName: "pkg1",
+            extensionName: "Tachiyomi: Comick",
+          },
+          candidates: [],
+        },
+      ],
+      autoReconciled: [],
+      needsReview: [],
+      unresolved: [],
+      warnings: [],
+    };
+
+    const installedExtensions = [{ ...availableExtensions[0], isInstalled: true }];
+    const readiness = buildRestoreReadiness(analysis, {}, [], installedExtensions);
+
+    expect(readiness.requiresInstallCount).toBe(1);
+    expect(readiness.blocksRestore).toBe(true);
+  });
+
   it("keeps ambiguous leftovers unresolved until the user explicitly chooses", () => {
     const analysis: ReconciliationAnalysis = {
       backupFingerprint: "backup",
