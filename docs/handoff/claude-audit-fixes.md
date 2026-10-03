@@ -109,6 +109,31 @@ Pontos de atenção:
   :data:verifySqlDelightMigration assembleDevDebug` passa (824 testes, nenhuma
   falha), com o Android SDK oficial. Falta só o teste no aparelho.
 
+## Testes visuais e de sync (3/out)
+
+- **Sync de ponta a ponta** com o `epigraph-syncd` real (Linux, perfil
+  descartável): pareamento, mutação, idempotência, `/v1/changes`, stream ao
+  vivo, cursor à frente, recriação do `change_log` e rotas de auditoria —
+  16/16 nesta branch. O mesmo roteiro contra a `main` falha em 4 pontos
+  (`server_version` volta de v2 para v1, celular perde a mudança nova, cursor
+  à frente aceito em silêncio, auditoria aceita pela rede local).
+- **Celular real contra o syncd real**: o cliente Kotlin do app (TLS com
+  pinning, `SnapshotCoreReplicaSync`, réplica SQLDelight) sincronizou por
+  snapshot, depois por `/v1/changes`, e continuou recebendo mudanças depois
+  da recriação do `change_log`. Contra um Core antigo já rebobinado o
+  celular não se recupera sozinho (o snapshot desse Core é inconsistente):
+  a solução é atualizar o desktop.
+- **Desktop no navegador** (build de produção, Suwayomi real, Chromium):
+  revelou que a revalidação das sessões do syncd entrava em laço apertado
+  quando falhava e congelava a UI — corrigido com nova tentativa após 30 s
+  (`src/App.svelte`, teste `src/lib/syncdRevalidationRetry.test.ts`).
+  Switch Animações confirmado (`data-epigraph-reduced-motion` e
+  `uiAnimations`).
+- **Mobile sem emulador**: `DiscoverScreenshotTest` (Robolectric +
+  Roborazzi). `./gradlew :app:testDevDebugUnitTest --tests
+  '*DiscoverScreenshotTest*' -Proborazzi.record=true` grava os PNGs em
+  `mobile/app/build/outputs/roborazzi`.
+
 ## Feito nesta sessão
 
 - Aba **Descobrir** no mobile (compilada e com testes; falta testar no aparelho):

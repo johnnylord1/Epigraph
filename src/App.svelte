@@ -269,6 +269,9 @@
   let bootReadyNotified = false;
   let lastSyncdRevalidatedProfileId = $state<string | null>(null);
   let syncdRevalidationInFlightProfileId = $state<string | null>(null);
+  // A failed revalidation (Core not running yet) waits before trying again; releasing the guard at once
+  // re-ran the effect immediately and retried in a tight loop.
+  const SYNCD_REVALIDATION_RETRY_MS = 30_000;
   const lockEnabled = $derived(
     store.settings.appLockEnabled && (store.settings.appLockPin?.length ?? 0) >= 4,
   );
@@ -2869,6 +2872,7 @@
     if (syncdRevalidationInFlightProfileId === profileId) return;
 
     syncdRevalidationInFlightProfileId = profileId;
+    let failed = false;
     void invoke("syncd_revalidate_persisted_sync_sessions", { profileId })
       .then(() => {
         if (syncdRevalidationInFlightProfileId === profileId) {
@@ -2876,12 +2880,17 @@
         }
       })
       .catch((error) => {
+        failed = true;
         console.warn("syncd desktop session revalidation failed:", error);
       })
       .finally(() => {
-        if (syncdRevalidationInFlightProfileId === profileId) {
-          syncdRevalidationInFlightProfileId = null;
-        }
+        const release = () => {
+          if (syncdRevalidationInFlightProfileId === profileId) {
+            syncdRevalidationInFlightProfileId = null;
+          }
+        };
+        if (failed) window.setTimeout(release, SYNCD_REVALIDATION_RETRY_MS);
+        else release();
       });
   });
 
