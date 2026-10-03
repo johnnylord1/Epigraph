@@ -67,6 +67,13 @@ describe("identity-aware Novel merge", () => {
     f.restored.progress[0].updatedAt = 300;
     expect(f.run().progress[0]).toMatchObject({ novelId: "destination", chapterId: "destination-c1", locator: "scroll:destination-c1:0.100000", updatedAt: 300 });
   });
+  it("keeps progress with an opaque foreign locator and opens the chapter from its start", () => {
+    const f = mergeFixture();
+    f.restored.progress[0] = { ...f.restored.progress[0], locator: "1", updatedAt: 300 };
+    const merged = mergeRestoredNovelsSnapshot({ currentState: f.current, restored: f.restored });
+    expect(merged.warnings.map(w => w.code)).not.toContain("LOCATOR_REMAP_UNSUPPORTED");
+    expect(merged.state.progress[0]).toMatchObject({ chapterId: "destination-c1", locator: "destination-c1", progressPercent: 0.1, updatedAt: 300 });
+  });
   it("keeps current progress when ordering is missing or tied", () => {
     for (const timestamp of [0, 200, NaN]) {
       const f = mergeFixture();

@@ -213,7 +213,9 @@ export function mergeRestoredNovelsSnapshot(input: {
         else if (locator.startsWith(`scroll:${encodeURIComponent(entry.chapterId)}:`)) {
           locator = `scroll:${encodeURIComponent(chapterId)}:${locator.slice(`scroll:${encodeURIComponent(entry.chapterId)}:`.length)}`;
         } else if (entry.chapterId !== chapterId) {
-          warn(incoming.id, "locator", "LOCATOR_REMAP_UNSUPPORTED"); return null;
+          // Opaque foreign locators (LNReader "1", "p:45") mean nothing to the desktop reader:
+          // keep the chapter and percentage, and open the chapter from its start.
+          locator = chapterId;
         }
       }
       return { ...entry, novelId: id, chapterId, ...(locator !== undefined ? { locator } : {}) };
