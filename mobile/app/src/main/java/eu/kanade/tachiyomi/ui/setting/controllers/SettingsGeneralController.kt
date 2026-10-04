@@ -103,10 +103,6 @@ class SettingsGeneralController : SettingsLegacyController() {
                     startActivity(intent)
                 }
             }
-        }
-
-        preferenceCategory {
-            titleRes = MR.strings.security
             preference {
                 key = "pref_security_screen"
                 isPersistent = false
