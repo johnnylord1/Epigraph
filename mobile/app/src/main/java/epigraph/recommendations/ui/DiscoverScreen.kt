@@ -6,10 +6,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -67,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -215,15 +216,7 @@ internal fun DiscoverContent(
         },
         // Inside the app bar so the tabs take its scrolled tone too.
         appBarBottomContent = {
-            UnderlineTabs(
-                options = listOf(
-                    DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
-                    DiscoverSection.CATALOG to MR.strings.discover_catalog,
-                ),
-                selected = state.section,
-                onSelect = onSection,
-            )
-            ModeChips(state.mode, onSelect = onMode)
+            DiscoverHeader(section = state.section, mode = state.mode, onSection = onSection, onMode = onMode)
         },
     ) { contentPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
@@ -285,45 +278,36 @@ private tailrec fun Context.findMainActivity(): MainActivity? = when (this) {
     else -> null
 }
 
-/** Underlined text tabs, the Discover sub-tabs (For you · Catalog). */
+/**
+ * One row under the title: the sub-tabs on the left and the Comics / Novels switch on the right,
+ * the same segmented pill the desktop uses for Comics / Books.
+ */
 @Composable
-private fun <T> UnderlineTabs(options: List<Pair<T, StringResource>>, selected: T, onSelect: (T) -> Unit) {
+private fun DiscoverHeader(
+    section: DiscoverSection,
+    mode: DiscoverMode,
+    onSection: (DiscoverSection) -> Unit,
+    onMode: (DiscoverMode) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            options.forEach { (value, label) ->
-                val isSelected = value == selected
-                val textColor by animateColorAsState(
-                    if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                    label = "discover-tab-text",
-                )
-                val barColor by animateColorAsState(
-                    if (isSelected) MaterialTheme.colorScheme.secondary else Color.Transparent,
-                    label = "discover-tab-bar",
-                )
-                Column(
-                    modifier = Modifier
-                        .width(IntrinsicSize.Max)
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(value) }
-                        .padding(top = 8.dp),
-                ) {
-                    Text(
-                        text = stringResource(label),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        color = textColor,
-                        modifier = Modifier.padding(bottom = 10.dp),
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .background(barColor, RoundedCornerShape(1.dp)),
-                    )
-                }
-            }
+            UnderlineTabs(
+                options = listOf(
+                    DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
+                    DiscoverSection.CATALOG to MR.strings.discover_catalog,
+                ),
+                selected = section,
+                onSelect = onSection,
+                modifier = Modifier.weight(1f),
+            )
+            SegmentedSwitch(
+                options = listOf(DiscoverMode.COMICS to MR.strings.discover_comics, DiscoverMode.NOVELS to MR.strings.novels),
+                selected = mode,
+                onSelect = onMode,
+            )
         }
         Box(
             modifier = Modifier
@@ -334,35 +318,87 @@ private fun <T> UnderlineTabs(options: List<Pair<T, StringResource>>, selected: 
     }
 }
 
-/** Comics / Novels, applied to both sub-tabs. */
+/** Underlined text tabs (For you · Catalog). */
 @Composable
-private fun ModeChips(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
-    val modes = listOf(DiscoverMode.COMICS to MR.strings.discover_comics, DiscoverMode.NOVELS to MR.strings.novels)
+private fun <T> UnderlineTabs(
+    options: List<Pair<T, StringResource>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        options.forEach { (value, label) ->
+            val isSelected = value == selected
+            val textColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                label = "discover-tab-text",
+            )
+            val barColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.secondary else Color.Transparent,
+                label = "discover-tab-bar",
+            )
+            Column(
+                modifier = Modifier
+                    .width(IntrinsicSize.Max)
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.Tab,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSelect(value) }
+                    .padding(top = 12.dp),
+            ) {
+                Text(
+                    text = stringResource(label),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = textColor,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(barColor, RoundedCornerShape(1.dp)),
+                )
+            }
+        }
+    }
+}
+
+/** Two-option pill switch, the mobile counterpart of the desktop Comics / Books toggle. */
+@Composable
+private fun <T> SegmentedSwitch(
+    options: List<Pair<T, StringResource>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+) {
     Row(
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(3.dp),
     ) {
-        modes.forEach { (value, label) ->
-            val selected = value == mode
+        options.forEach { (value, label) ->
+            val isSelected = value == selected
             val container by animateColorAsState(
-                if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                label = "discover-mode-container",
+                if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                label = "discover-switch-container",
+            )
+            val content by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                label = "discover-switch-content",
             )
             Text(
                 text = stringResource(label),
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                color = content,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
                     .background(container)
-                    .border(
-                        width = 1.dp,
-                        color = if (selected) Color.Transparent else MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(50),
-                    )
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                    .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(value) }
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
             )
         }
     }
