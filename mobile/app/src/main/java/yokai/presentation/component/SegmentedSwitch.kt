@@ -1,7 +1,9 @@
 package yokai.presentation.component
 
 import android.content.Context
+import android.view.Gravity
 import android.view.MenuItem
+import android.widget.FrameLayout
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
@@ -81,8 +83,8 @@ fun <T> MenuItem.setSegmentedSwitchActionView(
     onSelect: (T) -> Unit,
 ) {
     // Toolbar menus are re-inflated often; an item that already hosts the pill keeps it.
-    if (actionView is ComposeView) return
-    actionView = ComposeView(context).apply {
+    if (actionView is PillActionHost) return
+    val pill = ComposeView(context).apply {
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         setContent {
             YokaiTheme {
@@ -94,5 +96,25 @@ fun <T> MenuItem.setSegmentedSwitchActionView(
                 )
             }
         }
+    }
+    actionView = PillActionHost(context, pill)
+}
+
+/**
+ * The toolbar measures action views as soon as they are set, often before the toolbar is in a
+ * window, and a ComposeView cannot compose there. Until attached this host takes no space; the
+ * window's first layout pass measures the pill for real.
+ */
+private class PillActionHost(context: Context, pill: ComposeView) : FrameLayout(context) {
+    init {
+        addView(pill, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        if (!isAttachedToWindow) {
+            setMeasuredDimension(0, 0)
+            return
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 }
