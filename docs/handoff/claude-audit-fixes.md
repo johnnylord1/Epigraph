@@ -143,6 +143,15 @@ Pontos de atenção:
     infinita via `loadMore(HIGH_CONFIDENCE)` e badges dos trackers.
   - Cards `DiscoverEntryItem` removidos de Explorar e Recentes.
   - Menu de 3 pontos (`showOverflowDialog`) no topo da aba.
+- **Seletor de tipo de conteúdo** num só lugar em todas as telas: a pílula
+  `SegmentedSwitch` (`yokai/presentation/component/SegmentedSwitch.kt`) fica
+  na barra do topo, logo antes do ⋮ (ou no fim das ações quando não há ⋮).
+  Telas View usam `MenuItem.setSegmentedSwitchActionView`; os itens que não
+  podem sumir ficam `showAsAction="always"`, porque a pílula consome o
+  orçamento `ifRoom` da Toolbar. Biblioteca, Descobrir, Explorar, folha de
+  Extensões, Repositórios, Próximos lançamentos e Configurações › Leitor.
+- **Configurações** reorganizadas em subpáginas existentes (ver CHANGELOG
+  do mobile).
 
 ## Pendente depois da verificação
 

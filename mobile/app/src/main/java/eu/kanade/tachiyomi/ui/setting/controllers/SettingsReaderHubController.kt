@@ -4,30 +4,37 @@ import android.content.Context
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.ContextThemeWrapper
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.MenuItem
+import androidx.compose.runtime.mutableStateOf
 import androidx.preference.PreferenceScreen
 import androidx.preference.R as preferenceR
-import com.bluelinelabs.conductor.ControllerChangeHandler
-import com.bluelinelabs.conductor.ControllerChangeType
-import eu.kanade.tachiyomi.ui.base.TabItem
-import eu.kanade.tachiyomi.ui.base.TabMode
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
-import eu.kanade.tachiyomi.util.view.activityBinding
 import yokai.i18n.MR
+import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.util.lang.getString
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
 
 /**
  * Reader settings hub. Delegates its preference screen to either
  * [SettingsMangaReaderController] or [SettingsNovelReaderController] based on
- * [selectedTab]. The Manga/Novel tab strip is applied to the activity-global appBar
- * on enter; cleanup on exit is handled by [eu.kanade.tachiyomi.ui.main.MainActivity.syncActivityAppBarVisibility],
- * which resets the shared appBar on every controller transition.
+ * [selectedTab]. Manga / Novel / Books is the app bar pill, in the same place as every other
+ * content-type switch.
  */
 class SettingsReaderHubController : SettingsLegacyController() {
 
     private enum class ReaderTab { MANGA, NOVEL, BOOKS }
 
-    private var selectedTab: ReaderTab = ReaderTab.MANGA
+    /** Drives the pill; [selectedTab] reads and writes it. */
+    private val selectedTabState = mutableStateOf(ReaderTab.MANGA)
+
+    private var selectedTab: ReaderTab
+        get() = selectedTabState.value
+        set(value) {
+            selectedTabState.value = value
+        }
 
     fun selectInitialTab(tab: String?): SettingsReaderHubController = apply {
         selectedTab = ReaderTab.entries.firstOrNull { it.name == tab } ?: selectedTab
@@ -56,33 +63,38 @@ class SettingsReaderHubController : SettingsLegacyController() {
         return ContextThemeWrapper(activity, tv.resourceId)
     }
 
-    override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
-        super.onChangeStarted(handler, type)
-        if (type == ControllerChangeType.PUSH_ENTER || type == ControllerChangeType.POP_ENTER) {
-            applyTabs()
-        }
-    }
-
-    private fun applyTabs() {
+    override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
+        inflater.inflate(R.menu.settings_reader_hub, menu)
         val act = activity ?: return
         val labels = listOf(
             act.getString(MR.strings.manga),
             act.getString(MR.strings.novel),
-            act.getString(eu.kanade.tachiyomi.R.string.epigraph_books),
+            act.getString(R.string.epigraph_books),
         )
-        activityBinding?.appBar?.applyTabs(
-            items = labels.map { TabItem.Label(it) },
-            selectedIndex = selectedTab.ordinal,
-            mode = TabMode.Fixed,
-            onSelected = { idx ->
-                val target = ReaderTab.entries[idx]
-                if (target != selectedTab) {
-                    selectedTab = target
-                    rebuildPreferenceScreen()
-                }
-            },
-            onReselected = { if (view != null) listView.scrollToPosition(0) },
+        menu.findItem(R.id.action_reader_type)?.setSegmentedSwitchActionView(
+            context = act,
+            options = ReaderTab.entries.zip(labels),
+            selected = selectedTabState,
+            onSelect = ::selectTab,
         )
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        // Only reached if the toolbar shows the item instead of the pill: step to the next reader.
+        if (item.itemId == R.id.action_reader_type) {
+            selectTab(ReaderTab.entries[(selectedTab.ordinal + 1) % ReaderTab.entries.size])
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
+    private fun selectTab(target: ReaderTab) {
+        if (target == selectedTab) {
+            if (view != null) listView.scrollToPosition(0)
+            return
+        }
+        selectedTab = target
+        rebuildPreferenceScreen()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

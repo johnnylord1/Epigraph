@@ -1,5 +1,7 @@
 package yokai.presentation.component
 
+import android.content.Context
+import android.view.MenuItem
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Row
@@ -10,17 +12,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import yokai.presentation.theme.YokaiTheme
 
 /**
  * Compact two-option pill switch, the mobile counterpart of the desktop Comics / Books toggle.
- * Used by Discover (Comics / Novels) and the Library app bar (Comics / Books).
+ * Every screen that switches content type shows it in the same place: the top app bar actions,
+ * right before the overflow menu (Library, Discover, Browse, Extensions, Repositories).
  */
 @Composable
 fun <T> SegmentedSwitch(
@@ -58,6 +65,34 @@ fun <T> SegmentedSwitch(
                     .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(value) }
                     .padding(horizontal = 12.dp, vertical = 5.dp),
             )
+        }
+    }
+}
+
+/**
+ * Hosts a [SegmentedSwitch] as this menu item's action view, so View toolbars show the pill where
+ * Compose app bars do. The item needs `showAsAction="always"`. A collapsed app bar copies only the
+ * item's icon and title, so its click handler must still switch to the other option.
+ */
+fun <T> MenuItem.setSegmentedSwitchActionView(
+    context: Context,
+    options: List<Pair<T, String>>,
+    selected: State<T>,
+    onSelect: (T) -> Unit,
+) {
+    // Toolbar menus are re-inflated often; an item that already hosts the pill keeps it.
+    if (actionView is ComposeView) return
+    actionView = ComposeView(context).apply {
+        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        setContent {
+            YokaiTheme {
+                SegmentedSwitch(
+                    options = options,
+                    selected = selected.value,
+                    onSelect = onSelect,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
         }
     }
 }

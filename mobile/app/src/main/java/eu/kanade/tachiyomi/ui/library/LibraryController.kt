@@ -1,12 +1,7 @@
 package eu.kanade.tachiyomi.ui.library
 
 import yokai.presentation.theme.ReducedMotion
-import yokai.presentation.theme.YokaiTheme
-import yokai.presentation.component.SegmentedSwitch
-import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.compose.ui.unit.dp
+import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.util.koin.get
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -268,7 +263,8 @@ open class LibraryController(
 
     /**
      * Comics / Books pill in the app bar (the desktop's toggle), hosted as the action view of the
-     * books menu item. A menu re-inflate drops the view, so it is recreated here each time.
+     * books menu item. A menu re-inflate drops the view, so it is recreated here each time. The
+     * collapsed app bar shows only the item's icon and title, which name the library it switches to.
      */
     private fun updateBooksToggleItem() {
         val item = appBar()?.mainToolbar?.menu?.findItem(R.id.action_books) ?: return
@@ -276,23 +272,16 @@ open class LibraryController(
         item.title = context.getString(
             if (booksMode) MR.strings.library_switch_to_comics else MR.strings.library_switch_to_books,
         )
-        if (item.actionView is ComposeView) return
-        item.actionView = ComposeView(context).apply {
-            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent {
-                YokaiTheme {
-                    SegmentedSwitch(
-                        options = listOf(
-                            false to dev.icerock.moko.resources.compose.stringResource(MR.strings.library_comics),
-                            true to androidx.compose.ui.res.stringResource(R.string.epigraph_books),
-                        ),
-                        selected = booksModeState.value,
-                        onSelect = { setBooksMode(it) },
-                        modifier = androidx.compose.ui.Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-            }
-        }
+        item.setIcon(if (booksMode) R.drawable.ic_library_outline_24dp else R.drawable.ic_book_open_outline_24dp)
+        item.setSegmentedSwitchActionView(
+            context = context,
+            options = listOf(
+                false to context.getString(MR.strings.library_comics),
+                true to context.getString(R.string.epigraph_books),
+            ),
+            selected = booksModeState,
+            onSelect = { setBooksMode(it) },
+        )
     }
 
     private fun refreshDisplayChrome() {

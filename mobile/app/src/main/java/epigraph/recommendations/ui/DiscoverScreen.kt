@@ -211,13 +211,23 @@ internal fun DiscoverContent(
             IconButton(onClick = onRefresh, enabled = !state.loading) {
                 Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
             }
+            // Same place on every screen that switches content type: right before the overflow menu.
+            SegmentedSwitch(
+                options = listOf(
+                    DiscoverMode.COMICS to stringResource(MR.strings.discover_comics),
+                    DiscoverMode.NOVELS to stringResource(MR.strings.novels),
+                ),
+                selected = state.mode,
+                onSelect = onMode,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
             IconButton(onClick = onOverflow) {
                 Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.more))
             }
         },
         // Inside the app bar so the tabs take its scrolled tone too.
         appBarBottomContent = {
-            DiscoverHeader(section = state.section, mode = state.mode, onSection = onSection, onMode = onMode)
+            DiscoverHeader(section = state.section, onSection = onSection)
         },
     ) { contentPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
@@ -279,42 +289,22 @@ private tailrec fun Context.findMainActivity(): MainActivity? = when (this) {
     else -> null
 }
 
-/**
- * One row under the title: the sub-tabs on the left and the Comics / Novels switch on the right,
- * the same segmented pill the desktop uses for Comics / Books.
- */
+/** The For you · Catalog tabs under the title. The Comics / Novels switch lives in the actions. */
 @Composable
 private fun DiscoverHeader(
     section: DiscoverSection,
-    mode: DiscoverMode,
     onSection: (DiscoverSection) -> Unit,
-    onMode: (DiscoverMode) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
+        UnderlineTabs(
+            options = listOf(
+                DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
+                DiscoverSection.CATALOG to MR.strings.discover_catalog,
+            ),
+            selected = section,
+            onSelect = onSection,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            // Bottom-aligned so the pill can sit on the tab labels' line, above the underline.
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            UnderlineTabs(
-                options = listOf(
-                    DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
-                    DiscoverSection.CATALOG to MR.strings.discover_catalog,
-                ),
-                selected = section,
-                onSelect = onSection,
-                modifier = Modifier.weight(1f),
-            )
-            SegmentedSwitch(
-                options = listOf(
-                    DiscoverMode.COMICS to stringResource(MR.strings.discover_comics),
-                    DiscoverMode.NOVELS to stringResource(MR.strings.novels),
-                ),
-                selected = mode,
-                onSelect = onMode,
-                modifier = Modifier.padding(bottom = 7.dp),
-            )
-        }
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()

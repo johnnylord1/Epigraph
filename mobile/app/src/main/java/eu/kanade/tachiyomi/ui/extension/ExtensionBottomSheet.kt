@@ -12,6 +12,7 @@ import android.widget.TextView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExtensionOff
 import androidx.compose.material.icons.outlined.SwapHoriz
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.WindowInsetsCompat.Type.systemBars
 import androidx.core.view.isVisible
 import androidx.core.view.updatePaddingRelative
@@ -107,6 +108,9 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
     lateinit var controller: BrowseController
     var boundViews = arrayListOf<RecyclerWithScrollerView>()
     private var selectedExtensionTypeTab = EXTENSION_TYPE_MANGA
+
+    /** Drives the Manga / Novels pill in the sheet toolbar. */
+    val novelPluginsSelected = mutableStateOf(false)
     private var migrationSourcesEmpty = false
     private var tabbedSheetAdapter: TabbedSheetAdapter? = null
 
@@ -618,9 +622,21 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
     }
 
+    /** The pill's choice. Choosing the current type again refreshes novel plugins and scrolls up. */
+    fun selectExtensionType(novels: Boolean) {
+        val position = if (novels) EXTENSION_TYPE_NOVELS else EXTENSION_TYPE_MANGA
+        val reselected = position == selectedExtensionTypeTab
+        showExtensionTypeTab(position)
+        if (reselected) {
+            if (novels) presenter.refreshNovelPlugins()
+            activeExtensionFrameLayout()?.binding?.recycler?.smoothScrollToTop()
+        }
+    }
+
     private fun showExtensionTypeTab(position: Int) {
         selectedExtensionTypeTab = position.coerceIn(EXTENSION_TYPE_MANGA, EXTENSION_TYPE_NOVELS)
         val showNovels = selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS
+        novelPluginsSelected.value = showNovels
         extensionFrameLayout?.isVisible = !showNovels
         novelPluginFrameLayout?.isVisible = showNovels
         updatedNestedRecyclers()
@@ -825,31 +841,6 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
                 LayoutInflater.from(container.context),
                 container,
                 false,
-            )
-            pageBinding.extensionTypeTabs.addTab(
-                pageBinding.extensionTypeTabs.newTab().setText(context.getString(MR.strings.manga)),
-                selectedExtensionTypeTab == EXTENSION_TYPE_MANGA,
-            )
-            pageBinding.extensionTypeTabs.addTab(
-                pageBinding.extensionTypeTabs.newTab().setText(context.getString(MR.strings.novels)),
-                selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS,
-            )
-            pageBinding.extensionTypeTabs.addOnTabSelectedListener(
-                object : TabLayout.OnTabSelectedListener {
-                    override fun onTabSelected(tab: TabLayout.Tab?) {
-                        showExtensionTypeTab(tab?.position ?: EXTENSION_TYPE_MANGA)
-                    }
-
-                    override fun onTabUnselected(tab: TabLayout.Tab?) = Unit
-
-                    override fun onTabReselected(tab: TabLayout.Tab?) {
-                        showExtensionTypeTab(tab?.position ?: EXTENSION_TYPE_MANGA)
-                        if (selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS) {
-                            presenter.refreshNovelPlugins()
-                        }
-                        activeExtensionFrameLayout()?.binding?.recycler?.smoothScrollToTop()
-                    }
-                },
             )
             pageBinding.extensionTypeContent.addView(
                 createRecyclerPage(pageBinding.extensionTypeContent, EXTENSION_RECYCLER_TAG, extAdapter!!),

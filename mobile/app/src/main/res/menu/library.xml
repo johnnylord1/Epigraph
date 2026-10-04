@@ -17,7 +17,7 @@
         android:id="@+id/action_filter"
         android:icon="@drawable/ic_filter_list_24dp"
         android:title="@string/filter"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="always" />
 
     <item
         android:id="@+id/action_books"
@@ -29,6 +29,6 @@
         android:id="@+id/action_more"
         android:icon="@drawable/ic_more_vert_24dp"
         android:title="@string/more"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="always" />
 
 </menu>

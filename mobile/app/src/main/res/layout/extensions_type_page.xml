@@ -7,16 +7,7 @@
     android:background="?attr/background"
     android:orientation="vertical">
 
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/extension_type_tabs"
-        style="@style/Theme.Widget.Tabs.Highlight"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@android:color/transparent"
-        app:tabGravity="fill"
-        app:tabMaxWidth="0dp"
-        app:tabMode="fixed" />
-
+    <!-- Manga / Novels is the sheet toolbar pill (BrowseController.updateSheetMenu). -->
     <FrameLayout
         android:id="@+id/extension_type_content"
         android:layout_width="match_parent"
