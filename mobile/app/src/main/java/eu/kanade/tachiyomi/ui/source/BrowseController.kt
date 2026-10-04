@@ -432,7 +432,9 @@ class BrowseController :
                 binding.bottomSheet.root.currentSourceTitle
                     ?: view?.context?.getString(MR.strings.source_migration)
             } else {
-                view?.context?.getString(MR.strings.extensions)
+                // The selected tab right below already reads "Extensions", and the toolbar needs
+                // the room for search, options, languages and the Manga / Novels pill.
+                null
             }
         if (binding.bottomSheet.sheetToolbar.menu.findItem(if (!onMigrationTab) R.id.action_search else R.id.action_migration_guide) != null) {
             return

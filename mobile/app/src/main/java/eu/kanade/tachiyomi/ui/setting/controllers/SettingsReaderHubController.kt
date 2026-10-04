@@ -8,10 +8,12 @@ import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.view.updatePaddingRelative
 import androidx.preference.PreferenceScreen
 import androidx.preference.R as preferenceR
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
+import eu.kanade.tachiyomi.util.system.dpToPx
 import yokai.i18n.MR
 import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.util.lang.getString
@@ -71,12 +73,16 @@ class SettingsReaderHubController : SettingsLegacyController() {
             act.getString(MR.strings.novel),
             act.getString(R.string.epigraph_books),
         )
-        menu.findItem(R.id.action_reader_type)?.setSegmentedSwitchActionView(
-            context = act,
-            options = ReaderTab.entries.zip(labels),
-            selected = selectedTabState,
-            onSelect = ::selectTab,
-        )
+        menu.findItem(R.id.action_reader_type)?.apply {
+            setSegmentedSwitchActionView(
+                context = act,
+                options = ReaderTab.entries.zip(labels),
+                selected = selectedTabState,
+                onSelect = ::selectTab,
+            )
+            // Nothing follows the pill in this toolbar, so keep it off the screen edge.
+            actionView?.updatePaddingRelative(end = 12.dpToPx)
+        }
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
