@@ -15,8 +15,6 @@ import eu.kanade.tachiyomi.ui.more.AboutController
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.ui.setting.controllers.legacy.SettingsDataLegacyController
 import eu.kanade.tachiyomi.ui.setting.controllers.search.SettingsSearchController
-import exh.source.ExhPreferences
-import yokai.util.koin.injectLazy
 import eu.kanade.tachiyomi.ui.setting.iconRes
 import eu.kanade.tachiyomi.ui.setting.iconTint
 import eu.kanade.tachiyomi.ui.setting.onClick
@@ -33,20 +31,16 @@ import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import yokai.i18n.MR
 import yokai.util.lang.getString
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
-import epigraph.books.ui.LocalBooksController
 
 class SettingsMainController : SettingsLegacyController(), FloatingSearchInterface {
-
-    private val exhPreferences: ExhPreferences by injectLazy()
 
     init {
         setHasOptionsMenu(true)
     }
 
-    // Settings hierarchy follows plans/partitioned-foraging-karp.md Phase F.5
-    // (issue #13): General, Appearance, Library, Reader (manga+novel merged),
-    // Browse & Sources, Storage & Downloads (downloads+data-saver merged),
-    // Tracking, Security, Advanced (Compose-only), About.
+    // Top level keeps one entry per area; narrower screens live inside them:
+    // General › Security, Library › Recents and Books (EPUB/PDF), Reader › Novel › Translation,
+    // Browse › E-Hentai. Settings search still reaches every screen (SettingsSearchHelper).
     //
     // TODO(F.5/issue #13): Merge Browse & Sources entry-points — currently
     // Browse is its own screen and source-specific prefs scatter through
@@ -78,43 +72,16 @@ class SettingsMainController : SettingsLegacyController(), FloatingSearchInterfa
             onClick { navigateTo(SettingsLibraryController()) }
         }
         preference {
-            iconRes = R.drawable.ic_book_open_variant_24dp
-            iconTint = tintColor
-            title = "Books (EPUB/PDF)"
-            summary = "Import and read files kept offline on this device"
-            onClick { navigateTo(LocalBooksController()) }
-        }
-        preference {
             iconRes = R.drawable.ic_read_outline_24dp
             iconTint = tintColor
             titleRes = MR.strings.reader
             onClick { navigateTo(SettingsReaderHubController()) }
         }
         preference {
-            iconRes = R.drawable.ic_translate_24dp
-            iconTint = tintColor
-            titleRes = MR.strings.pref_category_translation
-            onClick { navigateTo(SettingsTranslationController()) }
-        }
-        preference {
-            iconRes = R.drawable.ic_history_24dp
-            iconTint = tintColor
-            titleRes = MR.strings.recents
-            onClick { navigateTo(SettingsRecentsController()) }
-        }
-        preference {
             iconRes = R.drawable.ic_browse_outline_24dp
             iconTint = tintColor
             titleRes = MR.strings.browse
             onClick { navigateTo(SettingsBrowseController()) }
-        }
-        if (exhPreferences.isHentaiEnabled.get()) {
-            preference {
-                iconRes = R.drawable.ic_eh_logo_24dp
-                iconTint = tintColor
-                titleRes = MR.strings.pref_category_eh
-                onClick { navigateTo(SettingsEhController()) }
-            }
         }
         // Storage & Downloads — single entry; SettingsDownloadController hosts
         // download settings and links to the Data Saver Compose screen.
@@ -148,12 +115,6 @@ class SettingsMainController : SettingsLegacyController(), FloatingSearchInterfa
                 navigateTo(SettingsDataLegacyController())
                 context.toast("You're entering legacy version of 'Data and storage'")
             }
-        }
-        preference {
-            iconRes = R.drawable.ic_security_24dp
-            iconTint = tintColor
-            titleRes = MR.strings.security
-            onClick { navigateTo(SettingsSecurityController()) }
         }
         // Advanced — Compose-only. Legacy fallback removed per Phase F.5; the
         // SettingsAdvancedLegacyController source file is retained for now to

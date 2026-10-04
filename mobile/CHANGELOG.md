@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changes
 - Discover is now a bottom navigation tab: Library · Discover · Recents · Browse. It has two sub-tabs, For you (picks from the library and trackers) and Catalog (everything the installed extensions list, with tracker score badges), each for comics or novels. The For you cards at the top of Browse and Recents are gone.
+- Discover shows For you / Catalog and a Comics / Novels switch on one row.
+- Settings: the main list has one entry per area. Security moved into General, Recents and Books (EPUB/PDF) into Library, E-Hentai into Browse, and Translation stays inside Reader › Novel. The tab gestures (long and double tap) are only in General › Navigation instead of also in Appearance. Settings search still finds every screen.
 
 ### Fixes
 - Library categories sync for comics, novels and books. A folder used by several libraries keeps one desktop category per library. A rename, reorder or delete of the folder reaches all of them, and books no longer take over the comic category.

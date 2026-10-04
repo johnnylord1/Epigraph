@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.data.preference.MANGA_NON_COMPLETED
 import eu.kanade.tachiyomi.data.preference.MANGA_NON_READ
 import eu.kanade.tachiyomi.data.preference.MANGA_OUTSIDE_RELEASE_PERIOD
 import eu.kanade.tachiyomi.data.preference.changesIn
+import epigraph.books.ui.LocalBooksController
 import eu.kanade.tachiyomi.ui.category.CategoryController
 import eu.kanade.tachiyomi.ui.library.LibraryPresenter
 import eu.kanade.tachiyomi.ui.library.display.TabbedLibraryDisplaySheet
@@ -328,6 +329,24 @@ class SettingsLibraryController : SettingsLegacyController() {
                     summary = context.getString(MR.strings.pref_migration_parallel_summary, newValue as Int)
                     true
                 }
+            }
+        }
+
+        preferenceCategory {
+            titleRes = MR.strings.settings_more_screens
+            preference {
+                key = "pref_recents_screen"
+                isPersistent = false
+                titleRes = MR.strings.recents
+                summaryRes = MR.strings.settings_recents_summary
+                onClick { router.pushController(SettingsRecentsController().withFadeTransaction()) }
+            }
+            preference {
+                key = "pref_local_books_screen"
+                isPersistent = false
+                titleRes = MR.strings.settings_local_books
+                summaryRes = MR.strings.settings_local_books_summary
+                onClick { router.pushController(LocalBooksController().withFadeTransaction()) }
             }
         }
     }

@@ -1276,6 +1276,11 @@
     <string name="library_books_no_categories">Ainda não há categorias. Crie uma em Configurações › Biblioteca › Categorias.</string>
     <string name="discover">Descobrir</string>
     <string name="discover_card_title">Para você</string>
+    <string name="settings_more_screens">Mais configurações</string>
+    <string name="settings_recents_summary">Aba de atualizações e histórico</string>
+    <string name="settings_local_books">Livros (EPUB/PDF)</string>
+    <string name="settings_local_books_summary">Importe e leia arquivos guardados neste aparelho</string>
+    <string name="settings_security_summary">Bloqueio do app, tela segura e notificações privadas</string>
     <string name="discover_catalog">Catálogo</string>
     <string name="discover_catalog_empty">As extensões instaladas ainda não listaram nenhuma obra. Instale ou ative fontes em Explorar.</string>
     <string name="discover_comics">Quadrinhos</string>

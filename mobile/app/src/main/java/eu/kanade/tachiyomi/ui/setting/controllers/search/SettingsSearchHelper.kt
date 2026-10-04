@@ -18,8 +18,10 @@ import eu.kanade.tachiyomi.ui.setting.controllers.SettingsGeneralController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsLibraryController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsMangaReaderController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsNovelReaderController
+import eu.kanade.tachiyomi.ui.setting.controllers.SettingsRecentsController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsSecurityController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsTrackingController
+import eu.kanade.tachiyomi.ui.setting.controllers.SettingsTranslationController
 import eu.kanade.tachiyomi.ui.setting.controllers.legacy.SettingsAdvancedLegacyController
 import eu.kanade.tachiyomi.ui.setting.controllers.legacy.SettingsDataLegacyController
 import eu.kanade.tachiyomi.util.system.isLTR
@@ -47,6 +49,9 @@ object SettingsSearchHelper {
         SettingsNovelReaderController::class,
         SettingsBooksReaderController::class,
         SettingsTrackingController::class,
+        // Reached from inside other screens, not from the main list.
+        SettingsRecentsController::class,
+        SettingsTranslationController::class,
     )
 
     /**

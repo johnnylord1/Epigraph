@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.ui.setting.intListPreference
 import eu.kanade.tachiyomi.ui.setting.listPreference
 import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.onClick
+import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.summaryMRes as summaryRes
@@ -101,6 +102,17 @@ class SettingsGeneralController : SettingsLegacyController() {
                     }
                     startActivity(intent)
                 }
+            }
+        }
+
+        preferenceCategory {
+            titleRes = MR.strings.security
+            preference {
+                key = "pref_security_screen"
+                isPersistent = false
+                titleRes = MR.strings.security
+                summaryRes = MR.strings.settings_security_summary
+                onClick { router.pushController(SettingsSecurityController().withFadeTransaction()) }
             }
         }
 

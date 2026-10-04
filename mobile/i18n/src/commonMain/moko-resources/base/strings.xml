@@ -2396,6 +2396,11 @@
     <string name="library_books_no_categories">No categories yet. Create one in Settings › Library › Categories.</string>
     <string name="discover">Discover</string>
     <string name="discover_card_title">For you</string>
+    <string name="settings_more_screens">More settings</string>
+    <string name="settings_recents_summary">Updates and history tab</string>
+    <string name="settings_local_books">Books (EPUB/PDF)</string>
+    <string name="settings_local_books_summary">Import and read files kept offline on this device</string>
+    <string name="settings_security_summary">App lock, secure screen and private notifications</string>
     <string name="discover_catalog">Catalog</string>
     <string name="discover_catalog_empty">Your installed extensions have not listed any titles yet. Install or enable sources in Browse.</string>
     <string name="discover_comics">Comics</string>

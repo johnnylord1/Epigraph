@@ -36,6 +36,7 @@ import eu.kanade.tachiyomi.ui.setting.infoPreference
 import eu.kanade.tachiyomi.ui.setting.intListPreference
 import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.onClick
+import exh.source.ExhPreferences
 import eu.kanade.tachiyomi.ui.setting.preference
 import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.summaryMRes as summaryRes
@@ -60,6 +61,7 @@ class SettingsBrowseController : SettingsLegacyController() {
     var updatedExtNotifPref: SwitchPreferenceCompat? = null
 
     private val uiPreferences: UiPreferences by injectLazy()
+    private val exhPreferences: ExhPreferences by injectLazy()
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = MR.strings.browse
@@ -247,6 +249,18 @@ class SettingsBrowseController : SettingsLegacyController() {
                 summary = blockedTagsSummary(context)
                 blockedTagsPref = this
                 onClick { showBlockedTagsDialog(context) }
+            }
+        }
+
+        if (exhPreferences.isHentaiEnabled.get()) {
+            preferenceCategory {
+                titleRes = MR.strings.pref_category_eh
+                preference {
+                    key = "pref_eh_screen"
+                    isPersistent = false
+                    titleRes = MR.strings.pref_category_eh
+                    onClick { router.pushController(SettingsEhController().withFadeTransaction()) }
+                }
             }
         }
     }
