@@ -101,6 +101,7 @@ import yokai.i18n.MR
 import yokai.presentation.AppBarType
 import yokai.presentation.core.enterAlwaysCollapsedAppBarScrollBehavior
 import yokai.presentation.YokaiScaffold
+import yokai.presentation.component.SegmentedSwitch
 import yokai.presentation.manga.components.MangaCover
 import yokai.util.Screen
 
@@ -292,7 +293,8 @@ private fun DiscoverHeader(
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            // Bottom-aligned so the pill can sit on the tab labels' line, above the underline.
+            verticalAlignment = Alignment.Bottom,
         ) {
             UnderlineTabs(
                 options = listOf(
@@ -304,9 +306,13 @@ private fun DiscoverHeader(
                 modifier = Modifier.weight(1f),
             )
             SegmentedSwitch(
-                options = listOf(DiscoverMode.COMICS to MR.strings.discover_comics, DiscoverMode.NOVELS to MR.strings.novels),
+                options = listOf(
+                    DiscoverMode.COMICS to stringResource(MR.strings.discover_comics),
+                    DiscoverMode.NOVELS to stringResource(MR.strings.novels),
+                ),
                 selected = mode,
                 onSelect = onMode,
+                modifier = Modifier.padding(bottom = 7.dp),
             )
         }
         Box(
@@ -362,44 +368,6 @@ private fun <T> UnderlineTabs(
                         .background(barColor, RoundedCornerShape(1.dp)),
                 )
             }
-        }
-    }
-}
-
-/** Two-option pill switch, the mobile counterpart of the desktop Comics / Books toggle. */
-@Composable
-private fun <T> SegmentedSwitch(
-    options: List<Pair<T, StringResource>>,
-    selected: T,
-    onSelect: (T) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .padding(3.dp),
-    ) {
-        options.forEach { (value, label) ->
-            val isSelected = value == selected
-            val container by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
-                label = "discover-switch-container",
-            )
-            val content by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                label = "discover-switch-content",
-            )
-            Text(
-                text = stringResource(label),
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                color = content,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(container)
-                    .selectable(selected = isSelected, role = Role.RadioButton) { onSelect(value) }
-                    .padding(horizontal = 14.dp, vertical = 7.dp),
-            )
         }
     }
 }
