@@ -302,6 +302,52 @@ pub async fn stop_owned_instances(timeout: Duration) -> Result<Vec<AttachedSuway
     Ok(instances)
 }
 
+pub fn attach_main_owned_instance() -> Option<AttachedSuwayomi> {
+    attach_owned_instance(&main_profile_root())
+}
+
+/// Runs `edit` on the main profile while its Suwayomi is stopped, then starts it again; for
+/// settings Suwayomi only reads at startup. Only a run this Core spawned and still retains is
+/// stopped, and no JVM can start for the profile until `edit` returns.
+pub async fn edit_main_profile_while_stopped<T>(
+    edit: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let result = {
+        let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(
+            &crate::suwayomi_maintenance::default_runtime_root(),
+        )?;
+        let _spawn = CORE_SPAWN_GATE.lock().await;
+        if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("Core is shutting down".into());
+        }
+        let root = main_profile_root();
+        let instance = attach_owned_instance(&root).ok_or("managed Suwayomi is not running")?;
+        let retained = instance
+            .run_id
+            .as_ref()
+            .is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
+        if !retained {
+            return Err("managed Suwayomi was not started by this Core".into());
+        }
+        stop_owned_instance(&instance, Duration::from_secs(5)).await?;
+        edit(&root)
+    };
+    // The supervisor would restart it within one health interval; do it now.
+    if let Err(error) = ensure_main_owned_instance().await {
+        tracing::warn!(
+            error = %crate::suwayomi_runtime::sanitize_log_line(&error, &[]),
+            "managed Suwayomi did not restart after a settings edit; the supervisor will retry"
+        );
+    }
+    result
+}
+
+/// Atomic replace for a file inside a Suwayomi profile.
+pub fn write_profile_file(path: &Path, payload: &[u8]) -> Result<(), String> {
+    write_file_atomic(path, payload)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
+}
+
 fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
     let owner_path = root.join("server.owner.json");
     let owner: ServerOwner = serde_json::from_slice(&std::fs::read(owner_path).ok()?).ok()?;

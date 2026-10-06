@@ -350,11 +350,17 @@ pub(crate) async fn execute_graphql_document(
             true,
         )
     })?;
-    if payload
+    if let Some(errors) = payload
         .get("errors")
         .and_then(Value::as_array)
-        .is_some_and(|errors| !errors.is_empty())
+        .filter(|errors| !errors.is_empty())
     {
+        tracing::warn!(
+            profile = session.profile_id,
+            operation = graphql_operation_name(document),
+            error = graphql_error_summary(errors),
+            "Suwayomi catalog bridge query failed"
+        );
         return Err(AppError::service_unavailable(
             "SUWAYOMI_CATALOG_QUERY_FAILED",
             "The comics runtime could not provide the requested catalog data.",
@@ -370,9 +376,48 @@ pub(crate) async fn execute_graphql_document(
     })
 }
 
+/// `EpigraphCoreFetchManga` for `mutation EpigraphCoreFetchManga($id: Int!) { ... }`.
+fn graphql_operation_name(document: &str) -> &str {
+    let mut words = document.split_whitespace();
+    match words.next() {
+        Some("query" | "mutation") => words.next(),
+        _ => None,
+    }
+    .and_then(|name| name.split(['(', '{']).next())
+    .filter(|name| !name.is_empty())
+    .unwrap_or("anonymous")
+}
+
+/// The first upstream error message, single-line, secret-scrubbed and bounded for the log.
+fn graphql_error_summary(errors: &[Value]) -> String {
+    let message = errors
+        .first()
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    crate::suwayomi_runtime::sanitize_log_line(message, &[])
+        .chars()
+        .take(300)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graphql_failures_are_summarized_for_the_log() {
+        assert_eq!(
+            graphql_operation_name("\n  mutation EpigraphCoreFetchManga($id: Int!) {"),
+            "EpigraphCoreFetchManga"
+        );
+        assert_eq!(graphql_operation_name("query Q{ a }"), "Q");
+        assert_eq!(graphql_operation_name("{ a }"), "anonymous");
+        let errors = vec![json!({ "message": "HTTP error 403\nat source" })];
+        assert_eq!(graphql_error_summary(&errors), "HTTP error 403 at source");
+        let long = vec![json!({ "message": "x".repeat(1_000) })];
+        assert_eq!(graphql_error_summary(&long).len(), 300);
+    }
 
     #[test]
     fn library_manifest_exposes_the_extension_package_for_source_relinking() {

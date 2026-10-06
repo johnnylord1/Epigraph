@@ -5,8 +5,10 @@
 //!   locally without deleting the remote tracker entry.
 //! * Suwayomi -> Core: bindings made on the desktop are emitted as full-state records, and a
 //!   mirrored binding that disappears from Suwayomi becomes a tombstone.
-//! * Tracker logins stored through `/v1/tracker-credentials` are applied to Suwayomi where
-//!   Suwayomi can accept them (AniList implicit-token OAuth).
+//! * Tracker logins stored through `/v1/tracker-credentials` are applied to Suwayomi: AniList
+//!   through its implicit-token OAuth login, the other portable trackers by writing the login
+//!   into the profile's `settings/tracker.xml` while Suwayomi is stopped (it only reads that file
+//!   at startup). Logins made on the desktop are read back from that file and published.
 //!
 //! Echo loops are prevented by `suwayomi_tracking_mirror_state`, which remembers per entity the
 //! Suwayomi fingerprint and the Core `server_version` both sides last agreed on. A side only
@@ -31,7 +33,10 @@ use super::models::{
     SharedAppState,
 };
 use super::routes::suwayomi_catalog;
-use super::tracker_credentials::{self, StoredTrackerCredential};
+use super::suwayomi_tracker_prefs;
+use super::tracker_credentials::{
+    self, CredentialValues, StoredTrackerCredential, DESKTOP_DEVICE_ID,
+};
 use super::tracking::{self, COMIC_TRACKING};
 use super::{db, suwayomi_process};
 
@@ -224,6 +229,9 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
             ),
         }
     }
+    if !pending_credentials.is_empty() {
+        credential_failures.extend(apply_file_logins(state, &pending_credentials).await);
+    }
     for credential in &pending_credentials {
         if credential_failures.contains(&credential.tracker_key) {
             continue;
@@ -239,6 +247,7 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
             tracing::warn!(error = %error, "could not record an applied tracker login");
         }
     }
+    publish_desktop_logins(state).await;
     Ok(changed)
 }
 
@@ -268,9 +277,8 @@ impl std::fmt::Debug for RedactedUrl {
 }
 
 pub fn credential_action(credential: &StoredTrackerCredential) -> CredentialAction {
-    // Only AniList's implicit-token login can be replayed into Suwayomi. MyAnimeList,
-    // Shikimori and Bangumi need a fresh authorization code, Kitsu and MangaUpdates need the
-    // plain password Mihon does not keep, so those stay a per-device login.
+    // AniList's implicit-token login is replayed through Suwayomi, which also fetches the
+    // user's score format. The other trackers go through `file_login_change`.
     if credential.tracker_key != "anilist" {
         return CredentialAction::Skip;
     }
@@ -393,6 +401,207 @@ async fn apply_credentials_to_profile(
         }
     }
     failures
+}
+
+/// What a pending login means for the main profile's `tracker.xml`: the Suwayomi tracker id
+/// and the login to write (`None` removes it). AniList is replayed through OAuth instead, and a
+/// logout of a login the desktop never had leaves the desktop's own login alone.
+pub fn file_login_change(
+    credential: &StoredTrackerCredential,
+) -> Option<(i64, Option<CredentialValues>)> {
+    let (_, tracker_id, _) = SUWAYOMI_TRACKERS
+        .iter()
+        .find(|(key, _, _)| *key == credential.tracker_key && *key != "anilist")?;
+    if credential.deleted {
+        return (credential.desktop_revision != 0).then_some((*tracker_id, None));
+    }
+    Some((
+        *tracker_id,
+        Some(CredentialValues {
+            username: credential.username.clone(),
+            password: credential.password.clone(),
+            token: credential.token.clone(),
+        }),
+    ))
+}
+
+/// Writes pending logins into the main profile's `tracker.xml`, restarting its Suwayomi only
+/// when the file does not already hold them; returns the tracker keys that must retry.
+async fn apply_file_logins(
+    state: &SharedAppState,
+    pending: &[StoredTrackerCredential],
+) -> Vec<String> {
+    let changes: Vec<(&str, i64, Option<CredentialValues>)> = pending
+        .iter()
+        .filter_map(|credential| {
+            file_login_change(credential)
+                .map(|(tracker_id, login)| (credential.tracker_key.as_str(), tracker_id, login))
+        })
+        .collect();
+    if changes.is_empty() {
+        return Vec::new();
+    }
+    let all_keys = || {
+        changes
+            .iter()
+            .map(|(key, _, _)| key.to_string())
+            .collect::<Vec<_>>()
+    };
+    let Some(main) = suwayomi_process::attach_main_owned_instance() else {
+        return all_keys();
+    };
+    let trackers = match fetch_trackers(state, &mirror_session(&main.profile_key)).await {
+        Ok(trackers) => trackers,
+        Err(_) => return all_keys(),
+    };
+    let (verified, unverified): (Vec<_>, Vec<_>) = changes
+        .iter()
+        .partition(|(key, tracker_id, _)| verified_tracker(&trackers, key, *tracker_id));
+    let mut failures: Vec<String> = unverified
+        .iter()
+        .map(|(key, _, _)| key.to_string())
+        .collect();
+    for key in &failures {
+        tracing::warn!(tracker_key = %key, "synced tracker login targets an unverified Suwayomi tracker; will retry");
+    }
+    let apply = |entries: &mut Vec<(String, String)>| {
+        verified
+            .iter()
+            .fold(false, |dirty, (_, tracker_id, login)| {
+                suwayomi_tracker_prefs::set_credential(entries, *tracker_id, login.as_ref())
+                    || dirty
+            })
+    };
+    let mut entries = match suwayomi_tracker_prefs::read_entries(&main.root_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(error = %error, "could not read the desktop tracker logins; will retry");
+            return all_keys();
+        }
+    };
+    if !apply(&mut entries) {
+        return failures;
+    }
+    let keys: Vec<&str> = verified.iter().map(|(key, _, _)| *key).collect();
+    tracing::info!(trackers = ?keys, "restarting the desktop Suwayomi to apply synced tracker logins");
+    let written = suwayomi_process::edit_main_profile_while_stopped(|root| {
+        // Suwayomi may have written the file since it was read above.
+        let mut entries = suwayomi_tracker_prefs::read_entries(root)?;
+        apply(&mut entries);
+        suwayomi_process::write_profile_file(
+            &suwayomi_tracker_prefs::tracker_prefs_path(root),
+            suwayomi_tracker_prefs::render(&entries)?.as_bytes(),
+        )
+    })
+    .await;
+    match written {
+        Ok(()) => tracing::info!(trackers = ?keys, "applied synced tracker logins to Suwayomi"),
+        Err(error) => {
+            tracing::warn!(
+                trackers = ?keys,
+                error = %crate::suwayomi_runtime::sanitize_log_line(&error, &[]),
+                "could not apply synced tracker logins; will retry"
+            );
+            failures.extend(keys.iter().map(|key| key.to_string()));
+        }
+    }
+    failures
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tracker logins (desktop Suwayomi -> Core)
+// ---------------------------------------------------------------------------------------------
+
+/// The vault write a desktop login implies: `Some(Some(_))` publishes a login, `Some(None)` a
+/// logout. Nothing while a Core login is still pending for the desktop (the Core wins), or
+/// when the desktop already matches the Core.
+pub fn desktop_login_change(
+    stored: Option<&StoredTrackerCredential>,
+    desktop: Option<&CredentialValues>,
+) -> Option<Option<CredentialValues>> {
+    if stored.is_some_and(|stored| stored.revision != stored.desktop_revision) {
+        return None;
+    }
+    let current = stored
+        .filter(|stored| !stored.deleted)
+        .map(|stored| CredentialValues {
+            username: stored.username.clone(),
+            password: stored.password.clone(),
+            token: stored.token.clone(),
+        });
+    match (current, desktop) {
+        (current, Some(desktop)) if current.as_ref() != Some(desktop) => {
+            Some(Some(desktop.clone()))
+        }
+        (Some(_), None) => Some(None),
+        _ => None,
+    }
+}
+
+/// Publishes logins made (or refreshed, or logged out) in the desktop Suwayomi, so paired
+/// devices log in without asking the user again.
+async fn publish_desktop_logins(state: &SharedAppState) {
+    if !tracker_credentials::is_supported() {
+        return;
+    }
+    let Some(main) = suwayomi_process::attach_main_owned_instance() else {
+        return;
+    };
+    let Ok(trackers) = fetch_trackers(state, &mirror_session(&main.profile_key)).await else {
+        return;
+    };
+    let entries = match suwayomi_tracker_prefs::read_entries(&main.root_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(error = %error, "could not read the desktop tracker logins");
+            return;
+        }
+    };
+    let verified = verified_tracker_map(&trackers);
+    for (tracker_key, tracker_id, _) in SUWAYOMI_TRACKERS {
+        if !verified.contains_key(tracker_key) {
+            continue;
+        }
+        let desktop = suwayomi_tracker_prefs::credential(&entries, tracker_id);
+        let now_ms = db::now_ms();
+        let outcome = tracker_credentials::update_vault(&state.config.data_dir, |vault| {
+            let Some(change) =
+                desktop_login_change(vault.credentials.get(tracker_key), desktop.as_ref())
+            else {
+                return Ok((None, false));
+            };
+            let base_revision = vault.current_revision(tracker_key);
+            let view = match change {
+                Some(values) => vault.put(
+                    tracker_key,
+                    base_revision,
+                    values,
+                    DESKTOP_DEVICE_ID,
+                    now_ms,
+                )?,
+                None => vault.delete(tracker_key, base_revision, DESKTOP_DEVICE_ID, now_ms)?,
+            };
+            // Suwayomi on this desktop already holds this login; nothing to apply back.
+            vault.mark_desktop_applied(tracker_key, view.revision);
+            Ok((Some((view.revision, view.deleted)), true))
+        })
+        .await;
+        match outcome {
+            Ok(Ok(Some((revision, logout)))) => tracing::info!(
+                tracker_key = %tracker_key,
+                revision,
+                logout,
+                "desktop tracker login published"
+            ),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(tracker_key = %tracker_key, error = ?error, "desktop tracker login was not published")
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "tracker credential vault unavailable for the mirror")
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1607,5 +1816,99 @@ mod tests {
             ..login
         };
         assert_eq!(credential_action(&mal), CredentialAction::Skip);
+    }
+
+    #[test]
+    fn file_logins_cover_every_suwayomi_tracker_but_anilist() {
+        let login = |key: &str| StoredTrackerCredential {
+            tracker_key: key.to_string(),
+            revision: 3,
+            username: "u".to_string(),
+            password: "p".to_string(),
+            token: "t".to_string(),
+            ..Default::default()
+        };
+        for (key, id) in [
+            ("myanimelist", 1),
+            ("kitsu", 3),
+            ("shikimori", 4),
+            ("bangumi", 5),
+            ("mangaupdates", 7),
+        ] {
+            let (tracker_id, values) = file_login_change(&login(key)).unwrap();
+            assert_eq!(tracker_id, id);
+            let values = values.unwrap();
+            assert_eq!(
+                (
+                    values.username.as_str(),
+                    values.password.as_str(),
+                    values.token.as_str()
+                ),
+                ("u", "p", "t")
+            );
+        }
+        for key in ["anilist", "komga", "hardcover", "novelupdates"] {
+            assert!(file_login_change(&login(key)).is_none(), "{key}");
+        }
+        let never_applied_logout = StoredTrackerCredential {
+            deleted: true,
+            ..login("kitsu")
+        };
+        assert!(file_login_change(&never_applied_logout).is_none());
+        let logout = StoredTrackerCredential {
+            desktop_revision: 2,
+            ..never_applied_logout
+        };
+        assert_eq!(file_login_change(&logout), Some((3, None)));
+    }
+
+    #[test]
+    fn desktop_logins_publish_only_differences_and_yield_to_pending_core_logins() {
+        let values = |token: &str| CredentialValues {
+            username: "u".to_string(),
+            password: "p".to_string(),
+            token: token.to_string(),
+        };
+        let stored = StoredTrackerCredential {
+            tracker_key: "myanimelist".to_string(),
+            revision: 4,
+            desktop_revision: 4,
+            username: "u".to_string(),
+            password: "p".to_string(),
+            token: "a".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(desktop_login_change(None, None), None);
+        assert_eq!(
+            desktop_login_change(None, Some(&values("a"))),
+            Some(Some(values("a")))
+        );
+        assert_eq!(
+            desktop_login_change(Some(&stored), Some(&values("a"))),
+            None
+        );
+        assert_eq!(
+            desktop_login_change(Some(&stored), Some(&values("b"))),
+            Some(Some(values("b")))
+        );
+        assert_eq!(desktop_login_change(Some(&stored), None), Some(None));
+        let tombstone = StoredTrackerCredential {
+            deleted: true,
+            ..stored.clone()
+        };
+        assert_eq!(desktop_login_change(Some(&tombstone), None), None);
+        assert_eq!(
+            desktop_login_change(Some(&tombstone), Some(&values("a"))),
+            Some(Some(values("a")))
+        );
+        let pending = StoredTrackerCredential {
+            revision: 5,
+            ..stored
+        };
+        assert_eq!(
+            desktop_login_change(Some(&pending), Some(&values("b"))),
+            None
+        );
+        assert_eq!(desktop_login_change(Some(&pending), None), None);
     }
 }

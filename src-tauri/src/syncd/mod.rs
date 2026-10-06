@@ -17,6 +17,7 @@ pub mod suwayomi_category_mirror;
 pub mod suwayomi_process;
 pub mod suwayomi_progress_mirror;
 pub mod suwayomi_projection;
+pub mod suwayomi_tracker_prefs;
 pub mod suwayomi_tracking_mirror;
 pub mod tls;
 pub mod tracker_credentials;
