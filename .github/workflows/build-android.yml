@@ -44,15 +44,27 @@ jobs:
           java-version: 17
           distribution: temurin
 
+      # The hosted runner has 16 GB: Kotlin compiles inside the Gradle JVM (no daemon that outlives
+      # a step), two workers at most, and swap absorbs dexing and lint peaks instead of the runner
+      # being killed (exit 143).
+      - name: Swap
+        run: |
+          sudo fallocate -l 8G /swapfile2
+          sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2
+          sudo swapon /swapfile2
+          free -m
+
       - name: Gradle properties for the hosted runner
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/gradle.properties <<'EOF'
           org.gradle.daemon=false
-          org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -Dfile.encoding=UTF-8
-          org.gradle.parallel=true
+          org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          org.gradle.parallel=false
+          org.gradle.workers.max=2
           org.gradle.caching=true
-          kotlin.daemon.jvmargs=-Xmx3g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.compiler.execution.strategy=in-process
           kotlin.incremental=false
           EOF
 
@@ -76,12 +88,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Lint runs last, after the APK is kept, and alone: with the Kotlin daemon of the earlier
-      # steps and parallel workers it ran the hosted runner out of memory.
+      # Lint runs last, after the APK is kept.
       - name: Lint
-        run: |
-          pkill -f KotlinCompileDaemon || true
-          ./gradlew :app:lintDevDebug --no-parallel --max-workers=2
+        run: ./gradlew :app:lintDevDebug
 
       - name: Upload test reports
         uses: actions/upload-artifact@v4
