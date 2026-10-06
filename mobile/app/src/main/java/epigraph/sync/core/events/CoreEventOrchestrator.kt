@@ -62,6 +62,7 @@ class CoreEventOrchestrator(
         var attempt = 0
         while (true) {
             network.awaitAvailable()
+            val cursorBefore = session.checkpoint.lastGlobalEventId
             val outcome = try {
                 connection.connect(session)
             } catch (cancelled: CancellationException) {
@@ -73,6 +74,9 @@ class CoreEventOrchestrator(
                     attempt = 0
                 }
                 is CoreEventStreamOutcome.Reconnect -> {
+                    // A connection that delivered changes was healthy; its drop starts a new
+                    // backoff series instead of inheriting the delay of earlier failures.
+                    if (outcome.checkpoint.lastGlobalEventId > cursorBefore) attempt = 0
                     attempt += 1
                     reconnect.awaitRetry(attempt, outcome.reason)
                 }

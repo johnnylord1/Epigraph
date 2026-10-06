@@ -13,6 +13,7 @@ import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableResolution
+import epigraph.contract.PortableResolutionReason
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
 import epigraph.sync.portable.PortableWorkBindingRecord
@@ -357,6 +358,150 @@ class EpigraphCoreDomainProjectionTest {
         assertEquals(realChapterId, chapters.single()._id)
         assertTrue(chapters.single().bookmark)
         assertNull(database.aethon_syncQueries.selectChapterBindingByEntityId(legacyEntityId).executeAsOneOrNull())
+    }
+
+    @Test
+    fun `portable chapter state reaches the Core-backed chapter of a title read through the Core catalog`() = runTest {
+        // The device has no extension for the title: it reads it through the Core catalog, so the
+        // portable chapter stays pending while the chapter exists under its server-local ids.
+        val mangaId = insertTrackingManga(EpigraphCoreSource.ID, "aethon-core://suwayomi/desktop/main/manga/2")
+        val coreChapterUrl = "aethon-core://suwayomi/desktop/main/chapter/211"
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = coreChapterUrl,
+            name = "Chapter 17",
+            scanlator = null,
+            read = true,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 17.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "suwayomi:server:desktop:profile:main:manga:2",
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = "suwayomi:server:desktop:profile:main:chapter:211",
+            workEntityId = "suwayomi:server:desktop:profile:main:manga:2",
+            localChapterId = localChapterId,
+            normalizedUrl = coreChapterUrl,
+            ordinal = 17.0,
+            updatedAt = 1,
+        )
+        val work = PortableWorkRef.Comic(DecimalSourceId("8531542650987673943"), ProviderOwnedKey("/series/165"))
+        val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey("/series/165/a7b251fee96b1f4e"))
+        val workId = PortableIdentityV3.workId(work)
+        val chapterId = PortableIdentityV3.chapterId(chapter)
+        fun desktopState(suwayomiChapterId: Long) = CoreConfirmedRecord(
+            key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$workId::$chapterId"),
+            serverVersion = 10,
+            lamport = 10,
+            originServerId = ORIGIN_SERVER_ID,
+            record = buildJsonObject {
+                put("comicId", workId)
+                put("chapterId", chapterId)
+                put("portableWorkRef", Json.encodeToJsonElement(work))
+                put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                put("coreServerId", "desktop")
+                put("coreProfileId", "main")
+                put("suwayomiMangaId", 2)
+                put("suwayomiChapterId", suwayomiChapterId)
+                put("read", false)
+                put("bookmarked", true)
+                put("updatedAtMs", 1_000)
+            },
+        )
+        fun local() = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+
+        // A record naming another server-local chapter leaves this one alone.
+        projection.upsert(database, desktopState(suwayomiChapterId = 212))
+        assertTrue(local().read)
+
+        projection.upsert(database, desktopState(suwayomiChapterId = 211))
+        assertFalse(local().read)
+        assertTrue(local().bookmark)
+        assertEquals(
+            PortableResolutionState.PENDING_PROVIDER.name,
+            database.aethon_syncQueries.selectPortableChapterBinding(chapterId).executeAsOne().resolution_state,
+        )
+    }
+
+    @Test
+    fun `legacy chapter state with null portable refs reaches its bound chapter`() = runTest {
+        // Desktop mirrors serialized an absent portable identity as explicit nulls.
+        val mangaId = insertTrackingManga(EpigraphCoreSource.ID, "aethon-core://suwayomi/desktop/main/manga/2")
+        val coreChapterUrl = "aethon-core://suwayomi/desktop/main/chapter/211"
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = coreChapterUrl,
+            name = "Chapter 17",
+            scanlator = null,
+            read = true,
+            bookmark = false,
+            lastPageRead = 9,
+            pagesLeft = 0,
+            chapterNumber = 17.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val comicId = "suwayomi:server:desktop:profile:main:manga:2"
+        val chapterEntityId = "suwayomi:server:desktop:profile:main:chapter:211"
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = comicId,
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = chapterEntityId,
+            workEntityId = comicId,
+            localChapterId = localChapterId,
+            normalizedUrl = coreChapterUrl,
+            ordinal = 17.0,
+            updatedAt = 1,
+        )
+
+        projection.upsert(
+            database,
+            CoreConfirmedRecord(
+                key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$comicId::$chapterEntityId"),
+                serverVersion = 10,
+                lamport = 10,
+                originServerId = ORIGIN_SERVER_ID,
+                record = buildJsonObject {
+                    put("comicId", comicId)
+                    put("chapterId", chapterEntityId)
+                    put("portableWorkRef", JsonNull)
+                    put("portableChapterRef", JsonNull)
+                    put("coreServerId", "desktop")
+                    put("coreProfileId", "main")
+                    put("suwayomiMangaId", 2)
+                    put("suwayomiChapterId", 211)
+                    put("read", false)
+                    put("bookmarked", true)
+                    put("updatedAtMs", 1_000)
+                },
+            ),
+        )
+
+        val local = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+        assertFalse(local.read)
+        assertTrue(local.bookmark)
+        // The mirror publishes page zero as an absent page; unread then resets local progress.
+        assertEquals(0L, local.last_page_read)
     }
 
     @Test
@@ -1732,6 +1877,33 @@ class EpigraphCoreDomainProjectionTest {
             record,
         )
         assertTrue(database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().isEmpty())
+    }
+
+    @Test
+    fun `comic tracking of a work waiting for its extension lands on the Core-served row`() = runTest {
+        projection.upsert(database, verifiedCoreEntryRecord(providerKey = "/Manga/Tracked"))
+        val coreMangaId = database.mangasQueries.findFavorites().executeAsList().single()._id
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/Manga/Tracked"))
+        val workId = PortableIdentityV3.workId(work)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = null,
+                resolution = PortableResolution(
+                    PortableResolutionState.REQUIRES_USER_ACTION,
+                    PortableResolutionReason.EXTENSION_NOT_FOUND,
+                ),
+                titleHint = "Tracked",
+                providerLabelHint = "Fixture",
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+
+        projection.upsert(database, trackingRecord(COMIC_SCOPE_ID, "comic.tracking", "comicId", workId, "anilist"))
+
+        assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(coreMangaId).executeAsList().single().remote_id)
     }
 
     @Test

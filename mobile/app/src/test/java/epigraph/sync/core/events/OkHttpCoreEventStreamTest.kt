@@ -13,7 +13,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.asResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.buffer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -51,6 +53,47 @@ class OkHttpCoreEventStreamTest {
         assertEquals(listOf(8L to 8L, 11L to 11L), persisted)
         assertEquals(11L, session.checkpoint.lastGlobalEventId)
         assertFalse(stream(interceptor).toString().contains("one-use-token"))
+    }
+
+    @Test
+    fun `silent half-open stream times out into a reconnect after the applied cursor`() = runTest {
+        val interceptor = RecordingInterceptor { request ->
+            val body = object : okio.Source {
+                private var sent = false
+                override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                    if (sent) throw java.net.SocketTimeoutException("timeout")
+                    sent = true
+                    return okio.Buffer().writeUtf8(changeEvent(8)).let { it.read(sink, it.size) }
+                }
+                override fun timeout() = okio.Timeout.NONE
+                override fun close() = Unit
+            }
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("test")
+                .body(body.buffer().asResponseBody("text/event-stream".toMediaType()))
+                .build()
+        }
+        val session = CoreReplaySession.afterSnapshot(7, CoreReplayCoverage.AllGrantedScopes)
+
+        val outcome = stream(interceptor).collect("secret", session) { _, _ -> }
+
+        val reconnect = assertInstanceOf(CoreEventStreamOutcome.Reconnect::class.java, outcome)
+        assertEquals(CoreReconnectReason.IO_FAILURE, reconnect.reason)
+        assertEquals(8L, reconnect.checkpoint.lastGlobalEventId)
+    }
+
+    @Test
+    fun `production stream never waits forever on a silent socket`() {
+        val production = OkHttpCoreEventStream(
+            client = OkHttpClient(),
+            baseUrl = "https://core.local/".toHttpUrl(),
+            clientVersion = "0.1.0",
+        )
+        // Finite, and long enough to survive at least two missed 30 s syncd pings.
+        assertTrue(production.idleTimeoutMillis in 60_001..120_000)
     }
 
     @Test

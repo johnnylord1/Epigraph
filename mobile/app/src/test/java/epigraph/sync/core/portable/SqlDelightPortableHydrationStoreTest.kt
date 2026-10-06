@@ -229,4 +229,65 @@ class SqlDelightPortableHydrationStoreTest {
             database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList().map { it.read },
         )
     }
+
+    @Test
+    fun `tracking confirmed before its work had a local row reaches it once the work is persisted`() = runTest {
+        database.mangasQueries.insert(
+            source = 10002,
+            url = "/Manga/Tracked",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Tracked comic",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        val ref = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/Manga/Tracked"))
+        val workId = PortableIdentityV3.workId(ref)
+        database.aethon_syncQueries.upsertCoreReplicaRecord(
+            scopeId = "comics:profile:main",
+            entityType = "comic.tracking",
+            entityId = "comic.tracking::$workId::anilist",
+            serverVersion = 10,
+            lamport = 1,
+            recordJson = """{"comicId":"$workId","trackerKey":"anilist","remoteId":4242,"title":"Tracked",""" +
+                """"remoteUrl":"https://anilist.co/manga/4242","status":1,"progress":3.0,""" +
+                """"totalChapters":10,"score":7.0,"updatedAtMs":100}""",
+            payloadSha256 = "0".repeat(64),
+        )
+
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = listOf(
+                PortableWorkBindingRecord(
+                    portableId = workId,
+                    ref = ref,
+                    localReference = localId.toString(),
+                    resolution = PortableResolution(PortableResolutionState.BOUND),
+                    titleHint = "Tracked comic",
+                    providerLabelHint = null,
+                    attemptCount = 1,
+                    updatedAt = 1,
+                ),
+            ),
+        )
+
+        assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(localId).executeAsList().single().remote_id)
+    }
 }

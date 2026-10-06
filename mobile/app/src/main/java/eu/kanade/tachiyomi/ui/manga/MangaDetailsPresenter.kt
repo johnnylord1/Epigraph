@@ -89,8 +89,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -174,6 +177,7 @@ class MangaDetailsPresenter(
     private var initialTracksJob: Job? = null
     private var initialContentJob: Job? = null
     private var trackingRefreshJob: Job? = null
+    private var chapterChangesJob: Job? = null
     private var tracks = emptyList<Track>()
 
     var trackList: List<TrackItem> = emptyList()
@@ -312,6 +316,16 @@ class MangaDetailsPresenter(
 
             setTrackItems()
         }
+
+        // Sync projections write chapter state while this screen is open; reflect them here.
+        chapterChangesJob?.cancel()
+        chapterChangesJob = getChapter.subscribeAll(mangaId, false)
+            .map { chapters -> chapters.map { listOf(it.id, it.read, it.bookmark, it.last_page_read) } }
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { initialContentJob?.join(); refreshChapters(andTracking = false) }
+            .catch { error -> Logger.e(error) }
+            .launchIn(presenterScope)
 
         refreshTracking(false)
     }

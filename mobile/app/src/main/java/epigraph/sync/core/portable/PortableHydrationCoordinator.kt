@@ -12,6 +12,7 @@ import epigraph.sync.core.replica.CoreConfirmedRecord
 import epigraph.sync.core.replica.CoreReplicaKey
 import epigraph.sync.core.replica.CoreReplicaProjection
 import epigraph.sync.core.replica.EpigraphCoreDomainProjection
+import epigraph.sync.TrackerSyncKeys
 import epigraph.sync.portable.PortableComicDependencyRecord
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableNovelDependencyRecord
@@ -195,6 +196,20 @@ class SqlDelightPortableHydrationStore(
                         entityId = "comic.chapter_state::${chapter.portableWorkId}::${chapter.portableChapterId}",
                     ).executeAsList()
                 }
+                // Tracking confirmed before its work had a local row is replayed the same way: a
+                // work bound now, or still served by the Core, can finally receive it.
+                .plus(
+                    works.asSequence()
+                        .filter { it.ref is PortableWorkRef.Comic }
+                        .flatMap { work ->
+                            TrackerSyncKeys.all.values.asSequence().flatMap { trackerKey ->
+                                aethon_syncQueries.selectCoreReplicaRecordsByEntity(
+                                    entityType = "comic.tracking",
+                                    entityId = "comic.tracking::${work.portableId}::$trackerKey",
+                                ).executeAsList()
+                            }
+                        },
+                )
                 .forEach { row ->
                     val element = runCatching { json.parseToJsonElement(row.record_json) }.getOrNull()
                         ?: return@forEach
