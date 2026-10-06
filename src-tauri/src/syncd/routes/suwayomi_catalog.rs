@@ -74,6 +74,7 @@ const CHAPTERS_QUERY: &str = r#"
         uploadDate
         realUrl
         lastPageRead
+        lastReadAt
         scanlator
       }
     }

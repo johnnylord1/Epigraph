@@ -23,7 +23,7 @@ const FETCH_CHAPTERS_DOCUMENT: &str = r#"
     fetchChapters(input: { mangaId: $mangaId }) {
       chapters {
         id name chapterNumber sourceOrder pageCount mangaId uploadDate realUrl scanlator
-        isRead isBookmarked lastPageRead
+        isRead isBookmarked lastPageRead lastReadAt
       }
     }
   }
@@ -127,8 +127,8 @@ mod tests {
             normalized_content(&ContentOperation::FetchChapters, 8).unwrap();
         assert!(chapters.contains("mutation EpigraphCoreFetchChapters"));
         // Paired phones mirror the desktop read state from this list; without it a Core manga
-        // read on the desktop opens on the phone at chapter one.
-        for field in ["isRead", "isBookmarked", "lastPageRead"] {
+        // read on the desktop opens on the phone at chapter one, and lastReadAt fills History.
+        for field in ["isRead", "isBookmarked", "lastPageRead", "lastReadAt"] {
             assert!(chapters.contains(field), "fetchChapters must select {field}");
         }
         assert_eq!(chapter_variables, json!({ "mangaId": 8 }));
