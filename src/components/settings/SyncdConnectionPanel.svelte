@@ -4,7 +4,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
-  import { ArrowClockwise, CaretRight, Check, CircleNotch, Copy, Desktop, Devices, DownloadSimple, ImageSquare, Info, Plugs, QrCode, Trash, UploadSimple, Warning, X } from "phosphor-svelte";
+  import { ArrowClockwise, CaretRight, Check, CircleNotch, Copy, Desktop, DeviceMobile, Devices, DownloadSimple, ImageSquare, Info, Plugs, QrCode, Trash, UploadSimple, Warning, X } from "phosphor-svelte";
   import { glideHeight } from "../../lib/motion/motion";
   import { addToast, store } from "../../store/state.svelte";
   import { buildSyncdQrDataUrl, decodeSyncdQrDataUrl, decodeSyncdQrFile } from "../../lib/syncdQr";
@@ -155,7 +155,7 @@
       return { tone: "info", label: statusLabel(connect.status), title: translate("syncd_modal_waitingHostApproval"), body: translate("syncd_modal_keepWindowsOpen") };
     }
     if (host?.status === "claimed") {
-      return { tone: "info", label: translate("syncd_status_approvalNeeded"), title: translate("syncd_modal_desktopWantsConnect"), body: translate("syncd_modal_reviewApprove") };
+      return { tone: "info", label: translate("syncd_status_approvalNeeded"), title: approvalTitle, body: translate("syncd_modal_reviewApprove") };
     }
     if (host?.status === "approved") {
       return { tone: "success", label: statusLabel("approved"), title: translate("syncd_modal_pairingApproved"), body: translate("syncd_modal_otherDesktopComplete") };
@@ -219,6 +219,28 @@
       || pairedDevice?.platform
       || translate("syncd_modal_pairDesktop");
   });
+
+  /* Phones and desktops both claim this host, so approval copy follows the claimant's platform. */
+  const remoteDeviceKind = $derived.by(() => {
+    const claimedDeviceId = host?.claimedDeviceId ?? connect?.claimedDeviceId ?? null;
+    const pairedDevice = claimedDeviceId
+      ? pairedDevices.find((device) => device.deviceId === claimedDeviceId)
+      : null;
+    const platform = (host?.claimedPlatform?.trim() || pairedDevice?.platform || "").toLowerCase();
+    if (["android", "ios", "mobile", "phone"].includes(platform)) return "phone" as const;
+    if (["desktop", "windows", "macos", "linux"].includes(platform)) return "desktop" as const;
+    return "device" as const;
+  });
+  const approvalTitle = $derived(
+    remoteDeviceKind === "phone" ? $_("syncd_modal_phoneWantsConnect")
+      : remoteDeviceKind === "desktop" ? $_("syncd_modal_desktopWantsConnect")
+        : $_("syncd_modal_deviceWantsConnect"),
+  );
+  const approvalVerificationHint = $derived(
+    remoteDeviceKind === "phone" ? $_("syncd_modal_verificationHintPhone")
+      : remoteDeviceKind === "desktop" ? $_("syncd_modal_verificationHint")
+        : $_("syncd_modal_verificationHintDevice"),
+  );
 
   /* Seconds left on the open host pairing. The PIN renews itself while this panel stays open. */
   let hostNowMs = $state(Date.now());
@@ -1046,6 +1068,8 @@
     }
 
     const replicationPoll = window.setInterval(() => {
+      // A minimized window has no one to show the status to; the next visible tick refreshes it.
+      if (document.hidden) return;
       if (activeProfileId) {
         void refreshReplicationSnapshot();
       }
@@ -1196,9 +1220,9 @@
             </div>
             <p class="syncd-note"><Info size={16} />{$_("syncd_modal_keepWindowsOpen")}</p>
           {:else if pairingStage === "approval" && host}
-            <div class="syncd-start-copy syncd-pane"><h3>{$_("syncd_modal_desktopWantsConnect")}</h3></div>
-            <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={20} /></span><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div></div>
-            <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{$_("syncd_modal_verificationHint")}</small></div>
+            <div class="syncd-start-copy syncd-pane"><h3>{approvalTitle}</h3></div>
+            <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true">{#if remoteDeviceKind === "phone"}<DeviceMobile size={20} />{:else}<Desktop size={20} />{/if}</span><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div></div>
+            <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{approvalVerificationHint}</small></div>
             <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
             <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}

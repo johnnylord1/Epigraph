@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
+  import { enableBuiltinCloudflareSolver } from "./lib/flaresolverr";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
@@ -14,6 +15,8 @@
     shouldBootFromLibrarySnapshot,
   } from "./lib/serverBootPolicy";
   import {
+    configureBuiltInLocalServerPorts,
+    fallbackBuiltInServerPorts,
     DEFAULT_LOCAL_PROFILE_ID,
     type LocalProfileId,
     localProfileDisplayName,
@@ -38,6 +41,7 @@
     addToast,
     openBookReader,
     replaceBooksState,
+    replaceBooksStateFromDisk,
     updateSettings,
     setActiveDownloads,
     setActiveBookId,
@@ -461,11 +465,13 @@
     if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
     syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
 
-    if (payload.lastAppliedScopes.includes("books:global")) {
+    const novelsApplied = payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"));
+    // Novel categories and memberships live in the shared Books category list.
+    if (payload.lastAppliedScopes.includes("books:global") || novelsApplied) {
       try {
         const { reloadBookLibraryState } = await import("./lib/books/libraryState");
         const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
-        replaceBooksState({
+        replaceBooksStateFromDisk({
           books: next.books,
           bookProgress: next.bookProgress,
           bookBookmarks: next.bookBookmarks,
@@ -478,7 +484,7 @@
       }
     }
 
-    if (payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) {
+    if (novelsApplied) {
       const currentProfileId =
         normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
         ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
@@ -2506,8 +2512,12 @@
     };
     document.addEventListener("contextmenu", e => e.preventDefault());
     void (async () => {
-      const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
+      const [launchTarget, builtInPorts] = await Promise.all([
+        invoke<LaunchTargetInfo>("get_launch_target").catch(() => null),
+        invoke<{ main: number; test: number }>("get_builtin_server_ports").catch(() => null),
+      ]);
       if (cancelled) return;
+      configureBuiltInLocalServerPorts(builtInPorts ?? fallbackBuiltInServerPorts(import.meta.env.MODE));
       applyLaunchTarget(launchTarget);
       const initialTarget = getServerTargetInfo();
       document.title = `Epigraph [${initialTarget.title}]`;
@@ -2626,6 +2636,17 @@
           }
         }
       }
+      void (async () => {
+        // The server may still be booting; the built-in solver is re-applied every launch.
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          try {
+            await enableBuiltinCloudflareSolver();
+            return;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+        }
+      })();
       void runAutomaticLibraryUpdate("startup");
 
       ensureProbeStarted();

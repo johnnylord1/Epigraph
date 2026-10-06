@@ -26,6 +26,7 @@ import {
   saveNovelLibraryState,
   toggleNovelChapterBookmark,
   updateNovelReadingProgress,
+  upsertNovelInLibrary,
 } from "./libraryState";
 
 const SCOPE = { profileId: "test" } as const;
@@ -93,6 +94,22 @@ function createState(): PersistedNovelLibraryState {
     updatedAtMs: 1,
   };
 }
+
+describe("re-adding a novel the source no longer serves", () => {
+  it("keeps the saved cover and chapters when the detail has none", () => {
+    const saved = createState();
+    saved.entries[0].coverUrl = "data:image/png;base64,AA";
+    const next = upsertNovelInLibrary(saved, {
+      ...saved.entries[0],
+      sourceId: "archiveofourown",
+      coverUrl: null,
+      chapterCount: 0,
+      chapters: [],
+    });
+    expect(next.entries[0]?.coverUrl).toBe("data:image/png;base64,AA");
+    expect(next.chapters.map((chapter) => chapter.id)).toEqual(["chapter:1"]);
+  });
+});
 
 describe("novel library state storage", () => {
   beforeEach(() => {

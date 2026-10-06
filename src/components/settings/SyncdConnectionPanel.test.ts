@@ -183,13 +183,42 @@ describe("SyncdConnectionPanel", () => {
         ...hostState,
         status: "claimed",
         claimedDeviceId: "desktop-2",
+        claimedPlatform: "desktop",
       });
     });
 
     expect(within(dialog).getAllByText("A desktop wants to connect").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Approve only if the other computer shows the same code.")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("claimed");
     expect(within(dialog).getByTestId("syncd-host-approve")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-reject")).toBeTruthy();
+  });
+
+  test.each([
+    ["android", "A phone wants to connect", "Approve only if the phone shows the same code."],
+    [null, "A device wants to connect", "Approve only if the other device shows the same code."],
+  ])("names a %s claimant without calling it a desktop", async (claimedPlatform, title, hint) => {
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "android-1",
+        claimedDeviceName: "Google sdk_gphone64_x86_64",
+        claimedPlatform,
+      });
+    });
+
+    expect(within(dialog).getAllByText(title).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(hint)).toBeTruthy();
+    expect(within(dialog).queryByText("A desktop wants to connect")).toBeNull();
+    expect(within(dialog).queryByText("Approve only if the other computer shows the same code.")).toBeNull();
   });
 
   test("refetches the active host after a pairing decision", async () => {

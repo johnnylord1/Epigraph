@@ -164,3 +164,29 @@ export function startDockerFlareSolverrAndEnable(configPatch: FlareSolverrConfig
   ).finally(() => { dockerStart = null; });
   return dockerStart;
 }
+
+const BUILTIN_SOLVER_PATH = /^\/epigraph-cf-[0-9a-f]{32}\/?$/;
+
+export function isBuiltinCloudflareSolverUrl(rawUrl: string | null | undefined): boolean {
+  try {
+    const url = new URL((rawUrl ?? "").trim());
+    return url.hostname === "127.0.0.1" && BUILTIN_SOLVER_PATH.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Points Suwayomi at the desktop's own WebView2 Cloudflare solver, so sources and cover CDNs
+ * behind a challenge work without installing FlareSolverr. A user-configured external or local
+ * FlareSolverr is left alone. The endpoint port changes on every launch, so it is re-applied.
+ */
+export async function enableBuiltinCloudflareSolver(): Promise<boolean> {
+  if (store.settings.flareSolverrLocalAutoStart) return false;
+  const current = store.settings.flareSolverrUrl;
+  if (store.settings.flareSolverrEnabled && current?.trim() && !isBuiltinCloudflareSolverUrl(current)) return false;
+  const url = await invoke<string | null>("builtin_cloudflare_solver_url", { userAgent: globalThis.navigator?.userAgent ?? "" });
+  if (!url) return false;
+  await saveFlareSolverrConfig({ enabled: true, url, fallback: false });
+  return true;
+}

@@ -221,7 +221,7 @@
       store.runtimeResolvedLocalProfileId = context.runtimeResolvedLocalProfileId as typeof store.runtimeResolvedLocalProfileId;
       store.runtimeResolvedLocalProfileMeta = context.runtimeResolvedLocalProfileMeta as LocalProfileMeta | null;
       storeRelay = relayDetachedStoreMethods(store, link);
-      configureDetachedMangaProgress(link.label, (scope, progress) => link.notify("mangaProgressSaved", [scope, progress]));
+      configureDetachedMangaProgress(link.label, (scope, progress, written) => link.notify("mangaProgressSaved", [scope, progress, written]));
 
       void (async () => {
         const target = context.target;

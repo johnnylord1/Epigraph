@@ -411,7 +411,7 @@ export async function planEpigraphMangaRestore(
 
   const baseMetadata = {
     mangaCount: parsedBackup.backupManga.length,
-    sourceCount: parsedBackup.backupSources.length,
+    sourceCount: new Set(parsedBackup.backupManga.map((manga) => manga.sourceId)).size,
     trackerCount: parsedBackup.trackerIds.length,
     exactMatches: analysis.exactMatches.length,
     autoReconciled: analysis.autoReconciled.length,

@@ -7,6 +7,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Monitor } from "@tauri-apps/api/window";
 import type { Chapter, Manga } from "../types";
 import type { ActiveNovelDetailState, ActiveNovelReaderState } from "../novels/domain";
+import { requestProgressMirror } from "../syncdProgressMirror";
 import {
   createDetachedChannelKey,
   DETACHED_READER_LABEL_PREFIX,
@@ -228,9 +229,10 @@ async function createStoreBridge(): Promise<DetachedReaderMainBridge> {
     },
     // Only the page count crosses over; the window reads each downloaded page itself through `offline-page`.
     openOfflineMangaChapter: async (input: unknown) => (await import("./offlineManga")).openOfflineMangaChapterForWindow(input),
-    mangaProgressSaved: (scope: string, progress: { chapterId: number; lastPageRead: number; isRead: boolean }) => {
+    mangaProgressSaved: (scope: string, progress: { chapterId: number; lastPageRead: number; isRead: boolean }, written?: unknown) => {
       if (typeof scope !== "string" || !progress || !Number.isSafeInteger(progress.chapterId)) return;
       getMangaProgressForScope(scope).seed(progress.chapterId, progress.lastPageRead, progress.isRead === true);
+      if (written === true) requestProgressMirror({ chapterIds: [progress.chapterId] });
     },
   };
   return {

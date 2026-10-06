@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import type { Manga, Chapter, Category, Source } from "../lib/types";
 import type {
   SearchBrowseContentType,
@@ -1700,6 +1701,8 @@ class Store {
   booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
   private booksStatePersistQueued = false;
   private booksStatePersistTask: Promise<void> | null = null;
+  /** Books state as last read back from disk after a sync apply; see queuePersistBooksLibraryState. */
+  private booksStateDiskSignature: string | null = null;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
@@ -1805,8 +1808,26 @@ class Store {
     }
   }
 
+  private booksPersistSignature(): string {
+    return untrack(() => JSON.stringify([
+      this.books.map(toPersistedBookEntry),
+      this.bookProgress,
+      this.bookBookmarks,
+      this.settings.booksCategories,
+      this.settings.booksCategoryAssignments,
+      this.settings.booksLibraryUi,
+    ]));
+  }
+
   private queuePersistBooksLibraryState() {
     if (!this.booksStateHydrated || DETACHED_READER_WINDOW) return;
+    if (this.booksStateDiskSignature !== null) {
+      // State just reloaded after a sync apply is already on disk. Writing it back could land after
+      // the next apply and publish the removal of whatever that apply added.
+      const unchanged = this.booksStateDiskSignature === this.booksPersistSignature();
+      this.booksStateDiskSignature = null;
+      if (unchanged) return;
+    }
     this.booksStatePersistQueued = true;
     if (this.booksStatePersistTask) return;
 
@@ -2292,6 +2313,12 @@ class Store {
     }
 
     this.queueCanonicalBookMigration();
+  }
+
+  /** Adopts the books state Syncd replication just wrote, without echoing it back to disk. */
+  replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) {
+    this.replaceBooksState(snapshot);
+    this.booksStateDiskSignature = this.booksPersistSignature();
   }
 
   replaceAppReadingState(snapshot: {
@@ -2949,6 +2976,7 @@ export function flushBookLibraryPersistence()                          { return 
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }
 export function removeBookBookmark(bookId: string)                      { store.removeBookBookmark(bookId); }
 export function replaceBooksState(snapshot: BooksRestoreHydrationInput) { store.replaceBooksState(snapshot); }
+export function replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) { store.replaceBooksStateFromDisk(snapshot); }
 /** Restore must observe persistence failure rather than relying on the UI autosave effect. */
 export function persistRestoredAppReadingState(snapshot?: Parameters<typeof normalizeAppReadingRestore>[0]) {
   const candidate = normalizeAppReadingRestore(snapshot ?? { history: store.history, readLog: store.readLog, readingStats: store.readingStats });

@@ -15,6 +15,7 @@
   import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { publishTrackerLogin, publishTrackerLogout } from "../../lib/syncdTrackerCredentials";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -3364,6 +3365,7 @@
         trackerId:   oauthTrackerId,
         callbackUrl,
       });
+      publishTrackerLogin({ id: oauthTrackerId, name: tracker?.name }, callbackUrl);
       await loadTrackers();
       oauthTrackerId     = null;
       oauthCallbackInput = "";
@@ -3418,6 +3420,7 @@
     loggingOut = trackerId;
     try {
       await gql(LOGOUT_TRACKER, { trackerId });
+      publishTrackerLogout({ id: trackerId, name: trackers.find((candidate) => candidate.id === trackerId)?.name });
       await loadTrackers();
     } catch (e: any) {
       trackersError = operationFailure(e, "firstRun.trackers.disconnectError");
@@ -5518,7 +5521,7 @@
                         {:else}
                           <div class="settings-mini-row__body">
                             <p class="settings-mini-row__label">{cat.name}</p>
-                            <p class="settings-mini-row__hint">{booksCategoryCounts[cat.id] ?? 0} book{(booksCategoryCounts[cat.id] ?? 0) === 1 ? "" : "s"}{normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? " / skipped by updates" : ""}</p>
+                            <p class="settings-mini-row__hint">{(booksCategoryCounts[cat.id] ?? 0) === 1 ? translate("library_count_titleOne") : translate("library_count_titles", { count: booksCategoryCounts[cat.id] ?? 0 })}{normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? ` ${translate("ui_skippedByUpdates").trim()}` : ""}</p>
                           </div>
                           <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
                             <button

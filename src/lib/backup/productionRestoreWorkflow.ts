@@ -69,7 +69,8 @@ async function inspectManga(file: File): Promise<BackupInspection> {
     workCount: parsed.backupManga.length,
     chapterCount: parsed.backupManga.reduce((sum, manga) => sum + (manga.chapterCount ?? 0), 0),
     repositoryCount: parsed.extensionStores.length,
-    extensionCount: new Set(parsed.backupSources.map((source) => source.sourceId)).size,
+    // Sources of removed/browsed titles stay in backups; only library entries need an extension.
+    extensionCount: new Set(parsed.backupManga.map((manga) => manga.sourceId)).size,
     conflictCount: analysis.needsReview.length,
     libraryKinds: ["manga"],
     needsSourceKinds: analysis.unresolved.length > 0 || analysis.needsReview.length > 0 ? ["manga"] : [],

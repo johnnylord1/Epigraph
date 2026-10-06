@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { store } from "../../store/state.svelte";
   import splashMarkUrl from "../../assets/epigraph-splash-mark.png";
-  import { flyBrandMark, SPLASH_EXIT_EVENT } from "../../lib/motion/motion";
+  import { flyBrandMark, prefersReducedMotion, SPLASH_EXIT_EVENT } from "../../lib/motion/motion";
 
   interface Props {
     mode?: "loading" | "idle";
@@ -475,6 +475,21 @@
       orbitBack.append(element);
       return { element, config };
     });
+
+    // With animations off (app switch or Windows setting) the stars are placed once and stay still.
+    if (prefersReducedMotion()) {
+      const now = performance.now();
+      updateAmbientStars(ambientStars, now);
+      updateOrbitStars(orbitStars, orbitBack, orbitFront, now);
+      return () => {
+        for (const { element } of ambientStars) {
+          element.remove();
+        }
+        for (const { element } of orbitStars) {
+          element.remove();
+        }
+      };
+    }
 
     let animationFrame = 0;
     let lastFrame = 0;

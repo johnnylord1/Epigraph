@@ -110,12 +110,16 @@
     type PersistedLibrarySnapshot,
   } from "../../lib/library/snapshot";
   import { ensureServerAwakeFor } from "../../lib/serverLifecycle";
+  import { normalizeLocalProfileId } from "../../lib/localProfiles";
+  import { listenSyncdComicLibraryChanged } from "../../lib/syncdDesktop";
+  import { fetchSourceMangaDetails } from "../../lib/manga/runtime/sourceOperations";
   import BooksLibraryBody from "../library/BooksLibraryBody.svelte";
   import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte";
   import LibraryToolbar from "../library/LibraryToolbar.svelte";
   import LibraryShell from "../library/LibraryShell.svelte";
   import LibraryRefreshModal from "../library/LibraryRefreshModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
+  import { warmAllLibraryCovers } from "../../lib/library/backgroundCoverWarm";
 
   const DT_TAB = "application/x-epigraph-tab";
   const CATEGORY_MEMBERS_CACHE_KEY = `${CACHE_KEYS.CATEGORIES}:members`;
@@ -166,6 +170,7 @@
   let coverWakeInFlight: Promise<void> | null = null;
   let coverRecoveryVersions = $state(new Map<number, number>());
   const pendingCoverRecoveryIds = new Set<number>();
+  const coverMetadataRefreshedIds = new Set<number>();
   let libraryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let libraryLoadRetryCount = 0;
   let categoryLoadRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -208,6 +213,23 @@
   });
 
   const allManga = $derived(store.libraryMangaSnapshot);
+  // Once per session, after startup settles (and the built-in Cloudflare solver is enabled),
+  // every library cover is cached so paired phones get covers for titles never shown here.
+  let coverWarmTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    if (coverWarmTimer || allManga.length === 0) return;
+    const scope = {
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+      coverCacheGeneration: store.libraryCoverCacheGeneration,
+    };
+    const mangas = [...allManga];
+    coverWarmTimer = setTimeout(() => {
+      void warmAllLibraryCovers(scope, mangas).catch((warmError) => {
+        console.warn("Could not warm library covers:", warmError);
+      });
+    }, 30_000);
+  });
   const visualLibrarySection = $derived(settledLibrarySection);
   const booksUi = $derived(store.settings.booksLibraryUi);
   const bookActiveCategoryId = $derived(booksUi.activeCategoryId);
@@ -1867,9 +1889,12 @@
       profileId: store.runtimeResolvedLocalProfileId,
       profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
       });
-      if (awake) {
-        bumpCoverRecoveryVersions(pendingCoverRecoveryIds);
+      if (!awake) return;
+      while (pendingCoverRecoveryIds.size) {
+        const mangaIds = [...pendingCoverRecoveryIds];
         pendingCoverRecoveryIds.clear();
+        await refreshCoverMetadata(mangaIds);
+        bumpCoverRecoveryVersions(mangaIds);
       }
     })()
       .catch((coverError) => {
@@ -1878,6 +1903,19 @@
       .finally(() => {
         coverWakeInFlight = null;
       });
+  }
+
+  // Restored backups keep thumbnail URLs on hosts the source has since abandoned, so a failed
+  // cover refreshes the title's metadata once before retrying.
+  async function refreshCoverMetadata(mangaIds: number[]) {
+    for (const mangaId of mangaIds) {
+      if (coverMetadataRefreshedIds.has(mangaId)) continue;
+      coverMetadataRefreshedIds.add(mangaId);
+      const manga = allManga.find((entry) => entry.id === mangaId);
+      await fetchSourceMangaDetails({ id: mangaId, sourceId: manga?.source?.id }).catch((refreshError) => {
+        console.warn("Could not refresh metadata for library cover:", refreshError);
+      });
+    }
   }
 
   async function addToLibrary(manga: Manga) {
@@ -2030,6 +2068,24 @@
     };
     globalThis.addEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
 
+    // Comics edited on another device reach Suwayomi through the syncd projection, which
+    // runs every couple of seconds, so wait for it before refetching the library.
+    let comicLibraryRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const comicLibraryUnlisten = listenSyncdComicLibraryChanged(({ localProfileId }) => {
+      if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
+      if (comicLibraryRefreshTimer) clearTimeout(comicLibraryRefreshTimer);
+      comicLibraryRefreshTimer = setTimeout(() => {
+        comicLibraryRefreshTimer = null;
+        cache.clearGroup(CACHE_GROUPS.LIBRARY);
+        cache.clear(CACHE_KEYS.CATEGORIES);
+        cache.clear(CATEGORY_MEMBERS_CACHE_KEY);
+        void loadData();
+      }, 3000);
+    }).catch((listenError) => {
+      console.warn("Failed to listen for synced comic library changes:", listenError);
+      return null;
+    });
+
     if (store.settings.defaultLibrarySection !== "last-used") {
       setLibrarySection(store.settings.defaultLibrarySection);
     }
@@ -2041,6 +2097,8 @@
 
     return () => {
       globalThis.removeEventListener?.("epigraph-hardcover-state-changed", handleHardcoverStateChanged);
+      if (comicLibraryRefreshTimer) clearTimeout(comicLibraryRefreshTimer);
+      void comicLibraryUnlisten.then((unlisten) => unlisten?.());
       if (libraryLoadRetryTimer) {
         clearTimeout(libraryLoadRetryTimer);
         libraryLoadRetryTimer = null;

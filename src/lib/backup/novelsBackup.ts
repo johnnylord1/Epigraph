@@ -8,6 +8,7 @@ import {
   type BuiltEpigraphBackupContainer,
   type InspectedEpigraphBackupContainer,
 } from "./epigraphBackup";
+import { novelRepositoryUrlKey } from "../novels/contracts";
 
 export const EPIGRAPH_NOVELS_PAYLOAD_FILE_PATH = "novels.json";
 
@@ -483,7 +484,7 @@ function classifyNovelEntry(
   entry: EpigraphNovelEntry,
   runtime: EpigraphNovelRuntimeState,
 ): EpigraphNovelRestoreClassification {
-  const repositorySet = new Set(runtime.repositoryUrls.map((value) => normalizeUrl(value)).filter((value): value is string => Boolean(value)));
+  const repositorySet = new Set(runtime.repositoryUrls.map((value) => normalizeUrl(value)).filter((value): value is string => Boolean(value)).map(novelRepositoryUrlKey));
   const pluginSet = new Set(runtime.installedPluginIds.map((value) => normalizeText(value)).filter((value): value is string => Boolean(value)));
   const sourceSet = new Set(runtime.availableSourceIds.map((value) => normalizeText(value)).filter((value): value is string => Boolean(value)));
 
@@ -495,7 +496,7 @@ function classifyNovelEntry(
 
   if (!requiredRepositoryUrl && !requiredPluginId && !requiredSourceId) {
     outcome = "restored-metadata-only";
-  } else if (requiredRepositoryUrl && !repositorySet.has(requiredRepositoryUrl)) {
+  } else if (requiredRepositoryUrl && !repositorySet.has(novelRepositoryUrlKey(requiredRepositoryUrl))) {
     outcome = "restored-needs-repository";
   } else if (
     (requiredPluginId && !pluginSet.has(requiredPluginId))

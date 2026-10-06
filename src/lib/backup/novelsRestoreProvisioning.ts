@@ -1,5 +1,5 @@
 import type { RestoredEpigraphNovelsSnapshot } from "./novelsBackup";
-import type { NovelCatalogEntry } from "../novels/contracts";
+import { novelRepositoryUrlKey, type NovelCatalogEntry } from "../novels/contracts";
 import type {
   NovelRepositoryRefreshResult,
   NovelRepositoryScopeInput,
@@ -39,7 +39,7 @@ export interface NovelRestoreProvisioningOperations {
 }
 
 function normalizedUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "");
+  return novelRepositoryUrlKey(value);
 }
 
 function requiredRepositoryUrls(restored: RestoredEpigraphNovelsSnapshot): string[] {

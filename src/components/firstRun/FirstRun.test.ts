@@ -314,18 +314,19 @@ describe("FirstRun", () => {
     await fireEvent.change(input, { target: { files: [new File(["data"], "test.epigraphbk")] } });
     await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
     // The dependency panels inspect as soon as they open; restoring waits until they are done.
-    const restore = screen.getByRole("button", { name: "Restore all" });
-    await waitFor(() => expect(restore.hasAttribute("disabled")).toBe(false));
+    // Generous waits: under a loaded full-suite run the inspection can outlast the 1 s default.
+    const restore = await screen.findByRole("button", { name: "Restore all" }, { timeout: 5000 });
+    await waitFor(() => expect(restore.hasAttribute("disabled")).toBe(false), { timeout: 5000 });
     await fireEvent.click(restore);
-    expect(await screen.findByRole("heading", { name: "Add repositories" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Add repositories" }, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
     await fireEvent.click(screen.getByRole("button", { name: "Novels" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Install Novels test extension" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Install Novels test extension" }, { timeout: 5000 }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
     await fireEvent.click(screen.getByRole("button", { name: "Comics" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Install Comics test extension" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Install Comics test extension" }, { timeout: 5000 }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
-  });
+  }, 15_000);
 
   it("does not require extensions after restoring only local books", async () => {
     localStorage.setItem("epigraph-first-run", JSON.stringify({

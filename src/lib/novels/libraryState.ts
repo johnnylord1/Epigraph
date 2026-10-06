@@ -392,7 +392,7 @@ export function upsertNovelInLibrary(
     title: detail.title,
     author: detail.author,
     description: detail.description,
-    coverUrl: detail.coverUrl,
+    coverUrl: normalizeNovelCoverUrl(detail.coverUrl) ?? normalizeNovelCoverUrl(existing?.coverUrl),
     path: detail.path,
     status: detail.status,
     tags: detail.tags,
@@ -402,7 +402,11 @@ export function upsertNovelInLibrary(
     updatedAt: now,
   };
 
-  const nextChapters = detail.chapters.map((chapter) => {
+  // Keep the saved chapter list (and its read state) when the source answers with none.
+  const previousChapters = state.chapters.filter((entry) => entry.novelId === detail.id);
+  const nextChapters = detail.chapters.length === 0 && previousChapters.length > 0
+    ? previousChapters
+    : detail.chapters.map((chapter) => {
     const existingChapter = state.chapters.find((entry) => entry.id === chapter.id);
     return {
       id: chapter.id || createNovelChapterId(detail.id, chapter.path),

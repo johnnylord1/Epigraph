@@ -11,6 +11,7 @@ import type { Category, Chapter, Manga } from "../types";
 import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
 import { fetchSourceMangaChapters } from "../manga/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
+import { requestProgressMirror } from "../syncdProgressMirror";
 import { getMigrationJournalEntry, getMigrationOperation } from "./journalState";
 import {
   beginMigrationChildOperation,
@@ -231,6 +232,8 @@ async function restoreMangaSnapshot(snapshot: MangaMigrationStateSlice) {
     inLibrary: snapshot.inLibrary,
   });
   await setCategoryIdsForManga(snapshot.mangaId, snapshot.categoryIds);
+  // The restore rewrites every chapter, so only the title is named: Core rescans it and mirrors what changed.
+  requestProgressMirror({ mangaIds: [snapshot.mangaId] });
 }
 
 async function readMangaState(mangaId: number): Promise<MangaMigrationStateSlice> {
@@ -515,6 +518,10 @@ async function applyPreparedMangaTarget(prepared: PreparedMangaMigrationOperatio
   }
   await gql(UPDATE_MANGA, { id: prepared.targetMangaId, inLibrary: true });
   await setCategoryIdsForManga(prepared.targetMangaId, prepared.targetCategoryIds);
+  requestProgressMirror({
+    mangaIds: [prepared.targetMangaId],
+    chapterIds: [...prepared.toMarkRead, ...prepared.toMarkBookmarked, ...prepared.progressUpdates.map((update) => update.id)],
+  });
 }
 
 async function cleanupPreparedMangaSource(prepared: PreparedMangaMigrationOperation): Promise<void> {

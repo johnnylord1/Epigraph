@@ -6,6 +6,7 @@ import {
   LOGOUT_TRACKER,
 } from "../queries";
 import { normalizeTrackerOAuthInput } from "../trackerOAuth";
+import { publishTrackerLogin, publishTrackerLogout } from "../syncdTrackerCredentials";
 import type { Tracker } from "../types";
 import {
   connectHardcover,
@@ -184,7 +185,9 @@ export function createProductionFirstRunTrackerWorkflow(): FirstRunTrackerWorkfl
     loginOAuth: async (trackerId, callbackUrl) => {
       const result = await gql<{ loginTrackerOAuth: { isLoggedIn: boolean } }>(LOGIN_TRACKER_OAUTH, { trackerId, callbackUrl });
       cache.clear(CACHE_KEYS.TRACKERS);
-      return result.loginTrackerOAuth?.isLoggedIn === true;
+      const loggedIn = result.loginTrackerOAuth?.isLoggedIn === true;
+      if (loggedIn) publishTrackerLogin({ id: trackerId }, callbackUrl);
+      return loggedIn;
     },
     loginCredentials: async (trackerId, username, password) => {
       const result = await gql<{ loginTrackerCredentials: { isLoggedIn: boolean } }>(LOGIN_TRACKER_CREDENTIALS, { trackerId, username, password });
@@ -194,7 +197,9 @@ export function createProductionFirstRunTrackerWorkflow(): FirstRunTrackerWorkfl
     logoutTracker: async (trackerId) => {
       const result = await gql<{ logoutTracker: { tracker: { isLoggedIn: boolean } } }>(LOGOUT_TRACKER, { trackerId });
       cache.clear(CACHE_KEYS.TRACKERS);
-      return result.logoutTracker?.tracker?.isLoggedIn === false;
+      const loggedOut = result.logoutTracker?.tracker?.isLoggedIn === false;
+      if (loggedOut) publishTrackerLogout({ id: trackerId });
+      return loggedOut;
     },
     loadHardcover: () => {
       const state = loadHardcoverState(currentScope());
