@@ -78,8 +78,7 @@ object BookImportMetadataExtractor {
             val tail = ByteArray(scanLength)
             input.seek(length - scanLength)
             input.readFully(tail)
-            tail.toString(StandardCharsets.ISO_8859_1) + "
-" + head.toString(StandardCharsets.ISO_8859_1)
+            tail.toString(StandardCharsets.ISO_8859_1) + "\n" + head.toString(StandardCharsets.ISO_8859_1)
         }
         return BookImportMetadata(
             title = extractPdfValue(source, "Title")?.let(::cleanText) ?: fallbackTitle(fallbackDisplayName),

@@ -236,11 +236,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 velocityX: Float,
                 velocityY: Float,
             ): Boolean {
-                if (!readerProgressIsPdf || readerSettingsPanel != null) return false
-                if (pdfSpreadPrimaryView == null && pdfReflowTextView == null) return false
+                if (readerSettingsPanel != null) return false
                 if (abs(velocityX) <= abs(velocityY) * 1.5f || abs(velocityX) < BOOK_PAGE_FLING_VELOCITY) {
                     return false
                 }
+                if (!readerProgressIsPdf) {
+                    // The paginated EPUB WebView does not page on a swipe by itself; scroll flow
+                    // keeps horizontal flings for the WebView.
+                    if (epubNavigator == null || epubFlow != EPUB_FLOW_PAGINATED) return false
+                    turnPage(forward = velocityX < 0f)
+                    return true
+                }
+                if (pdfSpreadPrimaryView == null && pdfReflowTextView == null) return false
                 navigateReader(if (velocityX < 0f) 1 else -1)
                 return true
             }
@@ -970,6 +977,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 override fun onPageLoaded() {
                     blockExternalEpubNetwork(navigator = epubNavigator)
                 }
+            },
+            configuration = EpubNavigatorFragment.Configuration().apply {
+                selectionActionModeCallback = epubSelectionActionModeCallback
             },
         )
         val navigator = supportFragmentManager.fragmentFactory.instantiate(
@@ -1948,45 +1958,80 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         }
     }
 
-    private fun captureEpubSelectionAndSave() {
-        val navigator = epubNavigator ?: return
-        val session = epubSession ?: return
-        val localBook = book ?: return
-        lifecycleScope.launch {
-            val selection = runCatching { navigator.currentSelection() }.getOrNull()
-            val readiumLocator = selection?.locator
-            val text = readiumLocator?.text?.highlight
-                ?.replace(Regex("\\s+"), " ")
-                ?.trim()
-                ?.take(MAX_HIGHLIGHT_TEXT)
-                .orEmpty()
-            if (readiumLocator == null || text.isBlank()) {
-                showMessage(getString(MR.strings.book_reader_select_text_first))
-                return@launch
-            }
-            val appLocator = session.toReaderLocator(readiumLocator)
-            val now = System.currentTimeMillis()
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    repository.addHighlight(
-                        BookHighlight(
-                            highlightId = UUID.randomUUID().toString(),
-                            bookId = localBook.bookId,
-                            start = appLocator,
-                            end = appLocator,
-                            selectedText = text,
-                            colorArgb = DEFAULT_HIGHLIGHT_COLOR,
-                            createdAt = now,
-                            updatedAt = now,
-                        ),
-                    )
-                    activeHighlights = repository.getHighlights(localBook.bookId)
-                    opened?.let { renderPersistedHighlights(it, activeHighlights) }
-                }
-                applyEpubHighlights()
-            }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
-                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
+    /**
+     * Highlight straight from the EPUB selection toolbar: a tap on the page to reach the HUD
+     * would clear the WebView selection first.
+     */
+    private val epubSelectionActionModeCallback = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            menu.add(Menu.NONE, MENU_HIGHLIGHT_SELECTION, Menu.NONE, getString(MR.strings.book_reader_highlight))
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+            return true
         }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.itemId != MENU_HIGHLIGHT_SELECTION) return false
+            // Finish only after Readium has read the selection, which finishing would clear.
+            captureEpubSelectionAndSave(onDone = mode::finish)
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) = Unit
+    }
+
+    private fun captureEpubSelectionAndSave(onDone: () -> Unit = {}) {
+        val navigator = epubNavigator ?: return onDone()
+        val session = epubSession ?: return onDone()
+        val localBook = book ?: return onDone()
+        lifecycleScope.launch {
+            try {
+                saveEpubSelection(navigator, session, localBook)
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    private suspend fun saveEpubSelection(
+        navigator: EpubNavigatorFragment,
+        session: EpubNavigatorSession,
+        localBook: LocalBook,
+    ) {
+        val selection = runCatching { navigator.currentSelection() }.getOrNull()
+        val readiumLocator = selection?.locator
+        val text = readiumLocator?.text?.highlight
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(MAX_HIGHLIGHT_TEXT)
+            .orEmpty()
+        if (readiumLocator == null || text.isBlank()) {
+            showMessage(getString(MR.strings.book_reader_select_text_first))
+            return
+        }
+        val appLocator = session.toReaderLocator(readiumLocator)
+        val now = System.currentTimeMillis()
+        runCatching {
+            withContext(Dispatchers.IO) {
+                repository.addHighlight(
+                    BookHighlight(
+                        highlightId = UUID.randomUUID().toString(),
+                        bookId = localBook.bookId,
+                        start = appLocator,
+                        end = appLocator,
+                        selectedText = text,
+                        colorArgb = DEFAULT_HIGHLIGHT_COLOR,
+                        createdAt = now,
+                        updatedAt = now,
+                    ),
+                )
+                activeHighlights = repository.getHighlights(localBook.bookId)
+                opened?.let { renderPersistedHighlights(it, activeHighlights) }
+            }
+            applyEpubHighlights()
+        }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
+            .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
     }
 
     private fun saveHighlight() {

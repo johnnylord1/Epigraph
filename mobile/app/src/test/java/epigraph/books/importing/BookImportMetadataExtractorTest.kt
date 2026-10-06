@@ -77,8 +77,7 @@ class BookImportMetadataExtractorTest {
     fun `finds the info dictionary at the end of a large pdf`() {
         val pdf = File(directory, "large.pdf")
         pdf.outputStream().use { output ->
-            output.write("%PDF-1.7
-".toByteArray())
+            output.write("%PDF-1.7\n".toByteArray())
             output.write(ByteArray(5 * 1024 * 1024) { ' '.code.toByte() })
             output.write("/Title (Tail title)".toByteArray())
         }
