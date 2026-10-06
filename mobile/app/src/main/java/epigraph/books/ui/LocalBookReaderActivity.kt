@@ -1589,14 +1589,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         )
     }
 
-    private fun showTextSelectionSurface() {
-        when {
-            pdfReflowTextView != null -> showPdfTextSelectionDialog()
-            epubNavigator != null -> captureEpubSelectionAndSave()
-            else -> showMessage(getString(MR.strings.book_reader_selection_unavailable))
-        }
-    }
-
     private fun pdfLocator(
         entityId: EpigraphEntityId,
         pageIndex: Int,
@@ -1986,7 +1978,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
             return
         }
-        if (pdfView != null) {
+        // Original-page modes (continuous or two pages) select from the page's text, OCR included.
+        if (pdfView != null || pdfSpreadPrimaryView != null) {
             showPdfTextSelectionDialog()
             return
         }

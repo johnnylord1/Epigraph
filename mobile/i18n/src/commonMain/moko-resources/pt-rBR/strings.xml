@@ -1013,6 +1013,7 @@
     <string name="clear_db_exclude_read">Mantenha mangás como capítulos lidos</string>
     <string name="statistics_details">Detalhes dos Status</string>
     <string name="all_read_manga">Todos os mangás lidos</string>
+    <string name="local_book_files">Arquivos EPUB e PDF (backup maior)</string>
     <string name="statistics">Estatísticas</string>
     <string name="tracked_titles">Títulos Monitorados</string>
     <string name="chapters_read">Capítulos lidos</string>

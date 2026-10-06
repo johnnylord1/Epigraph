@@ -1,7 +1,10 @@
 package eu.kanade.tachiyomi.data.backup.restore.restorers
 
 import epigraph.books.local.BookBookmark
+import epigraph.books.importing.LocalBookStreamSource
 import epigraph.books.local.BookHighlight
+import epigraph.books.local.LocalBook
+import epigraph.books.local.LocalBookImportService
 import epigraph.books.local.LocalBookRepository
 import epigraph.books.local.LocalBookRestoreEntry
 import epigraph.contract.ContentType
@@ -20,7 +23,15 @@ class LocalBookBackupRestorer(
     private val insertCategories: InsertCategories = get(),
     private val json: Json = get(),
 ) {
-    suspend fun restore(backup: BackupLocalBook): epigraph.books.local.LocalBook {
+    /** Only needed when the backup carries the book's file. */
+    private val importService: LocalBookImportService by lazy { get() }
+
+    /**
+     * Restores the library entry and reader state of a local book. When the backup also stores
+     * its file ([storedFile]) and this device lacks it, the file is imported after its SHA-256 is
+     * verified against the book's identity; otherwise the entry stays visibly relinkable.
+     */
+    suspend fun restore(backup: BackupLocalBook, storedFile: LocalBookStreamSource? = null): LocalBook {
         val contentType = runCatching { ContentType.valueOf(backup.contentType) }
             .getOrElse { error("Unsupported local book type: ${backup.contentType}") }
         require(contentType == ContentType.EPUB || contentType == ContentType.PDF) {
@@ -67,7 +78,7 @@ class LocalBookBackupRestorer(
             )
         }
 
-        return repository.restoreMissing(
+        val restored = repository.restoreMissing(
             LocalBookRestoreEntry(
                 bookId = backup.bookId,
                 contentType = contentType,
@@ -87,6 +98,8 @@ class LocalBookBackupRestorer(
                 categoryIds = backup.categoryNames.mapNotNull(categoryIds::get).distinct(),
             ),
         )
+        if (storedFile == null || restored.isAvailable) return restored
+        return importService.relink(storedFile, restored)
     }
 
     private fun decodeLocator(value: String): ReaderLocator =

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import epigraph.books.importing.AndroidSafBookImportSource
 import epigraph.books.importing.LocalBookPrivateImporter
+import epigraph.books.importing.LocalBookStreamSource
 import epigraph.books.importing.PrivateBookImportRequest
 import epigraph.contract.ContentType
 import kotlinx.coroutines.Dispatchers
@@ -80,10 +81,16 @@ class LocalBookImportService(
     suspend fun relink(uri: Uri, book: LocalBook, displayName: String = book.displayName): LocalBook =
         withContext(Dispatchers.IO) {
             val resolvedName = displayName.ifBlank { queryDisplayName(uri) }.ifBlank { book.displayName }
+            relink(AndroidSafBookImportSource(contentResolver, uri, resolvedName), book)
+        }
+
+    /** Restores the file of a missing [book] from [source], which must hash to the book's SHA-256. */
+    suspend fun relink(source: LocalBookStreamSource, book: LocalBook): LocalBook =
+        withContext(Dispatchers.IO) {
             val request = PrivateBookImportRequest(
-                source = AndroidSafBookImportSource(contentResolver, uri, resolvedName),
+                source = source,
                 expectedContentType = book.contentType,
-                displayName = resolvedName,
+                displayName = source.displayName,
             )
             val inspected = importer.inspect(request)
             require(inspected.assetId.value == book.sha256) {

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.backup.restore
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
@@ -52,6 +53,7 @@ class BackupRestoreJob(val context: Context, workerParams: WorkerParameters) : C
             return withIOContext {
                 try {
                     restorer.restore(uri)
+                    releaseReadPermission(context, uri)
                     Result.success()
                 } catch (e: Exception) {
                     if (e is CancellationException) {
@@ -75,6 +77,10 @@ class BackupRestoreJob(val context: Context, workerParams: WorkerParameters) : C
         private val activeWork = ActiveWorkTracker()
 
         fun start(context: Context, uri: Uri) {
+            // A restore resumed after process death must still be able to read the backup.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
             val request = OneTimeWorkRequestBuilder<BackupRestoreJob>()
                 .addTag(TAG)
                 .setInputData(workDataOf(BackupConst.EXTRA_URI to uri.toString()))
@@ -89,9 +95,17 @@ class BackupRestoreJob(val context: Context, workerParams: WorkerParameters) : C
             }
         }
 
+        /** Cancels the restore at the user's request; it will not resume later. */
         fun stop(context: Context) {
             activeWork.clear()
             context.workManager.cancelUniqueWork(TAG)
+            RestoreJournal.file(context.filesDir).delete()
+        }
+
+        private fun releaseReadPermission(context: Context, uri: Uri) {
+            runCatching {
+                context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
 
         fun isRunning(@Suppress("UNUSED_PARAMETER") context: Context): Boolean = activeWork.isActive
