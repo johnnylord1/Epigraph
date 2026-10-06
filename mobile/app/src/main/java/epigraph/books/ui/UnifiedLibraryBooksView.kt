@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import eu.kanade.tachiyomi.ui.library.LibraryPlaceholderItem
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.manga.MangaRepository
 import yokai.domain.track.interactor.GetTrack
@@ -106,9 +107,9 @@ class UnifiedLibraryBooksView(
     private val getCategories: GetCategories by injectLazy()
 
     /**
-     * Real category ids (0 = Default) shown as sections. Like the Comics library, every user
-     * category keeps its header (empty ones show "Category is empty"); Default only appears
-     * while it holds a book or novel.
+     * Real category ids (0 = Default) shown as sections. Like the Comics library, every Books &
+     * novels category keeps its header (empty ones show "Category is empty"); Default only appears
+     * while it holds a book or novel. Comics folders are never listed here.
      */
     private val presentCategoryIds: List<Int>
         get() {
@@ -137,6 +138,10 @@ class UnifiedLibraryBooksView(
     val hasActiveFilters: Boolean
         get() = hasActiveTypeFilter || booksFilterStates.values.any { it != FILTER_IGNORE }
 
+    /** False until the first collection snapshot is rendered, so "empty" is not claimed early. */
+    var hasLoadedCollection: Boolean = false
+        private set
+
     /** Source-of-truth collection state; adapter headers/placeholders are not book content. */
     val isCollectionEmpty: Boolean
         get() = books.isEmpty() && novels.isEmpty()
@@ -149,7 +154,7 @@ class UnifiedLibraryBooksView(
                 mangaRepository.getLibraryMangaAsFlow(),
                 // Novel plugins load lazily; reclassify once their sources resolve.
                 sourceManager.libraryClassificationChanges,
-                getCategories.subscribe(),
+                getCategories.subscribe(CategoryLibrary.BOOKS),
                 // Book category links live in their own table; assignments bump this revision.
                 categoryRevision,
             ) { local, library, _, categories, _ ->
@@ -195,6 +200,7 @@ class UnifiedLibraryBooksView(
                             .keys
                     }
                 }
+                hasLoadedCollection = true
                 submitItems()
             }
         }
@@ -214,6 +220,13 @@ class UnifiedLibraryBooksView(
 
     fun isBooksHeader(catId: Int?): Boolean =
         catId == BOOKS_CATEGORY_ID || (catId != null && catId <= GROUP_ID_BASE)
+
+    /** The real Books & novels folder behind a group header; null for Default or the lone section. */
+    fun realCategory(catId: Int?): Category? {
+        if (catId == null || catId > GROUP_ID_BASE) return null
+        val realId = GROUP_ID_BASE - catId
+        return userCategories.firstOrNull { it.id == realId && realId > 0 }
+    }
 
     /** Novels a header's refresh button updates; EPUB/PDF have no remote chapters. */
     fun novelsFor(catId: Int?): List<LibraryManga> {

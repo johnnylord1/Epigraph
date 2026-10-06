@@ -8,6 +8,10 @@ import epigraph.contract.PortableResolutionReason
 import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderDependency
+import epigraph.sync.core.replica.CoreConfirmedRecord
+import epigraph.sync.core.replica.CoreReplicaKey
+import epigraph.sync.core.replica.CoreReplicaProjection
+import epigraph.sync.core.replica.EpigraphCoreDomainProjection
 import epigraph.sync.portable.PortableComicDependencyRecord
 import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableNovelDependencyRecord
@@ -28,6 +32,8 @@ data class PortableHydrationSnapshot(
     val novels: List<PortableNovelDependencyRecord>,
     val works: List<PortableWorkBindingRecord>,
     val chapters: List<PortableChapterBindingRecord> = emptyList(),
+    /** Already-bound works that own a pending chapter; consulted, never re-resolved. */
+    val chapterWorks: List<PortableWorkBindingRecord> = emptyList(),
 )
 
 data class PortableHydrationReport(
@@ -54,15 +60,26 @@ interface PortableHydrationStore {
 class SqlDelightPortableHydrationStore(
     private val database: DatabaseHandler,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val replicaProjection: CoreReplicaProjection = EpigraphCoreDomainProjection(),
 ) : PortableHydrationStore {
     override suspend fun load(serverId: String, profileId: String, limit: Long): PortableHydrationSnapshot =
         database.await(inTransaction = false) {
             val dependencies = SqlDelightPortableDependencyStore(this)
+            val bindings = SqlDelightPortableBindingStore(this)
+            val works = bindings.pendingWorks(serverId, profileId, limit)
+            val chapters = bindings.pendingChapters(serverId, profileId, limit)
+            val pendingWorkIds = works.mapTo(HashSet(), PortableWorkBindingRecord::portableId)
             PortableHydrationSnapshot(
                 comics = dependencies.comics(serverId, profileId),
                 novels = dependencies.novels(serverId, profileId),
-                works = SqlDelightPortableBindingStore(this).pendingWorks(serverId, profileId, limit),
-                chapters = SqlDelightPortableBindingStore(this).pendingChapters(serverId, profileId, limit),
+                works = works,
+                chapters = chapters,
+                chapterWorks = chapters.asSequence()
+                    .map(PortableChapterBindingRecord::portableWorkId)
+                    .filterNot(pendingWorkIds::contains)
+                    .distinct()
+                    .mapNotNull { bindings.work(it) }
+                    .toList(),
             )
         }
 
@@ -166,6 +183,31 @@ class SqlDelightPortableHydrationStore(
                         }
                     }
                 }
+            // Reader progress keeps only a work's latest chapter, so chapter states confirmed by
+            // the Core before their chapter was bound are replayed now that a local chapter exists.
+            chapters
+                .asSequence()
+                .filter { it.resolution.state == PortableResolutionState.BOUND }
+                .filter { it.ref is epigraph.contract.PortableChapterRef.Comic }
+                .flatMap { chapter ->
+                    aethon_syncQueries.selectCoreReplicaRecordsByEntity(
+                        entityType = "comic.chapter_state",
+                        entityId = "comic.chapter_state::${chapter.portableWorkId}::${chapter.portableChapterId}",
+                    ).executeAsList()
+                }
+                .forEach { row ->
+                    val element = runCatching { json.parseToJsonElement(row.record_json) }.getOrNull()
+                        ?: return@forEach
+                    replicaProjection.upsert(
+                        this,
+                        CoreConfirmedRecord(
+                            key = CoreReplicaKey(row.scope_id, row.entity_type, row.entity_id),
+                            serverVersion = row.server_version,
+                            lamport = row.lamport,
+                            record = element,
+                        ),
+                    )
+                }
         }
     }
 
@@ -239,7 +281,17 @@ class PortableHydrationCoordinator(
         for (work in snapshot.works) {
             val dependencyKey = work.dependencyKey
             val dependency = dependencyKey?.let { dependencyGates[DependencyKey(work.ref.ecosystem, it)] }
+            val existing = if (dependency != null && dependency.resolution.state != PortableResolutionState.READY &&
+                dependency.accepts(work.ref)
+            ) {
+                // An unavailable provider blocks acquiring new titles, not binding the titles a
+                // restored backup already holds under the exact same provider identity.
+                resolveExisting(work, nowEpochMillis)
+            } else {
+                null
+            }
             when {
+                existing != null -> immediatelyPending += existing
                 // Older Suwayomi snapshots can retain a stable source id even after the
                 // extension row itself disappeared, leaving no package name to publish in the
                 // dependency manifest. If the user has independently installed a source with
@@ -265,7 +317,9 @@ class PortableHydrationCoordinator(
 
         val resolved = resolveBySourceQueue(eligible, nowEpochMillis)
         val updates = immediatelyPending + resolved
-        val worksById = (snapshot.works + updates).associateBy(PortableWorkBindingRecord::portableId)
+        // A chapter that arrives after its work was bound must still see that work as bound.
+        val worksById = (snapshot.chapterWorks + snapshot.works + updates)
+            .associateBy(PortableWorkBindingRecord::portableId)
         val chapterUpdates = resolveChapters(snapshot.chapters, worksById, nowEpochMillis)
         store.persist(comicDependencies, novelDependencies, updates, chapterUpdates)
         return PortableHydrationReport(
@@ -366,6 +420,29 @@ class PortableHydrationCoordinator(
             }
         }
         return results
+    }
+
+    private suspend fun resolveExisting(work: PortableWorkBindingRecord, now: Long): PortableWorkBindingRecord? {
+        val provider = when (work.ref.ecosystem) {
+            PortableEcosystem.SUWAYOMI -> comics
+            PortableEcosystem.LNREADER -> novels
+        }
+        val result = try {
+            provider.resolveExistingWork(work.ref)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+        if (result.ref != work.ref || result.resolution.state != PortableResolutionState.BOUND || result.localId == null) {
+            return null
+        }
+        return work.copy(
+            localReference = result.localId,
+            resolution = result.resolution,
+            attemptCount = work.attemptCount + 1,
+            updatedAt = now,
+        )
     }
 
     private suspend fun resolveWork(work: PortableWorkBindingRecord, now: Long): PortableWorkBindingRecord {

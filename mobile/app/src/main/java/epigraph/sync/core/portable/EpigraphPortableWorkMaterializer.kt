@@ -91,7 +91,12 @@ class EpigraphPortableWorkMaterializer(
             }
             val priorComicId = priorComicBinding?.local_reference?.toLongOrNull()?.takeIf { it > 0 }
             val priorNovelId = priorNovelBinding?.local_reference?.toLongOrNull()?.takeIf { it > 0 }
-            val exactNative = mangas.getMangaByUrlAndSource(providerKey, sourceId)
+            // A placeholder re-keyed to the plugin source id can share url/source with the row
+            // hydration created; keep the bound row so the binding cannot flip between twins.
+            val exactNative = priorNovelId
+                ?.let { mangas.getMangaById(it) }
+                ?.takeIf { it.url == providerKey && it.source == sourceId }
+                ?: mangas.getMangaByUrlAndSource(providerKey, sourceId)
             if (exactNative != null) {
                 if (ref is PortableWorkRef.Novel) {
                     reconcileNovelBinding(

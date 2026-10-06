@@ -218,7 +218,6 @@ class MangaDetailsPresenter(
         val controller = view ?: return
 
         isLockedFromSearch = controller.shouldLockIfNeeded && SecureActivityDelegate.shouldBeLocked()
-        preloadCategories()
 
         if (::manga.isInitialized) {
             // Common path — manga was pre-initialised by the library push.
@@ -236,6 +235,8 @@ class MangaDetailsPresenter(
     }
 
     private fun finalizeOnCreate() {
+        // Comics and Books & novels have separate folders, so the list depends on the work.
+        preloadCategories()
         syncData()
 
         if (source is EpigraphCoreSource) {
@@ -941,7 +942,7 @@ class MangaDetailsPresenter(
     fun preloadCategories() {
         presenterScope.launchIO {
             val previous = cachedCategories
-            cachedCategories = getCategories.await()
+            cachedCategories = getCategories.awaitFor(manga)
             // If the header was bound before the IO finished, its drag-to-open popup captured
             // an empty category list — rebind so the "Edit categories" entry appears.
             if (previous.isEmpty() && cachedCategories.isNotEmpty()) {

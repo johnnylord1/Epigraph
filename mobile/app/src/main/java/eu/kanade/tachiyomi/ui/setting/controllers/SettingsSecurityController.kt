@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.ui.setting.listPreference
 import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.requireAuthentication
 import eu.kanade.tachiyomi.ui.setting.switchPreference
+import eu.kanade.tachiyomi.ui.setting.summaryMRes as summaryRes
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.isAuthenticationSupported
 import yokai.util.koin.injectLazy
@@ -34,6 +35,7 @@ class SettingsSecurityController : SettingsLegacyController() {
             switchPreference {
                 bindTo(securityPreferences.useBiometrics())
                 titleRes = MR.strings.lock_with_biometrics
+                summaryRes = MR.strings.lock_with_biometrics_summary
                 defaultValue = false
 
                 requireAuthentication(

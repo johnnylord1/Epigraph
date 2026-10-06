@@ -212,7 +212,9 @@ android {
             dimension = "default"
         }
         create("dev") {
-            androidResources.localeFilters.add("en")
+            // No locale filter here: `androidResources` in a flavor block resolves to the module-wide
+            // `android.androidResources`, so an "en" filter stripped every translation from all builds,
+            // release included.
             dimension = "default"
         }
     }

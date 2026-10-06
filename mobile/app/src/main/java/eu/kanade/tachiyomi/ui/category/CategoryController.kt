@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.util.view.setTitle
 import eu.kanade.tachiyomi.util.view.snack
 import yokai.i18n.MR
 import yokai.util.lang.getString
+import yokai.domain.category.CategoryLibrary
 import android.R as AR
 
 /**
@@ -34,6 +35,13 @@ class CategoryController(bundle: Bundle? = null) :
     FlexibleAdapter.OnItemMoveListener,
     SmallToolbarInterface,
     CategoryAdapter.CategoryItemListener {
+
+    constructor(library: CategoryLibrary) : this(Bundle().apply { putString(LIBRARY_KEY, library.name) })
+
+    /** Comics and Books & novels keep separate folders; this screen edits one library's list. */
+    val library: CategoryLibrary =
+        args.getString(LIBRARY_KEY)?.let { runCatching { CategoryLibrary.valueOf(it) }.getOrNull() }
+            ?: CategoryLibrary.COMICS
 
     /**
      * Adapter containing category items.
@@ -196,5 +204,9 @@ class CategoryController(bundle: Bundle? = null) :
      */
     fun onCategoryExistsError() {
         activity?.toast(MR.strings.category_with_name_exists)
+    }
+
+    private companion object {
+        const val LIBRARY_KEY = "category_library"
     }
 }

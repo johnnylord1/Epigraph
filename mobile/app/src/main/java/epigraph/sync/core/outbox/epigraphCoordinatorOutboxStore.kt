@@ -7,6 +7,8 @@ import epigraph.contract.SyncScopeId
 import epigraph.sync.EpigraphMutationAcknowledgement
 import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.core.protocol.CoreMutationResult
+import epigraph.sync.core.protocol.CoreMutationResultStatus
+import epigraph.sync.core.replica.CoreReplicaKey
 import epigraph.sync.core.replica.CoreReplicaPayloadHasher
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -15,6 +17,8 @@ import kotlinx.serialization.json.Json
 class EpigraphCoordinatorOutboxStore(
     private val coordinator: EpigraphMutationCoordinator,
     private val json: Json = Json,
+    /** Projects the confirmed record already held for an entity whose local write lost. */
+    private val projectHeldRecord: (suspend (CoreReplicaKey) -> Unit)? = null,
 ) : CoreOutboxStore {
     override suspend fun claimReady(
         nowEpochMillis: Long,
@@ -98,6 +102,10 @@ class EpigraphCoordinatorOutboxStore(
                 receivedAtEpochMillis = receivedAtEpochMillis,
             ),
         )
+        // A superseded write is not echoed back; the newer value it lost to replaces the local edit.
+        if (result.status == CoreMutationResultStatus.SUPERSEDED) {
+            projectHeldRecord?.invoke(CoreReplicaKey(record.scopeId, record.entityType, result.entityId))
+        }
     }
 
     override suspend fun markFailed(

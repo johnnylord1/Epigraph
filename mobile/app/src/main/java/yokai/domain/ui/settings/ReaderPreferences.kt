@@ -283,8 +283,7 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     // OrientationType.flagValue (matches the manga `defaultOrientationType` storage shape) so the
     // same `OrientationType.fromPreference()` decoder works for both. Per-novel overrides live on
     // `Manga.orientationType` and take precedence; this is the fallback used when the per-novel
-    // value is `OrientationType.DEFAULT.flagValue`. Key is referenced by string in
-    // SettingsMangaReaderController — keep both in sync.
+    // value is `OrientationType.DEFAULT.flagValue`. Shown under Reader › Novel › Display.
     val novelDefaultOrientationType: Preference<Int> = preferenceStore.getInt(
         "pref_novel_default_orientation_type_key",
         OrientationType.FREE.flagValue,

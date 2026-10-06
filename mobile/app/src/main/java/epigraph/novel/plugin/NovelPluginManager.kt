@@ -450,6 +450,11 @@ class NovelPluginManager(
      */
     fun isInstalled(pluginId: String): Boolean = installedSources.containsKey(pluginId)
 
+    /** Language code each known plugin gets as a source here; installed plugins win. */
+    fun knownPluginLangs(): Map<String, String> =
+        availablePluginsFlow.value.associate { it.id to langFromLnReaderLang(it.lang) } +
+            installedSourcesFlow.value.associate { it.pluginId to it.lang }
+
     /**
      * Get installed version of a plugin, or null.
      */

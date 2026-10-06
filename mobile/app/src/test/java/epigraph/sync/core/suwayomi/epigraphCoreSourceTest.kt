@@ -123,6 +123,47 @@ class EpigraphCoreSourceTest {
         assertEquals(listOf("Chapter 3", "Chapter 2", "Chapter 1"), chapters.map { it.name })
     }
 
+    @Test
+    fun `chapters carry the desktop read state`() = runTest {
+        val gateway = RecordingGateway(
+            liveChapters = listOf(
+                buildJsonObject {
+                    put("id", 201)
+                    put("name", "Chapter 1")
+                    put("chapterNumber", 1.0)
+                    put("isRead", true)
+                    put("lastPageRead", 17)
+                },
+                buildJsonObject {
+                    put("id", 202)
+                    put("name", "Chapter 2")
+                    put("chapterNumber", 2.0)
+                    put("isRead", false)
+                    put("lastPageRead", 4)
+                },
+                buildJsonObject {
+                    put("id", 203)
+                    put("name", "Chapter 3")
+                    put("chapterNumber", 3.0)
+                },
+            ),
+        )
+        val source = EpigraphCoreSource(gateway)
+        val manga = SManga.create().apply {
+            url = SuwayomiCoreContentReference.forManga("desktop-one", "main", 7)
+            title = "Before"
+        }
+
+        val chapters = source.getChapterList(manga).associateBy { it.name }
+
+        assertEquals(true, chapters.getValue("Chapter 1").read)
+        assertEquals(17, chapters.getValue("Chapter 1").last_page_read)
+        assertEquals(false, chapters.getValue("Chapter 2").read)
+        assertEquals(4, chapters.getValue("Chapter 2").last_page_read)
+        assertEquals(false, chapters.getValue("Chapter 3").read)
+        assertEquals(0, chapters.getValue("Chapter 3").last_page_read)
+    }
+
     private class RecordingGateway(
         val includeChaptersCollection: Boolean = true,
         val liveChapters: List<JsonObject>? = null,

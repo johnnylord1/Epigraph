@@ -277,7 +277,7 @@ class ExtensionRepoScreen(
         val repos = (state as NovelRepoScreenModel.State.Success).repos.map { repo ->
             ExtensionRepo(
                 baseUrl = repo.baseUrl,
-                name = repo.name,
+                name = repo.displayName,
                 shortName = null,
                 website = "",
                 signingKeyFingerprint = "",

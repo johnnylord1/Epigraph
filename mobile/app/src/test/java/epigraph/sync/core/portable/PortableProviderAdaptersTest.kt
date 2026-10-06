@@ -135,6 +135,35 @@ class PortableProviderAdaptersTest {
     }
 
     @Test
+    fun `restored comic binds to its exact local rows while the extension is not installed`() = runTest {
+        val work = PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/series/Exact"))
+        val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey("/chapter/1"))
+        val lookup = object : PortableLocalEntityLookup by EmptyLookup {
+            override suspend fun comicWork(sourceId: Long, mangaKey: String): String? =
+                if (sourceId == 10L && mangaKey == "/series/Exact") "918" else null
+
+            override suspend fun comicChapter(sourceId: Long, mangaKey: String, chapterKey: String): String? =
+                if (sourceId == 10L && mangaKey == "/series/Exact" && chapterKey == "/chapter/1") "77" else null
+        }
+        val provider = MihonPortableProvider(FakeComicRegistry(emptySet(), emptyMap(), emptySet()), lookup)
+
+        val existing = provider.resolveExistingWork(work)
+        val resolved = provider.resolveWork(work)
+        val chapterResolution = provider.resolveChapter(chapter)
+
+        assertEquals(PortableResolutionState.BOUND, existing?.resolution?.state)
+        assertEquals("918", existing?.localId)
+        assertEquals("918", resolved.localId)
+        assertEquals(PortableResolutionState.BOUND, chapterResolution.resolution.state)
+        assertEquals("77", chapterResolution.localId)
+        assertNull(
+            provider.resolveExistingWork(
+                PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/series/Other")),
+            ),
+        )
+    }
+
+    @Test
     fun `trusted novel dependency still requires the exact plugin to be installed`() = runTest {
         val dependency = ProviderDependency.Novel(
             NovelDependency(

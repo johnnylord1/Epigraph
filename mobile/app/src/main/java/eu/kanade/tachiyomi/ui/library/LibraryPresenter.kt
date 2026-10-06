@@ -71,6 +71,7 @@ import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.category.interactor.UpdateCategories
@@ -288,11 +289,11 @@ class LibraryPresenter(
 
                 // Initial setup is deferred until the Library surface is actually visible.
                 if (categories.isEmpty()) {
-                    val dbCategories = getCategories.await()
+                    val dbCategories = getCategories.await(CategoryLibrary.COMICS)
                     if ((dbCategories + Category.createDefault(context)).distinctBy { it.order }.size != dbCategories.size + 1) {
                         reorderCategories(dbCategories)
                     }
-                    categories = lastCategories ?: getCategories.await().toMutableList()
+                    categories = lastCategories ?: getCategories.await(CategoryLibrary.COMICS).toMutableList()
                 }
 
                 combine(
@@ -941,7 +942,7 @@ class LibraryPresenter(
      */
     private fun getLibraryFlow(): Flow<LibraryData> {
         val libraryFlow = combine(
-            getCategories.subscribe(),
+            getCategories.subscribe(CategoryLibrary.COMICS),
             // FIXME: Remove retry once a real solution is found
             getLibraryManga.subscribe().retry(1) { e -> e is NullPointerException },
             getPreferencesFlow(),

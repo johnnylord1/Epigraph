@@ -98,6 +98,21 @@ class EpigraphCorePairingControllerTest {
             accepted.state.value,
         )
 
+        val expired = EpigraphCorePairingController(
+            activation = activation,
+            credentials = mockk { every { load() } returns null },
+            deviceProvider = mockk(),
+            syncScheduler = mockk(),
+            selections = mockk(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            pinResolver = resolver,
+            nowMs = { 100_000 },
+        )
+        expired.resolvePinAndPrepare(host, "377299")
+        expired.refresh()
+        assertSame(CorePairingUiState.Unpaired, expired.state.value)
+
         val withoutResolver = controller(null)
         withoutResolver.resolvePinAndPrepare(host, "377299")
         assertEquals(

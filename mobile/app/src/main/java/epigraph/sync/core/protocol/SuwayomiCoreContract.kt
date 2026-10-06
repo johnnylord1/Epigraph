@@ -78,6 +78,12 @@ enum class SuwayomiMutationOperation {
 
     @kotlinx.serialization.SerialName("CreateCategory")
     CREATE_CATEGORY,
+
+    @kotlinx.serialization.SerialName("AddExtensionRepos")
+    ADD_EXTENSION_REPOS,
+
+    @kotlinx.serialization.SerialName("InstallExtension")
+    INSTALL_EXTENSION,
 }
 
 @Serializable

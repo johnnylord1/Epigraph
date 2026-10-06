@@ -24,7 +24,7 @@ import epigraph.sync.core.policy.DependencyInventoryMode
 import epigraph.sync.core.work.CoreSyncStatus
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import epigraph.sync.core.work.CoreUserActionReason
-import android.text.format.DateUtils
+import eu.kanade.tachiyomi.util.relativeTimeSpanString
 import java.util.UUID
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.AlertDialog
@@ -100,6 +100,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         val extensionState by extensionReconciliation.state.collectAsState()
         val context = LocalContext.current
         var showPasteDialog by remember { mutableStateOf(false) }
+        var showDisconnectDialog by remember { mutableStateOf(false) }
         var showPinDialog by remember { mutableStateOf(false) }
         var pinText by remember { mutableStateOf("") }
         var selectedHost by remember { mutableStateOf<DiscoveredCoreHost?>(null) }
@@ -302,7 +303,30 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                     TextButton(onClick = {
                         if (selectingPairing) controller.cancelPairingSelection() else showSelectionEditor = false
                     }) {
-                        Text(stringResource(MR.strings.action_cancel))
+                        Text(stringResource(MR.strings.cancel))
+                    }
+                },
+            )
+        }
+
+        if (showDisconnectDialog) {
+            // Forgetting the pairing also signs out tracker logins delivered by Core, so a stray
+            // tap must not do it silently.
+            AlertDialog(
+                onDismissRequest = { showDisconnectDialog = false },
+                title = { Text(stringResource(MR.strings.epigraph_core_disconnect)) },
+                text = { Text(stringResource(MR.strings.epigraph_core_disconnect_confirm)) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showDisconnectDialog = false
+                            controller.startDisconnect()
+                        },
+                    ) { Text(stringResource(MR.strings.epigraph_core_disconnect_confirm_action)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDisconnectDialog = false }) {
+                        Text(stringResource(MR.strings.cancel))
                     }
                 },
             )
@@ -345,7 +369,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             bundleText = ""
                             showPasteDialog = false
                         },
-                    ) { Text(stringResource(MR.strings.action_cancel)) }
+                    ) { Text(stringResource(MR.strings.cancel)) }
                 },
             )
         }
@@ -436,7 +460,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 },
                 dismissButton = {
                     TextButton(enabled = !busy, onClick = { closePinDialog() }) {
-                        Text(stringResource(MR.strings.action_cancel))
+                        Text(stringResource(MR.strings.cancel))
                     }
                 },
             )
@@ -476,7 +500,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "${item.errorCode} · ${DateUtils.getRelativeTimeSpanString(item.createdAtEpochMillis)}",
+                                text = "${item.errorCode} · ${relativeTimeSpanString(item.createdAtEpochMillis)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -564,7 +588,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         title = stringResource(MR.strings.epigraph_core_disconnect),
                         subtitle = stringResource(MR.strings.epigraph_core_disconnect_summary),
                         enabled = state is CorePairingUiState.Paired,
-                        onClick = { controller.startDisconnect() },
+                        onClick = { showDisconnectDialog = true },
                     ),
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(MR.strings.epigraph_core_setup_entry_title),
@@ -674,11 +698,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             stringResource(MR.strings.epigraph_core_sync_status_pending, status.counts.unsettled)
         is CoreSyncStatus.Synced -> stringResource(
             MR.strings.epigraph_core_sync_status_synced,
-            DateUtils.getRelativeTimeSpanString(
-                status.lastSyncAtMs,
-                System.currentTimeMillis(),
-                DateUtils.MINUTE_IN_MILLIS,
-            ).toString(),
+            relativeTimeSpanString(status.lastSyncAtMs),
         )
         CoreSyncStatus.Idle -> stringResource(MR.strings.epigraph_core_sync_status_idle)
     }

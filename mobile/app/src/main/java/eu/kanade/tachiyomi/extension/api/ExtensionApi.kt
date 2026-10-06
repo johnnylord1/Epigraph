@@ -44,7 +44,11 @@ internal class ExtensionApi {
                 .map { async { getExtensions(it) } }
                 .awaitAll()
             ExtensionDiscoveryResult(
-                extensions = results.mapNotNull { it.getOrNull() }.flatten(),
+                // A mirror may serve a package its upstream also has: keep the newest build,
+                // like the desktop does, so both install the same source ids.
+                extensions = results.mapNotNull { it.getOrNull() }.flatten()
+                    .groupBy { it.pkgName }
+                    .map { (_, builds) -> builds.maxWith(compareBy({ it.libVersion }, { it.versionCode })) },
                 catalogReachable = results.any { it.isSuccess },
             )
         }

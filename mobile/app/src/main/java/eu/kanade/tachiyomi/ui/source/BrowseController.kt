@@ -473,6 +473,26 @@ class BrowseController :
 
             // Change hint to show global search.
             searchView.queryHint = view?.context?.getString(MR.strings.search_extensions)
+            // Give the open search field the room of the options/language icons; the
+            // Manga/Novels pill stays so the type can still be switched while searching.
+            val menu = binding.bottomSheet.sheetToolbar.menu
+            fun showSideActions(visible: Boolean) {
+                menu.findItem(R.id.action_extension_repos_settings)?.isVisible = visible
+                menu.findItem(R.id.action_filter)?.isVisible = visible
+            }
+            searchItem.setOnActionExpandListener(
+                object : MenuItem.OnActionExpandListener {
+                    override fun onMenuItemActionExpand(item: MenuItem): Boolean {
+                        showSideActions(false)
+                        return true
+                    }
+
+                    override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                        showSideActions(true)
+                        return true
+                    }
+                },
+            )
             if (extQuery.isNotEmpty()) {
                 searchView.setOnQueryTextListener(null)
                 searchItem.expandActionView()

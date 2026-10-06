@@ -28,8 +28,9 @@ import yokai.presentation.theme.YokaiTheme
 
 /**
  * Compact two-option pill switch, the mobile counterpart of the desktop Comics / Books toggle.
- * Every screen that switches content type shows it in the same place: the top app bar actions,
- * right before the overflow menu (Library, Discover, Browse, Extensions, Repositories).
+ * Like the desktop, the selected option takes the theme accent (primary), not a neutral tone.
+ * Screens that switch content type show it in the top app bar actions: in the Library left of the
+ * filter button, elsewhere right before the overflow menu (Discover, Browse, Extensions, Repositories).
  */
 @Composable
 fun <T> SegmentedSwitch(
@@ -48,11 +49,11 @@ fun <T> SegmentedSwitch(
         options.forEach { (value, label) ->
             val isSelected = value == selected
             val container by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                 label = "segmented-switch-container",
             )
             val content by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                 label = "segmented-switch-content",
             )
             Text(

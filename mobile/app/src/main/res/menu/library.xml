@@ -13,16 +13,17 @@
         app:showAsAction="collapseActionView|ifRoom" />
 
 
-    <item
-        android:id="@+id/action_filter"
-        android:icon="@drawable/ic_filter_list_24dp"
-        android:title="@string/filter"
-        app:showAsAction="always" />
-
+    <!-- Comics / Books pill sits left of the filter button. -->
     <item
         android:id="@+id/action_books"
         android:icon="@drawable/ic_book_open_outline_24dp"
         android:title="@string/epigraph_books"
+        app:showAsAction="always" />
+
+    <item
+        android:id="@+id/action_filter"
+        android:icon="@drawable/ic_filter_list_24dp"
+        android:title="@string/filter"
         app:showAsAction="always" />
 
     <item

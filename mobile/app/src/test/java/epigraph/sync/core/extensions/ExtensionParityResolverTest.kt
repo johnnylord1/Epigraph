@@ -55,15 +55,18 @@ class ExtensionParityResolverTest {
             inventory = inventory(
                 extension("installed.update", "1", source(1, "Update")),
                 extension("installed.mismatch", "1", source(2, "Mismatch")),
+                extension("installed.stale", "1", source(5, "Stale")),
                 extension("missing.none", "1", source(3, "Missing")),
                 extension("missing.untrusted", "1", source(4, "Blocked")),
             ),
             installed = listOf(
                 MobileInstalledExtension("installed.update", 1, "1.0", setOf(1)),
                 MobileInstalledExtension("installed.mismatch", 1, "1.0", setOf(99)),
+                MobileInstalledExtension("installed.stale", 1, "1.0", setOf(98)),
             ),
             available = listOf(
                 MobileAvailableExtension("installed.update", 2, "2.0", setOf(1)),
+                MobileAvailableExtension("installed.stale", 2, "2.0", setOf(5)),
             ),
             untrustedPackages = setOf("missing.untrusted"),
         )
@@ -71,6 +74,7 @@ class ExtensionParityResolverTest {
         val statuses = report.items.associate { it.packageName to it.status }
         assertEquals(ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE, statuses["installed.update"])
         assertEquals(ExtensionParityStatus.SOURCE_ID_MISMATCH, statuses["installed.mismatch"])
+        assertEquals(ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE, statuses["installed.stale"])
         assertEquals(ExtensionParityStatus.MISSING_UNAVAILABLE, statuses["missing.none"])
         assertEquals(ExtensionParityStatus.UNTRUSTED_OR_BLOCKED, statuses["missing.untrusted"])
     }
@@ -182,6 +186,12 @@ class ExtensionParityResolverTest {
             "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json",
             ExtensionParityResolver.repositoryIndexUrl(
                 "https://github.com/keiyoushi/extensions/raw/repo/index.pb",
+            ),
+        )
+        assertEquals(
+            "https://raw.githubusercontent.com/Owner/Mihon-repo/repo/index.min.json",
+            ExtensionParityResolver.repositoryIndexUrl(
+                "https://raw.githubusercontent.com/Owner/Mihon-repo/repo/repo.json",
             ),
         )
     }

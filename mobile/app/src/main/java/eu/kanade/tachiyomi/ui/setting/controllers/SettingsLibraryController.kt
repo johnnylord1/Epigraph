@@ -100,10 +100,10 @@ class SettingsLibraryController : SettingsLegacyController() {
             }
         }
 
-        val dbCategories = cachedCategories ?: run {
-            loadCategoriesThenRebuild(this)
-            return@apply
-        }
+        // Build every section right away (the settings search indexes this first pass) and
+        // rebuild once the categories arrive from the database.
+        val categoriesLoaded = cachedCategories != null
+        val dbCategories = cachedCategories ?: emptyList<Category>().also { loadCategoriesThenRebuild(this) }
 
         preferenceCategory {
             titleRes = MR.strings.categories
@@ -111,7 +111,11 @@ class SettingsLibraryController : SettingsLegacyController() {
                 key = "edit_categories"
                 isPersistent = false
                 val catCount = dbCategories.size
-                titleRes = if (catCount > 0) MR.strings.edit_categories else MR.strings.add_categories
+                titleRes = when {
+                    !categoriesLoaded -> MR.strings.add_edit_categories
+                    catCount > 0 -> MR.strings.edit_categories
+                    else -> MR.strings.add_categories
+                }
                 if (catCount > 0) summary = context.getString(MR.plurals.category_plural, catCount, catCount)
                 onClick { router.pushController(CategoryController().withFadeTransaction()) }
             }

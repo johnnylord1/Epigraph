@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.ui.setting.preferenceCategory
 import eu.kanade.tachiyomi.ui.setting.seekBarPreference
 import eu.kanade.tachiyomi.ui.setting.switchPreference
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.reader.settings.OrientationType
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.data.translation.TranslationEngineManager
@@ -78,6 +79,16 @@ fun SettingsLegacyController.populateNovelReaderPreferences(screen: PreferenceSc
                     context.getString(MR.strings.novel_theme_black),
                 )
                 entryValues = listOf("app", "light", "dark", "sepia", "black")
+            }
+
+            // Same choices as the manga default orientation, stored separately; a per-novel
+            // orientation still takes precedence over this fallback.
+            intListPreference(activity) {
+                bindTo(readerPreferences.novelDefaultOrientationType)
+                titleRes = MR.strings.novel_default_orientation
+                val enumConstants = OrientationType.entries.drop(1)
+                entriesRes = enumConstants.map { it.stringRes }.toTypedArray()
+                entryValues = enumConstants.map { value -> value.flagValue }
             }
 
             switchPreference {

@@ -94,6 +94,59 @@ class PortableHydrationCoordinatorTest {
     }
 
     @Test
+    fun `restored title binds to its local row while its extension awaits approval`() = runTest {
+        val dependency = dependency("fixture.missing", "3", trustState = "APPROVAL_REQUIRED")
+        val store = FakeStore(
+            PortableHydrationSnapshot(
+                comics = listOf(dependency),
+                novels = emptyList(),
+                works = listOf(
+                    work("restored", "3", dependency.dependency.pkgName),
+                    work("remote-only", "3", dependency.dependency.pkgName),
+                ),
+            ),
+        )
+        var resolveCalls = 0
+        val comics = FakeProvider(
+            ecosystem = PortableEcosystem.SUWAYOMI,
+            dependencyResolution = {
+                PortableResolution(
+                    PortableResolutionState.REQUIRES_USER_ACTION,
+                    PortableResolutionReason.EXTENSION_STORE_APPROVAL_REQUIRED,
+                )
+            },
+            resolve = { ref ->
+                resolveCalls += 1
+                WorkResolution(ref, ready(PortableResolutionState.BOUND), "unexpected")
+            },
+            existing = { ref ->
+                val comic = ref as PortableWorkRef.Comic
+                if (comic.mangaKey.value == "/manga/restored") {
+                    WorkResolution(ref, ready(PortableResolutionState.BOUND), "42")
+                } else {
+                    null
+                }
+            },
+        )
+
+        val report = PortableHydrationCoordinator(
+            store,
+            comics,
+            FakeProvider(PortableEcosystem.LNREADER),
+        ).hydrate("server", "main", 100)
+
+        assertEquals(0, resolveCalls)
+        assertEquals(1, report.boundWorks)
+        val restored = store.works.single { it.portableId == "restored" }
+        assertEquals(PortableResolutionState.BOUND, restored.resolution.state)
+        assertEquals("42", restored.localReference)
+        assertEquals(
+            PortableResolutionReason.EXTENSION_STORE_APPROVAL_REQUIRED,
+            store.works.single { it.portableId == "remote-only" }.resolution.reason,
+        )
+    }
+
+    @Test
     fun `source queues are serial internally and bounded globally`() = runTest {
         val dependencies = (1..3).map { dependency("fixture.source$it", it.toString()) }
         val works = dependencies.flatMap { dependency ->
@@ -170,10 +223,52 @@ class PortableHydrationCoordinatorTest {
         )
     }
 
+    @Test
+    fun `pending chapter of an already bound work resolves to its local chapter`() = runTest {
+        val boundWork = work("bound", "5", "fixture.bound").copy(
+            localReference = "2",
+            resolution = ready(PortableResolutionState.BOUND),
+        )
+        val chapter = PortableChapterBindingRecord(
+            portableChapterId = "chapter-16",
+            portableWorkId = boundWork.portableId,
+            ref = PortableChapterRef.Comic(boundWork.ref as PortableWorkRef.Comic, ProviderOwnedKey("/manga/bound/16")),
+            localReference = null,
+            resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+            attemptCount = 0,
+            updatedAt = 1,
+        )
+        val store = FakeStore(
+            PortableHydrationSnapshot(
+                comics = emptyList(),
+                novels = emptyList(),
+                works = emptyList(),
+                chapters = listOf(chapter),
+                chapterWorks = listOf(boundWork),
+            ),
+        )
+        val comics = FakeProvider(
+            ecosystem = PortableEcosystem.SUWAYOMI,
+            chapterResolution = { ref -> ChapterResolution(ref, ready(PortableResolutionState.BOUND), "210") },
+        )
+
+        val report = PortableHydrationCoordinator(
+            store,
+            comics,
+            FakeProvider(PortableEcosystem.LNREADER),
+        ).hydrate("server", "main", 100)
+
+        assertEquals(1, report.boundChapters)
+        assertEquals(0, report.pendingWorks)
+        assertEquals(emptyList<PortableWorkBindingRecord>(), store.works)
+        assertEquals("210", store.chapters.single().localReference)
+    }
+
     private class FakeStore(
         private val snapshot: PortableHydrationSnapshot,
     ) : PortableHydrationStore {
         var works: List<PortableWorkBindingRecord> = emptyList()
+        var chapters: List<PortableChapterBindingRecord> = emptyList()
 
         override suspend fun load(serverId: String, profileId: String, limit: Long) = snapshot
 
@@ -184,6 +279,7 @@ class PortableHydrationCoordinatorTest {
             chapters: List<PortableChapterBindingRecord>,
         ) {
             this.works = works
+            this.chapters = chapters
         }
     }
 
@@ -193,14 +289,19 @@ class PortableHydrationCoordinatorTest {
         private val resolve: suspend (PortableWorkRef) -> WorkResolution = { ref ->
             WorkResolution(ref, ready(PortableResolutionState.BOUND), "local-${ref.hashCode()}")
         },
+        private val existing: suspend (PortableWorkRef) -> WorkResolution? = { null },
+        private val chapterResolution: suspend (PortableChapterRef) -> ChapterResolution = { ref ->
+            ChapterResolution(ref, PortableResolution(PortableResolutionState.PENDING_PROVIDER))
+        },
     ) : PortableContentProvider {
+        override suspend fun resolveExistingWork(ref: PortableWorkRef): WorkResolution? = existing(ref)
+
         override suspend fun inspectDependencies(dependencies: List<ProviderDependency>) =
             DependencyResolutionResult(dependencies.associateWith(dependencyResolution))
 
         override suspend fun resolveWork(ref: PortableWorkRef): WorkResolution = resolve(ref)
 
-        override suspend fun resolveChapter(ref: PortableChapterRef) =
-            ChapterResolution(ref, PortableResolution(PortableResolutionState.PENDING_PROVIDER))
+        override suspend fun resolveChapter(ref: PortableChapterRef) = chapterResolution(ref)
     }
 
     private companion object {

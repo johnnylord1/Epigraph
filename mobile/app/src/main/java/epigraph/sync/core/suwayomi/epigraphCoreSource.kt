@@ -21,6 +21,7 @@ import java.time.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
@@ -114,6 +115,10 @@ class EpigraphCoreSource(
                 chapter_number = (chapter.double("chapterNumber") ?: 0.0).toFloat()
                 scanlator = chapter.string("scanlator")
                 date_upload = chapter.timestamp("uploadDate")
+                // Suwayomi's read state travels with the list so a phone shows the desktop's
+                // progress; ChapterSourceSync folds it in without un-reading local reads.
+                read = chapter.boolean("isRead") == true
+                last_page_read = chapter.long("lastPageRead")?.coerceIn(0L, Int.MAX_VALUE.toLong())?.toInt() ?: 0
             }
         }
     }
@@ -196,6 +201,7 @@ class EpigraphCoreSource(
     private fun JsonObject.string(field: String): String? = this[field].primitiveContent()
     private fun JsonObject.long(field: String): Long? = (this[field] as? JsonPrimitive)?.longOrNull
     private fun JsonObject.double(field: String): Double? = (this[field] as? JsonPrimitive)?.doubleOrNull
+    private fun JsonObject.boolean(field: String): Boolean? = (this[field] as? JsonPrimitive)?.booleanOrNull
     private fun JsonObject.timestamp(field: String): Long {
         val primitive = this[field] as? JsonPrimitive ?: return 0L
         primitive.longOrNull?.let { return it }

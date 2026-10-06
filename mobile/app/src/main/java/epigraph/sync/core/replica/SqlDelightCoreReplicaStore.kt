@@ -83,6 +83,36 @@ class SqlDelightCoreReplicaStore(
         }
     }
 
+    /**
+     * Projects the confirmed record already held for [key]. A local write the Core superseded never
+     * comes back as a change, and the newer record it lost to may have arrived while that write was
+     * still pending, when projecting it would have undone the pending edit.
+     */
+    suspend fun projectHeldRecord(key: CoreReplicaKey) {
+        requireKey(key)
+        databaseHandler.await(inTransaction = true) {
+            val row = aethon_syncQueries
+                .selectCoreReplicaRecord(key.scopeId, key.entityType, key.entityId)
+                .executeAsOneOrNull()
+                ?: return@await
+            projection?.upsert(
+                this,
+                CoreConfirmedRecord(
+                    key = key,
+                    serverVersion = row.server_version,
+                    lamport = row.lamport,
+                    record = CoreReplicaPayloadHasher.parse(row.record_json),
+                ),
+            )
+        }
+    }
+
+    private fun requireKey(key: CoreReplicaKey) {
+        require(key.scopeId.isNotBlank() && key.entityType.isNotBlank() && key.entityId.isNotBlank()) {
+            "replica key fields must not be blank"
+        }
+    }
+
     private companion object {
         const val ALL_COVERAGE_TYPE = "ALL"
         const val FILTERED_COVERAGE_TYPE = "FILTERED"

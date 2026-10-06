@@ -16,6 +16,7 @@ import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.credentials.EncryptedCoreCredentialStore
 import epigraph.sync.core.credentials.CoreCredentialScopeProvider
+import epigraph.sync.core.credentials.SharedPreferencesLastPairedProfileStore
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.events.CoreBackgroundSyncReason
@@ -32,6 +33,9 @@ import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
+import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
+import epigraph.sync.core.suwayomi.PhoneExtensionState
+import epigraph.sync.core.suwayomi.SharedPreferencesPublishedExtensionLedger
 import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
 import epigraph.sync.core.suwayomi.UnpublishedComicCategory
 import epigraph.sync.core.suwayomi.CreatedComicCategoryBinder
@@ -128,6 +132,7 @@ import epigraph.sync.core.work.CoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoreOutboxDrainerFactory
 import epigraph.sync.core.work.CoreOutboxSyncConnectionFactory
 import epigraph.sync.core.work.CoreOutboxSyncRunner
+import epigraph.sync.core.work.CoreReplicaAppliedHook
 import epigraph.sync.core.work.CorePendingOutbox
 import epigraph.sync.core.work.CoreSyncWakeStore
 import epigraph.sync.core.assets.BookAssetCoordinator
@@ -169,7 +174,9 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreCredentialStore> { get<EncryptedCoreCredentialStore>() }
     single<DeviceSyncSelectionStore> { SqlDelightDeviceSyncSelectionStore(get()) }
     single { SyncPolicyResolver(get()) }
-    single<EpigraphSyncScopeProvider> { CoreCredentialScopeProvider(get()) }
+    single<EpigraphSyncScopeProvider> {
+        CoreCredentialScopeProvider(get(), SharedPreferencesLastPairedProfileStore(app))
+    }
     single { EpigraphCorePairingActivation(get(), get(), get(), get()) }
     single { AndroidPairingDeviceProvider(app) }
     single<CoreBackgroundSyncScheduler> { WorkManagerCoreBackgroundSyncScheduler(app) }
@@ -308,7 +315,12 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
         )
     }
-    single<CoreOutboxStore> { EpigraphCoordinatorOutboxStore(get()) }
+    single<CoreOutboxStore> {
+        EpigraphCoordinatorOutboxStore(
+            coordinator = get(),
+            projectHeldRecord = { key -> get<SqlDelightCoreReplicaStore>().projectHeldRecord(key) },
+        )
+    }
     single { CoreV1OutboxAdapter() }
     single<CoreLamportSource> { SqlDelightCoreLamportSource(get()) }
     single<CoreRequestIdSource> { UuidCoreRequestIdSource() }
@@ -415,6 +427,24 @@ fun epigraphSyncModule(app: Application) = module {
                         categoryRouter.bindCreatedComicCategory(localCategoryId, expectedName, categoryEntityId, suwayomiOrder)
                     },
                 ),
+                SuwayomiExtensionPublishHook(
+                    phone = {
+                        val extensions = get<eu.kanade.tachiyomi.extension.ExtensionManager>()
+                        PhoneExtensionState(
+                            packageNames = if (extensions.isInitialized.value) {
+                                extensions.installedExtensionsFlow.value.map { it.pkgName }
+                            } else {
+                                emptyList()
+                            },
+                            repoIndexUrls = get<yokai.domain.extension.repo.interactor.GetExtensionRepo>().getAll()
+                                .map { it.baseUrl.trimEnd('/') + "/index.min.json" },
+                        )
+                    },
+                    ledger = SharedPreferencesPublishedExtensionLedger(app),
+                ),
+            ),
+            replicaAppliedHooks = listOf(
+                CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
             ),
         )
     }

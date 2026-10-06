@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
 import yokai.domain.category.interactor.GetCategories
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.manga.interactor.UpdateManga
 import yokai.domain.manga.models.MangaUpdate
@@ -252,9 +253,9 @@ class SetCategoriesSheet(
 
         binding.cancelButton.setOnClickListener { dismiss() }
         binding.newCategoryButton.setOnClickListener {
-            ManageCategoryDialog(null) {
+            ManageCategoryDialog(null, CategoryLibrary.of(listManga)) {
                 sheetScope.launch {
-                    val fresh = withContext(Dispatchers.IO) { getCategories.await() }
+                    val fresh = withContext(Dispatchers.IO) { getCategories.awaitFor(listManga) }
                     categories = fresh.toMutableList()
                     val map = itemAdapter.adapterItems.associate { it.category.id to it.state }
                     itemAdapter.set(

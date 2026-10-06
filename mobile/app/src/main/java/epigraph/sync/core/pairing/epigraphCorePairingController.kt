@@ -86,6 +86,7 @@ class EpigraphCorePairingController(
     private val hostDiscovery: CoreHostDiscovery = CoreHostDiscovery { emptyList() },
     private val pinResolver: PairingPinResolver? = null,
     private val pairingEndedListeners: List<CorePairingEndedListener> = emptyList(),
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val lifetimeScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val operation = Mutex()
@@ -99,6 +100,14 @@ class EpigraphCorePairingController(
     val discovery: StateFlow<CoreHostDiscoveryState> = mutableDiscovery.asStateFlow()
 
     suspend fun refresh() = operation.withLock {
+        // An expired QR/PIN bundle cannot be claimed; never reopen its "Choose what to sync" dialog
+        // while the persisted state below is still loading.
+        val selecting = mutableState.value as? CorePairingUiState.Selecting
+        if (selecting != null && selecting.expiresAtMs <= nowMs()) {
+            pendingBootstrapBundle = null
+            activeVerificationCode = null
+            mutableState.value = CorePairingUiState.Loading
+        }
         mutableState.value = readPersistedState()
         mutableSelection.value = readPersistedSelection()
     }

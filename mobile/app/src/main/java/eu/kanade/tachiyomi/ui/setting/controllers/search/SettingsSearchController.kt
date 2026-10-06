@@ -15,7 +15,7 @@ import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.databinding.SettingsSearchControllerBinding
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
 import eu.kanade.tachiyomi.ui.main.SearchControllerInterface
-import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
+import com.bluelinelabs.conductor.Controller
 import eu.kanade.tachiyomi.util.view.activityBinding
 import eu.kanade.tachiyomi.util.view.liftAppbarWith
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
@@ -140,7 +140,7 @@ class SettingsSearchController :
     /**
      * Opens a catalogue with the given search.
      */
-    override fun onTitleClick(ctrl: SettingsLegacyController) {
+    override fun onTitleClick(ctrl: Controller) {
         searchView?.query.let {
             query = it.toString()
         }

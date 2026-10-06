@@ -53,8 +53,10 @@ class ExtensionRepoRepositoryImpl(private val handler: DatabaseHandler): Extensi
     }
 
     override suspend fun replaceRepository(newRepo: ExtensionRepo) {
-        handler.await {
-            extension_reposQueries.replace(
+        // Same signer, new address: drop every repository of that signer, then add the new one.
+        handler.await(inTransaction = true) {
+            extension_reposQueries.deleteBySigningKeyFingerprint(newRepo.signingKeyFingerprint)
+            extension_reposQueries.upsert(
                 newRepo.baseUrl,
                 newRepo.name,
                 newRepo.shortName,

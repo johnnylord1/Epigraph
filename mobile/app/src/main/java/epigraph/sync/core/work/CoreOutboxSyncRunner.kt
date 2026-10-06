@@ -180,6 +180,15 @@ fun interface CoreNegotiatedSessionHook {
     suspend fun onNegotiated(capabilities: CoreCapabilities, connection: CoreOutboxSyncConnection)
 }
 
+/**
+ * Runs after a replica pass applied the Core state, before the run counts what is still unsettled,
+ * so work queued here is reported and drained by the next run. Best effort, like
+ * [CoreNegotiatedSessionHook].
+ */
+fun interface CoreReplicaAppliedHook {
+    suspend fun onReplicaApplied(nowEpochMillis: Long)
+}
+
 fun interface CoreOutboxSyncConnectionFactory {
     suspend fun open(credentials: CoreCredentialSession): CoreOutboxSyncConnection
 }
@@ -642,6 +651,7 @@ class CoreOutboxSyncRunner(
     private val replica: CoreReplicaSyncPort,
     private val policies: SyncPolicyResolver,
     private val negotiatedHooks: List<CoreNegotiatedSessionHook> = emptyList(),
+    private val replicaAppliedHooks: List<CoreReplicaAppliedHook> = emptyList(),
 ) {
     suspend fun run(
         nowEpochMillis: Long,
@@ -885,6 +895,17 @@ class CoreOutboxSyncRunner(
                 }
             } else {
                 CoreReplicaSyncOutcome.DEFERRED
+            }
+            if (replicaOutcome == CoreReplicaSyncOutcome.APPLIED) {
+                replicaAppliedHooks.forEach { hook ->
+                    try {
+                        hook.onReplicaApplied(nowEpochMillis)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        reportCoreSyncFailure("replica.hook", failure)
+                    }
+                }
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val remoteProjection = if (

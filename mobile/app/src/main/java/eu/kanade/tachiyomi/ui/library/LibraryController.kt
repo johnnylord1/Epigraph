@@ -169,6 +169,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.ui.UiPreferences
 import yokai.domain.manga.MangaRepository
 import yokai.i18n.MR
@@ -2978,8 +2979,16 @@ open class LibraryController(
         booksMode && unifiedBooksView?.novelsFor(catId)?.isNotEmpty() == true
 
     override fun manageCategory(position: Int) {
-        // Books & novels headers mirror Comics categories; they are managed from the Comics library.
-        if (booksMode) return
+        if (booksMode) {
+            // Books & novels folders are separate from Comics folders and are edited in place.
+            val books = unifiedBooksView ?: return
+            val header = books.libraryAdapter.getItem(position) as? LibraryHeaderItem ?: return
+            val category = books.realCategory(header.category.id) ?: return
+            ManageCategoryDialog(category, CategoryLibrary.BOOKS) {
+                books.reloadCategories()
+            }.showDialog(router)
+            return
+        }
         val category = (adapter.getItem(position) as? LibraryHeaderItem)?.category ?: return
         if (!category.isDynamic) {
             ManageCategoryDialog(category) {
@@ -3186,8 +3195,21 @@ open class LibraryController(
         val context = activity ?: return
         val books = unifiedBooksView ?: return
         val categories = books.assignableCategories
+        val createCategory = {
+            // Books & novels folders are their own list; a new one is created right here.
+            ManageCategoryDialog(null, CategoryLibrary.BOOKS) { newId ->
+                viewScope.launch {
+                    newId?.let {
+                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            localBookRepository.setCategory(book.bookId, it.toLong(), true)
+                        }
+                    }
+                    books.reloadCategories()
+                }
+            }.show(context)
+        }
         if (categories.isEmpty()) {
-            books.showStatus(context.getString(MR.strings.library_books_no_categories))
+            createCategory()
             return
         }
         val current = books.categoryIdsOf(book.bookId).toSet()
@@ -3198,6 +3220,7 @@ open class LibraryController(
                 checked[which] = isChecked
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(context.getString(MR.strings.new_category)) { _, _ -> createCategory() }
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 viewScope.launch {
                     runCatching {
@@ -3241,7 +3264,8 @@ open class LibraryController(
         // The category hopper belongs to the Comics presenter; Books headers are few and inline.
         binding.categoryHopperFrame.isVisible = false
         binding.jumperCategoryText.isVisible = false
-        if (hasBooksContent) {
+        // Before the first snapshot lands the collection is unknown, not empty.
+        if (hasBooksContent || unifiedBooksView?.hasLoadedCollection != true) {
             binding.emptyView.hide()
             return
         }
@@ -3441,7 +3465,8 @@ open class LibraryController(
     }
 
     fun showCategoriesController() {
-        router.pushController(CategoryController().withFadeTransaction())
+        val library = if (booksMode) CategoryLibrary.BOOKS else CategoryLibrary.COMICS
+        router.pushController(CategoryController(library).withFadeTransaction())
         displaySheet?.dismiss()
     }
 

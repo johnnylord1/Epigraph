@@ -123,7 +123,7 @@ private fun ExtensionReconciliationContent(
                     onClick = { pendingRepositoryUrl = null },
                     enabled = !repositoryApprovalBusy,
                 ) {
-                    Text(stringResource(MR.strings.action_cancel))
+                    Text(stringResource(MR.strings.cancel))
                 }
             },
             confirmButton = {

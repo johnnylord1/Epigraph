@@ -1105,6 +1105,65 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `a backup restored on the phone keeps one folder when its titles are adopted in the same run`() = runTest {
+        database.mangasQueries.insert(
+            source = 42,
+            url = "/manga/7",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Suwayomi One",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val restoredId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.categoriesQueries.insert("Remote Favorites", 0, 0, "a")
+        val localCategoryId = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.insertMangaCategoryAssignment(restoredId, localCategoryId)
+        // Before the catalog adopts the restored title it has no Core identity, so the folder does
+        // not look like it holds synced comics yet.
+        assertTrue(database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().isEmpty())
+
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(includeSecondManga = false),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities(categoryCreate = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(restoredId, database.mangasQueries.findFavorites().executeAsList().single()._id)
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAll().executeAsList().filter { it.name == "Remote Favorites" }.map { it._id },
+        )
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAllByMangaId(restoredId).executeAsList().map { it._id },
+        )
+        // The create hook binds the folder by name on the next session.
+        assertEquals(
+            listOf(localCategoryId),
+            database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it._id },
+        )
+    }
+
+    @Test
     fun `remote category is materialized when no phone category of that name awaits a bind`() = runTest {
         val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
         val outcome = SuwayomiCatalogSync(

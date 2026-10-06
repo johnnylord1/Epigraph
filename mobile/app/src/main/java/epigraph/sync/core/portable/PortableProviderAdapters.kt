@@ -144,8 +144,8 @@ class MihonPortableProvider(
     override suspend fun resolveWork(ref: PortableWorkRef): WorkResolution {
         val comic = ref as? PortableWorkRef.Comic
             ?: return WorkResolution(ref, conflict())
-        val sourceId = comic.sourceId.toLong()
-        if (!registry.isSourceReady(sourceId)) {
+        resolveExistingWork(ref)?.let { return it }
+        if (!registry.isSourceReady(comic.sourceId.toLong())) {
             return WorkResolution(
                 ref,
                 PortableResolution(
@@ -154,12 +154,15 @@ class MihonPortableProvider(
                 ),
             )
         }
-        val localId = local.comicWork(sourceId, comic.mangaKey.value)
-        return if (localId != null) {
-            WorkResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
-        } else {
-            materializer?.materialize(ref) ?: unsupported(ref)
-        }
+        return materializer?.materialize(ref) ?: unsupported(ref)
+    }
+
+    // The exact source id and provider key identify the local row; binding to it reads nothing
+    // from the extension, so a restored title keeps syncing while its extension is not installed.
+    override suspend fun resolveExistingWork(ref: PortableWorkRef): WorkResolution? {
+        val comic = ref as? PortableWorkRef.Comic ?: return null
+        val localId = local.comicWork(comic.sourceId.toLong(), comic.mangaKey.value) ?: return null
+        return WorkResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
     }
 
     override suspend fun resolveChapter(ref: PortableChapterRef): ChapterResolution =
@@ -176,21 +179,18 @@ class MihonPortableProvider(
                 continue
             }
             val sourceId = comic.work.sourceId.toLong()
-            if (!registry.isSourceReady(sourceId)) {
-                resolved[ref] = ChapterResolution(
+            val localId = local.comicChapter(sourceId, comic.work.mangaKey.value, comic.chapterKey.value)
+            when {
+                localId != null -> resolved[ref] =
+                    ChapterResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
+                !registry.isSourceReady(sourceId) -> resolved[ref] = ChapterResolution(
                     ref,
                     PortableResolution(
                         PortableResolutionState.RETRYABLE_FAILURE,
                         PortableResolutionReason.SOURCE_NOT_LOADED,
                     ),
                 )
-                continue
-            }
-            val localId = local.comicChapter(sourceId, comic.work.mangaKey.value, comic.chapterKey.value)
-            if (localId != null) {
-                resolved[ref] = ChapterResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
-            } else {
-                missing += ref
+                else -> missing += ref
             }
         }
         val materialized = chapterMaterializer?.materializeAll(missing)

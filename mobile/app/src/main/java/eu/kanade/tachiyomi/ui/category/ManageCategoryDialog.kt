@@ -25,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.InsertCategories
 import yokai.domain.category.interactor.UpdateCategories
@@ -36,10 +37,21 @@ import android.R as AR
 class ManageCategoryDialog(bundle: Bundle? = null) :
     DialogController(bundle) {
 
-    constructor(category: Category?, updateLibrary: ((Int?) -> Unit)) : this() {
+    constructor(
+        category: Category?,
+        library: CategoryLibrary = CategoryLibrary.COMICS,
+        updateLibrary: ((Int?) -> Unit),
+    ) : this() {
         this.updateLibrary = updateLibrary
         this.category = category
+        this.library = library
     }
+
+    constructor(category: Category?, updateLibrary: ((Int?) -> Unit)) :
+        this(category, CategoryLibrary.COMICS, updateLibrary)
+
+    /** Comics and Books & novels keep separate folders, so names only clash within one library. */
+    private var library = CategoryLibrary.COMICS
 
     private var updateLibrary: ((Int?) -> Unit)? = null
     private var category: Category? = null
@@ -56,7 +68,7 @@ class ManageCategoryDialog(bundle: Bundle? = null) :
 
     init {
         dialogScope.launch {
-            cachedCategories = withContext(Dispatchers.IO) { getCategories.await() }
+            cachedCategories = withContext(Dispatchers.IO) { getCategories.await(library) }
         }
     }
 
@@ -116,7 +128,7 @@ class ManageCategoryDialog(bundle: Bundle? = null) :
                     this.category = category
                     deferUpdateLibrary = true
                     dialogScope.launch {
-                        val newId = withContext(Dispatchers.IO) { insertCategories.awaitOne(category) }
+                        val newId = withContext(Dispatchers.IO) { insertCategories.awaitOne(category, library) }
                         category.id = newId?.toInt()
                         updateLibrary?.invoke(category.id)
                     }
@@ -177,7 +189,7 @@ class ManageCategoryDialog(bundle: Bundle? = null) :
         binding.editCategories.isVisible = category != null
         binding.editCategories.setOnClickListener {
             router.popCurrentController()
-            router.pushController(CategoryController().withFadeTransaction())
+            router.pushController(CategoryController(library).withFadeTransaction())
         }
         binding.title.addTextChangedListener {
             binding.categoryTextLayout.error = null

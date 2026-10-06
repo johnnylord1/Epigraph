@@ -11,6 +11,8 @@ import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.CoreDeviceIdentityProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
@@ -162,7 +164,8 @@ class ExtensionReconciliationCoordinator(
 
     /** Every repository the desktop inventory uses, plus the recommended fallback, with this phone's state. */
     suspend fun desktopRepositories(report: ExtensionParityReport): List<ComicRepositoryRow> {
-        val configuredBases = getExtensionRepo.getAll()
+        val configured = getExtensionRepo.getAll()
+        val configuredBases = configured
             .mapTo(mutableSetOf()) { ExtensionParityResolver.repositoryBaseUrl(it.baseUrl) }
         val candidates = (
             report.items.mapNotNull { it.repositoryHintUrl ?: it.storeIndexUrl } +
@@ -175,6 +178,8 @@ class ExtensionReconciliationCoordinator(
                 ComicRepositoryRow(
                     indexUrl = indexUrl,
                     name = repositoryLabel(indexUrl),
+                    // A mirror signed by the same key may serve other versions (and source ids),
+                    // so only the same repository address counts as added.
                     added = ExtensionParityResolver.repositoryBaseUrl(indexUrl) in configuredBases,
                 )
             }
@@ -202,13 +207,14 @@ class ExtensionReconciliationCoordinator(
             repositoryApproval = RepositoryApprovalState(activeIndexUrl = indexUrl),
         )
         val installableIndexUrl = ExtensionParityResolver.repositoryIndexUrl(indexUrl)
-        val outcome = when (createExtensionRepo.await(installableIndexUrl)) {
+        val outcome = when (val result = createExtensionRepo.await(installableIndexUrl)) {
             CreateExtensionRepo.Result.Success -> RepositoryApprovalOutcome.ADDED
             CreateExtensionRepo.Result.RepoAlreadyExists ->
                 RepositoryApprovalOutcome.ALREADY_CONFIGURED
             CreateExtensionRepo.Result.InvalidUrl -> RepositoryApprovalOutcome.INVALID
+            // Several repositories may share a signer now, so this only comes from an old database.
             is CreateExtensionRepo.Result.DuplicateFingerprint ->
-                RepositoryApprovalOutcome.DUPLICATE_FINGERPRINT
+                RepositoryApprovalOutcome.ALREADY_CONFIGURED
             CreateExtensionRepo.Result.Error -> RepositoryApprovalOutcome.FAILED
         }
         if (
@@ -330,14 +336,35 @@ class ExtensionReconciliationCoordinator(
         // on the installer event flow, which can drop the terminal emission and stall the batch
         // until the timeout. Extensions that land untrusted count as installed here; the report
         // refresh re-classifies them so the user can trust them in-flow.
+        var reachedInstaller = false
         val terminal = async {
             extensionManager.installExtensionWithUserConfirmation(
                 ExtensionManager.ExtensionInfo(available),
                 this@coroutineScope,
-            ).first { it.first.isCompleted() }
+            ).first {
+                if (it.first == InstallStep.Installing) reachedInstaller = true
+                it.first.isCompleted()
+            }
         }
+        // Cancelling Android's "install unknown apps" prompt (or backing out of the installer
+        // dialog on some builds) leaves the session pending without any status callback. Once
+        // the installer was shown and the user is back in Epigraph for a while with nothing
+        // installed, treat it as a cancellation instead of blocking the batch until the timeout.
+        val processLifecycle = ProcessLifecycleOwner.get().lifecycle
+        var leftForInstaller = false
+        var resumedSince = 0L
         val outcome: InstallOutcome? = withTimeoutOrNull(INSTALL_TIMEOUT_MS) {
             while (true) {
+                val resumed = withContext(Dispatchers.Main) {
+                    processLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                }
+                if (!resumed) {
+                    if (reachedInstaller) leftForInstaller = true
+                    resumedSince = 0L
+                } else if (leftForInstaller) {
+                    val now = System.currentTimeMillis()
+                    if (resumedSince == 0L) resumedSince = now
+                }
                 val present = extensionManager.installedExtensionsFlow.value.any {
                     it.pkgName == packageName && it.versionCode >= targetVersion
                 } || extensionManager.untrustedExtensionsFlow.value.any {
@@ -352,6 +379,11 @@ class ExtensionReconciliationCoordinator(
                         InstallStep.Cancelled -> InstallOutcome.CANCELLED
                         else -> InstallOutcome.FAILED
                     }
+                }
+                if (resumedSince != 0L &&
+                    System.currentTimeMillis() - resumedSince >= INSTALLER_ABANDONED_MS
+                ) {
+                    return@withTimeoutOrNull InstallOutcome.CANCELLED
                 }
                 delay(500)
             }
@@ -369,6 +401,11 @@ class ExtensionReconciliationCoordinator(
                     extensionManager.setInstallationResult(packageName, result = true)
                     withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
                 }
+            }
+            InstallOutcome.CANCELLED -> if (!terminal.isCompleted) {
+                // Abandoned installer prompt: release the canonical flow the same way.
+                extensionManager.setInstallationResult(packageName, result = false)
+                withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
             }
             null -> {
                 // Close the canonical flow after the user-confirmation deadline. Otherwise the
@@ -437,6 +474,11 @@ class ExtensionReconciliationCoordinator(
                 item.copy(
                     mobileVersionName = local?.versionName ?: update?.versionName,
                     status = when {
+                        // Same rule as ExtensionParityResolver: a newer build with the source fixes it.
+                        local != null && update != null && update.versionCode > local.versionCode &&
+                            expectedIds.intersect(localIds).isEmpty() &&
+                            update.sources.any { it.id in expectedIds } ->
+                            ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                         local != null && expectedIds.isNotEmpty() &&
                             expectedIds.intersect(localIds).isEmpty() ->
                             ExtensionParityStatus.SOURCE_ID_MISMATCH
@@ -480,6 +522,7 @@ class ExtensionReconciliationCoordinator(
             "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json"
         val INSTALL_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(10)
         val INSTALLER_FLOW_SETTLE_MS = TimeUnit.SECONDS.toMillis(5)
+        val INSTALLER_ABANDONED_MS = TimeUnit.SECONDS.toMillis(6)
         val INSTALLED_FLOW_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(15)
     }
 }
