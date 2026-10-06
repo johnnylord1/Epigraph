@@ -214,6 +214,8 @@ private fun CoreDependencySetupContent(
     }
 
     var syncRequestedAtMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    // The repositories page waits on the first sync after pairing, which brings the desktop's list.
+    var awaitingSync by remember { mutableStateOf(false) }
     val pairingState by pairingController.state.collectAsState()
     val selecting = pairingState as? CorePairingUiState.Selecting
     var selectionDraft by remember { mutableStateOf(SyncSelectionDraft()) }
@@ -222,7 +224,7 @@ private fun CoreDependencySetupContent(
             // Expired or cancelled: there is nothing left to confirm.
             step == STEP_SELECTION && pairingState !is CorePairingUiState.Selecting -> onClose()
             // A failed pairing has nothing to sync; the Core screen shows why.
-            step == STEP_SYNC && pairingState is CorePairingUiState.PairingFailed -> onClose()
+            awaitingSync && pairingState is CorePairingUiState.PairingFailed -> onClose()
         }
     }
     // Leaving before confirming "what to sync" cancels the pairing.
@@ -232,7 +234,8 @@ private fun CoreDependencySetupContent(
     }
     val onConfirmSelection: () -> Unit = {
         syncRequestedAtMs = System.currentTimeMillis()
-        step = STEP_SYNC
+        awaitingSync = true
+        step = STEP_REPOSITORIES
         pairingController.confirmPairing(selectionDraft.toPairingSelection())
     }
 
@@ -308,8 +311,8 @@ private fun CoreDependencySetupContent(
 
     // The sync may have brought new works and a new desktop inventory.
     val onSyncFinished: () -> Unit = {
-        if (step == STEP_SYNC) {
-            step = STEP_REPOSITORIES
+        if (awaitingSync) {
+            awaitingSync = false
             launchAction {
                 coordinator.refreshFromStore()
                 if (effectiveServerId != null && effectiveProfileId != null) {
@@ -340,7 +343,6 @@ private fun CoreDependencySetupContent(
                         stringResource(
                             when (step) {
                                 STEP_SELECTION -> MR.strings.epigraph_core_sync_selection_title
-                                STEP_SYNC -> MR.strings.epigraph_core_setup_syncing
                                 STEP_REPOSITORIES -> MR.strings.epigraph_core_setup_repositories
                                 else -> MR.strings.epigraph_core_setup_extensions
                             },
@@ -361,7 +363,7 @@ private fun CoreDependencySetupContent(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            val showTabs = step >= STEP_REPOSITORIES && report != null && novelInventory != null
+            val showTabs = step >= STEP_REPOSITORIES && !awaitingSync && report != null && novelInventory != null
             if (showTabs) {
                 TabRow(selectedTabIndex = tab) {
                     Tab(
@@ -397,7 +399,7 @@ private fun CoreDependencySetupContent(
                     enabled = selecting != null && selectionDraft.domains.isNotEmpty(),
                     onContinue = onConfirmSelection,
                 )
-            } else if (step == STEP_SYNC) {
+            } else if (awaitingSync) {
                 SyncProgressPage(
                     syncMonitor = syncMonitor,
                     requestedAtMs = syncRequestedAtMs,
@@ -1134,9 +1136,8 @@ private fun Step2BottomBar(
 }
 
 private const val STEP_SELECTION = 0
-private const val STEP_SYNC = 1
-private const val STEP_REPOSITORIES = 2
-private const val STEP_EXTENSIONS = 3
+private const val STEP_REPOSITORIES = 1
+private const val STEP_EXTENSIONS = 2
 
 /** "What to sync" while it is edited; the same rules as the Core screen's selection editor. */
 private data class SyncSelectionDraft(
@@ -1280,6 +1281,11 @@ private fun SyncProgressPage(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator()
+        Spacer(Modifier.height(16.dp))
+        Text(
+            stringResource(MR.strings.epigraph_core_setup_syncing),
+            style = MaterialTheme.typography.titleMedium,
+        )
         val detail = when (val current = status) {
             is CoreSyncStatus.Syncing ->
                 stringResource(MR.strings.epigraph_core_sync_status_syncing, current.counts.unsettled)
@@ -1288,7 +1294,7 @@ private fun SyncProgressPage(
             else -> null
         }
         if (detail != null) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(4.dp))
             Text(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
