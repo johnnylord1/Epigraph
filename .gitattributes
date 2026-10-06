@@ -1,2 +1,4 @@
 # syncd records a checksum of each migration's bytes; a CRLF checkout would change it for the same SQL.
 src-tauri/migrations-syncd/*.sql text eol=lf
+# Byte-compared with the TypeScript generator by builtinCss.test.ts; a CRLF checkout would fail that check.
+src/styles/builtin-themes.generated.css text eol=lf
