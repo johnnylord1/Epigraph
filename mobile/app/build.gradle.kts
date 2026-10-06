@@ -229,6 +229,8 @@ android {
         // no baseline or `checkOnly` shortcut is used to hide UAST failures.
         abortOnError = true
         checkReleaseBuilds = true
+        // Test sources never ship; analyzing them exhausted the CI runner (lintAnalyzeDevDebugUnitTest).
+        ignoreTestSources = true
     }
 
     namespace = "eu.kanade.tachiyomi"
