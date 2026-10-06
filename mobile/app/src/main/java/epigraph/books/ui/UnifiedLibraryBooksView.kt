@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.ui.library.LibraryHeaderItem
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import eu.kanade.tachiyomi.ui.library.LibraryMangaItem
 import eu.kanade.tachiyomi.ui.library.LibrarySort
+import exh.util.throttleLatest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -165,7 +166,11 @@ class UnifiedLibraryBooksView(
                     },
                     categories,
                 )
-            }.collectLatest { (local, libraryNovels, categories) ->
+            }
+                // A sync writes works one at a time; rebuilding the shelf for each write makes it
+                // flicker and stalls navigation.
+                .throttleLatest(1_000L)
+                .collectLatest { (local, libraryNovels, categories) ->
                 books = local
                 novels = libraryNovels
                 userCategories = categories.sortedBy { it.order }

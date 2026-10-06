@@ -57,6 +57,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlin.random.Random
+import exh.util.throttleLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -299,7 +300,11 @@ class LibraryPresenter(
                 combine(
                     getLibraryFlow(),
                     downloadCache.changes,
-                ) { data, _ -> data }.collectLatest { data ->
+                ) { data, _ -> data }
+                    // A sync writes works one at a time; redrawing the whole library for each
+                    // write makes it flicker and stalls navigation.
+                    .throttleLatest(LIBRARY_REFRESH_MILLIS)
+                    .collectLatest { data ->
                     categories = data.categories
                     allCategories = data.allCategories
                     categoryNamesById = data.allCategories
@@ -1663,6 +1668,7 @@ class LibraryPresenter(
         private var lastLibrary: LibraryMap? = null
         private const val dynamicCategorySplitter = "▄╪\t▄╪\t▄"
 
+        private const val LIBRARY_REFRESH_MILLIS = 1_000L
         private val randomTags = arrayOf(0, 1, 2)
         private const val randomSource = 4
         private const val randomTitle = 3
