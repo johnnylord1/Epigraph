@@ -359,13 +359,15 @@ Build `devDebug` da CI contra o desktop em modo dev (syncd 4787, perfil
 - [x] Bug: o replay da hydration buscava `comic.tracking`/`comic.chapter_state` por entidade numa
       tabela cuja PK começa pelo escopo (SCAN completo por obra × tracker, ~700 obras pendentes a
       cada ciclo, numa transação). O banco ficava travado por minutos e uma edição local levou
-      ~3 min para sair do outbox. Agora há uma leitura por tipo de entidade por ciclo.
+      ~3 min para sair do outbox. Agora há uma leitura por tipo de entidade por ciclo
+      (reinstalado e re-pareado: ciclo de 30 s sem contenção, bookmark no desktop em 4 s).
 - [ ] Tracking celular → desktop e `tracker.credential`: exigem login real num tracker; cobertos
       só pelos testes automatizados.
 - [x] Bug: `comic.history` só atualizava o progresso de leitura e a aba Histórico ficava vazia.
       A projeção agora grava `history_last_read` (sem regredir uma leitura local mais nova) e a
-      hydration reaplica o registro quando o capítulo é vinculado. Obras servidas pelo Core só
-      aparecem no Histórico depois que os capítulos existem no aparelho (ao abrir a obra).
+      hydration reaplica o registro quando o capítulo é vinculado. Nas obras servidas pelo Core
+      (extensão ainda não instalada) os capítulos não se vinculam, então a lista de capítulos do
+      Core agora traz o `lastReadAt` do Suwayomi e grava o histórico ao abrir/atualizar a obra.
 - [ ] Item 6 (dois dispositivos) não executado: um segundo emulador sobrecarrega a máquina de teste.
 - [ ] Menores, ainda abertos:
   - o modal do desktop mantém PIN/QR de uma sessão já expirada;

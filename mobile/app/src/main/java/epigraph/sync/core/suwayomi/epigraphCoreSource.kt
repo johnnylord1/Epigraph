@@ -119,6 +119,8 @@ class EpigraphCoreSource(
                 // progress; ChapterSourceSync folds it in without un-reading local reads.
                 read = chapter.boolean("isRead") == true
                 last_page_read = chapter.long("lastPageRead")?.coerceIn(0L, Int.MAX_VALUE.toLong())?.toInt() ?: 0
+                // Suwayomi keeps lastReadAt in epoch seconds.
+                last_read_at = chapter.long("lastReadAt")?.takeIf { it > 0 }?.times(1000) ?: 0L
             }
         }
     }

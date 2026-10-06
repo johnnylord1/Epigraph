@@ -21,4 +21,6 @@ class SChapterImpl : SChapter {
     override var read: Boolean = false
 
     override var last_page_read: Int = 0
+
+    override var last_read_at: Long = 0
 }

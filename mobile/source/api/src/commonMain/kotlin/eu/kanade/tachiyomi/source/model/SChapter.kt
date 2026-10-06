@@ -31,6 +31,11 @@ interface SChapter : Serializable {
         get() = 0
         set(_) {}
 
+    // Epoch milliseconds of the last read on the source side; 0 when unknown.
+    var last_read_at: Long
+        get() = 0
+        set(_) {}
+
     fun copyFrom(other: SChapter) {
         name = other.name
         url = other.url

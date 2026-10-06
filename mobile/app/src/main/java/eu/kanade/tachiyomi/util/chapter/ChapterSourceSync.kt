@@ -77,6 +77,23 @@ suspend fun syncChaptersWithSource(
     }
     val readStateUpdates = mutableListOf<ChapterUpdate>()
 
+    // The History screen lists the history table, so the desktop's last read time is recorded
+    // as well. A newer read on this device is kept, and nothing here is sent back to the Core.
+    suspend fun recordCoreLastReads() {
+        val mangaId = manga.id ?: return
+        if (coreReadState.values.none { it.last_read_at > 0 }) return
+        handler.await(inTransaction = true) {
+            coreReadState.values.forEach { remote ->
+                val readAt = remote.last_read_at.takeIf { it > 0 } ?: return@forEach
+                val local = chaptersQueries.getChaptersByUrlAndMangaId(remote.url, mangaId, 0)
+                    .executeAsList()
+                    .firstOrNull()
+                    ?: return@forEach
+                historyQueries.upsertSyncedLastRead(local._id, readAt)
+            }
+        }
+    }
+
     // Chapters from the source not in db.
     val toAdd = mutableListOf<Chapter>()
 
@@ -149,6 +166,7 @@ suspend fun syncChaptersWithSource(
 
     // Return if there's nothing to add, delete or change, avoid unnecessary db transactions.
     if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
+        recordCoreLastReads()
         if (preferences.smartUpdateEnabled().get() &&
             (manualFetch || manga.fetch_interval == 0 || manga.next_update < fetchWindow.first)
         ) {
@@ -281,6 +299,8 @@ suspend fun syncChaptersWithSource(
     // Those changes already checked beforehand, so we can proceed to updating the manga
     manga.last_update = Date().time
     updateManga.await(MangaUpdate(manga.id!!, lastUpdate = manga.last_update))
+
+    recordCoreLastReads()
 
     val filteredScanlators = ChapterUtil.getScanlators(manga.filtered_scanlators).toHashSet()
 

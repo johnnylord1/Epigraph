@@ -133,6 +133,8 @@ class EpigraphCoreSourceTest {
                     put("chapterNumber", 1.0)
                     put("isRead", true)
                     put("lastPageRead", 17)
+                    // Suwayomi sends lastReadAt as a LongString in epoch seconds.
+                    put("lastReadAt", "1791289794")
                 },
                 buildJsonObject {
                     put("id", 202)
@@ -162,6 +164,8 @@ class EpigraphCoreSourceTest {
         assertEquals(4, chapters.getValue("Chapter 2").last_page_read)
         assertEquals(false, chapters.getValue("Chapter 3").read)
         assertEquals(0, chapters.getValue("Chapter 3").last_page_read)
+        assertEquals(1_791_289_794_000L, chapters.getValue("Chapter 1").last_read_at)
+        assertEquals(0L, chapters.getValue("Chapter 3").last_read_at)
     }
 
     private class RecordingGateway(
