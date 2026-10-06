@@ -125,6 +125,8 @@ object CoreHostAddress {
         val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
         val uri = runCatching { URI(withScheme) }.getOrNull() ?: return null
         if (uri.host == null) return null
+        // Only a host and port are accepted; never rebuild an origin that drops a typed path.
+        if (!uri.rawPath.isNullOrEmpty() || uri.rawQuery != null || uri.rawFragment != null) return null
         val withPort = if (uri.port == -1) {
             "${uri.scheme}://${uri.rawAuthority}:$DEFAULT_PORT"
         } else {
