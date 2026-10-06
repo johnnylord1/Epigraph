@@ -196,6 +196,20 @@ class SqlDelightPortableHydrationStore(
                         entityId = "comic.chapter_state::${chapter.portableWorkId}::${chapter.portableChapterId}",
                     ).executeAsList()
                 }
+                // The work's last-read record becomes a History row once its chapter exists here.
+                .plus(
+                    chapters.asSequence()
+                        .filter { it.resolution.state == PortableResolutionState.BOUND }
+                        .filter { it.ref is epigraph.contract.PortableChapterRef.Comic }
+                        .map(PortableChapterBindingRecord::portableWorkId)
+                        .distinct()
+                        .flatMap { workId ->
+                            aethon_syncQueries.selectCoreReplicaRecordsByEntity(
+                                entityType = "comic.history",
+                                entityId = "comic.history::$workId",
+                            ).executeAsList()
+                        },
+                )
                 // Tracking confirmed before its work had a local row is replayed the same way: a
                 // work bound now, or still served by the Core, can finally receive it.
                 .plus(

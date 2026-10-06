@@ -524,6 +524,26 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `comic history records the last read time without moving a newer local read back`() = runTest {
+        projection.upsert(database, comicEntryRecord())
+        projection.upsert(database, comicChapterStateRecord())
+        val localChapterId = database.aethon_syncQueries
+            .selectChapterBindingByEntityId(CHAPTER_ID)
+            .executeAsOne()
+            .local_chapter_id
+        fun lastRead() = database.historyQueries.getByChapterUrl(
+            database.chaptersQueries.getChaptersById(localChapterId).executeAsOne().url,
+        ).executeAsOneOrNull()?.history_last_read
+
+        projection.upsert(database, comicHistoryRecord(serverVersion = 3))
+        assertEquals(300L, lastRead())
+
+        database.historyQueries.upsert(localChapterId, 1_000L, 0L)
+        projection.upsert(database, comicHistoryRecord(serverVersion = 4))
+        assertEquals(1_000L, lastRead())
+    }
+
+    @Test
     fun `comic history tombstone removes only remote progress`() = runTest {
         val entry = comicEntryRecord()
         projection.upsert(database, entry)

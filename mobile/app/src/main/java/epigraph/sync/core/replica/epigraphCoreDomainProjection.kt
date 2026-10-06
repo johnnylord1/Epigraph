@@ -1028,6 +1028,7 @@ class EpigraphCoreDomainProjection(
                 serverRevision = recordKey.serverVersion,
                 updatedAt = record.long("readAtMs") ?: now(record),
             )
+            recordComicHistory(database, chapterBinding.localReference?.toLongOrNull(), record)
             return
         }
         // The server-scoped identity may not exist yet: the Core catalog sync that materializes
@@ -1046,6 +1047,16 @@ class EpigraphCoreDomainProjection(
             serverRevision = recordKey.serverVersion,
             updatedAt = record.long("readAtMs") ?: now(record),
         )
+        recordComicHistory(database, binding?.local_chapter_id, record)
+    }
+
+    // The History screen lists local chapter rows, so a desktop read becomes visible once its
+    // chapter exists here. Hydration replays the record when the chapter binds later.
+    private fun recordComicHistory(database: Database, localChapterId: Long?, record: JsonObject) {
+        val chapterId = localChapterId ?: return
+        val readAt = record.long("readAtMs")?.takeIf { it > 0 } ?: return
+        if (database.chaptersQueries.getChaptersById(chapterId).executeAsOneOrNull() == null) return
+        database.historyQueries.upsertSyncedLastRead(chapterId, readAt)
     }
 
     private fun applyComicProgress(

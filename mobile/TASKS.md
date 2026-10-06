@@ -339,3 +339,38 @@ por cima da anterior:
 - [x] Fonte não instalada mantém o nome gravado no backup (restauração, detalhes e próximo
       backup) em vez do ID numérico.
 - [x] "1 repositories · 2 plugins" virou plural correto.
+
+## 12. E2E do sync com o desktop dev (2026-10-06)
+
+Build `devDebug` da CI contra o desktop em modo dev (syncd 4787, perfil
+`%LOCALAPPDATA%\Epigraph-dev`), emulador API 36, pareamento por pairing bundle.
+
+- [x] Pareamento, edições convergindo nos dois sentidos, offline/reconexão e concorrência
+      (itens 1–4 do `docs/audit/GO_NO_GO.md`).
+- [x] Revogação (item 5): o desktop ganhou "Revogar" por dispositivo pareado
+      (`/v1/pairing/devices/revoke`, dois cliques). Bug: o 401 do token revogado era engolido
+      pela sondagem de endpoints e o app ficava em "nova tentativa agendada". Agora vira
+      `CorePairingStaleException`; o app mostra "The pairing is no longer valid. Pair again…" e
+      não tenta de novo (60 s sem requisições). Re-parear depois funciona.
+- [x] Tracking desktop → celular: 2193 `comic.tracking` (AniList) no snapshot; as 402 obras
+      da biblioteca com tracking ganharam linha em `manga_sync` com os mesmos campos. O replay
+      acontece no ciclo de hydration seguinte, não no primeiro snapshot.
+- [ ] Tracking celular → desktop e `tracker.credential`: exigem login real num tracker; cobertos
+      só pelos testes automatizados.
+- [x] Bug: `comic.history` só atualizava o progresso de leitura e a aba Histórico ficava vazia.
+      A projeção agora grava `history_last_read` (sem regredir uma leitura local mais nova) e a
+      hydration reaplica o registro quando o capítulo é vinculado. Obras servidas pelo Core só
+      aparecem no Histórico depois que os capítulos existem no aparelho (ao abrir a obra).
+- [ ] Item 6 (dois dispositivos) não executado: um segundo emulador sobrecarrega a máquina de teste.
+- [ ] Menores, ainda abertos:
+  - o modal do desktop mantém PIN/QR de uma sessão já expirada;
+  - parear por PIN não funciona no emulador (sem mDNS);
+  - o subtítulo de Categorias menciona "livros";
+  - a sondagem do endpoint tenta a porta 4777 (release) depois da 4787 do dev;
+  - dispositivos pareados antigos com o mesmo nome ficam ambíguos no botão de revogar;
+  - capítulos "Chapter 0";
+  - timeout da ponte do catálogo;
+  - o editor de categorias não atualiza ao vivo;
+  - "Page 18 of 17";
+  - entradas `novel.*` republicadas no change_log;
+  - `adb input text` trunca o bundle (só afeta o teste).
