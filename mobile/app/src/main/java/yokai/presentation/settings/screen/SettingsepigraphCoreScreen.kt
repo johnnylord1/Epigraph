@@ -7,8 +7,6 @@ import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.extensions.ComicRepositoryRow
 import epigraph.sync.core.setup.CoreDependencySetupActivity
-import epigraph.sync.core.setup.InventoryChoice
-import epigraph.sync.core.setup.SyncDomainChoice
 import epigraph.sync.core.setup.coreDependencySetupCounts
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
@@ -123,9 +121,6 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var showSelectionEditor by remember { mutableStateOf(false) }
         var novelInventory by remember { mutableStateOf<LnReaderDependencyInventory?>(null) }
         var comicRepositories by remember { mutableStateOf(emptyList<ComicRepositoryRow>()) }
-        var openSetupAfterSync by remember { mutableStateOf(false) }
-        var sawSyncRunning by remember { mutableStateOf(false) }
-        var setupRequestedAtMs by remember { mutableStateOf(0L) }
         val mutationCoordinator = remember { GlobalContext.get().get<EpigraphMutationCoordinator>() }
         var blockedMutations by remember { mutableStateOf<List<BlockedMutation>>(emptyList()) }
         var showBlockedDialog by remember { mutableStateOf(false) }
@@ -147,35 +142,6 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         }
         LaunchedEffect(extensionState.report) {
             comicRepositories = extensionState.report?.let { extensionReconciliation.desktopRepositories(it) }.orEmpty()
-        }
-        LaunchedEffect(syncStatus, openSetupAfterSync) {
-            if (!openSetupAfterSync) return@LaunchedEffect
-            val status = syncStatus ?: return@LaunchedEffect
-            if (status is CoreSyncStatus.Syncing || status is CoreSyncStatus.Queued) {
-                sawSyncRunning = true
-                return@LaunchedEffect
-            }
-            // A short sync can finish before a running state is ever observed here.
-            val finished = status is CoreSyncStatus.Synced && status.lastSyncAtMs >= setupRequestedAtMs
-            if (!sawSyncRunning && !finished) return@LaunchedEffect
-            val selection = persistedSelection ?: return@LaunchedEffect
-            extensionReconciliation.refreshFromStore()
-            val report = extensionReconciliation.state.value.report
-            val rows = report?.let { extensionReconciliation.desktopRepositories(it) }.orEmpty()
-            val novels = novelDependencies.inventory(selection.serverId, selection.profileId)
-            novelInventory = novels
-            if (coreDependencySetupCounts(rows, report, novels).hasPending) {
-                openSetupAfterSync = false
-                sawSyncRunning = false
-                context.startActivity(
-                    CoreDependencySetupActivity.intent(context, selection.serverId, selection.profileId),
-                )
-            } else if (status is CoreSyncStatus.Synced) {
-                // Only a completed sync proves nothing is missing; a retry or a pause between
-                // stages may come before the desktop inventory was compared.
-                openSetupAfterSync = false
-                sawSyncRunning = false
-            }
         }
         LaunchedEffect((state as? CorePairingUiState.Selecting)?.serverId, showSelectionEditor) {
             if (state is CorePairingUiState.Selecting) {
@@ -293,11 +259,19 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 compareNovelRepositories = compareNovelRepositories,
                                 compareNovelPlugins = compareNovelPlugins,
                             )
-                            if (selectingPairing) {
-                                openSetupAfterSync = true
-                                sawSyncRunning = false
-                                setupRequestedAtMs = System.currentTimeMillis()
+                            val selecting = state as? CorePairingUiState.Selecting
+                            if (selecting != null) {
                                 controller.confirmPairing(selection)
+                                // The setup follows the first sync, then offers the desktop's
+                                // repositories and extensions.
+                                context.startActivity(
+                                    CoreDependencySetupActivity.intent(
+                                        context,
+                                        selecting.serverId,
+                                        selecting.profileId,
+                                        startWithSync = true,
+                                    ),
+                                )
                             } else {
                                 controller.updateSelection(selection)
                             }
@@ -690,18 +664,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         title = stringResource(MR.strings.epigraph_core_sync_now),
                         subtitle = stringResource(MR.strings.epigraph_core_sync_now_summary),
                         // A disabled item collapses out of the list, so it must not follow the sync
-                        // status: the setup screen shows the sync's progress instead.
+                        // status, or the list jumps on every status change.
                         enabled = state is CorePairingUiState.Paired,
-                        onClick = {
-                            context.startActivity(
-                                CoreDependencySetupActivity.intent(
-                                    context,
-                                    persistedSelection?.serverId,
-                                    persistedSelection?.profileId,
-                                    startWithSelection = true,
-                                ),
-                            )
-                        },
+                        onClick = { coroutineScope.launch { runCatching { syncMonitor.syncNow() } } },
                     ),
                     blockedMutations.takeIf { it.isNotEmpty() }?.let { blocked ->
                         Preference.PreferenceItem.TextPreference(
@@ -814,6 +779,62 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         is CorePairingUiState.CredentialFailed ->
             stringResource(MR.strings.epigraph_core_error_credentials)
         is CorePairingUiState.PairingFailed -> pairingErrorText(state.error, state.bundleFailure)
+    }
+
+    @Composable
+    private fun SyncDomainChoice(
+        title: String,
+        summary: String,
+        checked: Boolean,
+        onCheckedChange: (Boolean) -> Unit,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun InventoryChoice(
+        title: String,
+        checked: Boolean,
+        enabled: Boolean,
+        onCheckedChange: (Boolean) -> Unit,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 40.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                checked = checked && enabled,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange,
+            )
+            Text(
+                title,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
+        }
     }
 
     @Composable

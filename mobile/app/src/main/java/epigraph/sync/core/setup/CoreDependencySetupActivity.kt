@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -79,11 +77,8 @@ import epigraph.sync.core.novels.LnReaderPluginParityStatus
 import epigraph.sync.core.novels.LnReaderPluginInstallResult
 import epigraph.sync.core.novels.LnReaderRepositoryApprovalResult
 import epigraph.sync.core.novels.LnReaderRepositoryParityStatus
+import epigraph.sync.core.pairing.CorePairingUiState
 import epigraph.sync.core.pairing.EpigraphCorePairingController
-import epigraph.sync.core.pairing.PairingSyncSelection
-import epigraph.sync.core.policy.DependencyInventoryMode
-import epigraph.sync.core.policy.DeviceSyncSelectionV1
-import epigraph.sync.core.policy.SyncDomain
 import epigraph.sync.core.work.CoreSyncStatus
 import epigraph.sync.core.work.CoreSyncStatusMonitor
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
@@ -114,7 +109,7 @@ class CoreDependencySetupActivity : AppCompatActivity() {
         val serverId = intent.getStringExtra(EXTRA_SERVER_ID)?.takeIf(String::isNotBlank)
         val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank)
         val startAtExtensions = intent.getBooleanExtra(EXTRA_START_AT_EXTENSIONS, false)
-        val startWithSelection = intent.getBooleanExtra(EXTRA_START_WITH_SELECTION, false)
+        val startWithSync = intent.getBooleanExtra(EXTRA_START_WITH_SYNC, false)
         setContent {
             YokaiTheme {
                 CoreDependencySetupContent(
@@ -126,7 +121,7 @@ class CoreDependencySetupActivity : AppCompatActivity() {
                     novelPluginManager = novelPluginManager,
                     serverId = serverId,
                     profileId = profileId,
-                    startWithSelection = startWithSelection,
+                    startWithSync = startWithSync,
                     startAtExtensions = startAtExtensions,
                     onClose = {
                         coordinator.acknowledge()
@@ -141,21 +136,21 @@ class CoreDependencySetupActivity : AppCompatActivity() {
         private const val EXTRA_SERVER_ID = "epigraph.dependency_setup.server_id"
         private const val EXTRA_PROFILE_ID = "epigraph.dependency_setup.profile_id"
         private const val EXTRA_START_AT_EXTENSIONS = "epigraph.dependency_setup.start_at_extensions"
-        private const val EXTRA_START_WITH_SELECTION = "epigraph.dependency_setup.start_with_selection"
+        private const val EXTRA_START_WITH_SYNC = "epigraph.dependency_setup.start_with_sync"
 
         fun intent(
             context: Context,
             serverId: String? = null,
             profileId: String? = null,
             startAtExtensions: Boolean = false,
-            /** Starts at "what to sync", runs the sync, then shows repositories and extensions. */
-            startWithSelection: Boolean = false,
+            /** Follows the first sync after pairing, then shows repositories and extensions. */
+            startWithSync: Boolean = false,
         ): Intent = Intent(context, CoreDependencySetupActivity::class.java)
             .apply {
                 serverId?.let { putExtra(EXTRA_SERVER_ID, it) }
                 profileId?.let { putExtra(EXTRA_PROFILE_ID, it) }
                 putExtra(EXTRA_START_AT_EXTENSIONS, startAtExtensions)
-                putExtra(EXTRA_START_WITH_SELECTION, startWithSelection)
+                putExtra(EXTRA_START_WITH_SYNC, startWithSync)
             }
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
@@ -172,7 +167,7 @@ private fun CoreDependencySetupContent(
     novelPluginManager: NovelPluginManager,
     serverId: String?,
     profileId: String?,
-    startWithSelection: Boolean,
+    startWithSync: Boolean,
     startAtExtensions: Boolean,
     onClose: () -> Unit,
 ) {
@@ -182,7 +177,7 @@ private fun CoreDependencySetupContent(
 
     val firstStep = remember {
         when {
-            startWithSelection -> STEP_SELECTION
+            startWithSync -> STEP_SYNC
             startAtExtensions -> STEP_EXTENSIONS
             else -> STEP_REPOSITORIES
         }
@@ -194,8 +189,10 @@ private fun CoreDependencySetupContent(
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
 
-    val effectiveServerId = serverId ?: report?.serverId
-    val effectiveProfileId = profileId ?: report?.profileId
+    // Right after pairing the selection is persisted only once the pairing completes.
+    val persistedSelection by pairingController.selection.collectAsState()
+    val effectiveServerId = serverId ?: report?.serverId ?: persistedSelection?.serverId
+    val effectiveProfileId = profileId ?: report?.profileId ?: persistedSelection?.profileId
 
     LaunchedEffect(report) {
         if (report != null) {
@@ -209,10 +206,12 @@ private fun CoreDependencySetupContent(
         }
     }
 
-    val persistedSelection by pairingController.selection.collectAsState()
-    var selectionDraft by remember { mutableStateOf<SyncSelectionDraft?>(null) }
-    val draft = selectionDraft ?: persistedSelection?.toDraft() ?: SyncSelectionDraft()
-    var syncRequestedAtMs by remember { mutableStateOf(0L) }
+    val syncRequestedAtMs = remember { System.currentTimeMillis() }
+    // A failed pairing has nothing to sync; the Core screen shows why.
+    val pairingState by pairingController.state.collectAsState()
+    LaunchedEffect(pairingState) {
+        if (step == STEP_SYNC && pairingState is CorePairingUiState.PairingFailed) onClose()
+    }
 
     // Library works per source, to show how many works each repository and extension serves.
     var worksRefresh by remember { mutableStateOf(0) }
@@ -306,8 +305,6 @@ private fun CoreDependencySetupContent(
         when {
             isBusy -> onClose()
             step == STEP_EXTENSIONS -> step = STEP_REPOSITORIES
-            step == STEP_SYNC -> step = STEP_SELECTION
-            step == STEP_REPOSITORIES && firstStep == STEP_SELECTION -> step = STEP_SELECTION
             else -> onClose()
         }
     }
@@ -319,8 +316,7 @@ private fun CoreDependencySetupContent(
                     Text(
                         stringResource(
                             when (step) {
-                                STEP_SELECTION -> MR.strings.epigraph_core_sync_selection_title
-                                STEP_SYNC -> MR.strings.epigraph_core_sync_now
+                                STEP_SYNC -> MR.strings.epigraph_core_setup_syncing
                                 STEP_REPOSITORIES -> MR.strings.epigraph_core_setup_repositories
                                 else -> MR.strings.epigraph_core_setup_extensions
                             },
@@ -336,9 +332,8 @@ private fun CoreDependencySetupContent(
         },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            val firstPage = minOf(firstStep, STEP_REPOSITORIES)
             LinearProgressIndicator(
-                progress = { (step - firstPage + 1f) / (STEP_EXTENSIONS - firstPage + 1) },
+                progress = { (step - firstStep + 1f) / (STEP_EXTENSIONS - firstStep + 1) },
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -367,35 +362,14 @@ private fun CoreDependencySetupContent(
                 )
             }
 
-            if (step == STEP_SELECTION) {
-                SyncSelectionPage(
-                    draft = draft,
-                    onChange = { selectionDraft = it },
-                    modifier = Modifier.weight(1f),
-                )
-                SelectionBottomBar(
-                    enabled = !isBusy && draft.domains.isNotEmpty(),
-                    onSync = {
-                        if (persistedSelection?.toDraft() != draft) {
-                            pairingController.updateSelection(draft.toPairingSelection())
-                        }
-                        syncRequestedAtMs = System.currentTimeMillis()
-                        error = false
-                        step = STEP_SYNC
-                        launchAction { syncMonitor.syncNow() }
-                    },
-                )
-            } else if (step == STEP_SYNC) {
+            if (step == STEP_SYNC) {
                 SyncProgressPage(
                     syncMonitor = syncMonitor,
                     requestedAtMs = syncRequestedAtMs,
                     onFinished = onSyncFinished,
                     modifier = Modifier.weight(1f),
                 )
-                SyncBottomBar(
-                    onBack = { step = STEP_SELECTION },
-                    onSkip = onSyncFinished,
-                )
+                SyncBottomBar(onSkip = onSyncFinished)
             } else if (report == null && novelInventory == null) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -1124,135 +1098,13 @@ private fun Step2BottomBar(
     }
 }
 
-private const val STEP_SELECTION = 0
-private const val STEP_SYNC = 1
-private const val STEP_REPOSITORIES = 2
-private const val STEP_EXTENSIONS = 3
-
-/** "What to sync" while it is edited; the same rules as the pairing selection dialog. */
-private data class SyncSelectionDraft(
-    val comics: Boolean = true,
-    val novels: Boolean = true,
-    val books: Boolean = true,
-    val comicRepositories: Boolean = true,
-    val comicExtensions: Boolean = true,
-    val novelRepositories: Boolean = true,
-    val novelPlugins: Boolean = true,
-) {
-    val domains: Set<SyncDomain>
-        get() = buildSet {
-            if (comics) add(SyncDomain.COMICS)
-            if (novels) add(SyncDomain.NOVELS)
-            if (books) add(SyncDomain.BOOKS)
-        }
-
-    fun toPairingSelection() = PairingSyncSelection(
-        enabledDomains = domains,
-        compareComicRepositories = comicRepositories,
-        compareComicExtensions = comicExtensions,
-        compareNovelRepositories = novelRepositories,
-        compareNovelPlugins = novelPlugins,
-    )
-}
-
-private fun DeviceSyncSelectionV1.toDraft() = SyncSelectionDraft(
-    comics = SyncDomain.COMICS in enabledDomains,
-    novels = SyncDomain.NOVELS in enabledDomains,
-    books = SyncDomain.BOOKS in enabledDomains,
-    comicRepositories = comicRepositories == DependencyInventoryMode.INVENTORY_ONLY,
-    comicExtensions = comicExtensions == DependencyInventoryMode.INVENTORY_ONLY,
-    novelRepositories = novelRepositories == DependencyInventoryMode.INVENTORY_ONLY,
-    novelPlugins = novelPlugins == DependencyInventoryMode.INVENTORY_ONLY,
-)
-
-@Composable
-private fun SyncSelectionPage(
-    draft: SyncSelectionDraft,
-    onChange: (SyncSelectionDraft) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-    ) {
-        Text(
-            stringResource(MR.strings.epigraph_core_sync_selection_summary),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        SyncDomainChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_comics),
-            summary = stringResource(MR.strings.epigraph_core_sync_comics_summary),
-            checked = draft.comics,
-            onCheckedChange = { onChange(draft.copy(comics = it)) },
-        )
-        InventoryChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_comic_repositories),
-            checked = draft.comicRepositories,
-            enabled = draft.comics && draft.comicExtensions,
-            onCheckedChange = { onChange(draft.copy(comicRepositories = it)) },
-        )
-        InventoryChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_comic_extensions),
-            checked = draft.comicExtensions,
-            enabled = draft.comics,
-            onCheckedChange = { onChange(draft.copy(comicExtensions = it)) },
-        )
-        SyncDomainChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_novels),
-            summary = stringResource(MR.strings.epigraph_core_sync_novels_summary),
-            checked = draft.novels,
-            onCheckedChange = { onChange(draft.copy(novels = it)) },
-        )
-        InventoryChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_novel_repositories),
-            checked = draft.novelRepositories,
-            enabled = draft.novels,
-            onCheckedChange = { onChange(draft.copy(novelRepositories = it)) },
-        )
-        InventoryChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_novel_plugins),
-            checked = draft.novelPlugins,
-            enabled = draft.novels,
-            onCheckedChange = { onChange(draft.copy(novelPlugins = it)) },
-        )
-        SyncDomainChoice(
-            title = stringResource(MR.strings.epigraph_core_sync_books),
-            summary = stringResource(MR.strings.epigraph_core_sync_books_summary),
-            checked = draft.books,
-            onCheckedChange = { onChange(draft.copy(books = it)) },
-        )
-        Text(
-            stringResource(MR.strings.epigraph_core_sync_selection_install_notice),
-            modifier = Modifier.padding(top = 8.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun SelectionBottomBar(
-    enabled: Boolean,
-    onSync: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(16.dp),
-        horizontalArrangement = Arrangement.End,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Button(
-            shape = MaterialTheme.shapes.small,
-            enabled = enabled,
-            onClick = onSync,
-        ) { Text(stringResource(MR.strings.epigraph_core_sync_now)) }
-    }
-}
+private const val STEP_SYNC = 0
+private const val STEP_REPOSITORIES = 1
+private const val STEP_EXTENSIONS = 2
 
 /**
- * Follows the sync started on the selection page and moves on once it ran: either a run was seen
- * and has ended, or the last finished run is newer than the request.
+ * Follows the first sync after pairing and moves on once it ran: either a run was seen and has
+ * ended, or the last finished run is newer than the request.
  */
 @Composable
 private fun SyncProgressPage(
@@ -1279,11 +1131,6 @@ private fun SyncProgressPage(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         CircularProgressIndicator()
-        Spacer(Modifier.height(16.dp))
-        Text(
-            stringResource(MR.strings.epigraph_core_setup_syncing),
-            style = MaterialTheme.typography.titleMedium,
-        )
         val detail = when (val current = status) {
             is CoreSyncStatus.Syncing ->
                 stringResource(MR.strings.epigraph_core_sync_status_syncing, current.counts.unsettled)
@@ -1292,7 +1139,7 @@ private fun SyncProgressPage(
             else -> null
         }
         if (detail != null) {
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
                 detail,
                 style = MaterialTheme.typography.bodySmall,
@@ -1304,7 +1151,6 @@ private fun SyncProgressPage(
 
 @Composable
 private fun SyncBottomBar(
-    onBack: () -> Unit,
     onSkip: () -> Unit,
 ) {
     Row(
@@ -1312,8 +1158,6 @@ private fun SyncBottomBar(
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onBack) { Text(stringResource(MR.strings.epigraph_core_setup_back)) }
-        Spacer(Modifier.width(12.dp))
         TextButton(onClick = onSkip) { Text(stringResource(MR.strings.epigraph_core_setup_skip)) }
     }
 }
