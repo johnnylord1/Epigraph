@@ -2,12 +2,20 @@ package eu.kanade.tachiyomi.data.backup.restore
 
 import android.content.Context
 import android.net.Uri
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.repo.NovelRepoRepository
+import epigraph.novel.repo.interactor.NovelRepoIndexValidation
+import epigraph.novel.repo.interactor.NovelRepoIndexValidator
+import epigraph.novel.repo.model.NovelRepo
+import epigraph.sync.core.novels.matchesDeclaredRepository
 import epigraph.ui.moment.MomentEvents
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelRepository
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.LocalBookBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
+import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.BackupUtil
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
@@ -28,6 +36,10 @@ class BackupRestorer(
     private val localBookBackupRestorer: LocalBookBackupRestorer = LocalBookBackupRestorer(),
     private val preferenceBackupRestorer: PreferenceBackupRestorer = PreferenceBackupRestorer(context),
     private val sourceManager: SourceManager = get(),
+    private val novelPluginManager: NovelPluginManager = get(),
+    private val coverCache: CoverCache = get(),
+    private val novelRepos: NovelRepoRepository = get(),
+    private val novelRepoValidator: NovelRepoIndexValidator = get(),
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
@@ -57,7 +69,7 @@ class BackupRestorer(
     }
 
     private suspend fun performRestore(uri: Uri) {
-        val backup = BackupUtil.decodeBackup(context, uri)
+        val backup = BackupUtil.decodeBackup(context, uri, novelPluginManager::knownPluginLangs, ::cacheBackupCover)
 
         restoreAmount = backup.backupManga.size + backup.backupLocalBooks.size + 3 // +3 for categories, app prefs, source prefs
 
@@ -73,6 +85,12 @@ class BackupRestorer(
                     restoreProgress += 1
                     showRestoreProgress(restoreProgress, restoreAmount, context.getString(MR.strings.categories))
                 }
+            }
+
+            // Novel plugin repositories (LNReader) before the titles, so their plugins are listed.
+            if (backup.novelRepositories.isNotEmpty()) {
+                ensureActive()
+                restoreNovelRepositories(backup.novelRepositories)
             }
 
             ensureActive()
@@ -121,6 +139,22 @@ class BackupRestorer(
         // TODO: optionally trigger online library + tracker update
     }
 
+    /** Adds each repository not configured yet, once its index proves to be a plugin repository. */
+    private suspend fun restoreNovelRepositories(repositories: List<BackupNovelRepository>) {
+        repositories.forEach { repository ->
+            val existing = novelRepos.getAll()
+            if (existing.any { it.baseUrl.matchesDeclaredRepository(repository.url) }) return@forEach
+            val validation = runCatching { novelRepoValidator.validate(repository.url) }.getOrNull()
+            if (validation !is NovelRepoIndexValidation.Valid) {
+                errors.add(Date() to "${repository.name} [${repository.url}]: ${context.getString(MR.strings.restore_repository_unavailable)}")
+                return@forEach
+            }
+            if (existing.none { it.baseUrl == validation.indexUrl }) {
+                novelRepos.insert(NovelRepo(validation.indexUrl, repository.name))
+            }
+        }
+    }
+
     /**
      * Called to update dialog in [BackupConst]
      *
@@ -134,6 +168,19 @@ class BackupRestorer(
         title: String,
     ) {
         notifier.showRestoreProgress(title, progress, amount)
+    }
+
+    /** Keeps a cover shipped in the backup (LNReader) unless that cover is already cached. */
+    private fun cacheBackupCover(thumbnailUrl: String, image: ByteArray) {
+        val file = coverCache.getCoverFile(thumbnailUrl) ?: return
+        if (file.exists()) return
+        val partial = File(file.parentFile, file.name + ".tmp")
+        try {
+            partial.writeBytes(image)
+            if (!partial.renameTo(file)) partial.delete()
+        } finally {
+            if (partial.exists()) partial.delete()
+        }
     }
 
     internal fun writeErrorLog(): File {

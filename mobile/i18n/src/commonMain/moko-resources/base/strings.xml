@@ -67,6 +67,7 @@
     <string name="unlock_library">Unlock to access Library</string>
     <string name="unlock">Unlock</string>
     <string name="lock_with_biometrics">Require unlock</string>
+    <string name="lock_with_biometrics_summary">Open the app with biometrics, PIN, pattern or password</string>
     <string name="lock_when_idle">Lock when idle</string>
 
     <!-- Chapters -->
@@ -115,6 +116,7 @@
     <string name="already_in_category">Entry already in category</string>
     <string name="add_categories">Add categories</string>
     <string name="add_edit_categories">Add/Edit categories</string>
+    <string name="settings_search_keywords_categories">folders, groups, shelves</string>
     <string name="edit_categories">Edit categories</string>
     <string name="manage_category">Manage category</string>
     <string name="move_to_categories">Move to categories</string>
@@ -630,6 +632,7 @@
     <string name="must_be_in_library_to_edit">Series must be in your library to edit</string>
     <string name="remember_this_choice">Remember this choice</string>
     <string name="source_not_installed">Source not installed</string>
+    <string name="source_missing_install_extension">%1$s is not installed on this device. Install its extension in Browse → Extensions, then retry.</string>
     <string name="novel_source_not_ready">Source %1$d is still loading. Retry once installed plugins finish registering.</string>
     <string name="cover_saved">Cover saved</string>
     <string name="share_cover">Share cover</string>
@@ -847,7 +850,7 @@
     <string name="create_backup">Create backup</string>
     <string name="can_be_used_to_restore">Can be used to restore current library</string>
     <string name="restore_backup">Restore backup</string>
-    <string name="restore_from_backup_file">Restore library from backup file</string>
+    <string name="restore_from_backup_file">Restore library from an Epigraph, Tachiyomi or LNReader backup</string>
     <string name="restore_in_progress">Restore already in progress</string>
     <string name="backup_in_progress">Backup already in progress</string>
     <string name="backup_location">Backup location</string>
@@ -864,12 +867,14 @@
     <string name="restore_error">Failed to restore backup</string>
     <string name="restore_missing_sources">Missing sources:</string>
     <string name="restore_missing_trackers">Trackers not logged into:</string>
+    <string name="restore_new_repositories">Novel plugin repositories to add:</string>
+    <string name="restore_repository_unavailable">The plugin repository could not be reached, add it later in Extensions</string>
     <string name="restore_content_full">Data from the backup file will be restored.\n\nYou will need to install any missing extensions and log in to tracking services afterwards to use them.</string>
     <string name="restoring_backup_canceled">Canceled restore</string>
     <string name="backup_restore_invalid_uri">Error: empty URI</string>
     <string name="creating_backup">Creating backup</string>
     <string name="backup_info">Automatic backups are highly recommended. You should keep copies in other places as well.</string>
-    <string name="epigraph_backup_migration_info">Epigraph backups use the .epigraphbk suffix. You can import supported legacy containers, .tachibk, .proto.gz, and existing JSON backups. The Epigraph app is installed separately from the previous installation, so Android private app data must be moved through backup/import or a folder you choose.</string>
+    <string name="epigraph_backup_migration_info">Epigraph backups use the .epigraphbk suffix. You can import supported legacy containers, .tachibk, .proto.gz, existing JSON backups, and LNReader backup .zip files. The Epigraph app is installed separately from the previous installation, so Android private app data must be moved through backup/import or a folder you choose.</string>
     <string name="what_should_backup">What do you want to backup?</string>
     <string name="restoring_backup">Restoring backup</string>
     <string name="restore_duration">%1$02d min, %2$02d sec</string>
@@ -2184,7 +2189,7 @@
     <string name="action_sort_next_updated">Next expected update</string>
     <string name="custom_update_interval">Custom update interval</string>
     <string name="not_custom_update_interval">Automatic update interval</string>
-    <string name="label_upcoming">Upcoming Releases</string>
+    <string name="label_upcoming">Upcoming</string>
     <string name="action_view_upcoming">Upcoming Releases</string>
     <string name="upcoming_guide">Upcoming guide</string>
     <string name="upcoming_calendar_next">Next month</string>
@@ -2272,15 +2277,17 @@
     <string name="epigraph_core_sync_save_selection">Save selection</string>
     <string name="epigraph_core_disconnect">Forget connection on this device</string>
     <string name="epigraph_core_disconnect_summary">Revoke this device from Epigraph desktop to remove server access</string>
+    <string name="epigraph_core_disconnect_confirm">This device will stop syncing with Epigraph desktop, and tracker logins received from the desktop will be signed out here. Your library stays on this device.</string>
+    <string name="epigraph_core_disconnect_confirm_action">Forget</string>
     <string name="epigraph_core_pairing_validating">Validating the desktop bundle…</string>
     <string name="epigraph_core_pairing_claiming">Requesting the connection…</string>
     <string name="epigraph_core_pairing_waiting">Waiting for approval on the desktop…</string>
     <string name="epigraph_core_pairing_exchanging">Exchanging the approved token…</string>
     <string name="epigraph_core_pairing_saving">Encrypting the credential on this device…</string>
-    <string name="epigraph_core_error_invalid_bundle">The QR code is not a valid Epigraph Core pairing bundle.</string>
-    <string name="epigraph_core_error_expired">The pairing request expired. Generate a new QR code on the desktop.</string>
+    <string name="epigraph_core_error_invalid_bundle">The pairing bundle (QR code or pasted text) is not a valid Epigraph Core bundle.</string>
+    <string name="epigraph_core_error_expired">The pairing request expired. Start a new pairing on the desktop.</string>
     <string name="epigraph_core_error_rejected">The desktop rejected this device.</string>
-    <string name="epigraph_core_error_tls">The desktop certificate does not match the QR code. Pairing was blocked.</string>
+    <string name="epigraph_core_error_tls">The desktop certificate does not match the pairing bundle. Pairing was blocked.</string>
     <string name="epigraph_core_error_network">The Epigraph Core could not be reached on the local network.</string>
     <string name="epigraph_core_error_upgrade">This app or the Epigraph Core must be updated before pairing.</string>
     <string name="epigraph_core_error_generic">Pairing failed before a secure connection was completed.</string>
@@ -2376,7 +2383,7 @@
     <string name="epigraph_core_setup_entry_synced">Same as the desktop</string>
     <string name="epigraph_core_bridge_waiting_for">via Epigraph Core (waiting for %1$s)</string>
     <string name="epigraph_core_novels_without_chapters_title">Novels without chapters</string>
-    <string name="epigraph_core_novels_without_chapters_summary">%1$d novels arrived from the desktop without chapters: %2$s. Refresh them on the desktop and sync again.</string>
+    <string name="epigraph_core_novels_without_chapters_summary">%1$d synced novels have no chapters on this device yet: %2$s. Approve their LNReader plugins and repositories in the dependency setup, then sync again.</string>
     <string name="epigraph_core_setup_repositories">Repositories</string>
     <string name="epigraph_core_setup_extensions">Extensions</string>
     <string name="epigraph_core_setup_add">Add</string>
@@ -2400,7 +2407,7 @@
     <string name="settings_recents_summary">Updates and history tab</string>
     <string name="settings_local_books">Books (EPUB/PDF)</string>
     <string name="settings_local_books_summary">Import and read files kept offline on this device</string>
-    <string name="settings_security_summary">App lock, secure screen and private notifications</string>
+    <string name="settings_security_summary">App lock with biometrics or PIN, secure screen and private notifications</string>
     <string name="discover_catalog">Catalog</string>
     <string name="discover_catalog_empty">Your installed extensions have not listed any titles yet. Install or enable sources in Browse.</string>
     <string name="discover_comics">Comics</string>

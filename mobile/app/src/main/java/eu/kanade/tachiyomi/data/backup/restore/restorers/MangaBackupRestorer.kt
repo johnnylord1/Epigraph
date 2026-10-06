@@ -21,7 +21,10 @@ import eu.kanade.tachiyomi.util.chapter.ChapterUtil
 import eu.kanade.tachiyomi.util.manga.MangaUtil
 import eu.kanade.tachiyomi.util.system.launchNow
 import kotlin.math.max
+import eu.kanade.tachiyomi.data.database.models.Category
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
+import yokai.domain.category.interactor.InsertCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.chapter.interactor.GetChapter
 import yokai.domain.chapter.interactor.InsertChapter
@@ -62,7 +65,9 @@ class MangaBackupRestorer(
     ) {
         val manga = backupManga.getMangaImpl()
         val chapters = backupManga.getChaptersImpl()
-        val categories = backupManga.categories
+        // Titles removed from the library keep their history in J2K/Mihon backups, but their old
+        // category links are stale and must not come back as folder membership.
+        val categories = if (backupManga.favorite) backupManga.categories else emptyList()
         val history =
             backupManga.brokenHistory.map { BackupHistory(it.url, it.lastRead, it.readDuration) } + backupManga.history
         val tracks = backupManga.getTrackingImpl()
@@ -227,19 +232,34 @@ class MangaBackupRestorer(
      * @param manga the manga whose categories have to be restored.
      * @param categories the categories to restore.
      */
+    /** Only needed when a novel's folder must be created in Books & novels. */
+    private val insertCategories: InsertCategories by lazy { get() }
+
     private suspend fun restoreCategories(manga: Manga, categories: List<Int>, backupCategories: List<BackupCategory>) {
-        val dbCategories = getCategories.await()
+        // Comics and Books & novels keep separate folders; orders only identify a folder within
+        // one library, and older backups shared one list for both.
+        val library = CategoryLibrary.of(manga)
+        val dbCategories = getCategories.await(library).toMutableList()
         val mangaCategoriesToUpdate = ArrayList<MangaCategory>(categories.size)
         categories.forEach { backupCategoryOrder ->
-            backupCategories.firstOrNull {
-                it.order == backupCategoryOrder
-            }?.let { backupCategory ->
-                dbCategories.firstOrNull { dbCategory ->
-                    dbCategory.name == backupCategory.name
-                }?.let { dbCategory ->
-                    mangaCategoriesToUpdate += MangaCategory.create(manga, dbCategory)
+            val sameOrder = backupCategories.filter { it.order == backupCategoryOrder }
+            val backupCategory = sameOrder.firstOrNull { (it.library == CategoryLibrary.BOOKS.name) == (library == CategoryLibrary.BOOKS) }
+                ?: sameOrder.firstOrNull()
+                ?: return@forEach
+            val dbCategory = dbCategories.firstOrNull { it.name == backupCategory.name }
+                ?: if (library == CategoryLibrary.BOOKS) {
+                    // A novel folder from a shared-folder backup becomes a Books & novels folder.
+                    val created = Category.create(backupCategory.name).apply {
+                        order = (dbCategories.maxOfOrNull { it.order } ?: 0) + 1
+                        flags = backupCategory.flags
+                        mangaSort = backupCategory.mangaSort
+                    }
+                    created.id = insertCategories.awaitOne(created, library)?.toInt()
+                    created.takeIf { it.id != null }?.also { dbCategories += it }
+                } else {
+                    null
                 }
-            }
+            dbCategory?.let { mangaCategoriesToUpdate += MangaCategory.create(manga, it) }
         }
 
         // Update database
