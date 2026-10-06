@@ -7,6 +7,8 @@ import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.extensions.ComicRepositoryRow
 import epigraph.sync.core.setup.CoreDependencySetupActivity
+import epigraph.sync.core.setup.InventoryChoice
+import epigraph.sync.core.setup.SyncDomainChoice
 import epigraph.sync.core.setup.coreDependencySetupCounts
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
@@ -28,7 +30,6 @@ import eu.kanade.tachiyomi.util.relativeTimeSpanString
 import java.util.UUID
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -39,7 +40,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -143,16 +143,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         LaunchedEffect(extensionState.report) {
             comicRepositories = extensionState.report?.let { extensionReconciliation.desktopRepositories(it) }.orEmpty()
         }
-        LaunchedEffect((state as? CorePairingUiState.Selecting)?.serverId, showSelectionEditor) {
-            if (state is CorePairingUiState.Selecting) {
-                syncComics = true
-                syncNovels = true
-                syncBooks = true
-                compareComicRepositories = true
-                compareComicExtensions = true
-                compareNovelRepositories = true
-                compareNovelPlugins = true
-            } else if (showSelectionEditor && persistedSelection != null) {
+        LaunchedEffect(showSelectionEditor) {
+            if (showSelectionEditor && persistedSelection != null) {
                 val selection = persistedSelection ?: return@LaunchedEffect
                 syncComics = SyncDomain.COMICS in selection.enabledDomains
                 syncNovels = SyncDomain.NOVELS in selection.enabledDomains
@@ -163,6 +155,21 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 compareNovelRepositories = selection.novelRepositories == DependencyInventoryMode.INVENTORY_ONLY
                 compareNovelPlugins = selection.novelPlugins == DependencyInventoryMode.INVENTORY_ONLY
             }
+        }
+
+        // Pairing continues in the setup window: what to sync, the first sync, then the desktop's
+        // repositories and extensions.
+        val selectingServerId = (state as? CorePairingUiState.Selecting)?.serverId
+        LaunchedEffect(selectingServerId) {
+            val selecting = state as? CorePairingUiState.Selecting ?: return@LaunchedEffect
+            context.startActivity(
+                CoreDependencySetupActivity.intent(
+                    context,
+                    selecting.serverId,
+                    selecting.profileId,
+                    startWithPairing = true,
+                ),
+            )
         }
 
         fun beginPairing(bundle: String) {
@@ -177,23 +184,17 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             state is CorePairingUiState.Loading ||
             state is CorePairingUiState.Selecting
 
-        val selectingPairing = state is CorePairingUiState.Selecting
-        if (selectingPairing || showSelectionEditor) {
+        if (showSelectionEditor) {
             val selectedDomains = buildSet {
                 if (syncComics) add(SyncDomain.COMICS)
                 if (syncNovels) add(SyncDomain.NOVELS)
                 if (syncBooks) add(SyncDomain.BOOKS)
             }
             AlertDialog(
-                onDismissRequest = {
-                    if (selectingPairing) controller.cancelPairingSelection() else showSelectionEditor = false
-                },
+                onDismissRequest = { showSelectionEditor = false },
                 title = { Text(stringResource(MR.strings.epigraph_core_sync_selection_title)) },
                 text = {
                     Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                        (state as? CorePairingUiState.Selecting)?.let { selecting ->
-                            VerificationCodeHeader(selecting.verificationCode, selecting.desktopName)
-                        }
                         Text(
                             stringResource(MR.strings.epigraph_core_sync_selection_summary),
                             style = MaterialTheme.typography.bodyMedium,
@@ -259,40 +260,15 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 compareNovelRepositories = compareNovelRepositories,
                                 compareNovelPlugins = compareNovelPlugins,
                             )
-                            val selecting = state as? CorePairingUiState.Selecting
-                            if (selecting != null) {
-                                controller.confirmPairing(selection)
-                                // The setup follows the first sync, then offers the desktop's
-                                // repositories and extensions.
-                                context.startActivity(
-                                    CoreDependencySetupActivity.intent(
-                                        context,
-                                        selecting.serverId,
-                                        selecting.profileId,
-                                        startWithSync = true,
-                                    ),
-                                )
-                            } else {
-                                controller.updateSelection(selection)
-                            }
+                            controller.updateSelection(selection)
                             showSelectionEditor = false
                         },
                     ) {
-                        Text(
-                            stringResource(
-                                if (selectingPairing) {
-                                    MR.strings.epigraph_core_sync_continue
-                                } else {
-                                    MR.strings.epigraph_core_sync_save_selection
-                                },
-                            ),
-                        )
+                        Text(stringResource(MR.strings.epigraph_core_sync_save_selection))
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        if (selectingPairing) controller.cancelPairingSelection() else showSelectionEditor = false
-                    }) {
+                    TextButton(onClick = { showSelectionEditor = false }) {
                         Text(stringResource(MR.strings.cancel))
                     }
                 },
@@ -782,62 +758,6 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
     }
 
     @Composable
-    private fun SyncDomainChoice(
-        title: String,
-        summary: String,
-        checked: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-
-    @Composable
-    private fun InventoryChoice(
-        title: String,
-        checked: Boolean,
-        enabled: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 40.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(
-                checked = checked && enabled,
-                enabled = enabled,
-                onCheckedChange = onCheckedChange,
-            )
-            Text(
-                title,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
-            )
-        }
-    }
-
-    @Composable
     private fun pairingErrorText(
         error: PairingErrorCode,
         bundleFailure: PairingBundleFailure?,
@@ -866,27 +786,5 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         PairingErrorCode.PIN_LOCKED -> stringResource(MR.strings.epigraph_core_error_pin_locked)
         PairingErrorCode.PIN_INVALID -> stringResource(MR.strings.epigraph_core_error_pin_invalid)
         PairingErrorCode.HOST_NOT_FOUND -> stringResource(MR.strings.epigraph_core_error_host_not_found)
-    }
-
-    @Composable
-    private fun VerificationCodeHeader(code: String, desktopName: String?) {
-        Column(modifier = Modifier.padding(bottom = 12.dp)) {
-            desktopName?.let { name ->
-                Text(
-                    stringResource(MR.strings.epigraph_core_selection_desktop, name),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-            Text(
-                stringResource(MR.strings.epigraph_core_verification_code, code),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                stringResource(MR.strings.epigraph_core_verification_code_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
