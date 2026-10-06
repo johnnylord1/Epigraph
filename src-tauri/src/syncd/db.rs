@@ -6738,6 +6738,8 @@ pub(crate) const COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX: &str = "comic-category-ass
 /// its hashed id; the projection worker resolves the pair against Suwayomi.
 pub(crate) const REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION: &str =
     "RemoveComicCategoryAssignment";
+/// Projection variable carrying a portable comic's title hint; removed before Suwayomi sees it.
+pub(crate) const PORTABLE_TITLE_HINT_FIELD: &str = "portableTitleHint";
 
 /// `comic_sync_state` is only written by client merges, so deleting an item that already
 /// existed in Suwayomi has no stored record. Rebuild the projection input from the id.
@@ -6803,7 +6805,11 @@ async fn enqueue_comic_state_projection_in_tx(
                 .get("portableWorkRef")
                 .filter(|value| !value.is_null())
             {
-                json!({ "portableWorkRef": work, "inLibrary": !deleting })
+                let mut variables = json!({ "portableWorkRef": work, "inLibrary": !deleting });
+                if let Some(title) = record.get("titleHint").filter(|value| value.is_string()) {
+                    variables[PORTABLE_TITLE_HINT_FIELD] = title.clone();
+                }
+                variables
             } else {
                 let Some(manga_id) =
                     suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")

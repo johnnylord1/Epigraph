@@ -25,6 +25,8 @@ use crate::syncd::models::{
 use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
 use crate::syncd::{suwayomi_tracking_mirror, tracking};
 
+const MAX_COMIC_TITLE_HINT_CHARS: usize = 512;
+
 pub async fn post_mutations(
     State(state): State<SharedAppState>,
     Extension(mut session): Extension<AuthenticatedSession>,
@@ -3333,6 +3335,24 @@ fn validate_comic_entry_patch(
                 &patch.comic_id,
                 patch.portable_work_ref.as_ref(),
             )
+        })
+        .or_else(|| {
+            patch
+                .title_hint
+                .as_deref()
+                .filter(|title| {
+                    patch.portable_work_ref.is_none()
+                        || title.trim().is_empty()
+                        || title.chars().count() > MAX_COMIC_TITLE_HINT_CHARS
+                        || title.chars().any(char::is_control)
+                })
+                .map(|_| {
+                    error_detail(
+                        "INVALID_TITLE_HINT",
+                        "titleHint must be a short single-line title of a portable comic.",
+                        None,
+                    )
+                })
         })
         .or_else(|| {
             (!patch.in_library).then(|| {

@@ -2240,6 +2240,9 @@ pub struct ComicEntryPatch {
     pub in_library: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portable_work_ref: Option<PortableWorkRefV3>,
+    /// Title of a work first added on a device, so Suwayomi can find it by searching its source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

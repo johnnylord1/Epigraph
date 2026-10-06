@@ -9,7 +9,8 @@ use sqlx::FromRow;
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
 use super::models::{
     canonical_portable_chapter_id, canonical_portable_work_id, AppError, AuthenticatedSession,
-    PortableChapterRefV3, PortableResolutionStateV3, PortableWorkRefV3, SharedAppState,
+    PortableChapterRefV3, PortableResolutionStateV3, PortableWorkBindingRow, PortableWorkRefV3,
+    SharedAppState,
 };
 use super::routes::suwayomi_commands::{self, CommandOperation};
 use super::{db, routes::suwayomi_catalog};
@@ -43,11 +44,33 @@ const MAX_CONFIRMATION_ATTEMPTS: i64 = 5;
 /// changed). They get one fresh bounded cycle each time the daemon starts. Codes caused by the
 /// command itself (`command_rejected`, `invalid_variables`, `unsupported_operation`) stay blocked
 /// until a newer version supersedes them.
-const RECOVERABLE_BLOCKED_CODES: [&str; 2] = ["confirmation_mismatch", "command_failed"];
+const RECOVERABLE_BLOCKED_CODES: [&str; 3] = [
+    "confirmation_mismatch",
+    "command_failed",
+    PORTABLE_WORK_NOT_FOUND,
+];
+/// A device added a work Suwayomi could not find, for example because its extension is not
+/// installed here. Blocked after a few attempts so it stops counting as pending.
+const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
 const MAX_CATEGORY_ASSIGNMENT_PAGES: usize = 20;
+
+const PORTABLE_COMIC_LOOKUP_QUERY: &str = r#"
+  query EpigraphResolvePortableComic($sourceId: LongString!, $url: String!) {
+    mangas(condition: { sourceId: $sourceId, url: $url }, first: 2) {
+      nodes { id url }
+    }
+  }
+"#;
+const PORTABLE_COMIC_SEARCH_MUTATION: &str = r#"
+  mutation EpigraphSearchPortableComic($source: LongString!, $query: String!) {
+    fetchSourceManga(input: { source: $source, type: SEARCH, query: $query, page: 1 }) {
+      mangas { id url }
+    }
+  }
+"#;
 
 const PORTABLE_CHAPTER_LOOKUP_QUERY: &str = r#"
   query EpigraphResolvePortableChapter($mangaId: Int!, $first: Int!, $offset: Int!) {
@@ -327,13 +350,14 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
         UPDATE suwayomi_projection_outbox
         SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
             updated_at_ms = ?
-        WHERE status = 'blocked' AND last_error IN (?, ?)
+        WHERE status = 'blocked' AND last_error IN (?, ?, ?)
         "#,
     )
     .bind(now)
     .bind(now)
     .bind(RECOVERABLE_BLOCKED_CODES[0])
     .bind(RECOVERABLE_BLOCKED_CODES[1])
+    .bind(RECOVERABLE_BLOCKED_CODES[2])
     .execute(pool)
     .await
     .context("failed to requeue recoverable blocked Suwayomi projections")?;
@@ -369,6 +393,9 @@ async fn resolve_portable_projection_identity(
     let Some(object) = variables.as_object_mut() else {
         return Err(ProjectionOutcome::Blocked("invalid_variables"));
     };
+    let title_hint = object
+        .remove(db::PORTABLE_TITLE_HINT_FIELD)
+        .and_then(|value| value.as_str().map(str::to_string));
     let work_value = object.get("portableWorkRef").cloned();
     let chapter_value = object.get("portableChapterRef").cloned();
     if work_value.is_none() && chapter_value.is_none() {
@@ -388,10 +415,17 @@ async fn resolve_portable_projection_identity(
     }
 
     let portable_work_id = canonical_portable_work_id(&work);
-    let binding = db::load_portable_work_binding(&state.pool, &row.profile_id, &portable_work_id)
-        .await
-        .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
-        .ok_or(ProjectionOutcome::Retry("portable_work_not_bound"))?;
+    let binding =
+        match db::load_portable_work_binding(&state.pool, &row.profile_id, &portable_work_id)
+            .await
+            .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
+        {
+            Some(binding) => binding,
+            None => {
+                bind_unseen_comic(state, row, &work, &portable_work_id, title_hint.as_deref())
+                    .await?
+            }
+        };
     if binding.portable_ref().ok().as_ref() != Some(&work) || binding.resolution_state != "BOUND" {
         return Err(ProjectionOutcome::Blocked("portable_work_binding_mismatch"));
     }
@@ -474,6 +508,90 @@ async fn resolve_portable_projection_identity(
         Value::Array(vec![Value::from(chapter_id)]),
     );
     Ok(variables)
+}
+
+/// Binds a comic a device added that this desktop never listed. Suwayomi only knows works it has
+/// already fetched, so when the exact source and key are not there yet, searching the source for
+/// the title fetches it; only an exact key match is accepted.
+async fn bind_unseen_comic(
+    state: &SharedAppState,
+    row: &ProjectionRow,
+    work: &PortableWorkRefV3,
+    portable_work_id: &str,
+    title_hint: Option<&str>,
+) -> Result<PortableWorkBindingRow, ProjectionOutcome> {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = work
+    else {
+        return Err(ProjectionOutcome::Blocked(
+            "portable_reference_type_mismatch",
+        ));
+    };
+    let session = projection_session(&row.profile_id);
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        &session,
+        PORTABLE_COMIC_LOOKUP_QUERY,
+        json!({ "sourceId": source_id, "url": manga_key }),
+        false,
+    )
+    .await
+    .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
+    let mut manga_id = exact_comic_match(data.pointer("/mangas/nodes"), manga_key);
+    if let (None, Some(title)) = (manga_id, title_hint) {
+        // An extension that is missing or failing here answers with an error; that is retried
+        // like a work that was not found.
+        if let Ok(data) = suwayomi_catalog::execute_graphql_document(
+            state,
+            &session,
+            PORTABLE_COMIC_SEARCH_MUTATION,
+            json!({ "source": source_id, "query": title }),
+            true,
+        )
+        .await
+        {
+            manga_id = exact_comic_match(data.pointer("/fetchSourceManga/mangas"), manga_key);
+        }
+    }
+    let Some(manga_id) = manga_id else {
+        return Err(if row.attempt_count >= MAX_CONFIRMATION_ATTEMPTS {
+            ProjectionOutcome::Blocked(PORTABLE_WORK_NOT_FOUND)
+        } else {
+            ProjectionOutcome::Retry("portable_work_not_bound")
+        });
+    };
+    let local_reference = manga_id.to_string();
+    db::upsert_portable_work_binding(
+        &state.pool,
+        &row.profile_id,
+        portable_work_id,
+        work,
+        None,
+        Some(&local_reference),
+        PortableResolutionStateV3::Bound,
+        None,
+        title_hint,
+        None,
+        0,
+        db::now_ms(),
+    )
+    .await
+    .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?;
+    db::load_portable_work_binding(&state.pool, &row.profile_id, portable_work_id)
+        .await
+        .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
+        .ok_or(ProjectionOutcome::Retry("portable_binding_unavailable"))
+}
+
+fn exact_comic_match(nodes: Option<&Value>, manga_key: &str) -> Option<i64> {
+    nodes?
+        .as_array()?
+        .iter()
+        .filter(|node| node.get("url").and_then(Value::as_str) == Some(manga_key))
+        .filter_map(|node| node.get("id").and_then(Value::as_i64))
+        .find(|id| *id > 0 && *id <= i32::MAX as i64)
 }
 
 async fn resolve_chapter_id(
@@ -907,6 +1025,18 @@ mod tests {
                 ("waiting".to_string(), "retry".to_string(), 5, 99),
             ]
         );
+    }
+
+    #[test]
+    fn unseen_comics_bind_only_to_an_exact_key() {
+        let nodes = json!([
+            { "id": 4, "url": "/manga/a-b" },
+            { "id": 0, "url": "/manga/a" },
+            { "id": 9, "url": "/manga/a" },
+        ]);
+        assert_eq!(exact_comic_match(Some(&nodes), "/manga/a"), Some(9));
+        assert_eq!(exact_comic_match(Some(&nodes), "/manga/A"), None);
+        assert_eq!(exact_comic_match(None, "/manga/a"), None);
     }
 
     #[test]
