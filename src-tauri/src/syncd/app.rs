@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Extension, Router};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -24,7 +24,7 @@ use super::models::AppState;
 use super::routes::{
     assets, bootstrap, capabilities, discovery, events, health, local, mutations, pairing,
     portable_manifest, session, snapshot, status, suwayomi_catalog, suwayomi_commands,
-    suwayomi_content, suwayomi_extensions, suwayomi_proxy,
+    suwayomi_content, suwayomi_extensions, suwayomi_proxy, tracker_credentials,
 };
 use super::runtime_manifest::{RuntimeManifestLease, RuntimeProcessLock, SyncdRuntimeManifest};
 use super::tls;
@@ -107,6 +107,10 @@ pub async fn run() -> anyhow::Result<()> {
     spawn_gc_task(state.clone(), shutdown.subscribe());
     super::suwayomi_projection::spawn_projection_task(state.clone(), shutdown.subscribe());
     super::suwayomi_progress_mirror::spawn_progress_mirror_task(
+        state.clone(),
+        shutdown.subscribe(),
+    );
+    super::suwayomi_tracking_mirror::spawn_tracking_mirror_task(
         state.clone(),
         shutdown.subscribe(),
     );
@@ -207,6 +211,15 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             "/v1/portable/novel-manifest",
             get(portable_manifest::get_portable_novel_manifest),
         )
+        .route(
+            "/v1/tracker-credentials",
+            get(tracker_credentials::get_tracker_credentials),
+        )
+        .route(
+            "/v1/tracker-credentials/:tracker_key",
+            put(tracker_credentials::put_tracker_credential)
+                .delete(tracker_credentials::delete_tracker_credential),
+        )
         .layer(Extension(shutdown))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -257,6 +270,15 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
         .route(
             "/v1/local/authority-token",
             post(local::post_local_authority_token),
+        )
+        .route(
+            "/v1/local/progress-mirror",
+            post(local::post_local_progress_mirror),
+        )
+        .route(
+            "/v1/local/tracker-credentials/:tracker_key",
+            put(local::put_local_tracker_credential)
+                .delete(local::delete_local_tracker_credential),
         )
         .route("/v1/pairing/claim", post(pairing::post_pairing_claim))
         .merge(protected)
@@ -916,9 +938,16 @@ mod tests {
         assert_eq!(payload["supportsSyncStatusV1"], true);
         assert_eq!(payload["supportsComicDeleteProjectionWithoutRecord"], true);
         assert_eq!(payload["supportsSuwayomiCategoryCreate"], true);
+        assert_eq!(payload["supportsSuwayomiExtensionInstall"], true);
         assert_eq!(payload["snapshotSchemaVersion"], 3);
+        assert_eq!(
+            payload["supportsTrackerCredentialsV1"],
+            crate::syncd::tracker_credentials::is_supported()
+        );
         let entity_types = payload["snapshotEntityTypes"].as_array().unwrap();
-        assert_eq!(entity_types.len(), 25);
+        assert_eq!(entity_types.len(), 27);
+        assert!(entity_types.iter().any(|value| value == "comic.tracking"));
+        assert!(entity_types.iter().any(|value| value == "novel.tracking"));
         assert!(entity_types
             .iter()
             .any(|value| value == "novel.chapter_asset"));
@@ -2173,5 +2202,192 @@ mod tests {
         let text = String::from_utf8_lossy(&bytes);
         assert!(text.contains("event: replay_required"));
         assert!(text.contains("\"reasonCode\":\"LIVE_STREAM_LAGGED\""));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn tracker_credentials_use_per_key_cas_and_stay_out_of_sync_feeds() {
+        let (temp, state) = build_state_for_http().await;
+        ensure_test_token(
+            &state.pool,
+            "device-a",
+            "main",
+            &token_hash("secret-token"),
+            &["comics:profile:main"],
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state);
+        let token_json = r#"{"access_token":"tr4ck3r-secret","token_type":"Bearer"}"#;
+
+        let (status, _) = request_json(&app, Method::GET, "/v1/tracker-credentials", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/tracker-credentials",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["schemaVersion"], 1);
+        assert_eq!(payload["credentials"], serde_json::json!([]));
+
+        let write = |base: i64| {
+            serde_json::json!({
+                "baseRevision": base,
+                "deviceId": "mobile-audit-id",
+                "username": "4242",
+                "password": "tr4ck3r-secret",
+                "token": token_json,
+            })
+        };
+        let (status, payload) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(write(0)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["trackerKey"], "anilist");
+        assert_eq!(payload["revision"], 1);
+        assert_eq!(payload["deleted"], false);
+        assert_eq!(payload["token"], token_json);
+        assert!(payload.get("deviceId").is_none());
+        assert!(!payload.to_string().contains("mobile-audit-id"));
+
+        // A stale base is a 409 and writes nothing.
+        let (status, payload) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(write(0)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(!payload.to_string().contains("tr4ck3r-secret"));
+
+        // Invalid key, oversized value and malformed bodies are 400.
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/AniList",
+            Some("secret-token"),
+            Some(write(0)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let mut oversized = write(1);
+        oversized["token"] = Value::String("x".repeat(8 * 1024 + 1));
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(oversized),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(serde_json::json!({ "username": "x" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(serde_json::json!({ "baseRevision": -1 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Delete tombstones at base+1; the tombstone keeps its revision and a stale delete is 409.
+        let (status, payload) = request_json(
+            &app,
+            Method::DELETE,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(serde_json::json!({ "baseRevision": 1, "deviceId": "mobile-audit-id" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{payload}");
+        assert_eq!(payload["revision"], 2);
+        assert_eq!(payload["deleted"], true);
+        assert_eq!(payload["token"], "");
+        let (status, _) = request_json(
+            &app,
+            Method::DELETE,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(serde_json::json!({ "baseRevision": 1 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, payload) = request_json(
+            &app,
+            Method::GET,
+            "/v1/tracker-credentials",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["credentials"][0]["revision"], 2);
+        assert_eq!(payload["credentials"][0]["deleted"], true);
+        assert!(!payload.to_string().contains("mobile-audit-id"));
+
+        // Re-login on top of the tombstone continues the revision sequence.
+        let (status, payload) = request_json(
+            &app,
+            Method::PUT,
+            "/v1/tracker-credentials/anilist",
+            Some("secret-token"),
+            Some(write(2)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["revision"], 3);
+
+        // Credentials never reach the snapshot, the change feed or the replica database.
+        let (_, snapshot) = request_json(
+            &app,
+            Method::GET,
+            "/v1/snapshot?scopeId=comics%3Aprofile%3Amain",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(!snapshot.to_string().contains("tr4ck3r-secret"));
+        let (_, changes) = request_json(
+            &app,
+            Method::GET,
+            "/v1/changes?sinceVersion=0&scopeId=comics%3Aprofile%3Amain",
+            Some("secret-token"),
+            None,
+        )
+        .await;
+        assert!(!changes.to_string().contains("tr4ck3r-secret"));
+        for entry in std::fs::read_dir(temp.path()).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                let bytes = std::fs::read(&path).unwrap();
+                assert!(
+                    !String::from_utf8_lossy(&bytes).contains("tr4ck3r-secret"),
+                    "plaintext credential found in {}",
+                    path.display()
+                );
+            }
+        }
     }
 }

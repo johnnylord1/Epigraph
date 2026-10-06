@@ -21,7 +21,10 @@ const FETCH_MANGA_DOCUMENT: &str = r#"
 const FETCH_CHAPTERS_DOCUMENT: &str = r#"
   mutation EpigraphCoreFetchChapters($mangaId: Int!) {
     fetchChapters(input: { mangaId: $mangaId }) {
-      chapters { id name chapterNumber sourceOrder pageCount mangaId uploadDate realUrl scanlator }
+      chapters {
+        id name chapterNumber sourceOrder pageCount mangaId uploadDate realUrl scanlator
+        isRead isBookmarked lastPageRead
+      }
     }
   }
 "#;
@@ -123,6 +126,11 @@ mod tests {
         let (chapters, chapter_variables) =
             normalized_content(&ContentOperation::FetchChapters, 8).unwrap();
         assert!(chapters.contains("mutation EpigraphCoreFetchChapters"));
+        // Paired phones mirror the desktop read state from this list; without it a Core manga
+        // read on the desktop opens on the phone at chapter one.
+        for field in ["isRead", "isBookmarked", "lastPageRead"] {
+            assert!(chapters.contains(field), "fetchChapters must select {field}");
+        }
         assert_eq!(chapter_variables, json!({ "mangaId": 8 }));
 
         let (pages, page_variables) =

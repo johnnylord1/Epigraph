@@ -360,6 +360,12 @@ export function listenSyncdReplicationState(
   return listen<SyncdReplicationSnapshot>("syncd-replication-state", ({ payload }) => handler(payload));
 }
 
+export function listenSyncdComicLibraryChanged(
+  handler: (payload: { localProfileId: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
+}
+
 export function listenSyncdReplicationError(
   handler: (payload: SyncdReplicationErrorPayload) => void,
 ): Promise<UnlistenFn> {

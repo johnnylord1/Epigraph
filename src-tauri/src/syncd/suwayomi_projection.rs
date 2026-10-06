@@ -18,6 +18,12 @@ const MAX_BATCH: usize = 8;
 const LEASE_MS: i64 = 60_000;
 const BASE_RETRY_MS: i64 = 30_000;
 const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
+/// Backoff ceiling while the local Suwayomi runtime is unreachable. Retrying rows count as pending
+/// in `/v1/sync/status` and mobile defers its whole catalog reconciliation meanwhile, so once the
+/// runtime is back the queue must clear within minutes instead of waiting out an hours-long delay.
+/// Probing a local runtime this often is cheap.
+const MAX_RUNTIME_RETRY_MS: i64 = 5 * 60 * 1_000;
+const RUNTIME_UNAVAILABLE: &str = "runtime_unavailable";
 /// While an earlier projection of the same profile is in its first retries (a Suwayomi restart,
 /// a brief outage), later ones wait so Suwayomi sees commands in commit order: removing a manga
 /// from a category must not land after the category itself is deleted. After this many attempts
@@ -86,6 +92,13 @@ pub fn spawn_projection_task(
                     tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
                 }
             }
+            match rearm_runtime_retries(&state.pool, super::db::now_ms()).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(count, "rearmed Suwayomi projections waiting on the runtime"),
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
+                }
+            }
         }
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -128,10 +141,7 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
                 completed += 1;
             }
             ProjectionOutcome::Retry(code) => {
-                let shift = row.attempt_count.clamp(0, 8) as u32;
-                let delay = BASE_RETRY_MS
-                    .saturating_mul(1_i64 << shift)
-                    .min(MAX_RETRY_MS);
+                let delay = retry_delay_ms(code, row.attempt_count);
                 let now = super::db::now_ms();
                 let _writer_guard = state.mutation_gate.lock().await;
                 sqlx::query(
@@ -168,6 +178,16 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
         }
     }
     Ok(completed)
+}
+
+fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
+    let shift = attempt_count.clamp(0, 8) as u32;
+    let ceiling = if code == RUNTIME_UNAVAILABLE {
+        MAX_RUNTIME_RETRY_MS
+    } else {
+        MAX_RETRY_MS
+    };
+    BASE_RETRY_MS.saturating_mul(1_i64 << shift).min(ceiling)
 }
 
 async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionRow>> {
@@ -320,6 +340,27 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
     Ok(result.rows_affected())
 }
 
+/// Makes rows that were waiting on an unreachable runtime due now. Runs once at daemon start, which
+/// is when the owned Suwayomi is (re)started, so a backoff earned during an earlier outage does not
+/// keep the queue pending. Attempt counts are kept, so ordering and bounded-attempt rules hold.
+async fn rearm_runtime_retries(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET next_attempt_at_ms = ?, updated_at_ms = ?
+        WHERE status = 'retry' AND last_error = ? AND next_attempt_at_ms > ?
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(RUNTIME_UNAVAILABLE)
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to rearm Suwayomi projections waiting on the runtime")?;
+    Ok(result.rows_affected())
+}
+
 async fn resolve_portable_projection_identity(
     state: &SharedAppState,
     row: &ProjectionRow,
@@ -456,7 +497,7 @@ async fn resolve_chapter_id(
             false,
         )
         .await
-        .map_err(|_| ProjectionOutcome::Retry("runtime_unavailable"))?;
+        .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
         let chapters = data
             .get("chapters")
             .ok_or(ProjectionOutcome::Retry("portable_chapter_lookup_invalid"))?;
@@ -495,7 +536,7 @@ fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOut
     if non_retryable && attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
         ProjectionOutcome::Blocked("command_failed")
     } else {
-        ProjectionOutcome::Retry("runtime_unavailable")
+        ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE)
     }
 }
 
@@ -533,7 +574,7 @@ async fn resolve_category_assignment_removal(
             false,
         )
         .await
-        .map_err(|_| ProjectionOutcome::Retry("runtime_unavailable"))?;
+        .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
         let categories = data
             .get("categories")
             .ok_or(ProjectionOutcome::Retry("category_assignment_lookup_invalid"))?;
@@ -659,6 +700,8 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
                         == Some(expected)
                 })
         }
+        // Direct device commands only; the outbox projection never produces them.
+        CommandOperation::AddExtensionRepos | CommandOperation::InstallExtension => false,
         CommandOperation::CreateCategory => variables
             .get("name")
             .and_then(Value::as_str)
@@ -682,16 +725,30 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
         }
         CommandOperation::UpdateCategoryOrder => {
             let expected_id = variables.get("id").and_then(Value::as_i64);
-            let expected_position = variables.get("position").and_then(Value::as_i64);
-            data.get("updateCategoryOrder")
+            let Some(expected_position) = variables.get("position").and_then(Value::as_i64) else {
+                return false;
+            };
+            let categories = data
+                .get("updateCategoryOrder")
                 .and_then(|value| value.get("categories"))
                 .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .any(|category| {
-                    category.get("id").and_then(Value::as_i64) == expected_id
-                        && category.get("order").and_then(Value::as_i64) == expected_position
-                })
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            // Suwayomi clamps a position past its last category instead of rejecting it, so an
+            // order counted on a device with more categories lands last. Confirm that slot, or the
+            // row blocks forever and keeps `/v1/sync/status` from ever turning ready.
+            let Some(last_order) = categories
+                .iter()
+                .filter_map(|category| category.get("order").and_then(Value::as_i64))
+                .max()
+            else {
+                return false;
+            };
+            let expected_position = Some(expected_position.min(last_order));
+            categories.iter().any(|category| {
+                category.get("id").and_then(Value::as_i64) == expected_id
+                    && category.get("order").and_then(Value::as_i64) == expected_position
+            })
         }
     }
 }
@@ -853,6 +910,61 @@ mod tests {
     }
 
     #[test]
+    fn runtime_outages_retry_within_minutes() {
+        assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 0), BASE_RETRY_MS);
+        assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 9), MAX_RUNTIME_RETRY_MS);
+        assert_eq!(retry_delay_ms("confirmation_mismatch", 9), BASE_RETRY_MS << 8);
+    }
+
+    #[tokio::test]
+    async fn startup_rearms_only_rows_waiting_on_the_runtime() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, status, error, next) in [
+            ("outage", "retry", Some(RUNTIME_UNAVAILABLE), 9_000),
+            ("due", "retry", Some(RUNTIME_UNAVAILABLE), 100),
+            ("mismatch", "retry", Some("confirmation_mismatch"), 9_000),
+            ("blocked", "blocked", Some(RUNTIME_UNAVAILABLE), 9_000),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7}', 'comic.library', ?, 1, ?, 9, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(status)
+            .bind(next)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(rearm_runtime_retries(&pool, 500).await.unwrap(), 1);
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT operation_id, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("blocked".to_string(), 9, 9_000),
+                ("due".to_string(), 9, 100),
+                ("mismatch".to_string(), 9, 9_000),
+                ("outage".to_string(), 9, 500),
+            ]
+        );
+    }
+
+    #[test]
     fn delete_category_confirms_when_suwayomi_no_longer_has_it() {
         let variables = serde_json::json!({ "id": 7 });
         assert!(projection_confirmed(
@@ -936,6 +1048,28 @@ mod tests {
     }
 
     #[test]
+    fn category_order_past_the_end_confirms_at_the_clamped_last_slot() {
+        let categories = serde_json::json!({
+            "updateCategoryOrder": { "categories": [
+                { "id": 0, "order": 0 },
+                { "id": 1, "order": 1 },
+                { "id": 2, "order": 2 },
+                { "id": 3, "order": 3 }
+            ] }
+        });
+        assert!(projection_confirmed(
+            CommandOperation::UpdateCategoryOrder,
+            &serde_json::json!({ "id": 3, "position": 6 }),
+            &categories,
+        ));
+        assert!(!projection_confirmed(
+            CommandOperation::UpdateCategoryOrder,
+            &serde_json::json!({ "id": 2, "position": 4 }),
+            &categories,
+        ));
+    }
+
+    #[test]
     fn category_assignment_id_matches_mobile_derivation() {
         assert_eq!(
             comic_category_assignment_id(
@@ -996,7 +1130,10 @@ mod tests {
             CommandOperation::UpdateCategoryOrder,
             &serde_json::json!({ "id": 3, "position": 2 }),
             &serde_json::json!({
-                "updateCategoryOrder": { "categories": [{ "id": 3, "order": 1 }] }
+                "updateCategoryOrder": { "categories": [
+                    { "id": 1, "order": 2 },
+                    { "id": 3, "order": 1 }
+                ] }
             }),
         ));
     }

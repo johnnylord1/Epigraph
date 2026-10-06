@@ -42,6 +42,7 @@ mdns-sd = "0.19"
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Cryptography",
   "Win32_Storage_FileSystem",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
@@ -75,6 +76,9 @@ tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+# Same versions wry uses; the Cloudflare solver reads WebView2 cookies asynchronously.
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [profile.release]
 codegen-units = 1

@@ -23,6 +23,7 @@ use crate::syncd::models::{
     SharedAppState,
 };
 use crate::syncd::routes::assets::{validate_asset_reference, AssetReferenceError};
+use crate::syncd::{suwayomi_tracking_mirror, tracking};
 
 pub async fn post_mutations(
     State(state): State<SharedAppState>,
@@ -38,6 +39,23 @@ pub async fn post_mutations(
         return Err(AppError::BadRequest(
             "Mutations request must include at least one mutation.".to_string(),
         ));
+    }
+    // Tracker logins only travel through /v1/tracker-credentials.  A tracking record that
+    // carries anything credential-shaped is refused before any mutation of the batch applies.
+    for mutation in &request.mutations {
+        if let MutationInput::ComicTracking {
+            patch: Some(patch), ..
+        }
+        | MutationInput::NovelTracking {
+            patch: Some(patch), ..
+        } = mutation
+        {
+            if let Some(field) = tracking::credential_field_name(patch) {
+                return Err(AppError::BadRequest(format!(
+                    "Tracking records must not carry credentials (field '{field}')."
+                )));
+            }
+        }
     }
 
     let _mutation_guard = state.mutation_gate.lock().await;
@@ -301,13 +319,14 @@ pub async fn post_mutations(
                         results.push(rejected_result(&mutation, error));
                         continue;
                     }
-                    db::apply_book_category_mutation(
+                    match db::apply_book_category_mutation(
                         &state.pool,
                         &session,
                         &base.scope_id,
                         &base.entity_id,
                         patch,
                         base.lamport,
+                        base.event_clock.as_ref(),
                         state.config.retention_window,
                     )
                     .await
@@ -315,20 +334,61 @@ pub async fn post_mutations(
                         AppError::Internal(format!(
                             "Failed to persist book category mutation: {error}"
                         ))
-                    })?
+                    })? {
+                        db::CausalMutationWriteOutcome::Applied(outcome) => outcome,
+                        db::CausalMutationWriteOutcome::Superseded {
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        } => {
+                            current_server_version = current_server_version.max(server_version);
+                            results.push(superseded_result(
+                                &mutation,
+                                record,
+                                winning_clock,
+                                server_version,
+                                applied_lamport,
+                            ));
+                            continue;
+                        }
+                    }
                 }
-                MutationOperation::Delete => db::delete_book_category_mutation(
-                    &state.pool,
-                    &session,
-                    &base.scope_id,
-                    &base.entity_id,
-                    base.lamport,
-                    state.config.retention_window,
-                )
-                .await
-                .map_err(|error| {
-                    AppError::Internal(format!("Failed to delete book category mutation: {error}"))
-                })?,
+                MutationOperation::Delete => {
+                    match db::delete_book_category_mutation(
+                        &state.pool,
+                        &session,
+                        &base.scope_id,
+                        &base.entity_id,
+                        base.lamport,
+                        base.event_clock.as_ref(),
+                        state.config.retention_window,
+                    )
+                    .await
+                    .map_err(|error| {
+                        AppError::Internal(format!(
+                            "Failed to delete book category mutation: {error}"
+                        ))
+                    })? {
+                        db::CausalMutationWriteOutcome::Applied(outcome) => outcome,
+                        db::CausalMutationWriteOutcome::Superseded {
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        } => {
+                            current_server_version = current_server_version.max(server_version);
+                            results.push(superseded_result(
+                                &mutation,
+                                record,
+                                winning_clock,
+                                server_version,
+                                applied_lamport,
+                            ));
+                            continue;
+                        }
+                    }
+                }
             },
             MutationInput::BookCategoryAssignment { base, patch } => match base.op {
                 MutationOperation::Merge => {
@@ -1442,11 +1502,28 @@ pub async fn post_mutations(
                         &base.entity_id,
                         patch,
                         base.lamport,
+                        base.event_clock.as_ref(),
                         state.config.retention_window,
                     )
                     .await
                     {
-                        Ok(outcome) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Applied(outcome)) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Superseded {
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        }) => {
+                            current_server_version = current_server_version.max(server_version);
+                            results.push(superseded_result(
+                                &mutation,
+                                record,
+                                winning_clock,
+                                server_version,
+                                applied_lamport,
+                            ));
+                            continue;
+                        }
                         Err(error) => {
                             if let Some(error) = novel_category_persist_error_detail(error) {
                                 results.push(rejected_result(&mutation, error));
@@ -1476,11 +1553,28 @@ pub async fn post_mutations(
                         &base.scope_id,
                         &base.entity_id,
                         base.lamport,
+                        base.event_clock.as_ref(),
                         state.config.retention_window,
                     )
                     .await
                     {
-                        Ok(outcome) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Applied(outcome)) => outcome,
+                        Ok(db::CausalMutationWriteOutcome::Superseded {
+                            record,
+                            winning_clock,
+                            server_version,
+                            applied_lamport,
+                        }) => {
+                            current_server_version = current_server_version.max(server_version);
+                            results.push(superseded_result(
+                                &mutation,
+                                record,
+                                winning_clock,
+                                server_version,
+                                applied_lamport,
+                            ));
+                            continue;
+                        }
                         Err(error) => {
                             if let Some(error) = novel_category_persist_error_detail(error) {
                                 results.push(rejected_result(&mutation, error));
@@ -1872,6 +1966,21 @@ pub async fn post_mutations(
                     }
                 }
             },
+            MutationInput::ComicTracking { base, patch }
+            | MutationInput::NovelTracking { base, patch } => {
+                match persist_tracking_record(&state, &session, &mutation, base, patch.as_ref())
+                    .await?
+                {
+                    ComicSyncRouteOutcome::Applied(outcome) => outcome,
+                    ComicSyncRouteOutcome::Result(result) => {
+                        if let Some(version) = result.applied_server_version {
+                            current_server_version = current_server_version.max(version);
+                        }
+                        results.push(result);
+                        continue;
+                    }
+                }
+            }
         };
 
         current_server_version = outcome.envelope.server_version;
@@ -2054,6 +2163,122 @@ async fn persist_comic_sync_state<T: Serialize>(
     }
 }
 
+async fn persist_tracking_record(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    mutation: &MutationInput,
+    base: &MutationBase,
+    patch: Option<&Value>,
+) -> Result<ComicSyncRouteOutcome, AppError> {
+    let entity_type = mutation.entity_type().as_str();
+    let outcome = match base.op {
+        MutationOperation::Merge => {
+            let Some(patch) = patch else {
+                return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation,
+                    error_detail(
+                        "MISSING_PATCH",
+                        "Tracking merge mutations must include the full record.",
+                        None,
+                    ),
+                )));
+            };
+            let identity =
+                match tracking::validate_tracking_patch(entity_type, &base.entity_id, patch) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                            mutation,
+                            error_detail(error.code, &error.message, None),
+                        )));
+                    }
+                };
+            db::apply_tracking_record_mutation(
+                &state.pool,
+                session,
+                &base.scope_id,
+                entity_type,
+                &base.entity_id,
+                &identity.work_id,
+                &identity.tracker_key,
+                patch,
+                base.lamport,
+                base.event_clock.as_ref(),
+                state.config.retention_window,
+            )
+            .await
+        }
+        MutationOperation::Delete => {
+            if patch.is_some() {
+                return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation,
+                    error_detail(
+                        "DELETE_PATCH_NOT_ALLOWED",
+                        "Tracking delete mutations must not include a patch.",
+                        None,
+                    ),
+                )));
+            }
+            if tracking::parse_tracking_entity_id(entity_type, &base.entity_id).is_none() {
+                return Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation,
+                    error_detail(
+                        "INVALID_TRACKING_ID",
+                        &format!(
+                            "Tracking entityId must be '{entity_type}::<workId>::<trackerKey>'."
+                        ),
+                        None,
+                    ),
+                )));
+            }
+            db::delete_tracking_record_mutation(
+                &state.pool,
+                session,
+                &base.scope_id,
+                entity_type,
+                &base.entity_id,
+                base.lamport,
+                base.event_clock.as_ref(),
+                state.config.retention_window,
+            )
+            .await
+        }
+    };
+    match outcome {
+        Ok(db::CausalMutationWriteOutcome::Applied(outcome)) => {
+            if entity_type == tracking::COMIC_TRACKING {
+                suwayomi_tracking_mirror::request_immediate_mirror();
+            }
+            Ok(ComicSyncRouteOutcome::Applied(outcome))
+        }
+        Ok(db::CausalMutationWriteOutcome::Superseded {
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        }) => Ok(ComicSyncRouteOutcome::Result(superseded_result(
+            mutation,
+            record,
+            winning_clock,
+            server_version,
+            applied_lamport,
+        ))),
+        Err(error) => {
+            let diagnostic = error.to_string();
+            if let Some(error) = comic_state_persist_error_detail(error) {
+                Ok(ComicSyncRouteOutcome::Result(rejected_result(
+                    mutation, error,
+                )))
+            } else {
+                tracing::error!(error = %diagnostic, "failed to persist tracking mutation");
+                Err(AppError::Internal(
+                    "Failed to persist tracking mutation.".to_string(),
+                ))
+            }
+        }
+    }
+}
+
 fn set_canonical_receipt(
     session: &mut AuthenticatedSession,
     requested_entity_id: &str,
@@ -2182,7 +2407,8 @@ fn validate_mutation_base(
         | MutationEntityType::NovelRepository
         | MutationEntityType::NovelPlugin
         | MutationEntityType::NovelCategory
-        | MutationEntityType::NovelCategoryAssignment => {
+        | MutationEntityType::NovelCategoryAssignment
+        | MutationEntityType::NovelTracking => {
             if !scope_id.starts_with("novels:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -2200,7 +2426,8 @@ fn validate_mutation_base(
         | MutationEntityType::ComicCategoryAssignment
         | MutationEntityType::ComicChapterState
         | MutationEntityType::ComicHistory
-        | MutationEntityType::ComicPageBookmark => {
+        | MutationEntityType::ComicPageBookmark
+        | MutationEntityType::ComicTracking => {
             if !scope_id.starts_with("comics:profile:") {
                 return Some(error_detail(
                     "INVALID_SCOPE_FOR_ENTITY",
@@ -8041,5 +8268,245 @@ mod tests {
         let other_profile = json_body(other_profile).await;
         assert!(other_profile["entities"].as_array().unwrap().is_empty());
         assert!(other_profile["tombstones"].as_array().unwrap().is_empty());
+    }
+
+    fn tracking_record(entity_type: &str, work_id: &str, tracker_key: &str) -> Value {
+        let work_field = if entity_type == "comic.tracking" {
+            "comicId"
+        } else {
+            "novelId"
+        };
+        let mut record = json!({
+            "trackingId": format!("{entity_type}::{work_id}::{tracker_key}"),
+            "trackerKey": tracker_key,
+            "remoteId": 4242,
+            "libraryId": null,
+            "title": "Tracked title",
+            "remoteUrl": "https://anilist.co/manga/4242",
+            "status": 1,
+            "progress": 12.5,
+            "totalChapters": 100,
+            "score": 80.0,
+            "startedAtMs": 0,
+            "finishedAtMs": 0,
+            "updatedAtMs": 1_790_000_000_000_i64
+        });
+        record[work_field] = json!(work_id);
+        record
+    }
+
+    fn tracking_batch(request_id: &str, entity_type: &str, scope_id: &str, patch: Value) -> Value {
+        json!({
+            "requestId": request_id,
+            "mutations": [{
+                "entityType": entity_type,
+                "clientMutationId": format!("{request_id}-1"),
+                "scopeId": scope_id,
+                "entityId": patch["trackingId"].clone(),
+                "lamport": 1,
+                "eventClock": {
+                    "physicalMs": 1_790_000_000_000_i64,
+                    "logical": 0,
+                    "deviceGenerationId": "mobile-a"
+                },
+                "patch": patch
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn tracking_records_are_validated_snapshotted_and_replayed_without_credentials() {
+        let (_temp, state) = build_state().await;
+        let app = build_test_router(state);
+        let comic = tracking_record("comic.tracking", "comic:abc123", "anilist");
+        let novel = tracking_record("novel.tracking", "novel:def456", "novel_updates");
+
+        for (entity_type, scope, patch) in [
+            ("comic.tracking", "comics:profile:main", comic.clone()),
+            ("novel.tracking", "novels:profile:main", novel.clone()),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    tracking_batch(&format!("{entity_type}-ok"), entity_type, scope, patch),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload = json_body(response).await;
+            assert_eq!(payload["results"][0]["status"], "applied", "{payload}");
+        }
+
+        // Every credential-looking field is a 400 for the whole batch, nested or not.
+        for field in ["token", "password", "accessToken", "refreshToken", "cookie"] {
+            let mut leaked = comic.clone();
+            leaked["extra"] = json!({ field: "s3cr3t-value" });
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    tracking_batch(
+                        &format!("leak-{field}"),
+                        "comic.tracking",
+                        "comics:profile:main",
+                        leaked,
+                    ),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{field}");
+        }
+
+        // Identity, key and numeric validation reject the mutation.
+        let mut wrong_work = comic.clone();
+        wrong_work["comicId"] = json!("comic:other");
+        let mut bad_number = comic.clone();
+        bad_number["progress"] = json!("12");
+        let bad_key = tracking_record("comic.tracking", "comic:abc123", "AniList");
+        let mut wrong_prefix = comic.clone();
+        wrong_prefix["trackingId"] = json!("novel.tracking::comic:abc123::anilist");
+        for (name, patch) in [
+            ("work", wrong_work),
+            ("number", bad_number),
+            ("key", bad_key),
+            ("prefix", wrong_prefix),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(request_with_json(
+                    "/v1/mutations",
+                    "main-token",
+                    tracking_batch(
+                        &format!("invalid-{name}"),
+                        "comic.tracking",
+                        "comics:profile:main",
+                        patch,
+                    ),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{name}");
+            let payload = json_body(response).await;
+            assert_eq!(
+                payload["results"][0]["status"], "rejected",
+                "{name}: {payload}"
+            );
+        }
+
+        // A comic tracking record cannot live in a novel scope.
+        let response = app
+            .clone()
+            .oneshot(request_with_json(
+                "/v1/mutations",
+                "main-token",
+                tracking_batch(
+                    "wrong-scope",
+                    "comic.tracking",
+                    "novels:profile:main",
+                    comic.clone(),
+                ),
+            ))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(
+            payload["results"][0]["error"]["code"],
+            "INVALID_SCOPE_FOR_ENTITY"
+        );
+
+        let snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=comics:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(snapshot.status(), StatusCode::OK);
+        let snapshot = json_body(snapshot).await;
+        let entities = snapshot["entities"].as_array().unwrap();
+        assert_eq!(entities.len(), 1, "{snapshot}");
+        assert_eq!(entities[0]["entityType"], "comic.tracking");
+        assert_eq!(
+            entities[0]["entityId"],
+            "comic.tracking::comic:abc123::anilist"
+        );
+        assert_eq!(entities[0]["record"]["progress"], 12.5);
+        assert!(!snapshot.to_string().contains("s3cr3t-value"));
+
+        let novel_snapshot = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=novels:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let novel_snapshot = json_body(novel_snapshot).await;
+        assert!(novel_snapshot["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| entity["entityType"] == "novel.tracking"));
+
+        // Delete tombstones the record and replays through /v1/changes.
+        let delete = json!({
+            "requestId": "tracking-delete",
+            "mutations": [{
+                "entityType": "comic.tracking",
+                "clientMutationId": "tracking-delete-1",
+                "scopeId": "comics:profile:main",
+                "entityId": "comic.tracking::comic:abc123::anilist",
+                "op": "delete",
+                "lamport": 2,
+                "eventClock": {
+                    "physicalMs": 1_790_000_000_001_i64,
+                    "logical": 0,
+                    "deviceGenerationId": "mobile-a"
+                }
+            }]
+        });
+        let response = app
+            .clone()
+            .oneshot(request_with_json("/v1/mutations", "main-token", delete))
+            .await
+            .unwrap();
+        let payload = json_body(response).await;
+        assert_eq!(payload["results"][0]["status"], "applied", "{payload}");
+
+        let changes = app
+            .clone()
+            .oneshot(request_without_body(
+                "/v1/changes?scopeId=comics%3Aprofile%3Amain&sinceVersion=0",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(changes.status(), StatusCode::OK);
+        let changes = json_body(changes).await;
+        let changes_list = changes["changes"].as_array().unwrap();
+        assert_eq!(changes_list.len(), 2, "{changes}");
+        assert!(changes_list
+            .iter()
+            .all(|change| change["entityType"] == "comic.tracking"));
+        assert!(!changes.to_string().contains("s3cr3t-value"));
+
+        let snapshot = app
+            .oneshot(request_without_body(
+                "/v1/snapshot?scopeId=comics:profile:main",
+                "main-token",
+                None,
+            ))
+            .await
+            .unwrap();
+        let snapshot = json_body(snapshot).await;
+        assert!(snapshot["entities"].as_array().unwrap().is_empty());
+        assert_eq!(snapshot["tombstones"][0]["entityType"], "comic.tracking");
     }
 }
