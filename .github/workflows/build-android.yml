@@ -30,7 +30,7 @@ jobs:
   gates:
     name: Android gates
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: mobile
@@ -65,8 +65,12 @@ jobs:
       - name: App unit tests
         run: ./gradlew :app:testDevDebugUnitTest
 
+      # Lint analyzes three variants at once; the Kotlin daemon left by the earlier steps and
+      # parallel workers ran the hosted runner out of memory, so it runs alone and narrower.
       - name: Lint
-        run: ./gradlew :app:lintDevDebug
+        run: |
+          pkill -f KotlinCompileDaemon || true
+          ./gradlew :app:lintDevDebug --no-parallel --max-workers=2
 
       - name: Assemble dev debug
         run: ./gradlew :app:assembleDevDebug
