@@ -2776,6 +2776,8 @@
   "syncd_action_updating": "Updating...",
   "syncd_action_removing": "Removing...",
   "syncd_action_disconnect": "Disconnect",
+  "syncd_action_revokeDevice": "Revoke device",
+  "syncd_action_revokeDeviceConfirm": "Revoke? It must pair again",
   "syncd_action_forgetting": "Forgetting...",
   "syncd_action_forget": "Forget",
   "syncd_error_profileRequired": "A local profile must be active before connecting to another desktop.",

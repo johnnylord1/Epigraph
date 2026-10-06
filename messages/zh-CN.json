@@ -2776,6 +2776,8 @@
   "syncd_action_updating": "正在更新...",
   "syncd_action_removing": "正在移除...",
   "syncd_action_disconnect": "断开连接",
+  "syncd_action_revokeDevice": "撤销设备",
+  "syncd_action_revokeDeviceConfirm": "确定撤销？设备需要重新配对",
   "syncd_action_forgetting": "正在忘记...",
   "syncd_action_forget": "忘记",
   "syncd_error_profileRequired": "连接另一台桌面设备前，必须先启用本地配置文件。",

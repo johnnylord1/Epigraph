@@ -268,6 +268,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             post(pairing::post_paired_device_scopes),
         )
         .route(
+            "/v1/pairing/devices/revoke",
+            post(pairing::post_paired_device_revoke),
+        )
+        .route(
             "/v1/local/authority-token",
             post(local::post_local_authority_token),
         )

@@ -26,7 +26,7 @@ use crate::syncd::middleware::{
     LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
 };
 use crate::syncd::models::{
-    BootstrapPayloadResponse, ErrorBody, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
+    BootstrapPayloadResponse, ErrorBody, PairedDeviceRevokeRequest, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
     PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
     PairingHostDecisionResponse, PairingPlatform, PairingSessionStatus, PairingStatusEvent,
     PairingStatusEventType, SyncdClientDiscoveryContract, SyncdClientDiscoveryGuidanceContract,
@@ -892,6 +892,24 @@ pub async fn syncd_update_paired_device_granted_scopes(
         },
     )
     .await
+}
+
+/// Revokes a paired device: its tokens stop working and it has to pair again.
+#[tauri::command]
+pub async fn syncd_revoke_paired_device(device_id: String, app: AppHandle) -> Result<(), String> {
+    let runtime = host_core(&app).await?;
+    let client = insecure_local_client()?;
+    send_json(
+        client.post(format!(
+            "{}/v1/pairing/devices/revoke",
+            runtime.local_base_url
+        )),
+        &PairedDeviceRevokeRequest { device_id },
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

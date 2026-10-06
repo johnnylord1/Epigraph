@@ -7452,6 +7452,7 @@ pub fn run() {
             syncd_desktop::syncd_publish_tracker_login,
             syncd_desktop::syncd_publish_tracker_logout,
             syncd_desktop::syncd_update_paired_device_granted_scopes,
+            syncd_desktop::syncd_revoke_paired_device,
             syncd_desktop::syncd_list_persisted_sync_sessions,
             syncd_desktop::syncd_revalidate_persisted_sync_sessions,
             syncd_desktop::syncd_disconnect_persisted_session,

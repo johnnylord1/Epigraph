@@ -1722,6 +1722,38 @@ pub async fn list_paired_devices(
     Ok(devices)
 }
 
+/// Revokes every paired token of a device and its trust, so its next request is rejected and it
+/// must pair again. Local authority tokens are not paired devices and stay untouched.
+pub async fn revoke_paired_device(pool: &sqlx::SqlitePool, device_id: &str) -> anyhow::Result<bool> {
+    let now_ms = now_ms();
+    let mut tx = begin_write(pool).await?;
+    let revoked = sqlx::query(
+        r#"
+        UPDATE paired_device_tokens
+        SET revoked_at_ms = ?
+        WHERE device_id = ?
+          AND revoked_at_ms IS NULL
+          AND granted_via != 'local-authority'
+        "#,
+    )
+    .bind(now_ms)
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if revoked > 0 {
+        sqlx::query(
+            "UPDATE trusted_devices SET revoked_at_ms = ? WHERE device_id = ? AND revoked_at_ms IS NULL",
+        )
+        .bind(now_ms)
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(revoked > 0)
+}
+
 pub async fn update_paired_device_granted_scopes(
     pool: &sqlx::SqlitePool,
     device_id: &str,

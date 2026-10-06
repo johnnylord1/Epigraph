@@ -92,6 +92,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdRevalidateSession: vi.fn(),
   syncdRevalidatePersistedSyncSessions: vi.fn(async () => []),
   syncdSetActiveReplicationSession: vi.fn(),
+  syncdRevokePairedDevice: vi.fn(),
   syncdStartHostPairing: vi.fn(async () => hostState),
   syncdUpdatePairedDeviceGrantedScopes: vi.fn(),
 }));
@@ -108,6 +109,7 @@ import {
   syncdGetSessionCatalog,
   syncdHostDecidePairing,
   syncdListPairedDevices,
+  syncdRevokePairedDevice,
   syncdUpdatePairedDeviceGrantedScopes,
 } from "../../lib/syncdDesktop";
 import type { SyncdReplicationSnapshot } from "../../lib/syncdDesktop";
@@ -505,6 +507,43 @@ describe("SyncdConnectionPanel", () => {
         "main",
         ["comics:profile:main"],
       );
+    });
+  });
+
+  test("revokes a paired device only after the second click", async () => {
+    vi.mocked(syncdListPairedDevices).mockResolvedValue([{
+      deviceId: "android-1",
+      deviceName: "Pixel",
+      platform: "android" as const,
+      profileId: "main",
+      grantedScopes: ["comics:profile:main"],
+      lastSeenAtMs: Date.now(),
+    }]);
+    vi.mocked(syncdRevokePairedDevice).mockResolvedValue(undefined);
+
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "android-1",
+      });
+    });
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
+    const revoke = await within(dialog).findByTestId("syncd-revoke-paired-device");
+
+    await fireEvent.click(revoke);
+    expect(syncdRevokePairedDevice).not.toHaveBeenCalled();
+    await fireEvent.click(within(dialog).getByTestId("syncd-revoke-paired-device"));
+
+    await waitFor(() => expect(syncdRevokePairedDevice).toHaveBeenCalledWith("android-1"));
+    await waitFor(() => {
+      expect(within(dialog).queryByTestId("syncd-revoke-paired-device")).toBeNull();
     });
   });
 

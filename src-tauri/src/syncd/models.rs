@@ -581,6 +581,12 @@ pub struct PairedDeviceScopesUpdateRequest {
     pub granted_scopes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedDeviceRevokeRequest {
+    pub device_id: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapSessionCreateRequest {

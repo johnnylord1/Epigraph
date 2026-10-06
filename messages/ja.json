@@ -2776,6 +2776,8 @@
   "syncd_action_updating": "更新中...",
   "syncd_action_removing": "削除中...",
   "syncd_action_disconnect": "切断",
+  "syncd_action_revokeDevice": "デバイスを取り消す",
+  "syncd_action_revokeDeviceConfirm": "取り消しますか？再ペアリングが必要です",
   "syncd_action_forgetting": "登録解除中...",
   "syncd_action_forget": "登録解除",
   "syncd_error_profileRequired": "別のデスクトップに接続するには、ローカルプロファイルを有効にしてください。",

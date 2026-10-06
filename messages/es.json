@@ -2776,6 +2776,8 @@
   "syncd_action_updating": "Actualizando...",
   "syncd_action_removing": "Eliminando...",
   "syncd_action_disconnect": "Desconectar",
+  "syncd_action_revokeDevice": "Revocar dispositivo",
+  "syncd_action_revokeDeviceConfirm": "¿Revocar? Deberá emparejarse de nuevo",
   "syncd_action_forgetting": "Olvidando...",
   "syncd_action_forget": "Olvidar",
   "syncd_error_profileRequired": "Debe haber un perfil local activo antes de conectarse a otro equipo.",

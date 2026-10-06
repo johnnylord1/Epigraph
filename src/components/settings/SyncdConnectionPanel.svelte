@@ -32,6 +32,7 @@
     syncdSetActiveReplicationSession,
     syncdStartHostPairing,
     syncdUpdatePairedDeviceGrantedScopes,
+    syncdRevokePairedDevice,
     type PairingHostDecision,
     type PersistedSyncSessionView,
     type SyncdConnectState,
@@ -77,6 +78,8 @@
   let loadingPersisted = $state(false);
   let loadingPairedDevices = $state(false);
   let pairedDeviceScopeBusy = $state<string | null>(null);
+  /** Device whose revoke button was pressed once; a second press revokes it. */
+  let revokeArmedDeviceId = $state<string | null>(null);
   let connectBusy = $state(false);
   let hostDecisionBusy = $state<PairingHostDecision | null>(null);
   let revalidateBusy = $state(false);
@@ -585,6 +588,25 @@
     } catch (error) {
       panelError = { cause: error, fallback: "ui_syncActionFailed" };
     } finally {
+      pairedDeviceScopeBusy = null;
+    }
+  }
+
+  async function revokePairedDevice(device: SyncdPairedDeviceView) {
+    if (pairedDeviceScopeBusy) return;
+    if (revokeArmedDeviceId !== device.deviceId) {
+      revokeArmedDeviceId = device.deviceId;
+      return;
+    }
+    pairedDeviceScopeBusy = `${device.deviceId}:${device.profileId}`;
+    panelError = null;
+    try {
+      await syncdRevokePairedDevice(device.deviceId);
+      pairedDevices = pairedDevices.filter((candidate) => candidate.deviceId !== device.deviceId);
+    } catch (error) {
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
+    } finally {
+      revokeArmedDeviceId = null;
       pairedDeviceScopeBusy = null;
     }
   }
@@ -1253,7 +1275,7 @@
             <div><dt>{$_("ui_advertisedOrigin")}</dt><dd class="is-mono">{activeSession?.canonicalOrigin ?? connect?.remoteOrigin ?? host?.advertisedBaseUrl ?? $_("syncd_status_waiting")}</dd></div>
             <div><dt>{$_("ui_lastConnected")}</dt><dd>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</dd></div>
           </dl>
-          {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}</div>{/each}</div>{/if}
+          {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}<button class="syncd-btn" type="button" data-testid="syncd-revoke-paired-device" disabled={pairedDeviceScopeBusy !== null} onclick={() => revokePairedDevice(device)}>{revokeArmedDeviceId === device.deviceId ? $_("syncd_action_revokeDeviceConfirm") : $_("syncd_action_revokeDevice")}</button></div>{/each}</div>{/if}
           {#if persistedSessions.length > 0}<div class="syncd-hidden-value" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
         </section>
       </div>

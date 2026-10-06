@@ -4,6 +4,7 @@ use axum::extract::{
     ws::{close_code, CloseFrame, Message, WebSocket, WebSocketUpgrade},
     ConnectInfo, Path, Query, State,
 };
+use axum::http::StatusCode;
 use axum::response::{Json, Response};
 use futures_util::StreamExt;
 use std::net::SocketAddr;
@@ -11,7 +12,7 @@ use std::net::SocketAddr;
 use crate::syncd::db::{self, PairingClaimError, PairingClaimOutcome};
 use crate::syncd::middleware::validate_client_version_fields;
 use crate::syncd::models::{
-    AppError, ErrorDetail, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
+    AppError, ErrorDetail, PairedDeviceRevokeRequest, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
     PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
     PairingHostDecisionResponse, PairingSessionStatus, PairingStatusEvent, PairingStatusEventType,
     PairingStatusSubscribeQuery, PairingTokenResponse, SharedAppState, SyncdPairedDeviceView,
@@ -194,6 +195,30 @@ pub async fn post_paired_device_scopes(
         )
     })?;
     Ok(Json(device))
+}
+
+pub async fn post_paired_device_revoke(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<PairedDeviceRevokeRequest>,
+) -> Result<StatusCode, AppError> {
+    require_loopback_control(remote_addr, "Paired device revocation")?;
+    if request.device_id.trim().is_empty() {
+        return Err(AppError::BadRequest(
+            "Paired device id must not be empty.".to_string(),
+        ));
+    }
+    let revoked = db::revoke_paired_device(&state.pool, &request.device_id)
+        .await
+        .map_err(|error| AppError::Internal(format!("Failed to revoke paired device: {error}")))?;
+    if !revoked {
+        return Err(AppError::not_found(
+            "PAIRED_DEVICE_NOT_FOUND",
+            "Paired device was not found.",
+            None,
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn require_loopback_control(remote_addr: SocketAddr, action: &str) -> Result<(), AppError> {
@@ -1127,6 +1152,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(novels.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn loopback_revocation_rejects_the_device_until_it_pairs_again() {
+        let (_temp, state) = build_state().await;
+        create_pairing_session(
+            &state.pool,
+            "session-revoke",
+            "main",
+            "123456",
+            "fingerprint",
+            db::now_ms() + 60_000,
+        )
+        .await
+        .unwrap();
+        let app = build_test_router(state.clone());
+        let requested = ["comics:profile:main"];
+        let claim = || {
+            claim_request_with_scopes(
+                "session-revoke",
+                "123456",
+                "android-revoked",
+                "Revoked Pixel",
+                Some(&requested),
+            )
+        };
+        app.clone().oneshot(claim()).await.unwrap();
+        approve_pairing_session(&state.pool, "session-revoke")
+            .await
+            .unwrap();
+        let approved = json_body(app.clone().oneshot(claim()).await.unwrap()).await;
+        let access_token = approved["token"]["accessToken"].as_str().unwrap().to_string();
+        let changes = "/v1/changes?scopeId=comics%3Aprofile%3Amain&sinceVersion=0";
+        let before = app
+            .clone()
+            .oneshot(authorized_get(changes, &access_token))
+            .await
+            .unwrap();
+        assert_eq!(before.status(), StatusCode::OK);
+
+        let revoke = || {
+            loopback_request(
+                "POST",
+                "/v1/pairing/devices/revoke",
+                Some(json!({ "deviceId": "android-revoked" })),
+            )
+        };
+        let revoked = app.clone().oneshot(revoke()).await.unwrap();
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+
+        let after = app
+            .clone()
+            .oneshot(authorized_get(changes, &access_token))
+            .await
+            .unwrap();
+        assert_eq!(after.status(), StatusCode::UNAUTHORIZED);
+        let catalog = json_body(
+            app.clone()
+                .oneshot(loopback_request("GET", "/v1/pairing/devices", None))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert!(catalog
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["deviceId"] != "android-revoked"));
+        assert_eq!(app.oneshot(revoke()).await.unwrap().status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

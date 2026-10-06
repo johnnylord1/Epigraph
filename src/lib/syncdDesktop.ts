@@ -265,6 +265,10 @@ export function syncdUpdatePairedDeviceGrantedScopes(
   });
 }
 
+export function syncdRevokePairedDevice(deviceId: string): Promise<void> {
+  return invoke("syncd_revoke_paired_device", { deviceId });
+}
+
 export function syncdListPersistedSyncSessions(
   profileId: string,
 ): Promise<PersistedSyncSession[]> {
