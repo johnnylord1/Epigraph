@@ -415,6 +415,11 @@ pub fn file_login_change(
     if credential.deleted {
         return (credential.desktop_revision != 0).then_some((*tracker_id, None));
     }
+    // Suwayomi, like the phone, is logged in only with a username and a password; a leftover
+    // token alone is a logout.
+    if credential.username.is_empty() || credential.password.is_empty() {
+        return Some((*tracker_id, None));
+    }
     Some((
         *tracker_id,
         Some(CredentialValues {
@@ -1860,6 +1865,12 @@ mod tests {
             ..never_applied_logout
         };
         assert_eq!(file_login_change(&logout), Some((3, None)));
+        let token_only = StoredTrackerCredential {
+            username: String::new(),
+            password: String::new(),
+            ..login("mangaupdates")
+        };
+        assert_eq!(file_login_change(&token_only), Some((7, None)));
     }
 
     #[test]
