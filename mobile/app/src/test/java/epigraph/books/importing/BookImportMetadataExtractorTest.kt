@@ -63,4 +63,26 @@ class BookImportMetadataExtractorTest {
         assertEquals("PDF author", metadata.author)
         assertEquals(null, metadata.description)
     }
+
+    @Test
+    fun `decodes utf-16 literal titles written with a byte order mark`() {
+        val pdf = File(directory, "scan.pdf")
+        val title = byteArrayOf(0xfe.toByte(), 0xff.toByte()) + "Livro Ç".toByteArray(Charsets.UTF_16BE)
+        Files.write(pdf.toPath(), "%PDF-1.4 /Title (".toByteArray() + title + ") /Author (A)".toByteArray())
+
+        assertEquals("Livro Ç", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
+    }
+
+    @Test
+    fun `finds the info dictionary at the end of a large pdf`() {
+        val pdf = File(directory, "large.pdf")
+        pdf.outputStream().use { output ->
+            output.write("%PDF-1.7
+".toByteArray())
+            output.write(ByteArray(5 * 1024 * 1024) { ' '.code.toByte() })
+            output.write("/Title (Tail title)".toByteArray())
+        }
+
+        assertEquals("Tail title", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
+    }
 }

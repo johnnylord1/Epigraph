@@ -1412,6 +1412,7 @@
     <string name="book_reader_selection_unavailable">A seleção de texto não está disponível nesta página</string>
     <string name="book_reader_pdf_no_text">Esta página do PDF não tem texto legível ou o OCR não conseguiu reconhecê-lo</string>
     <string name="book_reader_select_text_title">Selecionar texto (OCR quando necessário)</string>
+    <string name="book_reader_pdf_reading_text">Lendo o texto da página…</string>
     <string name="book_reader_highlight_selection">Destacar seleção</string>
     <string name="book_reader_search_hint">Pesquisar neste livro</string>
     <string name="book_reader_no_results">Nenhum resultado</string>

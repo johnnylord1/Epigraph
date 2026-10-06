@@ -68,11 +68,19 @@ object BookImportMetadataExtractor {
     }
 
     private fun extractPdf(file: File, fallbackDisplayName: String): BookImportMetadata {
-        val scanLength = minOf(file.length(), MAX_PDF_METADATA_SCAN_BYTES).toInt()
+        val length = file.length()
+        val scanLength = minOf(length, MAX_PDF_METADATA_SCAN_BYTES).toInt()
         if (scanLength <= 0) return fallback(fallbackDisplayName)
-        val bytes = ByteArray(scanLength)
-        RandomAccessFile(file, "r").use { input -> input.readFully(bytes) }
-        val source = bytes.toString(StandardCharsets.ISO_8859_1)
+        // The info dictionary is usually written last, so a large PDF is scanned at both ends.
+        val source = RandomAccessFile(file, "r").use { input ->
+            val head = ByteArray(scanLength).also(input::readFully)
+            if (length <= MAX_PDF_METADATA_SCAN_BYTES) return@use head.toString(StandardCharsets.ISO_8859_1)
+            val tail = ByteArray(scanLength)
+            input.seek(length - scanLength)
+            input.readFully(tail)
+            tail.toString(StandardCharsets.ISO_8859_1) + "
+" + head.toString(StandardCharsets.ISO_8859_1)
+        }
         return BookImportMetadata(
             title = extractPdfValue(source, "Title")?.let(::cleanText) ?: fallbackTitle(fallbackDisplayName),
             author = extractPdfValue(source, "Author")?.let(::cleanText),
@@ -84,17 +92,25 @@ object BookImportMetadataExtractor {
         val match = Regex("/$key\\s*(\\((?:\\\\.|[^)])*\\)|<([0-9A-Fa-f\\s]+)>)")
             .find(source) ?: return null
         val literal = match.groupValues[1]
-        if (literal.startsWith("(")) return decodePdfLiteral(literal.substring(1, literal.length - 1))
+        if (literal.startsWith("(")) {
+            val raw = decodePdfLiteral(literal.substring(1, literal.length - 1))
+            return decodePdfTextString(raw.toByteArray(StandardCharsets.ISO_8859_1))
+        }
         val hex = match.groupValues[2].filterNot(Char::isWhitespace)
         if (hex.isEmpty() || hex.length % 2 != 0) return null
         val decoded = ByteArray(hex.length / 2) { index ->
             hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
         }
-        return if (decoded.size >= 2 && decoded[0] == 0xfe.toByte() && decoded[1] == 0xff.toByte()) {
-            decoded.copyOfRange(2, decoded.size).toString(Charsets.UTF_16BE)
-        } else {
-            decoded.toString(StandardCharsets.ISO_8859_1)
-        }
+        return decodePdfTextString(decoded)
+    }
+
+    /** A PDF text string is UTF-16BE or UTF-8 when it starts with that BOM, else PDFDocEncoding. */
+    private fun decodePdfTextString(bytes: ByteArray): String = when {
+        bytes.size >= 2 && bytes[0] == 0xfe.toByte() && bytes[1] == 0xff.toByte() ->
+            bytes.copyOfRange(2, bytes.size).toString(Charsets.UTF_16BE)
+        bytes.size >= 3 && bytes[0] == 0xef.toByte() && bytes[1] == 0xbb.toByte() && bytes[2] == 0xbf.toByte() ->
+            bytes.copyOfRange(3, bytes.size).toString(Charsets.UTF_8)
+        else -> bytes.toString(StandardCharsets.ISO_8859_1)
     }
 
     private fun decodePdfLiteral(value: String): String {

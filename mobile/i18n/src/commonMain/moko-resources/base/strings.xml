@@ -2531,6 +2531,7 @@
     <string name="book_reader_selection_unavailable">Text selection is not available for this page</string>
     <string name="book_reader_pdf_no_text">This PDF page has no readable text or OCR could not recognize it</string>
     <string name="book_reader_select_text_title">Select text (OCR when needed)</string>
+    <string name="book_reader_pdf_reading_text">Reading the page text…</string>
     <string name="book_reader_highlight_selection">Highlight selection</string>
     <string name="book_reader_search_hint">Search in this book</string>
     <string name="book_reader_no_results">No results</string>

@@ -66,6 +66,7 @@ import epigraph.books.reader.ReaderRange
 import epigraph.books.reader.ReaderTocEntry
 import epigraph.books.pdf.PdfReaderSession
 import epigraph.books.pdf.PdfOcrEngine
+import epigraph.books.pdf.PdfSelectionSegments
 import epigraph.books.pdf.PdfTextReflow
 import epigraph.books.pdf.PdfPageBitmapRenderer
 import epigraph.books.pdf.PdfPageView
@@ -713,7 +714,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val textView = pdfReflowTextView ?: return
         lifecycleScope.launch {
             val text = withContext(Dispatchers.IO) {
-                extractPdfText(reader, page)
+                extractPdfText(reader, page) {
+                    withContext(Dispatchers.Main) {
+                        if (pdfReflowTextView === textView) textView.text = getString(MR.strings.book_reader_pdf_reading_text)
+                    }
+                }
             }
             if (isFinishing || isDestroyed || pdfReflowTextView !== textView) return@launch
             val paragraphs = PdfTextReflow.paragraphs(text)
@@ -1603,21 +1608,42 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
 
     private fun showPdfTextSelectionDialog() {
         val reader = opened as? OpenedBookReader.Pdf ?: return
-        val page = pdfCurrentPage.coerceAtLeast(0)
+        val first = pdfCurrentPage.coerceAtLeast(0)
+        // A spread shows two pages, so both can be selected from.
+        val pages = first until min(first + pdfPagesShown(), readerProgressPageCount.coerceAtLeast(first + 1))
         lifecycleScope.launch {
-            val text = withContext(Dispatchers.IO) {
-                extractPdfText(reader, page)
+            var ocrNoticeShown = false
+            val pageTexts = withContext(Dispatchers.IO) {
+                pages.map { page ->
+                    // OCR takes seconds on a slow device; say so instead of looking unresponsive.
+                    page to extractPdfText(reader, page) {
+                        if (!ocrNoticeShown) {
+                            ocrNoticeShown = true
+                            withContext(Dispatchers.Main) { showMessage(getString(MR.strings.book_reader_pdf_reading_text)) }
+                        }
+                    }
+                }.filter { (_, text) -> text.isNotBlank() }
             }
-            if (text.isBlank()) {
+            if (pageTexts.isEmpty()) {
                 showMessage(getString(MR.strings.book_reader_pdf_no_text))
                 return@launch
+            }
+            val segments = PdfSelectionSegments(pageTexts)
+            val text = segments.text
+            fun saveSelection(start: Int, end: Int) {
+                val selection = segments.resolve(start, end)
+                if (selection == null) {
+                    showMessage(getString(MR.strings.book_reader_select_text_first))
+                    return
+                }
+                savePdfHighlight(selection.page, selection.start, selection.end, selection.text)
             }
             val selection = TextView(this@LocalBookReaderActivity).apply {
                 setText(text)
                 setTextIsSelectable(true)
                 setPadding(24.dpToPx, 16.dpToPx, 24.dpToPx, 16.dpToPx)
                 installTextSelectionActions(this) { selected ->
-                    savePdfHighlight(page, selected.first, selected.second, selected.third)
+                    saveSelection(selected.first, selected.second)
                 }
             }
             this@LocalBookReaderActivity.materialAlertDialog()
@@ -1627,18 +1653,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 .setPositiveButton(getString(MR.strings.book_reader_highlight_selection)) { _, _ ->
                     val start = min(selection.selectionStart, selection.selectionEnd)
                     val end = max(selection.selectionStart, selection.selectionEnd)
-                    if (start >= 0 && end > start) {
-                        savePdfHighlight(page, start, end, text.substring(start, end))
-                    } else {
-                        showMessage(getString(MR.strings.book_reader_select_text_first))
-                    }
+                    saveSelection(start, end)
                 }
                 .show()
         }
     }
 
     /** Extract native PDF text first, then OCR the rendered page when the document is scanned. */
-    private suspend fun extractPdfText(reader: OpenedBookReader.Pdf, page: Int): String {
+    private suspend fun extractPdfText(
+        reader: OpenedBookReader.Pdf,
+        page: Int,
+        onOcrStart: suspend () -> Unit = {},
+    ): String {
         val safePage = page.coerceAtLeast(0)
         val locator = ReaderLocator.Pdf(reader.document.entityId, safePage)
         val native = runCatching {
@@ -1649,6 +1675,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val renderer = reader.session as? PdfPageBitmapRenderer ?: return ""
         val bitmap = renderer.renderPageBitmap(safePage) ?: return ""
         return try {
+            onOcrStart()
             pdfOcrEngine.recognize(bitmap).trim()
         } catch (_: Throwable) {
             ""
