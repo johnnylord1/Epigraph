@@ -226,20 +226,26 @@ Pendente (exige ação do usuário ou está fora do escopo mobile):
       onboarding) foi removido: veja "Biblioteca e UI" acima.
 - [ ] Restauração de backup transacional/retomável e bytes de EPUB/PDF no backup (P1).
 - [ ] Seleção de texto/OCR em PDF (P2).
-- [ ] Testes de morte de processo no download de mangá (P2). Hoje cobertos indiretamente pelos
-      testes do finalizador atômico (nada publica antes de validar e renomear) e pela exclusão de
-      diretórios `_tmp` na leitura.
-- [ ] Trackers continuam locais (não sincronizam por decisão: tokens nunca entram no sync).
+- [x] Testes de morte de processo no download de mangá (P2): `DownloadFinalizerTest` cobre o
+      processo morto no meio de uma página (o `_tmp` não publica) e a retomada na execução seguinte
+      (publica uma vez completo); a contagem de páginas virou `DownloadFinalizer.countPageFiles`.
+- [x] Trackers sincronizam com o desktop (vínculos e login), conforme a Fase 3 abaixo.
+- [x] Importação de backup do LNReader no fluxo normal de restauração: novels, capítulos,
+      progresso e categorias; obras de plugins que não existem mais ficam na biblioteca para
+      migrar; os repositórios de plugins instalados ou usados são validados e adicionados, e o
+      diálogo de restauração lista quais serão adicionados.
+- [x] CI: `.github/workflows/build-android.yml` (na raiz do repositório) roda a verificação de
+      migrações, os testes de sync e unitários, o lint e a `assembleDevDebug` no GitHub, e guarda
+      o APK de debug como artefato. A release assinada e o smoke no emulador continuam manuais.
 - Versão: `0.1.0-alpha.1` / `versionCode 1` é a primeira release; não precisa de bump.
 
 ## 10. Onda de paridade com o desktop (plano)
 
 Decisões do usuário (2026-09-28):
 
-- Trackers sincronizam entre apps (vínculos obra → tracker e login). O syncd do desktop ainda não
-  tem entidade de tracker e este workspace não altera o desktop: o lado mobile fica pronto e só
-  liga quando o syncd anunciar a capacidade; a especificação para o desktop fica em
-  `docs/audit/TRACKER_SYNC_CONTRACT.md`.
+- Trackers sincronizam entre apps (vínculos obra → tracker e login). O lado mobile só liga quando
+  o syncd anuncia a capacidade, o que o syncd do desktop passou a fazer (2026-10-05); a
+  especificação fica em `docs/audit/TRACKER_SYNC_CONTRACT.md`.
 - Tokens de tracker trafegam só pelo canal TLS pareado e ficam cifrados no Android Keystore.
   Continuam fora do backup. A regra do `AGENTS.md` foi ajustada para essa exceção.
 
@@ -260,23 +266,28 @@ Fase 2 — Leitores (verificar e corrigir)
 
 Fase 3 — Trackers
 
-- [ ] Backup: obras (mangá e novel) restauram com os trackers; teste de ida e volta.
-- [ ] Sync dos vínculos (`comic.track`, `novel.track`) pelo outbox, na mesma transação.
-- [ ] Sync do login (`tracker.credential`) só pelo canal pareado, cifrado no Keystore; nunca em
-      backup; apagado ao desparear.
-- [ ] Contrato para o desktop.
+- [x] Backup: obras (mangá e novel) restauram com os trackers; teste de ida e volta
+      (`BackupTrackingRoundTripTest`).
+- [x] Sync dos vínculos (`comic.track`, `novel.track`) pelo outbox, na mesma transação, só quando
+      o Core anuncia as entidades; o mais recente vence contra a réplica.
+- [x] Sync do login (`tracker.credential`) só pelo canal pareado, cifrado no Keystore; nunca em
+      backup; apagado ao desparear (`CorePairingEndedListener` → `TrackerCredentialSyncer.wipe`).
+- [x] Contrato para o desktop (`docs/audit/TRACKER_SYNC_CONTRACT.md`), implementado no syncd
+      (migração 0026, rotas de credenciais de tracker).
 
 Fase 4 — Tema, HUD e configurações
 
-- [ ] Tema "Epigraph Nocturne" com a paleta do desktop, padrão em instalações novas.
+- [x] Tema "Epigraph Nocturne" com a paleta do desktop, padrão em instalações novas (escuro,
+      `PreferencesHelper.lightTheme/darkTheme/nightMode`).
 - [x] HUD dos leitores mais próximo do desktop: folha inferior plana e larga, sem pílula (o usuário
       rejeitou botões e barras em pílula e texturas).
 - [ ] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
 
 Fase 5 — Explorar
 
-- [ ] Reorganizar: Buscar / Descobrir / Fontes, com o seletor Quadrinhos / Livros.
-- [ ] Recomendações baseadas na biblioteca (port do motor do desktop: perfil de gosto por tags,
+- [x] Reorganizar: Descobrir virou aba própria (com sub-abas e o seletor Quadrinhos / Novels na
+      mesma linha); Fontes e a busca global ficam em Explorar.
+- [x] Recomendações baseadas na biblioteca (port do motor do desktop: perfil de gosto por tags,
       notas e status dos trackers, seções "Por causa da sua biblioteca", "Alta confiança",
       "Fora do habitual").
 
@@ -285,7 +296,7 @@ Fase 6 — Itens adiados
 - [ ] Restauração de backup transacional e retomável.
 - [ ] Bytes de EPUB/PDF no backup (opcional, com verificação SHA-256).
 - [ ] PDF: seleção de texto e OCR verificados nos dois modos.
-- [ ] Testes de morte de processo no download de mangá.
+- [x] Testes de morte de processo no download de mangá.
 
 Fase 7 — Gates, smoke no emulador e documentação.
 

@@ -84,6 +84,41 @@ class DownloadFinalizerTest {
         assertEquals(0, filesystem.renameAttempts)
     }
 
+    @Test
+    fun `process killed mid page leaves an unpublishable temporary chapter`() {
+        // Two of three pages written, the third cut off while streaming.
+        val left = listOf("001.jpg", "002.png", "003.tmp", ".nomedia", "ComicInfo.xml")
+        assertEquals(2, DownloadFinalizer.countPageFiles(left))
+
+        val filesystem = FakeFilesystem("chapter_tmp", complete = DownloadFinalizer.countPageFiles(left) == 3)
+        val temporary = filesystem.require("chapter_tmp")
+
+        assertThrows(IllegalStateException::class.java) {
+            finalize(filesystem, temporary, "chapter_tmp", "chapter")
+        }
+        assertSame(temporary, filesystem.find("chapter_tmp"))
+        assertNull(filesystem.find("chapter"))
+        assertEquals(0, filesystem.renameAttempts)
+    }
+
+    @Test
+    fun `next run resumes the temporary chapter and publishes it once complete`() {
+        // The restarted download deletes the partial write, fetches the missing page and finalizes.
+        val resumed = listOf("001.jpg", "002.png", "003.jpg", ".nomedia")
+        val filesystem = FakeFilesystem("chapter_tmp", complete = DownloadFinalizer.countPageFiles(resumed) == 3)
+        val temporary = filesystem.require("chapter_tmp")
+
+        val finalized = finalize(filesystem, temporary, "chapter_tmp", "chapter")
+
+        assertEquals("chapter", finalized.name)
+        assertNull(filesystem.find("chapter_tmp"))
+    }
+
+    @Test
+    fun `split pages count once`() {
+        assertEquals(2, DownloadFinalizer.countPageFiles(listOf("001.jpg", "002__001.jpg", "002__002.jpg", "002__003.jpg")))
+    }
+
     private fun finalize(
         filesystem: FakeFilesystem,
         temporary: Entry,

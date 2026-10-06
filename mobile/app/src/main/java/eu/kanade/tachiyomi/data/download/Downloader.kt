@@ -73,6 +73,20 @@ import yokai.util.lang.getString
  * `renameTo` leaves the temporary entry untouched and is treated as a hard failure.
  */
 internal object DownloadFinalizer {
+    /**
+     * Pages a chapter directory holds. Partial `.tmp` writes, which a killed process leaves behind
+     * and the next run deletes, never count; split pages count once.
+     */
+    fun countPageFiles(fileNames: List<String>): Int = fileNames.count { fileName ->
+        when {
+            fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
+            fileName.endsWith(".tmp") -> false
+            // Only count the first split page and not the others
+            fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
+            else -> true
+        }
+    }
+
     fun finalizeDirectory(
         parent: UniFile,
         temporary: UniFile,
@@ -559,16 +573,7 @@ class Downloader(
         if (download.downloadedImages != downloadPageCount) return false
 
         // Ensure that the chapter folder has all the pages
-        val downloadedImagesCount = tmpDir.listFiles().orEmpty().count {
-            val fileName = it.name.orEmpty()
-            when {
-                fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
-                fileName.endsWith(".tmp") -> false
-                // Only count the first split page and not the others
-                fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
-                else -> true
-            }
-        }
+        val downloadedImagesCount = DownloadFinalizer.countPageFiles(tmpDir.listFiles().orEmpty().map { it.name.orEmpty() })
 
         return downloadedImagesCount == downloadPageCount
     }
