@@ -44,7 +44,7 @@ fuzzywuzzy = { module = "me.xdrop:fuzzywuzzy", version.ref = "fuzzywuzzy" }
 flexbox = { module = "com.google.android.flexbox:flexbox", version = "3.0.0" }
 flexible-adapter-ui = { module = "com.github.arkon.FlexibleAdapter:flexible-adapter-ui", version.ref = "flexible-adapter" }
 flexible-adapter = { module = "com.github.arkon.FlexibleAdapter:flexible-adapter", version.ref = "flexible-adapter" }
-image-decoder = { module = "com.github.tachiyomiorg:image-decoder", version = "41c059e540" }
+image-decoder = { module = "com.github.mihonapp:image-decoder", version = "e03b81e18a" }
 
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 
