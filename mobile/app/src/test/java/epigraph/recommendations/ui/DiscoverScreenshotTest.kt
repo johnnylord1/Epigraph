@@ -68,7 +68,8 @@ import yokai.presentation.theme.AppTypography
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 // The app ships conscrypt-android, whose JNI library does not exist on the JVM; screenshots need no TLS.
 @ConscryptMode(ConscryptMode.Mode.OFF)
-@Config(sdk = [35], application = Application::class, qualifiers = "w411dp-h891dp-night-xxhdpi")
+// SDK 34: Robolectric needs Java 21 for 35 and later, and CI runs the unit tests on Java 17.
+@Config(sdk = [34], application = Application::class, qualifiers = "w411dp-h891dp-night-xxhdpi")
 class DiscoverScreenshotTest {
 
     @Test
