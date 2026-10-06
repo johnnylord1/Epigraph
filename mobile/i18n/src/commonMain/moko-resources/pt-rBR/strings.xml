@@ -1179,6 +1179,11 @@
     <string name="epigraph_core_pin_search_again">Procurar novamente</string>
     <string name="epigraph_core_pin_host">%1$s · código %2$s</string>
     <string name="epigraph_core_pin_label">PIN de 6 dígitos</string>
+    <string name="epigraph_core_pin_address_open">Digitar endereço do computador</string>
+    <string name="epigraph_core_pin_address_hint">Use quando o celular e o computador estiverem em redes diferentes. O endereço aparece em Detalhes da conexão, no computador.</string>
+    <string name="epigraph_core_pin_address_label">Endereço (ex.: 192.168.1.10:4777)</string>
+    <string name="epigraph_core_pin_address_find">Procurar</string>
+    <string name="epigraph_core_pin_address_failed">Nenhum Epigraph desktop respondeu neste endereço. Confira o endereço e se o Epigraph está aberto no computador.</string>
     <string name="epigraph_core_verification_code">Código de verificação: %1$s</string>
     <string name="epigraph_core_verification_code_hint">Aprove somente se o desktop mostrar o mesmo código.</string>
     <string name="epigraph_core_selection_desktop">Desktop: %1$s</string>

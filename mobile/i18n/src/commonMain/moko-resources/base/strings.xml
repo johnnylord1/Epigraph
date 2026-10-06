@@ -2300,6 +2300,11 @@
     <string name="epigraph_core_pin_search_again">Search again</string>
     <string name="epigraph_core_pin_host">%1$s · code %2$s</string>
     <string name="epigraph_core_pin_label">6-digit PIN</string>
+    <string name="epigraph_core_pin_address_open">Enter computer address</string>
+    <string name="epigraph_core_pin_address_hint">Use this when the phone and computer are on different networks. The address is in Connection details on the computer.</string>
+    <string name="epigraph_core_pin_address_label">Address (e.g. 192.168.1.10:4777)</string>
+    <string name="epigraph_core_pin_address_find">Find</string>
+    <string name="epigraph_core_pin_address_failed">No Epigraph desktop answered at this address. Check the address and that Epigraph is open on the computer.</string>
     <string name="epigraph_core_verification_code">Verification code: %1$s</string>
     <string name="epigraph_core_verification_code_hint">Approve only if the desktop shows the same code.</string>
     <string name="epigraph_core_selection_desktop">Desktop: %1$s</string>

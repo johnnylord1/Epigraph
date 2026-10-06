@@ -28,6 +28,52 @@ class PairingPinResolverTest {
     }
 
     @Test
+    fun `typed computer address becomes a LAN HTTPS origin with the installed Core port`() {
+        assertEquals("https://192.168.15.3:4777", CoreHostAddress.toOrigin(" 192.168.15.3 "))
+        assertEquals("https://192.168.15.3:4787", CoreHostAddress.toOrigin("192.168.15.3:4787"))
+        assertEquals("https://192.168.15.3:4787", CoreHostAddress.toOrigin("https://192.168.15.3:4787/"))
+        assertEquals("https://desktop.local:4777", CoreHostAddress.toOrigin("desktop.local"))
+        assertNull(CoreHostAddress.toOrigin(""))
+        assertNull(CoreHostAddress.toOrigin("http://192.168.15.3:4787"))
+        assertNull(CoreHostAddress.toOrigin("8.8.8.8"))
+        assertNull(CoreHostAddress.toOrigin("192.168.15.3/v1"))
+        assertNull(CoreHostAddress.toOrigin("192.168 .15.3"))
+    }
+
+    @Test
+    fun `descriptor host is pinned to the certificate that answered`() {
+        val host = DiscoveredCoreHost.fromDescriptor(
+            origin = "https://192.168.15.3:4787",
+            serverId = "server-a",
+            descriptorTlsCertSha256 = FINGERPRINT.uppercase(),
+            presentedTlsCertSha256 = FINGERPRINT,
+            advertisedOrigin = "https://192.168.1.20:4777",
+        )!!
+        assertEquals("192.168.15.3:4787", host.instanceName)
+        assertEquals(FINGERPRINT, host.tlsCertSha256)
+        assertEquals(listOf("https://192.168.15.3:4787", "https://192.168.1.20:4777"), host.origins)
+
+        assertNull(
+            DiscoveredCoreHost.fromDescriptor(
+                origin = "https://192.168.15.3:4787",
+                serverId = "server-a",
+                descriptorTlsCertSha256 = "b".repeat(64),
+                presentedTlsCertSha256 = FINGERPRINT,
+                advertisedOrigin = null,
+            ),
+        )
+        assertNull(
+            DiscoveredCoreHost.fromDescriptor(
+                origin = "https://192.168.15.3:4787",
+                serverId = "",
+                descriptorTlsCertSha256 = FINGERPRINT,
+                presentedTlsCertSha256 = FINGERPRINT,
+                advertisedOrigin = null,
+            ),
+        )
+    }
+
+    @Test
     fun `resolved PIN becomes a bundle the strict parser accepts`() = runTest {
         val requests = mutableListOf<Triple<String, String, String>>()
         val resolver = PairingPinResolver { endpoint, fingerprint, pin ->

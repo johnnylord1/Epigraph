@@ -98,6 +98,8 @@ import epigraph.sync.core.trackers.TrackerCredentialVault
 import epigraph.sync.core.trackers.TrackerSyncSessionHook
 import epigraph.sync.core.pairing.CoreHostDiscovery
 import epigraph.sync.core.pairing.AndroidCoreHostDiscovery
+import epigraph.sync.core.pairing.CoreHostProbe
+import epigraph.sync.core.pairing.transport.OkHttpCoreHostProbe
 import epigraph.sync.core.pairing.transport.OkHttpPairingTransport
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
 import epigraph.sync.core.replica.SqlDelightCoreLamportSource
@@ -168,6 +170,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<PairingPinTransport> { get<OkHttpPairingTransport>() }
     single { PairingPinResolver(get()) }
     single<CoreHostDiscovery> { AndroidCoreHostDiscovery(app) }
+    single<CoreHostProbe> { OkHttpCoreHostProbe(get<OkHttpClient>(named(PAIRING_HTTP_CLIENT))) }
     single { EpigraphCorePairingEngine(get()) }
 
     single { EncryptedCoreCredentialStore.create(app) }
@@ -193,6 +196,7 @@ fun epigraphSyncModule(app: Application) = module {
             endpoints = get(),
             hostDiscovery = get(),
             pinResolver = get(),
+            hostProbe = get(),
             pairingEndedListeners = listOf(
                 get<CoreTrackingCapabilityCache>(),
                 CorePairingEndedListener { get<TrackerCredentialSyncer>().wipe() },

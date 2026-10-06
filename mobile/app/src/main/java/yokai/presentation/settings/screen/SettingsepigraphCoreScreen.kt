@@ -59,6 +59,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.google.zxing.client.android.Intents
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.pluralStringResource
 import dev.icerock.moko.resources.compose.stringResource
@@ -104,6 +105,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var showPinDialog by remember { mutableStateOf(false) }
         var pinText by remember { mutableStateOf("") }
         var selectedHost by remember { mutableStateOf<DiscoveredCoreHost?>(null) }
+        var addressText by remember { mutableStateOf("") }
+        var showAddressField by remember { mutableStateOf(false) }
         val discoveryState by controller.discovery.collectAsState()
         var bundleText by remember { mutableStateOf("") }
         var syncComics by remember { mutableStateOf(true) }
@@ -383,6 +386,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             val closePinDialog = {
                 pinText = ""
                 selectedHost = null
+                addressText = ""
+                showAddressField = false
                 showPinDialog = false
             }
             AlertDialog(
@@ -421,6 +426,43 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                             style = MaterialTheme.typography.bodyMedium,
                                         )
                                     }
+                                }
+                            }
+                        }
+                        if (discoveryState is CoreHostDiscoveryState.Found) {
+                            if (!showAddressField) {
+                                TextButton(enabled = !busy, onClick = { showAddressField = true }) {
+                                    Text(stringResource(MR.strings.epigraph_core_pin_address_open))
+                                }
+                            } else {
+                                Text(
+                                    stringResource(MR.strings.epigraph_core_pin_address_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(top = 12.dp),
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        value = addressText,
+                                        onValueChange = { value ->
+                                            addressText = value.filterNot(Char::isWhitespace).take(64)
+                                        },
+                                        enabled = !busy,
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                        label = { Text(stringResource(MR.strings.epigraph_core_pin_address_label)) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(
+                                        enabled = !busy && addressText.isNotBlank(),
+                                        onClick = { controller.probeHostAddress(addressText) },
+                                    ) { Text(stringResource(MR.strings.epigraph_core_pin_address_find)) }
+                                }
+                                if ((discoveryState as CoreHostDiscoveryState.Found).addressFailed) {
+                                    Text(
+                                        stringResource(MR.strings.epigraph_core_pin_address_failed),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
                                 }
                             }
                         }
@@ -557,7 +599,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                     .setPrompt(scannerPrompt)
                                     .setBeepEnabled(false)
                                     .setBarcodeImageEnabled(false)
-                                    .setOrientationLocked(false),
+                                    .setOrientationLocked(false)
+                                    // Also read light-on-dark codes, as older desktop builds draw.
+                                    .addExtra(Intents.Scan.SCAN_TYPE, Intents.Scan.MIXED_SCAN),
                             )
                         },
                     ),
@@ -568,6 +612,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         onClick = {
                             pinText = ""
                             selectedHost = null
+                            addressText = ""
+                            showAddressField = false
                             showPinDialog = true
                             controller.discoverHosts()
                         },

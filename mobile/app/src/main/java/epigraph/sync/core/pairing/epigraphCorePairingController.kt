@@ -58,7 +58,11 @@ sealed interface CorePairingUiState {
 sealed interface CoreHostDiscoveryState {
     data object Idle : CoreHostDiscoveryState
     data object Searching : CoreHostDiscoveryState
-    data class Found(val hosts: List<DiscoveredCoreHost>) : CoreHostDiscoveryState
+    data class Found(
+        val hosts: List<DiscoveredCoreHost>,
+        /** The last address the user typed did not answer as an Epigraph Core. */
+        val addressFailed: Boolean = false,
+    ) : CoreHostDiscoveryState
 }
 
 enum class PairingStage {
@@ -85,6 +89,7 @@ class EpigraphCorePairingController(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val hostDiscovery: CoreHostDiscovery = CoreHostDiscovery { emptyList() },
     private val pinResolver: PairingPinResolver? = null,
+    private val hostProbe: CoreHostProbe = CoreHostProbe { null },
     private val pairingEndedListeners: List<CorePairingEndedListener> = emptyList(),
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
@@ -130,6 +135,34 @@ class EpigraphCorePairingController(
                 emptyList()
             }
             mutableDiscovery.value = CoreHostDiscoveryState.Found(hosts)
+        }
+    }
+
+    /**
+     * Looks for a desktop at an address the user typed, when LAN discovery cannot reach it. A host
+     * that answers is added to the discovered list, where the user still compares its code.
+     */
+    fun probeHostAddress(rawAddress: String) {
+        val previous = (mutableDiscovery.value as? CoreHostDiscoveryState.Found)?.hosts.orEmpty()
+        if (mutableDiscovery.value == CoreHostDiscoveryState.Searching) return
+        val origin = CoreHostAddress.toOrigin(rawAddress) ?: run {
+            mutableDiscovery.value = CoreHostDiscoveryState.Found(previous, addressFailed = true)
+            return
+        }
+        mutableDiscovery.value = CoreHostDiscoveryState.Searching
+        lifetimeScope.launch {
+            val host = try {
+                hostProbe.probe(origin)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            mutableDiscovery.value = if (host == null) {
+                CoreHostDiscoveryState.Found(previous, addressFailed = true)
+            } else {
+                CoreHostDiscoveryState.Found(DiscoveredCoreHost.merge(previous + host))
+            }
         }
     }
 
