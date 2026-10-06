@@ -375,6 +375,46 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `novel joining a desktop books category reuses its id for the novel library`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        val categoryId = insertCategory("Fila", sort = 2)
+        bindNovelIdentity(mangaId)
+        database.aethon_syncQueries.upsertCategoryIdentity(
+            entityId = "books-category:shared",
+            localCategoryId = categoryId,
+            contentScope = "BOOK",
+            name = "Fila",
+            sortOrder = 2,
+            updatedAt = 1,
+        )
+        val router = router(sequentialMutationIds(), scope = "novels:profile:main")
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        val commands = coordinator.claimReady(100, 1_000, 10)
+            .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        val category = commands.filterIsInstance<SyncCommand.UpsertCategory>().single()
+        assertEquals("books-category:shared", category.entityId.value)
+        assertEquals(CategoryScope.NOVEL, category.scope)
+        val assignment = commands.filterIsInstance<SyncCommand.SetCategoryAssignment>().single()
+        assertEquals("books-category:shared", assignment.categoryId.value)
+        assertEquals(
+            listOf("BOOK", "NOVEL"),
+            database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(categoryId).executeAsList()
+                .onEach { assertEquals("books-category:shared", it.entity_id) }
+                .map { it.content_scope },
+        )
+    }
+
+    @Test
     fun `legacy comic removal tombstones assignments before membership`() = runTest {
         val mangaId = insertManga(favorite = false)
         val categoryId = insertCategory("Keep", sort = 0)
@@ -455,6 +495,36 @@ class EpigraphLibraryMutationRouterTest {
             .map { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
         assertEquals(1, claimed.size)
         assertTrue(claimed[0] is SyncCommand.SetLibraryMembership)
+    }
+
+    @Test
+    fun `adding a comic to a local-only category wakes the Core worker without an envelope`() = runTest {
+        val mangaId = insertManga(favorite = true)
+        val categoryId = insertCategory("Local", sort = 0)
+        bindMangaIdentity(mangaId, "suwayomi:profile:main:manga:7")
+        var notifications = 0
+        val router = EpigraphLibraryMutationRouter(
+            coordinator = EpigraphMutationCoordinator(
+                AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+                onLocalMutationEnqueued = { notifications++ },
+            ),
+            deviceId = DeviceId("phone-a"),
+            scopeId = SyncScopeId("comics:profile:main"),
+            mutationIds = sequentialMutationIds(),
+        )
+
+        router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = setOf(categoryId),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        assertEquals(0, coordinator.claimReady(100, 1_000, 10).size)
+        assertEquals(1, notifications)
     }
 
     @Test

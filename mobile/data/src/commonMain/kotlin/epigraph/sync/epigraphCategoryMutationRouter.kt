@@ -11,6 +11,7 @@ import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.SyncEntityType
 import epigraph.contract.SyncScopeId
 import epigraph.sync.portable.SqlDelightPortableBindingStore
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import tachiyomi.data.Aethon_category_identity
 import yokai.data.Database
@@ -25,6 +26,7 @@ data class CategoryMutationResult(
  * Only categories which already have an Epigraph identity are published: a local category gets
  * its identity together with its first synchronized assignment (see [EpigraphLibraryMutationRouter]
  * and [EpigraphBookMutationRouter]), and that first publication carries the current name/order.
+ * A Books & novels folder created on this device is published on creation ([createBooksFolder]).
  */
 class EpigraphCategoryMutationRouter(
     private val coordinator: EpigraphMutationCoordinator,
@@ -58,7 +60,7 @@ class EpigraphCategoryMutationRouter(
                     rows.firstOrNull { it.content_scope == "MANGA" }?.let { localId to it }
                 }.toMap(),
             )
-            val positions = locals.syncPositions()
+            val positions = booksAndNovelsPositions()
 
             val envelopes = locals
                 .filter { it._id > 0 && it._id in touchedCategoryIds }
@@ -92,6 +94,40 @@ class EpigraphCategoryMutationRouter(
                     )
                 }
             LocalMutationResult(CategoryMutationResult(envelopes.size), envelopes)
+        }
+    }
+
+    /**
+     * Creates a Books & novels folder with [insert] (which returns its local id) and publishes it at
+     * once, as the desktop does, so an empty folder reaches paired devices before any title is filed.
+     */
+    suspend fun createBooksFolder(insert: suspend Database.() -> Long): Long {
+        val scopes = pairedScopes()
+        val now = timestamp()
+        return coordinator.mutateLocalBatch(now) {
+            val localId = insert()
+            val category = categoriesQueries.findAll().executeAsList().firstOrNull { it._id == localId }
+            if (scopes == null || category == null || !category.name.isPublishableCategoryName(null)) {
+                return@mutateLocalBatch LocalMutationResult(localId, emptyList())
+            }
+            val entityId = "books-category:${UUID.randomUUID()}"
+            val position = booksAndNovelsPositions(listOf(localId))[localId] ?: 0L
+            aethon_syncQueries.upsertCategoryIdentity(
+                entityId = entityId,
+                localCategoryId = localId,
+                contentScope = "NOVEL",
+                name = category.name,
+                sortOrder = position,
+                updatedAt = now,
+            )
+            val target = CategoryTarget(CategoryScope.NOVEL, scopes.novels, NOVEL_CATEGORY, null)
+            val command = SyncCommand.UpsertCategory(
+                entityId = EpigraphEntityId(entityId),
+                name = category.name,
+                scope = CategoryScope.NOVEL,
+                position = position,
+            )
+            LocalMutationResult(localId, listOf(envelope(target, command)))
         }
     }
 

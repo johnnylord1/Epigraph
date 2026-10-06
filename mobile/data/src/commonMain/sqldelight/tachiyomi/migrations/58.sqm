@@ -1,0 +1,25 @@
+-- The desktop keeps one Books category for books and novels and publishes it to both libraries under
+-- the same id. Keyed by entity id alone, the identity flipped between NOVEL and BOOK with whichever
+-- library arrived last, and the folder then got a second, phone-made id that reached the desktop as
+-- a duplicate category. An id is now unique per library.
+CREATE TABLE aethon_category_identity_58 (
+    entity_id TEXT NOT NULL,
+    local_category_id INTEGER NOT NULL,
+    content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(entity_id, content_scope),
+    UNIQUE(local_category_id, content_scope),
+    FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
+);
+
+INSERT INTO aethon_category_identity_58(
+    entity_id, local_category_id, content_scope, name, sort_order, updated_at
+)
+SELECT entity_id, local_category_id, content_scope, name, sort_order, updated_at
+FROM aethon_category_identity;
+
+DROP TABLE aethon_category_identity;
+
+ALTER TABLE aethon_category_identity_58 RENAME TO aethon_category_identity;

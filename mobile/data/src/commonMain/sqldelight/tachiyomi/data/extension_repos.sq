@@ -3,8 +3,10 @@ CREATE TABLE extension_repos (
     name TEXT NOT NULL,
     short_name TEXT,
     website TEXT NOT NULL,
-    signing_key_fingerprint TEXT UNIQUE NOT NULL
+    signing_key_fingerprint TEXT NOT NULL
 );
+
+CREATE INDEX extension_repos_signing_key_index ON extension_repos(signing_key_fingerprint);
 
 findOne:
 SELECT *
@@ -14,7 +16,8 @@ WHERE base_url = :base_url;
 findOneBySigningKeyFingerprint:
 SELECT *
 FROM extension_repos
-WHERE signing_key_fingerprint = :fingerprint;
+WHERE signing_key_fingerprint = :fingerprint
+LIMIT 1;
 
 findAll:
 SELECT *
@@ -40,17 +43,9 @@ SET
     signing_key_fingerprint = :fingerprint
 WHERE base_url = base_url;
 
-replace:
-INSERT INTO extension_repos(base_url, name, short_name, website, signing_key_fingerprint)
-VALUES (:base_url, :name, :short_name, :website, :fingerprint)
-ON CONFLICT(signing_key_fingerprint)
-DO UPDATE
-SET
-    base_url = :base_url,
-    name = :name,
-    short_name = :short_name,
-    website =: website
-WHERE signing_key_fingerprint = signing_key_fingerprint;
+deleteBySigningKeyFingerprint:
+DELETE FROM extension_repos
+WHERE signing_key_fingerprint = :fingerprint;
 
 delete:
 DELETE FROM extension_repos

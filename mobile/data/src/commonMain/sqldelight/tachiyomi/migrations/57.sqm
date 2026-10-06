@@ -1,0 +1,141 @@
+-- Comics and Books & novels now keep separate folders. A folder that held both comics and
+-- novels/books is split: the comics stay, while the novels, books and their novel/book category
+-- bindings move to a new Books & novels folder of the same name. A folder that only held novels or
+-- books becomes a Books & novels folder. Novels are recognised by their synced NOVEL identity.
+
+-- 1. A copy of every shared folder, tagged with the id it was split from.
+INSERT INTO categories(name, sort, flags, manga_order)
+SELECT c.name, c.sort, c.flags, 'epigraph-split:' || c._id
+FROM categories c
+WHERE c._id > 0
+  AND (
+      EXISTS (
+          SELECT 1 FROM aethon_category_identity i
+          WHERE i.local_category_id = c._id AND i.content_scope IN ('NOVEL', 'BOOK')
+      )
+      OR EXISTS (
+          SELECT 1 FROM mangas_categories mc
+          JOIN aethon_content_identity e
+            ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+          WHERE mc.category_id = c._id
+      )
+      OR EXISTS (SELECT 1 FROM local_books_categories b WHERE b.category_id = c._id)
+  )
+  AND (
+      EXISTS (
+          SELECT 1 FROM aethon_category_identity i
+          WHERE i.local_category_id = c._id AND i.content_scope IN ('MANGA', 'ALL')
+      )
+      OR EXISTS (
+          SELECT 1 FROM mangas_categories mc
+          WHERE mc.category_id = c._id
+            AND NOT EXISTS (
+                SELECT 1 FROM aethon_content_identity e
+                WHERE e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+            )
+      )
+  );
+
+-- 2. Novels, books and novel/book bindings follow the copy.
+UPDATE mangas_categories
+SET category_id = (
+    SELECT n._id FROM categories n
+    WHERE n.manga_order = 'epigraph-split:' || mangas_categories.category_id
+)
+WHERE EXISTS (
+    SELECT 1 FROM categories n
+    WHERE n.manga_order = 'epigraph-split:' || mangas_categories.category_id
+)
+  AND EXISTS (
+      SELECT 1 FROM aethon_content_identity e
+      WHERE e.content_type = 'NOVEL' AND e.local_reference = CAST(mangas_categories.manga_id AS TEXT)
+  );
+
+UPDATE local_books_categories
+SET category_id = (
+    SELECT n._id FROM categories n
+    WHERE n.manga_order = 'epigraph-split:' || local_books_categories.category_id
+)
+WHERE EXISTS (
+    SELECT 1 FROM categories n
+    WHERE n.manga_order = 'epigraph-split:' || local_books_categories.category_id
+);
+
+UPDATE aethon_category_identity
+SET local_category_id = (
+    SELECT n._id FROM categories n
+    WHERE n.manga_order = 'epigraph-split:' || aethon_category_identity.local_category_id
+)
+WHERE content_scope IN ('NOVEL', 'BOOK')
+  AND EXISTS (
+      SELECT 1 FROM categories n
+      WHERE n.manga_order = 'epigraph-split:' || aethon_category_identity.local_category_id
+  );
+
+-- 3. The folder that was split keeps only comics.
+INSERT OR REPLACE INTO aethon_category_scope(category_id, content_scope)
+SELECT CAST(substr(n.manga_order, 16) AS INTEGER), 'MANGA'
+FROM categories n
+WHERE n.manga_order LIKE 'epigraph-split:%';
+
+UPDATE categories
+SET manga_order = coalesce(
+    (SELECT o.manga_order FROM categories o WHERE o._id = CAST(substr(categories.manga_order, 16) AS INTEGER)),
+    'a'
+)
+WHERE manga_order LIKE 'epigraph-split:%';
+
+-- 4. Every folder holding novels or books (the copies included) belongs to Books & novels.
+INSERT OR REPLACE INTO aethon_category_scope(category_id, content_scope)
+SELECT c._id,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM aethon_category_identity i
+            WHERE i.local_category_id = c._id AND i.content_scope = 'NOVEL'
+        ) OR EXISTS (
+            SELECT 1 FROM mangas_categories mc
+            JOIN aethon_content_identity e
+              ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+            WHERE mc.category_id = c._id
+        ) THEN 'NOVEL'
+        ELSE 'BOOK'
+    END
+FROM categories c
+WHERE c._id > 0
+  AND (
+      EXISTS (
+          SELECT 1 FROM aethon_category_identity i
+          WHERE i.local_category_id = c._id AND i.content_scope IN ('NOVEL', 'BOOK')
+      )
+      OR EXISTS (
+          SELECT 1 FROM mangas_categories mc
+          JOIN aethon_content_identity e
+            ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+          WHERE mc.category_id = c._id
+      )
+      OR EXISTS (SELECT 1 FROM local_books_categories b WHERE b.category_id = c._id)
+  );
+
+-- 5. A folder left scoped to novels or books while holding only comics goes back to Comics.
+INSERT OR REPLACE INTO aethon_category_scope(category_id, content_scope)
+SELECT s.category_id, 'MANGA'
+FROM aethon_category_scope s
+WHERE s.content_scope IN ('NOVEL', 'BOOK')
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_category_identity i
+      WHERE i.local_category_id = s.category_id AND i.content_scope IN ('NOVEL', 'BOOK')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM mangas_categories mc
+      JOIN aethon_content_identity e
+        ON e.content_type = 'NOVEL' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+      WHERE mc.category_id = s.category_id
+  )
+  AND NOT EXISTS (SELECT 1 FROM local_books_categories b WHERE b.category_id = s.category_id)
+  AND (
+      EXISTS (
+          SELECT 1 FROM aethon_category_identity i
+          WHERE i.local_category_id = s.category_id AND i.content_scope IN ('MANGA', 'ALL')
+      )
+      OR EXISTS (SELECT 1 FROM mangas_categories mc WHERE mc.category_id = s.category_id)
+  );

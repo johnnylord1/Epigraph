@@ -85,6 +85,43 @@ class EpigraphCategoryMutationRouterTest {
     }
 
     @Test
+    fun `an empty books folder is published on creation and ranked among books folders`() = runTest {
+        insertCategory("Comics", sort = -5)
+        val existing = insertCategory("Reading", sort = 0)
+        bindCategory(existing, "novel-category-local-$existing", "NOVEL", "Reading", 0)
+
+        val created = router().createBooksFolder {
+            categoriesQueries.insert("Later", 1, flags = 0, mangaOrder = "")
+            categoriesQueries.selectLastInsertedRowId().executeAsOne().also {
+                aethon_syncQueries.upsertCategoryScope(it, "NOVEL")
+            }
+        }
+
+        val envelope = queued().single()
+        assertEquals("novels:profile:main", envelope.scopeId.value)
+        assertEquals("novel.category", envelope.entityType.value)
+        val command = envelope.command as SyncCommand.UpsertCategory
+        assertTrue(command.entityId.value.startsWith("books-category:"))
+        assertEquals("Later", command.name)
+        assertEquals(CategoryScope.NOVEL, command.scope)
+        assertEquals(1, command.position)
+        assertEquals(command.entityId.value, identity(created).entity_id)
+        assertEquals("NOVEL", identity(created).content_scope)
+    }
+
+    @Test
+    fun `a books folder created while unpaired stays local`() = runTest {
+        val created = router(scopes = { error("not paired") }).createBooksFolder {
+            categoriesQueries.insert("Offline", 0, flags = 0, mangaOrder = "")
+            categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        }
+
+        assertTrue(queued().isEmpty())
+        assertTrue(database.aethon_syncQueries.selectCategoryIdentitiesByLocalId(created).executeAsList().isEmpty())
+        assertEquals("Offline", database.categoriesQueries.findAll().executeAsList().single().name)
+    }
+
+    @Test
     fun `comic reorder publishes one-based ranks per Suwayomi profile`() = runTest {
         val a = insertCategory("A", sort = 0)
         val b = insertCategory("B", sort = 1)
@@ -399,13 +436,17 @@ class EpigraphCategoryMutationRouterTest {
     }
 
     @Test
-    fun `unpublished comic category query lists categories with comics but no comic binding`() {
+    fun `unpublished comic category query lists new comic folders without a comic binding`() {
         val listed = insertCategory("Listed", sort = 0)
         val bound = insertCategory("Bound", sort = 1)
         val empty = insertCategory("Empty", sort = 2)
         val sharedWithNovels = insertCategory("Novels", sort = 3)
+        val emptyNovelFolder = insertCategory("Novel folder", sort = 4)
+        database.aethon_syncQueries.upsertCategoryScope(categoryId = emptyNovelFolder, contentScope = "NOVEL")
+        val emptyBoundNovelFolder = insertCategory("Bound novel folder", sort = 5)
+        bindCategory(emptyBoundNovelFolder, "novel-category-local-$emptyBoundNovelFolder", "NOVEL", "Bound novel folder", 5)
         bindCategory(bound, "suwayomi:server:desk:profile:main:category:42", "MANGA", "Bound", 1)
-        // A folder first used for novels that now also holds a comic still needs its comic category.
+        // A Books & novels folder never becomes a comic category, even if a comic was put in it.
         database.aethon_syncQueries.upsertCategoryScope(categoryId = sharedWithNovels, contentScope = "NOVEL")
         bindCategory(sharedWithNovels, "novel-category-local-$sharedWithNovels", "NOVEL", "Novels", 3)
         val manga = insertManga()
@@ -416,8 +457,11 @@ class EpigraphCategoryMutationRouterTest {
 
         val rows = database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList()
 
-        assertEquals(listOf(listed, sharedWithNovels), rows.map { it._id })
-        assertFalse(empty in rows.map { it._id })
+        // A folder just created on the phone is empty and still reaches the desktop comics library.
+        assertEquals(listOf(listed, empty), rows.map { it._id })
+        assertFalse(sharedWithNovels in rows.map { it._id })
+        assertFalse(emptyNovelFolder in rows.map { it._id })
+        assertFalse(emptyBoundNovelFolder in rows.map { it._id })
     }
 
     @Test

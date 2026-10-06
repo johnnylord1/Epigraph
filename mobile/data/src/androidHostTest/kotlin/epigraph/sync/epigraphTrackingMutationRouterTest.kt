@@ -175,6 +175,92 @@ class EpigraphTrackingMutationRouterTest {
     }
 
     @Test
+    fun `bindings that never reached the core are published once`() = runTest {
+        val (mangaId, trackingId) = boundComic()
+        database.manga_syncQueries.insertRow(row(mangaId, syncId = 2))
+
+        val result = router().reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(publishedRows = 1, appliedRows = 0, removedRows = 0), result)
+        val queued = coordinator.claimReady(100, 1_000, 10).single()
+        assertEquals(trackingId, queued.entity_id)
+        assertTrue(json.decodeFromString<SyncCommandEnvelope>(queued.payload_json).command is SyncCommand.PatchTracking)
+        // The queued patch blocks a second publication until the replica confirms it.
+        assertEquals(TrackingReconcileResult(0, 0, 0), router().reconcileWithReplica(200))
+    }
+
+    @Test
+    fun `confirmed core record wins over a different local row without echo`() = runTest {
+        val (mangaId, trackingId) = boundComic()
+        database.manga_syncQueries.insertRow(row(mangaId, syncId = 2))
+        replicaRecord(trackingId, progress = 20.0)
+
+        val result = router().reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(0, 1, 0), result)
+        assertEquals(20.0, database.manga_syncQueries.getAllByMangaId(mangaId).executeAsOne().last_chapter_read)
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
+        assertEquals(TrackingReconcileResult(0, 0, 0), router().reconcileWithReplica(200))
+    }
+
+    @Test
+    fun `pending local tracker change is not overwritten by an older replica`() = runTest {
+        val (mangaId, trackingId) = boundComic()
+        replicaRecord(trackingId, progress = 20.0)
+        router().upsert(listOf(row(mangaId, syncId = 2)), EpigraphMutationOrigin.LOCAL_USER, 50)
+
+        val result = router().reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(0, 0, 0), result)
+        assertEquals(12.5, database.manga_syncQueries.getAllByMangaId(mangaId).executeAsOne().last_chapter_read)
+    }
+
+    @Test
+    fun `core tombstone removes the local binding`() = runTest {
+        val (mangaId, trackingId) = boundComic()
+        database.manga_syncQueries.insertRow(row(mangaId, syncId = 2))
+        database.aethon_syncQueries.upsertCoreReplicaTombstone(
+            scopeId = "comics:profile:main",
+            entityType = "comic.tracking",
+            entityId = trackingId,
+            serverVersion = 7,
+            lamport = 7,
+            deletedAt = 1,
+            reasonCode = null,
+            payloadSha256 = "0".repeat(64),
+        )
+
+        val result = router().reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(0, 0, 1), result)
+        assertTrue(database.manga_syncQueries.getAllByMangaId(mangaId).executeAsList().isEmpty())
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
+    }
+
+    @Test
+    fun `core record is applied once its work binds locally`() = runTest {
+        val (mangaId, trackingId) = boundComic()
+        replicaRecord(trackingId, progress = 33.0)
+
+        val result = router().reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(0, 1, 0), result)
+        val local = database.manga_syncQueries.getAllByMangaId(mangaId).executeAsOne()
+        assertEquals(2, local.sync_id)
+        assertEquals(33.0, local.last_chapter_read)
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
+    }
+
+    @Test
+    fun `reconciliation stays local when the core does not advertise tracking`() = runTest {
+        val (mangaId, _) = boundComic()
+        database.manga_syncQueries.insertRow(row(mangaId, syncId = 2))
+
+        assertEquals(TrackingReconcileResult(0, 0, 0), router(gate = TrackingSyncGate { false }).reconcileWithReplica(100))
+        assertEquals(0, database.aethon_syncQueries.pendingMutationCount().executeAsOne())
+    }
+
+    @Test
     fun `tracker keys are stable and reversible`() {
         assertEquals(12, TrackerSyncKeys.all.size)
         TrackerSyncKeys.all.forEach { (id, key) -> assertEquals(id, TrackerSyncKeys.syncIdFor(key)) }
@@ -212,6 +298,44 @@ class EpigraphTrackingMutationRouterTest {
         remoteUrl = "https://tracker.example/4242",
         startDate = 1_700_000_000_000,
         finishDate = 0,
+    )
+
+    private fun boundComic(): Pair<Long, String> {
+        val mangaId = insertManga("/Manga/Bound")
+        val work = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/Manga/Bound"))
+        bindPortable(mangaId, work)
+        return mangaId to "comic.tracking::${PortableIdentityV3.workId(work)}::anilist"
+    }
+
+    private fun replicaRecord(trackingId: String, progress: Double) {
+        val workId = trackingId.removePrefix("comic.tracking::").removeSuffix("::anilist")
+        database.aethon_syncQueries.upsertCoreReplicaRecord(
+            scopeId = "comics:profile:main",
+            entityType = "comic.tracking",
+            entityId = trackingId,
+            serverVersion = 5,
+            lamport = 5,
+            recordJson = """{"trackingId":"$trackingId","comicId":"$workId","trackerKey":"anilist",""" +
+                """"remoteId":4242,"libraryId":null,"title":"Shadow Slave","remoteUrl":"https://tracker.example/4242",""" +
+                """"status":1,"progress":$progress,"totalChapters":100,"score":8.0,""" +
+                """"startedAtMs":1700000000000,"finishedAtMs":0,"updatedAtMs":1}""",
+            payloadSha256 = "0".repeat(64),
+        )
+    }
+
+    private fun tachiyomi.data.Manga_syncQueries.insertRow(row: TrackingRow) = insert(
+        mangaId = row.mangaId,
+        syncId = row.syncId,
+        remoteId = row.remoteId,
+        libraryId = row.libraryId,
+        title = row.title,
+        lastChapterRead = row.lastChapterRead,
+        totalChapters = row.totalChapters,
+        status = row.status,
+        score = row.score,
+        remoteUrl = row.remoteUrl,
+        startDate = row.startDate,
+        finishDate = row.finishDate,
     )
 
     private fun insertManga(url: String): Long {

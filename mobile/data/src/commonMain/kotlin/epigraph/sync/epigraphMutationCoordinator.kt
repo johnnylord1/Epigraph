@@ -89,7 +89,9 @@ class EpigraphMutationCoordinator(
                     nextAttemptAt = intent.createdAtEpochMillis,
                 )
             }
-            mutation.value to (mutation.envelopes.isNotEmpty() || mutation.suwayomiMutations.isNotEmpty())
+            mutation.value to (
+                mutation.envelopes.isNotEmpty() || mutation.suwayomiMutations.isNotEmpty() || mutation.wakesSync
+            )
         }
         // The domain write and outbox insert are already durable. A scheduler failure must not
         // turn a successful local mutation into an error or cause the caller to retry it twice.
@@ -334,6 +336,8 @@ data class LocalMutationResult<T>(
     val value: T,
     val envelopes: List<SyncCommandEnvelope>,
     val suwayomiMutations: List<SuwayomiMutationIntent> = emptyList(),
+    /** Wakes the Core worker although nothing was queued, for work a sync run publishes itself. */
+    val wakesSync: Boolean = false,
 )
 
 data class EpigraphMutationAcknowledgement(
