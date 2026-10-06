@@ -1,0 +1,92 @@
+name: Build Android
+
+# Builds and checks the Android app in mobile/ on GitHub's servers: migration verification,
+# sync tests, unit tests, lint and the dev debug APK, which is kept as a downloadable artifact.
+# The signed standard release and the emulator smoke stay manual (mobile/docs/RELEASE_SIGNING.md).
+# GitHub only reads workflows from this root folder, so mobile/.github is not run.
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - main
+      - "claude/**"
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-android.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - ".github/workflows/build-android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: Android gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Gradle properties for the hosted runner
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/gradle.properties <<'EOF'
+          org.gradle.daemon=false
+          org.gradle.jvmargs=-Xmx6g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          kotlin.daemon.jvmargs=-Xmx3g -XX:+UseG1GC -Dfile.encoding=UTF-8
+          kotlin.incremental=false
+          EOF
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: mobile
+
+      - name: Migrations and sync tests
+        run: ./gradlew :data:verifySqlDelightMigration :data:testAndroidHostTest
+
+      - name: App unit tests
+        run: ./gradlew :app:testDevDebugUnitTest
+
+      - name: Lint
+        run: ./gradlew :app:lintDevDebug
+
+      - name: Assemble dev debug
+        run: ./gradlew :app:assembleDevDebug
+
+      - name: Upload dev debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: epigraph-mobile-dev-debug
+          path: mobile/app/build/outputs/apk/dev/debug/app-dev-universal-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-test-reports
+          path: |
+            mobile/**/build/reports/tests/
+            mobile/**/build/reports/lint-results-*.html
+          retention-days: 7
