@@ -34,6 +34,13 @@ object BookImportMetadataExtractor {
             }
         }.getOrElse { fallback(fallbackDisplayName) }
 
+    /**
+     * True for a title saved by older builds that read a UTF-16 or UTF-8 PDF text string as
+     * PDFDocEncoding, which left its byte order mark ("þÿ" or "ï»¿") and NUL bytes in the title.
+     */
+    fun isMisdecodedPdfTitle(title: String): Boolean =
+        title.startsWith("\u00fe\u00ff") || title.startsWith("\u00ef\u00bb\u00bf") || '\u0000' in title
+
     private fun extractEpub(file: File, fallbackDisplayName: String): BookImportMetadata {
         ZipFile(file).use { zip ->
             val container = zip.getEntry(CONTAINER_PATH)

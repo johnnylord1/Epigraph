@@ -6,6 +6,8 @@ import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -71,6 +73,13 @@ class BookImportMetadataExtractorTest {
         Files.write(pdf.toPath(), "%PDF-1.4 /Title (".toByteArray() + title + ") /Author (A)".toByteArray())
 
         assertEquals("Livro Ç", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
+    }
+
+    @Test
+    fun `recognizes titles saved with an undecoded byte order mark`() {
+        assertTrue(BookImportMetadataExtractor.isMisdecodedPdfTitle("\u00fe\u00ff\u0000L\u0000i"))
+        assertTrue(BookImportMetadataExtractor.isMisdecodedPdfTitle("\u00ef\u00bb\u00bfLivro"))
+        assertFalse(BookImportMetadataExtractor.isMisdecodedPdfTitle("Livro \u00c7"))
     }
 
     @Test

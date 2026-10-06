@@ -404,9 +404,12 @@ class LocalBookRepositoryImpl(
             if (coverChanged) coversMaterialized++
 
             val titleFromFile = book.displayName.endsWith(".epub", true) ||
-                book.displayName.endsWith(".pdf", true)
+                book.displayName.endsWith(".pdf", true) ||
+                BookImportMetadataExtractor.isMisdecodedPdfTitle(book.displayName)
             val title = if (titleFromFile) {
-                metadata.title?.takeIf(String::isNotBlank) ?: book.displayName
+                metadata.title
+                    ?.takeIf { it.isNotBlank() && !BookImportMetadataExtractor.isMisdecodedPdfTitle(it) }
+                    ?: book.displayName
             } else {
                 book.displayName
             }

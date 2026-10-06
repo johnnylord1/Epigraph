@@ -221,11 +221,13 @@ Pendente (exige ação do usuário ou está fora do escopo mobile):
 - [~] E2E real com o syncd do desktop (pareamento por PIN/QR, edição nos dois lados,
       offline/reconexão, revogação, convergência de dois aparelhos). O syncd estava ativo na
       4777, mas o pareamento exige aprovar no app desktop. Roteiro em `docs/audit/GO_NO_GO.md`.
-- [ ] Smoke manual da build de release além do onboarding (leitores, backup, pareamento) num
+- [~] Smoke manual da build de release além do onboarding (leitores, backup, pareamento) num
       aparelho real. O bloqueio anterior (permissão "instalar apps desconhecidos" obrigatória no
-      onboarding) foi removido: veja "Biblioteca e UI" acima.
-- [ ] Restauração de backup transacional/retomável e bytes de EPUB/PDF no backup (P1).
-- [ ] Seleção de texto/OCR em PDF (P2).
+      onboarding) foi removido: veja "Biblioteca e UI" acima. Sem aparelho real e sem build de
+      release autorizada; o mesmo roteiro passou no emulador com a build de debug do CI.
+- [x] Restauração de backup transacional/retomável e bytes de EPUB/PDF no backup (P1): veja a
+      Fase 6.
+- [x] Seleção de texto/OCR em PDF (P2): veja a Fase 6.
 - [x] Testes de morte de processo no download de mangá (P2): `DownloadFinalizerTest` cobre o
       processo morto no meio de uma página (o `_tmp` não publica) e a retomada na execução seguinte
       (publica uma vez completo); a contagem de páginas virou `DownloadFinalizer.countPageFiles`.
@@ -260,9 +262,16 @@ Fase 1 — Biblioteca
 
 Fase 2 — Leitores (verificar e corrigir)
 
-- [ ] Mangá (paginado e webtoon), novel, EPUB (páginas e rolagem).
-- [ ] PDF nos dois modos do desktop: página original (vertical, horizontal, duas páginas) e
-      texto refluído (com OCR quando a página não tem texto).
+- [x] Mangá (paginado e webtoon), novel, EPUB (páginas e rolagem). Verificado no emulador:
+      mangá local em RTL paginado (toque e arrasto) e faixa longa com transição de capítulo e
+      capítulos marcados como lidos; EPUB rolagem e paginado (o arrasto passou a virar página e a
+      seleção ganhou "Destacar", que limpa a seleção depois de gravar); novel restaurada do LNReader com capítulos, progresso e
+      marcador. Sem o plugin da fonte, o leitor de novel agora diz qual fonte instalar em vez de
+      "ainda carregando".
+- [x] PDF nos dois modos do desktop: página original (vertical, horizontal, duas páginas) e
+      texto refluído (com OCR quando a página não tem texto). Em duas páginas a seleção da página
+      da direita grava o destaque nela (`PdfSelectionSegments`); segurar uma página do spread
+      mostra só o texto dela, sem mover a página atual.
 
 Fase 3 — Trackers
 
@@ -281,7 +290,9 @@ Fase 4 — Tema, HUD e configurações
       `PreferencesHelper.lightTheme/darkTheme/nightMode`).
 - [x] HUD dos leitores mais próximo do desktop: folha inferior plana e larga, sem pílula (o usuário
       rejeitou botões e barras em pílula e texturas).
-- [ ] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
+- [x] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
+      Todas as telas de configurações abertas nos dois temas sem crash; o carregamento do leitor
+      de livros mostrava o spinner esticado na tela inteira e agora fica centralizado.
 
 Fase 5 — Explorar
 
@@ -293,9 +304,12 @@ Fase 5 — Explorar
 
 Fase 6 — Itens adiados
 
-- [ ] Restauração de backup transacional e retomável.
-- [ ] Bytes de EPUB/PDF no backup (opcional, com verificação SHA-256).
-- [ ] PDF: seleção de texto e OCR verificados nos dois modos.
+- [x] Restauração de backup transacional e retomável.
+- [x] Bytes de EPUB/PDF no backup (opcional, com verificação SHA-256). Backup criado no emulador
+      com os arquivos nomeados pelo SHA-256 e somas conferidas; restaurado numa instalação limpa,
+      os dois arquivos voltaram com o mesmo SHA-256. Títulos de PDF salvos com o BOM cru
+      ("þÿ...") por builds antigas são corrigidos no reparo da abertura.
+- [x] PDF: seleção de texto e OCR verificados nos dois modos.
 - [x] Testes de morte de processo no download de mangá.
 
 Fase 7 — Gates, smoke no emulador e documentação.

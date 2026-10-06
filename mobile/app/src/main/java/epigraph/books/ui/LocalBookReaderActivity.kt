@@ -316,7 +316,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
         })
         title = getString(MR.strings.local_books_title)
-        setContentView(FrameLayout(this).apply { addView(ProgressBar(context)) })
+        setContentView(
+            FrameLayout(this).apply {
+                addView(
+                    ProgressBar(context),
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER,
+                    ),
+                )
+            },
+        )
         val bookId = intent.getStringExtra(EXTRA_BOOK_ID)
         if (bookId.isNullOrBlank()) {
             finishWithError(getString(MR.strings.book_reader_unavailable))
@@ -598,16 +609,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         secondary.visibility = if (secondPage == safeFirst) android.view.View.INVISIBLE else android.view.View.VISIBLE
         pdfSpreadRenderJob?.cancel()
         val generation = ++pdfSpreadGeneration
+        // Select from the page that was pressed; the spread itself stays where it is.
         primary.setOnLongClickListener {
-            pdfCurrentPage = safeFirst
-            showPdfTextSelectionDialog()
+            showPdfTextSelectionDialog(onlyPage = safeFirst)
             true
         }
         secondary.setOnLongClickListener {
-            if (secondPage != safeFirst) {
-                pdfCurrentPage = secondPage
-                showPdfTextSelectionDialog()
-            }
+            if (secondPage != safeFirst) showPdfTextSelectionDialog(onlyPage = secondPage)
             true
         }
         pdfSpreadRenderJob = lifecycleScope.launch {
@@ -1616,11 +1624,12 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         characterOffset = characterOffset,
     ).withDocumentMetrics(readerProgressPageCount.coerceAtLeast(1))
 
-    private fun showPdfTextSelectionDialog() {
+    private fun showPdfTextSelectionDialog(onlyPage: Int? = null) {
         val reader = opened as? OpenedBookReader.Pdf ?: return
         val first = pdfCurrentPage.coerceAtLeast(0)
-        // A spread shows two pages, so both can be selected from.
-        val pages = first until min(first + pdfPagesShown(), readerProgressPageCount.coerceAtLeast(first + 1))
+        // A spread shows two pages, so both can be selected from unless one page was pressed.
+        val pages = onlyPage?.let { it..it }
+            ?: (first until min(first + pdfPagesShown(), readerProgressPageCount.coerceAtLeast(first + 1)))
         lifecycleScope.launch {
             var ocrNoticeShown = false
             val pageTexts = withContext(Dispatchers.IO) {
@@ -1988,6 +1997,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         lifecycleScope.launch {
             try {
                 saveEpubSelection(navigator, session, localBook)
+                // Drop the WebView selection so the new highlight shows instead of the handles.
+                runCatching { navigator.clearSelection() }
             } finally {
                 onDone()
             }
