@@ -7,6 +7,8 @@ import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.extensions.ComicRepositoryRow
 import epigraph.sync.core.setup.CoreDependencySetupActivity
+import epigraph.sync.core.setup.InventoryChoice
+import epigraph.sync.core.setup.SyncDomainChoice
 import epigraph.sync.core.setup.coreDependencySetupCounts
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
@@ -91,7 +93,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             .collectAsState(initial = null)
         val novelCoverageCheck = remember { GlobalContext.get().get<NovelChapterCoverageCheck>() }
         var novelsWithoutChapters by remember { mutableStateOf<List<String>>(emptyList()) }
-        LaunchedEffect(syncStatus) {
+        // Counts change on every poll while a sync runs; these lists only change when a sync ends.
+        val syncStatusKind = syncStatus?.let { it::class }
+        LaunchedEffect(syncStatusKind) {
             novelsWithoutChapters = runCatching { novelCoverageCheck.novelsWithoutChapters() }
                 .getOrDefault(emptyList())
         }
@@ -126,7 +130,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var blockedMutations by remember { mutableStateOf<List<BlockedMutation>>(emptyList()) }
         var showBlockedDialog by remember { mutableStateOf(false) }
         var blockedRefresh by remember { mutableStateOf(0) }
-        LaunchedEffect(syncStatus, blockedRefresh) {
+        LaunchedEffect(syncStatusKind, blockedRefresh) {
             blockedMutations = runCatching { mutationCoordinator.blockedMutations() }.getOrDefault(emptyList())
             if (blockedMutations.isEmpty()) showBlockedDialog = false
         }
@@ -685,12 +689,18 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(MR.strings.epigraph_core_sync_now),
                         subtitle = stringResource(MR.strings.epigraph_core_sync_now_summary),
-                        enabled = state is CorePairingUiState.Paired && syncStatus !is CoreSyncStatus.Syncing,
+                        // A disabled item collapses out of the list, so it must not follow the sync
+                        // status: the setup screen shows the sync's progress instead.
+                        enabled = state is CorePairingUiState.Paired,
                         onClick = {
-                            openSetupAfterSync = true
-                            sawSyncRunning = false
-                            setupRequestedAtMs = System.currentTimeMillis()
-                            coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
+                            context.startActivity(
+                                CoreDependencySetupActivity.intent(
+                                    context,
+                                    persistedSelection?.serverId,
+                                    persistedSelection?.profileId,
+                                    startWithSelection = true,
+                                ),
+                            )
                         },
                     ),
                     blockedMutations.takeIf { it.isNotEmpty() }?.let { blocked ->
@@ -804,62 +814,6 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         is CorePairingUiState.CredentialFailed ->
             stringResource(MR.strings.epigraph_core_error_credentials)
         is CorePairingUiState.PairingFailed -> pairingErrorText(state.error, state.bundleFailure)
-    }
-
-    @Composable
-    private fun SyncDomainChoice(
-        title: String,
-        summary: String,
-        checked: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-            Spacer(Modifier.width(8.dp))
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-
-    @Composable
-    private fun InventoryChoice(
-        title: String,
-        checked: Boolean,
-        enabled: Boolean,
-        onCheckedChange: (Boolean) -> Unit,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 40.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Checkbox(
-                checked = checked && enabled,
-                enabled = enabled,
-                onCheckedChange = onCheckedChange,
-            )
-            Text(
-                title,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                },
-            )
-        }
     }
 
     @Composable

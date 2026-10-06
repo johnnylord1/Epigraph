@@ -2400,6 +2400,8 @@
     <string name="epigraph_core_setup_done">Done</string>
     <string name="epigraph_core_setup_nothing">Nothing from the desktop here</string>
     <string name="epigraph_core_setup_failed">That didn\'t work. Try again.</string>
+    <string name="epigraph_core_setup_skip">Skip</string>
+    <string name="epigraph_core_setup_syncing">Syncing with the desktop…</string>
     <string name="library_comics">Comics</string>
     <string name="library_books_and_novels">Books &amp; novels</string>
     <string name="library_switch_to_comics">Comics</string>
