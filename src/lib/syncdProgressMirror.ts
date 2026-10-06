@@ -7,6 +7,7 @@ const MAX_IDS_PER_REQUEST = 1_000;
 
 let pendingMangaIds = new Set<number>();
 let pendingChapterIds = new Set<number>();
+let pendingCatalog = false;
 let timer: ReturnType<typeof setTimeout> | null = null;
 
 function addIds(target: Set<number>, ids: readonly number[] | undefined) {
@@ -21,7 +22,9 @@ function flush() {
   const chapterIds = [...pendingChapterIds];
   pendingMangaIds = new Set();
   pendingChapterIds = new Set();
-  if (!mangaIds.length && !chapterIds.length) return;
+  const catalog = pendingCatalog;
+  pendingCatalog = false;
+  if (!mangaIds.length && !chapterIds.length && !catalog) return;
   // The periodic mirror tick is the fallback, so a Core that is away or older is not an error here.
   void invoke("syncd_request_progress_mirror", { mangaIds, chapterIds }).catch(() => {});
 }
@@ -39,9 +42,21 @@ export function requestProgressMirror(edit: { mangaIds?: readonly number[]; chap
   timer = setTimeout(flush, PROGRESS_MIRROR_DEBOUNCE_MS);
 }
 
+/**
+ * Asks Core to mirror Suwayomi categories and title assignments soon, after this window created, renamed,
+ * reordered or deleted a category or changed a title's categories. The same Core tick mirrors them.
+ */
+export function requestCatalogMirror() {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+  pendingCatalog = true;
+  if (timer !== null) clearTimeout(timer);
+  timer = setTimeout(flush, PROGRESS_MIRROR_DEBOUNCE_MS);
+}
+
 export function resetProgressMirrorRequestsForTests() {
   if (timer !== null) clearTimeout(timer);
   timer = null;
   pendingMangaIds = new Set();
   pendingChapterIds = new Set();
+  pendingCatalog = false;
 }

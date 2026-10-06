@@ -14,7 +14,7 @@ use super::models::{
     PortableWorkBindingRow, PortableWorkRefV3, SharedAppState,
 };
 use super::routes::suwayomi_catalog;
-use super::{db, suwayomi_process};
+use super::{db, suwayomi_category_mirror, suwayomi_process};
 
 /// How often the desktop's Suwayomi reading progress is re-imported into the syncd
 /// replica so the snapshot/replay serve it to paired mobile devices.
@@ -409,6 +409,14 @@ async fn mirror_profile(
         let entity_id = identity.entity_id.clone();
         observed_bookmark_entities.insert(entity_id.clone());
         let portable_identity = identity.portable_work_ref.is_some();
+        if portable_identity {
+            // The progress pass keeps a device's server-local record of a bound chapter following
+            // Suwayomi; clearing its bookmark here would undo that write on every tick.
+            observed_bookmark_entities.insert(
+                chapter_state_identity(server_id, profile_id, bookmark.manga_id, bookmark.chapter_id, None)
+                    .entity_id,
+            );
+        }
         // Suwayomi does not expose a bookmark-updated timestamp. The observation time lets a
         // newer desktop command win over an older mobile record, while the semantic equality
         // guard below prevents a revision on every mirror tick.
@@ -470,6 +478,28 @@ async fn mirror_profile(
         state, &session, &scope_id, server_id, profile_id, &library, memory, hints,
     )
     .await?;
+    let library_titles = library
+        .iter()
+        .map(|(manga_id, node)| suwayomi_category_mirror::LibraryTitle {
+            manga_id: *manga_id,
+            portable_comic_id: Some(node.portable_comic_id.clone()),
+        })
+        .collect::<Vec<_>>();
+    // Category failures must not hide the progress already mirrored above.
+    match suwayomi_category_mirror::mirror_categories(
+        state,
+        &session,
+        &scope_id,
+        server_id,
+        profile_id,
+        &library_titles,
+        retention_window,
+    )
+    .await
+    {
+        Ok(count) => mirrored += count,
+        Err(error) => tracing::warn!(error = %error, "Suwayomi category mirror failed"),
+    }
     Ok(mirrored)
 }
 
@@ -766,14 +796,12 @@ async fn mirror_chapter_states(
                 .map(|identity| identity.entity_id.as_str()),
         )
         .await?;
-        // Earlier builds mirrored desktop edits under server-local ids that devices cannot apply.
-        // Such a record is evidence of a desktop edit that the portable identity must carry over.
+        // Records under the server-local ids of portable chapters; see
+        // `planned_chapter_state_writes`.
         let legacy_ids = chapters
             .iter()
             .zip(&identities)
-            .filter(|(_, identity)| {
-                identity.portable_chapter_ref.is_some() && !stored.contains_key(&identity.entity_id)
-            })
+            .filter(|(_, identity)| identity.portable_chapter_ref.is_some())
             .map(|(chapter, _)| {
                 (
                     chapter.chapter_id,
@@ -788,38 +816,49 @@ async fn mirror_chapter_states(
                 )
             })
             .collect::<HashMap<_, _>>();
-        let legacy = load_stored_chapter_states(
-            state,
-            scope_id,
-            legacy_ids.values().map(String::as_str),
-        )
-        .await?;
+        let legacy =
+            load_stored_chapter_states(state, scope_id, legacy_ids.values().map(String::as_str))
+                .await?;
 
         let mut writes = Vec::new();
         for (chapter, identity) in chapters.iter().zip(&identities) {
-            let legacy_edit_at_ms = legacy_ids
-                .get(&chapter.chapter_id)
-                .and_then(|entity_id| legacy.get(entity_id))
-                .filter(|row| row.record_updated_by_device_id == MIRROR_DEVICE_ID)
-                .map(|row| row.record_updated_at_ms);
-            let Some(updated_at_ms) = planned_chapter_state_updated_at(
+            let planned = planned_chapter_state_writes(
                 chapter,
                 memory.baselines.get(&chapter.manga_id),
-                hints
-                    .chapter_edits
-                    .get(&chapter.chapter_id)
-                    .copied()
-                    .max(legacy_edit_at_ms),
+                hints.chapter_edits.get(&chapter.chapter_id).copied(),
                 stored.get(&identity.entity_id),
+                legacy_ids
+                    .get(&chapter.chapter_id)
+                    .and_then(|entity_id| legacy.get(entity_id)),
                 observed_at_ms,
-            ) else {
-                continue;
-            };
-            writes.push((
-                identity.entity_id.clone(),
-                chapter_state_record(identity, server_id, profile_id, chapter, updated_at_ms),
-                updated_at_ms,
-            ));
+            );
+            if let Some(updated_at_ms) = planned.identity {
+                writes.push((
+                    identity.entity_id.clone(),
+                    chapter_state_record(identity, server_id, profile_id, chapter, updated_at_ms),
+                    updated_at_ms,
+                ));
+            }
+            if let Some(updated_at_ms) = planned.legacy {
+                let legacy_identity = chapter_state_identity(
+                    server_id,
+                    profile_id,
+                    chapter.manga_id,
+                    chapter.chapter_id,
+                    None,
+                );
+                writes.push((
+                    legacy_identity.entity_id.clone(),
+                    chapter_state_record(
+                        &legacy_identity,
+                        server_id,
+                        profile_id,
+                        chapter,
+                        updated_at_ms,
+                    ),
+                    updated_at_ms,
+                ));
+            }
         }
         for batch in writes.chunks(WRITE_BATCH_SIZE) {
             let _writer_guard = state.mutation_gate.lock().await;
@@ -997,6 +1036,51 @@ fn planned_chapter_state_updated_at(
     }
 }
 
+/// `updatedAtMs` of the writes one observed chapter needs, if any.
+#[derive(Debug, PartialEq, Eq)]
+struct PlannedChapterStateWrites {
+    /// The chapter's own (portable when bound) identity.
+    identity: Option<i64>,
+    /// The server-local identity of a bound chapter, when a device wrote a record under it.
+    legacy: Option<i64>,
+}
+
+/// Plans a chapter's writes. `legacy` is the record stored under the server-local id of a chapter
+/// whose identity is portable. A mirror-owned one is a desktop edit from an earlier build that
+/// the portable record carries over when it has none yet. Either kind must follow Suwayomi as
+/// well: a device that has not bound the chapter writes and reads it through that id, and would
+/// otherwise keep showing a state the desktop has since changed.
+fn planned_chapter_state_writes(
+    observed: &ChapterNode,
+    baseline: Option<&MangaBaseline>,
+    desktop_edit_at_ms: Option<i64>,
+    stored: Option<&StoredChapterStateRow>,
+    legacy: Option<&StoredChapterStateRow>,
+    observed_at_ms: i64,
+) -> PlannedChapterStateWrites {
+    let legacy_edit_at_ms = legacy
+        .filter(|row| stored.is_none() && row.record_updated_by_device_id == MIRROR_DEVICE_ID)
+        .map(|row| row.record_updated_at_ms);
+    PlannedChapterStateWrites {
+        identity: planned_chapter_state_updated_at(
+            observed,
+            baseline,
+            desktop_edit_at_ms.max(legacy_edit_at_ms),
+            stored,
+            observed_at_ms,
+        ),
+        legacy: legacy.and_then(|row| {
+            planned_chapter_state_updated_at(
+                observed,
+                baseline,
+                desktop_edit_at_ms,
+                Some(row),
+                observed_at_ms,
+            )
+        }),
+    }
+}
+
 /// Identity of one chapter's `comic.chapter_state` entity.
 struct ChapterStateIdentity {
     entity_id: String,
@@ -1031,12 +1115,10 @@ fn chapter_state_record(
     chapter: &ChapterNode,
     updated_at_ms: i64,
 ) -> Value {
-    json!({
+    let mut record = json!({
         "chapterStateId": identity.entity_id,
         "comicId": identity.comic_id,
         "chapterId": identity.chapter_id,
-        "portableWorkRef": identity.portable_work_ref,
-        "portableChapterRef": identity.portable_chapter_ref,
         "coreServerId": server_id,
         "coreProfileId": profile_id,
         "suwayomiMangaId": chapter.manga_id,
@@ -1047,7 +1129,16 @@ fn chapter_state_record(
         "lastReadAtMs": (chapter.last_read_at > 0).then_some(chapter.last_read_at),
         "updatedAtMs": updated_at_ms,
         "explicitProgressReset": false,
-    })
+    });
+    // Mobile projections treat a present portable ref key as a claim of portable identity, so a
+    // record under server-local ids must omit the keys rather than carry nulls.
+    if let (Some(work), Some(chapter)) =
+        (&identity.portable_work_ref, &identity.portable_chapter_ref)
+    {
+        record["portableWorkRef"] = json!(work);
+        record["portableChapterRef"] = json!(chapter);
+    }
+    record
 }
 
 type PortableComicRefs = (PortableWorkRefV3, PortableChapterRefV3);
@@ -1272,6 +1363,8 @@ fn history_identity(
 
 #[derive(Clone)]
 struct LibraryMangaNode {
+    /// Canonical portable id from the title's source identity.
+    portable_comic_id: String,
     latest_read_chapter: Option<ReadChapterNode>,
     fingerprint: MangaFingerprint,
 }
@@ -1338,7 +1431,8 @@ async fn fetch_library_with_progress(
             let Some(manga_key) = text(node.get("url")).map(str::to_string) else {
                 continue;
             };
-            let _ = (source_id, manga_key);
+            let portable_comic_id =
+                canonical_portable_work_id(&PortableWorkRefV3::comic(source_id, manga_key));
             let latest_read_chapter = node
                 .get("latestReadChapter")
                 .filter(|value| !value.is_null())
@@ -1366,6 +1460,7 @@ async fn fetch_library_with_progress(
             mangas.push((
                 manga_id,
                 LibraryMangaNode {
+                    portable_comic_id,
                     latest_read_chapter: latest_read_chapter.filter(|chapter| chapter.is_read),
                     fingerprint,
                 },
@@ -1819,6 +1914,21 @@ mod tests {
     }
 
     #[test]
+    fn server_local_chapter_state_omits_portable_ref_keys() {
+        let observed = chapter(211, false, 0);
+        let identity = chapter_state_identity(
+            "server",
+            "main",
+            observed.manga_id,
+            observed.chapter_id,
+            None,
+        );
+        let record = chapter_state_record(&identity, "server", "main", &observed, 1);
+        assert!(record.get("portableWorkRef").is_none());
+        assert!(record.get("portableChapterRef").is_none());
+    }
+
+    #[test]
     fn promotes_exact_bound_suwayomi_rows_to_portable_identity() {
         let (work, chapter) = bound_comic_rows();
         let refs = portable_refs_from_bindings(&work, &chapter, 3, 508).unwrap();
@@ -1970,6 +2080,120 @@ mod tests {
         let previous = baseline(1_000, &[(508, true, 0)]);
         let record = planned_record(&observed, Some(&previous), None, None, 5_000).unwrap();
         assert_eq!(record["read"], false);
+    }
+
+    #[test]
+    fn device_written_legacy_record_follows_a_later_desktop_edit() {
+        // A phone without the chapter binding marked it read under the server-local id; the
+        // portable record still says unread, which matches Suwayomi after the desktop un-read it.
+        let observed = chapter(508, false, 0);
+        let portable_row = stored_row(
+            MIRROR_DEVICE_ID,
+            1_000,
+            json!({ "read": false, "bookmarked": false, "updatedAtMs": 1_000 }),
+        );
+        let phone_legacy = stored_row(
+            "phone-1",
+            2_000,
+            json!({ "read": true, "bookmarked": null, "updatedAtMs": 1_900 }),
+        );
+        let planned = planned_chapter_state_writes(
+            &observed,
+            None,
+            Some(3_000),
+            Some(&portable_row),
+            Some(&phone_legacy),
+            5_000,
+        );
+        assert_eq!(
+            planned,
+            PlannedChapterStateWrites {
+                identity: None,
+                legacy: Some(3_000)
+            }
+        );
+        // Without evidence newer than the phone record the legacy record is left alone.
+        let planned = planned_chapter_state_writes(
+            &observed,
+            None,
+            Some(1_500),
+            Some(&portable_row),
+            Some(&phone_legacy),
+            5_000,
+        );
+        assert_eq!(planned.legacy, None);
+        // A legacy record that already matches Suwayomi needs nothing.
+        let read = chapter(508, true, 0);
+        let planned = planned_chapter_state_writes(
+            &read,
+            None,
+            Some(3_000),
+            None,
+            Some(&phone_legacy),
+            5_000,
+        );
+        assert_eq!(planned.legacy, None);
+        assert_eq!(planned.identity, Some(3_000));
+    }
+
+    #[test]
+    fn mirror_owned_legacy_record_seeds_a_missing_portable_record_and_follows_suwayomi() {
+        let observed = chapter(508, true, 0);
+        let mirror_legacy = stored_row(
+            MIRROR_DEVICE_ID,
+            2_500,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 2_500 }),
+        );
+        let planned =
+            planned_chapter_state_writes(&observed, None, None, None, Some(&mirror_legacy), 5_000);
+        assert_eq!(
+            planned,
+            PlannedChapterStateWrites {
+                identity: Some(2_500),
+                legacy: None
+            }
+        );
+        // Once a portable record exists, the mirror-owned legacy one is no longer evidence.
+        let phone_portable = stored_row(
+            "phone-1",
+            2_000,
+            json!({ "read": false, "bookmarked": false, "updatedAtMs": 2_000 }),
+        );
+        let planned = planned_chapter_state_writes(
+            &observed,
+            None,
+            None,
+            Some(&phone_portable),
+            Some(&mirror_legacy),
+            5_000,
+        );
+        assert_eq!(planned.identity, None);
+        // A stale mirror-owned legacy record still follows Suwayomi for devices that read it.
+        let stale_legacy = stored_row(
+            MIRROR_DEVICE_ID,
+            2_500,
+            json!({ "read": false, "bookmarked": false, "updatedAtMs": 2_500 }),
+        );
+        let desktop_portable = stored_row(
+            MIRROR_DEVICE_ID,
+            3_000,
+            json!({ "read": true, "bookmarked": false, "updatedAtMs": 3_000 }),
+        );
+        let planned = planned_chapter_state_writes(
+            &observed,
+            None,
+            None,
+            Some(&desktop_portable),
+            Some(&stale_legacy),
+            5_000,
+        );
+        assert_eq!(
+            planned,
+            PlannedChapterStateWrites {
+                identity: None,
+                legacy: Some(5_000)
+            }
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod pairing_pin;
 pub mod replay;
 pub mod routes;
 pub mod runtime_manifest;
+pub mod suwayomi_category_mirror;
 pub mod suwayomi_process;
 pub mod suwayomi_progress_mirror;
 pub mod suwayomi_projection;

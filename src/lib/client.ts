@@ -6,6 +6,7 @@ import {
   getServerUrl,
 } from "./startupClient";
 import { serverFileUrl, thumbUrl } from "./clientUrls";
+import { requestCatalogMirror } from "./syncdProgressMirror";
 
 export { getServerAuthHeader, getServerUrl } from "./startupClient";
 export { serverFileUrl, thumbUrl } from "./clientUrls";
@@ -93,6 +94,8 @@ export async function fetchWithRetry(
 }
 
 const DEFAULT_GQL_TIMEOUT_MS = 12000;
+/** Mutations whose result paired devices receive through Core's category mirror. */
+const CATEGORY_MUTATION = /\b(?:createCategory|updateCategory|updateCategories|deleteCategory|updateCategoryOrder|updateMangaCategories|updateMangasCategories)\s*\(/;
 
 /**
  * Without a caller signal the request is bounded by the default timeout. A caller signal keeps
@@ -146,6 +149,7 @@ export async function gql<T>(
       const message = json.errors.map((error) => error.message?.trim()).filter(Boolean).join("; ");
       throw new Error(message || "Suwayomi returned an empty GraphQL error.");
     }
+    if (mutation && CATEGORY_MUTATION.test(query)) requestCatalogMirror();
     return json.data;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);

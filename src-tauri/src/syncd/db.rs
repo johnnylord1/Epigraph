@@ -6064,6 +6064,58 @@ pub async fn delete_comic_sync_state_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
+    delete_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await
+}
+
+/// Deletes a record the desktop already removed from Suwayomi. Unlike a client delete it does
+/// not enqueue a Suwayomi projection, because Suwayomi is the source of this change.
+pub async fn delete_mirrored_comic_sync_state_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    delete_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        client_lamport,
+        event_clock,
+        retention_window,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn delete_comic_sync_state_mutation_inner(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    enqueue_projection: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicSyncStateRow>(
         r#"
@@ -6162,6 +6214,7 @@ pub async fn delete_comic_sync_state_mutation(
     )
     .await?;
     let projection_record = match previous_record {
+        _ if !enqueue_projection => None,
         Some(record) => Some(record),
         None => portable_comic_entry_delete_record_in_tx(&mut tx, scope_id, entity_type, entity_id)
             .await?
@@ -6873,6 +6926,45 @@ async fn enqueue_comic_projections_in_tx(
 ) -> anyhow::Result<()> {
     if projections.is_empty() {
         return Ok(());
+    }
+    let mut projections = projections;
+    // Chapter progress records are patches whose null fields mean "unchanged", so a superseded
+    // projection's values still apply unless the newer record sets them; otherwise a read flag
+    // followed quickly by a page-only update would never reach Suwayomi.
+    if projections
+        .iter()
+        .any(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
+    {
+        let superseded: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT variables_json FROM suwayomi_projection_outbox
+            WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
+              AND operation_name = 'UpdateChaptersProgress'
+              AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
+            ORDER BY source_server_version DESC
+            "#,
+        )
+        .bind(profile_id)
+        .bind(entity_type)
+        .bind(entity_id)
+        .bind(server_version)
+        .fetch_all(&mut **tx)
+        .await?;
+        for older in &superseded {
+            let older: Value = serde_json::from_str(older)?;
+            for (_, variables) in projections
+                .iter_mut()
+                .filter(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
+            {
+                for key in ["isRead", "isBookmarked", "lastPageRead"] {
+                    if variables.get(key).is_none_or(Value::is_null) {
+                        if let Some(value) = older.get(key).filter(|value| !value.is_null()) {
+                            variables[key] = value.clone();
+                        }
+                    }
+                }
+            }
+        }
     }
     sqlx::query(
         r#"
@@ -10688,6 +10780,69 @@ mod tests {
         assert_eq!(variables["mangaId"], 7);
         assert_eq!(variables["ids"], json!([11]));
         assert_eq!(variables["lastPageRead"], 5);
+    }
+
+    #[tokio::test]
+    async fn superseded_chapter_progress_projection_keeps_fields_the_newer_patch_leaves_null() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let comic_id = "suwayomi:profile:main:manga:7";
+        let chapter_id = "suwayomi:profile:main:chapter:11";
+        let entity_id = format!("comic.chapter_state::{comic_id}::{chapter_id}");
+        let patch = |read: Value, last_page_read: i64, at: i64| {
+            json!({
+                "chapterStateId": entity_id,
+                "comicId": comic_id,
+                "chapterId": chapter_id,
+                "read": read,
+                "bookmarked": null,
+                "lastPageRead": last_page_read,
+                "updatedAtMs": at,
+                "explicitProgressReset": false
+            })
+        };
+
+        for (lamport, record) in [
+            (1, patch(json!(true), 13, 100)),
+            (2, patch(Value::Null, 9, 200)),
+        ] {
+            apply_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                "comic.chapter_state",
+                &entity_id,
+                &record,
+                lamport,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+        }
+
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT variables_json FROM suwayomi_projection_outbox WHERE entity_type = 'comic.chapter_state'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        let variables: Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(variables["isRead"], true);
+        assert_eq!(variables["lastPageRead"], 9);
+        assert!(variables["isBookmarked"].is_null());
     }
 
     #[tokio::test]
