@@ -91,6 +91,8 @@ class AndroidCoreEndpointResolver(
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (stale: CorePairingStaleException) {
+            throw stale
         } catch (error: Throwable) {
             if (error.hasFingerprintMismatch()) {
                 throw CorePairingStaleException(
