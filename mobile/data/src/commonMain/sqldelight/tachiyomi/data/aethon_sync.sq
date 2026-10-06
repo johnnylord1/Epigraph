@@ -1447,6 +1447,10 @@ selectCoreReplicaRecordsByEntity:
 SELECT * FROM aethon_core_replica_record
 WHERE entity_type = :entityType AND entity_id = :entityId;
 
+selectCoreReplicaRecordsOfType:
+SELECT * FROM aethon_core_replica_record
+WHERE entity_type = :entityType;
+
 selectCoreReplicaTombstoneVersion:
 SELECT server_version FROM aethon_core_replica_tombstone
 WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;

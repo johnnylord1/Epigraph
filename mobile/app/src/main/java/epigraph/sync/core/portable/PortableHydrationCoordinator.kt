@@ -184,45 +184,48 @@ class SqlDelightPortableHydrationStore(
                         }
                     }
                 }
-            // Reader progress keeps only a work's latest chapter, so chapter states confirmed by
-            // the Core before their chapter was bound are replayed now that a local chapter exists.
-            chapters
-                .asSequence()
+            val boundComicChapters = chapters
                 .filter { it.resolution.state == PortableResolutionState.BOUND }
                 .filter { it.ref is epigraph.contract.PortableChapterRef.Comic }
-                .flatMap { chapter ->
-                    aethon_syncQueries.selectCoreReplicaRecordsByEntity(
-                        entityType = "comic.chapter_state",
-                        entityId = "comic.chapter_state::${chapter.portableWorkId}::${chapter.portableChapterId}",
-                    ).executeAsList()
+            // The replica table is keyed by scope first, so a lookup by entity alone scans it.
+            // Every pending work is replayed on each cycle; one scan per entity type keeps that
+            // from holding the database for minutes on a large library.
+            fun confirmedRecords(entityType: String, entityIds: Set<String>) =
+                if (entityIds.isEmpty()) {
+                    emptyList()
+                } else {
+                    aethon_syncQueries.selectCoreReplicaRecordsOfType(entityType)
+                        .executeAsList()
+                        .filter { it.entity_id in entityIds }
                 }
+            // Reader progress keeps only a work's latest chapter, so chapter states confirmed by
+            // the Core before their chapter was bound are replayed now that a local chapter exists.
+            confirmedRecords(
+                "comic.chapter_state",
+                boundComicChapters.mapTo(HashSet()) { chapter ->
+                    "comic.chapter_state::${chapter.portableWorkId}::${chapter.portableChapterId}"
+                },
+            ).asSequence()
                 // The work's last-read record becomes a History row once its chapter exists here.
                 .plus(
-                    chapters.asSequence()
-                        .filter { it.resolution.state == PortableResolutionState.BOUND }
-                        .filter { it.ref is epigraph.contract.PortableChapterRef.Comic }
-                        .map(PortableChapterBindingRecord::portableWorkId)
-                        .distinct()
-                        .flatMap { workId ->
-                            aethon_syncQueries.selectCoreReplicaRecordsByEntity(
-                                entityType = "comic.history",
-                                entityId = "comic.history::$workId",
-                            ).executeAsList()
-                        },
+                    confirmedRecords(
+                        "comic.history",
+                        boundComicChapters.mapTo(HashSet()) { "comic.history::${it.portableWorkId}" },
+                    ),
                 )
                 // Tracking confirmed before its work had a local row is replayed the same way: a
                 // work bound now, or still served by the Core, can finally receive it.
                 .plus(
-                    works.asSequence()
-                        .filter { it.ref is PortableWorkRef.Comic }
-                        .flatMap { work ->
-                            TrackerSyncKeys.all.values.asSequence().flatMap { trackerKey ->
-                                aethon_syncQueries.selectCoreReplicaRecordsByEntity(
-                                    entityType = "comic.tracking",
-                                    entityId = "comic.tracking::${work.portableId}::$trackerKey",
-                                ).executeAsList()
+                    confirmedRecords(
+                        "comic.tracking",
+                        works.asSequence()
+                            .filter { it.ref is PortableWorkRef.Comic }
+                            .flatMap { work ->
+                                TrackerSyncKeys.all.values.asSequence()
+                                    .map { trackerKey -> "comic.tracking::${work.portableId}::$trackerKey" }
                             }
-                        },
+                            .toHashSet(),
+                    ),
                 )
                 .forEach { row ->
                     val element = runCatching { json.parseToJsonElement(row.record_json) }.getOrNull()
