@@ -64,6 +64,8 @@ import epigraph.sync.core.novels.LnReaderRepositoryApprovalResult
 import epigraph.sync.core.novels.LnReaderRepositoryParityStatus
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.util.system.setThemeByPref
+import co.touchlab.kermit.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import yokai.i18n.MR
 import yokai.presentation.theme.YokaiTheme
@@ -154,12 +156,32 @@ private fun CoreDependencySetupContent(
         }
     }
 
+    // Every action runs here so a failure is shown instead of crashing, and the screen never stays
+    // locked as busy after an action ends.
+    val launchAction: (suspend () -> Unit) -> Unit = { action ->
+        busy = true
+        scope.launch {
+            try {
+                action()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Logger.e(failure) { "Dependency setup action failed" }
+                error = true
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     val isBusy = busy ||
         uiState.installation.activePackageName != null ||
         uiState.repositoryApproval.activeIndexUrl != null
 
-    BackHandler(enabled = !isBusy) {
-        if (step == 2) {
+    BackHandler {
+        if (isBusy) {
+            onClose()
+        } else if (step == 2) {
             step = 1
         } else {
             onClose()
@@ -178,7 +200,7 @@ private fun CoreDependencySetupContent(
                     )
                 },
                 actions = {
-                    IconButton(onClick = onClose, enabled = !isBusy) {
+                    IconButton(onClick = onClose) {
                         Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close))
                     }
                 },
@@ -237,8 +259,7 @@ private fun CoreDependencySetupContent(
                                     activeIndexUrl = uiState.repositoryApproval.activeIndexUrl,
                                     onAdd = { row ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.approveRepository(row.indexUrl)
                                             val outcome = coordinator.state.value.repositoryApproval.outcome
                                             if (outcome != RepositoryApprovalOutcome.ADDED &&
@@ -257,8 +278,7 @@ private fun CoreDependencySetupContent(
                                     isBusy = isBusy,
                                     onAdd = { repositoryId ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             val result = novelCoordinator.approveRepository(
                                                 effectiveServerId!!,
                                                 effectiveProfileId!!,
@@ -286,8 +306,7 @@ private fun CoreDependencySetupContent(
                                 activeIndexUrl = uiState.repositoryApproval.activeIndexUrl,
                                 onAdd = { row ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.approveRepository(row.indexUrl)
                                         val outcome = coordinator.state.value.repositoryApproval.outcome
                                         if (outcome != RepositoryApprovalOutcome.ADDED &&
@@ -306,8 +325,7 @@ private fun CoreDependencySetupContent(
                                 isBusy = isBusy,
                                 onAdd = { repositoryId ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         val result = novelCoordinator.approveRepository(
                                             effectiveServerId!!,
                                             effectiveProfileId!!,
@@ -346,8 +364,7 @@ private fun CoreDependencySetupContent(
                             },
                             onAddAll = {
                                 error = false
-                                busy = true
-                                scope.launch {
+                                launchAction {
                                     if (showComics && showNovels) {
                                         if (tab == 0) {
                                             comicRows.filter { !it.added }.forEach { row ->
@@ -401,16 +418,14 @@ private fun CoreDependencySetupContent(
                                     activePackageName = uiState.installation.activePackageName,
                                     onInstall = { packageName ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.installOne(packageName)
                                             busy = false
                                         }
                                     },
                                     onTrust = { packageName ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.trustUntrusted(packageName)
                                             busy = false
                                         }
@@ -422,8 +437,7 @@ private fun CoreDependencySetupContent(
                                     isBusy = isBusy,
                                     onInstall = { pluginId ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             val result = novelCoordinator.installPlugin(
                                                 effectiveServerId!!,
                                                 effectiveProfileId!!,
@@ -451,16 +465,14 @@ private fun CoreDependencySetupContent(
                                 activePackageName = uiState.installation.activePackageName,
                                 onInstall = { packageName ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.installOne(packageName)
                                         busy = false
                                     }
                                 },
                                 onTrust = { packageName ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.trustUntrusted(packageName)
                                         busy = false
                                     }
@@ -472,8 +484,7 @@ private fun CoreDependencySetupContent(
                                 isBusy = isBusy,
                                 onInstall = { pluginId ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         val result = novelCoordinator.installPlugin(
                                             effectiveServerId!!,
                                             effectiveProfileId!!,
@@ -523,8 +534,7 @@ private fun CoreDependencySetupContent(
                             onBack = { step = 1 },
                             onInstallAll = {
                                 error = false
-                                busy = true
-                                scope.launch {
+                                launchAction {
                                     if (showComics && showNovels) {
                                         if (tab == 0) {
                                             coordinator.installAllMissing()

@@ -229,6 +229,43 @@ class EpigraphLibraryMutationRouterTest {
     }
 
     @Test
+    fun `first local comic favorite provisions portable identity and publishes entry`() = runTest {
+        val mangaId = insertManga(favorite = false)
+        val work = PortableWorkRef.Comic(DecimalSourceId("1"), ProviderOwnedKey("/comic/1"))
+        val router = router(sequentialMutationIds())
+
+        val result = router.setMembership(
+            LibraryMembershipMutation(
+                localMangaId = mangaId,
+                inLibrary = true,
+                categoryIds = emptySet(),
+                origin = EpigraphMutationOrigin.LOCAL_USER,
+                portableWorkRef = work,
+            ),
+            createdAtEpochMillis = 100,
+        )
+
+        val portableId = PortableIdentityV3.workId(work)
+        assertEquals(1, result.emittedCommandCount)
+        assertEquals(
+            portableId,
+            database.aethon_syncQueries
+                .selectIdentityByLocalReference("MANGA", mangaId.toString())
+                .executeAsOne()
+                .entity_id,
+        )
+        assertEquals(mangaId.toString(), SqlDelightPortableBindingStore(database).work(portableId)?.localReference)
+        val command = coordinator.claimReady(100, 1_000, 10)
+            .single()
+            .let { json.decodeFromString<SyncCommandEnvelope>(it.payload_json).command }
+        assertTrue(command is SyncCommand.SetLibraryMembership)
+        command as SyncCommand.SetLibraryMembership
+        assertEquals(portableId, command.entityId.value)
+        assertEquals(work, command.portableWorkRef)
+        assertEquals("Example", command.titleHint)
+    }
+
+    @Test
     fun `remote replay and source refresh apply without echo`() = runTest {
         val mangaId = insertManga(favorite = false)
         val categoryId = insertCategory("Remote", sort = 0)

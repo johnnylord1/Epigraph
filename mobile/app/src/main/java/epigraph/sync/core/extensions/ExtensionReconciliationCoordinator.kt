@@ -26,6 +26,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -206,6 +207,19 @@ class ExtensionReconciliationCoordinator(
         _state.value = _state.value.copy(
             repositoryApproval = RepositoryApprovalState(activeIndexUrl = indexUrl),
         )
+        var outcome = RepositoryApprovalOutcome.FAILED
+        try {
+            outcome = addRepository(indexUrl)
+        } finally {
+            // Also when the screen that started it is closed mid-way: this coordinator outlives it,
+            // and a leftover active repository keeps the setup screen locked as busy.
+            _state.value = _state.value.copy(
+                repositoryApproval = RepositoryApprovalState(outcome = outcome),
+            )
+        }
+    }
+
+    private suspend fun addRepository(indexUrl: String): RepositoryApprovalOutcome {
         val installableIndexUrl = ExtensionParityResolver.repositoryIndexUrl(indexUrl)
         val outcome = when (val result = createExtensionRepo.await(installableIndexUrl)) {
             CreateExtensionRepo.Result.Success -> RepositoryApprovalOutcome.ADDED
@@ -233,9 +247,7 @@ class ExtensionReconciliationCoordinator(
             refreshReportFromCatalog()
             relinkFromCachedInventories()
         }
-        _state.value = _state.value.copy(
-            repositoryApproval = RepositoryApprovalState(outcome = outcome),
-        )
+        return outcome
     }
 
     suspend fun relinkFromCachedInventories(): CoreSourceRelinkResult {
@@ -294,8 +306,24 @@ class ExtensionReconciliationCoordinator(
         var progress = ExtensionInstallationProgress(total = uniquePackages.size)
         _state.value = _state.value.copy(installation = progress)
 
+        try {
+            installEach(uniquePackages, progress) { progress = it }
+        } finally {
+            // Also when the screen that started it is closed mid-way: this coordinator outlives it,
+            // and a leftover active package keeps the setup screen locked as busy.
+            _state.value = _state.value.copy(installation = progress.copy(activePackageName = null))
+        }
+    }
+
+    private suspend fun installEach(
+        uniquePackages: List<String>,
+        initial: ExtensionInstallationProgress,
+        onProgress: (ExtensionInstallationProgress) -> Unit,
+    ) {
+        var progress = initial
         for (packageName in uniquePackages) {
             progress = progress.copy(activePackageName = packageName)
+            onProgress(progress)
             _state.value = _state.value.copy(installation = progress)
             val outcome = installPackage(packageName)
             progress = when (outcome) {
@@ -312,11 +340,11 @@ class ExtensionReconciliationCoordinator(
                     failed = progress.failed + 1,
                 )
             }
+            onProgress(progress)
             refreshReportFromCatalog()
             relinkFromCachedInventories()
             _state.value = _state.value.copy(installation = progress)
         }
-        _state.value = _state.value.copy(installation = progress.copy(activePackageName = null))
     }
 
     private suspend fun installPackage(packageName: String): InstallOutcome = coroutineScope {
@@ -400,6 +428,17 @@ class ExtensionReconciliationCoordinator(
                 if (!terminal.isCompleted) {
                     extensionManager.setInstallationResult(packageName, result = true)
                     withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
+                }
+                // The installer can report success before the extension list has the package;
+                // wait for it so the refreshed report stops offering to install it.
+                withTimeoutOrNull(INSTALLED_FLOW_TIMEOUT_MS) {
+                    combine(
+                        extensionManager.installedExtensionsFlow,
+                        extensionManager.untrustedExtensionsFlow,
+                    ) { installed, untrusted ->
+                        installed.any { it.pkgName == packageName && it.versionCode >= targetVersion } ||
+                            untrusted.any { it.pkgName == packageName && it.versionCode >= targetVersion }
+                    }.first { it }
                 }
             }
             InstallOutcome.CANCELLED -> if (!terminal.isCompleted) {

@@ -63,6 +63,8 @@ data class DiscoverPool(
     val hardcoverCandidates: List<RecommendationCandidate> = emptyList(),
     val nsfwSourceIds: Set<Long> = emptySet(),
     val gatheredAtMs: Long = 0L,
+    /** [DiscoverRecommendationLoader.librarySignature] when gathered; a change makes the pool stale. */
+    val librarySignature: Int = 0,
     /** Desktop `searchRecommendationMorePages`: last source page loaded per section (absent = 1). */
     val morePages: Map<RecommendationSectionKey, Int> = emptyMap(),
     /** Desktop `searchRecommendationExhausted`. */
@@ -187,6 +189,7 @@ class DiscoverRecommendationLoader(
      */
     suspend fun gather(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverPool = coroutineScope {
         val library = getLibraryManga.await().distinctBy { it.manga.id }
+        val librarySignature = librarySignature(library)
         val tracksByManga = runCatching { getTrack.awaitAllGroupedByMangaId() }.getOrDefault(emptyMap())
         val libraryEntries = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
             .filter { it.isNovel == (mode == DiscoverMode.NOVELS) }
@@ -295,6 +298,7 @@ class DiscoverRecommendationLoader(
             hardcoverCandidates = parts.hardcoverCandidates,
             nsfwSourceIds = nsfwSourceIds,
             gatheredAtMs = nowMs,
+            librarySignature = librarySignature,
         )
         pool.copy(candidates = assembleDiscoverCandidates(pool))
     }
@@ -418,6 +422,17 @@ class DiscoverRecommendationLoader(
 
     private fun reassembled(pool: DiscoverPool): DiscoverPool =
         pool.copy(candidates = assembleDiscoverCandidates(pool))
+
+    /**
+     * Identifies the library a pool was built from: its works, and which of their sources are
+     * available (a synced work is told apart as comic or novel only once its source is installed).
+     */
+    suspend fun librarySignature(): Int = librarySignature(getLibraryManga.await().distinctBy { it.manga.id })
+
+    private fun librarySignature(library: List<LibraryManga>): Int = library
+        .map { it.manga.id to (sourceManager.get(it.manga.source) != null) }
+        .sortedBy { it.first }
+        .hashCode()
 
     suspend fun load(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverResult =
         rank(gather(mode, nowMs), includeInLibrary = false, includeNsfw = preferences.showNsfwSources().get(), nowMs = nowMs)

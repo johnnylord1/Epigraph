@@ -305,6 +305,7 @@ class CoreV1OutboxAdapter(
                 put("comicId", record.entityId)
                 put("inLibrary", true)
                 command.portableWorkRef?.let { put("portableWorkRef", portableWorkRefJson(it)) }
+                command.titleHint?.let { put("titleHint", it) }
             },
         )
     }

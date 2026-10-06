@@ -97,6 +97,8 @@ sealed interface SyncCommand {
         override val entityId: EpigraphEntityId,
         val inLibrary: Boolean,
         val portableWorkRef: PortableWorkRef.Comic? = null,
+        /** Lets the Core find a work it has never seen in its source by searching its title. */
+        val titleHint: String? = null,
     ) : SyncCommand
 
     /**

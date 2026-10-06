@@ -74,6 +74,7 @@ internal class ExtensionInstaller(private val context: Context) {
      */
     val activeDownloads = hashMapOf<String, Long>()
     private val visibleInstallerPackages = ConcurrentHashMap.newKeySet<String>()
+    private val completedFromPackageState = ConcurrentHashMap.newKeySet<String>()
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var installer: ShizukuInstaller? = null
@@ -122,6 +123,7 @@ internal class ExtensionInstaller(private val context: Context) {
         requireUserConfirmation: Boolean = false,
     ): Flow<ExtensionIntallInfo> {
         val pkgName = extension.pkgName
+        completedFromPackageState -= pkgName
 
         if (requireUserConfirmation) {
             visibleInstallerPackages += pkgName
@@ -428,6 +430,8 @@ internal class ExtensionInstaller(private val context: Context) {
      * @param result Whether the extension was installed or not.
      */
     fun setInstallationResult(pkgName: String, result: Boolean, cancelled: Boolean = false) {
+        // The package was already seen installed; a late failure from the installer is stale.
+        if (!result && completedFromPackageState.remove(pkgName)) return
         if (result) {
             deleteDownload(pkgName)
         }
@@ -438,6 +442,17 @@ internal class ExtensionInstaller(private val context: Context) {
         }
         downloadInstallerMap.remove(pkgName)
         emitToFlow(pkgName, ExtensionIntallInfo(step, null))
+    }
+
+    /**
+     * Completes an install still in flight for a package that is now on the device. Android
+     * sometimes installs the APK without reporting the installer result, which otherwise leaves
+     * the extension shown as installing.
+     */
+    fun completeFromPackageState(pkgName: String) {
+        if (pkgName !in activeDownloads && pkgName !in downloadInstallerMap) return
+        completedFromPackageState += pkgName
+        setInstallationResult(pkgName, result = true)
     }
 
     /**

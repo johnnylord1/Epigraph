@@ -92,6 +92,15 @@ class DiscoverScreenModel(
                     visibleLimits = emptyMap(),
                 )
             }
+            // The library may have changed since (a sync, or works added elsewhere): the picks
+            // would still be built from the old one and suggest what is now in it.
+            screenModelScope.launch(Dispatchers.IO) {
+                val current = runCatching { loader.librarySignature() }.getOrNull() ?: return@launch
+                if (current == cached.librarySignature) return@launch
+                withContext(Dispatchers.Main) {
+                    if (state.value.mode == mode && cache[mode]?.pool === cached) load(force = true)
+                }
+            }
             return
         }
         loadJob?.cancel()

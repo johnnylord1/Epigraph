@@ -121,6 +121,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
         var comicRepositories by remember { mutableStateOf(emptyList<ComicRepositoryRow>()) }
         var openSetupAfterSync by remember { mutableStateOf(false) }
         var sawSyncRunning by remember { mutableStateOf(false) }
+        var setupRequestedAtMs by remember { mutableStateOf(0L) }
         val mutationCoordinator = remember { GlobalContext.get().get<EpigraphMutationCoordinator>() }
         var blockedMutations by remember { mutableStateOf<List<BlockedMutation>>(emptyList()) }
         var showBlockedDialog by remember { mutableStateOf(false) }
@@ -150,9 +151,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 sawSyncRunning = true
                 return@LaunchedEffect
             }
-            if (!sawSyncRunning) return@LaunchedEffect
-            openSetupAfterSync = false
-            sawSyncRunning = false
+            // A short sync can finish before a running state is ever observed here.
+            val finished = status is CoreSyncStatus.Synced && status.lastSyncAtMs >= setupRequestedAtMs
+            if (!sawSyncRunning && !finished) return@LaunchedEffect
             val selection = persistedSelection ?: return@LaunchedEffect
             extensionReconciliation.refreshFromStore()
             val report = extensionReconciliation.state.value.report
@@ -160,9 +161,16 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             val novels = novelDependencies.inventory(selection.serverId, selection.profileId)
             novelInventory = novels
             if (coreDependencySetupCounts(rows, report, novels).hasPending) {
+                openSetupAfterSync = false
+                sawSyncRunning = false
                 context.startActivity(
                     CoreDependencySetupActivity.intent(context, selection.serverId, selection.profileId),
                 )
+            } else if (status is CoreSyncStatus.Synced) {
+                // Only a completed sync proves nothing is missing; a retry or a pause between
+                // stages may come before the desktop inventory was compared.
+                openSetupAfterSync = false
+                sawSyncRunning = false
             }
         }
         LaunchedEffect((state as? CorePairingUiState.Selecting)?.serverId, showSelectionEditor) {
@@ -284,6 +292,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             if (selectingPairing) {
                                 openSetupAfterSync = true
                                 sawSyncRunning = false
+                                setupRequestedAtMs = System.currentTimeMillis()
                                 controller.confirmPairing(selection)
                             } else {
                                 controller.updateSelection(selection)
@@ -680,6 +689,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         onClick = {
                             openSetupAfterSync = true
                             sawSyncRunning = false
+                            setupRequestedAtMs = System.currentTimeMillis()
                             coroutineScope.launch { runCatching { syncMonitor.syncNow() } }
                         },
                     ),
