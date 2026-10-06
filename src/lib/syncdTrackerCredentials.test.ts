@@ -6,6 +6,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
 import {
   accessTokenFromCallback,
+  completeEpigraphMyAnimeListLogin,
+  epigraphMyAnimeListAuthUrl,
+  isEpigraphMyAnimeListCallback,
   portableTrackerKey,
   publishTrackerLogin,
   publishTrackerLogout,
@@ -63,5 +66,62 @@ describe("desktop tracker login bridge", () => {
     invokeMock.mockRejectedValue(new Error("no core"));
     expect(() => publishTrackerLogout({ id: 2, name: "AniList" })).not.toThrow();
     await Promise.resolve();
+  });
+});
+
+describe("Epigraph MyAnimeList login", () => {
+  const authUrl = "https://myanimelist.net/v1/oauth2/authorize?client_id=epigraph";
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test("starts through Core only for MyAnimeList, falling back without Core", async () => {
+    invokeMock.mockResolvedValue(authUrl);
+    expect(await epigraphMyAnimeListAuthUrl({ id: 1, name: "MyAnimeList" })).toBe(authUrl);
+    expect(await epigraphMyAnimeListAuthUrl({ id: 2, name: "AniList" })).toBeNull();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenLastCalledWith("syncd_start_myanimelist_login");
+
+    invokeMock.mockResolvedValue(null);
+    expect(await epigraphMyAnimeListAuthUrl({ id: 1, name: "MyAnimeList" })).toBeNull();
+    invokeMock.mockRejectedValue(new Error("no core"));
+    expect(await epigraphMyAnimeListAuthUrl({ id: 1, name: "MyAnimeList" })).toBeNull();
+  });
+
+  test("recognizes only the Epigraph redirect with a code", () => {
+    expect(isEpigraphMyAnimeListCallback(" epigraph://myanimelist-auth?code=abc&state=s ")).toBe(true);
+    expect(isEpigraphMyAnimeListCallback("epigraph://myanimelist-auth?state=s&code=abc")).toBe(true);
+    expect(isEpigraphMyAnimeListCallback("epigraph://myanimelist-auth?error=access_denied")).toBe(false);
+    expect(isEpigraphMyAnimeListCallback("https://suwayomi.org/tracker-oauth?code=abc")).toBe(false);
+    expect(isEpigraphMyAnimeListCallback("abc")).toBe(false);
+  });
+
+  test("waits for Suwayomi to report the login after Core stored it", async () => {
+    invokeMock.mockResolvedValue(true);
+    const answers = [() => Promise.reject(new Error("restarting")), async () => false, async () => true];
+    const waits: number[] = [];
+    const confirmed = await completeEpigraphMyAnimeListLogin(
+      "epigraph://myanimelist-auth?code=abc&state=s",
+      () => answers.shift()!(),
+      async (ms) => { waits.push(ms); },
+    );
+    expect(confirmed).toBe(true);
+    expect(waits).toHaveLength(2);
+    expect(invokeMock).toHaveBeenLastCalledWith("syncd_complete_myanimelist_login", {
+      callbackUrl: "epigraph://myanimelist-auth?code=abc&state=s",
+    });
+  });
+
+  test("fails without Core and gives up when Suwayomi never confirms", async () => {
+    invokeMock.mockResolvedValue(false);
+    await expect(completeEpigraphMyAnimeListLogin("epigraph://myanimelist-auth?code=a", async () => true)).rejects.toThrow();
+    invokeMock.mockResolvedValue(true);
+    expect(await completeEpigraphMyAnimeListLogin("epigraph://myanimelist-auth?code=a", async () => false, async () => {})).toBe(false);
   });
 });

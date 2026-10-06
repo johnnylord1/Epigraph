@@ -85,6 +85,9 @@ fn tracker_oauth_window_label(session_id: Option<&str>) -> Result<String, String
 }
 
 fn is_tracker_oauth_callback(url: &Url) -> bool {
+    if syncd::myanimelist_oauth::is_login_callback(url) {
+        return true;
+    }
     let host_matches = url
         .host_str()
         .map(|host| host.eq_ignore_ascii_case("suwayomi.org"))
@@ -7451,6 +7454,8 @@ pub fn run() {
             syncd_desktop::syncd_request_progress_mirror,
             syncd_desktop::syncd_publish_tracker_login,
             syncd_desktop::syncd_publish_tracker_logout,
+            syncd_desktop::syncd_start_myanimelist_login,
+            syncd_desktop::syncd_complete_myanimelist_login,
             syncd_desktop::syncd_update_paired_device_granted_scopes,
             syncd_desktop::syncd_revoke_paired_device,
             syncd_desktop::syncd_list_persisted_sync_sessions,

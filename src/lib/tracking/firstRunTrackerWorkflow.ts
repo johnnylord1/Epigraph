@@ -6,7 +6,12 @@ import {
   LOGOUT_TRACKER,
 } from "../queries";
 import { normalizeTrackerOAuthInput } from "../trackerOAuth";
-import { publishTrackerLogin, publishTrackerLogout } from "../syncdTrackerCredentials";
+import {
+  completeEpigraphMyAnimeListLogin,
+  isEpigraphMyAnimeListCallback,
+  publishTrackerLogin,
+  publishTrackerLogout,
+} from "../syncdTrackerCredentials";
 import type { Tracker } from "../types";
 import {
   connectHardcover,
@@ -100,7 +105,10 @@ export function createFirstRunTrackerWorkflow(dependencies: FirstRunTrackerWorkf
       scores: [],
       statuses: [],
     } satisfies Tracker;
-    const callbackUrl = normalizeTrackerOAuthInput(tracker, rawCallback);
+    // A login with Epigraph's MyAnimeList client completes through Core, which needs the redirect as is.
+    const callbackUrl = isEpigraphMyAnimeListCallback(rawCallback)
+      ? rawCallback.trim()
+      : normalizeTrackerOAuthInput(tracker, rawCallback);
     if (!callbackUrl) throw new Error("Paste the redirected URL or the authorization value first.");
     loadGeneration += 1;
     if (!await dependencies.loginOAuth(Number(id), callbackUrl)) throw new Error("The tracker login was not confirmed. Check your authorization and try again.");
@@ -183,6 +191,14 @@ export function createProductionFirstRunTrackerWorkflow(): FirstRunTrackerWorkfl
       }));
     },
     loginOAuth: async (trackerId, callbackUrl) => {
+      if (isEpigraphMyAnimeListCallback(callbackUrl)) {
+        const loggedIn = await completeEpigraphMyAnimeListLogin(callbackUrl, async () => {
+          const result = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
+          return (result.trackers.nodes ?? []).some((tracker) => tracker.id === trackerId && tracker.isLoggedIn);
+        });
+        cache.clear(CACHE_KEYS.TRACKERS);
+        return loggedIn;
+      }
       const result = await gql<{ loginTrackerOAuth: { isLoggedIn: boolean } }>(LOGIN_TRACKER_OAUTH, { trackerId, callbackUrl });
       cache.clear(CACHE_KEYS.TRACKERS);
       const loggedIn = result.loginTrackerOAuth?.isLoggedIn === true;

@@ -3,12 +3,12 @@ use std::net::SocketAddr;
 use axum::body::Bytes;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::StatusCode;
-use axum::response::Json;
+use axum::response::{IntoResponse, Json};
 use serde::Deserialize;
 
 use crate::syncd::models::{AppError, PairingTokenResponse, SharedAppState};
 use crate::syncd::tracker_credentials::{self, DESKTOP_DEVICE_ID};
-use crate::syncd::{db, suwayomi_progress_mirror, suwayomi_tracking_mirror};
+use crate::syncd::{db, myanimelist_oauth, suwayomi_progress_mirror, suwayomi_tracking_mirror};
 
 /// Upper bound for ids accepted by one progress-mirror request.
 const MAX_PROGRESS_MIRROR_IDS: usize = 1_024;
@@ -215,6 +215,82 @@ pub async fn delete_local_tracker_credential(
         Ok(false) => Ok(StatusCode::NO_CONTENT),
         Err(_) => Err(AppError::BadRequest(
             "Local tracker logout could not be stored.".to_string(),
+        )),
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMyAnimeListLoginStart {
+    pub auth_url: String,
+}
+
+/// Starts a MyAnimeList login with Epigraph's client, so syncd can renew it before it expires.
+pub async fn post_local_myanimelist_login_start(
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+) -> Result<axum::response::Response, AppError> {
+    if !remote_addr.ip().is_loopback() {
+        return Err(AppError::Forbidden(
+            "Local tracker logins are only available from loopback.".to_string(),
+        ));
+    }
+    if !tracker_credentials::is_supported() {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+    let auth_url = myanimelist_oauth::start_login(local_now_ms());
+    Ok(Json(LocalMyAnimeListLoginStart { auth_url }).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMyAnimeListLoginComplete {
+    pub callback_url: String,
+}
+
+/// Completes a login started by [`post_local_myanimelist_login_start`]. The login is stored as a
+/// desktop write Suwayomi has not applied yet, so the tracking mirror writes it into Suwayomi and
+/// paired devices receive it.
+pub async fn post_local_myanimelist_login_complete(
+    State(state): State<SharedAppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<LocalMyAnimeListLoginComplete>,
+) -> Result<StatusCode, AppError> {
+    if !remote_addr.ip().is_loopback() {
+        return Err(AppError::Forbidden(
+            "Local tracker logins are only available from loopback.".to_string(),
+        ));
+    }
+    if !tracker_credentials::is_supported() {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    let now_ms = local_now_ms();
+    let values = myanimelist_oauth::complete_login(&request.callback_url, now_ms)
+        .await
+        .map_err(|error| match error {
+            myanimelist_oauth::LoginError::UnknownLogin => AppError::BadRequest(
+                "This MyAnimeList login expired or was not started here; start it again.".to_string(),
+            ),
+            myanimelist_oauth::LoginError::Rejected => {
+                tracing::warn!("MyAnimeList did not accept a desktop login");
+                AppError::BadRequest("MyAnimeList did not accept the login.".to_string())
+            }
+        })?;
+    let tracker_key = myanimelist_oauth::TRACKER_KEY;
+    let outcome = tracker_credentials::update_vault(&state.config.data_dir, |vault| {
+        let base_revision = vault.current_revision(tracker_key);
+        let view = vault.put(tracker_key, base_revision, values, DESKTOP_DEVICE_ID, now_ms)?;
+        Ok((view, true))
+    })
+    .await
+    .map_err(local_vault_error)?;
+    match outcome {
+        Ok(view) => {
+            tracing::info!(revision = view.revision, "desktop MyAnimeList login stored");
+            suwayomi_tracking_mirror::request_immediate_mirror();
+            Ok(StatusCode::ACCEPTED)
+        }
+        Err(_) => Err(AppError::BadRequest(
+            "Local tracker login could not be stored.".to_string(),
         )),
     }
 }

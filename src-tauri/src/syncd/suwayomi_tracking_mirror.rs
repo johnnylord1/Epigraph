@@ -38,7 +38,7 @@ use super::tracker_credentials::{
     self, CredentialValues, StoredTrackerCredential, DESKTOP_DEVICE_ID,
 };
 use super::tracking::{self, COMIC_TRACKING};
-use super::{db, suwayomi_process};
+use super::{db, myanimelist_oauth, suwayomi_process};
 
 const MIRROR_INTERVAL: Duration = Duration::from_secs(60);
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_millis(1_500);
@@ -210,6 +210,7 @@ async fn mirror_all_profiles(state: &SharedAppState) -> anyhow::Result<usize> {
     if instances.is_empty() {
         return Ok(0);
     }
+    myanimelist_oauth::renew_stored_login_if_due(&state.config.data_dir).await;
     let pending_credentials = pending_desktop_credentials(state).await;
     let mut credential_failures: HashSet<String> = HashSet::new();
     let mut changed = 0usize;

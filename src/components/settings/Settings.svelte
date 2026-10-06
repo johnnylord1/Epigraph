@@ -15,7 +15,13 @@
   import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { publishTrackerLogin, publishTrackerLogout } from "../../lib/syncdTrackerCredentials";
+  import {
+    completeEpigraphMyAnimeListLogin,
+    epigraphMyAnimeListAuthUrl,
+    isEpigraphMyAnimeListCallback,
+    publishTrackerLogin,
+    publishTrackerLogout,
+  } from "../../lib/syncdTrackerCredentials";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -3321,6 +3327,7 @@
   }
   async function startOAuth(tracker: Tracker) {
     if (!tracker.authUrl) return;
+    const authUrl = (await epigraphMyAnimeListAuthUrl(tracker)) ?? tracker.authUrl;
     trackersError = null;
     hardcoverAuthOpen = false;
     credsTrackerId = null;
@@ -3342,12 +3349,12 @@
     });
 
     try {
-      await invoke("open_tracker_oauth_window", { url: tracker.authUrl, sessionId });
+      await invoke("open_tracker_oauth_window", { url: authUrl, sessionId });
     } catch (error) {
       oauthAutoCapturing = false;
       oauthAutoUnlisten?.();
       oauthAutoUnlisten = null;
-      await openUrl(tracker.authUrl);
+      await openUrl(authUrl);
       trackersError = operationFailure(null, "firstRun.trackers.automaticUnavailable");
     }
   }
@@ -3356,6 +3363,22 @@
     oauthSubmitting = true;
     try {
       const tracker = trackers.find((candidate) => candidate.id === oauthTrackerId) ?? null;
+      if (isEpigraphMyAnimeListCallback(oauthCallbackInput)) {
+        const trackerId = oauthTrackerId;
+        const confirmed = await completeEpigraphMyAnimeListLogin(oauthCallbackInput, async () => {
+          const res = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
+          return res.trackers.nodes.some((candidate) => candidate.id === trackerId && candidate.isLoggedIn);
+        });
+        cache.clear(CACHE_KEYS.TRACKERS);
+        await loadTrackers();
+        if (!confirmed) trackersError = operationFailure(null, "settings_inline_loginFailed");
+        oauthTrackerId     = null;
+        oauthCallbackInput = "";
+        oauthAutoCapturing = false;
+        oauthAutoUnlisten?.();
+        oauthAutoUnlisten = null;
+        return;
+      }
       const callbackUrl = normalizeTrackerOAuthInput(tracker, oauthCallbackInput);
       if (!callbackUrl) {
         trackersError = operationFailure(null, "settings_inline_callbackUrlHint");

@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod listener;
 pub mod middleware;
 pub mod models;
+pub mod myanimelist_oauth;
 pub mod network;
 pub mod pairing_pin;
 pub mod replay;

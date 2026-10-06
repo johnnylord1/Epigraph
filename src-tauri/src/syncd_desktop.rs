@@ -864,6 +864,76 @@ pub async fn syncd_publish_tracker_logout(
     Ok(true)
 }
 
+/// Starts a MyAnimeList login with Epigraph's client through the running Core, which can then
+/// renew it before it expires. Returns `None` when no Core runtime is attached (or it cannot store
+/// tracker logins), in which case the caller falls back to Suwayomi's own login.
+#[tauri::command]
+pub async fn syncd_start_myanimelist_login(app: AppHandle) -> Result<Option<String>, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(None);
+    };
+    let client = insecure_local_client()?;
+    let response = send_json(
+        client
+            .post(format!(
+                "{}/v1/local/tracker-oauth/myanimelist/start",
+                runtime.local_base_url
+            ))
+            .timeout(Duration::from_secs(5)),
+        &json!({}),
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    let payload: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    Ok(payload
+        .get("authUrl")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string))
+}
+
+/// Completes a MyAnimeList login started by [`syncd_start_myanimelist_login`]. Core stores it and
+/// writes it into Suwayomi, restarting Suwayomi to do so. The callback URL is never logged.
+#[tauri::command]
+pub async fn syncd_complete_myanimelist_login(
+    callback_url: String,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(false);
+    };
+    let client = insecure_local_client()?;
+    let response = send_json(
+        client
+            .post(format!(
+                "{}/v1/local/tracker-oauth/myanimelist/complete",
+                runtime.local_base_url
+            ))
+            // Exchanging the code and reading the user are two MyAnimeList round trips.
+            .timeout(Duration::from_secs(40)),
+        &json!({ "callbackUrl": callback_url }),
+    )
+    .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|payload| {
+                payload
+                    .pointer("/error/message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+        return Err(message.unwrap_or_else(|| format!("MyAnimeList login failed ({status}).")));
+    }
+    Ok(response.status() == reqwest::StatusCode::ACCEPTED)
+}
+
 fn is_portable_tracker_key(tracker_key: &str) -> bool {
     let mut chars = tracker_key.chars();
     tracker_key.len() <= 64

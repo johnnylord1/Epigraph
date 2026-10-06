@@ -284,6 +284,14 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             put(local::put_local_tracker_credential)
                 .delete(local::delete_local_tracker_credential),
         )
+        .route(
+            "/v1/local/tracker-oauth/myanimelist/start",
+            post(local::post_local_myanimelist_login_start),
+        )
+        .route(
+            "/v1/local/tracker-oauth/myanimelist/complete",
+            post(local::post_local_myanimelist_login_complete),
+        )
         .route("/v1/pairing/claim", post(pairing::post_pairing_claim))
         .merge(protected)
         .with_state(state.clone());
