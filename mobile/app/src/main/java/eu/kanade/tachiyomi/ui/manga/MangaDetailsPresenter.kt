@@ -664,6 +664,7 @@ class MangaDetailsPresenter(
             }
         } catch (e: Exception) {
             if (e is HttpException && e.code == 103) return
+            Logger.e(e) { "fetchMangaFromSource failed for manga ${manga.id}" }
             withUIContext {
                 view?.showError(trimException(e))
             }

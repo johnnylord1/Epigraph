@@ -368,7 +368,10 @@ class AuthenticatedEpigraphCoreSourceGateway(
     }
 
     private fun CoreHttpResult.Failure.asSourceException() =
-        EpigraphCoreSourceException("Core request failed with HTTP $statusCode")
+        EpigraphCoreSourceException(
+            "Core request failed with HTTP $statusCode" +
+                (errorEnvelope?.let { " (${it.error.code})" } ?: ""),
+        )
 }
 
 class EpigraphCoreSourceException(message: String, cause: Throwable? = null) : Exception(message, cause)

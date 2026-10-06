@@ -283,6 +283,9 @@ Fase 3 — Trackers
       backup; apagado ao desparear (`CorePairingEndedListener` → `TrackerCredentialSyncer.wipe`).
 - [x] Contrato para o desktop (`docs/audit/TRACKER_SYNC_CONTRACT.md`), implementado no syncd
       (migração 0026, rotas de credenciais de tracker).
+- [x] O desktop loga o próprio Suwayomi com os logins sincronizados (e publica os dele) para
+      todos os trackers em comum: AniList por OAuth; MAL, Kitsu, Shikimori, Bangumi e
+      MangaUpdates por `settings/tracker.xml`, reiniciando o Suwayomi gerenciado.
 
 Fase 4 — Tema, HUD e configurações
 
@@ -368,6 +371,9 @@ Build `devDebug` da CI contra o desktop em modo dev (syncd 4787, perfil
       hydration reaplica o registro quando o capítulo é vinculado. Nas obras servidas pelo Core
       (extensão ainda não instalada) os capítulos não se vinculam, então a lista de capítulos do
       Core agora traz o `lastReadAt` do Suwayomi e grava o histórico ao abrir/atualizar a obra.
+- [x] Bug: abrir uma obra do Core cuja fonte responde 403 dava "HTTP 503" sem detalhe. O desktop
+      agora serve os detalhes que o Suwayomi já guarda (com WARN no log do syncd), o erro do
+      celular mostra o código do Core e `tauri:dev` recompila o sidecar antes de subir.
 - [ ] Item 6 (dois dispositivos) não executado: um segundo emulador sobrecarrega a máquina de teste.
 - [ ] Menores, ainda abertos:
   - o modal do desktop mantém PIN/QR de uma sessão já expirada;
