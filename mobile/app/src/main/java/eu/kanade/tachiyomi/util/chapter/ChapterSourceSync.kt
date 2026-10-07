@@ -72,19 +72,17 @@ suspend fun syncChaptersWithSource(
     // A Core manga is read on the paired desktop, and its chapter list carries Suwayomi's read
     // state. It is folded in without ever un-reading a chapter finished on this device. Source
     // refreshes are not user intent, so these writes stay local and never echo back to the Core.
-    // A Core work relinked to its own extension loses that state, so chapters it has not stored
-    // yet take the desktop's read state once, under the same rules.
+    // A Core work relinked to its own extension loses that state, so it reads the desktop's once,
+    // and again when new chapters appear, under the same rules.
     val coreReadState = if (source.id == EpigraphCoreSource.ID) {
         rawSourceChapters.associateBy { it.url }
     } else {
         val storedUrls = dbChapters.mapTo(HashSet()) { it.url }
-        val newUrls = rawSourceChapters.mapNotNullTo(HashSet()) { it.url.takeIf { url -> url !in storedUrls } }
-        val mangaId = manga.id
-        if (newUrls.isEmpty() || mangaId == null) {
-            emptyMap()
-        } else {
-            bridgedReadState.chapters(mangaId).filterKeys(newUrls::contains)
-        }
+        val sourceUrls = rawSourceChapters.mapTo(HashSet()) { it.url }
+        manga.id?.let { mangaId ->
+            bridgedReadState.chapters(mangaId, hasNewChapters = !storedUrls.containsAll(sourceUrls))
+                .filterKeys(sourceUrls::contains)
+        }.orEmpty()
     }
     val readStateUpdates = mutableListOf<ChapterUpdate>()
 
