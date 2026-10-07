@@ -356,7 +356,7 @@ private fun CoreDependencySetupContent(
     }
 
     val isBusy = busy ||
-        uiState.installation.activePackageName != null ||
+        uiState.installation.activePackageNames.isNotEmpty() ||
         uiState.repositoryApproval.activeIndexUrl != null
 
     BackHandler {
@@ -621,7 +621,7 @@ private fun CoreDependencySetupContent(
                                     items = report!!.items,
                                     isBusy = isBusy,
                                     worksFor = comicExtensionWorks,
-                                    activePackageName = uiState.installation.activePackageName,
+                                    activePackageNames = uiState.installation.activePackageNames,
                                     onInstall = { packageName ->
                                         error = false
                                         launchAction {
@@ -671,7 +671,7 @@ private fun CoreDependencySetupContent(
                                 items = report!!.items,
                                 isBusy = isBusy,
                                 worksFor = comicExtensionWorks,
-                                activePackageName = uiState.installation.activePackageName,
+                                activePackageNames = uiState.installation.activePackageNames,
                                 onInstall = { packageName ->
                                     error = false
                                     launchAction {
@@ -934,7 +934,7 @@ private fun ComicExtensionList(
     items: List<ExtensionParityItem>,
     worksFor: (ExtensionParityItem) -> Int,
     isBusy: Boolean,
-    activePackageName: String?,
+    activePackageNames: Set<String>,
     onInstall: (String) -> Unit,
     onTrust: (String) -> Unit,
 ) {
@@ -992,7 +992,7 @@ private fun ComicExtensionList(
                 },
                 trailingContent = {
                     when {
-                        activePackageName == item.packageName ->
+                        item.packageName in activePackageNames ->
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
                         item.status == ExtensionParityStatus.MISSING_AVAILABLE ||
                             item.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE ->

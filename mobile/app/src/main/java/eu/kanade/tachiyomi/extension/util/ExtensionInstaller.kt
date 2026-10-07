@@ -72,7 +72,7 @@ internal class ExtensionInstaller(private val context: Context) {
      * The currently requested downloads, with the package name (unique id) as key, and the id
      * returned by the download manager.
      */
-    val activeDownloads = hashMapOf<String, Long>()
+    val activeDownloads = ConcurrentHashMap<String, Long>()
     private val visibleInstallerPackages = ConcurrentHashMap.newKeySet<String>()
     private val completedFromPackageState = ConcurrentHashMap.newKeySet<String>()
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -105,7 +105,7 @@ internal class ExtensionInstaller(private val context: Context) {
     val downloadSharedFlow = _downloadsSharedFlow.asSharedFlow()
 
     /** Map of download id to installer session id */
-    val downloadInstallerMap = hashMapOf<String, Int>()
+    val downloadInstallerMap = ConcurrentHashMap<String, Int>()
     fun emitToFlow(name: String, extensionInfo: ExtensionIntallInfo) =
         ioScope.launch { _downloadsSharedFlow.emit(name to extensionInfo) }
 
@@ -207,7 +207,17 @@ internal class ExtensionInstaller(private val context: Context) {
                 val newDownloadState = try {
                     downloadManager.query(query)?.use { cursor ->
                         cursor.moveToFirst()
-                        cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS))
+                        val status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS))
+                        val reason = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_REASON))
+                        // A dropped connection parks the download for a retry minutes later with
+                        // no progress to show; fail it so the user can retry and batches move on.
+                        if (status == DownloadManager.STATUS_PAUSED &&
+                            reason == DownloadManager.PAUSED_WAITING_TO_RETRY
+                        ) {
+                            DownloadManager.STATUS_FAILED
+                        } else {
+                            status
+                        }
                     }
                 } catch (_: Exception) {
                     null

@@ -373,6 +373,29 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `novel plugin inventory is built after the replica commits declarations`() = runTest {
+        val order = mutableListOf<String>()
+        val novelSession = session.copyWithServerMetadata(scopes = session.scopes + "novels:profile:$PROFILE")
+
+        val outcome = novelSession.use { selected ->
+            CompositeCoreReplicaSync(
+                replica = CoreReplicaSyncPort { _, _, _ ->
+                    order += "replica"
+                    CoreReplicaSyncOutcome.APPLIED
+                },
+                catalog = CoreReplicaSyncPort { _, _, _ -> CoreReplicaSyncOutcome.DEFERRED },
+                novelPlugins = CoreReplicaSyncPort { _, _, _ ->
+                    order += "novelPlugins"
+                    CoreReplicaSyncOutcome.APPLIED
+                },
+            ).synchronize(selected, capabilities(), 1000)
+        }
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(listOf("replica", "novelPlugins"), order)
+    }
+
+    @Test
     fun `confirmed comic state replays independently from the Suwayomi catalog`() = runTest {
         var replicaScopes = emptyList<String>()
         var catalogScopes = emptyList<String>()

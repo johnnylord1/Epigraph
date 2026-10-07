@@ -186,7 +186,8 @@ class LnReaderDependencyActionCoordinator(
             else -> gateway.installPlugin(indexUrl, plugin.requirement)
         }
         // The paired Core serves the desktop's exact artifact, verified by hash and size, so a
-        // repository that was not added or lacks that version no longer blocks the install.
+        // repository that was not added, lacks that version or republished it with other bytes
+        // no longer blocks the install.
         val resolvedResult = if (repositoryResult in CORE_ARTIFACT_FALLBACK) {
             coreArtifacts?.install(serverId, profileId, plugin.requirement) ?: repositoryResult
         } else {
@@ -225,6 +226,7 @@ class LnReaderDependencyActionCoordinator(
             LnReaderPluginInstallResult.PluginUnavailable,
             LnReaderPluginInstallResult.IdentityMismatch,
             LnReaderPluginInstallResult.RepositoryApprovalRequired,
+            LnReaderPluginInstallResult.ArtifactRejected,
         )
     }
 }

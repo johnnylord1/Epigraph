@@ -460,16 +460,6 @@ class CompositeCoreReplicaSync(
             nowEpochMillis = nowEpochMillis,
         ) else CoreReplicaSyncOutcome.DEFERRED
 
-        val novelPluginOutcome = if (
-            policy?.let { it.reconcileNovelRepositories || it.reconcileNovelPlugins } ?: hasNovelScope
-        ) synchronizeSafely(
-            name = "novelPlugins",
-            port = novelPlugins,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
-
         val portableOutcome = if (policy?.syncComics ?: hasComicScope) synchronizeSafely(
             name = "portableManifest",
             port = portableManifest,
@@ -509,6 +499,17 @@ class CompositeCoreReplicaSync(
                 )
             }
         }
+        // LNReader declarations are read from the replica mirror, so the inventory is built only
+        // after this pass committed them; otherwise the first sync after pairing sees no repos.
+        val novelPluginOutcome = if (
+            policy?.let { it.reconcileNovelRepositories || it.reconcileNovelPlugins } ?: hasNovelScope
+        ) synchronizeSafely(
+            name = "novelPlugins",
+            port = novelPlugins,
+            credentials = credentials,
+            capabilities = capabilities,
+            nowEpochMillis = nowEpochMillis,
+        ) else CoreReplicaSyncOutcome.DEFERRED
         return when {
             replicaOutcome == CoreReplicaSyncOutcome.RETRY -> replicaOutcome
             portableOutcome == CoreReplicaSyncOutcome.RETRY -> portableOutcome

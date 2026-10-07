@@ -41,7 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 data class ExtensionInstallationProgress(
-    val activePackageName: String? = null,
+    val activePackageNames: Set<String> = emptySet(),
     val completed: Int = 0,
     val total: Int = 0,
     val installed: Int = 0,
@@ -326,7 +326,10 @@ class ExtensionReconciliationCoordinator(
                 // A failed pass keeps the last report; the next device change retries.
                 try {
                     refreshReportFromCatalog()
-                    relinkFromCachedInventories()
+                    // A running batch relinks once when it ends.
+                    if (_state.value.installation.activePackageNames.isEmpty()) {
+                        relinkFromCachedInventories()
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -371,7 +374,14 @@ class ExtensionReconciliationCoordinator(
         } finally {
             // Also when the screen that started it is closed mid-way: this coordinator outlives it,
             // and a leftover active package keeps the setup screen locked as busy.
-            _state.value = _state.value.copy(installation = progress.copy(activePackageName = null))
+            _state.value = _state.value.copy(installation = progress.copy(activePackageNames = emptySet()))
+        }
+        // Once per batch: relinking after every package re-ran the whole library pass each time.
+        try {
+            relinkFromCachedInventories()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
         }
     }
 
@@ -380,30 +390,30 @@ class ExtensionReconciliationCoordinator(
         initial: ExtensionInstallationProgress,
         onProgress: (ExtensionInstallationProgress) -> Unit,
     ) {
-        var progress = initial
-        for (packageName in uniquePackages) {
-            progress = progress.copy(activePackageName = packageName)
-            onProgress(progress)
-            _state.value = _state.value.copy(installation = progress)
-            val outcome = installPackage(packageName)
-            progress = when (outcome) {
-                InstallOutcome.INSTALLED -> progress.copy(
-                    completed = progress.completed + 1,
-                    installed = progress.installed + 1,
-                )
-                InstallOutcome.CANCELLED -> progress.copy(
-                    completed = progress.completed + 1,
-                    cancelled = progress.cancelled + 1,
-                )
-                InstallOutcome.FAILED -> progress.copy(
-                    completed = progress.completed + 1,
-                    failed = progress.failed + 1,
-                )
+        // Download every APK at once so Android queues the confirmation prompts back to back,
+        // instead of one download, prompt and install at a time.
+        val progressMutex = Mutex()
+        var progress = initial.copy(activePackageNames = uniquePackages.toSet())
+        onProgress(progress)
+        _state.value = _state.value.copy(installation = progress)
+        coroutineScope {
+            uniquePackages.forEach { packageName ->
+                async {
+                    val outcome = installPackage(packageName)
+                    progressMutex.withLock {
+                        progress = progress.copy(
+                            activePackageNames = progress.activePackageNames - packageName,
+                            completed = progress.completed + 1,
+                            installed = progress.installed + if (outcome == InstallOutcome.INSTALLED) 1 else 0,
+                            cancelled = progress.cancelled + if (outcome == InstallOutcome.CANCELLED) 1 else 0,
+                            failed = progress.failed + if (outcome == InstallOutcome.FAILED) 1 else 0,
+                        )
+                        onProgress(progress)
+                        refreshReportFromCatalog()
+                        _state.value = _state.value.copy(installation = progress)
+                    }
+                }
             }
-            onProgress(progress)
-            refreshReportFromCatalog()
-            relinkFromCachedInventories()
-            _state.value = _state.value.copy(installation = progress)
         }
     }
 

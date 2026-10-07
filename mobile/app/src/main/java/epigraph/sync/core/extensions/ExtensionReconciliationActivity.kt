@@ -97,7 +97,7 @@ private fun ExtensionReconciliationContent(
     var pendingRepositoryUrl by remember { mutableStateOf<String?>(null) }
     var recommendedRepositoryUrls by remember { mutableStateOf(emptyList<String>()) }
     val report = state.report
-    val installing = state.installation.activePackageName != null
+    val installing = state.installation.activePackageNames.isNotEmpty()
     val missingTitle = stringResource(MR.strings.epigraph_core_extensions_missing)
     val installedTitle = stringResource(MR.strings.epigraph_core_extensions_installed)
     val unavailableTitle = stringResource(MR.strings.epigraph_core_extensions_unavailable)

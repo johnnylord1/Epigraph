@@ -232,10 +232,10 @@ class NovelJsRuntime(
         if (!initialized) throw IllegalStateException("Plugin '$pluginId' not initialized")
 
         require(METHOD_NAME.matches(method)) { "Unsupported plugin method: $method" }
-        val timeout = if (method == "parseChapter" || method == "chapter") {
-            limits.chapterTimeoutMs
-        } else {
-            limits.operationTimeoutMs
+        val timeout = when (method) {
+            "parseChapter", "chapter" -> limits.chapterTimeoutMs
+            "parseNovel" -> limits.novelTimeoutMs
+            else -> limits.operationTimeoutMs
         }
         return try {
             withTimeout(timeout) {
@@ -353,6 +353,8 @@ data class NovelRuntimeLimits(
     val initializationTimeoutMs: Long = 15_000,
     val operationTimeoutMs: Long = 15_000,
     val chapterTimeoutMs: Long = 30_000,
+    // A long-running novel page can list thousands of chapters in one multi-megabyte document.
+    val novelTimeoutMs: Long = 90_000,
     val maxPluginCodeBytes: Int = 2 * 1024 * 1024,
     val maxResultBytes: Int = 8 * 1024 * 1024,
     // Holds the bundled runtime libraries (cheerio, protobufjs, crypto-js...) plus a parsed

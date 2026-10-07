@@ -113,6 +113,26 @@ class LnReaderDependencyActionCoordinatorTest {
     }
 
     @Test
+    fun `desktop artifact installs a plugin the repository republished with other bytes`() = runTest {
+        val gateway = RecordingActionGateway(installResult = LnReaderPluginInstallResult.ArtifactRejected)
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = inventoryStore(repositoryInstalled = true),
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, gateway.pluginInstalls)
+        assertEquals(1, coreInstalls)
+    }
+
+    @Test
     fun `source id never substitutes the canonical plugin identity`() {
         val requirement = CoreNovelPluginRequirement(
             repositoryId = REPOSITORY,
@@ -171,7 +191,9 @@ class LnReaderDependencyActionCoordinatorTest {
         )
     }
 
-    private class RecordingActionGateway : LnReaderDependencyActionGateway {
+    private class RecordingActionGateway(
+        private val installResult: LnReaderPluginInstallResult = LnReaderPluginInstallResult.Installed,
+    ) : LnReaderDependencyActionGateway {
         var repositoryApprovals = 0
         var pluginInstalls = 0
         var lastRepositoryUrl: String? = null
@@ -191,7 +213,7 @@ class LnReaderDependencyActionCoordinatorTest {
             pluginInstalls += 1
             lastRepositoryUrl = repositoryIndexUrl
             lastPlugin = requirement
-            return LnReaderPluginInstallResult.Installed
+            return installResult
         }
     }
 
