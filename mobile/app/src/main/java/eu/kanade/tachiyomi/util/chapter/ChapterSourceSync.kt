@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.util.chapter
 
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
+import epigraph.sync.core.suwayomi.BridgedChapterReadState
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.data.database.models.Chapter
@@ -47,6 +48,7 @@ suspend fun syncChaptersWithSource(
     handler: DatabaseHandler = get(),
     libraryPreferences: LibraryPreferences = get(),
     preferences: PreferencesHelper = get(),
+    bridgedReadState: BridgedChapterReadState = get(),
 ): Pair<List<Chapter>, List<Chapter>> {
     if (rawSourceChapters.isEmpty()) {
         throw Exception("No chapters found")
@@ -70,10 +72,19 @@ suspend fun syncChaptersWithSource(
     // A Core manga is read on the paired desktop, and its chapter list carries Suwayomi's read
     // state. It is folded in without ever un-reading a chapter finished on this device. Source
     // refreshes are not user intent, so these writes stay local and never echo back to the Core.
+    // A Core work relinked to its own extension loses that state, so chapters it has not stored
+    // yet take the desktop's read state once, under the same rules.
     val coreReadState = if (source.id == EpigraphCoreSource.ID) {
         rawSourceChapters.associateBy { it.url }
     } else {
-        emptyMap()
+        val storedUrls = dbChapters.mapTo(HashSet()) { it.url }
+        val newUrls = rawSourceChapters.mapNotNullTo(HashSet()) { it.url.takeIf { url -> url !in storedUrls } }
+        val mangaId = manga.id
+        if (newUrls.isEmpty() || mangaId == null) {
+            emptyMap()
+        } else {
+            bridgedReadState.chapters(mangaId).filterKeys(newUrls::contains)
+        }
     }
     val readStateUpdates = mutableListOf<ChapterUpdate>()
 

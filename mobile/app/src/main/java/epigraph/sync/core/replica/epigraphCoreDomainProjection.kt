@@ -1219,7 +1219,7 @@ class EpigraphCoreDomainProjection(
         entityId: String,
         record: JsonObject,
     ): SuwayomiCoreContentReference.Manga? {
-        val reference = parseCoreMangaEntityId(entityId) ?: return null
+        val reference = SuwayomiCoreContentReference.parseMangaEntityId(entityId) ?: return null
         val payloadId = record.long("suwayomiMangaId")?.takeIf { it > 0 } ?: return null
         val comicId = record.string("comicId") ?: return null
         val recordServerId = record.string("coreServerId")
@@ -1245,33 +1245,10 @@ class EpigraphCoreDomainProjection(
         database: Database,
         entityId: String,
     ): SuwayomiCoreContentReference.Manga? {
-        val reference = parseCoreMangaEntityId(entityId) ?: return null
+        val reference = SuwayomiCoreContentReference.parseMangaEntityId(entityId) ?: return null
         val localId = localMangaId(database, entityId) ?: return null
         val manga = database.mangasQueries.findById(localId).executeAsOneOrNull() ?: return null
         return reference.takeIf { manga.source == EpigraphCoreSource.ID }
-    }
-
-    private fun parseCoreMangaEntityId(entityId: String): SuwayomiCoreContentReference.Manga? {
-        val marker = ":manga:"
-        val markerIndex = entityId.lastIndexOf(marker)
-        if (markerIndex < 0) return null
-        val mangaId = entityId.substring(markerIndex + marker.length).toLongOrNull()?.takeIf { it > 0 }
-            ?: return null
-        val serverPrefix = "suwayomi:server:"
-        val profileMarker = ":profile:"
-        if (entityId.startsWith(serverPrefix)) {
-            val profileMarkerIndex = entityId.indexOf(profileMarker, serverPrefix.length)
-            if (profileMarkerIndex <= serverPrefix.length || profileMarkerIndex >= markerIndex) return null
-            val serverId = entityId.substring(serverPrefix.length, profileMarkerIndex)
-            val profileId = entityId.substring(profileMarkerIndex + profileMarker.length, markerIndex)
-            if (serverId.isBlank() || profileId.isBlank()) return null
-            return SuwayomiCoreContentReference.Manga(serverId, profileId, mangaId)
-        }
-        val legacyPrefix = "suwayomi:profile:"
-        if (!entityId.startsWith(legacyPrefix) || markerIndex <= legacyPrefix.length) return null
-        val profileId = entityId.substring(legacyPrefix.length, markerIndex)
-        if (profileId.isBlank()) return null
-        return SuwayomiCoreContentReference.Manga(null, profileId, mangaId)
     }
 
     private fun preserveOriginalSourceBinding(

@@ -57,6 +57,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.google.zxing.client.android.Intents
@@ -132,7 +134,12 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
 
         LaunchedEffect(controller) { controller.refresh() }
         LaunchedEffect(extensionReconciliation) { extensionReconciliation.refreshFromStore() }
-        LaunchedEffect(persistedSelection?.serverId, persistedSelection?.profileId) {
+        // Right after pairing the desktop's novel list has not arrived yet; it comes with a sync, and
+        // the setup screen may add repositories, so read it again after each sync and on return.
+        val lastSyncAtMs = (syncStatus as? CoreSyncStatus.Synced)?.lastSyncAtMs
+        var novelRefresh by remember { mutableStateOf(0) }
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { novelRefresh++ }
+        LaunchedEffect(persistedSelection?.serverId, persistedSelection?.profileId, lastSyncAtMs, novelRefresh) {
             val selection = persistedSelection
             novelInventory = if (selection == null) {
                 null

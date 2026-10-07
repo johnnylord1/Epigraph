@@ -646,7 +646,7 @@ class MangaDetailsPresenter(
                 manga.copyFrom(networkManga)
                 manga.initialized = true
 
-                updateManga.await(manga.toMangaUpdate())
+                updateManga.await(manga.toSourceDetailsUpdate())
 
                 presenterScope.launchNonCancellableIO {
                     val request =

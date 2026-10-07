@@ -462,6 +462,30 @@ object SuwayomiCoreContentReference {
             ?.let { Page(parsed.serverId, parsed.profileId, it) }
     }
 
+    /** Reads a Core work identity, `suwayomi:server:<server>:profile:<profile>:manga:<id>` or its legacy form. */
+    fun parseMangaEntityId(entityId: String): Manga? {
+        val marker = ":manga:"
+        val markerIndex = entityId.lastIndexOf(marker)
+        if (markerIndex < 0) return null
+        val mangaId = entityId.substring(markerIndex + marker.length).toLongOrNull()?.takeIf { it > 0 }
+            ?: return null
+        val serverPrefix = "suwayomi:server:"
+        val profileMarker = ":profile:"
+        if (entityId.startsWith(serverPrefix)) {
+            val profileMarkerIndex = entityId.indexOf(profileMarker, serverPrefix.length)
+            if (profileMarkerIndex <= serverPrefix.length || profileMarkerIndex >= markerIndex) return null
+            val serverId = entityId.substring(serverPrefix.length, profileMarkerIndex)
+            val profileId = entityId.substring(profileMarkerIndex + profileMarker.length, markerIndex)
+            if (serverId.isBlank() || profileId.isBlank()) return null
+            return Manga(serverId, profileId, mangaId)
+        }
+        val legacyPrefix = "suwayomi:profile:"
+        if (!entityId.startsWith(legacyPrefix) || markerIndex <= legacyPrefix.length) return null
+        val profileId = entityId.substring(legacyPrefix.length, markerIndex)
+        if (profileId.isBlank()) return null
+        return Manga(null, profileId, mangaId)
+    }
+
     private fun build(serverId: String?, profileId: String, kind: String, payload: String): String {
         require(serverId?.isNotBlank() != false) { "serverId must not be blank" }
         require(profileId.isNotBlank()) { "profileId must not be blank" }

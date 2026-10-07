@@ -317,7 +317,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                                         .build()
                                 }
                             context.imageLoader.execute(request)
-                            updateManga.await(manga.manga.toMangaUpdate())
+                            updateManga.await(manga.manga.toSourceDetailsUpdate())
                         }
                     }
                 }

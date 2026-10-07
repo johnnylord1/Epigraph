@@ -127,6 +127,8 @@ import epigraph.sync.core.suwayomi.CoreCatalogCoverStore
 import epigraph.sync.core.suwayomi.CoreCoverByteSource
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import epigraph.sync.core.suwayomi.AuthenticatedEpigraphCoreSourceGateway
+import epigraph.sync.core.suwayomi.BridgedChapterReadState
+import epigraph.sync.core.suwayomi.CoreBridgedChapterReadState
 import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
 import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.AndroidCoreDeviceIdentityProvider
@@ -235,6 +237,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreCatalogCoverSink> { CoreCatalogCoverCache(get(), get()) }
     single { AuthenticatedEpigraphCoreSourceGateway(get(), get(), get()) }
     single { EpigraphCoreSource(get<AuthenticatedEpigraphCoreSourceGateway>()) }
+    single<BridgedChapterReadState> { CoreBridgedChapterReadState(get(), get<AuthenticatedEpigraphCoreSourceGateway>()) }
     single { SqlDelightCoreIdentityInventoryStore(get()) }
     single { ExtensionReconciliationStore(get()) }
     single { EpigraphCoreBridgeLabeler(get(), get()) }

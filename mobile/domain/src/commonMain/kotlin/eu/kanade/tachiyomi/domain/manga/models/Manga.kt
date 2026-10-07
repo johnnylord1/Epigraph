@@ -235,6 +235,25 @@ interface Manga : SManga {
         )
     }
 
+    /**
+     * Writes only what a source details refresh changes. A full [toMangaUpdate] from a copy loaded
+     * before the refresh would put back the reading mode or chapter filters chosen meanwhile.
+     */
+    fun toSourceDetailsUpdate(): MangaUpdate {
+        return MangaUpdate(
+            id = id!!,
+            artist = artist,
+            author = author,
+            description = description,
+            genres = genre?.split(", ").orEmpty(),
+            status = status,
+            thumbnailUrl = thumbnail_url,
+            updateStrategy = update_strategy,
+            initialized = initialized,
+            coverLastModified = cover_last_modified,
+        )
+    }
+
     companion object {
 
         // Generic filter that does not filter anything

@@ -75,6 +75,7 @@ const CHAPTERS_QUERY: &str = r#"
         pageCount
         mangaId
         uploadDate
+        url
         realUrl
         lastPageRead
         lastReadAt
@@ -426,6 +427,13 @@ mod tests {
     fn library_manifest_exposes_the_extension_package_for_source_relinking() {
         assert!(LIBRARY_QUERY.contains("extension { pkgName }"));
         assert!(LIBRARY_QUERY.contains("realUrl"));
+    }
+
+    #[test]
+    fn chapter_catalog_exposes_the_source_url_for_relinked_read_state() {
+        assert!(CHAPTERS_QUERY.contains("
+        url
+"));
     }
 
     #[test]
