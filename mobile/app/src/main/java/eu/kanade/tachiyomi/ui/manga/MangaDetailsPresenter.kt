@@ -102,6 +102,7 @@ import yokai.domain.category.interactor.GetCategories
 import yokai.domain.chapter.interactor.GetAvailableScanlators
 import yokai.domain.chapter.interactor.GetChapter
 import epigraph.sync.core.SyncedChapterStateWriter
+import epigraph.sync.core.portable.PortableWorkDetailsRefresher.Companion.needSourceFetch
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.history.interactor.GetHistory
 import yokai.domain.library.custom.model.CustomMangaInfo
@@ -303,7 +304,10 @@ class MangaDetailsPresenter(
             }
             val coreSessionAvailable = (source as? EpigraphCoreSource)?.hasActiveSession() != false
             val fetchMangaNeeded = !manga.initialized && coreSessionAvailable
-            val fetchChaptersNeeded = getChaptersNow().isEmpty() && coreSessionAvailable
+            // A synced novel holds only the chapters read on the desktop; list the rest from the plugin.
+            val fetchChaptersNeeded = getChaptersNow().let {
+                if (source is NovelSource) it.needSourceFetch() else it.isEmpty()
+            } && coreSessionAvailable
             val tasks = listOf(
                 async { if (fetchMangaNeeded) fetchMangaFromSource() },
                 async { if (fetchChaptersNeeded) fetchChaptersFromSource(false) },

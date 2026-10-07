@@ -4,6 +4,7 @@ import android.util.Log
 import epigraph.novel.source.NovelSource
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
@@ -56,19 +57,39 @@ class PortableWorkDetailsRefresher(
     }
 
     suspend fun refresh(): Int {
-        val pending = mangas.getFavorites().mapNotNull { manga ->
+        val favorites = mangas.getFavorites()
+        val pending = favorites.mapNotNull { manga ->
             val source = manga.takeIf { it.thumbnail_url.isDesktopCover() }
                 ?.let { nativeSource(it.source) }
                 ?: return@mapNotNull null
-            manga to source
+            source to suspend { refresh(manga, source) }
+        } + favorites.mapNotNull { manga ->
+            val source = sources.get(manga.source) as? NovelSource ?: return@mapNotNull null
+            source to suspend { refreshNovelChapters(manga, source) }
         }
         if (pending.isEmpty()) return 0
         val permits = Semaphore(MAX_PARALLEL_SOURCES)
         return coroutineScope {
-            pending.groupBy { (_, source) -> source.id }.values.map { works ->
-                async { permits.withPermit { works.count { (manga, source) -> refresh(manga, source) } } }
+            pending.groupBy { (source, _) -> source.id }.values.map { works ->
+                async { permits.withPermit { works.count { (_, refresh) -> refresh() } } }
             }.awaitAll().sum()
         }
+    }
+
+    /**
+     * The desktop only publishes the novel chapters already read, all at source order 0, so a
+     * synced novel shows a partial, unordered list. Fetch the full list from the installed plugin;
+     * matching chapters keep their read state.
+     */
+    private suspend fun refreshNovelChapters(manga: Manga, source: NovelSource): Boolean = try {
+        val mangaId = manga.id ?: return false
+        if (!chapters.getChapters(mangaId, false).needSourceFetch()) return false
+        syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
     }
 
     private fun nativeSource(sourceId: Long): CatalogueSource? =
@@ -106,8 +127,11 @@ class PortableWorkDetailsRefresher(
     private fun String?.isDesktopCover(): Boolean =
         this?.let(SuwayomiCoreThumbnailReference::parse) != null
 
-    private companion object {
-        const val MAX_PARALLEL_SOURCES = 3
-        const val LOG_TAG = "EpigraphCoreSync"
+    companion object {
+        /** Empty, or only chapters projected from the desktop: a source fetch numbers them 0..n-1. */
+        fun List<Chapter>.needSourceFetch(): Boolean = isEmpty() || all { it.source_order == 0 }
+
+        private const val MAX_PARALLEL_SOURCES = 3
+        private const val LOG_TAG = "EpigraphCoreSync"
     }
 }

@@ -7,6 +7,7 @@ import epigraph.novel.repo.NovelRepoRepository
 import epigraph.novel.repo.interactor.NovelRepoIndexValidation
 import epigraph.novel.repo.interactor.NovelRepoIndexValidator
 import epigraph.novel.repo.model.NovelRepo
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 
 sealed interface LnReaderRepositoryApprovalResult {
@@ -47,6 +48,10 @@ class ManagedLnReaderDependencyActionGateway(
     private val validator: NovelRepoIndexValidator,
     private val plugins: NovelPluginManager,
 ) : LnReaderDependencyActionGateway {
+    // "Install all" installs every plugin of a repository in a row; fetch its index once, not
+    // once per plugin.
+    private val repositoryIndexes = ConcurrentHashMap<String, Pair<Long, List<NovelPluginIndex>>>()
+
     override suspend fun approveRepository(
         requirement: CoreNovelRepositoryRequirement,
     ): LnReaderRepositoryApprovalResult {
@@ -80,7 +85,7 @@ class ManagedLnReaderDependencyActionGateway(
         ) {
             return LnReaderPluginInstallResult.AlreadyInstalled
         }
-        val candidates = plugins.refreshRepositoryPlugins(repositoryIndexUrl)
+        val candidates = repositoryPlugins(repositoryIndexUrl)
         val candidate = candidates.singleMatching(requirement)
             ?: return if (candidates.any { it.id == requirement.pluginId || it.id == requirement.sourceId }) {
                 LnReaderPluginInstallResult.IdentityMismatch
@@ -107,6 +112,19 @@ class ManagedLnReaderDependencyActionGateway(
         } else {
             LnReaderPluginInstallResult.ArtifactRejected
         }
+    }
+
+    private suspend fun repositoryPlugins(indexUrl: String): List<NovelPluginIndex> {
+        val now = System.currentTimeMillis()
+        repositoryIndexes[indexUrl]?.takeIf { (fetchedAt, _) -> now - fetchedAt < INDEX_REUSE_MS }
+            ?.let { (_, cached) -> return cached }
+        return plugins.refreshRepositoryPlugins(indexUrl).also { fetched ->
+            if (fetched.isNotEmpty()) repositoryIndexes[indexUrl] = now to fetched
+        }
+    }
+
+    private companion object {
+        const val INDEX_REUSE_MS = 60_000L
     }
 }
 
