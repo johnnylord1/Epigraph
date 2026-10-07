@@ -872,7 +872,7 @@ class CoreOutboxSyncRunner(
             } catch (failure: Throwable) {
                 reportCoreSyncFailure("connection.drain", failure)
                 return CoreOutboxSyncOutcome.Retry(
-                    pendingOutbox.count().also { require(it >= 0) },
+                    pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) },
                     CoreOutboxRetryReason.CONNECTION,
                 )
             }

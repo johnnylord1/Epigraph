@@ -127,13 +127,19 @@ class SqlDelightCoreReplicaStore(
 }
 
 /** Atomic, process-safe Lamport allocator backed by the same SQLDelight database as the outbox. */
+/**
+ * The desktop stamps its own writes with wall-clock milliseconds, and the Core rejects a write
+ * whose Lamport is not above a delete's. Never falling behind the wall clock keeps a phone edit made
+ * after a desktop delete it has not pulled yet from losing to that delete.
+ */
 class SqlDelightCoreLamportSource(
     private val databaseHandler: DatabaseHandler,
+    private val wallClock: () -> Long = System::currentTimeMillis,
 ) : CoreLamportSource {
     override suspend fun nextLamport(): Long = databaseHandler.await(inTransaction = true) {
         val current = aethon_syncQueries.selectCoreLamport().executeAsOneOrNull() ?: 0L
         check(current < Long.MAX_VALUE) { "Core Lamport clock is exhausted" }
-        val next = current + 1
+        val next = maxOf(current + 1, wallClock())
         aethon_syncQueries.advanceCoreLamport(next)
         next
     }
@@ -219,12 +225,12 @@ private class SqlDelightCoreReplicaTransaction(
         return queries.isCoreReplicaInboxEventApplied(globalEventId).executeAsOne()
     }
 
-    override suspend fun upsertConfirmed(record: CoreConfirmedRecord) {
+    override suspend fun upsertConfirmed(record: CoreConfirmedRecord): Boolean {
         requireKey(record.key)
         require(record.serverVersion >= 0 && record.lamport >= 0) {
             "record versions must not be negative"
         }
-        if (record.serverVersion < currentVersion(record.key)) return
+        if (record.serverVersion < currentVersion(record.key)) return false
 
         queries.deleteCoreReplicaTombstone(
             record.key.scopeId,
@@ -232,6 +238,7 @@ private class SqlDelightCoreReplicaTransaction(
             record.key.entityId,
         )
         writeRecord(record)
+        return true
     }
 
     override suspend fun projectConfirmed(record: CoreConfirmedRecord) {
@@ -239,12 +246,12 @@ private class SqlDelightCoreReplicaTransaction(
         reconcileReplicaWait(record)
     }
 
-    override suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone) {
+    override suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone): Boolean {
         requireKey(tombstone.key)
         require(tombstone.serverVersion >= 0 && tombstone.lamport >= 0 && tombstone.deletedAtMs >= 0) {
             "tombstone versions and deletion time must not be negative"
         }
-        if (tombstone.serverVersion < currentVersion(tombstone.key)) return
+        if (tombstone.serverVersion < currentVersion(tombstone.key)) return false
 
         val previousRecord = queries
             .selectCoreReplicaRecord(
@@ -268,6 +275,7 @@ private class SqlDelightCoreReplicaTransaction(
         )
         writeTombstone(tombstone)
         pendingPreviousRecord = previousRecord
+        return true
     }
 
     private var pendingPreviousRecord: CoreConfirmedRecord? = null

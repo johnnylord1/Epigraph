@@ -1183,12 +1183,15 @@ SELECT entity_id FROM aethon_suwayomi_mutation_queue
 WHERE profile_id = :profileId
   AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
 
+-- A permanently refused row (blocked:) no longer holds the entity: the Core will never accept
+-- it, so remote updates keep arriving while it waits in settings for retry or discard.
 hasBlockingMutationForObservedVersion:
 SELECT EXISTS(
     SELECT 1 FROM aethon_sync_outbox
     WHERE scope_id = :scopeId
       AND entity_type = :entityType
       AND entity_id = :entityId
+      AND NOT (status = 'ERROR' AND last_error LIKE 'blocked:%')
     UNION ALL
     SELECT 1 FROM aethon_sync_replica_wait
     WHERE scope_id = :scopeId

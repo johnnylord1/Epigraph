@@ -139,8 +139,9 @@ class CoreReplicaApplier(
                     record = requireNotNull(change.patch),
                     originServerId = originServerId,
                 )
-                upsertConfirmed(record)
-                projectConfirmed(record)
+                // An event older than the held version (an SSE backlog arriving after a newer
+                // snapshot) must not put the old state back on screen.
+                if (upsertConfirmed(record)) projectConfirmed(record)
             }
 
             DELETE_OPERATION -> {
@@ -151,8 +152,7 @@ class CoreReplicaApplier(
                     deletedAtMs = change.appliedAtMs,
                     reasonCode = null,
                 )
-                deleteConfirmed(tombstone)
-                projectDeleted(tombstone)
+                if (deleteConfirmed(tombstone)) projectDeleted(tombstone)
             }
         }
         recordAppliedInboxEvent(
