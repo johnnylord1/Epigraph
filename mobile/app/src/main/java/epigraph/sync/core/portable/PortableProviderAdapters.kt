@@ -334,10 +334,12 @@ private fun unsupported(ref: PortableWorkRef) = WorkResolution(
     ),
 )
 
+// The device lists a work's chapters through its extension when the work is opened, added or
+// updated, never from the sync pass; until then the chapter stays pending and binds on a later pass.
 private fun unsupported(ref: PortableChapterRef) = ChapterResolution(
     ref,
     PortableResolution(
         PortableResolutionState.PENDING_PROVIDER,
-        PortableResolutionReason.CHAPTER_RESOLUTION_FAILED,
+        PortableResolutionReason.CHAPTER_NOT_FOUND,
     ),
 )

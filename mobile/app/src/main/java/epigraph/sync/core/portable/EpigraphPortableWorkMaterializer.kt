@@ -3,10 +3,8 @@ package epigraph.sync.core.portable
 import epigraph.contract.PortableResolution
 import epigraph.contract.PortableResolutionReason
 import epigraph.contract.PortableResolutionState
-import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableWorkRef
-import epigraph.contract.ChapterResolution
 import epigraph.contract.WorkResolution
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import eu.kanade.tachiyomi.data.database.models.create
@@ -14,14 +12,12 @@ import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
 import epigraph.novel.source.NovelSource
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import yokai.data.DatabaseHandler
-import yokai.domain.chapter.ChapterRepository
 import yokai.domain.manga.MangaRepository
 import yokai.domain.manga.models.MangaUpdate
 
@@ -106,7 +102,7 @@ class EpigraphPortableWorkMaterializer(
                         titleHint = priorNovelBinding?.title_hint,
                     )
                 }
-                return boundAfterNovelChapterHydration(ref, source, exactNative)
+                return bound(ref, exactNative.id)
             }
 
             if (ref is PortableWorkRef.Comic) {
@@ -191,7 +187,7 @@ class EpigraphPortableWorkMaterializer(
                         PortableResolutionState.RETRYABLE_FAILURE,
                         PortableResolutionReason.WORK_RESOLUTION_FAILED,
                     )
-                return boundAfterNovelChapterHydration(ref, source, local)
+                return bound(ref, local.id)
             }
             val entity = Manga.create(providerKey, details.title, sourceId).apply {
                 copyFrom(details)
@@ -209,7 +205,7 @@ class EpigraphPortableWorkMaterializer(
             if (local.source != sourceId || local.url != providerKey) {
                 return WorkResolution(ref, PortableResolution(PortableResolutionState.CONFLICT))
             }
-            boundAfterNovelChapterHydration(ref, source, local)
+            bound(ref, local.id)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: IOException) {
@@ -243,23 +239,6 @@ class EpigraphPortableWorkMaterializer(
         val relinked = mangas.getMangaById(localId)
             ?.takeIf { it.source == sourceId && it.url == providerKey }
         return bound(ref, relinked?.id)
-    }
-
-    /**
-     * Novel manifests intentionally synchronize provider-owned work keys instead of copying the
-     * chapter catalogue through Core. Once the exact LNReader work is bound, hydrate its chapters
-     * with Epigraph's canonical source sync so the restored library item is immediately readable.
-     */
-    private suspend fun boundAfterNovelChapterHydration(
-        ref: PortableWorkRef,
-        source: CatalogueSource,
-        manga: Manga,
-    ): WorkResolution {
-        if (ref is PortableWorkRef.Novel) {
-            val remoteChapters = source.getChapterList(manga.copy())
-            syncChaptersWithSource(remoteChapters, manga, source)
-        }
-        return bound(ref, manga.id)
     }
 
     /**
@@ -351,131 +330,4 @@ class EpigraphPortableWorkMaterializer(
         state: PortableResolutionState,
         reason: PortableResolutionReason,
     ) = WorkResolution(ref, PortableResolution(state, reason))
-}
-
-/** Fetches and persists a source's canonical chapter list through Epigraph's standard sync helper. */
-class EpigraphPortableChapterMaterializer(
-    private val sources: SourceManager,
-    private val mangas: MangaRepository,
-    private val chapters: ChapterRepository,
-) : PortableChapterMaterializer {
-    override suspend fun materialize(ref: PortableChapterRef): ChapterResolution =
-        materializeAll(listOf(ref)).single()
-
-    override suspend fun materializeAll(refs: List<PortableChapterRef>): List<ChapterResolution> {
-        if (refs.isEmpty()) return emptyList()
-        val results = LinkedHashMap<PortableChapterRef, ChapterResolution>(refs.size)
-        refs.groupBy(PortableChapterRef::work).values.forEach { workRefs ->
-            materializeWork(workRefs).forEach { results[it.ref] = it }
-        }
-        return refs.map { ref ->
-            results[ref] ?: ChapterResolution(ref, PortableResolution(PortableResolutionState.CONFLICT))
-        }
-    }
-
-    private suspend fun materializeWork(refs: List<PortableChapterRef>): List<ChapterResolution> {
-        val first = refs.first()
-        val sourceId = when (first) {
-            is PortableChapterRef.Comic -> first.work.sourceId.toLong()
-            is PortableChapterRef.Novel -> sources.getCatalogueSources()
-                .filterIsInstance<NovelSource>()
-                .firstOrNull { it.pluginId == first.work.pluginId }
-                ?.id
-                ?: return refs.failAll(
-                    PortableResolutionState.PENDING_DEPENDENCY,
-                    PortableResolutionReason.PLUGIN_NOT_FOUND,
-                )
-        }
-        val source = sources.get(sourceId) as? CatalogueSource
-            ?: return refs.failAll(
-                PortableResolutionState.RETRYABLE_FAILURE,
-                PortableResolutionReason.SOURCE_NOT_LOADED,
-            )
-        if ((first is PortableChapterRef.Novel) != (source is NovelSource)) {
-            return refs.map { ChapterResolution(it, PortableResolution(PortableResolutionState.CONFLICT)) }
-        }
-        val workKey = when (first) {
-            is PortableChapterRef.Comic -> first.work.mangaKey.value
-            is PortableChapterRef.Novel -> first.work.novelKey.value
-        }
-        val manga = mangas.getMangaByUrlAndSource(workKey, sourceId)
-            ?: return refs.failAll(
-                PortableResolutionState.PENDING_PROVIDER,
-                PortableResolutionReason.WORK_NOT_FOUND,
-            )
-        val mangaId = manga.id
-            ?: return refs.failAll(
-                PortableResolutionState.RETRYABLE_FAILURE,
-                PortableResolutionReason.WORK_RESOLUTION_FAILED,
-            )
-        // A work with no chapters at all needs its whole list from the provider; hundreds of those
-        // (a backup without chapters) held the sync pass for many minutes. The detached
-        // PortableWorkDetailsRefresher fetches them and wakes the sync, which then binds locally.
-        if (chapters.getChapters(mangaId, false).isEmpty()) {
-            return refs.failAll(
-                PortableResolutionState.PENDING_PROVIDER,
-                PortableResolutionReason.CHAPTER_NOT_FOUND,
-            )
-        }
-        return try {
-            val remoteChapters = source.getChapterList(manga.copy())
-            val remoteKeys = remoteChapters.mapTo(HashSet(remoteChapters.size)) { it.url }
-            syncChaptersWithSource(remoteChapters, manga, source)
-            refs.map { ref ->
-                val chapterKey = when (ref) {
-                    is PortableChapterRef.Comic -> ref.chapterKey.value
-                    is PortableChapterRef.Novel -> ref.chapterKey.value
-                }
-                if (chapterKey !in remoteKeys) {
-                    return@map failure(
-                        ref,
-                        PortableResolutionState.REQUIRES_USER_ACTION,
-                        PortableResolutionReason.CHAPTER_NOT_FOUND,
-                    )
-                }
-                val local = chapters.getChapterByUrlAndMangaId(chapterKey, mangaId, false)
-                    ?: return@map failure(
-                        ref,
-                        PortableResolutionState.RETRYABLE_FAILURE,
-                        PortableResolutionReason.CHAPTER_RESOLUTION_FAILED,
-                    )
-                if (local.url != chapterKey || local.manga_id != mangaId) {
-                    return@map ChapterResolution(ref, PortableResolution(PortableResolutionState.CONFLICT))
-                }
-                ChapterResolution(
-                    ref,
-                    PortableResolution(PortableResolutionState.BOUND),
-                    local.id?.toString(),
-                ).takeIf { it.localId != null }
-                    ?: failure(
-                        ref,
-                        PortableResolutionState.RETRYABLE_FAILURE,
-                        PortableResolutionReason.CHAPTER_RESOLUTION_FAILED,
-                    )
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: IOException) {
-            refs.failAll(
-                PortableResolutionState.RETRYABLE_FAILURE,
-                PortableResolutionReason.SOURCE_OFFLINE,
-            )
-        } catch (_: Throwable) {
-            refs.failAll(
-                PortableResolutionState.RETRYABLE_FAILURE,
-                PortableResolutionReason.CHAPTER_RESOLUTION_FAILED,
-            )
-        }
-    }
-
-    private fun List<PortableChapterRef>.failAll(
-        state: PortableResolutionState,
-        reason: PortableResolutionReason,
-    ) = map { failure(it, state, reason) }
-
-    private fun failure(
-        ref: PortableChapterRef,
-        state: PortableResolutionState,
-        reason: PortableResolutionReason,
-    ) = ChapterResolution(ref, PortableResolution(state, reason))
 }

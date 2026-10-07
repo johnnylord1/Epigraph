@@ -8,8 +8,6 @@ import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
-import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +19,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import yokai.domain.chapter.ChapterRepository
 import yokai.domain.manga.MangaRepository
 import yokai.domain.manga.models.MangaUpdate
 
@@ -32,21 +29,18 @@ import yokai.domain.manga.models.MangaUpdate
  * complete on its own instead of depending on the paired desktop.
  *
  * Runs detached from the sync pass so pairing never waits on hundreds of provider requests; a row
- * still carrying the desktop cover is retried on the next pass. Works with no chapters are fetched
- * here too (hydration leaves their chapters pending), then [onRefreshed] wakes the sync to bind them.
+ * still carrying the desktop cover is retried on the next pass.
+ *
+ * Chapter lists are never fetched here: like Mihon, the device lists a work's chapters through its
+ * extension when the work is opened, added or updated, and the desktop's read state is applied then.
  */
 class PortableWorkDetailsRefresher(
     private val sources: SourceManager,
     private val mangas: MangaRepository,
-    private val chapters: ChapterRepository,
-    private val onRefreshed: () -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
     private val requested = AtomicBoolean(false)
-    // Works whose chapter list is present or was fetched once: skips re-reading every favorite's
-    // chapters each pass, and a provider listing nothing can't wake the sync forever.
-    private val chaptersChecked: MutableSet<Long> = ConcurrentHashMap.newKeySet()
 
     fun launch() {
         requested.set(true)
@@ -55,9 +49,7 @@ class PortableWorkDetailsRefresher(
             try {
                 // A launch during a pass runs one more: that pass listed the works before an
                 // extension installed meanwhile existed, so its works waited for the next sync.
-                while (requested.getAndSet(false)) {
-                    if (refresh() > 0) onRefreshed()
-                }
+                while (requested.getAndSet(false)) refresh()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -70,16 +62,11 @@ class PortableWorkDetailsRefresher(
     }
 
     suspend fun refresh(): Int {
-        val favorites = mangas.getFavorites()
-        // Novels first: one chapter list each, while the comic pass can take minutes.
-        val pending = favorites.mapNotNull { manga ->
-            val source = sources.get(manga.source) as? NovelSource ?: return@mapNotNull null
-            source to suspend { refreshNovelChapters(manga, source) }
-        } + favorites.mapNotNull { manga ->
-            val source = nativeSource(manga.source) ?: return@mapNotNull null
-            val details = manga.thumbnail_url.isDesktopCover()
-            if (!details && !manga.lacksChapters()) return@mapNotNull null
-            source to suspend { refresh(manga, source, details) }
+        val pending = mangas.getFavorites().mapNotNull { manga ->
+            val source = manga.takeIf { it.thumbnail_url.isDesktopCover() }
+                ?.let { nativeSource(it.source) }
+                ?: return@mapNotNull null
+            source to suspend { refresh(manga, source) }
         }
         if (pending.isEmpty()) return 0
         val permits = Semaphore(MAX_PARALLEL_SOURCES)
@@ -90,48 +77,13 @@ class PortableWorkDetailsRefresher(
         }
     }
 
-    /**
-     * The desktop only publishes the novel chapters already read, all at source order 0, so a
-     * synced novel shows a partial, unordered list. Fetch the full list from the installed plugin;
-     * matching chapters keep their read state.
-     */
-    private suspend fun refreshNovelChapters(manga: Manga, source: NovelSource): Boolean = try {
-        val mangaId = manga.id ?: return false
-        if (mangaId in chaptersChecked) return false
-        if (!chapters.getChapters(mangaId, false).needSourceFetch()) {
-            chaptersChecked += mangaId
-            return false
-        }
-        syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
-        chaptersChecked += mangaId
-        true
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Throwable) {
-        false
-    }
-
     private fun nativeSource(sourceId: Long): CatalogueSource? =
         (sources.get(sourceId) as? CatalogueSource)
             ?.takeIf { it.id != EpigraphCoreSource.ID && it !is NovelSource }
 
-    private suspend fun Manga.lacksChapters(): Boolean {
-        val mangaId = id ?: return false
-        if (mangaId in chaptersChecked) return false
-        return chapters.getChapters(mangaId, false).isEmpty().also { empty ->
-            if (!empty) chaptersChecked += mangaId
-        }
-    }
-
-    private suspend fun refresh(manga: Manga, source: CatalogueSource, details: Boolean): Boolean = try {
+    private suspend fun refresh(manga: Manga, source: CatalogueSource): Boolean = try {
         val mangaId = manga.id ?: return false
-        if (details) refreshDetails(mangaId, manga, source)
-        // Works the desktop never fetched chapters for, or a backup restored without them, arrive
-        // empty; a manual update fixed those too.
-        if (chapters.getChapters(mangaId, false).isEmpty()) {
-            syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
-        }
-        chaptersChecked += mangaId
+        refreshDetails(mangaId, manga, source)
         true
     } catch (cancelled: CancellationException) {
         throw cancelled

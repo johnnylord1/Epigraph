@@ -68,7 +68,6 @@ import epigraph.sync.core.portable.PortableHydrationStore
 import epigraph.sync.core.portable.SqlDelightPortableHydrationStore
 import epigraph.sync.core.portable.ComicDependencyRegistry
 import epigraph.sync.core.portable.EpigraphPortableLocalEntityLookup
-import epigraph.sync.core.portable.EpigraphPortableChapterMaterializer
 import epigraph.sync.core.portable.EpigraphPortableWorkMaterializer
 import epigraph.sync.core.portable.PortableWorkDetailsRefresher
 import epigraph.sync.core.portable.LnReaderNovelDependencyRegistry
@@ -77,7 +76,6 @@ import epigraph.sync.core.portable.MihonComicDependencyRegistry
 import epigraph.sync.core.portable.MihonPortableProvider
 import epigraph.sync.core.portable.NovelDependencyRegistry
 import epigraph.sync.core.portable.PortableLocalEntityLookup
-import epigraph.sync.core.portable.PortableChapterMaterializer
 import epigraph.sync.core.portable.PortableWorkMaterializer
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
 import epigraph.contract.PortableContentProvider
@@ -382,20 +380,14 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single<PortableLocalEntityLookup> { EpigraphPortableLocalEntityLookup(get(), get()) }
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
-    single {
-        PortableWorkDetailsRefresher(get(), get(), get()) {
-            // Chapters it fetched bind on the next pass, applying the desktop's reading progress.
-            get<PortableDependencyTrustCoordinator>().wake()
-        }
-    }
-    single<PortableChapterMaterializer> { EpigraphPortableChapterMaterializer(get(), get(), get()) }
+    single { PortableWorkDetailsRefresher(get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
     single<NovelDependencyRegistry> { LnReaderNovelDependencyRegistry(get()) }
     single<PortableContentProvider>(named(PORTABLE_COMICS_PROVIDER)) {
-        MihonPortableProvider(get(), get(), get(), get())
+        MihonPortableProvider(get(), get(), get())
     }
     single<PortableContentProvider>(named(PORTABLE_NOVELS_PROVIDER)) {
-        LnReaderPortableProvider(get(), get(), get(), get())
+        LnReaderPortableProvider(get(), get(), get())
     }
     single<PortableHydrationStore> { SqlDelightPortableHydrationStore(get()) }
     single {
