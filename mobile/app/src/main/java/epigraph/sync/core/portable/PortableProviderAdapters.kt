@@ -120,13 +120,24 @@ class MihonPortableProvider(
         dependencies.associateWith { providerDependency ->
             val dependency = (providerDependency as? ProviderDependency.Comic)?.dependency
                 ?: return@associateWith conflict()
-            if (!registry.isPackageInstalled(dependency.pkgName)) {
-                return@associateWith PortableResolution(
-                    PortableResolutionState.PENDING_DEPENDENCY,
-                    PortableResolutionReason.EXTENSION_NOT_FOUND,
-                )
-            }
             val sourceIds = dependency.requiredSourceIds.map { it.toLong() }
+            if (!registry.isPackageInstalled(dependency.pkgName)) {
+                // Forks republish a source under another package with the same id (a "revived"
+                // Manganato keeps the original id). The source id is what the works are keyed by,
+                // so an installed extension already loading every one of them serves them, the
+                // same as works whose manifest names no package at all.
+                val servedElsewhere = sourceIds.isNotEmpty() && sourceIds.all {
+                    registry.packageForSource(it) != null && registry.isSourceReady(it)
+                }
+                return@associateWith if (servedElsewhere) {
+                    PortableResolution(PortableResolutionState.READY)
+                } else {
+                    PortableResolution(
+                        PortableResolutionState.PENDING_DEPENDENCY,
+                        PortableResolutionReason.EXTENSION_NOT_FOUND,
+                    )
+                }
+            }
             when {
                 sourceIds.any { registry.packageForSource(it) != dependency.pkgName } -> PortableResolution(
                     PortableResolutionState.REQUIRES_USER_ACTION,

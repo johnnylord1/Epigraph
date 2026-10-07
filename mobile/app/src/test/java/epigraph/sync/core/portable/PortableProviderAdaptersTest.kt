@@ -37,6 +37,23 @@ class PortableProviderAdaptersTest {
     }
 
     @Test
+    fun `a fork loading the same source id stands in for a package that is not installed`() = runTest {
+        val registry = FakeComicRegistry(
+            installed = setOf("revived.package"),
+            packagesBySource = mapOf(10L to "revived.package"),
+            readySources = setOf(10L),
+        )
+        val provider = MihonPortableProvider(registry, EmptyLookup)
+        val served = comicDependency(setOf("10"))
+        val missing = comicDependency(setOf("12"))
+
+        val report = provider.inspectDependencies(listOf(served, missing)).resolutions
+
+        assertEquals(PortableResolutionState.READY, report.getValue(served).state)
+        assertEquals(PortableResolutionReason.EXTENSION_NOT_FOUND, report.getValue(missing).reason)
+    }
+
+    @Test
     fun `comic work binds only by exact source and opaque key`() = runTest {
         val ref = PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/Keep/Case?A=%2F"))
         val lookup = object : PortableLocalEntityLookup by EmptyLookup {
