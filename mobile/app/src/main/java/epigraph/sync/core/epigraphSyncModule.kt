@@ -382,7 +382,12 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single<PortableLocalEntityLookup> { EpigraphPortableLocalEntityLookup(get(), get()) }
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
-    single { PortableWorkDetailsRefresher(get(), get(), get()) }
+    single {
+        PortableWorkDetailsRefresher(get(), get(), get()) {
+            // Chapters it fetched bind on the next pass, applying the desktop's reading progress.
+            get<PortableDependencyTrustCoordinator>().wake()
+        }
+    }
     single<PortableChapterMaterializer> { EpigraphPortableChapterMaterializer(get(), get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
     single<NovelDependencyRegistry> { LnReaderNovelDependencyRegistry(get()) }

@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -31,16 +32,21 @@ import yokai.domain.manga.models.MangaUpdate
  * complete on its own instead of depending on the paired desktop.
  *
  * Runs detached from the sync pass so pairing never waits on hundreds of provider requests; a row
- * still carrying the desktop cover is retried on the next pass.
+ * still carrying the desktop cover is retried on the next pass. Works with no chapters are fetched
+ * here too (hydration leaves their chapters pending), then [onRefreshed] wakes the sync to bind them.
  */
 class PortableWorkDetailsRefresher(
     private val sources: SourceManager,
     private val mangas: MangaRepository,
     private val chapters: ChapterRepository,
+    private val onRefreshed: () -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
     private val requested = AtomicBoolean(false)
+    // Works whose chapter list is present or was fetched once: skips re-reading every favorite's
+    // chapters each pass, and a provider listing nothing can't wake the sync forever.
+    private val chaptersChecked: MutableSet<Long> = ConcurrentHashMap.newKeySet()
 
     fun launch() {
         requested.set(true)
@@ -49,7 +55,9 @@ class PortableWorkDetailsRefresher(
             try {
                 // A launch during a pass runs one more: that pass listed the works before an
                 // extension installed meanwhile existed, so its works waited for the next sync.
-                while (requested.getAndSet(false)) refresh()
+                while (requested.getAndSet(false)) {
+                    if (refresh() > 0) onRefreshed()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -68,10 +76,10 @@ class PortableWorkDetailsRefresher(
             val source = sources.get(manga.source) as? NovelSource ?: return@mapNotNull null
             source to suspend { refreshNovelChapters(manga, source) }
         } + favorites.mapNotNull { manga ->
-            val source = manga.takeIf { it.thumbnail_url.isDesktopCover() }
-                ?.let { nativeSource(it.source) }
-                ?: return@mapNotNull null
-            source to suspend { refresh(manga, source) }
+            val source = nativeSource(manga.source) ?: return@mapNotNull null
+            val details = manga.thumbnail_url.isDesktopCover()
+            if (!details && !manga.lacksChapters()) return@mapNotNull null
+            source to suspend { refresh(manga, source, details) }
         }
         if (pending.isEmpty()) return 0
         val permits = Semaphore(MAX_PARALLEL_SOURCES)
@@ -89,8 +97,13 @@ class PortableWorkDetailsRefresher(
      */
     private suspend fun refreshNovelChapters(manga: Manga, source: NovelSource): Boolean = try {
         val mangaId = manga.id ?: return false
-        if (!chapters.getChapters(mangaId, false).needSourceFetch()) return false
+        if (mangaId in chaptersChecked) return false
+        if (!chapters.getChapters(mangaId, false).needSourceFetch()) {
+            chaptersChecked += mangaId
+            return false
+        }
         syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
+        chaptersChecked += mangaId
         true
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -102,8 +115,31 @@ class PortableWorkDetailsRefresher(
         (sources.get(sourceId) as? CatalogueSource)
             ?.takeIf { it.id != EpigraphCoreSource.ID && it !is NovelSource }
 
-    private suspend fun refresh(manga: Manga, source: CatalogueSource): Boolean = try {
+    private suspend fun Manga.lacksChapters(): Boolean {
+        val mangaId = id ?: return false
+        if (mangaId in chaptersChecked) return false
+        return chapters.getChapters(mangaId, false).isEmpty().also { empty ->
+            if (!empty) chaptersChecked += mangaId
+        }
+    }
+
+    private suspend fun refresh(manga: Manga, source: CatalogueSource, details: Boolean): Boolean = try {
         val mangaId = manga.id ?: return false
+        if (details) refreshDetails(mangaId, manga, source)
+        // Works the desktop never fetched chapters for, or a backup restored without them, arrive
+        // empty; a manual update fixed those too.
+        if (chapters.getChapters(mangaId, false).isEmpty()) {
+            syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
+        }
+        chaptersChecked += mangaId
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+
+    private suspend fun refreshDetails(mangaId: Long, manga: Manga, source: CatalogueSource) {
         manga.copyFrom(source.getMangaDetails(manga.copy()))
         // Only the provider's fields: the snapshot is from before the network call, so writing the
         // whole row could undo a reading mode or favorite changed meanwhile.
@@ -119,15 +155,6 @@ class PortableWorkDetailsRefresher(
                 initialized = true,
             ),
         )
-        // Works the desktop never fetched chapters for arrive empty; a manual update fixed those too.
-        if (chapters.getChapters(mangaId, false).isEmpty()) {
-            syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
-        }
-        true
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Throwable) {
-        false
     }
 
     private fun String?.isDesktopCover(): Boolean =

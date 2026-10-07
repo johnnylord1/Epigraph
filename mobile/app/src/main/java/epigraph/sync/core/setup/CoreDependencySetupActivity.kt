@@ -92,7 +92,12 @@ import eu.kanade.tachiyomi.util.system.setThemeByPref
 import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
@@ -338,21 +343,31 @@ private fun CoreDependencySetupContent(
     }
 
     val installNovelPlugins: suspend () -> Unit = {
-        novelInventory?.plugins.orEmpty()
-            .filter { it.status in NOVEL_INSTALLABLE_STATUSES }
-            .forEach { item ->
-                val result = novelCoordinator.installPlugin(
-                    effectiveServerId!!,
-                    effectiveProfileId!!,
-                    item.requirement.pluginId,
-                )
-                if (
-                    result != LnReaderPluginInstallResult.Installed &&
-                    result != LnReaderPluginInstallResult.AlreadyInstalled
-                ) {
-                    error = true
+        // In parallel: one at a time, each plugin's download and load added up to most of a minute.
+        val permits = Semaphore(NOVEL_PARALLEL_INSTALLS)
+        coroutineScope {
+            novelInventory?.plugins.orEmpty()
+                .filter { it.status in NOVEL_INSTALLABLE_STATUSES }
+                .map { item ->
+                    async {
+                        permits.withPermit {
+                            novelCoordinator.installPlugin(
+                                effectiveServerId!!,
+                                effectiveProfileId!!,
+                                item.requirement.pluginId,
+                            )
+                        }
+                    }
                 }
+                .awaitAll()
+        }.forEach { result ->
+            if (
+                result != LnReaderPluginInstallResult.Installed &&
+                result != LnReaderPluginInstallResult.AlreadyInstalled
+            ) {
+                error = true
             }
+        }
     }
 
     val isBusy = busy ||
@@ -1394,6 +1409,8 @@ private val COMIC_ACTIONABLE_STATUSES = setOf(
     ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE,
     ExtensionParityStatus.UNTRUSTED_OR_BLOCKED,
 )
+
+private const val NOVEL_PARALLEL_INSTALLS = 4
 
 /** A mismatched version is replaced by the desktop's exact artifact. */
 private val NOVEL_INSTALLABLE_STATUSES = setOf(

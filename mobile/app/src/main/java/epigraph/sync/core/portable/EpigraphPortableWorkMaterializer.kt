@@ -408,6 +408,15 @@ class EpigraphPortableChapterMaterializer(
                 PortableResolutionState.RETRYABLE_FAILURE,
                 PortableResolutionReason.WORK_RESOLUTION_FAILED,
             )
+        // A work with no chapters at all needs its whole list from the provider; hundreds of those
+        // (a backup without chapters) held the sync pass for many minutes. The detached
+        // PortableWorkDetailsRefresher fetches them and wakes the sync, which then binds locally.
+        if (chapters.getChapters(mangaId, false).isEmpty()) {
+            return refs.failAll(
+                PortableResolutionState.PENDING_PROVIDER,
+                PortableResolutionReason.CHAPTER_NOT_FOUND,
+            )
+        }
         return try {
             val remoteChapters = source.getChapterList(manga.copy())
             val remoteKeys = remoteChapters.mapTo(HashSet(remoteChapters.size)) { it.url }

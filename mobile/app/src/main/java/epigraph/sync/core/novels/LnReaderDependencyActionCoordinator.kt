@@ -9,6 +9,8 @@ import epigraph.novel.repo.interactor.NovelRepoIndexValidator
 import epigraph.novel.repo.model.NovelRepo
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 sealed interface LnReaderRepositoryApprovalResult {
     data class Approved(val indexUrl: String) : LnReaderRepositoryApprovalResult
@@ -51,6 +53,8 @@ class ManagedLnReaderDependencyActionGateway(
     // "Install all" installs every plugin of a repository in a row; fetch its index once, not
     // once per plugin.
     private val repositoryIndexes = ConcurrentHashMap<String, Pair<Long, List<NovelPluginIndex>>>()
+    // Installs run in parallel; the first one fetches the index and the rest reuse it.
+    private val indexMutex = Mutex()
 
     override suspend fun approveRepository(
         requirement: CoreNovelRepositoryRequirement,
@@ -114,11 +118,11 @@ class ManagedLnReaderDependencyActionGateway(
         }
     }
 
-    private suspend fun repositoryPlugins(indexUrl: String): List<NovelPluginIndex> {
+    private suspend fun repositoryPlugins(indexUrl: String): List<NovelPluginIndex> = indexMutex.withLock {
         val now = System.currentTimeMillis()
         repositoryIndexes[indexUrl]?.takeIf { (fetchedAt, _) -> now - fetchedAt < INDEX_REUSE_MS }
-            ?.let { (_, cached) -> return cached }
-        return plugins.refreshRepositoryPlugins(indexUrl).also { fetched ->
+            ?.let { (_, cached) -> return@withLock cached }
+        plugins.refreshRepositoryPlugins(indexUrl).also { fetched ->
             if (fetched.isNotEmpty()) repositoryIndexes[indexUrl] = now to fetched
         }
     }
@@ -134,6 +138,10 @@ class LnReaderDependencyActionCoordinator(
     private val portableTrust: PortableDependencyTrustCoordinator? = null,
     private val coreArtifacts: CoreNovelPluginArtifactGateway? = null,
 ) {
+    // "Install all" installs plugins in parallel: each marks its own plugin on the latest
+    // inventory, since writing back the copy read before the install undid the others' marks.
+    private val inventoryMutex = Mutex()
+
     suspend fun inventory(serverId: String, profileId: String): LnReaderDependencyInventory? =
         inventories.get(serverId, profileId)
 
@@ -216,20 +224,23 @@ class LnReaderDependencyActionCoordinator(
                 result == LnReaderPluginInstallResult.Installed ||
                 result == LnReaderPluginInstallResult.AlreadyInstalled
             ) {
-                inventories.replace(
-                    inventory.copy(
-                        plugins = inventory.plugins.map { item ->
-                            if (item.requirement.pluginId == pluginId) {
-                                item.copy(
-                                    status = LnReaderPluginParityStatus.INSTALLED,
-                                    installedVersion = item.requirement.version,
-                                )
-                            } else {
-                                item
-                            }
-                        },
-                    ),
-                )
+                inventoryMutex.withLock {
+                    val latest = inventories.get(serverId, profileId) ?: inventory
+                    inventories.replace(
+                        latest.copy(
+                            plugins = latest.plugins.map { item ->
+                                if (item.requirement.pluginId == pluginId) {
+                                    item.copy(
+                                        status = LnReaderPluginParityStatus.INSTALLED,
+                                        installedVersion = item.requirement.version,
+                                    )
+                                } else {
+                                    item
+                                }
+                            },
+                        ),
+                    )
+                }
                 portableTrust?.wake()
             }
         }
