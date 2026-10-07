@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import yokai.domain.chapter.ChapterRepository
 import yokai.domain.manga.MangaRepository
+import yokai.domain.manga.models.MangaUpdate
 
 /**
  * A portable binding relinks a synced work to the extension installed on this device, but the row
@@ -75,12 +76,24 @@ class PortableWorkDetailsRefresher(
             ?.takeIf { it.id != EpigraphCoreSource.ID && it !is NovelSource }
 
     private suspend fun refresh(manga: Manga, source: CatalogueSource): Boolean = try {
+        val mangaId = manga.id ?: return false
         manga.copyFrom(source.getMangaDetails(manga.copy()))
-        manga.initialized = true
-        mangas.update(manga.toMangaUpdate())
+        // Only the provider's fields: the snapshot is from before the network call, so writing the
+        // whole row could undo a reading mode or favorite changed meanwhile.
+        mangas.update(
+            MangaUpdate(
+                id = mangaId,
+                artist = manga.artist,
+                author = manga.author,
+                description = manga.description,
+                genres = manga.getGenres(),
+                status = manga.status,
+                thumbnailUrl = manga.thumbnail_url,
+                initialized = true,
+            ),
+        )
         // Works the desktop never fetched chapters for arrive empty; a manual update fixed those too.
-        val mangaId = manga.id
-        if (mangaId != null && chapters.getChapters(mangaId, false).isEmpty()) {
+        if (chapters.getChapters(mangaId, false).isEmpty()) {
             syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
         }
         true
