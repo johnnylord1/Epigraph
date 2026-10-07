@@ -21,12 +21,18 @@ import yokai.domain.extension.repo.interactor.GetExtensionRepo
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -255,6 +261,9 @@ class ExtensionReconciliationCoordinator(
         return relinker.relinkAvailable(cached.map(::packageScope))
     }
 
+    /** Desktop source of each bridged work, so works still served by the Core count toward their extension. */
+    suspend fun bridgedWorkSources(): Map<Long, Long> = withContext(Dispatchers.IO) { relinker.bridgedWorkSources() }
+
     fun acknowledge() {
         _state.value.report?.let(store::acknowledge)
         notifier.dismiss()
@@ -270,8 +279,59 @@ class ExtensionReconciliationCoordinator(
             .firstOrNull { it.pkgName == packageName }
             ?: return
         extensionManager.trust(untrusted.pkgName, untrusted.versionCode, untrusted.signatureHash)
+        // Trusting loads the extension in the background; classifying before it lands showed the
+        // package as missing and offered to install it again.
+        withTimeoutOrNull(INSTALLED_FLOW_TIMEOUT_MS) {
+            extensionManager.installedExtensionsFlow.first { installed ->
+                installed.any { it.pkgName == packageName }
+            }
+        }
         refreshReportFromCatalog()
         relinkFromCachedInventories()
+    }
+
+    /** Trusts every installed package the desktop needs that this device still blocks. */
+    suspend fun trustAllUntrusted() {
+        _state.value.report?.items
+            ?.filter { it.status == ExtensionParityStatus.UNTRUSTED_OR_BLOCKED }
+            ?.forEach { trustUntrusted(it.packageName) }
+    }
+
+    /**
+     * Keeps the report in step with this device while a screen shows it. The persisted report is
+     * from the last classification, so an extension installed, trusted or removed since then (or
+     * an install whose result arrived late) kept offering the old action until the next sync.
+     */
+    @OptIn(FlowPreview::class)
+    suspend fun followDeviceExtensions() {
+        refreshFromStore()
+        extensionManager.isInitialized.first { it }
+        if (extensionManager.availableExtensionsFlow.value.isEmpty()) {
+            extensionManager.findAvailableExtensions()
+        }
+        combine(
+            extensionManager.installedExtensionsFlow,
+            extensionManager.untrustedExtensionsFlow,
+            extensionManager.availableExtensionsFlow,
+        ) { installed, untrusted, available ->
+            Triple(
+                installed.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+                untrusted.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+                available.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+            )
+        }
+            .distinctUntilChanged()
+            .debounce(DEVICE_STATE_DEBOUNCE_MS)
+            .collect {
+                // A failed pass keeps the last report; the next device change retries.
+                try {
+                    refreshReportFromCatalog()
+                    relinkFromCachedInventories()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                }
+            }
     }
 
     suspend fun installAllMissing() {
@@ -347,7 +407,22 @@ class ExtensionReconciliationCoordinator(
         }
     }
 
-    private suspend fun installPackage(packageName: String): InstallOutcome = coroutineScope {
+    private suspend fun installPackage(packageName: String): InstallOutcome {
+        // The installer's status poller outlives the install it reports on: once the session is
+        // released it waits for a new one forever. Run it in a scope closed here, since as a child
+        // of this call it kept the batch (and the setup screen) busy after a finished install.
+        val installerJob = SupervisorJob(currentCoroutineContext()[Job])
+        return try {
+            installPackage(packageName, CoroutineScope(currentCoroutineContext() + installerJob))
+        } finally {
+            installerJob.cancel()
+        }
+    }
+
+    private suspend fun installPackage(
+        packageName: String,
+        installerScope: CoroutineScope,
+    ): InstallOutcome = coroutineScope {
         val available = extensionManager.availableExtensionsFlow.value
             .filter { it.pkgName == packageName }
             .maxByOrNull { it.versionCode }
@@ -365,10 +440,10 @@ class ExtensionReconciliationCoordinator(
         // until the timeout. Extensions that land untrusted count as installed here; the report
         // refresh re-classifies them so the user can trust them in-flow.
         var reachedInstaller = false
-        val terminal = async {
+        val terminal = installerScope.async {
             extensionManager.installExtensionWithUserConfirmation(
                 ExtensionManager.ExtensionInfo(available),
-                this@coroutineScope,
+                installerScope,
             ).first {
                 if (it.first == InstallStep.Installing) reachedInstaller = true
                 it.first.isCompleted()
@@ -447,9 +522,7 @@ class ExtensionReconciliationCoordinator(
                 withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
             }
             null -> {
-                // Close the canonical flow after the user-confirmation deadline. Otherwise the
-                // child producer keeps this coroutineScope alive even though the batch already
-                // classified the item as failed.
+                // Close the canonical flow after the user-confirmation deadline.
                 extensionManager.setInstallationResult(packageName, result = false)
                 withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
             }
@@ -496,6 +569,7 @@ class ExtensionReconciliationCoordinator(
     private suspend fun refreshReportFromCatalog() {
         val current = _state.value.report ?: return
         val installed = extensionManager.installedExtensionsFlow.value.associateBy { it.pkgName }
+        val installedSourceIds = installed.values.flatMapTo(mutableSetOf()) { local -> local.sources.map { it.id } }
         val available = extensionManager.availableExtensionsFlow.value
             .groupBy { it.pkgName }
             .mapValues { (_, values) -> values.maxBy { it.versionCode } }
@@ -524,6 +598,8 @@ class ExtensionReconciliationCoordinator(
                         local != null && update != null && update.versionCode > local.versionCode ->
                             ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                         local != null -> ExtensionParityStatus.INSTALLED
+                        expectedIds.isNotEmpty() && installedSourceIds.containsAll(expectedIds) ->
+                            ExtensionParityStatus.INSTALLED
                         item.packageName in untrusted -> ExtensionParityStatus.UNTRUSTED_OR_BLOCKED
                         update != null -> ExtensionParityStatus.MISSING_AVAILABLE
                         item.repositoryHintUrl != null &&
@@ -563,6 +639,7 @@ class ExtensionReconciliationCoordinator(
         val INSTALLER_FLOW_SETTLE_MS = TimeUnit.SECONDS.toMillis(5)
         val INSTALLER_ABANDONED_MS = TimeUnit.SECONDS.toMillis(6)
         val INSTALLED_FLOW_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(15)
+        const val DEVICE_STATE_DEBOUNCE_MS = 500L
     }
 }
 

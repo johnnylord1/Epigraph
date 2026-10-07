@@ -41,12 +41,32 @@ class ExtensionParityResolverTest {
 
         val report = ExtensionParityResolver.resolve(
             inventory = inventory,
-            installed = listOf(MobileInstalledExtension(desktopPackage.lowercase(), 1, "1.0", setOf(10))),
+            installed = listOf(MobileInstalledExtension(desktopPackage.lowercase(), 1, "1.0", setOf(11))),
             available = listOf(MobileAvailableExtension(desktopPackage, 2, "2.0", setOf(10))),
             untrustedPackages = emptySet(),
         )
 
         assertEquals(ExtensionParityStatus.MISSING_AVAILABLE, report.items.single().status)
+    }
+
+    @Test
+    fun `a fork serving every desktop source id counts as installed`() {
+        val report = ExtensionParityResolver.resolve(
+            inventory = inventory(
+                extension("original.package", "1", source(10, "Served")),
+                extension("partial.package", "1", source(10, "Served"), source(12, "Missing")),
+            ),
+            installed = listOf(MobileInstalledExtension("revived.package", 1, "1.0", setOf(10))),
+            available = listOf(
+                MobileAvailableExtension("original.package", 1, "1.0", setOf(10)),
+                MobileAvailableExtension("partial.package", 1, "1.0", setOf(10, 12)),
+            ),
+            untrustedPackages = emptySet(),
+        )
+
+        val statuses = report.items.associate { it.packageName to it.status }
+        assertEquals(ExtensionParityStatus.INSTALLED, statuses["original.package"])
+        assertEquals(ExtensionParityStatus.MISSING_AVAILABLE, statuses["partial.package"])
     }
 
     @Test

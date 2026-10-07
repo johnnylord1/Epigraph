@@ -176,16 +176,18 @@ class LnReaderDependencyActionCoordinator(
         if (plugin.status == LnReaderPluginParityStatus.INSTALLED) {
             return LnReaderPluginInstallResult.AlreadyInstalled
         }
-        if (plugin.status == LnReaderPluginParityStatus.IDENTITY_MISMATCH) {
-            return LnReaderPluginInstallResult.IdentityMismatch
-        }
-        val repository = inventory.repositories.singleOrNull {
+        val indexUrl = inventory.repositories.singleOrNull {
             it.requirement.repositoryId == plugin.requirement.repositoryId
-        } ?: return LnReaderPluginInstallResult.RepositoryApprovalRequired
-        val indexUrl = repository.configuredIndexUrl
-            ?: return LnReaderPluginInstallResult.RepositoryApprovalRequired
-        val repositoryResult = gateway.installPlugin(indexUrl, plugin.requirement)
-        val resolvedResult = if (repositoryResult == LnReaderPluginInstallResult.PluginUnavailable) {
+        }?.configuredIndexUrl
+        val repositoryResult = when {
+            plugin.status == LnReaderPluginParityStatus.IDENTITY_MISMATCH ->
+                LnReaderPluginInstallResult.IdentityMismatch
+            indexUrl == null -> LnReaderPluginInstallResult.RepositoryApprovalRequired
+            else -> gateway.installPlugin(indexUrl, plugin.requirement)
+        }
+        // The paired Core serves the desktop's exact artifact, verified by hash and size, so a
+        // repository that was not added or lacks that version no longer blocks the install.
+        val resolvedResult = if (repositoryResult in CORE_ARTIFACT_FALLBACK) {
             coreArtifacts?.install(serverId, profileId, plugin.requirement) ?: repositoryResult
         } else {
             repositoryResult
@@ -216,6 +218,14 @@ class LnReaderDependencyActionCoordinator(
         throw cancelled
     } catch (error: Throwable) {
         LnReaderPluginInstallResult.Failed(error.javaClass.simpleName)
+    }
+
+    private companion object {
+        val CORE_ARTIFACT_FALLBACK = setOf(
+            LnReaderPluginInstallResult.PluginUnavailable,
+            LnReaderPluginInstallResult.IdentityMismatch,
+            LnReaderPluginInstallResult.RepositoryApprovalRequired,
+        )
     }
 }
 

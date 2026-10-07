@@ -67,6 +67,52 @@ class LnReaderDependencyActionCoordinatorTest {
     }
 
     @Test
+    fun `desktop artifact installs a plugin whose repository was not added`() = runTest {
+        val gateway = RecordingActionGateway()
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = inventoryStore(repositoryInstalled = false),
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, coreInstalls)
+        assertEquals(0, gateway.pluginInstalls)
+    }
+
+    @Test
+    fun `desktop artifact replaces a plugin installed at another version`() = runTest {
+        val store = InMemoryLnReaderDependencyInventoryStore()
+        store.replace(inventory(repositoryInstalled = true, LnReaderPluginParityStatus.IDENTITY_MISMATCH))
+        val gateway = RecordingActionGateway()
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = store,
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, coreInstalls)
+        assertEquals(0, gateway.pluginInstalls)
+        assertEquals(
+            LnReaderPluginParityStatus.INSTALLED,
+            store.get(SERVER, PROFILE)?.plugins?.single()?.status,
+        )
+    }
+
+    @Test
     fun `source id never substitutes the canonical plugin identity`() {
         val requirement = CoreNovelPluginRequirement(
             repositoryId = REPOSITORY,

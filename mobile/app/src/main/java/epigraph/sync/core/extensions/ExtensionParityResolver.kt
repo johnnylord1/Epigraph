@@ -15,6 +15,7 @@ internal object ExtensionParityResolver {
         configuredRepositoryBaseUrls: Set<String> = emptySet(),
     ): ExtensionParityReport {
         val installedByPackage = installed.associateBy { it.packageName }
+        val installedSourceIds = installed.flatMapTo(mutableSetOf()) { it.sourceIds }
         val availableByPackage = available
             .groupBy { it.packageName }
             .mapValues { (_, values) -> values.maxBy { it.versionCode } }
@@ -53,6 +54,10 @@ internal object ExtensionParityResolver {
                         ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                     }
                     mobileInstalled != null -> ExtensionParityStatus.INSTALLED
+                    // A fork republishing the source under another package (a "revived" Manganato)
+                    // already serves these works; installing the original would only duplicate it.
+                    expectedSourceIds.isNotEmpty() && installedSourceIds.containsAll(expectedSourceIds) ->
+                        ExtensionParityStatus.INSTALLED
                     desktop.packageName in untrustedPackages -> ExtensionParityStatus.UNTRUSTED_OR_BLOCKED
                     mobileAvailable != null -> ExtensionParityStatus.MISSING_AVAILABLE
                     repositoryHintUrl != null &&

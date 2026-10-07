@@ -6,7 +6,9 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -109,7 +111,10 @@ class CoreDependencySetupActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setThemeByPref(preferences)
-        lifecycleScope.launch { coordinator.refreshFromStore() }
+        // Follows installs, trusts and removals made while the screen is open or away from it.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { coordinator.followDeviceExtensions() }
+        }
         val serverId = intent.getStringExtra(EXTRA_SERVER_ID)?.takeIf(String::isNotBlank)
         val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank)
         val startAtExtensions = intent.getBooleanExtra(EXTRA_START_AT_EXTENSIONS, false)
@@ -207,7 +212,10 @@ private fun CoreDependencySetupContent(
         }
     }
 
-    LaunchedEffect(effectiveServerId, effectiveProfileId) {
+    // The novel inventory arrives with a sync, which may finish after the screen opened.
+    val syncStatus by remember(syncMonitor) { syncMonitor.status() }.collectAsState(initial = null)
+    val lastSyncAtMs = (syncStatus as? CoreSyncStatus.Synced)?.lastSyncAtMs
+    LaunchedEffect(effectiveServerId, effectiveProfileId, lastSyncAtMs) {
         if (effectiveServerId != null && effectiveProfileId != null) {
             novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
         }
@@ -242,9 +250,15 @@ private fun CoreDependencySetupContent(
     // Library works per source, to show how many works each repository and extension serves.
     var worksRefresh by remember { mutableStateOf(0) }
     var worksBySource by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
-    LaunchedEffect(worksRefresh) {
+    LaunchedEffect(worksRefresh, lastSyncAtMs) {
         worksBySource = try {
-            withContext(Dispatchers.IO) { getManga.awaitFavorites().groupingBy { it.source }.eachCount() }
+            // Works still served by the Core count toward the desktop source they come from.
+            val bridged = coordinator.bridgedWorkSources()
+            withContext(Dispatchers.IO) {
+                getManga.awaitFavorites()
+                    .groupingBy { manga -> manga.id?.let(bridged::get) ?: manga.source }
+                    .eachCount()
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -321,6 +335,24 @@ private fun CoreDependencySetupContent(
                 worksRefresh += 1
             }
         }
+    }
+
+    val installNovelPlugins: suspend () -> Unit = {
+        novelInventory?.plugins.orEmpty()
+            .filter { it.status in NOVEL_INSTALLABLE_STATUSES }
+            .forEach { item ->
+                val result = novelCoordinator.installPlugin(
+                    effectiveServerId!!,
+                    effectiveProfileId!!,
+                    item.requirement.pluginId,
+                )
+                if (
+                    result != LnReaderPluginInstallResult.Installed &&
+                    result != LnReaderPluginInstallResult.AlreadyInstalled
+                ) {
+                    error = true
+                }
+            }
     }
 
     val isBusy = busy ||
@@ -689,26 +721,12 @@ private fun CoreDependencySetupContent(
                         Step2BottomBar(
                             isBusy = isBusy,
                             hasInstallable = if (showComics && showNovels) {
-                                if (tab == 0) report!!.items.any {
-                                    it.status == ExtensionParityStatus.MISSING_AVAILABLE ||
-                                        it.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
-                                }
-                                else novelInventory!!.plugins.any {
-                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                }
+                                if (tab == 0) report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }
+                                else novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }
                             } else if (showComics) {
-                                report!!.items.any {
-                                    it.status == ExtensionParityStatus.MISSING_AVAILABLE ||
-                                        it.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
-                                }
+                                report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }
                             } else {
-                                novelInventory!!.plugins.any {
-                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                }
+                                novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }
                             },
                             onBack = { step = STEP_REPOSITORIES },
                             onInstallAll = {
@@ -716,38 +734,16 @@ private fun CoreDependencySetupContent(
                                 launchAction {
                                     if (showComics && showNovels) {
                                         if (tab == 0) {
+                                            coordinator.trustAllUntrusted()
                                             coordinator.installAllMissing()
                                         } else {
-                                            novelInventory!!.plugins
-                                                .filter {
-                                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                                }
-                                                .forEach { item ->
-                                                    novelCoordinator.installPlugin(
-                                                        effectiveServerId!!,
-                                                        effectiveProfileId!!,
-                                                        item.requirement.pluginId,
-                                                    )
-                                                }
+                                            installNovelPlugins()
                                         }
                                     } else if (showComics) {
+                                        coordinator.trustAllUntrusted()
                                         coordinator.installAllMissing()
                                     } else {
-                                        novelInventory!!.plugins
-                                            .filter {
-                                                it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                                    it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                                    it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                            }
-                                            .forEach { item ->
-                                                novelCoordinator.installPlugin(
-                                                    effectiveServerId!!,
-                                                    effectiveProfileId!!,
-                                                    item.requirement.pluginId,
-                                                )
-                                            }
+                                        installNovelPlugins()
                                     }
                                     if (effectiveServerId != null && effectiveProfileId != null) {
                                         novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
@@ -1038,10 +1034,9 @@ private fun NovelPluginList(
                     LnReaderPluginParityStatus.MISSING_AVAILABLE,
                     LnReaderPluginParityStatus.UPDATE_AVAILABLE,
                     LnReaderPluginParityStatus.MISSING_UNAVAILABLE,
-                    -> 0
                     LnReaderPluginParityStatus.IDENTITY_MISMATCH,
-                    LnReaderPluginParityStatus.UNTRUSTED_OR_BLOCKED,
-                    -> 1
+                    -> 0
+                    LnReaderPluginParityStatus.UNTRUSTED_OR_BLOCKED -> 1
                     LnReaderPluginParityStatus.INSTALLED -> 2
                 }
             },
@@ -1062,9 +1057,7 @@ private fun NovelPluginList(
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(sorted, key = { it.requirement.pluginId }) { item ->
-            val canInstall = item.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                item.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                item.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
+            val canInstall = item.status in NOVEL_INSTALLABLE_STATUSES
             ListItem(
                 leadingContent = {
                     DependencyIcon(
@@ -1394,3 +1387,18 @@ private fun ExtensionParityItem.iconUrl(): String? =
 
 private fun ExtensionParityItem.works(worksBySource: Map<Long, Int>): Int =
     sourceIds.distinct().sumOf { worksBySource[it] ?: 0 }
+
+/** Comic statuses "install all" settles: untrusted packages are trusted, the rest installed. */
+private val COMIC_ACTIONABLE_STATUSES = setOf(
+    ExtensionParityStatus.MISSING_AVAILABLE,
+    ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE,
+    ExtensionParityStatus.UNTRUSTED_OR_BLOCKED,
+)
+
+/** A mismatched version is replaced by the desktop's exact artifact. */
+private val NOVEL_INSTALLABLE_STATUSES = setOf(
+    LnReaderPluginParityStatus.MISSING_AVAILABLE,
+    LnReaderPluginParityStatus.UPDATE_AVAILABLE,
+    LnReaderPluginParityStatus.MISSING_UNAVAILABLE,
+    LnReaderPluginParityStatus.IDENTITY_MISMATCH,
+)

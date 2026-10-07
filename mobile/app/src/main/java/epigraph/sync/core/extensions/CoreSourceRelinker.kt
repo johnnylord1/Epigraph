@@ -75,6 +75,10 @@ class CoreSourceRelinker(
             pending = candidates.size - relinked,
         )
     }
+
+    /** The desktop source of every work the Core bridged here, by local work id. */
+    suspend fun bridgedWorkSources(): Map<Long, Long> =
+        store.candidates().associate { it.localMangaId to it.sourceId }
 }
 
 class InstalledCoreSourceRegistry(
