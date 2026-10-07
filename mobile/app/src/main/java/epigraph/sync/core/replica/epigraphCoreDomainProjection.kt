@@ -2048,11 +2048,13 @@ class EpigraphCoreDomainProjection(
         return File(File(root, extension), "$sha256.$extension").absolutePath
     }
 
-    private fun nativeOwnedCover(manga: Mangas?): Boolean =
-        manga != null &&
+    private fun nativeOwnedCover(manga: Mangas?): Boolean {
+        val thumbnail = manga?.thumbnail_url
+        return manga != null &&
             manga.source != EpigraphCoreSource.ID &&
-            !manga.thumbnail_url.isNullOrBlank() &&
-            SuwayomiCoreThumbnailReference.parse(manga.thumbnail_url) == null
+            !thumbnail.isNullOrBlank() &&
+            SuwayomiCoreThumbnailReference.parse(thumbnail) == null
+    }
 
     private fun ensureManga(
         database: Database,
