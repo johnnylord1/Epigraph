@@ -4,6 +4,9 @@ import tachiyomi.data.Mangas
 import yokai.data.memoColumnAdapter
 
 import epigraph.contract.DecimalSourceId
+import epigraph.contract.EpigraphEntityId
+import epigraph.contract.ReaderLocator
+import kotlinx.serialization.json.Json
 import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import kotlinx.serialization.json.JsonObject
@@ -228,6 +231,103 @@ class SqlDelightPortableHydrationStoreTest {
             listOf(true, true),
             database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList().map { it.read },
         )
+    }
+
+    @Test
+    fun `novel progress confirmed before its chapter was bound is applied on binding`() = runTest {
+        database.mangasQueries.insert(
+            source = 10003,
+            url = "/novel/shadow",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Restored novel",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/novel/shadow/1146",
+            name = "Chapter 1146",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 1146.0,
+            sourceOrder = 0,
+            dateFetch = 0,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val work = PortableWorkRef.Novel("plugin.example", ProviderOwnedKey("/novel/shadow"))
+        val chapter = PortableChapterRef.Novel(work, ProviderOwnedKey("/novel/shadow/1146"))
+        val workId = PortableIdentityV3.workId(work)
+        val chapterId = PortableIdentityV3.chapterId(chapter)
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = workId,
+            contentType = "NOVEL",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertRemoteReaderProgress(
+            entityId = workId,
+            chapterEntityId = null,
+            locatorJson = Json.encodeToString(
+                ReaderLocator.serializer(),
+                ReaderLocator.Novel(
+                    entityId = EpigraphEntityId(workId),
+                    chapterId = chapterId,
+                    blockIndex = 12,
+                    textOffset = 0,
+                    progression = 0.36,
+                    portableWork = work,
+                    portableChapter = chapter,
+                ),
+            ),
+            chapterOrdinal = null,
+            progression = 0.36,
+            serverRevision = 5,
+            updatedAt = 1,
+        )
+
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = emptyList(),
+            chapters = listOf(
+                PortableChapterBindingRecord(
+                    portableChapterId = chapterId,
+                    portableWorkId = workId,
+                    ref = chapter,
+                    localReference = localChapterId.toString(),
+                    resolution = PortableResolution(PortableResolutionState.BOUND),
+                    attemptCount = 1,
+                    updatedAt = 1,
+                ),
+            ),
+        )
+
+        val stored = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+        assertEquals(36L, stored.last_page_read)
+        assertEquals(false, stored.read)
     }
 
     @Test

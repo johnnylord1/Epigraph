@@ -4108,7 +4108,8 @@ async fn publish_current_novel_library_state(
 ) -> Result<(), String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let current = read_novels_state(&launch_target, profile_id)?;
-    let digest = serialized_state_digest(&current)?;
+    // The version makes snapshots published before chapter read flags were sent go out once more.
+    let digest = format!("v2:{}", serialized_state_digest(&current)?);
     let already_published = load_replication_state()?
         .profiles
         .get(profile_id)
@@ -5436,7 +5437,6 @@ fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
     Some(patch)
 }
 
-#[allow(dead_code)]
 fn build_novel_chapter_patch(value: &Value) -> Option<NovelChapterPatch> {
     Some(NovelChapterPatch {
         novel_id: value_string_field(value, "novelId")?,
@@ -6018,6 +6018,62 @@ fn diff_novel_mutations(
                 lamport: now_ms(),
             },
             patch: Some(patch.clone()),
+        });
+    }
+    // Read flags live on chapters. A chapter nobody published is unread everywhere, so only
+    // changes are sent and the first snapshot carries just the chapters already read.
+    let previous_unread: BTreeMap<String, bool> = previous
+        .chapters
+        .iter()
+        .filter_map(|chapter| {
+            Some((
+                novel_chapter_entity_id(chapter)?,
+                value_bool_field(chapter, "unread", true),
+            ))
+        })
+        .collect();
+    let works: BTreeMap<String, PortableWorkRefV3> = next
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            Some((
+                novel_entry_entity_id(entry)?,
+                portable_novel_work_ref_from_entry(entry)?,
+            ))
+        })
+        .collect();
+    for chapter in &next.chapters {
+        let Some(local_id) = novel_chapter_entity_id(chapter) else {
+            continue;
+        };
+        let unread = value_bool_field(chapter, "unread", true);
+        if previous_unread.get(&local_id).copied().unwrap_or(true) == unread {
+            continue;
+        }
+        let Some(work) = value_string_field(chapter, "novelId").and_then(|id| works.get(&id))
+        else {
+            continue;
+        };
+        let Some(mut patch) = build_novel_chapter_patch(chapter) else {
+            continue;
+        };
+        let chapter_ref = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: patch.path.clone(),
+        };
+        if chapter_ref.validate().is_err() {
+            continue;
+        }
+        patch.novel_id = canonical_portable_work_id(work);
+        mutations.push(SerializableMutationInput::NovelChapter {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: scope_id.clone(),
+                entity_id: canonical_portable_chapter_id(&chapter_ref),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(patch),
         });
     }
     // Entry deletes are appended after dependent bookmark/progress changes below.
@@ -7940,6 +7996,71 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn diff_novel_mutations_publishes_chapter_read_changes_with_portable_ids() {
+        let entry = json!({
+            "id": "local-novel-42",
+            "title": "Fixture",
+            "path": "/Novel/KeepCase",
+            "source": { "pluginId": "fixture.plugin" }
+        });
+        let chapter = |id: &str, path: &str, unread: bool| {
+            json!({
+                "id": id,
+                "novelId": "local-novel-42",
+                "path": path,
+                "title": id,
+                "order": 1,
+                "unread": unread
+            })
+        };
+        let snapshot = PersistedNovelLibraryState {
+            entries: vec![entry.clone()],
+            chapters: vec![
+                chapter("ch-1", "/c/1", false),
+                chapter("ch-2", "/c/2", true),
+            ],
+            ..PersistedNovelLibraryState::default()
+        };
+        let chapter_mutations = |diff: Vec<SerializableMutationInput>| {
+            diff.into_iter()
+                .filter_map(|mutation| match mutation {
+                    SerializableMutationInput::NovelChapter { base, patch } => {
+                        Some((base.entity_id, patch.unwrap()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let first = chapter_mutations(diff_novel_mutations(
+            "local-main",
+            &PersistedNovelLibraryState::default(),
+            &snapshot,
+        ));
+        let work = PortableWorkRefV3::Novel {
+            plugin_id: "fixture.plugin".to_string(),
+            novel_key: "/Novel/KeepCase".to_string(),
+        };
+        let read_chapter = PortableChapterRefV3::Novel {
+            work: work.clone(),
+            chapter_key: "/c/1".to_string(),
+        };
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].0, canonical_portable_chapter_id(&read_chapter));
+        assert_eq!(first[0].1.novel_id, canonical_portable_work_id(&work));
+        assert_eq!(first[0].1.path, "/c/1");
+        assert!(!first[0].1.unread);
+
+        let next = PersistedNovelLibraryState {
+            chapters: vec![chapter("ch-1", "/c/1", true), chapter("ch-2", "/c/2", true)],
+            ..snapshot.clone()
+        };
+        let unread_again = chapter_mutations(diff_novel_mutations("local-main", &snapshot, &next));
+        assert_eq!(unread_again.len(), 1);
+        assert!(unread_again[0].1.unread);
     }
 
     #[test]

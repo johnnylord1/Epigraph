@@ -146,16 +146,18 @@ class SqlDelightPortableHydrationStore(
                         ?: return@forEach
                     when (val ref = chapter.ref) {
                         is epigraph.contract.PortableChapterRef.Novel -> {
+                            // Novel progress is stored as a ReaderLocator.Novel, which names it portableChapter.
                             val observedRef = runCatching {
                                 json.decodeFromJsonElement<epigraph.contract.PortableChapterRef.Novel>(
-                                    payload.getValue("portableChapterRef"),
+                                    payload["portableChapter"] ?: payload.getValue("portableChapterRef"),
                                 )
                             }.getOrNull()
                             if (observedRef != ref) return@forEach
                             val lastPage = (progress.progression * 100.0).toLong().coerceIn(0, 100)
                             updateChapterProgress(
                                 localChapterId,
-                                read = lastPage >= 98,
+                                // Read/unread is authoritative in novel.chapter; progress never infers it.
+                                read = null,
                                 bookmark = null,
                                 lastPageRead = lastPage,
                                 pagesLeft = 100 - lastPage,
