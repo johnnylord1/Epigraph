@@ -40,32 +40,38 @@ class PortableWorkDetailsRefresher(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val running = AtomicBoolean(false)
+    private val requested = AtomicBoolean(false)
 
     fun launch() {
+        requested.set(true)
         if (!running.compareAndSet(false, true)) return
         scope.launch {
             try {
-                refresh()
+                // A launch during a pass runs one more: that pass listed the works before an
+                // extension installed meanwhile existed, so its works waited for the next sync.
+                while (requested.getAndSet(false)) refresh()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 Log.w(LOG_TAG, "portable details refresh failed: ${error::class.simpleName}")
             } finally {
                 running.set(false)
+                if (requested.get()) launch()
             }
         }
     }
 
     suspend fun refresh(): Int {
         val favorites = mangas.getFavorites()
+        // Novels first: one chapter list each, while the comic pass can take minutes.
         val pending = favorites.mapNotNull { manga ->
+            val source = sources.get(manga.source) as? NovelSource ?: return@mapNotNull null
+            source to suspend { refreshNovelChapters(manga, source) }
+        } + favorites.mapNotNull { manga ->
             val source = manga.takeIf { it.thumbnail_url.isDesktopCover() }
                 ?.let { nativeSource(it.source) }
                 ?: return@mapNotNull null
             source to suspend { refresh(manga, source) }
-        } + favorites.mapNotNull { manga ->
-            val source = sources.get(manga.source) as? NovelSource ?: return@mapNotNull null
-            source to suspend { refreshNovelChapters(manga, source) }
         }
         if (pending.isEmpty()) return 0
         val permits = Semaphore(MAX_PARALLEL_SOURCES)

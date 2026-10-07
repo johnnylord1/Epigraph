@@ -274,27 +274,38 @@ class ExtensionReconciliationCoordinator(
      * so it can be loaded and relinked. Used by the reconciliation flow to clear
      * [ExtensionParityStatus.UNTRUSTED_OR_BLOCKED] items coming from the desktop inventory.
      */
-    suspend fun trustUntrusted(packageName: String) {
-        val untrusted = extensionManager.untrustedExtensionsFlow.value
-            .firstOrNull { it.pkgName == packageName }
-            ?: return
-        extensionManager.trust(untrusted.pkgName, untrusted.versionCode, untrusted.signatureHash)
+    suspend fun trustUntrusted(packageName: String) = trustAndRelink(listOf(packageName))
+
+    /** Trusts every installed package the desktop needs that this device still blocks. */
+    suspend fun trustAllUntrusted() {
+        trustAndRelink(
+            _state.value.report?.items
+                ?.filter { it.status == ExtensionParityStatus.UNTRUSTED_OR_BLOCKED }
+                ?.map { it.packageName }
+                .orEmpty(),
+        )
+    }
+
+    // A relink walks the whole library, so a batch relinks once after every trust lands instead
+    // of once per extension.
+    private suspend fun trustAndRelink(packageNames: List<String>) {
+        val trusted = packageNames.filter { packageName ->
+            val untrusted = extensionManager.untrustedExtensionsFlow.value
+                .firstOrNull { it.pkgName == packageName }
+                ?: return@filter false
+            extensionManager.trust(untrusted.pkgName, untrusted.versionCode, untrusted.signatureHash)
+            true
+        }
+        if (trusted.isEmpty()) return
         // Trusting loads the extension in the background; classifying before it lands showed the
         // package as missing and offered to install it again.
         withTimeoutOrNull(INSTALLED_FLOW_TIMEOUT_MS) {
             extensionManager.installedExtensionsFlow.first { installed ->
-                installed.any { it.pkgName == packageName }
+                trusted.all { packageName -> installed.any { it.pkgName == packageName } }
             }
         }
         refreshReportFromCatalog()
         relinkFromCachedInventories()
-    }
-
-    /** Trusts every installed package the desktop needs that this device still blocks. */
-    suspend fun trustAllUntrusted() {
-        _state.value.report?.items
-            ?.filter { it.status == ExtensionParityStatus.UNTRUSTED_OR_BLOCKED }
-            ?.forEach { trustUntrusted(it.packageName) }
     }
 
     /**
