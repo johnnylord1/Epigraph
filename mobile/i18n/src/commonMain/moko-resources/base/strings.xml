@@ -2359,7 +2359,7 @@
     <string name="epigraph_core_extensions_repository_review">Review</string>
     <string name="epigraph_core_extensions_repository_add">Add repository</string>
     <string name="epigraph_core_extensions_repository_confirm_title">Trust this repository?</string>
-    <string name="epigraph_core_extensions_repository_confirm_body">Epigraph will validate %1$s and add it to this device. Extensions will still require Android installation confirmation.</string>
+    <string name="epigraph_core_extensions_repository_confirm_body">Epigraph will validate %1$s and add it to this device.</string>
     <string name="epigraph_core_extensions_repository_added">Repository added. Extension availability was refreshed.</string>
     <string name="epigraph_core_extensions_repository_already_added">This repository is already configured.</string>
     <string name="epigraph_core_extensions_repository_invalid">The repository could not be validated.</string>

@@ -308,14 +308,14 @@ class ExtensionManager(
      * the Android Package Installer UI. Core reconciliation must never inherit a silent/private
      * installer preference.
      */
-    suspend fun installExtensionWithUserConfirmation(
+    suspend fun installExtensionWithoutPrompt(
         extension: ExtensionInfo,
         scope: CoroutineScope,
     ): Flow<ExtensionIntallInfo> = installer.downloadAndInstall(
         url = api.getApkUrl(extension),
         extension = extension,
         scope = scope,
-        requireUserConfirmation = true,
+        installWithoutPrompt = true,
     )
 
     /**

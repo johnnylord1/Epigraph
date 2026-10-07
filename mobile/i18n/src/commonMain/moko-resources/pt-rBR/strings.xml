@@ -1238,7 +1238,7 @@
     <string name="epigraph_core_extensions_repository_review">Revisar</string>
     <string name="epigraph_core_extensions_repository_add">Adicionar repositório</string>
     <string name="epigraph_core_extensions_repository_confirm_title">Confiar neste repositório?</string>
-    <string name="epigraph_core_extensions_repository_confirm_body">O Epigraph validará %1$s e o adicionará a este dispositivo. As extensões ainda exigirão confirmação de instalação do Android.</string>
+    <string name="epigraph_core_extensions_repository_confirm_body">O Epigraph validará %1$s e o adicionará a este dispositivo.</string>
     <string name="epigraph_core_extensions_repository_added">Repositório adicionado. A disponibilidade das extensões foi atualizada.</string>
     <string name="epigraph_core_extensions_repository_already_added">Este repositório já está configurado.</string>
     <string name="epigraph_core_extensions_repository_invalid">Não foi possível validar o repositório.</string>

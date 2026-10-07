@@ -390,8 +390,8 @@ class ExtensionReconciliationCoordinator(
         initial: ExtensionInstallationProgress,
         onProgress: (ExtensionInstallationProgress) -> Unit,
     ) {
-        // Download every APK at once so Android queues the confirmation prompts back to back,
-        // instead of one download, prompt and install at a time.
+        // Download every APK at once; each one installs as soon as its download lands,
+        // instead of one download and install at a time.
         val progressMutex = Mutex()
         var progress = initial.copy(activePackageNames = uniquePackages.toSet())
         onProgress(progress)
@@ -451,7 +451,7 @@ class ExtensionReconciliationCoordinator(
         // refresh re-classifies them so the user can trust them in-flow.
         var reachedInstaller = false
         val terminal = installerScope.async {
-            extensionManager.installExtensionWithUserConfirmation(
+            extensionManager.installExtensionWithoutPrompt(
                 ExtensionManager.ExtensionInfo(available),
                 installerScope,
             ).first {

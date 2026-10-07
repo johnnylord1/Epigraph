@@ -54,7 +54,7 @@ is required instead of retrying indefinitely.
 ## Dependency authorities
 
 ```text
-Comics: Suwayomi inventory -> optional trusted Android repository refresh -> visible Package Installer
+Comics: Suwayomi inventory -> optional trusted Android repository refresh -> private installer after "Install all"
 Novels: Core descriptors -> user-approved LNReader repository -> NovelPluginManager
 Books: no extension runtime
 ```
