@@ -30,6 +30,9 @@ const LIBRARY_QUERY: &str = r#"
         chapters { totalCount }
         status
         genre
+        description
+        author
+        artist
         sourceId
         url
         source { id name lang displayName extension { pkgName } }
