@@ -1341,6 +1341,8 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: BookProgressPatch,
+        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        event_clock: Option<EventClock>,
     },
     #[serde(rename = "book.history")]
     BookHistory {
@@ -1353,6 +1355,8 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: NovelProgressPatch,
+        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        event_clock: Option<EventClock>,
     },
     #[serde(rename = "book.bookmark")]
     BookBookmark {
@@ -1421,6 +1425,8 @@ enum SerializableMutationInput {
         #[serde(flatten)]
         base: SerializableMutationBase,
         patch: Option<ComicHistoryPatch>,
+        #[serde(rename = "eventClock", default, skip_serializing_if = "Option::is_none")]
+        event_clock: Option<EventClock>,
     },
     #[serde(rename = "comic.page_bookmark")]
     ComicPageBookmark {
@@ -4274,9 +4280,8 @@ pub async fn syncd_publish_comic_reader_mutation(
         lamport: now_ms(),
     };
     let mutation = match input.entity_type.trim() {
-        "comic.history" => SerializableMutationInput::ComicHistory {
-            base,
-            patch: match input.op {
+        "comic.history" => {
+            let patch = match input.op {
                 MutationOperation::Merge => Some(
                     serde_json::from_value::<ComicHistoryPatch>(
                         patch.ok_or_else(|| "comic.history merge requires patch.".to_string())?,
@@ -4284,8 +4289,18 @@ pub async fn syncd_publish_comic_reader_mutation(
                     .map_err(|error| format!("Invalid comic.history patch: {error}"))?,
                 ),
                 MutationOperation::Delete => None,
-            },
-        },
+            };
+            // A removal is made now; a read carries the time the page was read.
+            let event_clock = Some(match &patch {
+                Some(patch) => edit_time_clock(patch.read_at_ms),
+                None => category_edit_clock(),
+            });
+            SerializableMutationInput::ComicHistory {
+                base,
+                patch,
+                event_clock,
+            }
+        }
         "comic.page_bookmark" => {
             SerializableMutationInput::ComicPageBookmark {
                 base,
@@ -5564,6 +5579,7 @@ fn diff_book_mutations(
                 section_label: entry.section_label.clone(),
                 reset: false,
             },
+            event_clock: Some(edit_time_clock(entry.last_read_at)),
         });
     }
 
@@ -5860,6 +5876,18 @@ fn book_category_assignment_lists(
 
 const DESKTOP_CATEGORY_CLOCK_GENERATION: &str = "epigraph-desktop";
 
+/// Progress and history are newest-wins on the Core by edit time, and a write without a clock
+/// loses to any device that already stamped the entity. The desktop stamps its own with the time
+/// the edit was made, so a newer desktop read wins while an echo of a remote edit, which keeps that
+/// edit's time, never outranks it.
+fn edit_time_clock(edited_at_ms: i64) -> EventClock {
+    EventClock {
+        physical_ms: edited_at_ms.max(0),
+        logical: 0,
+        device_generation_id: DESKTOP_CATEGORY_CLOCK_GENERATION.to_string(),
+    }
+}
+
 /// Folders are newest-wins on the Core by edit time; a desktop edit is published as it is made, so
 /// its clock is now, kept strictly increasing so two edits in the same millisecond stay ordered.
 fn category_edit_clock() -> EventClock {
@@ -6043,6 +6071,7 @@ fn diff_novel_mutations(
                 updated_at_ms: entry.updated_at,
                 reset: false,
             },
+            event_clock: Some(edit_time_clock(entry.updated_at)),
         });
     }
 
@@ -7941,7 +7970,11 @@ mod tests {
 
         let diff =
             diff_novel_mutations("local-main", &PersistedNovelLibraryState::default(), &next);
-        let SerializableMutationInput::NovelProgress { base, patch } = diff
+        let SerializableMutationInput::NovelProgress {
+            base,
+            patch,
+            event_clock,
+        } = diff
             .iter()
             .find(|mutation| matches!(mutation, SerializableMutationInput::NovelProgress { .. }))
             .expect("expected novel progress mutation")
@@ -7957,6 +7990,8 @@ mod tests {
             format!("novel.progress::{}", canonical_portable_work_id(work))
         );
         assert_eq!(patch.chapter_id.as_deref(), Some(chapter_id.as_str()));
+        // Stamped with the read's own time so it competes with other devices by edit time.
+        assert_eq!(event_clock.as_ref().map(|clock| clock.physical_ms), Some(20));
         assert!(matches!(
             work,
             PortableWorkRefV3::Novel { plugin_id, novel_key }
@@ -8588,6 +8623,7 @@ mod tests {
                 progress_percent: 0.2,
                 read_at_ms: 123,
             }),
+            event_clock: None,
         };
         let value = serde_json::to_value(mutation).unwrap();
         assert_eq!(value["entityType"], "comic.history");
@@ -9461,6 +9497,7 @@ mod tests {
                 lamport: 1,
             },
             patch: None,
+            event_clock: None,
         };
         let request = SerializableMutationsRequest {
             request_id: "request-1".to_string(),
@@ -9539,6 +9576,7 @@ mod tests {
                 lamport,
             },
             patch: None,
+            event_clock: None,
         }
     }
 
@@ -9573,6 +9611,7 @@ mod tests {
                     progress_percent: 0.2,
                     read_at_ms: 123,
                 }),
+                event_clock: None,
             },
             outbox_mutation("mutation-b", "history-b", MutationOperation::Delete, 124),
         ];
