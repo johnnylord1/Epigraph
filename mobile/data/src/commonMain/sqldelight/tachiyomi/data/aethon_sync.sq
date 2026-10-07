@@ -1183,8 +1183,8 @@ SELECT entity_id FROM aethon_suwayomi_mutation_queue
 WHERE profile_id = :profileId
   AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
 
--- A permanently refused row (blocked:) no longer holds the entity: the Core will never accept
--- it, so remote updates keep arriving while it waits in settings for retry or discard.
+-- A row the Core refused for good no longer holds the entity because it will never be accepted, and
+-- remote updates keep arriving while it waits in settings for retry or discard.
 hasBlockingMutationForObservedVersion:
 SELECT EXISTS(
     SELECT 1 FROM aethon_sync_outbox
