@@ -285,7 +285,7 @@ private fun CoreDependencySetupContent(
         val available = availableNovelPlugins.firstOrNull { it.id == requirement.pluginId }
         val langSourceIds = listOfNotNull(requirement.lang, installed?.lang, available?.lang)
             .filter(String::isNotBlank)
-            .map { NovelSource.sourceIdFor(requirement.pluginId, it) }
+            .map { NovelSource.sourceIdFor(requirement.pluginId, NovelPluginManager.langCode(it)) }
         (listOfNotNull(installed?.source?.id) + langSourceIds)
             .distinct()
             .sumOf { worksBySource[it] ?: 0 }

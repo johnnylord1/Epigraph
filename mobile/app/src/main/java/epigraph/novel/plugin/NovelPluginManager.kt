@@ -643,6 +643,10 @@ class NovelPluginManager(
             }
         }
 
+        /** The code a plugin's source id uses: LNReader names the language ("Português"). */
+        fun langCode(lang: String): String =
+            lang.takeIf { it.length <= 3 && it.all(Char::isLowerCase) } ?: langFromLnReaderLang(lang)
+
         fun isVersionNewer(candidate: String, installed: String): Boolean {
             return comparePluginVersions(candidate, installed) > 0
         }

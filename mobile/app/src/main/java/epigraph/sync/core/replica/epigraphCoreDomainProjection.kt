@@ -2353,10 +2353,7 @@ class EpigraphCoreDomainProjection(
         val source = record["source"] as? JsonObject ?: return null
         val pluginId = source.string("pluginId")?.takeIf { it.isNotBlank() } ?: return null
         val lang = source.string("lang")?.takeIf { it.isNotBlank() } ?: return null
-        // LNReader names the language ("Português"); an ISO code is already what plugins use.
-        val code = lang.takeIf { it.length <= 3 && it.all(Char::isLowerCase) }
-            ?: NovelPluginManager.langFromLnReaderLang(lang)
-        return NovelSource.sourceIdFor(pluginId, code)
+        return NovelSource.sourceIdFor(pluginId, NovelPluginManager.langCode(lang))
     }
 
     private fun stableSourceId(record: JsonObject, fallbackSeed: String? = null): Long {
