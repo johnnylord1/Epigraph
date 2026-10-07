@@ -1191,7 +1191,7 @@ SELECT EXISTS(
     WHERE scope_id = :scopeId
       AND entity_type = :entityType
       AND entity_id = :entityId
-      AND NOT (status = 'ERROR' AND last_error LIKE 'blocked:%')
+      AND (status != 'ERROR' OR last_error IS NULL OR last_error NOT LIKE 'blocked:%')
     UNION ALL
     SELECT 1 FROM aethon_sync_replica_wait
     WHERE scope_id = :scopeId
