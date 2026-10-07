@@ -34,6 +34,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import tachiyomi.data.Mangas
 import yokai.data.Database
 
 /**
@@ -567,10 +568,13 @@ class EpigraphCoreDomainProjection(
             title = title,
             author = record.string("author"),
             description = record.string("description"),
-            genre = record.strings("tags").ifEmpty {
+            // Suwayomi's catalog sends `genre` as a list; older payloads used a comma-joined string.
+            genre = record.strings("tags").ifEmpty { record.strings("genre") }.ifEmpty {
                 record.string("genre")?.split(',').orEmpty().map(String::trim)
             }.filter(String::isNotBlank).joinToString(", ").ifBlank { null },
-            thumbnailUrl = coreReference?.let {
+            // Once the row belongs to an installed extension and carries that extension's cover,
+            // keep it: the desktop cover only resolves while the Core is paired and reachable.
+            thumbnailUrl = if (nativeOwnedCover(effectivePortableLocal ?: preservedLocalBinding)) null else coreReference?.let {
                 it.serverId?.let { serverId ->
                     SuwayomiCoreThumbnailReference.forManga(serverId, it.profileId, it.mangaId)
                 } ?: SuwayomiCoreThumbnailReference.forManga(it.profileId, it.mangaId)
@@ -2043,6 +2047,12 @@ class EpigraphCoreDomainProjection(
         val extension = if (contentType == ContentType.PDF) "pdf" else "epub"
         return File(File(root, extension), "$sha256.$extension").absolutePath
     }
+
+    private fun nativeOwnedCover(manga: Mangas?): Boolean =
+        manga != null &&
+            manga.source != EpigraphCoreSource.ID &&
+            !manga.thumbnail_url.isNullOrBlank() &&
+            SuwayomiCoreThumbnailReference.parse(manga.thumbnail_url) == null
 
     private fun ensureManga(
         database: Database,

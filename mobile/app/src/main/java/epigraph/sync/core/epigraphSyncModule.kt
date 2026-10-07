@@ -70,6 +70,7 @@ import epigraph.sync.core.portable.ComicDependencyRegistry
 import epigraph.sync.core.portable.EpigraphPortableLocalEntityLookup
 import epigraph.sync.core.portable.EpigraphPortableChapterMaterializer
 import epigraph.sync.core.portable.EpigraphPortableWorkMaterializer
+import epigraph.sync.core.portable.PortableWorkDetailsRefresher
 import epigraph.sync.core.portable.LnReaderNovelDependencyRegistry
 import epigraph.sync.core.portable.LnReaderPortableProvider
 import epigraph.sync.core.portable.MihonComicDependencyRegistry
@@ -364,13 +365,14 @@ fun epigraphSyncModule(app: Application) = module {
         SuwayomiCatalogSync(get(), get(), get(), get(), projectionStatus = get<CoreSuwayomiProjectionStatusSource>())
     }
     single<CoreReplicaSyncPort>(named(PORTABLE_MANIFEST_REPLICA)) {
-        PortableManifestSync(get(), get(), get(), get())
+        PortableManifestSync(get(), get(), get(), get(), detailsRefresher = get())
     }
     single<CoreReplicaSyncPort>(named(PORTABLE_NOVEL_MANIFEST_REPLICA)) {
         PortableNovelManifestSync(get(), get(), get(), get())
     }
     single<PortableLocalEntityLookup> { EpigraphPortableLocalEntityLookup(get(), get()) }
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
+    single { PortableWorkDetailsRefresher(get(), get(), get()) }
     single<PortableChapterMaterializer> { EpigraphPortableChapterMaterializer(get(), get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
     single<NovelDependencyRegistry> { LnReaderNovelDependencyRegistry(get()) }

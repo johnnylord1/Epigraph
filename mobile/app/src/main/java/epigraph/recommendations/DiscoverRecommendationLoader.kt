@@ -424,13 +424,15 @@ class DiscoverRecommendationLoader(
         pool.copy(candidates = assembleDiscoverCandidates(pool))
 
     /**
-     * Identifies the library a pool was built from: its works, and which of their sources are
-     * available (a synced work is told apart as comic or novel only once its source is installed).
+     * Identifies the library a pool was built from: its works, which of their sources are
+     * available (a synced work is told apart as comic or novel only once its source is installed),
+     * and their genres, which arrive after sync once the installed extension fills in details and
+     * are the taste profile's tags.
      */
     suspend fun librarySignature(): Int = librarySignature(getLibraryManga.await().distinctBy { it.manga.id })
 
     private fun librarySignature(library: List<LibraryManga>): Int = library
-        .map { it.manga.id to (sourceManager.get(it.manga.source) != null) }
+        .map { Triple(it.manga.id, sourceManager.get(it.manga.source) != null, it.manga.genre) }
         .sortedBy { it.first }
         .hashCode()
 

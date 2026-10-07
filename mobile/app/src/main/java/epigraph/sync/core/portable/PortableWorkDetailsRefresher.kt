@@ -1,0 +1,100 @@
+package epigraph.sync.core.portable
+
+import android.util.Log
+import epigraph.novel.source.NovelSource
+import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import eu.kanade.tachiyomi.domain.manga.models.Manga
+import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import yokai.domain.chapter.ChapterRepository
+import yokai.domain.manga.MangaRepository
+
+/**
+ * A portable binding relinks a synced work to the extension installed on this device, but the row
+ * keeps the desktop catalog's cover and lacks the extension's own details (description, genres,
+ * status) until a manual library update. Refresh those from the installed source so the library is
+ * complete on its own instead of depending on the paired desktop.
+ *
+ * Runs detached from the sync pass so pairing never waits on hundreds of provider requests; a row
+ * still carrying the desktop cover is retried on the next pass.
+ */
+class PortableWorkDetailsRefresher(
+    private val sources: SourceManager,
+    private val mangas: MangaRepository,
+    private val chapters: ChapterRepository,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val running = AtomicBoolean(false)
+
+    fun launch() {
+        if (!running.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                refresh()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                Log.w(LOG_TAG, "portable details refresh failed: ${error::class.simpleName}")
+            } finally {
+                running.set(false)
+            }
+        }
+    }
+
+    suspend fun refresh(): Int {
+        val pending = mangas.getFavorites().mapNotNull { manga ->
+            val source = manga.takeIf { it.thumbnail_url.isDesktopCover() }
+                ?.let { nativeSource(it.source) }
+                ?: return@mapNotNull null
+            manga to source
+        }
+        if (pending.isEmpty()) return 0
+        val permits = Semaphore(MAX_PARALLEL_SOURCES)
+        return coroutineScope {
+            pending.groupBy { (_, source) -> source.id }.values.map { works ->
+                async { permits.withPermit { works.count { (manga, source) -> refresh(manga, source) } } }
+            }.awaitAll().sum()
+        }
+    }
+
+    private fun nativeSource(sourceId: Long): CatalogueSource? =
+        (sources.get(sourceId) as? CatalogueSource)
+            ?.takeIf { it.id != EpigraphCoreSource.ID && it !is NovelSource }
+
+    private suspend fun refresh(manga: Manga, source: CatalogueSource): Boolean = try {
+        manga.copyFrom(source.getMangaDetails(manga.copy()))
+        manga.initialized = true
+        mangas.update(manga.toMangaUpdate())
+        // Works the desktop never fetched chapters for arrive empty; a manual update fixed those too.
+        val mangaId = manga.id
+        if (mangaId != null && chapters.getChapters(mangaId, false).isEmpty()) {
+            syncChaptersWithSource(source.getChapterList(manga.copy()), manga, source)
+        }
+        true
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun String?.isDesktopCover(): Boolean =
+        this?.let(SuwayomiCoreThumbnailReference::parse) != null
+
+    private companion object {
+        const val MAX_PARALLEL_SOURCES = 3
+        const val LOG_TAG = "EpigraphCoreSync"
+    }
+}

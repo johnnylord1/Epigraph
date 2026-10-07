@@ -40,6 +40,7 @@ class PortableManifestSync(
     private val database: DatabaseHandler,
     private val hydration: PortableHydrationCoordinator? = null,
     private val pageSize: Long = DEFAULT_PAGE_SIZE,
+    private val detailsRefresher: PortableWorkDetailsRefresher? = null,
 ) : CoreReplicaSyncPort {
     init {
         require(pageSize in 1..MAX_PAGE_SIZE) { "portable manifest page size is outside the Core limit" }
@@ -233,6 +234,7 @@ class PortableManifestSync(
                     manifestFingerprint = expectedFingerprint,
                 )
                 hydrationReport = hydration.hydrate(credentials.serverId, credentials.profileId, nowEpochMillis)
+                detailsRefresher?.launch()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
