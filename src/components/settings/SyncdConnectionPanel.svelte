@@ -80,6 +80,7 @@
   let pairedDeviceScopeBusy = $state<string | null>(null);
   /** Device whose revoke button was pressed once; a second press revokes it. */
   let revokeArmedDeviceId = $state<string | null>(null);
+  let removePreviousPairings = $state(false);
   let connectBusy = $state(false);
   let hostDecisionBusy = $state<PairingHostDecision | null>(null);
   let revalidateBusy = $state(false);
@@ -207,11 +208,43 @@
   });
 
   // Only the device behind this connection gets scope switches; hide the block when there is none.
-  const permissionDevices = $derived(
-    pairedDevices.filter((device) => device.deviceName === remoteDeviceName
-      || device.deviceId === host?.claimedDeviceId
-      || device.deviceId === connect?.claimedDeviceId),
+  // A reinstalled phone pairs under a new id, so without a claimed id only the most recently seen
+  // device with the remote name stands in; its older namesakes are listed under paired devices.
+  const permissionDevices = $derived.by(() => {
+    const claimedIds = [host?.claimedDeviceId, connect?.claimedDeviceId].filter(Boolean);
+    const claimed = pairedDevices.filter((device) => claimedIds.includes(device.deviceId));
+    if (claimed.length > 0) return claimed;
+    const latest = pairedDevices
+      .filter((device) => device.deviceName === remoteDeviceName)
+      .reduce<SyncdPairedDeviceView | null>(
+        (best, device) => ((device.lastSeenAtMs ?? 0) > (best?.lastSeenAtMs ?? -1) ? device : best),
+        null,
+      );
+    return latest ? pairedDevices.filter((device) => device.deviceId === latest.deviceId) : [];
+  });
+
+  const pairedDevicesByLastSeen = $derived(
+    [...pairedDevices].sort((a, b) => (b.lastSeenAtMs ?? 0) - (a.lastSeenAtMs ?? 0)),
   );
+
+  const inactiveDeviceIds = $derived(
+    [...new Set(pairedDevices.filter((device) => device.inactive).map((device) => device.deviceId))],
+  );
+
+  /* Earlier pairings with the claimant's name and platform are most likely the same phone before a
+     reinstall. They are offered for removal on approval, never removed silently: two people can own
+     the same model. */
+  const previousPairingsOfClaimant = $derived.by(() => {
+    const claimedId = host?.claimedDeviceId;
+    const name = host?.claimedDeviceName?.trim();
+    if (!claimedId || !name) return [];
+    const platform = host?.claimedPlatform?.trim().toLowerCase();
+    return [...new Set(pairedDevices
+      .filter((device) => device.deviceId !== claimedId
+        && device.deviceName === name
+        && (!platform || device.platform === platform))
+      .map((device) => device.deviceId))];
+  });
 
   const remotePlatformLabel = $derived.by(() => {
     const claimedDeviceId = host?.claimedDeviceId ?? connect?.claimedDeviceId ?? null;
@@ -611,6 +644,24 @@
     }
   }
 
+  /* Inactive devices already lost access after the token inactivity window; removing them only
+     clears the list, and pairing again brings a device back. */
+  async function removeInactiveDevices() {
+    if (pairedDeviceScopeBusy || inactiveDeviceIds.length === 0) return;
+    const deviceIds = inactiveDeviceIds;
+    pairedDeviceScopeBusy = "inactive";
+    panelError = null;
+    try {
+      for (const deviceId of deviceIds) await syncdRevokePairedDevice(deviceId);
+      pairedDevices = pairedDevices.filter((device) => !deviceIds.includes(device.deviceId));
+    } catch (error) {
+      panelError = { cause: error, fallback: "ui_syncActionFailed" };
+      void loadPairedDevices();
+    } finally {
+      pairedDeviceScopeBusy = null;
+    }
+  }
+
   async function refreshReplicationSnapshot() {
     if (!activeProfileId) {
       replicationSnapshot = null;
@@ -732,6 +783,9 @@
     if (!host) return;
     hostDecisionBusy = decision;
     panelError = null;
+    const replacedDeviceIds = decision === "approve" && removePreviousPairings
+      ? previousPairingsOfClaimant
+      : [];
     try {
       const nextHost = await withTimeout(
         syncdHostDecidePairing(host.sessionId, decision),
@@ -740,6 +794,8 @@
       );
       if (!panelMounted) return;
       host = mergeHostState(host, nextHost);
+      for (const deviceId of replacedDeviceIds) await syncdRevokePairedDevice(deviceId);
+      removePreviousPairings = false;
       addToast({
         kind: decision === "approve" ? "success" : "info",
         title: decision === "approve" ? translate("ui_syncPairingApproved") : translate("ui_syncPairingRejected"),
@@ -1246,6 +1302,7 @@
             <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true">{#if remoteDeviceKind === "phone"}<DeviceMobile size={20} />{:else}<Desktop size={20} />{/if}</span><div><strong>{remoteDeviceName}</strong><small>{remotePlatformLabel}</small></div></div>
             <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{approvalVerificationHint}</small></div>
             <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
+            {#if previousPairingsOfClaimant.length > 0}<label class="syncd-replace-previous syncd-pane" data-testid="syncd-replace-previous-pairings"><span>{$_("syncd_modal_replacePreviousPairings", { count: previousPairingsOfClaimant.length })}</span><input class="syncd-switch" type="checkbox" bind:checked={removePreviousPairings} disabled={hostDecisionBusy !== null} /></label>{/if}
             <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}
             <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={20} /></span><div><strong>{remoteDeviceName}</strong><small>{overviewStatus.body}</small></div><span class="syncd-state" data-tone={overviewStatus.tone}>{statusLabel(replicationSnapshot?.replicationStatus ?? "connected")}</span></div>
@@ -1276,6 +1333,26 @@
             <div><dt>{$_("ui_lastConnected")}</dt><dd>{formatWhen(replicationSnapshot?.lastConnectedAtMs ?? activeSession?.lastValidatedAtMs)}</dd></div>
           </dl>
           {#if permissionDevices.length > 0}<div class="syncd-permissions syncd-pane" data-testid="syncd-paired-device-permissions"><h3>{$_("ui_scope")}</h3>{#each permissionDevices as device}<div class="syncd-permission-device" data-testid="syncd-paired-device-permission">{#each allowedDeviceScopes(device) as scope}<label><strong>{permissionScopeLabel(scope)}</strong><input class="syncd-switch" type="checkbox" checked={device.grantedScopes.includes(scope)} disabled={pairedDeviceScopeBusy !== null} onchange={() => togglePairedDeviceScope(device, scope)} /></label>{/each}<button class="syncd-btn" type="button" data-testid="syncd-revoke-paired-device" disabled={pairedDeviceScopeBusy !== null} onclick={() => revokePairedDevice(device)}>{revokeArmedDeviceId === device.deviceId ? $_("syncd_action_revokeDeviceConfirm") : $_("syncd_action_revokeDevice")}</button></div>{/each}</div>{/if}
+          {#if pairedDevices.length > 0}
+            <div class="syncd-permissions syncd-pane" data-testid="syncd-paired-devices">
+              <h3>{$_("syncd_modal_pairedDevices")}</h3>
+              <div class="syncd-list">
+                {#each pairedDevicesByLastSeen as device (`${device.deviceId}:${device.profileId}`)}
+                  {@const current = permissionDevices.some((candidate) => candidate.deviceId === device.deviceId)}
+                  <div class="syncd-list__item" data-testid="syncd-paired-device-item" data-inactive={device.inactive ? "true" : "false"}>
+                    <span class="syncd-list__icon" aria-hidden="true">{#if device.platform === "android"}<DeviceMobile size={18} />{:else}<Desktop size={18} />{/if}</span>
+                    <div><strong>{device.deviceName}</strong><small>{current ? `${$_("syncd_modal_thisConnection")} · ` : ""}{$_("syncd_modal_pairedDeviceLastSeen", { when: formatWhen(device.lastSeenAtMs) })}</small></div>
+                    {#if device.inactive}<span class="syncd-state" data-tone="danger">{$_("syncd_modal_pairedDeviceInactive")}</span>{/if}
+                    {#if !current}<button class="syncd-link" type="button" data-testid="syncd-revoke-listed-device" disabled={pairedDeviceScopeBusy !== null} onclick={() => revokePairedDevice(device)}>{revokeArmedDeviceId === device.deviceId ? $_("syncd_action_revokeDeviceConfirm") : $_("syncd_action_revokeDevice")}</button>{/if}
+                  </div>
+                {/each}
+              </div>
+              {#if inactiveDeviceIds.length > 0}
+                <p class="syncd-note"><Info size={16} />{$_("syncd_modal_pairedDeviceInactiveHint")}</p>
+                <div><button class="syncd-btn" type="button" data-testid="syncd-remove-inactive-devices" disabled={pairedDeviceScopeBusy !== null} onclick={removeInactiveDevices}>{pairedDeviceScopeBusy === "inactive" ? $_("syncd_action_removing") : $_("syncd_action_removeInactiveDevices", { count: inactiveDeviceIds.length })}</button></div>
+              {/if}
+            </div>
+          {/if}
           {#if persistedSessions.length > 0}<div class="syncd-hidden-value" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
         </section>
       </div>
@@ -1963,6 +2040,16 @@
   .syncd-permission-device {
     display: grid;
     gap: 2px;
+  }
+
+  .syncd-replace-previous {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--component-syncd-control-gap);
+    color: var(--component-syncd-strong-fg);
+    font-size: var(--text-sm);
+    cursor: pointer;
   }
 
   .syncd-permission-device label {

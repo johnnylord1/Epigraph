@@ -74,6 +74,7 @@ struct PairedDeviceCatalogRow {
     platform: String,
     profile_id: String,
     last_seen_at_ms: Option<i64>,
+    inactivity_expires_at_ms: i64,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -1667,7 +1668,8 @@ pub async fn list_paired_devices(
             trusted.device_name,
             trusted.platform,
             tokens.profile_id,
-            MAX(tokens.last_seen_at_ms) AS last_seen_at_ms
+            MAX(tokens.last_seen_at_ms) AS last_seen_at_ms,
+            MAX(tokens.inactivity_expires_at_ms) AS inactivity_expires_at_ms
         FROM trusted_devices AS trusted
         INNER JOIN paired_device_tokens AS tokens
             ON tokens.device_id = trusted.device_id
@@ -1685,6 +1687,7 @@ pub async fn list_paired_devices(
     .fetch_all(pool)
     .await?;
 
+    let now_ms = now_ms();
     let mut devices = Vec::with_capacity(rows.len());
     for row in rows {
         let granted_scopes = sqlx::query_scalar::<_, String>(
@@ -1717,6 +1720,7 @@ pub async fn list_paired_devices(
             profile_id: row.profile_id,
             granted_scopes,
             last_seen_at_ms: row.last_seen_at_ms,
+            inactive: row.inactivity_expires_at_ms < now_ms,
         });
     }
     Ok(devices)
@@ -1936,6 +1940,7 @@ pub async fn fetch_replay_changes(
 
 /// Ninety days: three times the default change-log replay window.
 pub(crate) const MUTATION_RECEIPT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+pub(crate) const STALE_PAIRED_DEVICE_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
 pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow::Result<()> {
     let mut tx = begin_write(pool).await?;
@@ -1955,6 +1960,42 @@ pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow:
         .bind(now_ms.saturating_sub(MUTATION_RECEIPT_RETENTION_MS))
         .execute(&mut *tx)
         .await?;
+    // A reinstalled phone pairs as a new device and leaves the old record behind. Its tokens stop
+    // authenticating after the inactivity window; past STALE_PAIRED_DEVICE_RETENTION_MS without a
+    // request the device is revoked so it leaves the paired device list. Pairing again restores it.
+    let stale_before_ms = now_ms.saturating_sub(STALE_PAIRED_DEVICE_RETENTION_MS);
+    sqlx::query(
+        r#"
+        UPDATE trusted_devices
+        SET revoked_at_ms = ?
+        WHERE revoked_at_ms IS NULL
+          AND device_id IN (
+            SELECT device_id
+            FROM paired_device_tokens
+            WHERE revoked_at_ms IS NULL
+              AND granted_via != 'local-authority'
+            GROUP BY device_id
+            HAVING MAX(last_seen_at_ms) < ?
+          )
+        "#,
+    )
+    .bind(now_ms)
+    .bind(stale_before_ms)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE paired_device_tokens
+        SET revoked_at_ms = ?
+        WHERE revoked_at_ms IS NULL
+          AND granted_via != 'local-authority'
+          AND device_id IN (SELECT device_id FROM trusted_devices WHERE revoked_at_ms = ?)
+        "#,
+    )
+    .bind(now_ms)
+    .bind(now_ms)
+    .execute(&mut *tx)
+    .await?;
 
     let current_server_version: i64 = sqlx::query_scalar(
         "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
@@ -10155,6 +10196,72 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(remaining, vec!["fresh".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn prune_revokes_paired_devices_idle_past_retention_and_flags_inactive_ones() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let now = now_ms();
+        let day = 24 * 60 * 60 * 1000;
+        // (device, last request, token inactivity expiry)
+        for (device_id, last_seen, expires) in [
+            ("abandoned", now - STALE_PAIRED_DEVICE_RETENTION_MS - day, now - 60 * day),
+            ("idle", now - 40 * day, now - 10 * day),
+            ("active", now - day, now + 29 * day),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO trusted_devices (
+                    device_id, trusted_host_id, device_name, platform,
+                    first_trusted_at_ms, last_seen_at_ms, revoked_at_ms
+                ) VALUES (?, 'syncd-local-host', 'Pixel', 'android', ?, ?, NULL)
+                "#,
+            )
+            .bind(device_id)
+            .bind(last_seen)
+            .bind(last_seen)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO paired_device_tokens (
+                    token_id, device_id, profile_id, token_hash, issued_at_ms,
+                    last_seen_at_ms, inactivity_expires_at_ms, revoked_at_ms, granted_via
+                ) VALUES (?, ?, 'main', ?, ?, ?, ?, NULL, 'qr')
+                "#,
+            )
+            .bind(format!("token-{device_id}"))
+            .bind(device_id)
+            .bind(format!("hash-{device_id}"))
+            .bind(last_seen)
+            .bind(last_seen)
+            .bind(expires)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        prune_expired_rows(&pool, now).await.unwrap();
+
+        let devices = list_paired_devices(&pool).await.unwrap();
+        let listed: Vec<(&str, bool)> = devices
+            .iter()
+            .map(|device| (device.device_id.as_str(), device.inactive))
+            .collect();
+        assert_eq!(listed, vec![("active", false), ("idle", true)]);
+        let abandoned_token_revoked: Option<i64> = sqlx::query_scalar(
+            "SELECT revoked_at_ms FROM paired_device_tokens WHERE device_id = 'abandoned'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(abandoned_token_revoked.is_some());
     }
 
     #[tokio::test]

@@ -571,6 +571,9 @@ pub struct SyncdPairedDeviceView {
     pub profile_id: String,
     pub granted_scopes: Vec<String>,
     pub last_seen_at_ms: Option<i64>,
+    /// Every token of the device passed its inactivity window: it must pair again to sync.
+    #[serde(default)]
+    pub inactive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

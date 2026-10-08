@@ -186,6 +186,8 @@ export interface SyncdPairedDeviceView {
   profileId: string;
   grantedScopes: string[];
   lastSeenAtMs?: number | null;
+  /** Every token passed its inactivity window; the device must pair again to sync. */
+  inactive?: boolean;
 }
 
 export interface SyncdDesktopSnapshot {
