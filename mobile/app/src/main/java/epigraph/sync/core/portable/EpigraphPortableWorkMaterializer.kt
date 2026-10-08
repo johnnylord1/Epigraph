@@ -11,9 +11,7 @@ import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
-import eu.kanade.tachiyomi.source.model.SManga
 import epigraph.novel.source.NovelSource
-import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,12 +20,11 @@ import yokai.domain.manga.MangaRepository
 import yokai.domain.manga.models.MangaUpdate
 
 /**
- * Adapter for Epigraph's existing known-key import flow.
+ * Binds a desktop work to the extension installed on this device.
  *
- * Upstream has no public interactor that accepts a provider-owned key directly. Its own merged
- * source flow seeds the loaded source with that opaque key, fetches details, and persists through
- * [MangaRepository]. Keeping that implementation here prevents SManga and source DTOs from
- * leaking into the portable contract or hydration coordinator.
+ * Like a Mihon or LNReader backup restore, it only writes rows and never calls the extension: a
+ * work missing on the device is created from the key and title the desktop knows, not initialized,
+ * so opening it fetches its details and chapters from the extension.
  */
 class EpigraphPortableWorkMaterializer(
     private val sources: SourceManager,
@@ -139,21 +136,10 @@ class EpigraphPortableWorkMaterializer(
                 }
             }
 
-            val details = source.getMangaDetails(
-                SManga.create().apply {
-                    url = providerKey
-                    title = ""
-                },
-            )
-            if (details.url != providerKey) {
-                return failure(
-                    ref,
-                    PortableResolutionState.REQUIRES_USER_ACTION,
-                    PortableResolutionReason.WORK_NOT_FOUND,
-                )
-            }
-            val resolvedTitle = details.title.takeIf { it.isNotBlank() }
-                ?: priorNovelBinding?.title_hint?.takeIf { it.isNotBlank() }
+            // Like a backup restore, the row is written from what the desktop knows, without
+            // calling the extension: it fetches the details when the work is opened.
+            val resolvedTitle = (priorComicBinding?.title_hint ?: priorNovelBinding?.title_hint)
+                ?.takeIf { it.isNotBlank() }
                 ?: providerKey.substringAfterLast('/').ifBlank { providerKey }
             if (ref is PortableWorkRef.Novel && priorNovelId != null && mangas.getMangaById(priorNovelId) != null) {
                 val updated = mangas.update(
@@ -161,16 +147,7 @@ class EpigraphPortableWorkMaterializer(
                         id = priorNovelId,
                         url = providerKey,
                         title = resolvedTitle,
-                        artist = details.artist,
-                        author = details.author,
-                        description = details.description,
-                        genres = details.genre
-                            ?.split(',')
-                            ?.map(String::trim)
-                            ?.filter(String::isNotBlank),
-                        status = details.status,
-                        thumbnailUrl = details.thumbnail_url,
-                        initialized = true,
+                        initialized = false,
                         source = sourceId,
                     ),
                 )
@@ -189,11 +166,8 @@ class EpigraphPortableWorkMaterializer(
                     )
                 return bound(ref, local.id)
             }
-            val entity = Manga.create(providerKey, details.title, sourceId).apply {
-                copyFrom(details)
-                url = providerKey
-                title = resolvedTitle
-                initialized = true
+            val entity = Manga.create(providerKey, resolvedTitle, sourceId).apply {
+                initialized = false
             }
             mangas.insert(entity)
             val local = mangas.getMangaByUrlAndSource(providerKey, sourceId)
@@ -208,12 +182,6 @@ class EpigraphPortableWorkMaterializer(
             bound(ref, local.id)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: IOException) {
-            failure(
-                ref,
-                PortableResolutionState.RETRYABLE_FAILURE,
-                PortableResolutionReason.SOURCE_OFFLINE,
-            )
         } catch (_: Throwable) {
             failure(
                 ref,

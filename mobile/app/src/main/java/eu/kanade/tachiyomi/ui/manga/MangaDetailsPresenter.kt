@@ -50,6 +50,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.ui.manga.track.TrackItem
@@ -102,7 +103,7 @@ import yokai.domain.category.interactor.GetCategories
 import yokai.domain.chapter.interactor.GetAvailableScanlators
 import yokai.domain.chapter.interactor.GetChapter
 import epigraph.sync.core.SyncedChapterStateWriter
-import epigraph.sync.core.portable.PortableWorkDetailsRefresher.Companion.needSourceFetch
+import epigraph.sync.core.portable.needSourceFetch
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.history.interactor.GetHistory
 import yokai.domain.library.custom.model.CustomMangaInfo
@@ -303,7 +304,11 @@ class MangaDetailsPresenter(
                 controller.updateHeader()
             }
             val coreSessionAvailable = (source as? EpigraphCoreSource)?.hasActiveSession() != false
-            val fetchMangaNeeded = !manga.initialized && coreSessionAvailable
+            // A work synced from the desktop keeps the desktop's cover and details until its
+            // extension is asked, like a work restored from a backup.
+            val desktopDetails = source !is EpigraphCoreSource &&
+                manga.thumbnail_url?.let(SuwayomiCoreThumbnailReference::parse) != null
+            val fetchMangaNeeded = (!manga.initialized || desktopDetails) && coreSessionAvailable
             // A synced novel holds only the chapters read on the desktop; list the rest from the plugin.
             val fetchChaptersNeeded = getChaptersNow().let {
                 if (source is NovelSource) it.needSourceFetch() else it.isEmpty()
