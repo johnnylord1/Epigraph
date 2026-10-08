@@ -1279,7 +1279,8 @@
     <string name="epigraph_core_setup_done">Concluir</string>
     <string name="epigraph_core_setup_nothing">Nada do desktop aqui</string>
     <string name="epigraph_core_setup_failed">Não deu certo. Tente de novo.</string>
-    <string name="epigraph_core_setup_skip">Pular</string>
+    <string name="epigraph_core_setup_continue_background">Continuar em segundo plano</string>
+    <string name="epigraph_core_setup_background_hint">Isso continua mesmo se você fechar a tela.</string>
     <string name="epigraph_core_setup_syncing">Sincronizando com o desktop…</string>
     <string name="library_comics">Quadrinhos</string>
     <string name="library_books_and_novels">Livros e novels</string>

@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.Image
@@ -50,7 +51,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -141,6 +141,8 @@ class CoreDependencySetupActivity : AppCompatActivity() {
                         coordinator.acknowledge()
                         finish()
                     },
+                    // The sync goes on without the screen; its review notification brings the user back.
+                    onLeave = ::finish,
                 )
             }
         }
@@ -187,8 +189,8 @@ private fun CoreDependencySetupContent(
     startWithPairing: Boolean,
     startAtExtensions: Boolean,
     onClose: () -> Unit,
+    onLeave: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val uiState by coordinator.state.collectAsState()
     val report = uiState.report
 
@@ -311,10 +313,11 @@ private fun CoreDependencySetupContent(
     }
 
     // Every action runs here so a failure is shown instead of crashing, and the screen never stays
-    // locked as busy after an action ends.
+    // locked as busy after an action ends. Installs and refreshes outlive the screen, so the user
+    // may close it while they run.
     val launchAction: (suspend () -> Unit) -> Unit = { action ->
         busy = true
-        scope.launch {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
             try {
                 action()
             } catch (cancelled: CancellationException) {
@@ -433,6 +436,13 @@ private fun CoreDependencySetupContent(
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
+            } else if (isBusy) {
+                Text(
+                    stringResource(MR.strings.epigraph_core_setup_background_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
             }
 
             if (step == STEP_SELECTION) {
@@ -453,7 +463,7 @@ private fun CoreDependencySetupContent(
                     onFinished = onSyncFinished,
                     modifier = Modifier.weight(1f),
                 )
-                SyncBottomBar(onSkip = onSyncFinished)
+                SyncBottomBar(onContinueInBackground = onLeave)
             } else if (report == null && novelInventory == null) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -1135,9 +1145,9 @@ private fun Step2BottomBar(
             ) { Text(stringResource(MR.strings.epigraph_core_setup_install_all)) }
             Spacer(Modifier.width(12.dp))
         }
+        // Installs go on after the screen closes.
         Button(
             shape = MaterialTheme.shapes.small,
-            enabled = !isBusy,
             onClick = onDone,
         ) { Text(stringResource(MR.strings.epigraph_core_setup_done)) }
     }
@@ -1314,14 +1324,16 @@ private fun SyncProgressPage(
 
 @Composable
 private fun SyncBottomBar(
-    onSkip: () -> Unit,
+    onContinueInBackground: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onSkip) { Text(stringResource(MR.strings.epigraph_core_setup_skip)) }
+        TextButton(onClick = onContinueInBackground) {
+            Text(stringResource(MR.strings.epigraph_core_setup_continue_background))
+        }
     }
 }
 
