@@ -13,6 +13,14 @@
   import { isBookFinished, isBookInProgress } from "../../lib/books/progress";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import {
+    buildNovelDetailRecordFromLibrary,
+    getNovelLibraryChapters,
+    getNovelReadingHistory,
+    loadNovelLibraryState,
+    type NovelReadingHistoryItem,
+  } from "../../lib/novels/libraryState";
+  import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
+  import {
     loadTrackingProviderInventory,
     loadNativeTrackedTitleKeys,
     TRACKING_PROVIDER_STATE_EVENTS,
@@ -23,6 +31,7 @@
     openBookReader,
     setActiveBookId,
     setPreviewManga,
+    setActiveNovelDetail,
     setNavPage,
     setLibraryFilter,
     setLibrarySection,
@@ -446,6 +455,48 @@
     void loadLibrary();
   });
 
+  let novelLibraryState: PersistedNovelLibraryState | null = $state(null);
+  $effect(() => {
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    store.contentSetupVersion;
+    store.activeNovelReader;
+    void loadNovelLibraryState(scope).then((state) => { novelLibraryState = state; });
+  });
+  const novelHistory = $derived(novelLibraryState ? getNovelReadingHistory(novelLibraryState) : []);
+  // One item per novel: its newest chapter, plus how many other chapters of it were read.
+  const latestNovelReads = $derived((() => {
+    const latest = new Map<string, { item: NovelReadingHistoryItem; count: number }>();
+    for (const item of novelHistory) {
+      const seen = latest.get(item.novel.id);
+      if (seen) seen.count += 1;
+      else latest.set(item.novel.id, { item, count: 1 });
+    }
+    return [...latest.values()];
+  })());
+
+  function novelCoverUrl(item: NovelReadingHistoryItem): string {
+    return item.novel.coverUrl
+      ? resolveMangaCoverUrl(item.novel.coverUrl, {
+          context: "home",
+          persistence: "persistent",
+          cacheGeneration: store.libraryCoverCacheGeneration,
+        })
+      : "";
+  }
+
+  function novelMetric(item: NovelReadingHistoryItem): { value: string; label: string; percent: number } {
+    const chapters = novelLibraryState ? getNovelLibraryChapters(novelLibraryState, item.novel.id) : [];
+    if (chapters.length > 0) {
+      const read = chapters.filter((chapter) => !chapter.unread).length;
+      return {
+        value: String(read),
+        label: translate("library.card.ofChapters", { count: chapters.length }),
+        percent: Math.round((read / chapters.length) * 100),
+      };
+    }
+    return { value: item.entry.chapterTitle?.match(/(\d+(?:\.\d+)?)/)?.[1] ?? "", label: "", percent: 0 };
+  }
+
   const continueReading = $derived((() => {
     const seen = new Set<number>();
     const out: HistoryEntry[] = [];
@@ -488,6 +539,22 @@
         manga: null;
         book: BookEntry;
         progress: BookProgress;
+      }
+    | {
+        kind: "novel";
+        ts: number;
+        eyebrow: string;
+        title: string;
+        subtitle: string;
+        metricValue: string;
+        metricLabel: string;
+        coverUrl: string;
+        progressPct: number;
+        entry: null;
+        manga: null;
+        book: null;
+        progress: null;
+        novelId: string;
       };
 
   const continueCards = $derived((() => {
@@ -541,7 +608,27 @@
       })
       .filter((item): item is Extract<HomeContinueDisplayCard, { kind: "book" }> => Boolean(item));
 
-    return [...mangaCards, ...bookCards]
+    const novelCards = latestNovelReads.slice(0, 10).map(({ item }) => {
+      const metric = novelMetric(item);
+      return {
+        kind: "novel" as const,
+        ts: item.entry.readAt,
+        eyebrow: translate("ui_inProgress"),
+        title: item.novel.title,
+        subtitle: item.entry.chapterTitle || (item.novel.author ?? ""),
+        metricValue: metric.value,
+        metricLabel: metric.label,
+        coverUrl: novelCoverUrl(item),
+        progressPct: metric.percent,
+        entry: null,
+        manga: null,
+        book: null,
+        progress: null,
+        novelId: item.novel.id,
+      } satisfies HomeContinueDisplayCard;
+    });
+
+    return [...mangaCards, ...bookCards, ...novelCards]
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 3);
   })());
@@ -573,6 +660,20 @@
         progress: BookProgress;
         entry: null;
         extraCount: number;
+      }
+    | {
+        kind: "novel";
+        ts: number;
+        title: string;
+        subtitle: string;
+        meta: string;
+        coverUrl: string;
+        manga: null;
+        book: null;
+        progress: null;
+        entry: null;
+        extraCount: number;
+        novelId: string;
       };
 
   const recentUpdates = $derived((() => {
@@ -622,7 +723,22 @@
       })
       .filter((item): item is Extract<HomeRecentUpdateRow, { kind: "book" }> => Boolean(item));
 
-    return [...mangaRows, ...bookRows]
+    const novelRows = latestNovelReads.slice(0, 4).map(({ item, count }) => ({
+      kind: "novel" as const,
+      ts: item.entry.readAt,
+      title: item.novel.title,
+      subtitle: item.entry.chapterTitle ?? "",
+      meta: timeAgo(item.entry.readAt),
+      coverUrl: novelCoverUrl(item),
+      manga: null,
+      book: null,
+      progress: null,
+      entry: null,
+      extraCount: count - 1,
+      novelId: item.novel.id,
+    } satisfies HomeRecentUpdateRow));
+
+    return [...mangaRows, ...bookRows, ...novelRows]
       .sort((a, b) => b.ts - a.ts)
       .slice(0, 4);
   })());
@@ -914,7 +1030,21 @@
     openBookReader(book.id);
   }
 
+  function openNovelEntry(novelId: string) {
+    const state = novelLibraryState;
+    const novel = state?.entries.find((candidate) => candidate.id === novelId);
+    if (!state || !novel) return;
+    setActiveNovelDetail({
+      novel: buildNovelDetailRecordFromLibrary(novel, getNovelLibraryChapters(state, novel.id)),
+      inLibrary: true,
+    });
+  }
+
   function openContinueItem(item: HomeContinueDisplayCard) {
+    if (item.kind === "novel") {
+      openNovelEntry(item.novelId);
+      return;
+    }
     if (item.kind === "manga" && item.manga) {
       setPreviewManga(item.manga);
       return;
@@ -925,6 +1055,10 @@
   }
 
   function openRecentItem(row: HomeRecentUpdateRow) {
+    if (row.kind === "novel") {
+      openNovelEntry(row.novelId);
+      return;
+    }
     if (row.kind === "manga" && row.entry) {
       void resumeEntry(row.entry);
       return;
