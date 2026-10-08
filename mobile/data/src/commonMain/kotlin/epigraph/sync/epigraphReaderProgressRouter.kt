@@ -223,6 +223,26 @@ class EpigraphReaderProgressRouter(
                     ),
                 )
             }
+            // Like comic.history: the other device lists this chapter as read, LNReader-style.
+            val historyEnvelope = if (portableWork != null && portableChapter != null && !explicitReset) {
+                SyncCommandEnvelope(
+                    protocolVersion = EpigraphSyncProtocol.CURRENT_VERSION,
+                    deviceId = deviceId,
+                    clientMutationId = mutationIds.next(),
+                    scopeId = currentScopes.novels,
+                    entityType = NOVEL_HISTORY,
+                    command = SyncCommand.AppendHistory(
+                        entityId = entityId,
+                        entryId = "novel.history::${PortableIdentityV3.workId(portableWork)}::" +
+                            PortableIdentityV3.chapterId(portableChapter),
+                        locator = locator,
+                        visitedAtEpochMillis = createdAt,
+                        chapterTitle = localChapter?.name,
+                    ),
+                )
+            } else {
+                null
+            }
             val bookmarkEnvelope = bookmarked?.let { isBookmarked ->
                 val bookmarkId = EpigraphEntityId(deterministicNovelBookmarkId(entityId.value, chapterEntityId))
                 SyncCommandEnvelope(
@@ -247,7 +267,7 @@ class EpigraphReaderProgressRouter(
                     entityId = entityId,
                     chapterEntityId = chapterEntityId,
                 ),
-                envelopes = listOfNotNull(progressEnvelope, chapterStateEnvelope, bookmarkEnvelope),
+                envelopes = listOfNotNull(progressEnvelope, historyEnvelope, chapterStateEnvelope, bookmarkEnvelope),
             )
         }
     }
@@ -656,6 +676,7 @@ class EpigraphReaderProgressRouter(
         val NOVEL_PROGRESS = SyncEntityType("novel.progress")
         val NOVEL_CHAPTER = SyncEntityType("novel.chapter")
         val NOVEL_BOOKMARK = SyncEntityType("novel.bookmark")
+        val NOVEL_HISTORY = SyncEntityType("novel.history")
         val COMIC_HISTORY = SyncEntityType("comic.history")
         val COMIC_CHAPTER_STATE = SyncEntityType("comic.chapter_state")
 

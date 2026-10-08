@@ -307,6 +307,8 @@ sealed interface SyncCommand {
         val entryId: String,
         val locator: ReaderLocator,
         val visitedAtEpochMillis: Long,
+        /** Shown in the other device's history; older outbox rows omit it. */
+        val chapterTitle: String? = null,
     ) : SyncCommand {
         init {
             validateProtocolIdentifier(entryId, "history entry ID")
