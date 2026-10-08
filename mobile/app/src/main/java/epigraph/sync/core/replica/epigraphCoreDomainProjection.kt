@@ -24,6 +24,7 @@ import android.util.Log
 import eu.kanade.tachiyomi.BuildConfig
 import java.security.MessageDigest
 import java.io.File
+import java.net.URLDecoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -134,6 +135,7 @@ class EpigraphCoreDomainProjection(
             "novel.category_assignment" -> projectNovelAssignment(database, obj, assigned = true)
             "novel.chapter" -> projectNovelChapter(database, record.key.entityId, obj)
             "novel.progress" -> projectNovelProgress(database, record, obj)
+            "novel.history" -> projectNovelHistory(database, obj)
             "novel.bookmark" -> projectNovelBookmark(database, obj, bookmarked = true)
             "book.entry" -> projectBookEntry(database, record.key.entityId, obj)
             "book.progress" -> projectBookProgress(database, record, obj)
@@ -1805,6 +1807,27 @@ class EpigraphCoreDomainProjection(
         )
     }
 
+    /**
+     * Like comic history, a desktop novel read becomes a History row once its chapter exists here.
+     * A chapter the plugin lists only later gets its row when the chapter list is fetched.
+     */
+    private fun projectNovelHistory(database: Database, record: JsonObject) {
+        val readAt = record.long("readAtMs")?.takeIf { it > 0 } ?: return
+        val (novelId, chapterKey) = novelHistoryChapter(record) ?: return
+        val mangaId = SqlDelightPortableBindingStore(database).work(novelId)
+            ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
+            ?.localReference?.toLongOrNull()?.takeIf { it > 0 }
+            ?: localMangaId(database, novelId)
+            ?: return
+        val chapterId = database.chaptersQueries
+            .getChaptersByUrlAndMangaId(chapterKey, mangaId, 0)
+            .executeAsList()
+            .firstOrNull()
+            ?._id
+            ?: return
+        database.historyQueries.upsertSyncedLastRead(chapterId, readAt)
+    }
+
     private fun parseNovelLocator(locator: String?): Pair<Int, Int> {
         val parts = locator?.split(':').orEmpty()
         if (parts.size != 3 || parts[0] != "block") return 0 to 0
@@ -2410,4 +2433,21 @@ class EpigraphCoreDomainProjection(
         const val MAX_COVER_ASSET_BYTES = 8L * 1024L * 1024L
         val COVER_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
     }
+}
+
+/**
+ * The novel id and chapter key a Core `novel.history` record names. The chapter id is
+ * `chapter:novel:<plugin>:<work key>:<chapter key>`, keys percent-encoded; the decoded work must
+ * hash to the record's novel id.
+ */
+internal fun novelHistoryChapter(record: JsonObject): Pair<String, String>? {
+    val novelId = (record["novelId"] as? JsonPrimitive)?.contentOrNull ?: return null
+    val parts = (record["chapterId"] as? JsonPrimitive)?.contentOrNull?.split(':') ?: return null
+    if (parts.size != 5 || parts[0] != "chapter" || parts[1] != "novel") return null
+    return runCatching {
+        val workKey = URLDecoder.decode(parts[3].replace("+", "%2B"), "UTF-8")
+        val chapterKey = URLDecoder.decode(parts[4].replace("+", "%2B"), "UTF-8")
+        val work = PortableWorkRef.Novel(parts[2], ProviderOwnedKey(workKey))
+        (novelId to chapterKey).takeIf { PortableIdentityV3.workId(work) == novelId && chapterKey.isNotEmpty() }
+    }.getOrNull()
 }

@@ -2,8 +2,10 @@ package epigraph.sync.core.suwayomi
 
 import android.content.SharedPreferences
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
+import epigraph.sync.core.replica.novelHistoryChapter
 import eu.kanade.tachiyomi.source.model.SChapter
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -18,6 +20,9 @@ import yokai.data.DatabaseHandler
  * flags. Once its extension is installed the work is relinked and the local source no longer
  * knows them. Each work reads it once, which also repairs works relinked before this existed,
  * and again whenever the source lists chapters the device has not stored yet.
+ *
+ * A novel's desktop history is already in the confirmed replica, so its last-read chapter is
+ * read from there, without calling the Core.
  */
 fun interface BridgedChapterReadState {
     suspend fun chapters(mangaId: Long, hasNewChapters: Boolean): Map<String, SChapter>
@@ -29,6 +34,7 @@ class CoreBridgedChapterReadState(
     private val baselines: SharedPreferences,
 ) : BridgedChapterReadState {
     override suspend fun chapters(mangaId: Long, hasNewChapters: Boolean): Map<String, SChapter> {
+        novelLastReads(mangaId)?.let { return it }
         val identity = database.awaitOneOrNull {
             aethon_syncQueries.selectIdentityByLocalReference(MANGA_CONTENT_TYPE, mangaId.toString())
         } ?: return emptyMap()
@@ -49,6 +55,28 @@ class CoreBridgedChapterReadState(
         return states.associateBy { it.url }
     }
 
+    private suspend fun novelLastReads(mangaId: Long): Map<String, SChapter>? {
+        val novelId = database.awaitOneOrNull {
+            aethon_syncQueries.selectIdentityByLocalReference(NOVEL_CONTENT_TYPE, mangaId.toString())
+        }?.entity_id ?: return null
+        return database.awaitList { aethon_syncQueries.selectCoreReplicaRecordsOfType("novel.history") }
+            .asSequence()
+            .filter { "\"$novelId\"" in it.record_json }
+            .mapNotNull { row -> runCatching { Json.parseToJsonElement(row.record_json) as? JsonObject }.getOrNull() }
+            .mapNotNull { record ->
+                val readAt = record.primitive("readAtMs")?.longOrNull?.takeIf { it > 0 } ?: return@mapNotNull null
+                val (recordNovelId, chapterKey) = novelHistoryChapter(record) ?: return@mapNotNull null
+                if (recordNovelId != novelId) return@mapNotNull null
+                // Unread with no page: only the history row is written, never a read mark.
+                SChapter.create().apply {
+                    url = chapterKey
+                    name = ""
+                    last_read_at = readAt
+                }
+            }
+            .associateBy { it.url }
+    }
+
     private fun readState(node: JsonObject): SChapter? {
         val url = node.primitive("url")?.contentOrNull?.takeIf(String::isNotBlank) ?: return null
         return SChapter.create().apply {
@@ -65,6 +93,7 @@ class CoreBridgedChapterReadState(
 
     private companion object {
         const val MANGA_CONTENT_TYPE = "MANGA"
+        const val NOVEL_CONTENT_TYPE = "NOVEL"
     }
 }
 

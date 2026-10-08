@@ -544,6 +544,86 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `novel history records the last read time of its local chapter without marking it read`() = runTest {
+        val work = PortableWorkRef.Novel("mahoureader", ProviderOwnedKey("/series/352/barbaro"))
+        val workId = PortableIdentityV3.workId(work)
+        database.mangasQueries.insert(
+            source = 7,
+            url = "/series/352/barbaro",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Barbaro",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/series/352/ler/207118",
+            name = "Chapter 278",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 100,
+            chapterNumber = 278.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 1,
+            memo = JsonObject(emptyMap()),
+        )
+        val chapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Barbaro",
+                providerLabelHint = null,
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        fun history(chapterKey: String, novelId: String = workId) = CoreConfirmedRecord(
+            key = CoreReplicaKey(SCOPE_ID, "novel.history", "novel.history::barbaro"),
+            serverVersion = 5,
+            lamport = 5,
+            originServerId = ORIGIN_SERVER_ID,
+            record = buildJsonObject {
+                put("novelId", novelId)
+                put("chapterId", "chapter:novel:mahoureader:%2Fseries%2F352%2Fbarbaro:$chapterKey")
+                put("readAtMs", 1_790_144_696_000)
+            },
+        )
+        fun lastRead() = database.historyQueries.getByChapterUrl("/series/352/ler/207118")
+            .executeAsOneOrNull()?.history_last_read
+
+        // A record whose decoded work does not hash to its novel id is ignored.
+        projection.upsert(database, history("%2Fseries%2F352%2Fler%2F207118", novelId = "novel:other"))
+        assertNull(lastRead())
+
+        projection.upsert(database, history("%2Fseries%2F352%2Fler%2F207118"))
+        assertEquals(1_790_144_696_000, lastRead())
+        assertFalse(database.chaptersQueries.getChaptersById(chapterId).executeAsOne().read)
+    }
+
+    @Test
     fun `comic history tombstone removes only remote progress`() = runTest {
         val entry = comicEntryRecord()
         projection.upsert(database, entry)
