@@ -439,7 +439,11 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         OutlinedTextField(
                             value = pinText,
                             onValueChange = { value ->
-                                pinText = value.filter { it.isDigit() || it == ' ' || it == '-' }.take(12)
+                                // Separators from a pasted "123 456" are kept, but never more than six digits.
+                                var digits = 0
+                                pinText = value.filter { it.isDigit() || it == ' ' || it == '-' }
+                                    .takeWhile { !it.isDigit() || ++digits <= PairingPin.LENGTH }
+                                    .take(12)
                             },
                             enabled = !busy,
                             singleLine = true,

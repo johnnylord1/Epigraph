@@ -342,14 +342,19 @@ class EpigraphCorePairingController(
 
     private suspend fun readPersistedState(): CorePairingUiState = try {
         withContext(ioDispatcher) { credentials.load() }?.use { session ->
-            val verifiedEndpoint = runCatching { endpoints.resolve(session) }.getOrNull()
-            CorePairingUiState.Paired(
-                origin = verifiedEndpoint?.origin ?: session.origin,
+            val stored = CorePairingUiState.Paired(
+                origin = session.origin,
                 profileId = session.profileId,
                 scopes = session.scopes,
                 inactivityExpiresAtMs = session.inactivityExpiresAtMs,
-                verifiedInThisProcess = verifiedEndpoint != null,
+                verifiedInThisProcess = false,
             )
+            // The endpoint probe can wait out a connect timeout when the desktop is off; show the
+            // stored pairing meanwhile instead of a loading state that reads as "not paired".
+            if (mutableState.value == CorePairingUiState.Loading) mutableState.value = stored
+            val verifiedEndpoint = runCatching { endpoints.resolve(session) }.getOrNull()
+            if (verifiedEndpoint == null) stored
+            else stored.copy(origin = verifiedEndpoint.origin, verifiedInThisProcess = true)
         } ?: CorePairingUiState.Unpaired
     } catch (failure: CoreCredentialException) {
         CorePairingUiState.CredentialFailed(failure.failure)

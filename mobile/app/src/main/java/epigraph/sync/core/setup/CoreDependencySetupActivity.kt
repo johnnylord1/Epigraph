@@ -393,9 +393,10 @@ private fun CoreDependencySetupContent(
                 title = {
                     Text(
                         stringResource(
-                            when (step) {
-                                STEP_SELECTION -> MR.strings.epigraph_core_sync_selection_title
-                                STEP_REPOSITORIES -> MR.strings.epigraph_core_setup_repositories
+                            when {
+                                awaitingSync -> MR.strings.epigraph_core_sync_status_title
+                                step == STEP_SELECTION -> MR.strings.epigraph_core_sync_selection_title
+                                step == STEP_REPOSITORIES -> MR.strings.epigraph_core_setup_repositories
                                 else -> MR.strings.epigraph_core_setup_extensions
                             },
                         ),
