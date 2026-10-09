@@ -4942,7 +4942,7 @@ fn upsert_novel_chapter(state: &mut PersistedNovelLibraryState, record: NovelCha
         "novelId": local_novel_id,
         "path": record.path,
         "title": record.title,
-        "order": record.chapter_order_key,
+        "order": desktop_novel_chapter_order(record.chapter_order_key),
         "releaseTime": record.release_time_ms,
         "unread": record.unread,
     });
@@ -5437,12 +5437,22 @@ fn build_novel_entry_patch(value: &Value) -> Option<NovelEntryPatch> {
     Some(patch)
 }
 
+// The desktop orders novel chapters by list position from 0; the Core and the phone read
+// chapterOrderKey as the chapter number, which starts at 1.
+fn core_novel_chapter_order_key(desktop_order: f64) -> f64 {
+    desktop_order + 1.0
+}
+
+fn desktop_novel_chapter_order(chapter_order_key: f64) -> f64 {
+    (chapter_order_key - 1.0).max(0.0)
+}
+
 fn build_novel_chapter_patch(value: &Value) -> Option<NovelChapterPatch> {
     Some(NovelChapterPatch {
         novel_id: value_string_field(value, "novelId")?,
         path: value_string_field(value, "path")?,
         title: value_string_field(value, "title")?,
-        chapter_order_key: value_f64_field(value, "order").unwrap_or_default(),
+        chapter_order_key: core_novel_chapter_order_key(value_f64_field(value, "order").unwrap_or_default()),
         release_time_ms: value_i64_field(value, "releaseTime"),
         unread: value_bool_field(value, "unread", true),
     })
@@ -7357,6 +7367,21 @@ async fn post_mutations_for_session(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn novel_chapter_numbers_start_at_one_on_the_core() {
+        use super::*;
+        let patch = build_novel_chapter_patch(&json!({
+            "novelId": "novel-1",
+            "path": "/chapter-664",
+            "title": "Capítulo 664",
+            "order": 663,
+        }))
+        .expect("chapter patch");
+        assert_eq!(patch.chapter_order_key, 664.0);
+        assert_eq!(desktop_novel_chapter_order(patch.chapter_order_key), 663.0);
+        assert_eq!(desktop_novel_chapter_order(0.0), 0.0);
+    }
+
     #[test]
     fn b4_remote_bootstrap_requires_current_remote_completion() {
         use super::*;

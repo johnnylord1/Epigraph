@@ -1596,6 +1596,8 @@ class Store {
   librarySection:    LibrarySection   = $state(normalizeLibrarySection(saved?.librarySection));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
+  // Reads synced from other devices older than this were cleared here and stay hidden.
+  historyClearedAt:  number           = $state(Number(saved?.historyClearedAt) || 0);
   libraryUpdateNotifications: LibraryUpdateNotification[] = $state(
     Array.isArray(saved?.libraryUpdateNotifications)
       ? saved.libraryUpdateNotifications
@@ -1730,6 +1732,7 @@ class Store {
         $effect(() => { persist({ librarySection: this.librarySection }); });
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
+        $effect(() => { persist({ historyClearedAt: this.historyClearedAt }); });
         $effect(() => { persist({ libraryUpdateNotifications: this.libraryUpdateNotifications }); });
         $effect(() => { persist({ libraryUpdateIssues: this.libraryUpdateIssues }); });
         $effect(() => { persist({ systemNotifications: this.systemNotifications }); });
@@ -2081,7 +2084,21 @@ class Store {
     return this.bookmarks.find(b => b.chapterId === chapterId);
   }
 
-  clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
+  clearHistory()                        { this.history = []; this.readLog = []; this.historyClearedAt = Date.now(); bumpContentSetupVersion(); }
+  /** Merge reads recorded on other devices; local entries win unless the synced read is newer. */
+  mergeSyncedHistory(entries: HistoryEntry[]) {
+    const byChapter = new Map(this.history.map((entry) => [entry.chapterId, entry]));
+    let changed = false;
+    for (const entry of entries) {
+      if (entry.readAt <= this.historyClearedAt) continue;
+      const current = byChapter.get(entry.chapterId);
+      if (current && current.readAt >= entry.readAt) continue;
+      byChapter.set(entry.chapterId, current ? { ...current, readAt: entry.readAt } : entry);
+      changed = true;
+    }
+    if (!changed) return;
+    this.history = [...byChapter.values()].sort((a, b) => b.readAt - a.readAt).slice(0, 300);
+  }
   clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; this.libraryUpdateIssues = []; }
   clearSystemNotifications()            { this.systemNotifications = []; }
   matchesRuntimeProfile(entry: { profileId?: LocalProfileId | null }) {
@@ -2967,6 +2984,7 @@ export function addSystemNotification(entry: Omit<SystemNotification, "id" | "cr
 }
 export function clearSystemNotifications()                                { store.clearSystemNotifications(); }
 export function clearHistory()                                           { store.clearHistory(); }
+export function mergeSyncedHistory(entries: HistoryEntry[])               { store.mergeSyncedHistory(entries); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }
 export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }
 export function removeBook(bookId: string)                              { store.removeBook(bookId); }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_READING_STATS, addHistory, store } from "./state.svelte";
+import { DEFAULT_READING_STATS, addHistory, mergeSyncedHistory, store } from "./state.svelte";
 
 const original = {
   history: store.history,
@@ -41,5 +41,38 @@ describe("reading history completion accounting", () => {
     }]);
     expect(store.readingStats.totalChaptersRead).toBe(1);
     expect(store.readingStats.totalMinutesRead).toBe(4);
+  });
+});
+
+describe("reads synced from paired devices", () => {
+  const entry = (chapterId: number, readAt: number) => ({
+    mangaId: 4,
+    mangaTitle: "A title",
+    thumbnailUrl: "",
+    chapterId,
+    chapterName: `Chapter ${chapterId}`,
+    readAt,
+  });
+
+  beforeEach(() => {
+    store.history = [];
+    store.readLog = [];
+    store.historyClearedAt = 0;
+  });
+
+  afterEach(() => {
+    store.history = original.history;
+    store.readLog = original.readLog;
+    store.historyClearedAt = 0;
+  });
+
+  it("adds newer reads, keeps newer local ones and skips reads cleared on this desktop", () => {
+    store.history = [entry(1, 5_000)];
+    store.historyClearedAt = 2_000;
+
+    mergeSyncedHistory([entry(1, 4_000), entry(2, 6_000), entry(3, 1_000)]);
+
+    expect(store.history.map((item) => [item.chapterId, item.readAt])).toEqual([[2, 6_000], [1, 5_000]]);
+    expect(store.readLog).toEqual([]);
   });
 });

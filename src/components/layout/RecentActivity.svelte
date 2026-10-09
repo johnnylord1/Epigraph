@@ -9,6 +9,7 @@
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
   import { groupRefreshedNovelChaptersForNotifications, refreshNovelLibraryFromSources } from "../../lib/novels/libraryRefresh";
   import {
     buildNovelDetailRecordFromLibrary,
@@ -16,6 +17,7 @@
     getNovelReadingHistory,
     loadNovelLibraryState,
     peekNovelLibraryState,
+    saveNovelLibraryState,
     type NovelReadingHistoryItem,
   } from "../../lib/novels/libraryState";
   import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
@@ -24,6 +26,7 @@
     store,
     addToast,
     clearHistory,
+    mergeSyncedHistory,
     clearLibraryUpdateNotifications,
     closeActivityPanel,
     clearSystemNotifications,
@@ -167,6 +170,13 @@
     store.contentSetupVersion;
     store.activeNovelReader;
     void loadNovelLibraryState(scope).then((state) => { novelLibraryState = state; });
+  });
+
+  // Comic reads from paired devices reach Suwayomi through Epigraph Core, not this store.
+  $effect(() => {
+    if (!store.runtimeServerUrl) return;
+    store.contentSetupVersion;
+    void fetchSyncedComicHistory().then(mergeSyncedHistory).catch(() => {});
   });
 
   const sessions = $derived(
@@ -421,18 +431,27 @@
     }
   }
 
+  // Novel reads live in the novel library state, not in the comics history, so clear both.
+  async function clearReadingHistory() {
+    clearHistory();
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    const state = await loadNovelLibraryState(scope);
+    if (state.history.length === 0) return;
+    novelLibraryState = await saveNovelLibraryState({ ...state, history: [] }, scope);
+  }
+
   function handleClear() {
     if (!confirmClear) { confirmClear = true; setTimeout(() => confirmClear = false, 3000); return; }
     if (activeTab === "all") {
       clearLibraryUpdateNotifications();
-      clearHistory();
+      void clearReadingHistory();
       clearSystemNotifications();
     } else if (activeTab === "updates") {
       clearLibraryUpdateNotifications();
     } else if (activeTab === "system") {
       clearSystemNotifications();
     } else {
-      clearHistory();
+      void clearReadingHistory();
     }
     confirmClear = false;
   }
@@ -462,7 +481,7 @@
         </button>
       </div>
 
-      {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
+      {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && sessions.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
           title={confirmClear ? $_("activity.clearConfirmHint") : activeTab === "all" ? $_("activity.clearAll") : activeTab === "updates" ? $_("activity.clearUpdates") : activeTab === "system" ? $_("activity.clearSystem") : $_("activity.clearHistory")}>
           <Trash size={14} weight="light" />

@@ -12,6 +12,7 @@
   import { presentBook } from "../../lib/books/presentation";
   import { isBookFinished, isBookInProgress } from "../../lib/books/progress";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelLibraryChapters,
@@ -47,6 +48,7 @@
     updateSettings,
     setSettingsOpen,
     setRuntimeSettingsTab,
+    mergeSyncedHistory,
   } from "../../store/state.svelte";
   import type { HistoryEntry, LibrarySortDir, LibrarySortMode } from "../../store/state.svelte";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
@@ -276,6 +278,8 @@
     if (store.navPage !== "home") return;
     store.contentSetupVersion;
     void loadLibrary();
+    // Continue reading also covers chapters read on paired devices.
+    if (store.runtimeServerUrl) void fetchSyncedComicHistory().then(mergeSyncedHistory).catch(() => {});
     scheduleHomeMetaLoad();
     void refreshSetupState();
   });

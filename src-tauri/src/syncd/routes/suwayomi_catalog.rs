@@ -359,17 +359,23 @@ pub(crate) async fn execute_graphql_document(
         .and_then(Value::as_array)
         .filter(|errors| !errors.is_empty())
     {
+        let summary = graphql_error_summary(errors);
         tracing::warn!(
             profile = session.profile_id,
             operation = graphql_operation_name(document),
-            error = graphql_error_summary(errors),
+            error = summary.as_str(),
             "Suwayomi catalog bridge query failed"
         );
-        return Err(AppError::service_unavailable(
+        let mut error = AppError::service_unavailable(
             "SUWAYOMI_CATALOG_QUERY_FAILED",
             "The comics runtime could not provide the requested catalog data.",
             false,
-        ));
+        );
+        // The source's own failure (e.g. "HTTP error 403") tells the phone why, not just that it failed.
+        if let AppError::ServiceUnavailable(detail) = &mut error {
+            detail.details = Some(json!({ "upstreamError": summary }));
+        }
+        return Err(error);
     }
     payload.get("data").cloned().ok_or_else(|| {
         AppError::service_unavailable(
