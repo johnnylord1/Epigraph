@@ -20,7 +20,9 @@ class BangumiInterceptor(val bangumi: Bangumi) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
-        val currAuth = oauth ?: throw Exception("Not authenticated with Bangumi")
+        // A login installed without this interceptor (Epigraph Core tracker sync) is only in the preferences.
+        val currAuth = oauth ?: bangumi.restoreToken()?.also { oauth = it }
+            ?: throw Exception("Not authenticated with Bangumi")
 
         if (currAuth.isExpired()) {
             val response = chain.proceed(BangumiApi.refreshTokenRequest(currAuth.refreshToken!!))

@@ -90,7 +90,8 @@ data class TrackingReconcileResult(
  *
  * Each tracking record is full-state: the Core keeps the last causally ordered patch per
  * `(work, tracker)`. Comic tracking needs a portable work binding, exactly like comic library
- * membership; novels fall back to their Epigraph identity.
+ * membership; novels fall back to their Epigraph identity. A comic still waiting for its native
+ * extension is tracked through its Core-backed row (`coreSourceId`), as the projection does.
  */
 class EpigraphTrackingMutationRouter(
     private val coordinator: EpigraphMutationCoordinator,
@@ -98,6 +99,7 @@ class EpigraphTrackingMutationRouter(
     private val mutationIds: ClientMutationIdFactory,
     private val scopeProvider: EpigraphSyncScopeProvider,
     private val gate: TrackingSyncGate,
+    private val coreSourceId: Long? = null,
 ) {
     suspend fun upsert(
         rows: List<TrackingRow>,
@@ -261,14 +263,15 @@ class EpigraphTrackingMutationRouter(
         val workId = trackingId.removePrefix(prefix).substringBeforeLast("::", "")
         val syncId = TrackerSyncKeys.syncIdFor(trackingId.substringAfterLast("::")) ?: return null
         if (workId.isBlank()) return null
-        val portableLocalId = SqlDelightPortableBindingStore(this).work(workId)
+        val binding = SqlDelightPortableBindingStore(this).work(workId)
+        val portableLocalId = binding
             ?.takeIf { it.resolution.state == PortableResolutionState.BOUND }
             ?.localReference?.toLongOrNull()
         val mangaId = portableLocalId ?: if (entityType == NOVEL_TRACKING) {
             aethon_syncQueries.selectIdentityByEntityId(workId).executeAsOneOrNull()
                 ?.local_reference?.toLongOrNull()
         } else {
-            null
+            coreBackedMangaId(binding?.ref)
         }
         mangaId ?: return null
         val manga = mangasQueries.findById(mangaId).executeAsOneOrNull() ?: return null
@@ -345,11 +348,34 @@ class EpigraphTrackingMutationRouter(
         return when (portableWork) {
             is PortableWorkRef.Comic -> TrackingTarget(COMIC_TRACKING, PortableIdentityV3.workId(portableWork))
             is PortableWorkRef.Novel -> TrackingTarget(NOVEL_TRACKING, PortableIdentityV3.workId(portableWork))
-            null -> aethon_syncQueries
-                .selectIdentityByLocalReference("NOVEL", mangaId.toString())
-                .executeAsOneOrNull()
-                ?.let { TrackingTarget(NOVEL_TRACKING, it.entity_id) }
+            null -> coreBackedComic(mangaId)
+                ?.let { TrackingTarget(COMIC_TRACKING, PortableIdentityV3.workId(it)) }
+                ?: aethon_syncQueries
+                    .selectIdentityByLocalReference("NOVEL", mangaId.toString())
+                    .executeAsOneOrNull()
+                    ?.let { TrackingTarget(NOVEL_TRACKING, it.entity_id) }
         }
+    }
+
+    /** The unbound portable comic shown through this Core-backed row, when it is the only one. */
+    private fun Database.coreBackedComic(mangaId: Long): PortableWorkRef.Comic? {
+        val coreSource = coreSourceId ?: return null
+        val portableId = aethon_syncQueries
+            .selectUnboundPortableComicIdsByCoreManga(mangaId = mangaId, coreSourceId = coreSource)
+            .executeAsList().singleOrNull() ?: return null
+        val comic = SqlDelightPortableBindingStore(this).work(portableId)?.ref as? PortableWorkRef.Comic
+        // Only when inbound records resolve back to this same row, so both directions agree.
+        return comic?.takeIf { coreBackedMangaId(it) == mangaId }
+    }
+
+    private fun Database.coreBackedMangaId(ref: PortableWorkRef?): Long? {
+        val comic = ref as? PortableWorkRef.Comic ?: return null
+        val coreSource = coreSourceId ?: return null
+        return aethon_syncQueries.selectAethonCoreMangaBySourceBinding(
+            sourceId = comic.sourceId.value,
+            providerKey = comic.mangaKey.value,
+            coreSourceId = coreSource,
+        ).executeAsList().singleOrNull()
     }
 
     private data class EmissionContext(

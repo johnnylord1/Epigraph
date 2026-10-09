@@ -138,6 +138,35 @@ class EpigraphTrackingMutationRouterTest {
     }
 
     @Test
+    fun `core-backed comic waiting for its extension still reaches the core`() = runTest {
+        val (mangaId, trackingId) = coreBackedComic()
+
+        val withoutCore = router().upsert(listOf(row(mangaId, syncId = 2)), EpigraphMutationOrigin.LOCAL_USER, 50)
+        val result = router(coreSourceId = CORE_SOURCE_ID)
+            .upsert(listOf(row(mangaId, syncId = 2).copy(lastChapterRead = 38.0)), EpigraphMutationOrigin.LOCAL_USER, 100)
+
+        assertEquals(TrackingMutationResult(1, 0), withoutCore)
+        assertEquals(TrackingMutationResult(1, 1), result)
+        val queued = coordinator.claimReady(100, 1_000, 10).single()
+        assertEquals("comic.tracking", queued.entity_type)
+        assertEquals("comics:profile:main", queued.scope_id)
+        assertEquals(trackingId, queued.entity_id)
+    }
+
+    @Test
+    fun `core-backed comic is reconciled in both directions`() = runTest {
+        val (published, _) = coreBackedComic("/Manga/Published")
+        database.manga_syncQueries.insertRow(row(published, syncId = 2))
+        val (applied, appliedId) = coreBackedComic("/Manga/Applied")
+        replicaRecord(appliedId, progress = 37.0)
+
+        val result = router(coreSourceId = CORE_SOURCE_ID).reconcileWithReplica(100)
+
+        assertEquals(TrackingReconcileResult(publishedRows = 1, appliedRows = 1, removedRows = 0), result)
+        assertEquals(37.0, database.manga_syncQueries.getAllByMangaId(applied).executeAsOne().last_chapter_read)
+    }
+
+    @Test
     fun `tracker removal emits a tombstone for the same record`() = runTest {
         val mangaId = insertManga("/novel/1")
         bindNovelIdentity(mangaId, "novel:abc")
@@ -272,12 +301,14 @@ class EpigraphTrackingMutationRouterTest {
         gate: TrackingSyncGate = TrackingSyncGate { true },
         scopeProvider: EpigraphSyncScopeProvider = EpigraphSyncScopeProvider { scopes },
         mutationIds: ClientMutationIdFactory = sequentialMutationIds(),
+        coreSourceId: Long? = null,
     ) = EpigraphTrackingMutationRouter(
         coordinator = coordinator,
         deviceId = DeviceId("phone-a"),
         mutationIds = mutationIds,
         scopeProvider = scopeProvider,
         gate = gate,
+        coreSourceId = coreSourceId,
     )
 
     private fun sequentialMutationIds(): ClientMutationIdFactory {
@@ -304,6 +335,44 @@ class EpigraphTrackingMutationRouterTest {
         val mangaId = insertManga("/Manga/Bound")
         val work = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/Manga/Bound"))
         bindPortable(mangaId, work)
+        return mangaId to "comic.tracking::${PortableIdentityV3.workId(work)}::anilist"
+    }
+
+    /** A comic shown through its Core-backed row while its native extension is missing. */
+    private fun coreBackedComic(providerKey: String = "/Manga/Waiting"): Pair<Long, String> {
+        val mangaId = insertManga(providerKey, source = CORE_SOURCE_ID)
+        val entityId = "manga:core:$mangaId"
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = entityId,
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.insertBinding(
+            bindingId = "binding:$entityId",
+            entityId = entityId,
+            ecosystem = "SUWAYOMI",
+            repository = "fixture",
+            pluginPackage = "unknown",
+            sourceId = "10002",
+            normalizedUrl = providerKey,
+            isPrimary = true,
+            createdAt = 1,
+        )
+        val work = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey(providerKey))
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = PortableIdentityV3.workId(work),
+                ref = work,
+                localReference = null,
+                resolution = PortableResolution(PortableResolutionState.PENDING_PROVIDER),
+                titleHint = "Example",
+                providerLabelHint = "Fixture",
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
         return mangaId to "comic.tracking::${PortableIdentityV3.workId(work)}::anilist"
     }
 
@@ -338,9 +407,9 @@ class EpigraphTrackingMutationRouterTest {
         finishDate = row.finishDate,
     )
 
-    private fun insertManga(url: String): Long {
+    private fun insertManga(url: String, source: Long = 10002): Long {
         database.mangasQueries.insert(
-            source = 10002,
+            source = source,
             url = url,
             artist = null,
             author = null,
@@ -389,5 +458,9 @@ class EpigraphTrackingMutationRouterTest {
                 updatedAt = 1,
             ),
         )
+    }
+
+    private companion object {
+        const val CORE_SOURCE_ID = 3_238_364_976_084_580_419L
     }
 }

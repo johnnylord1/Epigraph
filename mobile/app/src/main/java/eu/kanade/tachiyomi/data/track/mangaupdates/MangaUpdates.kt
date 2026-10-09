@@ -147,6 +147,11 @@ class MangaUpdates(private val context: Context, id: Long) : TrackService(id) {
         return true
     }
 
+    override fun logout() {
+        super.logout()
+        interceptor.newAuth(null)
+    }
+
     fun restoreSession(): String? {
         return getPassword().ifBlank { null }
     }

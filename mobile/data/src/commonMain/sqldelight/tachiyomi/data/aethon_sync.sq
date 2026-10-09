@@ -749,6 +749,22 @@ WHERE binding.ecosystem = 'SUWAYOMI'
   AND binding.normalized_url = :providerKey
   AND mangas.source = :coreSourceId;
 
+-- Reverse of selectAethonCoreMangaBySourceBinding: the not-yet-bound portable comic a Core-backed
+-- row stands in for.
+selectUnboundPortableComicIdsByCoreManga:
+SELECT DISTINCT work.portable_id
+FROM aethon_portable_work_binding AS work
+JOIN aethon_source_binding AS binding
+  ON binding.ecosystem = 'SUWAYOMI'
+  AND binding.source_id = work.source_id
+  AND binding.normalized_url = work.provider_key
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE work.ecosystem = 'SUWAYOMI'
+  AND work.resolution_state <> 'BOUND'
+  AND mangas._id = :mangaId
+  AND mangas.source = :coreSourceId;
+
 selectMangaByExactSourceBinding:
 SELECT mangas.*
 FROM aethon_source_binding AS binding

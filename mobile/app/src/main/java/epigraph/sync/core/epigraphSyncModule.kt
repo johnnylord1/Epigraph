@@ -32,6 +32,7 @@ import epigraph.sync.core.extensions.CoreSourceRelinkStore
 import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
 import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
 import epigraph.sync.core.suwayomi.PhoneExtensionState
@@ -318,6 +319,7 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
             scopeProvider = get(),
             gate = get(),
+            coreSourceId = EpigraphCoreSource.ID,
         )
     }
     single {
