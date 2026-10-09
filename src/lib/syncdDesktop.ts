@@ -186,6 +186,8 @@ export interface SyncdPairedDeviceView {
   profileId: string;
   grantedScopes: string[];
   lastSeenAtMs?: number | null;
+  /** Every token passed its inactivity window; the device must pair again to sync. */
+  inactive?: boolean;
 }
 
 export interface SyncdDesktopSnapshot {
@@ -263,6 +265,10 @@ export function syncdUpdatePairedDeviceGrantedScopes(
     profileId,
     grantedScopes,
   });
+}
+
+export function syncdRevokePairedDevice(deviceId: string): Promise<void> {
+  return invoke("syncd_revoke_paired_device", { deviceId });
 }
 
 export function syncdListPersistedSyncSessions(
@@ -358,6 +364,12 @@ export function listenSyncdReplicationState(
   handler: (payload: SyncdReplicationSnapshot) => void,
 ): Promise<UnlistenFn> {
   return listen<SyncdReplicationSnapshot>("syncd-replication-state", ({ payload }) => handler(payload));
+}
+
+export function listenSyncdComicLibraryChanged(
+  handler: (payload: { localProfileId: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ localProfileId: string }>("syncd-comic-library-changed", ({ payload }) => handler(payload));
 }
 
 export function listenSyncdReplicationError(

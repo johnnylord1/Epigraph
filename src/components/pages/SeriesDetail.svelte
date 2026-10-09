@@ -24,6 +24,7 @@
   import DetailDownloadMenu from "../shared/DetailDownloadMenu.svelte";
   import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
+  import { requestProgressMirror } from "../../lib/syncdProgressMirror";
 
   type MenuEntry = any;
 
@@ -434,7 +435,10 @@
     const anyRead    = asc.some(c => c.isRead);
     const inProgress = asc.find(c => !c.isRead && (c.lastPageRead ?? 0) > 0);
     if (inProgress) return { chapter: inProgress, type: "continue" as const };
-    const firstUnread = asc.find(c => !c.isRead);
+    // Continue after the furthest read chapter; an unread prologue/extra before it is not "next".
+    let lastReadIndex = -1;
+    asc.forEach((c, index) => { if (c.isRead) lastReadIndex = index; });
+    const firstUnread = asc.find((c, index) => !c.isRead && index > lastReadIndex) ?? asc.find(c => !c.isRead);
     if (firstUnread) {
       const type = anyRead ? "continue" : "start";
       return { chapter: firstUnread, type };
@@ -669,7 +673,8 @@
   }
 
   async function markRead(chapterId: number, isRead: boolean) {
-    await gql(MARK_CHAPTER_READ, { id: chapterId, isRead }).catch(console.error);
+    const marked = await gql(MARK_CHAPTER_READ, { id: chapterId, isRead }).then(() => true, (error) => { console.error(error); return false; });
+    if (marked) requestProgressMirror({ mangaIds: store.activeManga ? [store.activeManga.id] : [], chapterIds: [chapterId] });
     chapters = chapters.map(c => c.id === chapterId ? { ...c, isRead } : c);
     if (store.activeManga) {
       chapterStore.set(store.activeManga.id, { data: chapters, fetchedAt: Date.now() });
@@ -679,7 +684,8 @@
 
   async function markBulk(ids: number[], isRead: boolean) {
     if (!ids.length) return;
-    await gql(MARK_CHAPTERS_READ, { ids, isRead }).catch(console.error);
+    const marked = await gql(MARK_CHAPTERS_READ, { ids, isRead }).then(() => true, (error) => { console.error(error); return false; });
+    if (marked) requestProgressMirror({ mangaIds: store.activeManga ? [store.activeManga.id] : [], chapterIds: ids });
     const idSet = new Set(ids);
     chapters = chapters.map(c => idSet.has(c.id) ? { ...c, isRead } : c);
     if (store.activeManga) {
@@ -814,9 +820,16 @@
     } catch (e) { console.error(e); }
   }
 
+  // Paired devices change read state through Core while this page is open; coming back to the window shows it.
+  function reloadChaptersOnFocus() {
+    if (store.activeManga && chapters.length > 0) void reloadChapters(store.activeManga.id).catch(() => {});
+  }
+
   onMount(() => {
     void refreshDownloadQueue({ reschedule: true });
+    window.addEventListener("focus", reloadChaptersOnFocus);
     return () => {
+      window.removeEventListener("focus", reloadChaptersOnFocus);
       mangaAbort?.abort();
       chapterAbort?.abort();
       clearChapterReconnect();

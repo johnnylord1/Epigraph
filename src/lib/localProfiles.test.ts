@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  configureBuiltInLocalServerPorts,
   createCustomLocalProfile,
   DEFAULT_LOCAL_PROFILE_ID,
+  fallbackBuiltInServerPorts,
   getAllLocalProfiles,
   getLocalProfileMeta,
   localProfileDisplayName,
@@ -93,6 +95,38 @@ describe("resolveSessionProfile", () => {
 
     expect(() => createCustomLocalProfile({ label: "Other", port: 4777 }, [custom])).toThrow("already used");
     expect(() => createCustomLocalProfile({ label: "Main Copy", port: 4567 }, [custom])).toThrow("already used");
+  });
+});
+
+describe("configureBuiltInLocalServerPorts", () => {
+  afterEach(() => configureBuiltInLocalServerPorts({ main: 4567, test: 4667 }));
+
+  it("follows a debug build's ports instead of the installed release's", () => {
+    configureBuiltInLocalServerPorts({ main: 4577, test: 4677 });
+
+    expect(resolveSessionProfile(null, "main").effectiveServerUrl).toBe("http://127.0.0.1:4577");
+    expect(getLocalProfileMeta("test")).toMatchObject({ port: 4677, title: "TEST :4677" });
+  });
+
+  it("keeps the release ports when the Core reports nothing usable", () => {
+    configureBuiltInLocalServerPorts(null);
+    configureBuiltInLocalServerPorts({ main: 0, test: "nope" });
+
+    expect(getLocalProfileMeta("main")?.serverUrl).toBe("http://127.0.0.1:4567");
+    expect(getLocalProfileMeta("test")?.port).toBe(4667);
+  });
+
+  it("keeps the Vite dev page off the release ports when it runs outside Tauri", () => {
+    configureBuiltInLocalServerPorts(fallbackBuiltInServerPorts("development"));
+
+    expect(getLocalProfileMeta("main")?.serverUrl).toBe("http://127.0.0.1:4577");
+    expect(getLocalProfileMeta("test")?.port).toBe(4677);
+  });
+
+  it("has no fallback for a production build or the test runner", () => {
+    expect(fallbackBuiltInServerPorts("production")).toBeNull();
+    expect(fallbackBuiltInServerPorts("test")).toBeNull();
+    expect(fallbackBuiltInServerPorts(undefined)).toBeNull();
   });
 });
 

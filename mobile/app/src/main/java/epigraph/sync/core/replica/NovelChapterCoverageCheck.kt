@@ -7,12 +7,13 @@ import kotlinx.serialization.json.contentOrNull
 import yokai.data.DatabaseHandler
 
 /**
- * Flags novels the desktop sent without a single chapter.
+ * Flags synced novels that still have no chapters on this device.
  *
- * After a completed snapshot, a `novel.entry` with no `novel.chapter` almost always means the
- * desktop failed to ingest that novel's chapter list; the mobile library would otherwise show an
- * empty novel with no hint of why. Only the confirmed replica is inspected, so local-only novels
- * are never reported.
+ * The desktop publishes novel membership and progress but not chapter lists: this device hydrates
+ * chapters from the exact LNReader plugin. A `novel.entry` is covered when the replica carries a
+ * `novel.chapter` for it or when its local row already has hydrated chapters; anything else is
+ * usually waiting for a plugin or plugin repository to be approved here. Only the confirmed replica
+ * is inspected, so local-only novels are never reported.
  */
 class NovelChapterCoverageCheck(private val databaseHandler: DatabaseHandler) {
 
@@ -27,14 +28,30 @@ class NovelChapterCoverageCheck(private val databaseHandler: DatabaseHandler) {
         val chapters = queries.selectCoreReplicaRecordsByType(EpigraphCoreEntityType.NOVEL_CHAPTER)
             .executeAsList()
             .map { it.record_json }
-        findNovelsWithoutChapters(entries, chapters)
+        val hydrated = entries.mapNotNullTo(HashSet()) { (entityId, _) ->
+            val localId = queries.selectIdentityByEntityId(entityId).executeAsOneOrNull()
+                ?.local_reference?.toLongOrNull()
+                ?: return@mapNotNullTo null
+            entityId.takeIf {
+                chaptersQueries.getChaptersByMangaId(localId, 0).executeAsList().isNotEmpty()
+            }
+        }
+        findNovelsWithoutChapters(entries, chapters, hydrated)
     }
 
     internal companion object {
-        /** [entries] pairs each entry's entity id with its record JSON. */
-        fun findNovelsWithoutChapters(entries: List<Pair<String, String>>, chapterRecords: List<String>): List<String> {
+        /**
+         * [entries] pairs each entry's entity id with its record JSON; [hydratedEntityIds] are entry
+         * entity ids whose local row already has chapters.
+         */
+        fun findNovelsWithoutChapters(
+            entries: List<Pair<String, String>>,
+            chapterRecords: List<String>,
+            hydratedEntityIds: Set<String> = emptySet(),
+        ): List<String> {
             val novelsWithChapters = chapterRecords.mapNotNullTo(HashSet()) { parse(it)?.string("novelId") }
             return entries.mapNotNull { (entityId, json) ->
+                if (entityId in hydratedEntityIds) return@mapNotNull null
                 val record = parse(json) ?: return@mapNotNull null
                 val novelId = record.string("novelId") ?: entityId
                 if (novelId in novelsWithChapters) return@mapNotNull null

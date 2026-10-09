@@ -1,8 +1,7 @@
 # Tracker sync contract (Phase 3)
 
-Status: mobile side implemented; the desktop Core (`epigraph-syncd`) still has to implement the
-parts marked **Core**. Until a Core advertises the capabilities below, the mobile keeps every
-tracker change local, so shipping the mobile first is safe.
+Status: implemented on both sides. Until a Core advertises the capabilities below, the mobile
+keeps every tracker change local, so shipping the mobile first is safe.
 
 Tracker sync has two parts, and they are gated separately:
 
@@ -157,6 +156,25 @@ limited to 8 KiB each (UTF-8).
 4. When a device is revoked, its token stops working, so it can no longer read credentials.
    Revocation does not delete the stored credentials; the remaining devices keep them.
 5. Record `deviceId` for audit only. Do not echo it back to other devices.
+
+### Desktop Suwayomi bridge (implemented in syncd)
+
+The desktop logs its own Suwayomi in and out from the vault, and publishes the logins made in
+Suwayomi back to the vault, for every tracker both apps share: MAL (1), AniList (2), Kitsu (3),
+Shikimori (4), Bangumi (5) and MangaUpdates (7). Both apps store the same raw values (username,
+password, token JSON with the same field names), so the Core only moves them; it never parses or
+refreshes a token.
+
+- **AniList:** replayed through Suwayomi's OAuth mutation, so Suwayomi also fetches the score
+  format. No restart.
+- **The others:** written to Suwayomi's `settings/tracker.xml`. Suwayomi reads that file only at
+  startup, so the Core stops the Suwayomi it started, writes the file and starts it again (under
+  the spawn gate and the maintenance lease). The expired flag is cleared on every write.
+- **Desktop → vault:** each mirror tick compares `tracker.xml` with the vault and publishes only
+  differences. A login pending from another device wins; a tombstone that never reached the
+  desktop does not log the desktop out.
+- **Known cost:** a token refresh on either side (Shikimori refreshes daily) is a new revision, so
+  the other side may restart Suwayomi once to pick it up.
 
 ### Mobile algorithm (one run per negotiated sync session)
 

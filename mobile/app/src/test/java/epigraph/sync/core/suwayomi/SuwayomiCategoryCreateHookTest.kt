@@ -239,7 +239,7 @@ class SuwayomiCategoryCreateHookTest {
 
         override suspend fun command(request: SuwayomiCommandRequest): CoreHttpResult<SuwayomiCommandResponse> {
             requests += request
-            return answers.removeFirst()
+            return answers.removeAt(0)
         }
     }
 

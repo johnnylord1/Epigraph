@@ -255,3 +255,41 @@ describe("FlareSolverr integration contracts", () => {
     expect(settingsSource).not.toMatch(/invoke<[^>]+>\(["']start_flaresolverr_(?:local|docker)["']/);
   });
 });
+
+describe("built-in Cloudflare solver endpoint", () => {
+  it("recognizes only the loopback token endpoint", async () => {
+    const { isBuiltinCloudflareSolverUrl } = await import("./flaresolverr");
+    expect(isBuiltinCloudflareSolverUrl(`http://127.0.0.1:51234/epigraph-cf-${"a".repeat(32)}`)).toBe(true);
+    expect(isBuiltinCloudflareSolverUrl("http://localhost:8191")).toBe(false);
+    expect(isBuiltinCloudflareSolverUrl(`http://192.168.0.2:51234/epigraph-cf-${"a".repeat(32)}`)).toBe(false);
+    expect(isBuiltinCloudflareSolverUrl(undefined)).toBe(false);
+  });
+
+  it("never replaces a FlareSolverr the user configured", async () => {
+    const { enableBuiltinCloudflareSolver } = await import("./flaresolverr");
+    vi.clearAllMocks();
+    Object.assign(settings, { flareSolverrEnabled: true, flareSolverrUrl: "http://localhost:8191" });
+    try {
+      await expect(enableBuiltinCloudflareSolver()).resolves.toBe(false);
+      expect(invoke).not.toHaveBeenCalled();
+      expect(gql).not.toHaveBeenCalled();
+    } finally {
+      Object.assign(settings, { flareSolverrEnabled: false });
+    }
+  });
+
+  it("enables the built-in endpoint when no FlareSolverr is configured", async () => {
+    const { enableBuiltinCloudflareSolver } = await import("./flaresolverr");
+    vi.clearAllMocks();
+    const endpoint = `http://127.0.0.1:51234/epigraph-cf-${"b".repeat(32)}`;
+    invoke.mockResolvedValueOnce(endpoint);
+    gql.mockResolvedValueOnce({});
+
+    await expect(enableBuiltinCloudflareSolver()).resolves.toBe(true);
+    expect(gql).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      flareSolverrEnabled: true,
+      flareSolverrUrl: endpoint,
+      flareSolverrAsResponseFallback: false,
+    }));
+  });
+});

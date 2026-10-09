@@ -600,6 +600,10 @@ export function createReconciledBackupPayload(
         source: encodeInt64(replacement.sourceId),
       };
       }),
+  ).map((message: any) =>
+    // Titles removed from the library keep their history, but their old category
+    // links are stale; Mihon/J2K ignore them and so must the restored server.
+    message.favorite === false && message.categories?.length ? { ...message, categories: [] } : message,
   );
 
   const patchedSourceMessages = parsedBackup.sourceMessages

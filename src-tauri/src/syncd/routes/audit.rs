@@ -1,5 +1,8 @@
-use axum::extract::State;
-use axum::response::Json;
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use axum::Router;
 use serde::Deserialize;
@@ -82,6 +85,21 @@ pub fn router(state: SharedAppState) -> Router {
         .route("/__audit/revoke-token", post(revoke_token))
         .route("/__audit/expire-token", post(expire_token))
         .with_state(state)
+        .layer(middleware::from_fn(loopback_only))
+}
+
+/// Audit routes mint tokens and rewrite server state for the phase-gate scripts. Even when the
+/// environment switch is on, they answer only callers on this machine, never the LAN listener.
+async fn loopback_only(request: Request, next: Next) -> Response {
+    let from_loopback = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(remote)| remote.ip().is_loopback());
+    if !from_loopback {
+        return AppError::Forbidden("Audit routes are only available from loopback.".to_string())
+            .into_response();
+    }
+    next.run(request).await
 }
 
 async fn ensure_token(

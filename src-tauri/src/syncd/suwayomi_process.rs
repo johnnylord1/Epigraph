@@ -37,7 +37,9 @@ pub async fn prepare_shutdown() -> Result<(), String> {
     stop_owned_instances(Duration::from_secs(5)).await?;
     Ok(())
 }
-const MAIN_SERVER_PORT: u16 = 4567;
+fn main_server_port() -> u16 {
+    crate::suwayomi_runtime::main_server_port()
+}
 const STARTUP_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const STARTUP_PROBE_TIMEOUT_EMPTY: Duration = Duration::from_secs(240);
 const STARTUP_PROBE_TIMEOUT_EXISTING: Duration = Duration::from_secs(360);
@@ -184,7 +186,7 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     }
 
     if let Some(instance) = attach_owned_instance(&root) {
-        if probe_server(MAIN_SERVER_PORT).await {
+        if probe_server(main_server_port()).await {
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
         if process_age_secs(instance.java_pid).unwrap_or_default()
@@ -213,14 +215,14 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
             if known_run && !crate::suwayomi_runtime::has_confirmed_stop(&root.join("server.owner.json")) {
                 stop_owned_instance(&AttachedSuwayomi {
                     profile_key: MAIN_PROFILE_KEY.into(), root_dir: root.clone(), java_pid: owner.java_pid,
-                    server_url: format!("http://127.0.0.1:{MAIN_SERVER_PORT}"), run_id: owner.run_id,
+                    server_url: format!("http://127.0.0.1:{}", main_server_port()), run_id: owner.run_id,
                 }, Duration::from_secs(5)).await?;
             }
         }
     }
     remove_stale_owner(&root)?;
     if let Some(java_pid) = find_java_pid_for_root(&root) {
-        if probe_server(MAIN_SERVER_PORT).await {
+        if probe_server(main_server_port()).await {
             let instance = publish_reconstructed_owner(&root, java_pid, false)?;
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
@@ -229,7 +231,7 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
         ));
     }
 
-    ensure_port_available(MAIN_SERVER_PORT)?;
+    ensure_port_available(main_server_port())?;
     // Release builds start the main profile here rather than through the desktop spawn, so the copy taken
     // before Suwayomi opens (and may upgrade) its database has to be made here as well.
     match crate::suwayomi_runtime::backup_local_server_files(&root) {
@@ -282,7 +284,7 @@ pub fn attach_owned_instances() -> Vec<AttachedSuwayomi> {
 pub async fn stop_owned_instances(timeout: Duration) -> Result<Vec<AttachedSuwayomi>, String> {
     let instances: Vec<_> = spawned_runs().lock().map_err(|_| "Core leases unavailable")?.iter().map(|(run, lease)| AttachedSuwayomi {
         profile_key: MAIN_PROFILE_KEY.into(), root_dir: lease.root.clone(), java_pid: lease.identity.pid,
-        server_url: format!("http://127.0.0.1:{MAIN_SERVER_PORT}"), run_id: Some(run.clone()),
+        server_url: format!("http://127.0.0.1:{}", main_server_port()), run_id: Some(run.clone()),
     }).collect();
     // Malformed or foreign evidence is never filtered into empty success.
     // Only the configured main root is relevant to this Core's authority.
@@ -298,6 +300,52 @@ pub async fn stop_owned_instances(timeout: Duration) -> Result<Vec<AttachedSuway
         stop_owned_instance(instance, timeout).await?;
     }
     Ok(instances)
+}
+
+pub fn attach_main_owned_instance() -> Option<AttachedSuwayomi> {
+    attach_owned_instance(&main_profile_root())
+}
+
+/// Runs `edit` on the main profile while its Suwayomi is stopped, then starts it again; for
+/// settings Suwayomi only reads at startup. Only a run this Core spawned and still retains is
+/// stopped, and no JVM can start for the profile until `edit` returns.
+pub async fn edit_main_profile_while_stopped<T>(
+    edit: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let result = {
+        let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(
+            &crate::suwayomi_maintenance::default_runtime_root(),
+        )?;
+        let _spawn = CORE_SPAWN_GATE.lock().await;
+        if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("Core is shutting down".into());
+        }
+        let root = main_profile_root();
+        let instance = attach_owned_instance(&root).ok_or("managed Suwayomi is not running")?;
+        let retained = instance
+            .run_id
+            .as_ref()
+            .is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
+        if !retained {
+            return Err("managed Suwayomi was not started by this Core".into());
+        }
+        stop_owned_instance(&instance, Duration::from_secs(5)).await?;
+        edit(&root)
+    };
+    // The supervisor would restart it within one health interval; do it now.
+    if let Err(error) = ensure_main_owned_instance().await {
+        tracing::warn!(
+            error = %crate::suwayomi_runtime::sanitize_log_line(&error, &[]),
+            "managed Suwayomi did not restart after a settings edit; the supervisor will retry"
+        );
+    }
+    result
+}
+
+/// Atomic replace for a file inside a Suwayomi profile.
+pub fn write_profile_file(path: &Path, payload: &[u8]) -> Result<(), String> {
+    write_file_atomic(path, payload)
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
 }
 
 fn attach_owned_instance(root: &Path) -> Option<AttachedSuwayomi> {
@@ -552,7 +600,7 @@ fn seed_headless_server_conf(root: &Path) -> Result<(), String> {
     patched = patch_conf_key(patched, "server.globalUpdateInterval", "0");
     patched = patch_conf_key(patched, "server.autoDownloadNewChapters", "false");
     patched = patch_conf_key(patched, "server.ip", "\"127.0.0.1\"");
-    patched = patch_conf_key(patched, "server.port", &MAIN_SERVER_PORT.to_string());
+    patched = patch_conf_key(patched, "server.port", &main_server_port().to_string());
     write_file_atomic(&path, patched.as_bytes())
         .map_err(|error| format!("failed to update managed Suwayomi configuration: {error}"))
 }
@@ -671,11 +719,12 @@ async fn wait_for_spawned_runtime(
         {
             return Err("managed Suwayomi exited before becoming ready".to_string());
         }
-        if probe_server(MAIN_SERVER_PORT).await {
-            let listener = listener_pid_for_port(MAIN_SERVER_PORT);
+        if probe_server(main_server_port()).await {
+            let listener = listener_pid_for_port(main_server_port());
             if listener.is_some_and(|pid| pid != child.id()) {
                 return Err(format!(
-                    "managed Suwayomi port {MAIN_SERVER_PORT} belongs to PID {} instead of spawned PID {}",
+                    "managed Suwayomi port {} belongs to PID {} instead of spawned PID {}",
+                    main_server_port(),
                     listener.unwrap_or_default(),
                     child.id()
                 ));
@@ -720,7 +769,7 @@ fn ensure_port_available(port: u16) -> Result<(), String> {
 }
 
 fn publish_reconstructed_owner(root: &Path, java_pid: u32, spawned_by_core: bool) -> Result<AttachedSuwayomi, String> {
-    let server_url = format!("http://127.0.0.1:{MAIN_SERVER_PORT}");
+    let server_url = format!("http://127.0.0.1:{}", main_server_port());
     let process_identity = runtime_process_identity_with_retry(java_pid).ok_or_else(|| {
         format!("could not establish process identity for managed Suwayomi PID {java_pid}")
     })?;
@@ -729,7 +778,7 @@ fn publish_reconstructed_owner(root: &Path, java_pid: u32, spawned_by_core: bool
         root_dir: root.to_string_lossy().into_owned(),
         app_pid: std::process::id(),
         java_pid,
-        port: MAIN_SERVER_PORT,
+        port: main_server_port(),
         server_url: server_url.clone(),
         started_at: unix_now_secs(),
         run_id: Some(uuid::Uuid::new_v4().to_string()),

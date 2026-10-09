@@ -185,7 +185,7 @@
 
 <FirstRunTitle text={$_("firstRun.sources.title")} />
 <p class="fr-lede" data-enter>{$_("firstRun.sources.lede")}</p>
-{#if requiredKinds.length > 1}
+{#if requiredKinds.length > 1 && !ready}
   <div class="fr-notice" data-enter><Info size={18} /><span>{$_("firstRun.sources.mixedBackup")}</span></div>
 {/if}
 

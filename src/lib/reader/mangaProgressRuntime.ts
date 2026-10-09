@@ -1,5 +1,6 @@
 import { getServerUrl, gql } from "../client";
 import { UPDATE_CHAPTERS_PROGRESS } from "../queries";
+import { requestProgressMirror } from "../syncdProgressMirror";
 import { createMangaProgressJournal, createMangaProgressPersister, type MangaChapterProgress, type MangaProgressPersister } from "./mangaProgress";
 
 type ProgressStorage = Pick<Storage, "getItem" | "setItem"> & Partial<Pick<Storage, "key" | "length" | "removeItem">>;
@@ -11,11 +12,13 @@ const JOURNAL_PREFIX = "epigraph-manga-pending-progress:";
 // entries. The main window owns the unsuffixed journal and adopts any a closed window left behind.
 const DETACHED_JOURNAL_SEPARATOR = "~";
 let journalWindowSuffix: string | null = null;
-let onProgressSaved: ((scope: string, progress: MangaChapterProgress) => void) | null = null;
+// `written` says whether this save changed Suwayomi, which is when Core should mirror it to paired devices.
+type ProgressSavedListener = (scope: string, progress: MangaChapterProgress, written: boolean) => void;
+let onProgressSaved: ProgressSavedListener | null = null;
 
 export function configureDetachedMangaProgress(
   windowLabel: string,
-  savedListener: ((scope: string, progress: MangaChapterProgress) => void) | null,
+  savedListener: ProgressSavedListener | null,
 ) {
   journalWindowSuffix = windowLabel;
   onProgressSaved = savedListener;
@@ -68,6 +71,7 @@ export function getMangaProgressForScope(scope: string, storage: ProgressStorage
   const journalScope = journalWindowSuffix === null ? scope : `${scope}${DETACHED_JOURNAL_SEPARATOR}${journalWindowSuffix}`;
   if (journalWindowSuffix === null) adoptDetachedJournals(scope, storage);
   const savedListener = onProgressSaved;
+  const isMainWindow = journalWindowSuffix === null;
   const persister = createMangaProgressPersister({
     journal: createMangaProgressJournal(journalScope, storage),
     write: async (pending) => {
@@ -80,11 +84,14 @@ export function getMangaProgressForScope(scope: string, storage: ProgressStorage
         throw new Error("The saved chapter could not be verified. Its pending progress has been kept.");
       }
       const merged = { ...pending, lastPageRead: Math.max(pending.lastPageRead, current.lastPageRead), isRead: pending.isRead || current.isRead };
-      if (merged.lastPageRead !== current.lastPageRead || merged.isRead !== current.isRead) {
+      const written = merged.lastPageRead !== current.lastPageRead || merged.isRead !== current.isRead;
+      if (written) {
         if (getServerUrl() !== endpoint) throw new Error("The reading connection changed before progress was saved.");
         await gql(UPDATE_CHAPTERS_PROGRESS, { ids: [pending.chapterId], lastPageRead: merged.lastPageRead, isRead: merged.isRead });
+        // Detached windows cannot invoke app commands; the main window asks for them (see detachedReaderHost).
+        if (isMainWindow) requestProgressMirror({ chapterIds: [pending.chapterId] });
       }
-      savedListener?.(scope, merged);
+      savedListener?.(scope, merged, written);
       return merged;
     },
   });

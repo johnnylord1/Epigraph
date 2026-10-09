@@ -392,7 +392,7 @@ export function upsertNovelInLibrary(
     title: detail.title,
     author: detail.author,
     description: detail.description,
-    coverUrl: detail.coverUrl,
+    coverUrl: normalizeNovelCoverUrl(detail.coverUrl) ?? normalizeNovelCoverUrl(existing?.coverUrl),
     path: detail.path,
     status: detail.status,
     tags: detail.tags,
@@ -402,7 +402,11 @@ export function upsertNovelInLibrary(
     updatedAt: now,
   };
 
-  const nextChapters = detail.chapters.map((chapter) => {
+  // Keep the saved chapter list (and its read state) when the source answers with none.
+  const previousChapters = state.chapters.filter((entry) => entry.novelId === detail.id);
+  const nextChapters = detail.chapters.length === 0 && previousChapters.length > 0
+    ? previousChapters
+    : detail.chapters.map((chapter) => {
     const existingChapter = state.chapters.find((entry) => entry.id === chapter.id);
     return {
       id: chapter.id || createNovelChapterId(detail.id, chapter.path),
@@ -489,8 +493,44 @@ export function getNovelHistoryEntries(
   novelId: string,
 ): EpigraphNovelHistoryEntry[] {
   return state.history
-    .filter((entry) => entry.novelId === novelId)
+    .filter((entry) => entry.novelId === novelId || resolveNovelHistoryNovelId(state, entry) === novelId)
     .sort((left, right) => right.readAt - left.readAt);
+}
+
+/** Synced history carries the portable novel id; its local chapter id still names the library entry. */
+export function resolveNovelHistoryNovelId(
+  state: PersistedNovelLibraryState,
+  entry: EpigraphNovelHistoryEntry,
+): string | null {
+  if (state.entries.some((candidate) => candidate.id === entry.novelId)) return entry.novelId;
+  const chapterId = entry.chapterId ?? "";
+  const separator = chapterId.lastIndexOf(":");
+  if (!chapterId.startsWith("chapter:") || separator <= "chapter:".length) return null;
+  const novelId = chapterId.slice("chapter:".length, separator);
+  return state.entries.some((candidate) => candidate.id === novelId) ? novelId : null;
+}
+
+export interface NovelReadingHistoryItem {
+  novel: PersistedNovelLibraryEntry;
+  entry: EpigraphNovelHistoryEntry;
+}
+
+/** Newest first, one row per chapter; rows without a read time or a library work are left out. */
+export function getNovelReadingHistory(state: PersistedNovelLibraryState): NovelReadingHistoryItem[] {
+  const novels = new Map(state.entries.map((entry) => [entry.id, entry] as const));
+  const seen = new Set<string>();
+  const items: NovelReadingHistoryItem[] = [];
+  for (const entry of [...state.history].sort((left, right) => right.readAt - left.readAt)) {
+    if (!(entry.readAt > 0)) continue;
+    const novelId = resolveNovelHistoryNovelId(state, entry);
+    const novel = novelId ? novels.get(novelId) : undefined;
+    if (!novel) continue;
+    const key = `${novel.id}::${entry.chapterId ?? entry.chapterTitle ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({ novel, entry });
+  }
+  return items;
 }
 
 export function getNovelLastReadChapterId(

@@ -147,4 +147,8 @@
         <item quantity="one">%d plugin</item>
         <item quantity="other">%d plugins</item>
     </plurals>
+    <plurals name="epigraph_core_setup_works">
+        <item quantity="one">%d work</item>
+        <item quantity="other">%d works</item>
+    </plurals>
 </resources>

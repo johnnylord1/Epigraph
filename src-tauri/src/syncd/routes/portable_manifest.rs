@@ -494,6 +494,12 @@ fn load_manifest_snapshot(
     {
         return Err(invalid_manifest_snapshot());
     }
+    // The TTL bounds an abandoned walk, not a slow one: each page read keeps the snapshot alive.
+    let mut entry = entry;
+    entry.expires_at_ms = now_ms.saturating_add(MANIFEST_SNAPSHOT_TTL_MS);
+    if let Some(cached) = cache.entries.get_mut(snapshot_id) {
+        cached.expires_at_ms = entry.expires_at_ms;
+    }
     Ok(entry)
 }
 
@@ -1626,6 +1632,39 @@ mod tests {
             .unwrap()
             .entries
             .contains_key(&entry.snapshot_id));
+    }
+
+    #[test]
+    fn reading_a_snapshot_page_extends_its_expiry() {
+        let _cache = snapshot_cache_turn();
+        let session = test_session("token-sliding", "device-sliding");
+        let mut entry = store_manifest_snapshot(
+            &session,
+            "comics:profile:main",
+            ManifestSnapshotPayload::Comics(Arc::new(test_comic_snapshot())),
+        )
+        .unwrap();
+        entry.expires_at_ms = db::now_ms() + 1_000;
+        manifest_snapshot_cache()
+            .lock()
+            .unwrap()
+            .entries
+            .insert(entry.snapshot_id.clone(), entry.clone());
+
+        let loaded = load_manifest_snapshot(
+            &entry.snapshot_id,
+            Some(&entry.fingerprint),
+            &session,
+            "comics:profile:main",
+            ManifestSnapshotType::Comics,
+        )
+        .unwrap();
+
+        assert!(loaded.expires_at_ms > entry.expires_at_ms + 60_000);
+        assert_eq!(
+            manifest_snapshot_cache().lock().unwrap().entries[&entry.snapshot_id].expires_at_ms,
+            loaded.expires_at_ms
+        );
     }
 
     #[test]

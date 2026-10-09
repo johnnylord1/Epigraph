@@ -5,6 +5,7 @@ import yokai.data.memoColumnAdapter
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import epigraph.novel.source.NovelSource
 import kotlinx.serialization.json.JsonObject
 import epigraph.contract.ReaderLocator
 import epigraph.contract.DecimalSourceId
@@ -12,6 +13,7 @@ import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableResolution
+import epigraph.contract.PortableResolutionReason
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
 import epigraph.sync.portable.PortableWorkBindingRecord
@@ -359,6 +361,150 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `portable chapter state reaches the Core-backed chapter of a title read through the Core catalog`() = runTest {
+        // The device has no extension for the title: it reads it through the Core catalog, so the
+        // portable chapter stays pending while the chapter exists under its server-local ids.
+        val mangaId = insertTrackingManga(EpigraphCoreSource.ID, "aethon-core://suwayomi/desktop/main/manga/2")
+        val coreChapterUrl = "aethon-core://suwayomi/desktop/main/chapter/211"
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = coreChapterUrl,
+            name = "Chapter 17",
+            scanlator = null,
+            read = true,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 17.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = "suwayomi:server:desktop:profile:main:manga:2",
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = "suwayomi:server:desktop:profile:main:chapter:211",
+            workEntityId = "suwayomi:server:desktop:profile:main:manga:2",
+            localChapterId = localChapterId,
+            normalizedUrl = coreChapterUrl,
+            ordinal = 17.0,
+            updatedAt = 1,
+        )
+        val work = PortableWorkRef.Comic(DecimalSourceId("8531542650987673943"), ProviderOwnedKey("/series/165"))
+        val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey("/series/165/a7b251fee96b1f4e"))
+        val workId = PortableIdentityV3.workId(work)
+        val chapterId = PortableIdentityV3.chapterId(chapter)
+        fun desktopState(suwayomiChapterId: Long) = CoreConfirmedRecord(
+            key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$workId::$chapterId"),
+            serverVersion = 10,
+            lamport = 10,
+            originServerId = ORIGIN_SERVER_ID,
+            record = buildJsonObject {
+                put("comicId", workId)
+                put("chapterId", chapterId)
+                put("portableWorkRef", Json.encodeToJsonElement(work))
+                put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                put("coreServerId", "desktop")
+                put("coreProfileId", "main")
+                put("suwayomiMangaId", 2)
+                put("suwayomiChapterId", suwayomiChapterId)
+                put("read", false)
+                put("bookmarked", true)
+                put("updatedAtMs", 1_000)
+            },
+        )
+        fun local() = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+
+        // A record naming another server-local chapter leaves this one alone.
+        projection.upsert(database, desktopState(suwayomiChapterId = 212))
+        assertTrue(local().read)
+
+        projection.upsert(database, desktopState(suwayomiChapterId = 211))
+        assertFalse(local().read)
+        assertTrue(local().bookmark)
+        assertEquals(
+            PortableResolutionState.PENDING_PROVIDER.name,
+            database.aethon_syncQueries.selectPortableChapterBinding(chapterId).executeAsOne().resolution_state,
+        )
+    }
+
+    @Test
+    fun `legacy chapter state with null portable refs reaches its bound chapter`() = runTest {
+        // Desktop mirrors serialized an absent portable identity as explicit nulls.
+        val mangaId = insertTrackingManga(EpigraphCoreSource.ID, "aethon-core://suwayomi/desktop/main/manga/2")
+        val coreChapterUrl = "aethon-core://suwayomi/desktop/main/chapter/211"
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = coreChapterUrl,
+            name = "Chapter 17",
+            scanlator = null,
+            read = true,
+            bookmark = false,
+            lastPageRead = 9,
+            pagesLeft = 0,
+            chapterNumber = 17.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val comicId = "suwayomi:server:desktop:profile:main:manga:2"
+        val chapterEntityId = "suwayomi:server:desktop:profile:main:chapter:211"
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = comicId,
+            contentType = "MANGA",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = chapterEntityId,
+            workEntityId = comicId,
+            localChapterId = localChapterId,
+            normalizedUrl = coreChapterUrl,
+            ordinal = 17.0,
+            updatedAt = 1,
+        )
+
+        projection.upsert(
+            database,
+            CoreConfirmedRecord(
+                key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$comicId::$chapterEntityId"),
+                serverVersion = 10,
+                lamport = 10,
+                originServerId = ORIGIN_SERVER_ID,
+                record = buildJsonObject {
+                    put("comicId", comicId)
+                    put("chapterId", chapterEntityId)
+                    put("portableWorkRef", JsonNull)
+                    put("portableChapterRef", JsonNull)
+                    put("coreServerId", "desktop")
+                    put("coreProfileId", "main")
+                    put("suwayomiMangaId", 2)
+                    put("suwayomiChapterId", 211)
+                    put("read", false)
+                    put("bookmarked", true)
+                    put("updatedAtMs", 1_000)
+                },
+            ),
+        )
+
+        val local = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+        assertFalse(local.read)
+        assertTrue(local.bookmark)
+        // The mirror publishes page zero as an absent page; unread then resets local progress.
+        assertEquals(0L, local.last_page_read)
+    }
+
+    @Test
     fun `comic history on the last page marks the chapter read and later history keeps it read`() = runTest {
         projection.upsert(database, comicEntryRecord())
         projection.upsert(database, comicChapterStateRecord())
@@ -375,6 +521,106 @@ class EpigraphCoreDomainProjectionTest {
         projection.upsert(database, comicHistoryRecord(pageIndex = 2, progressPercent = 0.2, serverVersion = 4))
         assertTrue(chapter().read)
         assertEquals(2L, chapter().last_page_read)
+    }
+
+    @Test
+    fun `comic history records the last read time without moving a newer local read back`() = runTest {
+        projection.upsert(database, comicEntryRecord())
+        projection.upsert(database, comicChapterStateRecord())
+        val localChapterId = database.aethon_syncQueries
+            .selectChapterBindingByEntityId(CHAPTER_ID)
+            .executeAsOne()
+            .local_chapter_id
+        fun lastRead() = database.historyQueries.getByChapterUrl(
+            database.chaptersQueries.getChaptersById(localChapterId).executeAsOne().url,
+        ).executeAsOneOrNull()?.history_last_read
+
+        projection.upsert(database, comicHistoryRecord(serverVersion = 3))
+        assertEquals(300L, lastRead())
+
+        database.historyQueries.upsert(localChapterId, 1_000L, 0L)
+        projection.upsert(database, comicHistoryRecord(serverVersion = 4))
+        assertEquals(1_000L, lastRead())
+    }
+
+    @Test
+    fun `novel history records the last read time of its local chapter without marking it read`() = runTest {
+        val work = PortableWorkRef.Novel("mahoureader", ProviderOwnedKey("/series/352/barbaro"))
+        val workId = PortableIdentityV3.workId(work)
+        database.mangasQueries.insert(
+            source = 7,
+            url = "/series/352/barbaro",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Barbaro",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/series/352/ler/207118",
+            name = "Chapter 278",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 100,
+            chapterNumber = 278.0,
+            sourceOrder = 0,
+            dateFetch = 1,
+            dateUpload = 1,
+            memo = JsonObject(emptyMap()),
+        )
+        val chapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Barbaro",
+                providerLabelHint = null,
+                attemptCount = 0,
+                updatedAt = 1,
+            ),
+        )
+        fun history(chapterKey: String, novelId: String = workId) = CoreConfirmedRecord(
+            key = CoreReplicaKey(SCOPE_ID, "novel.history", "novel.history::barbaro"),
+            serverVersion = 5,
+            lamport = 5,
+            originServerId = ORIGIN_SERVER_ID,
+            record = buildJsonObject {
+                put("novelId", novelId)
+                put("chapterId", "chapter:novel:mahoureader:%2Fseries%2F352%2Fbarbaro:$chapterKey")
+                put("readAtMs", 1_790_144_696_000)
+            },
+        )
+        fun lastRead() = database.historyQueries.getByChapterUrl("/series/352/ler/207118")
+            .executeAsOneOrNull()?.history_last_read
+
+        // A record whose decoded work does not hash to its novel id is ignored.
+        projection.upsert(database, history("%2Fseries%2F352%2Fler%2F207118", novelId = "novel:other"))
+        assertNull(lastRead())
+
+        projection.upsert(database, history("%2Fseries%2F352%2Fler%2F207118"))
+        assertEquals(1_790_144_696_000, lastRead())
+        assertFalse(database.chaptersQueries.getChaptersById(chapterId).executeAsOne().read)
     }
 
     @Test
@@ -510,6 +756,66 @@ class EpigraphCoreDomainProjectionTest {
         )
 
         assertEquals(0.25, database.aethon_syncQueries.selectReaderProgress(workId).executeAsOne().progression)
+    }
+
+    @Test
+    fun `chapter state for a chapter fetched after hydration binds the local chapter of a bound work`() = runTest {
+        val mangaId = insertTrackingManga(42, "/series/165")
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/series/165/new",
+            name = "Chapter 18",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 18.0,
+            sourceOrder = 0,
+            dateFetch = 0,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/series/165"))
+        val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey("/series/165/new"))
+        val workId = PortableIdentityV3.workId(work)
+        val chapterId = PortableIdentityV3.chapterId(chapter)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = null,
+                providerLabelHint = null,
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+
+        projection.upsert(
+            database,
+            CoreConfirmedRecord(
+                key = CoreReplicaKey(COMIC_SCOPE_ID, "comic.chapter_state", "comic.chapter_state::$workId::$chapterId"),
+                serverVersion = 10,
+                lamport = 10,
+                originServerId = ORIGIN_SERVER_ID,
+                record = buildJsonObject {
+                    put("comicId", workId)
+                    put("chapterId", chapterId)
+                    put("read", true)
+                    put("updatedAtMs", 1_000)
+                    put("portableWorkRef", Json.encodeToJsonElement(work))
+                    put("portableChapterRef", Json.encodeToJsonElement(chapter))
+                },
+            ),
+        )
+
+        val binding = database.aethon_syncQueries.selectPortableChapterBinding(chapterId).executeAsOne()
+        assertEquals(PortableResolutionState.BOUND.name, binding.resolution_state)
+        assertEquals(localChapterId.toString(), binding.local_reference)
+        assertTrue(database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsOne().read)
     }
 
     @Test
@@ -739,6 +1045,52 @@ class EpigraphCoreDomainProjectionTest {
         assertEquals(
             nativeId.toString(),
             database.aethon_syncQueries.selectIdentityByEntityId(VERIFIED_CORE_ID).executeAsOne().local_reference,
+        )
+    }
+
+    @Test
+    fun `Core catalog entry adopts the same work restored natively from a backup`() = runTest {
+        database.mangasQueries.insert(
+            source = 42,
+            url = "/title/restored",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Restored title",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val nativeId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        val categoryId = insertFolder("Reading", 0)
+        database.aethon_syncQueries.insertMangaCategoryAssignment(nativeId, categoryId)
+
+        projection.upsert(database, verifiedCoreEntryRecord(providerKey = "/title/restored"))
+
+        val favorite = database.mangasQueries.findFavorites().executeAsList().single()
+        assertEquals(nativeId, favorite._id)
+        assertEquals(42, favorite.source)
+        assertEquals("/title/restored", favorite.url)
+        assertEquals(
+            nativeId.toString(),
+            database.aethon_syncQueries.selectIdentityByEntityId(VERIFIED_CORE_ID).executeAsOne().local_reference,
+        )
+        assertEquals(
+            listOf("Reading"),
+            database.categoriesQueries.findAllByMangaId(nativeId).executeAsList().map { it.name },
         )
     }
 
@@ -1022,29 +1374,31 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
-    fun `a category of each library joins the same-named folder instead of duplicating it`() = runTest {
+    fun `comic and books categories of the same name keep separate folders`() = runTest {
         val folder = insertFolder("Reading", sort = 4)
 
         projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 2))
         projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "reading", 7))
         projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", " Reading ", 9))
 
-        val folders = database.categoriesQueries.findAll().executeAsList()
-        assertEquals(listOf(folder), folders.filter { it.name.trim().equals("reading", true) }.map { it._id })
-        assertEquals(
-            mapOf("BOOK" to "book-cat-1", "MANGA" to "comic-cat-1", "NOVEL" to "novel-cat-1"),
-            folderScopes(folder),
-        )
-        // The first library to bind a purely local folder names and orders it; the others only join.
-        val joined = folders.single { it._id == folder }
+        // The local Comics folder is joined by the comic category only.
+        assertEquals(mapOf("MANGA" to "comic-cat-1"), folderScopes(folder))
+        val joined = database.categoriesQueries.findAll().executeAsList().single { it._id == folder }
         assertEquals("Reading", joined.name)
         assertEquals(2L, joined.sort)
+        // Novels and books share one Books & novels folder, never listed with Comics.
+        val booksFolder = database.aethon_syncQueries.selectCategoryIdentityByEntityId("novel-cat-1")
+            .executeAsOne().local_category_id
+        assertTrue(booksFolder != folder)
+        assertEquals(mapOf("BOOK" to "book-cat-1", "NOVEL" to "novel-cat-1"), folderScopes(booksFolder))
+        assertEquals(listOf(booksFolder), database.categoriesQueries.findAllBooks().executeAsList().map { it._id })
+        assertTrue(database.categoriesQueries.findAllComics().executeAsList().none { it._id == booksFolder })
     }
 
     @Test
     fun `an exact name wins over a different letter case`() = runTest {
-        val lower = insertFolder("reading", sort = 0)
-        val exact = insertFolder("Reading", sort = 1)
+        val lower = insertBooksFolder("reading", sort = 0)
+        val exact = insertBooksFolder("Reading", sort = 1)
 
         projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Reading", 1))
 
@@ -1054,20 +1408,49 @@ class EpigraphCoreDomainProjectionTest {
 
     @Test
     fun `a rename in one library moves the shared folder but a replay does not undo it`() = runTest {
-        val folder = insertFolder("Reading", sort = 0)
-        projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 0))
+        val folder = insertBooksFolder("Reading", sort = 0)
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", "Reading", 0))
         projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Reading", 0))
 
         projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Now reading", 0))
-        // A snapshot after re-pair replays the comic category with its old name.
-        projection.upsert(database, categoryRecord(COMIC_SCOPE_ID, "comic.category", "comic-cat-1", "Reading", 0))
+        // A snapshot after re-pair replays the book category with its old name.
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", "Reading", 0))
 
         assertEquals("Now reading", database.categoriesQueries.findAll().executeAsList().single { it._id == folder }.name)
     }
 
     @Test
+    fun `a desktop books category binds one folder in both libraries and its deletion removes it`() = runTest {
+        val shared = "books-category:shared"
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", shared, "Fila", 4))
+        projection.upsert(database, categoryRecord(SCOPE_ID, "novel.category", shared, "Fila", 4))
+        // A replay of the book record must not move the id out of the novel library.
+        projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", shared, "Fila", 4))
+
+        val folder = database.categoriesQueries.findAllBooks().executeAsList().single()._id
+        assertEquals(mapOf("BOOK" to shared, "NOVEL" to shared), folderScopes(folder))
+
+        listOf(BOOK_SCOPE_ID to "book.category", SCOPE_ID to "novel.category").forEachIndexed { index, (scope, type) ->
+            projection.delete(
+                database,
+                CoreConfirmedTombstone(
+                    key = CoreReplicaKey(scope, type, shared),
+                    serverVersion = 10L + index,
+                    lamport = 10L + index,
+                    deletedAtMs = 1_000,
+                    reasonCode = "deleted",
+                ),
+                null,
+            )
+            if (index == 0) assertEquals(mapOf("NOVEL" to shared), folderScopes(folder))
+        }
+
+        assertTrue(database.categoriesQueries.findAll().executeAsList().none { it._id == folder })
+    }
+
+    @Test
     fun `a binding left over from an earlier pairing is replaced by the same-named category`() = runTest {
-        val folder = insertFolder("Reading", sort = 0)
+        val folder = insertBooksFolder("Reading", sort = 0, scope = "BOOK")
         bindFolder(folder, "book-category-old", "BOOK", "Reading")
 
         projection.upsert(database, categoryRecord(BOOK_SCOPE_ID, "book.category", "book-cat-1", "Reading", 0))
@@ -1078,7 +1461,7 @@ class EpigraphCoreDomainProjectionTest {
 
     @Test
     fun `a live category of the same library and name stays a separate folder`() = runTest {
-        val folder = insertFolder("Reading", sort = 0)
+        val folder = insertBooksFolder("Reading", sort = 0)
         bindFolder(folder, "novel-cat-1", "NOVEL", "Reading")
         database.aethon_syncQueries.upsertCoreReplicaRecord(
             SCOPE_ID, "novel.category", "novel-cat-1", 1, 1, "{}", "0".repeat(64),
@@ -1093,7 +1476,7 @@ class EpigraphCoreDomainProjectionTest {
 
     @Test
     fun `a book category does not join a folder whose books were never published`() = runTest {
-        val folder = insertFolder("Reading", sort = 0)
+        val folder = insertBooksFolder("Reading", sort = 0, scope = "BOOK")
         val bookProjection = EpigraphCoreDomainProjection(privateBookStorageDirectory = tempDirectory)
         bookProjection.upsert(database, bookEntryRecord())
         database.local_booksQueries.insertCategory(BOOK_ID, folder)
@@ -1209,6 +1592,58 @@ class EpigraphCoreDomainProjectionTest {
         assertEquals(
             listOf(localNovel.source),
             database.aethon_syncQueries.selectNovelSourceIds().executeAsList(),
+        )
+    }
+
+    @Test
+    fun `synced novel takes the source id of the installed LNReader plugin`() = runTest {
+        val record = novelEntryRecord().let {
+            it.copy(
+                record = JsonObject(
+                    (it.record as JsonObject) + ("source" to buildJsonObject {
+                        put("pluginId", "Illusia")
+                        put("lang", "Português")
+                    }),
+                ),
+            )
+        }
+
+        projection.upsert(database, record)
+
+        val identity = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID).executeAsOne()
+        val localNovel = database.mangasQueries.findById(identity.local_reference.toLong()).executeAsOne()
+        assertEquals(NovelSource.sourceIdFor("illusia", "pt"), localNovel.source)
+        assertEquals(8409116688781432325L, localNovel.source)
+    }
+
+    @Test
+    fun `re-keyed novel placeholder joins the hydrated plugin row instead of duplicating it`() = runTest {
+        projection.upsert(database, novelEntryRecord())
+        val placeholderId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID)
+            .executeAsOne().local_reference.toLong()
+        val pluginSource = NovelSource.sourceIdFor("illusia", "pt")
+        val hydratedId = insertTrackingManga(pluginSource, "/novel/epigraph")
+        val record = novelEntryRecord().let {
+            it.copy(
+                serverVersion = 2,
+                record = JsonObject(
+                    (it.record as JsonObject) + ("source" to buildJsonObject {
+                        put("pluginId", "Illusia")
+                        put("lang", "Português")
+                    }),
+                ),
+            )
+        }
+
+        projection.upsert(database, record)
+
+        val identity = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID).executeAsOne()
+        assertEquals(hydratedId.toString(), identity.local_reference)
+        assertEquals(false, database.mangasQueries.findById(placeholderId).executeAsOne().favorite)
+        assertEquals(
+            listOf(hydratedId),
+            database.mangasQueries.findByUrlAndSource("/novel/epigraph", pluginSource).executeAsList()
+                .filter { it.favorite }.map { it._id },
         )
     }
 
@@ -1431,6 +1866,64 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `an offline folder rename that lost to a newer edit takes the newer name once superseded`() = runTest {
+        val folder = insertBooksFolder("Reading", sort = 0)
+        val store = SqlDelightCoreReplicaStore(
+            databaseHandler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO),
+            projection = projection,
+        )
+        val key = CoreReplicaKey(SCOPE_ID, "novel.category", "novel-cat-1")
+        store.transaction {
+            val record = categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Reading", 0)
+            upsertConfirmed(record)
+            projectConfirmed(record)
+        }
+        // The rename made offline is still queued when the newer desktop name arrives.
+        database.categoriesQueries.update(id = folder, name = "Phone_Old", sort = null, flags = null, mangaOrder = null)
+        database.aethon_syncQueries.enqueueMutation(
+            clientMutationId = "offline-rename",
+            deviceId = "phone-a",
+            scopeId = SCOPE_ID,
+            entityType = "novel.category",
+            entityId = "novel-cat-1",
+            operation = "merge",
+            payloadJson = "{}",
+            createdAt = 900,
+            nextAttemptAt = 900,
+        )
+        store.transaction {
+            val newer = categoryRecord(SCOPE_ID, "novel.category", "novel-cat-1", "Desk_Newer", 0)
+                .copy(serverVersion = 5, lamport = 5)
+            upsertConfirmed(newer)
+            projectConfirmed(newer)
+        }
+        assertEquals("Phone_Old", database.categoriesQueries.findAll().executeAsList().single { it._id == folder }.name)
+
+        // Core supersedes it with the version of the newer name, which is already held here.
+        database.aethon_syncQueries.upsertReceipt("phone-a", "offline-rename", null, 910)
+        database.aethon_syncQueries.upsertReplicaWait(
+            deviceId = "phone-a",
+            clientMutationId = "offline-rename",
+            scopeId = SCOPE_ID,
+            entityType = "novel.category",
+            entityId = "novel-cat-1",
+            canonicalEntityId = null,
+            resultStatus = "SUPERSEDED",
+            requiredServerVersion = 5,
+            appliedLamport = 5,
+            eventClockJson = null,
+            canonicalRecordSha256 = null,
+            receivedAt = 910,
+        )
+        database.aethon_syncQueries.reconcileReplicaWaitWithApplied("phone-a", "offline-rename")
+        database.aethon_syncQueries.deleteAcknowledgedMutation("phone-a", "offline-rename")
+        store.projectHeldRecord(key)
+
+        assertEquals(0, database.aethon_syncQueries.replicaWaitCount().executeAsOne())
+        assertEquals("Desk_Newer", database.categoriesQueries.findAll().executeAsList().single { it._id == folder }.name)
+    }
+
+    @Test
     fun `comic tracking applies idempotently to the exact bound work and tombstones remove it`() = runTest {
         val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/Manga/Tracked"))
         val workId = PortableIdentityV3.workId(work)
@@ -1484,6 +1977,33 @@ class EpigraphCoreDomainProjectionTest {
             record,
         )
         assertTrue(database.manga_syncQueries.getAllByMangaId(localMangaId).executeAsList().isEmpty())
+    }
+
+    @Test
+    fun `comic tracking of a work waiting for its extension lands on the Core-served row`() = runTest {
+        projection.upsert(database, verifiedCoreEntryRecord(providerKey = "/Manga/Tracked"))
+        val coreMangaId = database.mangasQueries.findFavorites().executeAsList().single()._id
+        val work = PortableWorkRef.Comic(DecimalSourceId("42"), ProviderOwnedKey("/Manga/Tracked"))
+        val workId = PortableIdentityV3.workId(work)
+        SqlDelightPortableBindingStore(database).upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = null,
+                resolution = PortableResolution(
+                    PortableResolutionState.REQUIRES_USER_ACTION,
+                    PortableResolutionReason.EXTENSION_NOT_FOUND,
+                ),
+                titleHint = "Tracked",
+                providerLabelHint = "Fixture",
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+
+        projection.upsert(database, trackingRecord(COMIC_SCOPE_ID, "comic.tracking", "comicId", workId, "anilist"))
+
+        assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(coreMangaId).executeAsList().single().remote_id)
     }
 
     @Test
@@ -1631,6 +2151,10 @@ class EpigraphCoreDomainProjectionTest {
         database.categoriesQueries.insert(name, sort, 0, "a")
         return database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
     }
+
+    /** A Books & novels folder: Comics folders are never joined by novel or book categories. */
+    private fun insertBooksFolder(name: String, sort: Long, scope: String = "NOVEL"): Long =
+        insertFolder(name, sort).also { database.aethon_syncQueries.upsertCategoryScope(it, scope) }
 
     private fun bindFolder(folder: Long, entityId: String, scope: String, name: String, order: Long = 0) {
         database.aethon_syncQueries.upsertCategoryIdentity(entityId, folder, scope, name, order, 1)

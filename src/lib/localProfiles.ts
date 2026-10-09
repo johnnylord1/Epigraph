@@ -114,6 +114,28 @@ function normalizeProfilePort(value: unknown): number | null {
   return numeric;
 }
 
+/** Moves the built-in profiles to the ports this build's Core manages; a debug build keeps off the installed release's. */
+export function configureBuiltInLocalServerPorts(ports: { main?: unknown; test?: unknown } | null | undefined): void {
+  for (const [profile, value] of [[MAIN_PROFILE, ports?.main], [TEST_PROFILE, ports?.test]] as const) {
+    const port = normalizeProfilePort(value);
+    if (!port) continue;
+    profile.port = port;
+    profile.serverUrl = `http://127.0.0.1:${port}`;
+    profile.title = `${profile.label} :${port}`;
+  }
+}
+
+/** The MAIN and TEST ports a debug build's Core gives Suwayomi (`DEV_LOCAL_SERVER_PORTS` in `lib.rs`). */
+export const DEV_BUILTIN_SERVER_PORTS = { main: 4577, test: 4677 } as const;
+
+/**
+ * Ports to use when the Core can't be asked (no Tauri, e.g. the Vite page opened in a plain browser). The
+ * Vite dev server keeps to the debug ports so it never shows or changes the installed release's library.
+ */
+export function fallbackBuiltInServerPorts(mode: string | undefined): { main: number; test: number } | null {
+  return mode === "development" ? { ...DEV_BUILTIN_SERVER_PORTS } : null;
+}
+
 export function isBuiltInLocalProfileId(profileId: LocalProfileId | null | undefined): boolean {
   return profileId === "main" || profileId === "test";
 }

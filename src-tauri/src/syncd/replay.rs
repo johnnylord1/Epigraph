@@ -31,6 +31,13 @@ pub async fn prepare_replay(
                 runtime.min_replayable_server_version,
             ));
         }
+        if last > runtime.current_server_version {
+            return Err(AppError::replay_cursor_ahead(
+                last,
+                runtime.current_server_version,
+                runtime.min_replayable_server_version,
+            ));
+        }
     }
 
     let allowed_scopes = filter_allowed_scopes(session, scope_filter)?;

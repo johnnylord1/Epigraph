@@ -11,10 +11,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.withContext
@@ -40,6 +42,7 @@ class InstalledExtensionRelinkObserver internal constructor(
         wakePortableSync = { scheduler.enqueue(CoreBackgroundSyncReason.OUTBOX_PENDING) },
     )
 
+    @OptIn(FlowPreview::class)
     fun start(scope: CoroutineScope): Job = combine(
         installedExtensions,
         catalogueSources,
@@ -56,6 +59,9 @@ class InstalledExtensionRelinkObserver internal constructor(
         )
     }
         .distinctUntilChanged()
+        // "Install all" lands a dozen extensions within seconds; each one relinked the library and
+        // woke a full Core sync, saturating the device until the batch was done. Settle first.
+        .debounce(SETTLE_MS)
         .onEach {
             try {
                 withContext(dispatcher) {
@@ -69,6 +75,10 @@ class InstalledExtensionRelinkObserver internal constructor(
             }
         }
         .launchIn(scope)
+
+    private companion object {
+        const val SETTLE_MS = 1_500L
+    }
 }
 
 private data class InstalledExtensionIdentity(

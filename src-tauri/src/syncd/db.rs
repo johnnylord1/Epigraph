@@ -74,6 +74,7 @@ struct PairedDeviceCatalogRow {
     platform: String,
     profile_id: String,
     last_seen_at_ms: Option<i64>,
+    inactivity_expires_at_ms: i64,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize)]
@@ -339,7 +340,53 @@ pub async fn connect(config: &SyncdConfig) -> anyhow::Result<sqlx::SqlitePool> {
         .run(&pool)
         .await
         .context("failed to run syncd migrations")?;
+    preserve_change_log_sequence(&pool)
+        .await
+        .context("failed to preserve the change log sequence")?;
     Ok(pool)
+}
+
+/// `server_version` is the `change_log` AUTOINCREMENT key. Migrations that add an entity type rebuild
+/// `change_log` (its CHECK lists the types), and a rebuilt table restarts its sequence at the highest
+/// copied row: after a fully pruned log that is 1, below every cursor clients hold, so they would drop
+/// every new change as already seen. The sequence must never fall below the version already published.
+pub(crate) async fn preserve_change_log_sequence(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
+    let mut tx = begin_write(pool).await?;
+    let published: Option<i64> = sqlx::query_scalar(
+        "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(published) = published.filter(|version| *version > 0) else {
+        tx.commit().await?;
+        return Ok(());
+    };
+    let max_row: Option<i64> = sqlx::query_scalar("SELECT MAX(server_version) FROM change_log")
+        .fetch_one(&mut *tx)
+        .await?;
+    let floor = published.max(max_row.unwrap_or(0));
+    let updated = sqlx::query(
+        "UPDATE sqlite_sequence SET seq = ? WHERE name = 'change_log' AND seq < ?",
+    )
+    .bind(floor)
+    .bind(floor)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        sqlx::query(
+            r#"
+            INSERT INTO sqlite_sequence (name, seq)
+            SELECT 'change_log', ?
+            WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'change_log')
+            "#,
+        )
+        .bind(floor)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The migration checksum hashes the script bytes as they were in the build checkout, so a build from a CRLF
@@ -855,6 +902,8 @@ pub async fn load_scope_snapshot(
                 NovelCategoryAssignmentRecord::from(row),
             )?;
         }
+        push_tracking_snapshot_entities_in_tx(&mut tx, &mut entities, scope_id, "novel.tracking")
+            .await?;
     } else if scope_id.starts_with("comics:profile:") {
         let rows = sqlx::query_as::<_, ComicSyncStateRow>(
             r#"
@@ -916,6 +965,8 @@ pub async fn load_scope_snapshot(
                 ComicPageBookmarkRecord::from(row),
             )?;
         }
+        push_tracking_snapshot_entities_in_tx(&mut tx, &mut entities, scope_id, "comic.tracking")
+            .await?;
     } else {
         bail!("unsupported snapshot scope: {scope_id}");
     }
@@ -1617,7 +1668,8 @@ pub async fn list_paired_devices(
             trusted.device_name,
             trusted.platform,
             tokens.profile_id,
-            MAX(tokens.last_seen_at_ms) AS last_seen_at_ms
+            MAX(tokens.last_seen_at_ms) AS last_seen_at_ms,
+            MAX(tokens.inactivity_expires_at_ms) AS inactivity_expires_at_ms
         FROM trusted_devices AS trusted
         INNER JOIN paired_device_tokens AS tokens
             ON tokens.device_id = trusted.device_id
@@ -1635,6 +1687,7 @@ pub async fn list_paired_devices(
     .fetch_all(pool)
     .await?;
 
+    let now_ms = now_ms();
     let mut devices = Vec::with_capacity(rows.len());
     for row in rows {
         let granted_scopes = sqlx::query_scalar::<_, String>(
@@ -1667,9 +1720,42 @@ pub async fn list_paired_devices(
             profile_id: row.profile_id,
             granted_scopes,
             last_seen_at_ms: row.last_seen_at_ms,
+            inactive: row.inactivity_expires_at_ms < now_ms,
         });
     }
     Ok(devices)
+}
+
+/// Revokes every paired token of a device and its trust, so its next request is rejected and it
+/// must pair again. Local authority tokens are not paired devices and stay untouched.
+pub async fn revoke_paired_device(pool: &sqlx::SqlitePool, device_id: &str) -> anyhow::Result<bool> {
+    let now_ms = now_ms();
+    let mut tx = begin_write(pool).await?;
+    let revoked = sqlx::query(
+        r#"
+        UPDATE paired_device_tokens
+        SET revoked_at_ms = ?
+        WHERE device_id = ?
+          AND revoked_at_ms IS NULL
+          AND granted_via != 'local-authority'
+        "#,
+    )
+    .bind(now_ms)
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if revoked > 0 {
+        sqlx::query(
+            "UPDATE trusted_devices SET revoked_at_ms = ? WHERE device_id = ? AND revoked_at_ms IS NULL",
+        )
+        .bind(now_ms)
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(revoked > 0)
 }
 
 pub async fn update_paired_device_granted_scopes(
@@ -1852,6 +1938,10 @@ pub async fn fetch_replay_changes(
     Ok(rows)
 }
 
+/// Ninety days: three times the default change-log replay window.
+pub(crate) const MUTATION_RECEIPT_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+pub(crate) const STALE_PAIRED_DEVICE_RETENTION_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+
 pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow::Result<()> {
     let mut tx = begin_write(pool).await?;
 
@@ -1863,6 +1953,49 @@ pub async fn prune_expired_rows(pool: &sqlx::SqlitePool, now_ms: i64) -> anyhow:
         .bind(now_ms)
         .execute(&mut *tx)
         .await?;
+    // Receipts make a retried mutation idempotent. A phone retries within hours or days; after
+    // MUTATION_RECEIPT_RETENTION_MS a resend is decided again by the entity's event clock, which
+    // supersedes stale writes on its own. Without this bound the table grows with every write.
+    sqlx::query("DELETE FROM mutation_receipts WHERE created_at_ms < ?")
+        .bind(now_ms.saturating_sub(MUTATION_RECEIPT_RETENTION_MS))
+        .execute(&mut *tx)
+        .await?;
+    // A reinstalled phone pairs as a new device and leaves the old record behind. Its tokens stop
+    // authenticating after the inactivity window; past STALE_PAIRED_DEVICE_RETENTION_MS without a
+    // request the device is revoked so it leaves the paired device list. Pairing again restores it.
+    let stale_before_ms = now_ms.saturating_sub(STALE_PAIRED_DEVICE_RETENTION_MS);
+    sqlx::query(
+        r#"
+        UPDATE trusted_devices
+        SET revoked_at_ms = ?
+        WHERE revoked_at_ms IS NULL
+          AND device_id IN (
+            SELECT device_id
+            FROM paired_device_tokens
+            WHERE revoked_at_ms IS NULL
+              AND granted_via != 'local-authority'
+            GROUP BY device_id
+            HAVING MAX(last_seen_at_ms) < ?
+          )
+        "#,
+    )
+    .bind(now_ms)
+    .bind(stale_before_ms)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"
+        UPDATE paired_device_tokens
+        SET revoked_at_ms = ?
+        WHERE revoked_at_ms IS NULL
+          AND granted_via != 'local-authority'
+          AND device_id IN (SELECT device_id FROM trusted_devices WHERE revoked_at_ms = ?)
+        "#,
+    )
+    .bind(now_ms)
+    .bind(now_ms)
+    .execute(&mut *tx)
+    .await?;
 
     let current_server_version: i64 = sqlx::query_scalar(
         "SELECT current_server_version FROM server_runtime WHERE singleton_id = 1",
@@ -2163,8 +2296,9 @@ pub async fn apply_book_category_mutation(
     entity_id: &str,
     patch: &BookCategoryPatch,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, BookCategoryRow>(
         r#"SELECT scope_id, category_id, name, sort_order, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
@@ -2174,11 +2308,29 @@ pub async fn apply_book_category_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
+    let current_server_version = current.as_ref().map(|row| row.record_server_version);
+    let current = current.map(BookCategoryRecord::from);
+    if let Some(outcome) = superseded_category_outcome_in_tx(
+        &mut tx,
+        scope_id,
+        "book.category",
+        entity_id,
+        event_clock,
+        session,
+        current.as_ref().map(serde_json::to_value).transpose()?,
+        current.as_ref().map(|record| record.record_lamport),
+        current_server_version,
+    )
+    .await?
+    {
+        tx.commit().await?;
+        return Ok(outcome);
+    }
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
     }
-    let merged = merge_book_category(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let merged = merge_book_category(current, entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
         &mut tx,
@@ -2218,8 +2370,20 @@ pub async fn apply_book_category_mutation(
     if tombstone.is_some() {
         delete_tombstone_in_tx(&mut tx, scope_id, "book.category", entity_id).await?;
     }
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "book.category",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
     tx.commit().await?;
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -2233,7 +2397,7 @@ pub async fn apply_book_category_mutation(
         },
         record,
         applied_lamport: merged.record_lamport,
-    })
+    }))
 }
 
 pub async fn delete_book_category_mutation(
@@ -2242,9 +2406,36 @@ pub async fn delete_book_category_mutation(
     scope_id: &str,
     entity_id: &str,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
+    let current = sqlx::query_as::<_, BookCategoryRow>(
+        r#"SELECT scope_id, category_id, name, sort_order, record_updated_at_ms, record_updated_by_device_id, record_lamport, record_server_version
+        FROM book_categories WHERE scope_id = ? AND category_id = ?"#,
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current_server_version = current.as_ref().map(|row| row.record_server_version);
+    let current = current.map(BookCategoryRecord::from);
+    if let Some(outcome) = superseded_category_outcome_in_tx(
+        &mut tx,
+        scope_id,
+        "book.category",
+        entity_id,
+        event_clock,
+        session,
+        current.as_ref().map(serde_json::to_value).transpose()?,
+        current.as_ref().map(|record| record.record_lamport),
+        current_server_version,
+    )
+    .await?
+    {
+        tx.commit().await?;
+        return Ok(outcome);
+    }
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "book.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
@@ -2285,8 +2476,20 @@ pub async fn delete_book_category_mutation(
         "book_category_deleted",
     )
     .await?;
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "book.category",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
     tx.commit().await?;
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -2300,7 +2503,7 @@ pub async fn delete_book_category_mutation(
         },
         record: Value::Null,
         applied_lamport,
-    })
+    }))
 }
 
 pub async fn apply_book_category_assignment_mutation(
@@ -3973,8 +4176,9 @@ pub async fn apply_novel_category_mutation(
     entity_id: &str,
     patch: &NovelCategoryPatch,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, NovelCategoryRow>(
         "SELECT * FROM novel_categories WHERE scope_id = ? AND category_id = ?",
@@ -3983,11 +4187,29 @@ pub async fn apply_novel_category_mutation(
     .bind(entity_id)
     .fetch_optional(&mut *tx)
     .await?;
+    let current_server_version = current.as_ref().map(|row| row.record_server_version);
+    let current = current.map(NovelCategoryRecord::from);
+    if let Some(outcome) = superseded_category_outcome_in_tx(
+        &mut tx,
+        scope_id,
+        "novel.category",
+        entity_id,
+        event_clock,
+        session,
+        current.as_ref().map(serde_json::to_value).transpose()?,
+        current.as_ref().map(|record| record.record_lamport),
+        current_server_version,
+    )
+    .await?
+    {
+        tx.commit().await?;
+        return Ok(outcome);
+    }
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
     }
-    let merged = merge_novel_category(current.map(Into::into), entity_id, patch, client_lamport)?;
+    let merged = merge_novel_category(current, entity_id, patch, client_lamport)?;
     let record = serde_json::to_value(&merged)?;
     let (server_version, applied_at_ms) = append_change_log_in_tx(
         &mut tx,
@@ -4028,8 +4250,20 @@ pub async fn apply_novel_category_mutation(
     if tombstone.is_some() {
         delete_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
     }
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "novel.category",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
     tx.commit().await?;
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -4043,7 +4277,7 @@ pub async fn apply_novel_category_mutation(
         },
         record,
         applied_lamport: merged.record_lamport,
-    })
+    }))
 }
 
 pub async fn delete_novel_category_mutation(
@@ -4052,9 +4286,35 @@ pub async fn delete_novel_category_mutation(
     scope_id: &str,
     entity_id: &str,
     client_lamport: i64,
+    event_clock: Option<&EventClock>,
     retention_window: Duration,
-) -> anyhow::Result<MutationWriteOutcome> {
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
+    let current = sqlx::query_as::<_, NovelCategoryRow>(
+        "SELECT * FROM novel_categories WHERE scope_id = ? AND category_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current_server_version = current.as_ref().map(|row| row.record_server_version);
+    let current = current.map(NovelCategoryRecord::from);
+    if let Some(outcome) = superseded_category_outcome_in_tx(
+        &mut tx,
+        scope_id,
+        "novel.category",
+        entity_id,
+        event_clock,
+        session,
+        current.as_ref().map(serde_json::to_value).transpose()?,
+        current.as_ref().map(|record| record.record_lamport),
+        current_server_version,
+    )
+    .await?
+    {
+        tx.commit().await?;
+        return Ok(outcome);
+    }
     let tombstone = load_tombstone_in_tx(&mut tx, scope_id, "novel.category", entity_id).await?;
     if let Some(tombstone) = tombstone.as_ref() {
         ensure_not_stale_novel_category_against_tombstone(client_lamport, tombstone)?;
@@ -4106,8 +4366,20 @@ pub async fn delete_novel_category_mutation(
         "novel_category_deleted",
     )
     .await?;
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            "novel.category",
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
     tx.commit().await?;
-    Ok(MutationWriteOutcome {
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
         envelope: ChangeEnvelope {
             server_version,
             scope_id: scope_id.to_string(),
@@ -4121,7 +4393,7 @@ pub async fn delete_novel_category_mutation(
         },
         record: Value::Null,
         applied_lamport,
-    })
+    }))
 }
 
 pub async fn apply_novel_category_assignment_mutation(
@@ -4296,6 +4568,41 @@ pub async fn delete_novel_category_assignment_mutation(
     })
 }
 
+/// Books & novels folders are newest-wins by edit time: an edit made offline and replayed after a
+/// newer edit from another device keeps the newer folder value instead of the later arrival.
+#[allow(clippy::too_many_arguments)]
+async fn superseded_category_outcome_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    event_clock: Option<&EventClock>,
+    session: &AuthenticatedSession,
+    current_record: Option<Value>,
+    current_lamport: Option<i64>,
+    current_server_version: Option<i64>,
+) -> anyhow::Result<Option<CausalMutationWriteOutcome>> {
+    let Some(winning_clock) = superseding_event_clock_in_tx(
+        tx,
+        scope_id,
+        entity_type,
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let server_version = superseded_server_version_in_tx(tx, current_server_version).await?;
+    Ok(Some(CausalMutationWriteOutcome::Superseded {
+        record: current_record.unwrap_or(Value::Null),
+        winning_clock,
+        server_version,
+        applied_lamport: current_lamport.unwrap_or_default(),
+    }))
+}
+
 async fn superseding_event_clock_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     scope_id: &str,
@@ -4381,6 +4688,18 @@ async fn upsert_event_clock_in_tx(
     Ok(())
 }
 
+/// A superseded write reports the version of the record that won: replicas wait for that version
+/// of this entity, and no later version of it may ever come.
+async fn superseded_server_version_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    winning_record_server_version: Option<i64>,
+) -> anyhow::Result<i64> {
+    match winning_record_server_version {
+        Some(server_version) => Ok(server_version),
+        None => current_server_version_in_tx(tx).await,
+    }
+}
+
 async fn current_server_version_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> anyhow::Result<i64> {
@@ -4444,7 +4763,11 @@ pub async fn apply_book_progress_mutation(
     )
     .await?
     {
-        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
         let record = current
             .clone()
             .map(BookProgressRecord::from)
@@ -4717,7 +5040,11 @@ pub async fn apply_novel_progress_mutation(
     )
     .await?
     {
-        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
         let record = current
             .clone()
             .map(NovelProgressRecord::from)
@@ -5687,7 +6014,11 @@ async fn apply_comic_sync_state_mutation_inner(
     )
     .await?
     {
-        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
         let record = current
             .as_ref()
             .map(|row| serde_json::from_str(&row.record_json))
@@ -5806,6 +6137,58 @@ pub async fn delete_comic_sync_state_mutation(
     event_clock: Option<&EventClock>,
     retention_window: Duration,
 ) -> anyhow::Result<CausalMutationWriteOutcome> {
+    delete_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        client_lamport,
+        event_clock,
+        retention_window,
+        true,
+    )
+    .await
+}
+
+/// Deletes a record the desktop already removed from Suwayomi. Unlike a client delete it does
+/// not enqueue a Suwayomi projection, because Suwayomi is the source of this change.
+pub async fn delete_mirrored_comic_sync_state_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    delete_comic_sync_state_mutation_inner(
+        pool,
+        session,
+        scope_id,
+        entity_type,
+        entity_id,
+        client_lamport,
+        event_clock,
+        retention_window,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn delete_comic_sync_state_mutation_inner(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+    enqueue_projection: bool,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
     let mut tx = begin_write(pool).await?;
     let current = sqlx::query_as::<_, ComicSyncStateRow>(
         r#"
@@ -5829,7 +6212,11 @@ pub async fn delete_comic_sync_state_mutation(
     )
     .await?
     {
-        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
         let record = current
             .as_ref()
             .map(|row| serde_json::from_str(&row.record_json))
@@ -5899,8 +6286,13 @@ pub async fn delete_comic_sync_state_mutation(
         "client_delete",
     )
     .await?;
-    let projection_record = previous_record
-        .or_else(|| comic_delete_projection_record_from_id(entity_type, entity_id));
+    let projection_record = match previous_record {
+        _ if !enqueue_projection => None,
+        Some(record) => Some(record),
+        None => portable_comic_entry_delete_record_in_tx(&mut tx, scope_id, entity_type, entity_id)
+            .await?
+            .or_else(|| comic_delete_projection_record_from_id(entity_type, entity_id)),
+    };
     if let Some(record) = projection_record.as_ref() {
         enqueue_comic_state_projection_in_tx(
             &mut tx,
@@ -5944,14 +6336,485 @@ pub async fn delete_comic_sync_state_mutation(
     }))
 }
 
+#[derive(Debug, Clone, FromRow)]
+#[allow(dead_code)]
+pub struct TrackingRecordRow {
+    pub entity_type: String,
+    pub entity_id: String,
+    pub work_id: String,
+    pub tracker_key: String,
+    pub record_json: String,
+    pub record_updated_by_device_id: String,
+    pub record_lamport: i64,
+    pub record_server_version: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct TrackingTombstoneRow {
+    pub entity_id: String,
+    pub server_version: i64,
+    #[allow(dead_code)]
+    pub deleted_by_device_id: String,
+}
+
+#[derive(Debug, Clone, FromRow, PartialEq, Eq)]
+pub struct SuwayomiTrackingMirrorStateRow {
+    pub entity_id: String,
+    pub suwayomi_fingerprint: Option<String>,
+    pub core_server_version: i64,
+}
+
+async fn load_tracking_record_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> anyhow::Result<Option<TrackingRecordRow>> {
+    Ok(sqlx::query_as::<_, TrackingRecordRow>(
+        r#"
+        SELECT entity_type, entity_id, work_id, tracker_key, record_json,
+               record_updated_by_device_id, record_lamport, record_server_version
+        FROM tracking_records
+        WHERE scope_id = ? AND entity_type = ? AND entity_id = ?
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+fn superseded_tracking_outcome(
+    current: Option<&TrackingRecordRow>,
+    winning_clock: EventClock,
+    server_version: i64,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let record = current
+        .map(|row| serde_json::from_str(&row.record_json))
+        .transpose()?
+        .unwrap_or(Value::Null);
+    Ok(CausalMutationWriteOutcome::Superseded {
+        record,
+        winning_clock,
+        server_version,
+        applied_lamport: current.map(|row| row.record_lamport).unwrap_or_default(),
+    })
+}
+
+/// Stores a full-state tracker binding (`comic.tracking` / `novel.tracking`).
+///
+/// The record replaces the previous one as a whole.  Causal clocks decide
+/// concurrent writers.  Mobile Lamport counters are small device-local values,
+/// so a tombstone written by another clock domain (for example the Suwayomi
+/// mirror) must not block a causally newer re-bind; the Lamport tombstone
+/// guard only applies to legacy writes without an event clock.
+#[allow(clippy::too_many_arguments)]
+pub async fn apply_tracking_record_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    work_id: &str,
+    tracker_key: &str,
+    record: &Value,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut tx = begin_write(pool).await?;
+    let current = load_tracking_record_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        entity_type,
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
+        let outcome = superseded_tracking_outcome(current.as_ref(), winning_clock, server_version)?;
+        tx.commit().await?;
+        return Ok(outcome);
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let (Some(tombstone), None) = (tombstone.as_ref(), event_clock) {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|row| next_lamport(row.record_lamport, client_lamport))
+        .or_else(|| {
+            tombstone
+                .as_ref()
+                .map(|row| next_lamport(row.lamport, client_lamport))
+        })
+        .unwrap_or(client_lamport);
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        "merge",
+        applied_lamport,
+        session,
+        Some(record),
+        retention_window,
+    )
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO tracking_records (
+            scope_id, entity_type, entity_id, work_id, tracker_key, record_json,
+            record_updated_at_ms, record_updated_by_device_id, record_lamport,
+            record_server_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(scope_id, entity_type, entity_id) DO UPDATE SET
+            work_id = excluded.work_id,
+            tracker_key = excluded.tracker_key,
+            record_json = excluded.record_json,
+            record_updated_at_ms = excluded.record_updated_at_ms,
+            record_updated_by_device_id = excluded.record_updated_by_device_id,
+            record_lamport = excluded.record_lamport,
+            record_server_version = excluded.record_server_version
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .bind(work_id)
+    .bind(tracker_key)
+    .bind(serde_json::to_string(record)?)
+    .bind(applied_at_ms)
+    .bind(&session.device_id)
+    .bind(applied_lamport)
+    .bind(server_version)
+    .execute(&mut *tx)
+    .await?;
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    if tombstone.is_some() {
+        delete_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    }
+    tx.commit().await?;
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "merge".to_string(),
+            lamport: applied_lamport,
+            patch: Some(record.clone()),
+            applied_at_ms,
+        },
+        record: record.clone(),
+        applied_lamport,
+    }))
+}
+
+/// Unbinds a tracker: removes the stored binding and records a tombstone.
+#[allow(clippy::too_many_arguments)]
+pub async fn delete_tracking_record_mutation(
+    pool: &sqlx::SqlitePool,
+    session: &AuthenticatedSession,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+    client_lamport: i64,
+    event_clock: Option<&EventClock>,
+    retention_window: Duration,
+) -> anyhow::Result<CausalMutationWriteOutcome> {
+    let mut tx = begin_write(pool).await?;
+    let current = load_tracking_record_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let Some(winning_clock) = superseding_event_clock_in_tx(
+        &mut tx,
+        scope_id,
+        entity_type,
+        entity_id,
+        event_clock,
+        &session.device_id,
+    )
+    .await?
+    {
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
+        let outcome = superseded_tracking_outcome(current.as_ref(), winning_clock, server_version)?;
+        tx.commit().await?;
+        return Ok(outcome);
+    }
+    let tombstone = load_tombstone_in_tx(&mut tx, scope_id, entity_type, entity_id).await?;
+    if let (Some(tombstone), None) = (tombstone.as_ref(), event_clock) {
+        ensure_not_stale_against_tombstone(client_lamport, tombstone)?;
+    }
+    let applied_lamport = current
+        .as_ref()
+        .map(|row| next_lamport(row.record_lamport, client_lamport))
+        .or_else(|| {
+            tombstone
+                .as_ref()
+                .map(|row| next_lamport(row.lamport, client_lamport))
+        })
+        .unwrap_or(client_lamport);
+    sqlx::query(
+        "DELETE FROM tracking_records WHERE scope_id = ? AND entity_type = ? AND entity_id = ?",
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .bind(entity_id)
+    .execute(&mut *tx)
+    .await?;
+    let (server_version, applied_at_ms) = append_change_log_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        "delete",
+        applied_lamport,
+        session,
+        None,
+        retention_window,
+    )
+    .await?;
+    upsert_tombstone_in_tx(
+        &mut tx,
+        scope_id,
+        Some(session.profile_id.as_str()),
+        entity_type,
+        entity_id,
+        &session.device_id,
+        applied_lamport,
+        server_version,
+        applied_at_ms,
+        retention_window,
+        "client_delete",
+    )
+    .await?;
+    if let Some(clock) = event_clock {
+        upsert_event_clock_in_tx(
+            &mut tx,
+            scope_id,
+            entity_type,
+            entity_id,
+            clock,
+            &session.device_id,
+            applied_at_ms,
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(CausalMutationWriteOutcome::Applied(MutationWriteOutcome {
+        envelope: ChangeEnvelope {
+            server_version,
+            scope_id: scope_id.to_string(),
+            profile_id: Some(session.profile_id.clone()),
+            entity_type: entity_type.to_string(),
+            entity_id: entity_id.to_string(),
+            op: "delete".to_string(),
+            lamport: applied_lamport,
+            patch: None,
+            applied_at_ms,
+        },
+        record: Value::Null,
+        applied_lamport,
+    }))
+}
+
+pub async fn list_tracking_records(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    entity_type: &str,
+) -> anyhow::Result<Vec<TrackingRecordRow>> {
+    Ok(sqlx::query_as::<_, TrackingRecordRow>(
+        r#"
+        SELECT entity_type, entity_id, work_id, tracker_key, record_json,
+               record_updated_by_device_id, record_lamport, record_server_version
+        FROM tracking_records
+        WHERE scope_id = ? AND entity_type = ?
+        ORDER BY entity_id
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn list_tracking_tombstones(
+    pool: &sqlx::SqlitePool,
+    scope_id: &str,
+    entity_type: &str,
+) -> anyhow::Result<Vec<TrackingTombstoneRow>> {
+    Ok(sqlx::query_as::<_, TrackingTombstoneRow>(
+        r#"
+        SELECT entity_id, server_version, deleted_by_device_id
+        FROM tombstones
+        WHERE scope_id = ? AND entity_type = ?
+        ORDER BY entity_id
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn list_suwayomi_tracking_mirror_state(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+) -> anyhow::Result<Vec<SuwayomiTrackingMirrorStateRow>> {
+    Ok(sqlx::query_as::<_, SuwayomiTrackingMirrorStateRow>(
+        r#"
+        SELECT entity_id, suwayomi_fingerprint, core_server_version
+        FROM suwayomi_tracking_mirror_state
+        WHERE profile_id = ?
+        "#,
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn upsert_suwayomi_tracking_mirror_state(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    entity_id: &str,
+    suwayomi_fingerprint: Option<&str>,
+    core_server_version: i64,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO suwayomi_tracking_mirror_state (
+            profile_id, entity_id, suwayomi_fingerprint, core_server_version, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, entity_id) DO UPDATE SET
+            suwayomi_fingerprint = excluded.suwayomi_fingerprint,
+            core_server_version = excluded.core_server_version,
+            updated_at_ms = excluded.updated_at_ms
+        "#,
+    )
+    .bind(profile_id)
+    .bind(entity_id)
+    .bind(suwayomi_fingerprint)
+    .bind(core_server_version)
+    .bind(now_ms())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_suwayomi_tracking_mirror_state(
+    pool: &sqlx::SqlitePool,
+    profile_id: &str,
+    entity_id: &str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "DELETE FROM suwayomi_tracking_mirror_state WHERE profile_id = ? AND entity_id = ?",
+    )
+    .bind(profile_id)
+    .bind(entity_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn push_tracking_snapshot_entities_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    entities: &mut Vec<SnapshotEntity>,
+    scope_id: &str,
+    entity_type: &str,
+) -> anyhow::Result<()> {
+    let rows = sqlx::query_as::<_, TrackingRecordRow>(
+        r#"
+        SELECT entity_type, entity_id, work_id, tracker_key, record_json,
+               record_updated_by_device_id, record_lamport, record_server_version
+        FROM tracking_records
+        WHERE scope_id = ? AND entity_type = ?
+        ORDER BY entity_id
+        "#,
+    )
+    .bind(scope_id)
+    .bind(entity_type)
+    .fetch_all(&mut **tx)
+    .await?;
+    for row in rows {
+        let record: Value = serde_json::from_str(&row.record_json)?;
+        push_snapshot_entity(
+            entities,
+            entity_type,
+            row.entity_id,
+            row.record_server_version,
+            row.record_lamport,
+            record,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) const COMIC_CATEGORY_ASSIGNMENT_ID_PREFIX: &str = "comic-category-assignment:";
 /// Outbox operation for an assignment delete whose comic/category pair is only known by
 /// its hashed id; the projection worker resolves the pair against Suwayomi.
 pub(crate) const REMOVE_COMIC_CATEGORY_ASSIGNMENT_OPERATION: &str =
     "RemoveComicCategoryAssignment";
+/// Projection variable carrying a portable comic's title hint; removed before Suwayomi sees it.
+pub(crate) const PORTABLE_TITLE_HINT_FIELD: &str = "portableTitleHint";
 
 /// `comic_sync_state` is only written by client merges, so deleting an item that already
 /// existed in Suwayomi has no stored record. Rebuild the projection input from the id.
+/// Entries restored from a backup on both devices were never published, so their delete arrives
+/// without a stored record. The portable binding still names the Suwayomi manga to project.
+async fn portable_comic_entry_delete_record_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    scope_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> anyhow::Result<Option<Value>> {
+    if entity_type != "comic.entry" {
+        return Ok(None);
+    }
+    let Some(profile_id) = scope_id.strip_prefix("comics:profile:") else {
+        return Ok(None);
+    };
+    let binding = sqlx::query_as::<_, PortableWorkBindingRow>(
+        "SELECT * FROM portable_work_bindings WHERE profile_id = ? AND portable_id = ?",
+    )
+    .bind(profile_id)
+    .bind(entity_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(work) = binding
+        .filter(|binding| binding.resolution_state == "BOUND")
+        .and_then(|binding| binding.portable_ref().ok())
+        .filter(|work| matches!(work, PortableWorkRefV3::Comic { .. }))
+    else {
+        return Ok(None);
+    };
+    Ok(Some(json!({ "comicId": entity_id, "portableWorkRef": work })))
+}
+
 fn comic_delete_projection_record_from_id(entity_type: &str, entity_id: &str) -> Option<Value> {
     match entity_type {
         "comic.entry" => Some(json!({ "comicId": entity_id })),
@@ -5983,7 +6846,11 @@ async fn enqueue_comic_state_projection_in_tx(
                 .get("portableWorkRef")
                 .filter(|value| !value.is_null())
             {
-                json!({ "portableWorkRef": work, "inLibrary": !deleting })
+                let mut variables = json!({ "portableWorkRef": work, "inLibrary": !deleting });
+                if let Some(title) = record.get("titleHint").filter(|value| value.is_string()) {
+                    variables[PORTABLE_TITLE_HINT_FIELD] = title.clone();
+                }
+                variables
             } else {
                 let Some(manga_id) =
                     suwayomi_numeric_id_for_profile(comic_id, profile_id, ":manga:")
@@ -6139,6 +7006,45 @@ async fn enqueue_comic_projections_in_tx(
     if projections.is_empty() {
         return Ok(());
     }
+    let mut projections = projections;
+    // Chapter progress records are patches whose null fields mean "unchanged", so a superseded
+    // projection's values still apply unless the newer record sets them; otherwise a read flag
+    // followed quickly by a page-only update would never reach Suwayomi.
+    if projections
+        .iter()
+        .any(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
+    {
+        let superseded: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT variables_json FROM suwayomi_projection_outbox
+            WHERE profile_id = ? AND entity_type = ? AND entity_id = ?
+              AND operation_name = 'UpdateChaptersProgress'
+              AND status IN ('pending', 'retry', 'blocked') AND source_server_version < ?
+            ORDER BY source_server_version DESC
+            "#,
+        )
+        .bind(profile_id)
+        .bind(entity_type)
+        .bind(entity_id)
+        .bind(server_version)
+        .fetch_all(&mut **tx)
+        .await?;
+        for older in &superseded {
+            let older: Value = serde_json::from_str(older)?;
+            for (_, variables) in projections
+                .iter_mut()
+                .filter(|(operation_name, _)| *operation_name == "UpdateChaptersProgress")
+            {
+                for key in ["isRead", "isBookmarked", "lastPageRead"] {
+                    if variables.get(key).is_none_or(Value::is_null) {
+                        if let Some(value) = older.get(key).filter(|value| !value.is_null()) {
+                            variables[key] = value.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
     sqlx::query(
         r#"
         DELETE FROM suwayomi_projection_outbox
@@ -6216,7 +7122,11 @@ pub async fn apply_comic_history_mutation(
     )
     .await?
     {
-        let server_version = current_server_version_in_tx(&mut tx).await?;
+        let server_version = superseded_server_version_in_tx(
+            &mut tx,
+            current.as_ref().map(|row| row.record_server_version),
+        )
+        .await?;
         let record = current
             .clone()
             .map(ComicHistoryRecord::from)
@@ -9189,6 +10099,172 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn change_log_sequence_never_restarts_below_the_published_version() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let mut last = 0;
+        for index in 0..3 {
+            last = append_change_log_entry(
+                &pool,
+                "books:global",
+                None,
+                "book.progress",
+                &format!("book-{index}"),
+                "merge",
+                index + 1,
+                "device-1",
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap()
+            .server_version;
+        }
+        // A fully pruned log rebuilt the way the entity-type migrations rebuild it.
+        sqlx::raw_sql(
+            r#"
+            DELETE FROM change_log;
+            DELETE FROM sqlite_sequence WHERE name = 'change_log';
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        drop(pool);
+
+        let pool = connect(&config).await.unwrap();
+        let next = append_change_log_entry(
+            &pool,
+            "books:global",
+            None,
+            "book.progress",
+            "book-after-rebuild",
+            "merge",
+            10,
+            "device-1",
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+        assert!(
+            next.server_version > last,
+            "server_version restarted at {} after publishing {last}",
+            next.server_version
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_drops_mutation_receipts_past_their_retention() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let now = now_ms();
+        for (id, created_at) in [
+            ("old", now - MUTATION_RECEIPT_RETENTION_MS - 1),
+            ("fresh", now - 1_000),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO mutation_receipts (
+                    device_id, client_mutation_id, mutation_hash, mutation_json, result_json,
+                    applied_server_version, created_at_ms
+                ) VALUES ('device-1', ?, ?, '{}', '{}', NULL, ?)
+                "#,
+            )
+            .bind(id)
+            .bind("a".repeat(64))
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        prune_expired_rows(&pool, now).await.unwrap();
+
+        let remaining: Vec<String> = sqlx::query_scalar(
+            "SELECT client_mutation_id FROM mutation_receipts ORDER BY client_mutation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, vec!["fresh".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn prune_revokes_paired_devices_idle_past_retention_and_flags_inactive_ones() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let now = now_ms();
+        let day = 24 * 60 * 60 * 1000;
+        // (device, last request, token inactivity expiry)
+        for (device_id, last_seen, expires) in [
+            ("abandoned", now - STALE_PAIRED_DEVICE_RETENTION_MS - day, now - 60 * day),
+            ("idle", now - 40 * day, now - 10 * day),
+            ("active", now - day, now + 29 * day),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO trusted_devices (
+                    device_id, trusted_host_id, device_name, platform,
+                    first_trusted_at_ms, last_seen_at_ms, revoked_at_ms
+                ) VALUES (?, 'syncd-local-host', 'Pixel', 'android', ?, ?, NULL)
+                "#,
+            )
+            .bind(device_id)
+            .bind(last_seen)
+            .bind(last_seen)
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                r#"
+                INSERT INTO paired_device_tokens (
+                    token_id, device_id, profile_id, token_hash, issued_at_ms,
+                    last_seen_at_ms, inactivity_expires_at_ms, revoked_at_ms, granted_via
+                ) VALUES (?, ?, 'main', ?, ?, ?, ?, NULL, 'qr')
+                "#,
+            )
+            .bind(format!("token-{device_id}"))
+            .bind(device_id)
+            .bind(format!("hash-{device_id}"))
+            .bind(last_seen)
+            .bind(last_seen)
+            .bind(expires)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        prune_expired_rows(&pool, now).await.unwrap();
+
+        let devices = list_paired_devices(&pool).await.unwrap();
+        let listed: Vec<(&str, bool)> = devices
+            .iter()
+            .map(|device| (device.device_id.as_str(), device.inactive))
+            .collect();
+        assert_eq!(listed, vec![("active", false), ("idle", true)]);
+        let abandoned_token_revoked: Option<i64> = sqlx::query_scalar(
+            "SELECT revoked_at_ms FROM paired_device_tokens WHERE device_id = 'abandoned'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(abandoned_token_revoked.is_some());
+    }
+
+    #[tokio::test]
     async fn upsert_server_identity_replaces_seed_placeholder_server_id() {
         let temp = tempdir().unwrap();
         let config = SyncdConfig::for_test(temp.path().to_path_buf());
@@ -9607,6 +10683,173 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn folder_edit_made_offline_does_not_override_a_newer_edit_delivered_first() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = |device_id: &str| AuthenticatedSession {
+            token_id: format!("token-{device_id}"),
+            device_id: device_id.to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from([
+                "books:global".to_string(),
+                "novels:profile:main".to_string(),
+            ]),
+            mutation_receipt: None,
+        };
+        let desktop = session("desktop");
+        let phone = session("phone");
+        let clock = |physical_ms| EventClock {
+            physical_ms,
+            logical: 0,
+            device_generation_id: "generation".to_string(),
+        };
+        let book = |name: &str| BookCategoryPatch {
+            category_id: "folder-1".to_string(),
+            name: name.to_string(),
+            order: 1,
+        };
+        let novel = |name: &str| NovelCategoryPatch {
+            category_id: "folder-1".to_string(),
+            name: name.to_string(),
+            order: 1,
+        };
+        let book_name = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT name FROM book_categories WHERE scope_id = 'books:global' AND category_id = 'folder-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let novel_name = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT name FROM novel_categories WHERE scope_id = 'novels:profile:main' AND category_id = 'folder-1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // The desktop renames at 300; the phone's offline rename from 200 arrives afterwards with
+        // a higher Lamport value, as a reconnecting device's replay does.
+        for (lamport, at, name) in [(1, 100, "Lendo"), (10, 300, "B_Desk")] {
+            assert!(matches!(
+                apply_book_category_mutation(
+                    &pool, &desktop, "books:global", "folder-1", &book(name), lamport,
+                    Some(&clock(at)), config.retention_window,
+                )
+                .await
+                .unwrap(),
+                CausalMutationWriteOutcome::Applied(_)
+            ));
+            assert!(matches!(
+                apply_novel_category_mutation(
+                    &pool, &desktop, "novels:profile:main", "folder-1", &novel(name), lamport,
+                    Some(&clock(at)), config.retention_window,
+                )
+                .await
+                .unwrap(),
+                CausalMutationWriteOutcome::Applied(_)
+            ));
+        }
+        let CausalMutationWriteOutcome::Superseded { record, winning_clock, server_version, .. } =
+            apply_book_category_mutation(
+                &pool, &phone, "books:global", "folder-1", &book("B_Cel"), 11,
+                Some(&clock(200)), config.retention_window,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("an older offline rename must not win");
+        };
+        assert_eq!(record["name"], "B_Desk");
+        assert_eq!(winning_clock.physical_ms, 300);
+        // The phone waits for the winning folder's own version; the novel write after it is a
+        // later version of another entity, so the global version would never arrive for this one.
+        let winning_version: i64 = sqlx::query_scalar(
+            "SELECT record_server_version FROM book_categories WHERE category_id = 'folder-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(server_version, winning_version);
+        assert!(matches!(
+            apply_novel_category_mutation(
+                &pool, &phone, "novels:profile:main", "folder-1", &novel("B_Cel"), 11,
+                Some(&clock(200)), config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+        assert_eq!(book_name().await, "B_Desk");
+        assert_eq!(novel_name().await, "B_Desk");
+
+        // An offline delete older than the rename keeps the folder; a republish without an edit
+        // time does not outrank an edit either.
+        assert!(matches!(
+            delete_book_category_mutation(
+                &pool, &phone, "books:global", "folder-1", 12, Some(&clock(250)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+        assert!(matches!(
+            delete_novel_category_mutation(
+                &pool, &phone, "novels:profile:main", "folder-1", 12, Some(&clock(250)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+        assert!(matches!(
+            apply_book_category_mutation(
+                &pool, &desktop, "books:global", "folder-1", &book("Lendo"), 13, None,
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Superseded { .. }
+        ));
+        assert_eq!(book_name().await, "B_Desk");
+
+        // A newer edit wins wherever it comes from, and a newer delete removes the folder.
+        assert!(matches!(
+            apply_book_category_mutation(
+                &pool, &phone, "books:global", "folder-1", &book("Depois"), 14,
+                Some(&clock(400)), config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        assert_eq!(book_name().await, "Depois");
+        assert!(matches!(
+            delete_novel_category_mutation(
+                &pool, &phone, "novels:profile:main", "folder-1", 15, Some(&clock(500)),
+                config.retention_window,
+            )
+            .await
+            .unwrap(),
+            CausalMutationWriteOutcome::Applied(_)
+        ));
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM novel_categories WHERE category_id = 'folder-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
     async fn causal_comic_history_enqueues_only_the_latest_canonical_projection() {
         let temp = tempdir().unwrap();
         let config = SyncdConfig::for_test(temp.path().to_path_buf());
@@ -9682,6 +10925,69 @@ mod tests {
         assert_eq!(variables["mangaId"], 7);
         assert_eq!(variables["ids"], json!([11]));
         assert_eq!(variables["lastPageRead"], 5);
+    }
+
+    #[tokio::test]
+    async fn superseded_chapter_progress_projection_keeps_fields_the_newer_patch_leaves_null() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let comic_id = "suwayomi:profile:main:manga:7";
+        let chapter_id = "suwayomi:profile:main:chapter:11";
+        let entity_id = format!("comic.chapter_state::{comic_id}::{chapter_id}");
+        let patch = |read: Value, last_page_read: i64, at: i64| {
+            json!({
+                "chapterStateId": entity_id,
+                "comicId": comic_id,
+                "chapterId": chapter_id,
+                "read": read,
+                "bookmarked": null,
+                "lastPageRead": last_page_read,
+                "updatedAtMs": at,
+                "explicitProgressReset": false
+            })
+        };
+
+        for (lamport, record) in [
+            (1, patch(json!(true), 13, 100)),
+            (2, patch(Value::Null, 9, 200)),
+        ] {
+            apply_comic_sync_state_mutation(
+                &pool,
+                &session,
+                "comics:profile:main",
+                "comic.chapter_state",
+                &entity_id,
+                &record,
+                lamport,
+                None,
+                config.retention_window,
+            )
+            .await
+            .unwrap();
+        }
+
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT variables_json FROM suwayomi_projection_outbox WHERE entity_type = 'comic.chapter_state'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        let variables: Value = serde_json::from_str(&rows[0]).unwrap();
+        assert_eq!(variables["isRead"], true);
+        assert_eq!(variables["lastPageRead"], 9);
+        assert!(variables["isBookmarked"].is_null());
     }
 
     #[tokio::test]
@@ -9957,6 +11263,68 @@ mod tests {
                 "{prefix}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn comic_entry_delete_without_prior_record_projects_its_portable_binding() {
+        let temp = tempdir().unwrap();
+        let config = SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = connect(&config).await.unwrap();
+        upsert_server_identity(&pool, &config, "fingerprint")
+            .await
+            .unwrap();
+        let session = AuthenticatedSession {
+            token_id: "token-main".to_string(),
+            device_id: "device-main".to_string(),
+            profile_id: "main".to_string(),
+            scopes: BTreeSet::from(["comics:profile:main".to_string()]),
+            mutation_receipt: None,
+        };
+        let work = PortableWorkRefV3::Comic {
+            source_id: "6247824327199706550".to_string(),
+            manga_key: "/series/restored".to_string(),
+        };
+        let work_id = canonical_portable_work_id(&work);
+        upsert_portable_work_binding(
+            &pool,
+            "main",
+            &work_id,
+            &work,
+            None,
+            Some("160"),
+            PortableResolutionStateV3::Bound,
+            None,
+            Some("Restored"),
+            None,
+            0,
+            1,
+        )
+        .await
+        .unwrap();
+
+        delete_comic_sync_state_mutation(
+            &pool,
+            &session,
+            "comics:profile:main",
+            "comic.entry",
+            &work_id,
+            1,
+            None,
+            config.retention_window,
+        )
+        .await
+        .unwrap();
+
+        let (operation, variables_json): (String, String) = sqlx::query_as(
+            "SELECT operation_name, variables_json FROM suwayomi_projection_outbox WHERE entity_type = 'comic.entry'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let variables: Value = serde_json::from_str(&variables_json).unwrap();
+        assert_eq!(operation, "UpdateManga");
+        assert_eq!(variables["portableWorkRef"], serde_json::to_value(&work).unwrap());
+        assert_eq!(variables["inLibrary"], false);
     }
 
     #[tokio::test]

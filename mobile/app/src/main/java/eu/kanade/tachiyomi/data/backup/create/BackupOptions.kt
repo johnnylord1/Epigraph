@@ -14,6 +14,8 @@ data class BackupOptions(
     val sourcePrefs: Boolean = true,
     val customInfo: Boolean = true,
     val readManga: Boolean = true,
+    /** Stores the private EPUB/PDF files of local books, verified by SHA-256 on restore. */
+    val bookFiles: Boolean = false,
 ) {
     fun asBooleanArray() = booleanArrayOf(
         libraryEntries,
@@ -25,6 +27,9 @@ data class BackupOptions(
         sourcePrefs,
         customInfo,
         readManga,
+        // Index 9 is reserved for the retired "include private preferences" flag.
+        false,
+        bookFiles,
     )
 
     companion object {
@@ -77,6 +82,12 @@ data class BackupOptions(
                 enabled = { it.libraryEntries },
             ),
             Entry(
+                label = MR.strings.local_book_files,
+                getter = BackupOptions::bookFiles,
+                setter = { options, enabled -> options.copy(bookFiles = enabled) },
+                enabled = { it.libraryEntries },
+            ),
+            Entry(
                 label = MR.strings.categories,
                 getter = BackupOptions::categories,
                 setter = { options, enabled -> options.copy(categories = enabled) },
@@ -96,7 +107,8 @@ data class BackupOptions(
         /**
          * Older builds appended an "include private preferences" flag at index 9. Pending
          * WorkManager requests may still carry it; it is ignored because secrets never enter a
-         * backup (see [eu.kanade.tachiyomi.data.backup.BackupSecretPolicy]).
+         * backup (see [eu.kanade.tachiyomi.data.backup.BackupSecretPolicy]). Book files therefore
+         * use index 10, so such a request never turns them on.
          */
         fun fromBooleanArray(array: BooleanArray): BackupOptions {
             val defaults = BackupOptions()
@@ -110,6 +122,7 @@ data class BackupOptions(
                 array.getOrElse(6) { defaults.sourcePrefs },
                 array.getOrElse(7) { defaults.customInfo },
                 array.getOrElse(8) { defaults.readManga },
+                array.getOrElse(10) { defaults.bookFiles },
             )
         }
     }

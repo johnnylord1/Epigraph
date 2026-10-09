@@ -20,7 +20,7 @@
         'com.github.arkon.FlexibleAdapter:flexible-adapter',
         'com.github.CarlosEsco:ViewTooltip',
         'com.github.null2264:subsampling-scale-image-view',
-        'com.github.tachiyomiorg:image-decoder',
+        'com.github.mihonapp:image-decoder',
         'com.github.tachiyomiorg:unifile',
         'com.github.tachiyomiorg:conductor-support-preference',
         'com.github.chrisbanes:PhotoView',

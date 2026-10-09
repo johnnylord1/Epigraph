@@ -2,10 +2,34 @@
 
 import { page } from "@vitest/browser/context";
 import { render } from "@testing-library/svelte";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
+import { setAnimationPreference } from "../../lib/motion/motion";
 import SplashScreen from "./SplashScreen.svelte";
 
+function starPositions() {
+  return [...document.querySelectorAll<HTMLElement>(".orbit-star, .ambient-star")].map((star) => star.style.cssText).join("|");
+}
+
 describe("SplashScreen (browser)", () => {
+  afterEach(() => setAnimationPreference(null));
+
+  test("keeps the starfield still when animations are turned off", async () => {
+    setAnimationPreference(false);
+    render(SplashScreen, { props: { mode: "loading", statusText: "Loading", showCards: true } });
+    await expect.poll(() => document.querySelectorAll(".orbit-star").length).toBeGreaterThan(0);
+    const before = starPositions();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(starPositions()).toBe(before);
+  });
+
+  test("moves the starfield when animations are on", async () => {
+    setAnimationPreference(true);
+    render(SplashScreen, { props: { mode: "loading", statusText: "Loading", showCards: true } });
+    await expect.poll(() => document.querySelectorAll(".orbit-star").length).toBeGreaterThan(0);
+    const before = starPositions();
+    await expect.poll(starPositions, { timeout: 2000 }).not.toBe(before);
+  });
+
   test("renders the approved splash shell in loading state", async () => {
     render(SplashScreen, {
       props: {

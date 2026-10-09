@@ -94,6 +94,28 @@ impl AppError {
         })
     }
 
+    /// A cursor beyond the newest published version can only come from an earlier server history
+    /// (for example a rewound change log). The client must rebuild from a snapshot; the code stays
+    /// `REPLAY_WINDOW_EXPIRED` so every client already knows how to recover.
+    pub fn replay_cursor_ahead(
+        cursor: i64,
+        current_server_version: i64,
+        min_replayable_server_version: i64,
+    ) -> Self {
+        Self::Conflict(ErrorDetail {
+            code: "REPLAY_WINDOW_EXPIRED".to_string(),
+            message: format!(
+                "Client cursor {cursor} is ahead of the server history ({current_server_version})."
+            ),
+            retryable: Some(false),
+            min_client_version: None,
+            current_server_version: Some(current_server_version),
+            min_replayable_server_version: Some(min_replayable_server_version),
+            required_action: Some("full_bootstrap".to_string()),
+            details: Some(serde_json::json!({ "reasonCode": "CURSOR_AHEAD_OF_SERVER" })),
+        })
+    }
+
     pub fn upgrade_required(
         code: impl Into<String>,
         message: impl Into<String>,
@@ -285,6 +307,11 @@ pub struct CapabilitiesResponse {
     pub supports_comic_delete_projection_without_record: bool,
     /// The confirmed command bridge accepts `CreateCategory` (name -> new id).
     pub supports_suwayomi_category_create: bool,
+    /// The confirmed command bridge accepts `AddExtensionRepos` and `InstallExtension`, so a
+    /// paired device can publish extensions it installed to the desktop runtime.
+    pub supports_suwayomi_extension_install: bool,
+    /// `/v1/tracker-credentials` (GET, CAS PUT/DELETE) is available on the paired session.
+    pub supports_tracker_credentials_v1: bool,
     pub snapshot_schema_version: u32,
     pub snapshot_entity_types: Vec<String>,
     pub tls_cert_sha256: String,
@@ -298,7 +325,7 @@ pub struct CapabilitiesResponse {
 pub const MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 pub const SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
-pub const SNAPSHOT_ENTITY_TYPES: [&str; 25] = [
+pub const SNAPSHOT_ENTITY_TYPES: [&str; 27] = [
     "book.entry",
     "book.category",
     "book.category_assignment",
@@ -324,6 +351,8 @@ pub const SNAPSHOT_ENTITY_TYPES: [&str; 25] = [
     "comic.chapter_state",
     "comic.history",
     "comic.page_bookmark",
+    "comic.tracking",
+    "novel.tracking",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -542,6 +571,9 @@ pub struct SyncdPairedDeviceView {
     pub profile_id: String,
     pub granted_scopes: Vec<String>,
     pub last_seen_at_ms: Option<i64>,
+    /// Every token of the device passed its inactivity window: it must pair again to sync.
+    #[serde(default)]
+    pub inactive: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -550,6 +582,12 @@ pub struct PairedDeviceScopesUpdateRequest {
     pub device_id: String,
     pub profile_id: String,
     pub granted_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedDeviceRevokeRequest {
+    pub device_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -957,6 +995,10 @@ pub enum MutationEntityType {
     ComicChapterState,
     #[serde(rename = "comic.page_bookmark")]
     ComicPageBookmark,
+    #[serde(rename = "comic.tracking")]
+    ComicTracking,
+    #[serde(rename = "novel.tracking")]
+    NovelTracking,
 }
 
 impl MutationEntityType {
@@ -987,6 +1029,8 @@ impl MutationEntityType {
             Self::ComicChapterState => "comic.chapter_state",
             Self::ComicHistory => "comic.history",
             Self::ComicPageBookmark => "comic.page_bookmark",
+            Self::ComicTracking => "comic.tracking",
+            Self::NovelTracking => "novel.tracking",
         }
     }
 }
@@ -1180,6 +1224,21 @@ pub enum MutationInput {
         base: MutationBase,
         patch: Option<ComicPageBookmarkPatch>,
     },
+    /// Full-state tracker binding.  The patch is kept as a raw JSON object so
+    /// unknown fields survive the Core round trip; validation lives in the
+    /// mutation route.
+    #[serde(rename = "comic.tracking")]
+    ComicTracking {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<serde_json::Value>,
+    },
+    #[serde(rename = "novel.tracking")]
+    NovelTracking {
+        #[serde(flatten)]
+        base: MutationBase,
+        patch: Option<serde_json::Value>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1224,6 +1283,8 @@ impl MutationInput {
             Self::ComicChapterState { .. } => MutationEntityType::ComicChapterState,
             Self::ComicHistory { .. } => MutationEntityType::ComicHistory,
             Self::ComicPageBookmark { .. } => MutationEntityType::ComicPageBookmark,
+            Self::ComicTracking { .. } => MutationEntityType::ComicTracking,
+            Self::NovelTracking { .. } => MutationEntityType::NovelTracking,
         }
     }
 
@@ -1253,7 +1314,9 @@ impl MutationInput {
             | Self::ComicCategoryAssignment { base, .. }
             | Self::ComicChapterState { base, .. }
             | Self::ComicHistory { base, .. }
-            | Self::ComicPageBookmark { base, .. } => base,
+            | Self::ComicPageBookmark { base, .. }
+            | Self::ComicTracking { base, .. }
+            | Self::NovelTracking { base, .. } => base,
         }
     }
 }
@@ -2180,6 +2243,9 @@ pub struct ComicEntryPatch {
     pub in_library: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub portable_work_ref: Option<PortableWorkRefV3>,
+    /// Title of a work first added on a device, so Suwayomi can find it by searching its source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

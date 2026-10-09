@@ -57,6 +57,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlin.random.Random
+import exh.util.throttleLatest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -71,6 +72,7 @@ import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.category.interactor.UpdateCategories
@@ -288,17 +290,21 @@ class LibraryPresenter(
 
                 // Initial setup is deferred until the Library surface is actually visible.
                 if (categories.isEmpty()) {
-                    val dbCategories = getCategories.await()
+                    val dbCategories = getCategories.await(CategoryLibrary.COMICS)
                     if ((dbCategories + Category.createDefault(context)).distinctBy { it.order }.size != dbCategories.size + 1) {
                         reorderCategories(dbCategories)
                     }
-                    categories = lastCategories ?: getCategories.await().toMutableList()
+                    categories = lastCategories ?: getCategories.await(CategoryLibrary.COMICS).toMutableList()
                 }
 
                 combine(
                     getLibraryFlow(),
                     downloadCache.changes,
-                ) { data, _ -> data }.collectLatest { data ->
+                ) { data, _ -> data }
+                    // A sync writes works one at a time; redrawing the whole library for each
+                    // write makes it flicker and stalls navigation.
+                    .throttleLatest(LIBRARY_REFRESH_MILLIS)
+                    .collectLatest { data ->
                     categories = data.categories
                     allCategories = data.allCategories
                     categoryNamesById = data.allCategories
@@ -941,7 +947,7 @@ class LibraryPresenter(
      */
     private fun getLibraryFlow(): Flow<LibraryData> {
         val libraryFlow = combine(
-            getCategories.subscribe(),
+            getCategories.subscribe(CategoryLibrary.COMICS),
             // FIXME: Remove retry once a real solution is found
             getLibraryManga.subscribe().retry(1) { e -> e is NullPointerException },
             getPreferencesFlow(),
@@ -1662,6 +1668,7 @@ class LibraryPresenter(
         private var lastLibrary: LibraryMap? = null
         private const val dynamicCategorySplitter = "▄╪\t▄╪\t▄"
 
+        private const val LIBRARY_REFRESH_MILLIS = 1_000L
         private val randomTags = arrayOf(0, 1, 2)
         private const val randomSource = 4
         private const val randomTitle = 3

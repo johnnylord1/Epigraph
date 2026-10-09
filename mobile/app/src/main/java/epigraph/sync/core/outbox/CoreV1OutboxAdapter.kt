@@ -28,6 +28,7 @@ import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.net.URLEncoder
 import java.security.MessageDigest
 
 /**
@@ -235,6 +236,7 @@ class CoreV1OutboxAdapter(
             ?: projectNovelProgress(record, command, capabilities)
             ?: projectBookProgress(record, command)
         is SyncCommand.AppendHistory -> projectBookHistory(record, command)
+            ?: projectNovelHistory(record, command)
         is SyncCommand.PatchTracking -> projectTracking(record, command)
         else -> null
     }
@@ -305,6 +307,7 @@ class CoreV1OutboxAdapter(
                 put("comicId", record.entityId)
                 put("inLibrary", true)
                 command.portableWorkRef?.let { put("portableWorkRef", portableWorkRefJson(it)) }
+                command.titleHint?.let { put("titleHint", it) }
             },
         )
     }
@@ -751,6 +754,35 @@ class CoreV1OutboxAdapter(
         )
     }
 
+    /**
+     * The desktop lists history by its local chapter id, `chapter:novel:<plugin>:<work>:<chapter>`
+     * with keys encoded like `encodeURIComponent`; the replica projection parses that form back.
+     */
+    private fun projectNovelHistory(
+        record: CoreOutboxRecord,
+        command: SyncCommand.AppendHistory,
+    ): Projection? {
+        if (record.entityType != EpigraphCoreEntityType.NOVEL_HISTORY) return null
+        val locator = command.locator as? ReaderLocator.Novel ?: return null
+        val work = locator.portableWork ?: return null
+        val chapter = locator.portableChapter ?: return null
+        return Projection(
+            entityId = command.entryId,
+            operation = CoreMutationOperation.MERGE,
+            patch = buildJsonObject {
+                put("novelId", PortableIdentityV3.workId(work))
+                put(
+                    "chapterId",
+                    "chapter:novel:${work.pluginId}:${encodeUriComponent(work.novelKey.value)}:" +
+                        encodeUriComponent(chapter.chapterKey.value),
+                )
+                putNullableString("chapterTitle", command.chapterTitle)
+                put("locator", "block:${locator.blockIndex}:${locator.textOffset}")
+                put("readAtMs", command.visitedAtEpochMillis)
+            },
+        )
+    }
+
     private fun scopeMatchesEntity(scopeId: String, entityType: String): Boolean = when {
         entityType.startsWith("book.") -> scopeId == BOOKS_GLOBAL_SCOPE
         entityType.startsWith("novel.") -> hasNonEmptyProfileId(scopeId, NOVELS_PROFILE_SCOPE_PREFIX)
@@ -888,3 +920,13 @@ private fun CoreOutboxIdentity.blocked(
 private fun JsonObjectBuilder.putNullableString(key: String, value: String?) {
     put(key, value?.let(::JsonPrimitive) ?: JsonNull)
 }
+
+/** Matches JavaScript's `encodeURIComponent`, which the desktop uses for its local ids. */
+private fun encodeUriComponent(value: String): String =
+    URLEncoder.encode(value, Charsets.UTF_8.name())
+        .replace("+", "%20")
+        .replace("%21", "!")
+        .replace("%27", "'")
+        .replace("%28", "(")
+        .replace("%29", ")")
+        .replace("%7E", "~")

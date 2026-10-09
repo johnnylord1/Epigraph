@@ -450,6 +450,11 @@ class NovelPluginManager(
      */
     fun isInstalled(pluginId: String): Boolean = installedSources.containsKey(pluginId)
 
+    /** Language code each known plugin gets as a source here; installed plugins win. */
+    fun knownPluginLangs(): Map<String, String> =
+        availablePluginsFlow.value.associate { it.id to langFromLnReaderLang(it.lang) } +
+            installedSourcesFlow.value.associate { it.pluginId to it.lang }
+
     /**
      * Get installed version of a plugin, or null.
      */
@@ -637,6 +642,10 @@ class NovelPluginManager(
                 else -> "other"
             }
         }
+
+        /** The code a plugin's source id uses: LNReader names the language ("Português"). */
+        fun langCode(lang: String): String =
+            lang.takeIf { it.length <= 3 && it.all(Char::isLowerCase) } ?: langFromLnReaderLang(lang)
 
         fun isVersionNewer(candidate: String, installed: String): Boolean {
             return comparePluginVersions(candidate, installed) > 0

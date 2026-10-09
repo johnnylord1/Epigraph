@@ -5,6 +5,25 @@ use std::path::{Path, PathBuf};
 #[path = "process_ownership.rs"]
 pub mod ownership;
 
+/// Suwayomi port of the built-in MAIN profile. A debug build moves it through `EPIGRAPH_LOCAL_SERVER_MAIN_PORT`
+/// so it never answers on, or attaches to, an installed release's server.
+pub fn main_server_port() -> u16 {
+    server_port_from_env("EPIGRAPH_LOCAL_SERVER_MAIN_PORT", 4567)
+}
+
+/// Suwayomi port of the built-in TEST profile; `EPIGRAPH_LOCAL_SERVER_TEST_PORT` moves it like the MAIN one.
+pub fn test_server_port() -> u16 {
+    server_port_from_env("EPIGRAPH_LOCAL_SERVER_TEST_PORT", 4667)
+}
+
+fn server_port_from_env(name: &str, default: u16) -> u16 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(default)
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RuntimeLifecycleState {

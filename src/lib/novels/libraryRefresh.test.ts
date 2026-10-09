@@ -151,6 +151,23 @@ describe("novel library refresh", () => {
     expect(merged.newChapters[0]?.coverUrl).toBe("https://example.com/cover.jpg");
   });
 
+  it("keeps saved chapters, read state and metadata when the source returns an empty chapter list", () => {
+    const previous = { ...entry(), author: "Saved author", tags: ["saved"], coverUrl: "data:image/png;base64,AA" };
+    const emptyDetail = { ...detail(), author: null, tags: [], coverUrl: null, chapterCount: 0, chapters: [] };
+
+    const merged = mergeNovelDetailIntoLibraryState({ ...state(), entries: [previous] }, previous, emptyDetail, 1234);
+
+    expect(merged.newChapters).toEqual([]);
+    expect(merged.state.chapters).toEqual([expect.objectContaining({ id: "chapter:old", unread: false })]);
+    expect(merged.state.progress).toEqual([expect.objectContaining({ chapterId: "chapter:old", progressPercent: 0.5 })]);
+    expect(merged.state.entries[0]).toMatchObject({
+      coverUrl: "data:image/png;base64,AA",
+      author: "Saved author",
+      tags: ["saved"],
+      chapterCount: 1,
+    });
+  });
+
   it("filters only ongoing novels when requested", () => {
     expect(shouldRefreshNovelEntry(entry("Ongoing"), { onlyOngoing: true })).toBe(true);
     expect(shouldRefreshNovelEntry(entry("Releasing"), { onlyOngoing: true })).toBe(true);

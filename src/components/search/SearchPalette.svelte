@@ -6,6 +6,7 @@
   import { fetchSourceMangaSearchWithFallback } from "../../lib/manga/sourceSearch";
   import { resolveMangaCoverUrl, type MangaCoverContext } from "../../lib/manga/coverResolver";
   import { BookAssetResolver } from "../../lib/books/assets";
+  import { getSessionLibraryCoverUrl } from "../../lib/library/coverCache";
   import { shouldHideNsfw, shouldHideSource } from "../../lib/util";
   import { isConfirmedAntibotChallengeMessage, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
@@ -78,6 +79,7 @@
   let renderedQuery = $state("");
   let renderedContext = $state<SearchContext>("home");
   let failedImages = $state(new Set<string>());
+  let retriedImages = $state(new Set<string>());
   let paletteView = $state<PaletteView>("global");
   let browseCanGoBack = $state(false);
   let browseQuery = $state("");
@@ -509,9 +511,34 @@
     return "home";
   }
 
+  // The Library may have recovered a cover after the search index captured the title, so reuse the
+  // URL its grid already loaded, and retry a failed cover once with a fresh URL before the icon.
   function resultImageUrl(result: SearchResult): string {
+    const url = baseResultImageUrl(result);
+    if (!url || !retriedImages.has(result.id)) return url;
+    return `${url}${url.includes("?") ? "&" : "?"}epigraph_cover_retry=1`;
+  }
+
+  function handleResultImageError(result: SearchResult) {
+    if (!retriedImages.has(result.id)) {
+      retriedImages = new Set(retriedImages).add(result.id);
+      return;
+    }
+    failedImages = new Set(failedImages).add(result.id);
+  }
+
+  function baseResultImageUrl(result: SearchResult): string {
     if (result.action.kind === "manga") {
-      return resolveMangaCoverUrl(result.action.manga, {
+      const manga = result.action.manga;
+      const libraryUrl = manga.inLibrary
+        ? getSessionLibraryCoverUrl({
+            profileId: store.runtimeResolvedLocalProfileId,
+            serverUrl: store.runtimeServerUrl,
+            coverCacheGeneration: store.libraryCoverCacheGeneration,
+          }, manga)
+        : null;
+      if (libraryUrl) return libraryUrl;
+      return resolveMangaCoverUrl(manga, {
         context: mangaCoverContext(),
         persistence: result.action.manga.inLibrary ? "persistent" : "memory",
         cacheGeneration: store.libraryCoverCacheGeneration,
@@ -546,6 +573,7 @@
     activeResultId = null;
     keyboardNavigationStarted = false;
     failedImages = new Set();
+    retriedImages = new Set();
     try {
       if (browseContentType === "novels") {
         await searchBrowseNovels(trimmed, controller, requestId);
@@ -736,6 +764,7 @@
     keyboardNavigationStarted = false;
     error = null;
     failedImages = new Set();
+    retriedImages = new Set();
     queryRequestId += 1;
     activeController?.cancel();
     const controller = controllerForContext();
@@ -1129,9 +1158,7 @@
                             alt=""
                             loading="lazy"
                             decoding="async"
-                            onerror={() => {
-                              failedImages = new Set(failedImages).add(result.id);
-                            }}
+                            onerror={() => handleResultImageError(result)}
                           />
                         {:else}
                           <span class="search-palette__result-icon material-symbols-outlined" aria-hidden="true">{resultIcon(result)}</span>
@@ -1190,9 +1217,7 @@
                         alt=""
                         loading="lazy"
                         decoding="async"
-                        onerror={() => {
-                          failedImages = new Set(failedImages).add(result.id);
-                        }}
+                        onerror={() => handleResultImageError(result)}
                       />
                     {:else}
                       <span class="search-palette__result-icon material-symbols-outlined" aria-hidden="true">{resultIcon(result)}</span>
@@ -1595,12 +1620,11 @@
       max-height: calc(100vh - var(--sp-6));
     }
   }
-  @media (prefers-reduced-motion: reduce) {
-    .search-palette,
-    .search-palette.is-open,
-    .search-palette__result.is-work-card {
-      animation: none;
-      transition: none;
-    }
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette,
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette.is-open,
+  :global(html[data-epigraph-reduced-motion="true"]) .search-palette__result.is-work-card {
+    animation: none;
+    transition: none;
   }
 </style>

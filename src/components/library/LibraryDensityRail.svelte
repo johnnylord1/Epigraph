@@ -167,10 +167,9 @@
     color: var(--component-library-density-label-active-fg);
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .density-fill,
-    .density-thumb {
-      transition-duration: 1ms;
-    }
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+  :global(html[data-epigraph-reduced-motion="true"]) .density-fill,
+  :global(html[data-epigraph-reduced-motion="true"]) .density-thumb {
+    transition-duration: 1ms;
   }
 </style>

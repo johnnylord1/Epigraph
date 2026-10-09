@@ -26,7 +26,7 @@ use crate::syncd::middleware::{
     LEGACY_CLIENT_PROTOCOL_HEADER, LEGACY_CLIENT_VERSION_HEADER,
 };
 use crate::syncd::models::{
-    BootstrapPayloadResponse, ErrorBody, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
+    BootstrapPayloadResponse, ErrorBody, PairedDeviceRevokeRequest, PairedDeviceScopesUpdateRequest, PairingClaimRequest,
     PairingClaimResponse, PairingClaimStatus, PairingHostDecision, PairingHostDecisionRequest,
     PairingHostDecisionResponse, PairingPlatform, PairingSessionStatus, PairingStatusEvent,
     PairingStatusEventType, SyncdClientDiscoveryContract, SyncdClientDiscoveryGuidanceContract,
@@ -776,6 +776,171 @@ pub async fn syncd_list_paired_devices(
     parse_json_response(response).await
 }
 
+/// Asks the running Core to mirror Suwayomi reading progress now, after the desktop changed
+/// chapter read, page or bookmark state. Returns `false` when no Core runtime is attached; the
+/// periodic mirror tick stays the fallback either way. Never starts Core.
+#[tauri::command]
+pub async fn syncd_request_progress_mirror(
+    manga_ids: Vec<i64>,
+    chapter_ids: Vec<i64>,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(false);
+    };
+    let client = insecure_local_client()?;
+    send_json(
+        client
+            .post(format!(
+                "{}/v1/local/progress-mirror",
+                runtime.local_base_url
+            ))
+            .timeout(Duration::from_secs(5)),
+        &json!({ "mangaIds": manga_ids, "chapterIds": chapter_ids }),
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+/// Publishes a tracker login the desktop just completed against its Suwayomi to the running
+/// Core, so paired devices receive it through `/v1/tracker-credentials`. Only AniList has a
+/// portable login shape. Returns `false` when no Core runtime is attached. Never starts Core,
+/// and the token is never logged.
+#[tauri::command]
+pub async fn syncd_publish_tracker_login(
+    tracker_key: String,
+    access_token: String,
+    app: AppHandle,
+) -> Result<bool, String> {
+    if !is_portable_tracker_key(&tracker_key) {
+        return Err("Unsupported tracker key.".to_string());
+    }
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(false);
+    };
+    let client = insecure_local_client()?;
+    send_json(
+        client
+            .put(format!(
+                "{}/v1/local/tracker-credentials/{tracker_key}",
+                runtime.local_base_url
+            ))
+            // Resolving the AniList viewer id can take a network round trip.
+            .timeout(Duration::from_secs(25)),
+        &json!({ "accessToken": access_token }),
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+/// Publishes a desktop tracker logout to the running Core (a tombstone for paired devices).
+#[tauri::command]
+pub async fn syncd_publish_tracker_logout(
+    tracker_key: String,
+    app: AppHandle,
+) -> Result<bool, String> {
+    if !is_portable_tracker_key(&tracker_key) {
+        return Err("Unsupported tracker key.".to_string());
+    }
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(false);
+    };
+    let client = insecure_local_client()?;
+    client
+        .delete(format!(
+            "{}/v1/local/tracker-credentials/{tracker_key}",
+            runtime.local_base_url
+        ))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(transport_error_message)?
+        .error_for_status()
+        .map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+/// Starts a MyAnimeList login with Epigraph's client through the running Core, which can then
+/// renew it before it expires. Returns `None` when no Core runtime is attached (or it cannot store
+/// tracker logins), in which case the caller falls back to Suwayomi's own login.
+#[tauri::command]
+pub async fn syncd_start_myanimelist_login(app: AppHandle) -> Result<Option<String>, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(None);
+    };
+    let client = insecure_local_client()?;
+    let response = send_json(
+        client
+            .post(format!(
+                "{}/v1/local/tracker-oauth/myanimelist/start",
+                runtime.local_base_url
+            ))
+            .timeout(Duration::from_secs(5)),
+        &json!({}),
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    if response.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    let payload: serde_json::Value = response.json().await.map_err(|error| error.to_string())?;
+    Ok(payload
+        .get("authUrl")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string))
+}
+
+/// Completes a MyAnimeList login started by [`syncd_start_myanimelist_login`]. Core stores it and
+/// writes it into Suwayomi, restarting Suwayomi to do so. The callback URL is never logged.
+#[tauri::command]
+pub async fn syncd_complete_myanimelist_login(
+    callback_url: String,
+    app: AppHandle,
+) -> Result<bool, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(false);
+    };
+    let client = insecure_local_client()?;
+    let response = send_json(
+        client
+            .post(format!(
+                "{}/v1/local/tracker-oauth/myanimelist/complete",
+                runtime.local_base_url
+            ))
+            // Exchanging the code and reading the user are two MyAnimeList round trips.
+            .timeout(Duration::from_secs(40)),
+        &json!({ "callbackUrl": callback_url }),
+    )
+    .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|payload| {
+                payload
+                    .pointer("/error/message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+        return Err(message.unwrap_or_else(|| format!("MyAnimeList login failed ({status}).")));
+    }
+    Ok(response.status() == reqwest::StatusCode::ACCEPTED)
+}
+
+fn is_portable_tracker_key(tracker_key: &str) -> bool {
+    let mut chars = tracker_key.chars();
+    tracker_key.len() <= 64
+        && chars.next().is_some_and(|first| first.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
 #[tauri::command]
 pub async fn syncd_update_paired_device_granted_scopes(
     device_id: String,
@@ -797,6 +962,24 @@ pub async fn syncd_update_paired_device_granted_scopes(
         },
     )
     .await
+}
+
+/// Revokes a paired device: its tokens stop working and it has to pair again.
+#[tauri::command]
+pub async fn syncd_revoke_paired_device(device_id: String, app: AppHandle) -> Result<(), String> {
+    let runtime = host_core(&app).await?;
+    let client = insecure_local_client()?;
+    send_json(
+        client.post(format!(
+            "{}/v1/pairing/devices/revoke",
+            runtime.local_base_url
+        )),
+        &PairedDeviceRevokeRequest { device_id },
+    )
+    .await?
+    .error_for_status()
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

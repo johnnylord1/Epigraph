@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
+  import { enableBuiltinCloudflareSolver } from "./lib/flaresolverr";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
@@ -14,6 +15,8 @@
     shouldBootFromLibrarySnapshot,
   } from "./lib/serverBootPolicy";
   import {
+    configureBuiltInLocalServerPorts,
+    fallbackBuiltInServerPorts,
     DEFAULT_LOCAL_PROFILE_ID,
     type LocalProfileId,
     localProfileDisplayName,
@@ -38,6 +41,7 @@
     addToast,
     openBookReader,
     replaceBooksState,
+    replaceBooksStateFromDisk,
     updateSettings,
     setActiveDownloads,
     setActiveBookId,
@@ -69,7 +73,6 @@
   import { setLibraryMotionEnvironment } from "./lib/library/motionGate";
   import { getLibraryVisibilityRegistryStats } from "./lib/library/visibilityRegistry";
   import { isEditableKeyboardTarget } from "./lib/keybinds";
-  import { observeMotionWake } from "./lib/motionWake";
   import { hasActiveReaderCommandScope } from "./lib/reader/commands";
   import {
     announceServerWhenReady,
@@ -92,7 +95,7 @@
   import { operationFailure, presentOperationFailure, restorePlanSummary, type OperationFailure } from "./lib/i18n/operationPresentation";
   import { DEFAULT_BUILTIN_THEME_ID, normalizeThemeSelection } from "./lib/theme/contract";
   import SplashScreen from "./components/layout/SplashScreen.svelte";
-  import { playShellEntrance, pointerEffects, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
+  import { playShellEntrance, pointerEffects, setAnimationPreference, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
   import { FIRST_RUN_COMPLETED_EVENT, writeCompletedFirstRunMarker } from "./lib/firstRun";
 
@@ -261,11 +264,18 @@
   let startupFailsafeTimer: number | null = null;
   let idle          = $state(false);
   let uiMotionActive = $state(true);
-  let prefersReducedMotion = $state(false);
+  let systemReducedMotion = $state(false);
+  // Settings › Appearance › Animations wins; without a choice the system setting applies.
+  const animationsEnabled = $derived(
+    typeof store.settings.uiAnimations === "boolean" ? store.settings.uiAnimations : !systemReducedMotion,
+  );
   let devSplash     = $state(false);
   let bootReadyNotified = false;
   let lastSyncdRevalidatedProfileId = $state<string | null>(null);
   let syncdRevalidationInFlightProfileId = $state<string | null>(null);
+  // A failed revalidation (Core not running yet) waits before trying again; releasing the guard at once
+  // re-ran the effect immediately and retried in a tight loop.
+  const SYNCD_REVALIDATION_RETRY_MS = 30_000;
   const lockEnabled = $derived(
     store.settings.appLockEnabled && (store.settings.appLockPin?.length ?? 0) >= 4,
   );
@@ -455,11 +465,13 @@
     if (syncdAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
     syncdAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
 
-    if (payload.lastAppliedScopes.includes("books:global")) {
+    const novelsApplied = payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"));
+    // Novel categories and memberships live in the shared Books category list.
+    if (payload.lastAppliedScopes.includes("books:global") || novelsApplied) {
       try {
         const { reloadBookLibraryState } = await import("./lib/books/libraryState");
         const next = await reloadBookLibraryState({ profileId: store.runtimeResolvedLocalProfileId });
-        replaceBooksState({
+        replaceBooksStateFromDisk({
           books: next.books,
           bookProgress: next.bookProgress,
           bookBookmarks: next.bookBookmarks,
@@ -472,7 +484,7 @@
       }
     }
 
-    if (payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) {
+    if (novelsApplied) {
       const currentProfileId =
         normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
         ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
@@ -1520,11 +1532,11 @@
     uiMotionActive = true;
     if (pageHidden) return;
 
+    // Idle only pauses the few looping decorations (theme preview, branch lines). It never
+    // re-styles the whole shell, and caches are trimmed when the window goes to the background,
+    // not every few seconds, so returning to a page does not refetch its covers.
     uiMotionIdleTimer = window.setTimeout(() => {
-      if (!pageHidden) {
-        uiMotionActive = false;
-        trimRuntimeMemory();
-      }
+      if (!pageHidden) uiMotionActive = false;
     }, 5_000);
   }
 
@@ -2417,7 +2429,7 @@
   onMount(() => {
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const updateReducedMotion = () => {
-      prefersReducedMotion = reducedMotionQuery.matches;
+      systemReducedMotion = reducedMotionQuery.matches;
     };
     updateReducedMotion();
     reducedMotionQuery.addEventListener("change", updateReducedMotion);
@@ -2479,9 +2491,6 @@
         });
     }
     updatePageBackgroundState();
-    // Pointer listeners only exist once the shell is ready; first-run steps and late content still
-    // need their entrance animations to run while motion is idle.
-    const stopMotionWake = observeMotionWake(document.body, () => !uiMotionActive && !pageHidden, scheduleUiMotionPause);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleWindowFocusStateChange, { passive: true });
     window.addEventListener("blur", handleWindowFocusStateChange, { passive: true });
@@ -2503,8 +2512,12 @@
     };
     document.addEventListener("contextmenu", e => e.preventDefault());
     void (async () => {
-      const launchTarget = await invoke<LaunchTargetInfo>("get_launch_target").catch(() => null);
+      const [launchTarget, builtInPorts] = await Promise.all([
+        invoke<LaunchTargetInfo>("get_launch_target").catch(() => null),
+        invoke<{ main: number; test: number }>("get_builtin_server_ports").catch(() => null),
+      ]);
       if (cancelled) return;
+      configureBuiltInLocalServerPorts(builtInPorts ?? fallbackBuiltInServerPorts(import.meta.env.MODE));
       applyLaunchTarget(launchTarget);
       const initialTarget = getServerTargetInfo();
       document.title = `Epigraph [${initialTarget.title}]`;
@@ -2623,6 +2636,17 @@
           }
         }
       }
+      void (async () => {
+        // The server may still be booting; the built-in solver is re-applied every launch.
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          try {
+            await enableBuiltinCloudflareSolver();
+            return;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+        }
+      })();
       void runAutomaticLibraryUpdate("startup");
 
       ensureProbeStarted();
@@ -2652,7 +2676,6 @@
       cancelProbe = true;
       stopSnapshotServerWatch();
       clearStartupFailsafe();
-      stopMotionWake();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocusStateChange);
       window.removeEventListener("blur", handleWindowFocusStateChange);
@@ -2837,6 +2860,11 @@
   });
 
   $effect(() => {
+    setAnimationPreference(store.settings.uiAnimations);
+    document.documentElement.dataset.epigraphReducedMotion = animationsEnabled ? "false" : "true";
+  });
+
+  $effect(() => {
     document.documentElement.dataset.epigraphMotion = uiMotionActive ? "active" : "idle";
     document.body.dataset.epigraphMotion = uiMotionActive ? "active" : "idle";
     document.documentElement.dataset.epigraphIdle = idle ? "true" : "false";
@@ -2849,7 +2877,7 @@
       libraryVisible: store.navPage === "library",
       windowFocused: !pageHidden || webviewFocused,
       shellIdle: idle,
-      motionEnabled: !prefersReducedMotion,
+      motionEnabled: animationsEnabled,
     });
   });
 
@@ -2865,6 +2893,7 @@
     if (syncdRevalidationInFlightProfileId === profileId) return;
 
     syncdRevalidationInFlightProfileId = profileId;
+    let failed = false;
     void invoke("syncd_revalidate_persisted_sync_sessions", { profileId })
       .then(() => {
         if (syncdRevalidationInFlightProfileId === profileId) {
@@ -2872,12 +2901,17 @@
         }
       })
       .catch((error) => {
+        failed = true;
         console.warn("syncd desktop session revalidation failed:", error);
       })
       .finally(() => {
-        if (syncdRevalidationInFlightProfileId === profileId) {
-          syncdRevalidationInFlightProfileId = null;
-        }
+        const release = () => {
+          if (syncdRevalidationInFlightProfileId === profileId) {
+            syncdRevalidationInFlightProfileId = null;
+          }
+        };
+        if (failed) window.setTimeout(release, SYNCD_REVALIDATION_RETRY_MS);
+        else release();
       });
   });
 
@@ -3246,32 +3280,6 @@
   :global([data-epigraph-motion="idle"] .epigraph-app-shell .settings-theme-preview__glow),
   :global([data-epigraph-motion="idle"] .epigraph-app-shell .anim-branch) {
     animation-play-state: paused !important;
-  }
-
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell *:not(.anim-spin):not(.anim-liquid-progress):not(.toast-life):not(.search-palette):not(.epigraph-port--splash):not(.epigraph-port--splash *)) {
-    animation-play-state: paused !important;
-  }
-
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .anim-spin) {
-    animation-play-state: paused !important;
-  }
-
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .toast.toast.toast.toast),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .toast.toast.toast.toast *),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .search-palette) {
-    animation-play-state: running !important;
-  }
-
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-topbar),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-sidebar),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-search),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .n-popover),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .content-header),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .repoOverlayBackdrop),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .modal),
-  :global([data-epigraph-motion="idle"] .epigraph-app-shell .backdrop) {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
   }
 
   :global([data-epigraph-motion="idle"] .epigraph-app-shell .settings-theme-preview__glow) {

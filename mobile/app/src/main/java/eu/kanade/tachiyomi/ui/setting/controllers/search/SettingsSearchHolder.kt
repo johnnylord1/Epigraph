@@ -9,6 +9,7 @@ import yokai.i18n.MR
 import yokai.util.lang.getString
 import dev.icerock.moko.resources.compose.stringResource
 import eu.kanade.tachiyomi.databinding.SettingsSearchControllerCardBinding
+import eu.kanade.tachiyomi.ui.setting.SettingsComposeController
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.util.lang.highlightText
 import eu.kanade.tachiyomi.util.system.getResourceColor
@@ -28,9 +29,11 @@ class SettingsSearchHolder(view: View, val adapter: SettingsSearchAdapter) :
         binding.titleWrapper.setOnClickListener {
             adapter.getItem(bindingAdapterPosition)?.let {
                 val ctrl = it.settingsSearchResult.searchController::class.createInstance()
-                if (ctrl !is SettingsLegacyController) return@let
-
-                ctrl.preferenceKey = it.settingsSearchResult.key
+                when (ctrl) {
+                    is SettingsLegacyController -> ctrl.preferenceKey = it.settingsSearchResult.key
+                    is SettingsComposeController -> Unit
+                    else -> return@let
+                }
 
                 // must pass a new Controller instance to avoid this error https://github.com/bluelinelabs/Conductor/issues/446
                 adapter.titleClickListener.onTitleClick(ctrl)

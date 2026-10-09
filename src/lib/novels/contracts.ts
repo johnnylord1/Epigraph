@@ -131,6 +131,19 @@ export function normalizeNovelRepositoryUrl(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
+/**
+ * Comparison key for repository URLs. GitHub owner/repository names are case-insensitive, and LNReader
+ * backups record "lnreader/lnreader-plugins" while the built-in repository is "LNReader/lnreader-plugins".
+ * The branch and file path stay case-sensitive. Use only for matching, never as a stored value.
+ */
+export function novelRepositoryUrlKey(url: string): string {
+  const normalized = normalizeNovelRepositoryUrl(url);
+  const github = /^https:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)(\/.*)?$/i.exec(normalized);
+  return github
+    ? `https://raw.githubusercontent.com/${github[1].toLowerCase()}/${github[2].toLowerCase()}${github[3] ?? ""}`
+    : normalized;
+}
+
 export function isNovelRuntimeActionWhitelisted(action: string): action is NovelRuntimeInvokeAction {
   return (NOVEL_RUNTIME_ALLOWED_ACTIONS as readonly string[]).includes(action);
 }

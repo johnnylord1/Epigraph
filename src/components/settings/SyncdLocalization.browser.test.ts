@@ -1,7 +1,7 @@
 /// <reference types="@vitest/browser/matchers" />
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { applyAppLanguage } from "../../lib/i18n/runtime";
 
 vi.mock("../../store/state.svelte", async (importOriginal) => ({
@@ -85,9 +85,15 @@ async function expectDialogScreenshot(name: string) {
 }
 
 describe("Syncd localization (browser)", () => {
+  // App.svelte maps the emulated prefers-reduced-motion to this attribute; the panel keys off it.
+  beforeEach(() => {
+    document.documentElement.dataset.epigraphReducedMotion = "true";
+  });
+
   afterEach(() => {
     cleanup();
     applyAppLanguage("en");
+    delete document.documentElement.dataset.epigraphReducedMotion;
   });
 
   test.each([

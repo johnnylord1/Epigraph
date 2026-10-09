@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.databinding.RecentMangaItemBinding
 import eu.kanade.tachiyomi.databinding.RecentSubChapterItemBinding
 import eu.kanade.tachiyomi.ui.download.DownloadButton
 import eu.kanade.tachiyomi.ui.manga.chapter.BaseChapterHolder
+import eu.kanade.tachiyomi.ui.manga.chapter.pageProgress
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil.Companion.preferredChapterName
 import eu.kanade.tachiyomi.util.isLocal
@@ -251,11 +252,7 @@ class RecentMangaHolder(
                         item.chapter.last_page_read,
                     )
                 } else {
-                    itemView.context.getString(
-                        MR.strings.page_x_of_y,
-                        item.chapter.last_page_read + 1,
-                        item.chapter.pages_left + item.chapter.last_page_read,
-                    )
+                    itemView.context.pageProgress(item.chapter.last_page_read, item.chapter.pages_left)
                 }
                 context.timeSpanFromNow(MR.strings.read_, item.mch.history.last_read) + "\n" + progressText
             }

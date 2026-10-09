@@ -94,7 +94,7 @@ suspend fun Manga.moveCategories(
     onMangaMoved: () -> Unit,
 ) {
     val getCategories: GetCategories = get()
-    val categories = getCategories.await()
+    val categories = getCategories.awaitFor(this)
     val categoriesForManga = this.id?.let { mangaId -> getCategories.awaitByMangaId(mangaId) }.orEmpty()
     val ids = categoriesForManga.mapNotNull { it.id }.toTypedArray()
     withUIContext {
@@ -120,7 +120,7 @@ suspend fun List<Manga>.moveCategories(
     if (this.isEmpty()) return
 
     val getCategories: GetCategories = get()
-    val categories = getCategories.await()
+    val categories = getCategories.awaitFor(this)
     val mangaCategories = map { manga ->
         manga.id?.let { mangaId -> getCategories.awaitByMangaId(mangaId) }.orEmpty()
     }
@@ -196,7 +196,7 @@ suspend fun Manga.addOrRemoveToFavorites(
             }
         }
 
-        val categories = getCategories.await()
+        val categories = getCategories.awaitFor(this)
         val defaultCategoryId = preferences.defaultCategory().get()
         val defaultCategory = categories.find { it.id == defaultCategoryId }
         val lastUsedCategories = Category.lastCategoriesAddedTo.mapNotNull { catId ->

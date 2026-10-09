@@ -51,8 +51,8 @@ import yokai.domain.DialogHostState
 import yokai.domain.extension.repo.model.ExtensionRepo
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
-import yokai.presentation.YokaiAppBarTabs
 import yokai.presentation.YokaiScaffold
+import yokai.presentation.component.SegmentedSwitch
 import yokai.presentation.component.ToolTipButton
 import yokai.presentation.extension.repo.component.ExtensionRepoInput
 import yokai.presentation.extension.repo.component.ExtensionRepoItem
@@ -120,21 +120,20 @@ class ExtensionRepoScreen(
                         )
                     }
                 }
-            },
-            appBarBottomContent = {
-                YokaiAppBarTabs(
-                    labels = listOf(
-                        stringResource(MR.strings.manga),
-                        stringResource(MR.strings.novels),
+                // Same place as every other content-type switch: the end of the app bar actions.
+                SegmentedSwitch(
+                    options = listOf(
+                        0 to repoTabLabel(stringResource(MR.strings.manga), extensionCount),
+                        1 to repoTabLabel(stringResource(MR.strings.novels), novelCount),
                     ),
-                    counts = listOf(extensionCount, novelCount),
-                    selectedIndex = pagerState.currentPage,
-                    onSelected = { page ->
+                    selected = pagerState.currentPage,
+                    onSelect = { page ->
                         scope.launch {
                             if (ReducedMotion.isEnabled()) pagerState.scrollToPage(page)
                             else pagerState.animateScrollToPage(page)
                         }
                     },
+                    modifier = Modifier.padding(horizontal = 4.dp),
                 )
             },
         ) { innerPadding ->
@@ -278,7 +277,7 @@ class ExtensionRepoScreen(
         val repos = (state as NovelRepoScreenModel.State.Success).repos.map { repo ->
             ExtensionRepo(
                 baseUrl = repo.baseUrl,
-                name = repo.name,
+                name = repo.displayName,
                 shortName = null,
                 website = "",
                 signingKeyFingerprint = "",
@@ -483,3 +482,6 @@ class ExtensionRepoScreen(
         )
     }
 }
+
+/** "Manga 3": the pill keeps the repository count the old tabs showed. */
+private fun repoTabLabel(label: String, count: Int?): String = if (count == null) label else "$label $count"

@@ -243,8 +243,8 @@ impl BootstrapLocalServerProfile {
 
     fn default_port(self) -> u16 {
         match self {
-            Self::Main => 4567,
-            Self::Test => 4667,
+            Self::Main => crate::suwayomi_runtime::main_server_port(),
+            Self::Test => crate::suwayomi_runtime::test_server_port(),
         }
     }
 }

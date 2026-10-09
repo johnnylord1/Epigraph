@@ -1035,3 +1035,17 @@ export const LOGOUT_TRACKER = `
     }
   }
 `;
+
+// Chapters read on any device (the phone's reads reach Suwayomi through Epigraph Core).
+export const GET_RECENTLY_READ_CHAPTERS = `
+  query GetRecentlyReadChapters($first: Int!) {
+    chapters(
+      filter: { lastReadAt: { greaterThan: "0" }, inLibrary: { equalTo: true } }
+      orderBy: LAST_READ_AT
+      orderByType: DESC
+      first: $first
+    ) {
+      nodes { id name lastReadAt manga { id title thumbnailUrl } }
+    }
+  }
+`;

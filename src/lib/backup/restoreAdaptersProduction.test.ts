@@ -33,4 +33,22 @@ describe.each(["epigraph", "lnreader"] as const)("production %s Novel readiness"
     f.repositories.installedPlugins = [{ pluginId: "used", repositoryId: "owner", enabled: true, disabledReason: null }];
     await expect(prepareProductionNovels(new ArrayBuffer(0), format)).rejects.toThrow("RESTORE_WAITING_FOR_DEPENDENCIES");
   });
+  it("accepts an installed plugin whose GitHub owner differs only in letter case", async () => {
+    const recorded = "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
+    const installed = "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json";
+    f.snapshot.entries[0].source = { pluginId: "illusia", sourceId: "illusia", repositoryUrl: recorded };
+    f.snapshot.plugins = [{ id: "illusia", repositoryUrl: recorded }];
+    f.repositories.repositories = [{ id: "builtin", normalizedUrl: installed, enabled: true, trustState: "trusted" }];
+    f.repositories.installedPlugins = [{ pluginId: "illusia", repositoryId: "builtin", enabled: true, disabledReason: null }];
+    const result = await prepareProductionNovels(new ArrayBuffer(0), format);
+    expect(result.restored.summary.restoredUsableCount).toBe(1);
+  });
+  it("still treats a different branch of the same repository as another origin", async () => {
+    const recorded = "https://raw.githubusercontent.com/lnreader/lnreader-plugins/plugins/v2.0.0/.dist/plugins.min.json";
+    f.snapshot.entries[0].source = { pluginId: "illusia", sourceId: "illusia", repositoryUrl: recorded };
+    f.snapshot.plugins = [{ id: "illusia", repositoryUrl: recorded }];
+    f.repositories.repositories = [{ id: "builtin", normalizedUrl: "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json", enabled: true, trustState: "trusted" }];
+    f.repositories.installedPlugins = [{ pluginId: "illusia", repositoryId: "builtin", enabled: true, disabledReason: null }];
+    await expect(prepareProductionNovels(new ArrayBuffer(0), format)).rejects.toThrow("RESTORE_WAITING_FOR_DEPENDENCIES");
+  });
 });

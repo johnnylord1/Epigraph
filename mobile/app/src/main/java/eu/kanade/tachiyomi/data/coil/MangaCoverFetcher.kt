@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.coil
 
+import android.util.Base64
 import android.webkit.MimeTypeMap
 import androidx.core.net.toUri
 import co.touchlab.kermit.Logger
@@ -14,6 +15,7 @@ import coil3.request.Options
 import com.hippo.unifile.UniFile
 import epigraph.sync.core.http.CoreHttpResult
 import epigraph.sync.core.suwayomi.EpigraphCoreCoverClient
+import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.domain.manga.models.Manga
@@ -35,6 +37,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import okio.FileSystem
 import okio.IOException
 import okio.Path.Companion.toOkioPath
@@ -45,6 +48,7 @@ import okio.source
 import yokai.util.koin.injectLazy
 import yokai.util.koin.get
 import yokai.domain.manga.models.MangaCover
+import yokai.domain.manga.interactor.GetManga
 
 class MangaCoverFetcher(
     private val mangaId: Long?,
@@ -87,6 +91,7 @@ class MangaCoverFetcher(
                 setRatioAndColorsInScope(mangaId, url, isInLibrary, UniFile.fromUri(options.context, url.toUri()))
                 fileUriLoader(url)
             }
+            Type.DATA -> dataUriLoader(url)
             null -> error("Invalid image")
         }
     }
@@ -112,6 +117,19 @@ class MangaCoverFetcher(
             source = ImageSource(source = source, fileSystem = FileSystem.SYSTEM),
             mimeType = "image/*",
             dataSource = DataSource.DISK,
+        )
+    }
+
+    // LNReader plugins (and novels synced from the desktop) may embed the cover as a base64 data URI.
+    private fun dataUriLoader(uri: String): FetchResult {
+        val header = uri.substringBefore(',')
+        require(header.endsWith(";base64", ignoreCase = true)) { "Unsupported data URI cover" }
+        val bytes = Base64.decode(uri.substringAfter(','), Base64.DEFAULT)
+        setRatioAndColorsInScope(mangaId, url, isInLibrary)
+        return SourceFetchResult(
+            source = ImageSource(source = Buffer().write(bytes), fileSystem = FileSystem.SYSTEM),
+            mimeType = header.removePrefix("data:").substringBefore(';').ifBlank { "image/*" },
+            dataSource = DataSource.MEMORY,
         )
     }
 
@@ -187,7 +205,8 @@ class MangaCoverFetcher(
             val result = coreCoverClientLazy.value.fetch(url!!)
             val bytes = when (result) {
                 is CoreHttpResult.Success -> result.value
-                is CoreHttpResult.Failure -> error("Core cover request failed with ${result.statusCode}")
+                is CoreHttpResult.Failure -> return installedSourceCover()
+                    ?: error("Core cover request failed with ${result.statusCode}")
             }
             return Response.Builder()
                 .request(Request.Builder().url(CORE_COVER_RESPONSE_URL).build())
@@ -215,6 +234,26 @@ class MangaCoverFetcher(
             throw IOException(response.message)
         }
         return response
+    }
+
+    /**
+     * The desktop serves only covers it has cached. When it has none and this title is already
+     * relinked to an extension installed on the phone, the phone asks that source for the cover
+     * itself (through the extension's own client, Cloudflare handling included).
+     */
+    private suspend fun installedSourceCover(): Response? {
+        val source = sourceLazy.value?.takeUnless { it.id == EpigraphCoreSource.ID } ?: return null
+        val manga = mangaId?.let { runCatching { get<GetManga>().awaitById(it) }.getOrNull() } ?: return null
+        if (manga.source != source.id) return null
+        return runCatching {
+            val coverUrl = source.getMangaDetails(manga.copy()).thumbnail_url
+                ?.let { if (it.startsWith("//")) "https:$it" else it }
+                ?.takeIf { it.startsWith("http", ignoreCase = true) }
+                ?: return null
+            val request = Request.Builder().url(coverUrl).headers(source.headers).build()
+            source.client.newCall(request).await().takeIf { it.isSuccessful }
+        }.onFailure { Logger.w(it) { "Installed source cover fallback failed for manga $mangaId" } }
+            .getOrNull()
     }
 
     private fun newRequest(): Request {
@@ -360,6 +399,7 @@ class MangaCoverFetcher(
                 cover.startsWith(SuwayomiCoreThumbnailReference.SCHEME, true) -> Type.URL
             cover.startsWith("/") || cover.startsWith("file://") -> Type.File
             cover.startsWith("content") -> Type.URI
+            cover.startsWith("data:", true) -> Type.DATA
             else -> null
         }
     }
@@ -415,7 +455,7 @@ class MangaCoverFetcher(
     }
 
     private enum class Type {
-        File, URL, URI;
+        File, URL, URI, DATA;
     }
 
     companion object {

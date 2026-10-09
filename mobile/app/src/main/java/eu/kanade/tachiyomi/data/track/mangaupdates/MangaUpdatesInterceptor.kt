@@ -6,7 +6,7 @@ import okhttp3.Response
 import java.io.IOException
 
 class MangaUpdatesInterceptor(
-    mangaUpdates: MangaUpdates,
+    private val mangaUpdates: MangaUpdates,
 ) : Interceptor {
 
     private var token: String? = mangaUpdates.restoreSession()
@@ -14,7 +14,9 @@ class MangaUpdatesInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
-        val token = token ?: throw IOException("Not authenticated with MangaUpdates")
+        // A login installed without this interceptor (Epigraph Core tracker sync) is only in the preferences.
+        val token = token ?: mangaUpdates.restoreSession()?.also { this.token = it }
+            ?: throw IOException("Not authenticated with MangaUpdates")
 
         // Add the authorization header to the original request.
         val authRequest = originalRequest.newBuilder()

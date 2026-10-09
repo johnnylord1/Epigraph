@@ -92,6 +92,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdRevalidateSession: vi.fn(),
   syncdRevalidatePersistedSyncSessions: vi.fn(async () => []),
   syncdSetActiveReplicationSession: vi.fn(),
+  syncdRevokePairedDevice: vi.fn(),
   syncdStartHostPairing: vi.fn(async () => hostState),
   syncdUpdatePairedDeviceGrantedScopes: vi.fn(),
 }));
@@ -108,6 +109,7 @@ import {
   syncdGetSessionCatalog,
   syncdHostDecidePairing,
   syncdListPairedDevices,
+  syncdRevokePairedDevice,
   syncdUpdatePairedDeviceGrantedScopes,
 } from "../../lib/syncdDesktop";
 import type { SyncdReplicationSnapshot } from "../../lib/syncdDesktop";
@@ -142,7 +144,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile", onClose },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     expect(dialog.parentElement?.parentElement).toBe(document.body);
     expect(within(dialog).getByTestId("syncd-pairing-view").hidden).toBe(false);
     expect(within(dialog).getByTestId("syncd-details-view").hidden).toBe(true);
@@ -172,7 +174,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(within(dialog).getByTestId("syncd-host-status-live").textContent).toContain("Pending"));
     expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("pending");
@@ -183,13 +185,42 @@ describe("SyncdConnectionPanel", () => {
         ...hostState,
         status: "claimed",
         claimedDeviceId: "desktop-2",
+        claimedPlatform: "desktop",
       });
     });
 
     expect(within(dialog).getAllByText("A desktop wants to connect").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText("Approve only if the other computer shows the same code.")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("claimed");
     expect(within(dialog).getByTestId("syncd-host-approve")).toBeTruthy();
     expect(within(dialog).getByTestId("syncd-host-reject")).toBeTruthy();
+  });
+
+  test.each([
+    ["android", "A phone wants to connect", "Approve only if the phone shows the same code."],
+    [null, "A device wants to connect", "Approve only if the other device shows the same code."],
+  ])("names a %s claimant without calling it a desktop", async (claimedPlatform, title, hint) => {
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "android-1",
+        claimedDeviceName: "Google sdk_gphone64_x86_64",
+        claimedPlatform,
+      });
+    });
+
+    expect(within(dialog).getAllByText(title).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(hint)).toBeTruthy();
+    expect(within(dialog).queryByText("A desktop wants to connect")).toBeNull();
+    expect(within(dialog).queryByText("Approve only if the other computer shows the same code.")).toBeNull();
   });
 
   test("refetches the active host after a pairing decision", async () => {
@@ -197,7 +228,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(pairingStatusListener).not.toBeNull());
     await act(async () => {
@@ -218,7 +249,9 @@ describe("SyncdConnectionPanel", () => {
     await waitFor(() => {
       expect(syncdHostDecidePairing).toHaveBeenCalledWith("pairing-1", "approve");
       expect(syncdGetActiveHostPairing).toHaveBeenCalledTimes(2);
-      expect(within(dialog).getByTestId("syncd-host-status-live").getAttribute("data-status")).toBe("approved");
+      // The approved code is spent, so the panel drops it and offers a fresh pairing.
+      expect(within(dialog).queryByTestId("syncd-host-pin")).toBeNull();
+      expect(within(dialog).getByTestId("syncd-host-start")).toBeTruthy();
     });
   });
 
@@ -227,7 +260,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
 
-    await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    await screen.findByRole("dialog", { name: "Device pairing" });
     await waitFor(() => {
       expect(listenSyncdDesktopState).toHaveBeenCalledTimes(1);
       expect(listenSyncdPairingStatus).toHaveBeenCalledTimes(1);
@@ -254,7 +287,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await waitFor(() => expect(desktopStateListener).not.toBeNull());
     await act(async () => {
       desktopStateListener?.({
@@ -290,7 +323,7 @@ describe("SyncdConnectionPanel", () => {
       },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     expect(host.contains(dialog)).toBe(true);
     expect(dialog.closest(".syncd-modal-backdrop")?.classList.contains("syncd-modal-backdrop--embedded")).toBe(true);
     expect(within(dialog).queryByRole("button", { name: "Close" })).toBeNull();
@@ -352,7 +385,7 @@ describe("SyncdConnectionPanel", () => {
     vi.mocked(syncdGetSessionCatalog).mockResolvedValue({ localProfileId: "main", activeSessionKey: "remote", replication: live, sessions: [] });
     render(SyncdConnectionPanel, { profileId: "main", scopeLabel: "First run", presentation: "embedded", onReadyChange });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await waitFor(() => expect(refreshFirstRunSyncLibrary).toHaveBeenCalledTimes(1));
     expect(within(dialog).getByTestId("syncd-initial-sync-status").dataset.phase).toBe("loading");
 
@@ -415,7 +448,7 @@ describe("SyncdConnectionPanel", () => {
       props: { profileId: "main", scopeLabel: "Main profile", onClose },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(pairingStatusListener).not.toBeNull());
     await act(async () => {
@@ -452,7 +485,7 @@ describe("SyncdConnectionPanel", () => {
     render(SyncdConnectionPanel, {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(pairingStatusListener).not.toBeNull());
     await act(async () => {
@@ -479,13 +512,50 @@ describe("SyncdConnectionPanel", () => {
     });
   });
 
+  test("revokes a paired device only after the second click", async () => {
+    vi.mocked(syncdListPairedDevices).mockResolvedValue([{
+      deviceId: "android-1",
+      deviceName: "Pixel",
+      platform: "android" as const,
+      profileId: "main",
+      grantedScopes: ["comics:profile:main"],
+      lastSeenAtMs: Date.now(),
+    }]);
+    vi.mocked(syncdRevokePairedDevice).mockResolvedValue(undefined);
+
+    render(SyncdConnectionPanel, {
+      props: { profileId: "main", scopeLabel: "Main profile" },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
+    await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
+    await waitFor(() => expect(pairingStatusListener).not.toBeNull());
+    await act(async () => {
+      pairingStatusListener?.({
+        ...hostState,
+        status: "claimed",
+        claimedDeviceId: "android-1",
+      });
+    });
+    await fireEvent.click(within(dialog).getByTestId("syncd-modal-details"));
+    const revoke = await within(dialog).findByTestId("syncd-revoke-paired-device");
+
+    await fireEvent.click(revoke);
+    expect(syncdRevokePairedDevice).not.toHaveBeenCalled();
+    await fireEvent.click(within(dialog).getByTestId("syncd-revoke-paired-device"));
+
+    await waitFor(() => expect(syncdRevokePairedDevice).toHaveBeenCalledWith("android-1"));
+    await waitFor(() => {
+      expect(within(dialog).queryByTestId("syncd-revoke-paired-device")).toBeNull();
+    });
+  });
+
   test("releases the decision controls when the native decision times out", async () => {
     vi.mocked(syncdHostDecidePairing).mockImplementation(() => new Promise(() => {}));
     render(SyncdConnectionPanel, {
       props: { profileId: "main", scopeLabel: "Main profile" },
     });
 
-    const dialog = await screen.findByRole("dialog", { name: "Desktop sync pairing" });
+    const dialog = await screen.findByRole("dialog", { name: "Device pairing" });
     await fireEvent.click(within(dialog).getByTestId("syncd-host-start"));
     await waitFor(() => expect(pairingStatusListener).not.toBeNull());
     await act(async () => {

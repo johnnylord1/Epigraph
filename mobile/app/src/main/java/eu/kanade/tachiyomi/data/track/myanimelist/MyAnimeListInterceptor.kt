@@ -23,6 +23,12 @@ class MyAnimeListInterceptor(private val myanimelist: MyAnimeList) : Interceptor
 
         val originalRequest = chain.request()
 
+        // A login applied after logout() (such as one synced from the desktop) is only in the
+        // preferences until it is read again.
+        if (oauth == null) {
+            oauth = myanimelist.loadOAuth()
+        }
+
         if (oauth?.isExpired() == true) {
             refreshToken(chain)
         }

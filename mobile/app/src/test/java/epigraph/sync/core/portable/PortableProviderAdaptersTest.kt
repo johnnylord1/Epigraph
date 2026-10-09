@@ -37,6 +37,23 @@ class PortableProviderAdaptersTest {
     }
 
     @Test
+    fun `a fork loading the same source id stands in for a package that is not installed`() = runTest {
+        val registry = FakeComicRegistry(
+            installed = setOf("revived.package"),
+            packagesBySource = mapOf(10L to "revived.package"),
+            readySources = setOf(10L),
+        )
+        val provider = MihonPortableProvider(registry, EmptyLookup)
+        val served = comicDependency(setOf("10"))
+        val missing = comicDependency(setOf("12"))
+
+        val report = provider.inspectDependencies(listOf(served, missing)).resolutions
+
+        assertEquals(PortableResolutionState.READY, report.getValue(served).state)
+        assertEquals(PortableResolutionReason.EXTENSION_NOT_FOUND, report.getValue(missing).reason)
+    }
+
+    @Test
     fun `comic work binds only by exact source and opaque key`() = runTest {
         val ref = PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/Keep/Case?A=%2F"))
         val lookup = object : PortableLocalEntityLookup by EmptyLookup {
@@ -132,6 +149,35 @@ class PortableProviderAdaptersTest {
         assertEquals(0, materializerCalls)
         assertEquals(PortableResolutionState.RETRYABLE_FAILURE, resolution.resolution.state)
         assertEquals(PortableResolutionReason.SOURCE_NOT_LOADED, resolution.resolution.reason)
+    }
+
+    @Test
+    fun `restored comic binds to its exact local rows while the extension is not installed`() = runTest {
+        val work = PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/series/Exact"))
+        val chapter = PortableChapterRef.Comic(work, ProviderOwnedKey("/chapter/1"))
+        val lookup = object : PortableLocalEntityLookup by EmptyLookup {
+            override suspend fun comicWork(sourceId: Long, mangaKey: String): String? =
+                if (sourceId == 10L && mangaKey == "/series/Exact") "918" else null
+
+            override suspend fun comicChapter(sourceId: Long, mangaKey: String, chapterKey: String): String? =
+                if (sourceId == 10L && mangaKey == "/series/Exact" && chapterKey == "/chapter/1") "77" else null
+        }
+        val provider = MihonPortableProvider(FakeComicRegistry(emptySet(), emptyMap(), emptySet()), lookup)
+
+        val existing = provider.resolveExistingWork(work)
+        val resolved = provider.resolveWork(work)
+        val chapterResolution = provider.resolveChapter(chapter)
+
+        assertEquals(PortableResolutionState.BOUND, existing?.resolution?.state)
+        assertEquals("918", existing?.localId)
+        assertEquals("918", resolved.localId)
+        assertEquals(PortableResolutionState.BOUND, chapterResolution.resolution.state)
+        assertEquals("77", chapterResolution.localId)
+        assertNull(
+            provider.resolveExistingWork(
+                PortableWorkRef.Comic(DecimalSourceId("10"), ProviderOwnedKey("/series/Other")),
+            ),
+        )
     }
 
     @Test

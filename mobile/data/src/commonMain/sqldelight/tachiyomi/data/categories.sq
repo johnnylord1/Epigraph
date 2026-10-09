@@ -11,6 +11,26 @@ SELECT *
 FROM categories
 ORDER BY sort;
 
+-- Comics and Books & novels keep separate folders: a folder scoped to novels or books belongs to
+-- Books & novels, every other folder to Comics.
+findAllComics:
+SELECT c.*
+FROM categories c
+WHERE NOT EXISTS (
+    SELECT 1 FROM aethon_category_scope s
+    WHERE s.category_id = c._id AND s.content_scope IN ('NOVEL', 'BOOK')
+)
+ORDER BY c.sort;
+
+findAllBooks:
+SELECT c.*
+FROM categories c
+WHERE EXISTS (
+    SELECT 1 FROM aethon_category_scope s
+    WHERE s.category_id = c._id AND s.content_scope IN ('NOVEL', 'BOOK')
+)
+ORDER BY c.sort;
+
 findAllByMangaId:
 SELECT categories.* FROM categories
 JOIN mangas_categories ON categories._id = mangas_categories.category_id

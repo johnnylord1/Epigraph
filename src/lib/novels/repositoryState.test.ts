@@ -19,6 +19,7 @@ import {
   deriveNovelRepositoryUiState,
   isBuiltinNovelRepository,
   loadNovelRepositoryState,
+  normalizeNovelRepositoryState,
   refreshNovelRepositoryCatalog,
   removeNovelRepositoryFromState,
   withBuiltinNovelRepository,
@@ -66,6 +67,48 @@ describe("novel repository state", () => {
     const builtin = state.repositories[0];
     expect(removeNovelRepositoryFromState(state, builtin.id)).toBe(state);
     expect(removeNovelRepositoryFromState(state, state.repositories[1].id).repositories).toHaveLength(1);
+  });
+
+  it("treats GitHub feeds differing only in owner/repo case as the same repository", () => {
+    const lowercase = BUILTIN_LNREADER_REPOSITORY_URL.replace("LNReader/lnreader-plugins", "lnreader/lnreader-plugins");
+    let state = createEmptyNovelRepositoryState({ profileId: "test" });
+    state = addNovelRepositoryToState(state, { profileId: "test", url: lowercase });
+    state = withBuiltinNovelRepository(state);
+    expect(state.repositories.map((repository) => repository.url)).toEqual([lowercase]);
+    // An older case-variant copy stays removable; the built-in feed returns once it is gone.
+    expect(isBuiltinNovelRepository(state.repositories[0])).toBe(false);
+    expect(withBuiltinNovelRepository(removeNovelRepositoryFromState(state, state.repositories[0].id))
+      .repositories.map((repository) => repository.url)).toEqual([BUILTIN_LNREADER_REPOSITORY_URL]);
+    expect(() => addNovelRepositoryToState(state, { profileId: "test", url: BUILTIN_LNREADER_REPOSITORY_URL }))
+      .toThrow("already saved");
+    const otherPath = BUILTIN_LNREADER_REPOSITORY_URL.replace("plugins.min.json", "PLUGINS.min.json");
+    expect(addNovelRepositoryToState(state, { profileId: "test", url: otherPath }).repositories).toHaveLength(2);
+  });
+
+  it("folds a saved case-variant copy of a feed into one repository with its installed plugins", () => {
+    const lowercase = BUILTIN_LNREADER_REPOSITORY_URL.replace("LNReader/lnreader-plugins", "lnreader/lnreader-plugins");
+    let state = createEmptyNovelRepositoryState({ profileId: "test" });
+    state = addNovelRepositoryToState(state, { profileId: "test", url: lowercase });
+    const [copy] = state.repositories;
+    state = withBuiltinNovelRepository(removeNovelRepositoryFromState(state, copy.id));
+    const [builtin] = state.repositories;
+    const plugin = (repositoryId: string, pluginId: string) => ({
+      profileId: "test", repositoryId, pluginId, version: "1.0.0", enabled: true, disabledReason: null,
+      artifactPath: `C:/plugins/${pluginId}.js`, customJsPath: null, customCssPath: null, hasSettings: false,
+      installedAtMs: 1, updatedAtMs: 1,
+    });
+    const saved = {
+      ...state,
+      repositories: [builtin, copy],
+      installedPlugins: [plugin(copy.id, "illusia"), plugin(copy.id, "wtrlab"), plugin(builtin.id, "wtrlab")],
+    };
+
+    const merged = normalizeNovelRepositoryState(JSON.parse(JSON.stringify(saved)), { profileId: "test" });
+    expect(merged.repositories.map((repository) => repository.url)).toEqual([BUILTIN_LNREADER_REPOSITORY_URL]);
+    expect(merged.installedPlugins.map((entry) => [entry.repositoryId, entry.pluginId])).toEqual([
+      [builtin.id, "illusia"],
+      [builtin.id, "wtrlab"],
+    ]);
   });
 
   it("persists repositories and language filters through the Tauri state file", async () => {

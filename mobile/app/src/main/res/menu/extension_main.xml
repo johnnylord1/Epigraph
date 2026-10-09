@@ -6,17 +6,23 @@
         android:icon="@drawable/ic_search_24dp"
         android:title="@string/search"
         app:actionViewClass="eu.kanade.tachiyomi.ui.base.MiniSearchView"
-        app:showAsAction="collapseActionView|ifRoom" />
+        app:showAsAction="collapseActionView|always" />
 
     <item
         android:id="@+id/action_extension_repos_settings"
         android:icon="@drawable/ic_tune_24dp"
         android:title="@string/options"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="always" />
 
     <item
         android:id="@+id/action_filter"
         android:title="@string/filter_languages"
         android:icon="@drawable/ic_language_24dp"
         app:showAsAction="always"/>
+
+    <!-- Manga / Novels pill; its action view is set by BrowseController.updateSheetMenu. -->
+    <item
+        android:id="@+id/action_extension_type"
+        android:title="@string/novels"
+        app:showAsAction="always" />
 </menu>

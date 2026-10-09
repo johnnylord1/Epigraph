@@ -46,6 +46,8 @@ pub async fn get_capabilities(
         supports_sync_status_v1: true,
         supports_comic_delete_projection_without_record: true,
         supports_suwayomi_category_create: true,
+        supports_suwayomi_extension_install: true,
+        supports_tracker_credentials_v1: crate::syncd::tracker_credentials::is_supported(),
         snapshot_schema_version: SNAPSHOT_SCHEMA_VERSION,
         snapshot_entity_types: SNAPSHOT_ENTITY_TYPES
             .iter()

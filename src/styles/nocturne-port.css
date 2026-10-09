@@ -491,22 +491,21 @@
   40%, 80% { transform: translateX(6px); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .epigraph-port--splash,
-  .epigraph-port--splash *,
-  .epigraph-port--splash *::before,
-  .epigraph-port--splash *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
+/* Reduced motion follows the app setting, then the system (motion.ts). */
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::before,
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
 
-  /* The loading line must still read as alive: it breathes in place instead of sweeping across. */
-  .epigraph-port--splash .line span {
-    width: 100%;
-    animation: epigraph-splash-breathe 1.8s ease-in-out infinite !important;
-  }
+/* The loading line must still read as alive: it breathes in place instead of sweeping across. */
+html[data-epigraph-reduced-motion="true"] .epigraph-port--splash .line span {
+  width: 100%;
+  animation: epigraph-splash-breathe 1.8s ease-in-out infinite !important;
 }
 
 @keyframes epigraph-splash-breathe {
@@ -1005,11 +1004,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   box-shadow: var(--component-topbar-shadow);
   z-index: var(--component-topbar-z-index);
   -webkit-app-region: drag;
-}
-
-html[data-epigraph-motion="idle"] .n-topbar {
-  backdrop-filter: var(--component-topbar-idle-blur);
-  box-shadow: var(--component-topbar-idle-shadow);
 }
 
 .n-topbar::before {

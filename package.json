@@ -34,8 +34,8 @@
     "syncd:prepare-sidecar:release": "node ./scripts/prepare-syncd-sidecar.mjs --release",
     "tauri": "tauri",
     "tauri:build": "pnpm suwayomi:prepare-bundle:windows && pnpm syncd:prepare-sidecar:release && tauri build --config src-tauri/tauri.conf.json",
-    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:dev:gate": "tauri dev --config src-tauri/tauri.dev.conf.json --no-watch"
+    "tauri:dev": "pnpm syncd:prepare-sidecar && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev:gate": "pnpm syncd:prepare-sidecar && tauri dev --config src-tauri/tauri.dev.conf.json --no-watch"
   },
   "dependencies": {
     "@noble/ciphers": "^2.1.1",

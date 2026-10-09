@@ -249,6 +249,13 @@ interface PortableContentProvider {
 
     suspend fun resolveWork(ref: PortableWorkRef): WorkResolution
 
+    /**
+     * Binds [ref] to a local row that already carries the exact provider identity, without
+     * loading the provider. A restored backup keeps titles whose extension is not installed;
+     * those rows must still sync reading progress. Returns null when no such row exists.
+     */
+    suspend fun resolveExistingWork(ref: PortableWorkRef): WorkResolution? = null
+
     suspend fun resolveChapter(ref: PortableChapterRef): ChapterResolution
 }
 

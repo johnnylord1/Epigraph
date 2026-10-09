@@ -170,7 +170,12 @@ export function mergeNovelDetailIntoLibraryState(
   const previousChapters = state.chapters.filter((chapter) => chapter.novelId === previousEntry.id);
   const previousChapterCount = previousChapters.length;
   const existingByPath = new Map(previousChapters.map((chapter) => [chapter.path, chapter]));
-  const nextChapters: PersistedNovelChapterEntry[] = detail.chapters.map((chapter) => {
+  // An empty chapter list from a source that already listed chapters is a transient or removed page, not a
+  // catalog that dropped everything; keep the last-known-good chapters and their read state.
+  const keepPreviousChapters = detail.chapters.length === 0 && previousChapterCount > 0;
+  const nextChapters: PersistedNovelChapterEntry[] = keepPreviousChapters
+    ? previousChapters.map((chapter) => ({ ...chapter, novelId: detail.id }))
+    : detail.chapters.map((chapter) => {
     const existing = existingByPath.get(chapter.path);
     return {
       id: chapter.id || existing?.id || createNovelChapterId(detail.id, chapter.path),
@@ -204,14 +209,14 @@ export function mergeNovelDetailIntoLibraryState(
   const nextEntry: PersistedNovelLibraryEntry = {
     id: detail.id,
     title: detail.title,
-    author: detail.author,
-    description: detail.description,
+    author: detail.author ?? previousEntry.author,
+    description: detail.description ?? previousEntry.description,
     coverUrl: normalizeNovelCoverUrl(detail.coverUrl) ?? normalizeNovelCoverUrl(previousEntry.coverUrl),
     path: detail.path,
-    status: detail.status,
-    tags: detail.tags,
+    status: detail.status ?? previousEntry.status,
+    tags: detail.tags.length > 0 ? detail.tags : previousEntry.tags,
     source: detail.source,
-    chapterCount: detail.chapterCount,
+    chapterCount: keepPreviousChapters ? Math.max(previousEntry.chapterCount ?? 0, previousChapterCount) : detail.chapterCount,
     addedAt: previousEntry.addedAt,
     updatedAt: createdAt,
   };

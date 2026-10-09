@@ -7,7 +7,10 @@ import epigraph.novel.repo.NovelRepoRepository
 import epigraph.novel.repo.interactor.NovelRepoIndexValidation
 import epigraph.novel.repo.interactor.NovelRepoIndexValidator
 import epigraph.novel.repo.model.NovelRepo
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 sealed interface LnReaderRepositoryApprovalResult {
     data class Approved(val indexUrl: String) : LnReaderRepositoryApprovalResult
@@ -47,6 +50,12 @@ class ManagedLnReaderDependencyActionGateway(
     private val validator: NovelRepoIndexValidator,
     private val plugins: NovelPluginManager,
 ) : LnReaderDependencyActionGateway {
+    // "Install all" installs every plugin of a repository in a row; fetch its index once, not
+    // once per plugin.
+    private val repositoryIndexes = ConcurrentHashMap<String, Pair<Long, List<NovelPluginIndex>>>()
+    // Installs run in parallel; the first one fetches the index and the rest reuse it.
+    private val indexMutex = Mutex()
+
     override suspend fun approveRepository(
         requirement: CoreNovelRepositoryRequirement,
     ): LnReaderRepositoryApprovalResult {
@@ -80,7 +89,7 @@ class ManagedLnReaderDependencyActionGateway(
         ) {
             return LnReaderPluginInstallResult.AlreadyInstalled
         }
-        val candidates = plugins.refreshRepositoryPlugins(repositoryIndexUrl)
+        val candidates = repositoryPlugins(repositoryIndexUrl)
         val candidate = candidates.singleMatching(requirement)
             ?: return if (candidates.any { it.id == requirement.pluginId || it.id == requirement.sourceId }) {
                 LnReaderPluginInstallResult.IdentityMismatch
@@ -108,6 +117,19 @@ class ManagedLnReaderDependencyActionGateway(
             LnReaderPluginInstallResult.ArtifactRejected
         }
     }
+
+    private suspend fun repositoryPlugins(indexUrl: String): List<NovelPluginIndex> = indexMutex.withLock {
+        val now = System.currentTimeMillis()
+        repositoryIndexes[indexUrl]?.takeIf { (fetchedAt, _) -> now - fetchedAt < INDEX_REUSE_MS }
+            ?.let { (_, cached) -> return@withLock cached }
+        plugins.refreshRepositoryPlugins(indexUrl).also { fetched ->
+            if (fetched.isNotEmpty()) repositoryIndexes[indexUrl] = now to fetched
+        }
+    }
+
+    private companion object {
+        const val INDEX_REUSE_MS = 60_000L
+    }
 }
 
 class LnReaderDependencyActionCoordinator(
@@ -116,6 +138,10 @@ class LnReaderDependencyActionCoordinator(
     private val portableTrust: PortableDependencyTrustCoordinator? = null,
     private val coreArtifacts: CoreNovelPluginArtifactGateway? = null,
 ) {
+    // "Install all" installs plugins in parallel: each marks its own plugin on the latest
+    // inventory, since writing back the copy read before the install undid the others' marks.
+    private val inventoryMutex = Mutex()
+
     suspend fun inventory(serverId: String, profileId: String): LnReaderDependencyInventory? =
         inventories.get(serverId, profileId)
 
@@ -154,6 +180,24 @@ class LnReaderDependencyActionCoordinator(
                                 item
                             }
                         },
+                        // The inventory was compared before this repository existed, so its plugins
+                        // were marked unavailable; they can be installed from it now.
+                        plugins = inventory.plugins.map { item ->
+                            if (
+                                item.requirement.repositoryId == repositoryId &&
+                                item.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
+                            ) {
+                                item.copy(
+                                    status = if (item.installedVersion != null) {
+                                        LnReaderPluginParityStatus.UPDATE_AVAILABLE
+                                    } else {
+                                        LnReaderPluginParityStatus.MISSING_AVAILABLE
+                                    },
+                                )
+                            } else {
+                                item
+                            }
+                        },
                     ),
                 )
             }
@@ -176,16 +220,19 @@ class LnReaderDependencyActionCoordinator(
         if (plugin.status == LnReaderPluginParityStatus.INSTALLED) {
             return LnReaderPluginInstallResult.AlreadyInstalled
         }
-        if (plugin.status == LnReaderPluginParityStatus.IDENTITY_MISMATCH) {
-            return LnReaderPluginInstallResult.IdentityMismatch
-        }
-        val repository = inventory.repositories.singleOrNull {
+        val indexUrl = inventory.repositories.singleOrNull {
             it.requirement.repositoryId == plugin.requirement.repositoryId
-        } ?: return LnReaderPluginInstallResult.RepositoryApprovalRequired
-        val indexUrl = repository.configuredIndexUrl
-            ?: return LnReaderPluginInstallResult.RepositoryApprovalRequired
-        val repositoryResult = gateway.installPlugin(indexUrl, plugin.requirement)
-        val resolvedResult = if (repositoryResult == LnReaderPluginInstallResult.PluginUnavailable) {
+        }?.configuredIndexUrl
+        val repositoryResult = when {
+            plugin.status == LnReaderPluginParityStatus.IDENTITY_MISMATCH ->
+                LnReaderPluginInstallResult.IdentityMismatch
+            indexUrl == null -> LnReaderPluginInstallResult.RepositoryApprovalRequired
+            else -> gateway.installPlugin(indexUrl, plugin.requirement)
+        }
+        // The paired Core serves the desktop's exact artifact, verified by hash and size, so a
+        // repository that was not added, lacks that version or republished it with other bytes
+        // no longer blocks the install.
+        val resolvedResult = if (repositoryResult in CORE_ARTIFACT_FALLBACK) {
             coreArtifacts?.install(serverId, profileId, plugin.requirement) ?: repositoryResult
         } else {
             repositoryResult
@@ -195,20 +242,23 @@ class LnReaderDependencyActionCoordinator(
                 result == LnReaderPluginInstallResult.Installed ||
                 result == LnReaderPluginInstallResult.AlreadyInstalled
             ) {
-                inventories.replace(
-                    inventory.copy(
-                        plugins = inventory.plugins.map { item ->
-                            if (item.requirement.pluginId == pluginId) {
-                                item.copy(
-                                    status = LnReaderPluginParityStatus.INSTALLED,
-                                    installedVersion = item.requirement.version,
-                                )
-                            } else {
-                                item
-                            }
-                        },
-                    ),
-                )
+                inventoryMutex.withLock {
+                    val latest = inventories.get(serverId, profileId) ?: inventory
+                    inventories.replace(
+                        latest.copy(
+                            plugins = latest.plugins.map { item ->
+                                if (item.requirement.pluginId == pluginId) {
+                                    item.copy(
+                                        status = LnReaderPluginParityStatus.INSTALLED,
+                                        installedVersion = item.requirement.version,
+                                    )
+                                } else {
+                                    item
+                                }
+                            },
+                        ),
+                    )
+                }
                 portableTrust?.wake()
             }
         }
@@ -216,6 +266,15 @@ class LnReaderDependencyActionCoordinator(
         throw cancelled
     } catch (error: Throwable) {
         LnReaderPluginInstallResult.Failed(error.javaClass.simpleName)
+    }
+
+    private companion object {
+        val CORE_ARTIFACT_FALLBACK = setOf(
+            LnReaderPluginInstallResult.PluginUnavailable,
+            LnReaderPluginInstallResult.IdentityMismatch,
+            LnReaderPluginInstallResult.RepositoryApprovalRequired,
+            LnReaderPluginInstallResult.ArtifactRejected,
+        )
     }
 }
 

@@ -412,16 +412,18 @@ private class FakeReplicaStore : CoreReplicaStore {
 
             override suspend fun hasAppliedInboxEvent(globalEventId: Long) = globalEventId in stagedInbox
 
-            override suspend fun upsertConfirmed(record: CoreConfirmedRecord) {
+            override suspend fun upsertConfirmed(record: CoreConfirmedRecord): Boolean {
                 stagedTombstones.remove(record.key)
                 stagedConfirmed[record.key] = record
                 stagedOperations += "upsert:${record.key.entityId}"
+                return true
             }
 
-            override suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone) {
+            override suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone): Boolean {
                 stagedConfirmed.remove(tombstone.key)
                 stagedTombstones[tombstone.key] = tombstone
                 stagedOperations += "delete:${tombstone.key.entityId}"
+                return true
             }
 
             override suspend fun recordAppliedInboxEvent(event: CoreReplicaInboxEvent) {

@@ -3,6 +3,7 @@ package epigraph.sync.core.suwayomi
 import epigraph.sync.core.credentials.CoreCredentialException
 import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.http.CoreHttpResult
+import epigraph.sync.core.protocol.CoreErrorDetail
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
@@ -21,6 +22,7 @@ import java.time.Instant
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
@@ -114,6 +116,12 @@ class EpigraphCoreSource(
                 chapter_number = (chapter.double("chapterNumber") ?: 0.0).toFloat()
                 scanlator = chapter.string("scanlator")
                 date_upload = chapter.timestamp("uploadDate")
+                // Suwayomi's read state travels with the list so a phone shows the desktop's
+                // progress; ChapterSourceSync folds it in without un-reading local reads.
+                read = chapter.boolean("isRead") == true
+                last_page_read = chapter.long("lastPageRead")?.coerceIn(0L, Int.MAX_VALUE.toLong())?.toInt() ?: 0
+                // Suwayomi keeps lastReadAt in epoch seconds.
+                last_read_at = chapter.long("lastReadAt")?.takeIf { it > 0 }?.times(1000) ?: 0L
             }
         }
     }
@@ -196,6 +204,7 @@ class EpigraphCoreSource(
     private fun JsonObject.string(field: String): String? = this[field].primitiveContent()
     private fun JsonObject.long(field: String): Long? = (this[field] as? JsonPrimitive)?.longOrNull
     private fun JsonObject.double(field: String): Double? = (this[field] as? JsonPrimitive)?.doubleOrNull
+    private fun JsonObject.boolean(field: String): Boolean? = (this[field] as? JsonPrimitive)?.booleanOrNull
     private fun JsonObject.timestamp(field: String): Long {
         val primitive = this[field] as? JsonPrimitive ?: return 0L
         primitive.longOrNull?.let { return it }
@@ -360,7 +369,14 @@ class AuthenticatedEpigraphCoreSourceGateway(
     }
 
     private fun CoreHttpResult.Failure.asSourceException() =
-        EpigraphCoreSourceException("Core request failed with HTTP $statusCode")
+        EpigraphCoreSourceException(
+            "Core request failed with HTTP $statusCode" +
+                (errorEnvelope?.error?.let { error -> " (${error.code}): ${error.reason()}" } ?: ""),
+        )
+
+    // The source's own failure (e.g. "HTTP error 403") says more than the Core's generic message.
+    private fun CoreErrorDetail.reason(): String =
+        ((details as? JsonObject)?.get("upstreamError") as? JsonPrimitive)?.contentOrNull ?: message
 }
 
 class EpigraphCoreSourceException(message: String, cause: Throwable? = null) : Exception(message, cause)

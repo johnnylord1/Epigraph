@@ -31,8 +31,6 @@ import com.bluelinelabs.conductor.ControllerChangeType
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.snackbar.BaseTransientBottomBar
 import com.google.android.material.snackbar.Snackbar
-import epigraph.recommendations.DiscoverMode
-import epigraph.recommendations.ui.DiscoverController
 import epigraph.ui.motion.ListEntryAnimation
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.SelectableAdapter
@@ -62,8 +60,6 @@ import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.recents.options.TabbedRecentsOptionsSheet
 import eu.kanade.tachiyomi.ui.upcoming.UpcomingController
-import eu.kanade.tachiyomi.ui.source.BrowseSourceType
-import eu.kanade.tachiyomi.ui.source.DiscoverEntryItem
 import eu.kanade.tachiyomi.ui.source.browse.ProgressItem
 import eu.kanade.tachiyomi.util.chapter.updateTrackChapterMarkedAsRead
 import eu.kanade.tachiyomi.util.system.addCheckBoxPrompt
@@ -678,10 +674,6 @@ class RecentsController(bundle: Bundle? = null) :
 
     fun refresh() = presenter.getRecents()
 
-    private fun openDiscover() {
-        router.pushController(DiscoverController(DiscoverMode.COMICS).withFadeTransaction())
-    }
-
     fun showLists(
         recents: List<RecentMangaItem>,
         hasNewItems: Boolean,
@@ -697,13 +689,7 @@ class RecentsController(bundle: Bundle? = null) :
         }
         binding.progress.isVisible = false
         binding.recentsFrameLayout.alpha = 1f
-        // "For you" leads the grouped feed so recommendations are one tap from the daily screen.
-        val wantsDiscover = presenter.viewType == RecentsViewType.GroupedAll && !isSearching()
-        if (!wantsDiscover) adapter.removeAllScrollableHeaders()
         adapter.updateDataSetIfChanged(recents)
-        if (wantsDiscover && adapter.scrollableHeaders.none { it is DiscoverEntryItem }) {
-            adapter.addScrollableHeader(DiscoverEntryItem(BrowseSourceType.Manga) { openDiscover() })
-        }
         adapter.onLoadMoreComplete(null)
         // DESIGN.md §9 "Entrada de lista": once per screen, never on refresh, paging or search.
         if (!recentsEntryPlayed && recents.isNotEmpty() && !isSearching()) {

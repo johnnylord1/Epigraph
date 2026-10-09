@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import type { Manga, Chapter, Category, Source } from "../lib/types";
 import type {
   SearchBrowseContentType,
@@ -225,6 +226,7 @@ const PROFILE_SCOPED_SETTING_KEYS = [
   "keybinds",
   "idleTimeoutMin",
   "splashCards",
+  "uiAnimations",
   "storageLimitGb",
   "markReadOnNext",
   "overlayBars",
@@ -520,6 +522,8 @@ export interface Settings {
   keybinds:                Keybinds;
   idleTimeoutMin?:         number;
   splashCards?:            boolean;
+  /** Interface animations. Unset follows the system setting; true/false is the user's choice. */
+  uiAnimations?:           boolean;
   storageLimitGb:          number | null;
   markReadOnNext:          boolean;
   overlayBars:             boolean;
@@ -921,13 +925,19 @@ const RESET_ON_UPGRADE: (keyof Settings)[] = [
   "serverUrl",
 ];
 
-function loadPersisted(): any {
+function readPersistedBlob(): any {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
+}
+
+function loadPersisted(): any {
+  // A pending write-behind must land first so every reader sees the latest store.
+  if (persistFlushTimer !== null) writePersistedFields();
+  return readPersistedBlob();
 }
 
 function normalizeSavedCustomThemes(value: unknown): CustomTheme[] {
@@ -982,15 +992,84 @@ function readPersistedAppReadingSnapshot(): {
 // detached copy reads localStorage but never writes it; its changes are relayed to the main window instead.
 const DETACHED_READER_WINDOW = isDetachedReaderWindow();
 
-function persist(patch: Record<string, unknown>): boolean {
-  if (DETACHED_READER_WINDOW) return true;
+// The persisted store is cached as one serialized string per top-level field. A store effect replaces
+// only its own field and the blob is reassembled from the cached strings off the interaction frame:
+// a navigation used to parse and re-serialize the whole document (history, read log, settings)
+// synchronously before the next paint.
+let persistedFields: Map<string, string> | null = null;
+let persistFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const PERSIST_WRITE_BEHIND_MS = 250;
+
+function persistedFieldCache(): Map<string, string> {
+  if (persistedFields) return persistedFields;
+  const fields = new Map<string, string>();
+  const current = readPersistedBlob();
+  if (current && typeof current === "object" && !Array.isArray(current)) {
+    for (const [key, value] of Object.entries(current)) {
+      const serialized = JSON.stringify(value);
+      if (serialized !== undefined) fields.set(key, serialized);
+    }
+  }
+  persistedFields = fields;
+  return fields;
+}
+
+function writePersistedFields(): boolean {
+  if (persistFlushTimer !== null) {
+    clearTimeout(persistFlushTimer);
+    persistFlushTimer = null;
+  }
+  if (!persistedFields || DETACHED_READER_WINDOW) return true;
   try {
-    const current = loadPersisted() ?? {};
-    localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...patch }));
+    const parts: string[] = [];
+    for (const [key, serialized] of persistedFields) parts.push(`${JSON.stringify(key)}:${serialized}`);
+    localStorage.setItem(STORE_KEY, `{${parts.join(",")}}`);
     return true;
   } catch {
     return false;
   }
+}
+
+/** Writes any pending store changes now (window close, restore, tests). */
+export function flushStorePersistence(): boolean {
+  return writePersistedFields();
+}
+
+/** Someone wrote the persisted store directly; the cached fields must be read again. */
+function forgetPersistedFieldCache() {
+  persistedFields = null;
+}
+
+function persist(patch: Record<string, unknown>, options: { immediate?: boolean } = {}): boolean {
+  if (DETACHED_READER_WINDOW) return true;
+  try {
+    const fields = persistedFieldCache();
+    // Serializing here (inside the caller's effect) keeps the effect subscribed to every nested value.
+    for (const [key, value] of Object.entries(patch)) {
+      const serialized = JSON.stringify(value);
+      if (serialized === undefined) fields.delete(key);
+      else fields.set(key, serialized);
+    }
+  } catch {
+    return false;
+  }
+  if (options.immediate) return writePersistedFields();
+  if (persistFlushTimer === null) {
+    persistFlushTimer = setTimeout(() => {
+      persistFlushTimer = null;
+      writePersistedFields();
+    }, PERSIST_WRITE_BEHIND_MS);
+  }
+  return true;
+}
+
+if (typeof window !== "undefined" && !DETACHED_READER_WINDOW) {
+  const flushOnLeave = () => { writePersistedFields(); };
+  window.addEventListener("pagehide", flushOnLeave);
+  window.addEventListener("beforeunload", flushOnLeave);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushOnLeave();
+  });
 }
 
 const saved = (() => {
@@ -1008,6 +1087,7 @@ const saved = (() => {
     };
     if (!DETACHED_READER_WINDOW) try {
       localStorage.setItem(STORE_KEY, JSON.stringify(migrated));
+      forgetPersistedFieldCache();
     } catch {}
     return migrated;
   }
@@ -1516,6 +1596,8 @@ class Store {
   librarySection:    LibrarySection   = $state(normalizeLibrarySection(saved?.librarySection));
   libraryFilter:     LibraryFilter    = $state("library");
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
+  // Reads synced from other devices older than this were cleared here and stay hidden.
+  historyClearedAt:  number           = $state(Number(saved?.historyClearedAt) || 0);
   libraryUpdateNotifications: LibraryUpdateNotification[] = $state(
     Array.isArray(saved?.libraryUpdateNotifications)
       ? saved.libraryUpdateNotifications
@@ -1621,6 +1703,8 @@ class Store {
   booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
   private booksStatePersistQueued = false;
   private booksStatePersistTask: Promise<void> | null = null;
+  /** Books state as last written to or read back from disk; see queuePersistBooksLibraryState. */
+  private booksStateDiskSignature: string | null = null;
 
   // ── Shared category list ──────────────────────────────────────────────────
   // Single source of truth for the category list, shared between Library and
@@ -1648,6 +1732,7 @@ class Store {
         $effect(() => { persist({ librarySection: this.librarySection }); });
         $effect(() => { persist({ libraryFilter: this.libraryFilter }); });
         $effect(() => { persist({ history:       this.history       }); });
+        $effect(() => { persist({ historyClearedAt: this.historyClearedAt }); });
         $effect(() => { persist({ libraryUpdateNotifications: this.libraryUpdateNotifications }); });
         $effect(() => { persist({ libraryUpdateIssues: this.libraryUpdateIssues }); });
         $effect(() => { persist({ systemNotifications: this.systemNotifications }); });
@@ -1695,6 +1780,7 @@ class Store {
     this.booksStateScopeKey = profileId;
     this.booksStateHydrated = false;
     this.booksLibraryHydrated = false;
+    this.booksStateDiskSignature = null;
 
     try {
       const snapshot = await loadBookLibraryState({ profileId });
@@ -1726,8 +1812,22 @@ class Store {
     }
   }
 
+  private booksPersistSignature(): string {
+    return untrack(() => JSON.stringify([
+      this.books.map(toPersistedBookEntry),
+      this.bookProgress,
+      this.bookBookmarks,
+      this.settings.booksCategories,
+      this.settings.booksCategoryAssignments,
+      this.settings.booksLibraryUi,
+    ]));
+  }
+
   private queuePersistBooksLibraryState() {
     if (!this.booksStateHydrated || DETACHED_READER_WINDOW) return;
+    // The effect also reruns on unrelated settings changes. Rewriting books state that is already on
+    // disk could land right after a sync apply and publish the revert of whatever that apply changed.
+    if (this.booksStateDiskSignature === this.booksPersistSignature()) return;
     this.booksStatePersistQueued = true;
     if (this.booksStatePersistTask) return;
 
@@ -1742,6 +1842,7 @@ class Store {
       try {
         while (this.booksStatePersistQueued) {
           this.booksStatePersistQueued = false;
+          this.booksStateDiskSignature = this.booksPersistSignature();
           await saveBookLibraryState({
             version: 1 as const,
             books: this.books.map(toPersistedBookEntry),
@@ -1753,6 +1854,9 @@ class Store {
             updatedAtMs: Date.now(),
           }, { profileId: this.booksStateScopeKey ?? this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings) });
         }
+      } catch (error) {
+        this.booksStateDiskSignature = null;
+        throw error;
       } finally {
         this.booksStatePersistTask = null;
       }
@@ -1981,7 +2085,21 @@ class Store {
     return this.bookmarks.find(b => b.chapterId === chapterId);
   }
 
-  clearHistory()                        { this.history = []; this.readLog = []; bumpContentSetupVersion(); }
+  clearHistory()                        { this.history = []; this.readLog = []; this.historyClearedAt = Date.now(); bumpContentSetupVersion(); }
+  /** Merge reads recorded on other devices; local entries win unless the synced read is newer. */
+  mergeSyncedHistory(entries: HistoryEntry[]) {
+    const byChapter = new Map(this.history.map((entry) => [entry.chapterId, entry]));
+    let changed = false;
+    for (const entry of entries) {
+      if (entry.readAt <= this.historyClearedAt) continue;
+      const current = byChapter.get(entry.chapterId);
+      if (current && current.readAt >= entry.readAt) continue;
+      byChapter.set(entry.chapterId, current ? { ...current, readAt: entry.readAt } : entry);
+      changed = true;
+    }
+    if (!changed) return;
+    this.history = [...byChapter.values()].sort((a, b) => b.readAt - a.readAt).slice(0, 300);
+  }
   clearLibraryUpdateNotifications()     { this.libraryUpdateNotifications = []; this.libraryUpdateIssues = []; }
   clearSystemNotifications()            { this.systemNotifications = []; }
   matchesRuntimeProfile(entry: { profileId?: LocalProfileId | null }) {
@@ -2213,6 +2331,12 @@ class Store {
     }
 
     this.queueCanonicalBookMigration();
+  }
+
+  /** Adopts the books state Syncd replication just wrote, without echoing it back to disk. */
+  replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) {
+    this.replaceBooksState(snapshot);
+    this.booksStateDiskSignature = this.booksPersistSignature();
   }
 
   replaceAppReadingState(snapshot: {
@@ -2574,7 +2698,7 @@ class Store {
       booksCategoryAssignments: input.booksCategoryAssignments,
     }, this.runtimeResolvedLocalProfileId);
 
-    if (!persist({ settings: sanitizeSettingsForPersistence(this.settings) })) {
+    if (!persist({ settings: sanitizeSettingsForPersistence(this.settings) }, { immediate: true })) {
       throw new Error("Migration links could not be persisted.");
     }
 
@@ -2606,7 +2730,7 @@ class Store {
       { customThemes: next, theme: activate ? theme.id : this.settings.theme },
       this.runtimeResolvedLocalProfileId,
     );
-    if (!persist({ settings: sanitizeSettingsForPersistence(nextSettings) })) return false;
+    if (!persist({ settings: sanitizeSettingsForPersistence(nextSettings) }, { immediate: true })) return false;
     this.settings = nextSettings;
     return true;
   }
@@ -2861,6 +2985,7 @@ export function addSystemNotification(entry: Omit<SystemNotification, "id" | "cr
 }
 export function clearSystemNotifications()                                { store.clearSystemNotifications(); }
 export function clearHistory()                                           { store.clearHistory(); }
+export function mergeSyncedHistory(entries: HistoryEntry[])               { store.mergeSyncedHistory(entries); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }
 export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }
 export function removeBook(bookId: string)                              { store.removeBook(bookId); }
@@ -2870,9 +2995,11 @@ export function flushBookLibraryPersistence()                          { return 
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }
 export function removeBookBookmark(bookId: string)                      { store.removeBookBookmark(bookId); }
 export function replaceBooksState(snapshot: BooksRestoreHydrationInput) { store.replaceBooksState(snapshot); }
+export function replaceBooksStateFromDisk(snapshot: BooksRestoreHydrationInput) { store.replaceBooksStateFromDisk(snapshot); }
 /** Restore must observe persistence failure rather than relying on the UI autosave effect. */
 export function persistRestoredAppReadingState(snapshot?: Parameters<typeof normalizeAppReadingRestore>[0]) {
   const candidate = normalizeAppReadingRestore(snapshot ?? { history: store.history, readLog: store.readLog, readingStats: store.readingStats });
+  if (!flushStorePersistence()) throw Error("RESTORE_APP_PERSISTENCE_FAILED");
   let raw: string | null;
   try { raw = localStorage.getItem(STORE_KEY); } catch { throw Error("RESTORE_APP_PERSISTENCE_FAILED"); }
   let current: Record<string, unknown> = {};
@@ -2885,6 +3012,7 @@ export function persistRestoredAppReadingState(snapshot?: Parameters<typeof norm
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({ ...current, ...candidate }));
   } catch { throw Error("RESTORE_APP_PERSISTENCE_FAILED"); }
+  forgetPersistedFieldCache();
   if (snapshot) store.replaceAppReadingState(candidate);
 }
 

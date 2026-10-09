@@ -10,6 +10,8 @@ import {
 
 const VERSION_FILE = "Version.json";
 const CATEGORY_FILE = "Category.json";
+const LNREADER_DEFAULT_CATEGORY_ID = "1";
+const LNREADER_LOCAL_CATEGORY_ID = "2";
 const SETTING_FILE = "Setting.json";
 const NOVEL_DIR = "NovelAndChapters";
 const DOWNLOAD_ZIP = "download.zip";
@@ -522,6 +524,10 @@ export async function parseLnReaderNovelsBackup(bytes: Uint8Array | ArrayBuffer)
         if (matches.length === 1) novelIds.push(matches[0].entry.id);
         else importIssues.push({ code: "unresolved-category-novel", message: "Preserved destination memberships because a backup Novel reference is unresolved." });
       }
+      // LNReader seeds two system categories: 1 is its built-in default (here: uncategorized)
+      // and 2 holds local EPUB imports. Neither is a folder the user created.
+      if (String(category.id) === LNREADER_DEFAULT_CATEGORY_ID) continue;
+      if (String(category.id) === LNREADER_LOCAL_CATEGORY_ID && novelIds.length === 0) continue;
       categories.push({ id: String(category.id), name: category.name.trim(), order: Number.isFinite(category.sort) ? category.sort : 0, novelIds: [...new Set(novelIds)] });
     }
   }

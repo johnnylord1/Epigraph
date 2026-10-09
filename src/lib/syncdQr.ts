@@ -25,14 +25,25 @@ async function loadImageElement(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Pretty-printed JSON wastes QR modules; a denser code is harder for phone cameras to read. */
+function compactQrPayload(payload: string): string {
+  try {
+    return JSON.stringify(JSON.parse(payload));
+  } catch {
+    return payload;
+  }
+}
+
 export async function buildSyncdQrDataUrl(payload: string): Promise<string> {
-  return QRCode.toDataURL(payload, {
+  // Phone scanners expect dark modules on a light background with a 4-module quiet zone;
+  // inverted or transparent codes are not detected by many camera decoders.
+  return QRCode.toDataURL(compactQrPayload(payload), {
     errorCorrectionLevel: "M",
-    margin: 1,
+    margin: 4,
     scale: 8,
     color: {
-      dark: "#f5f0ff",
-      light: "#00000000",
+      dark: "#000000ff",
+      light: "#ffffffff",
     },
   });
 }

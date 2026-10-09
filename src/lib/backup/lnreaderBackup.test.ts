@@ -47,6 +47,19 @@ const snapshot: EpigraphNovelsSnapshot = {
 };
 
 describe("LNReader backup compatibility", () => {
+  it("drops LNReader's built-in default and empty local categories", async () => {
+    const zip = new JSZip();
+    zip.file("Version.json", "{}");
+    zip.file("NovelAndChapters/7.json", JSON.stringify({ id: 7, pluginId: "provider", path: "/valid", chapters: [] }));
+    zip.file("Category.json", JSON.stringify([
+      { id: 1, name: "Padrão", sort: 1, novelIds: [7] },
+      { id: 2, name: "Localização", sort: 2, novelIds: [] },
+      { id: 3, name: "Lendo", sort: 3, novelIds: [7] },
+    ]));
+    const parsed = await parseLnReaderNovelsBackup(await zip.generateAsync({ type: "uint8array" }));
+    expect(parsed.categories).toEqual([{ id: "3", name: "Lendo", order: 3, novelIds: [parsed.entries[0].id] }]);
+  });
+
   it("maps category database references through imported stable Novel identities", async () => {
     const zip = new JSZip();
     zip.file("Version.json", "{}");

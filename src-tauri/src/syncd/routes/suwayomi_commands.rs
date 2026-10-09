@@ -94,6 +94,38 @@ const UPDATE_CATEGORY_ORDER_QUERY: &str = r#"
   }
 "#;
 
+const EXTENSION_REPOS_QUERY: &str = r#"
+  query EpigraphExtensionRepos {
+    settings { extensionRepos }
+  }
+"#;
+
+const SET_EXTENSION_REPOS_QUERY: &str = r#"
+  mutation EpigraphSetExtensionRepos($repos: [String!]!) {
+    setSettings(input: { settings: { extensionRepos: $repos } }) {
+      settings { extensionRepos }
+    }
+  }
+"#;
+
+const FETCH_EXTENSIONS_QUERY: &str = r#"
+  mutation EpigraphFetchExtensions {
+    fetchExtensions(input: {}) {
+      extensions { pkgName isInstalled }
+    }
+  }
+"#;
+
+const INSTALL_EXTENSION_QUERY: &str = r#"
+  mutation EpigraphInstallExtension($id: String!) {
+    updateExtension(input: { id: $id, patch: { install: true } }) {
+      extension { pkgName isInstalled }
+    }
+  }
+"#;
+
+const MAX_EXTENSION_REPOS: usize = 20;
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub enum CommandOperation {
     #[serde(rename = "UpdateManga")]
@@ -110,6 +142,10 @@ pub enum CommandOperation {
     UpdateCategoryOrder,
     #[serde(rename = "CreateCategory")]
     CreateCategory,
+    #[serde(rename = "AddExtensionRepos")]
+    AddExtensionRepos,
+    #[serde(rename = "InstallExtension")]
+    InstallExtension,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +216,18 @@ struct DeleteCategoryVariables {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AddExtensionReposVariables {
+    repos: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallExtensionVariables {
+    pkg_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct UpdateCategoryOrderVariables {
     id: i64,
     position: i64,
@@ -206,6 +254,10 @@ pub async fn post_command(
     let (document, variables) = normalized_command(&request.operation, request.variables)?;
     let data = if request.operation == CommandOperation::CreateCategory {
         create_category_confirmed(&state, &session, document, variables).await?
+    } else if request.operation == CommandOperation::AddExtensionRepos {
+        add_extension_repos_confirmed(&state, &session, variables).await?
+    } else if request.operation == CommandOperation::InstallExtension {
+        install_extension_confirmed(&state, &session, document, variables).await?
     } else {
         suwayomi_catalog::execute_graphql_document(&state, &session, document, variables, true)
             .await?
@@ -292,6 +344,128 @@ async fn create_category_confirmed(
         )
     })?;
     Ok(json!({ "createCategory": { "category": category, "created": true } }))
+}
+
+/// Adds repositories to the desktop runtime without dropping the ones it already has.
+async fn add_extension_repos_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    variables: Value,
+) -> Result<Value, AppError> {
+    let requested: Vec<String> = string_array(variables.get("repos"));
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        EXTENSION_REPOS_QUERY,
+        json!({}),
+        false,
+    )
+    .await?;
+    let mut repos = string_array(
+        data.get("settings")
+            .and_then(|value| value.get("extensionRepos")),
+    );
+    let before = repos.len();
+    for repo in requested {
+        if !repos
+            .iter()
+            .any(|known| repo_root(known).eq_ignore_ascii_case(repo_root(&repo)))
+        {
+            repos.push(repo);
+        }
+    }
+    if repos.len() == before {
+        return Ok(json!({ "extensionRepos": repos, "changed": false }));
+    }
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        SET_EXTENSION_REPOS_QUERY,
+        json!({ "repos": repos }),
+        true,
+    )
+    .await?;
+    let confirmed = string_array(
+        data.get("setSettings")
+            .and_then(|value| value.get("settings"))
+            .and_then(|value| value.get("extensionRepos")),
+    );
+    Ok(json!({ "extensionRepos": confirmed, "changed": true }))
+}
+
+/// The repository folder, so `.../repo/index.min.json`, `.../repo/index.pb` and
+/// `.../repo/repo.json` count as the same repository.
+fn repo_root(url: &str) -> &str {
+    let url = url.trim_end_matches('/');
+    match url.rsplit_once('/') {
+        Some((root, file)) if file.ends_with(".json") || file.ends_with(".pb") => root,
+        _ => url,
+    }
+}
+
+fn string_array(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Installs an extension from the desktop runtime's own repositories. A package the runtime
+/// does not offer is answered with `available: false` so the caller can stop retrying it.
+async fn install_extension_confirmed(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    document: &'static str,
+    variables: Value,
+) -> Result<Value, AppError> {
+    let pkg_name = variables
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        FETCH_EXTENSIONS_QUERY,
+        json!({}),
+        true,
+    )
+    .await?;
+    let listed = data
+        .get("fetchExtensions")
+        .and_then(|value| value.get("extensions"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|extension| {
+            extension.get("pkgName").and_then(Value::as_str) == Some(pkg_name.as_str())
+        });
+    let Some(listed) = listed else {
+        return Ok(json!({ "pkgName": pkg_name, "available": false, "isInstalled": false }));
+    };
+    if listed.get("isInstalled").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({ "pkgName": pkg_name, "available": true, "isInstalled": true }));
+    }
+    let data =
+        suwayomi_catalog::execute_graphql_document(state, session, document, variables, true)
+            .await?;
+    let installed = data
+        .get("updateExtension")
+        .and_then(|value| value.get("extension"))
+        .and_then(|value| value.get("isInstalled"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    if !installed {
+        return Err(AppError::service_unavailable(
+            "SUWAYOMI_EXTENSION_NOT_CONFIRMED",
+            "The comics runtime did not confirm the extension install.",
+            true,
+        ));
+    }
+    Ok(json!({ "pkgName": pkg_name, "available": true, "isInstalled": true }))
 }
 
 pub(crate) fn created_category<'a>(name: &str, data: &'a Value) -> Option<&'a Value> {
@@ -422,6 +596,29 @@ fn normalized_command(
             ensure_int(variables.id, "id")?;
             Ok((DELETE_CATEGORY_QUERY, json!({ "id": variables.id })))
         }
+        CommandOperation::AddExtensionRepos => {
+            let variables: AddExtensionReposVariables = serde_json::from_value(variables)
+                .map_err(|_| {
+                    AppError::BadRequest("AddExtensionRepos requires only repos.".to_string())
+                })?;
+            if variables.repos.is_empty() || variables.repos.len() > MAX_EXTENSION_REPOS {
+                return Err(AppError::BadRequest(format!(
+                    "repos must contain between 1 and {MAX_EXTENSION_REPOS} URLs."
+                )));
+            }
+            for repo in &variables.repos {
+                ensure_repo_url(repo)?;
+            }
+            Ok((EXTENSION_REPOS_QUERY, json!({ "repos": variables.repos })))
+        }
+        CommandOperation::InstallExtension => {
+            let variables: InstallExtensionVariables = serde_json::from_value(variables)
+                .map_err(|_| {
+                    AppError::BadRequest("InstallExtension requires only pkgName.".to_string())
+                })?;
+            ensure_package_name(&variables.pkg_name)?;
+            Ok((INSTALL_EXTENSION_QUERY, json!({ "id": variables.pkg_name })))
+        }
         CommandOperation::UpdateCategoryOrder => {
             let variables: UpdateCategoryOrderVariables = serde_json::from_value(variables)
                 .map_err(|_| {
@@ -440,6 +637,37 @@ fn normalized_command(
                 json!({ "id": variables.id, "position": variables.position }),
             ))
         }
+    }
+}
+
+fn ensure_repo_url(value: &str) -> Result<(), AppError> {
+    let valid = value.len() <= 2048
+        && value.starts_with("https://")
+        && value.ends_with(".json")
+        && !value.chars().any(|c| c.is_whitespace() || c.is_control());
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "Extension repositories must be https URLs to a .json index.".to_string(),
+        ))
+    }
+}
+
+fn ensure_package_name(value: &str) -> Result<(), AppError> {
+    let segments: Vec<&str> = value.split('.').collect();
+    let valid = value.len() <= 200
+        && segments.len() >= 2
+        && segments.iter().all(|segment| {
+            segment.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && segment.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "pkgName must be an Android package name.".to_string(),
+        ))
     }
 }
 
@@ -582,6 +810,45 @@ mod tests {
         )
         .is_none());
         assert!(created_category("Reading", &json!({ "createCategory": null })).is_none());
+    }
+
+    #[test]
+    fn normalizes_extension_commands_and_rejects_unsafe_values() {
+        let (document, variables) = normalized_command(
+            &CommandOperation::InstallExtension,
+            json!({ "pkgName": "eu.kanade.tachiyomi.extension.en.mangadex" }),
+        )
+        .unwrap();
+        assert_eq!(document, INSTALL_EXTENSION_QUERY);
+        assert_eq!(variables, json!({ "id": "eu.kanade.tachiyomi.extension.en.mangadex" }));
+        for bad in ["", "mangadex", "eu.kanade..x", "eu.kanade.1x", "eu.kanade.x;drop"] {
+            assert!(normalized_command(
+                &CommandOperation::InstallExtension,
+                json!({ "pkgName": bad }),
+            )
+            .is_err());
+        }
+        assert!(normalized_command(
+            &CommandOperation::InstallExtension,
+            json!({ "pkgName": "a.b", "extra": 1 }),
+        )
+        .is_err());
+
+        assert_eq!(
+            repo_root("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb"),
+            repo_root("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json"),
+        );
+
+        let repo = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json";
+        let (_, variables) = normalized_command(
+            &CommandOperation::AddExtensionRepos,
+            json!({ "repos": [repo] }),
+        )
+        .unwrap();
+        assert_eq!(variables, json!({ "repos": [repo] }));
+        for bad in [json!({ "repos": [] }), json!({ "repos": ["http://x/index.json"] }), json!({ "repos": ["https://x/a b.json"] })] {
+            assert!(normalized_command(&CommandOperation::AddExtensionRepos, bad).is_err());
+        }
     }
 
     #[test]

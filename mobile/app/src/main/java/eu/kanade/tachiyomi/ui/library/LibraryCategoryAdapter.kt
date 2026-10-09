@@ -235,7 +235,19 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
         if (isAttachedToRecyclerView) {
             isLongPressDragEnabled = requestedLongPressDragEnabled
         }
+        val previousCounts = itemsPerCategory
         setItemsPerCategoryMap()
+        // Headers are bound inside updateDataSet, before the totals above are known. Rebind the
+        // headers whose total changed so an emptied category never keeps showing its old count.
+        if (itemsPerCategory != previousCounts) {
+            headerItems.forEach { header ->
+                val catId = (header as LibraryHeaderItem).category.id ?: return@forEach
+                if (itemsPerCategory[catId] != previousCounts[catId]) {
+                    val position = getGlobalPositionOf(header)
+                    if (position >= 0) notifyItemChanged(position)
+                }
+            }
+        }
     }
 
     override fun onAttachedToRecyclerView(recyclerView: androidx.recyclerview.widget.RecyclerView) {

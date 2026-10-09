@@ -136,9 +136,8 @@ describe("SearchPalette contract", () => {
     expect(source).toContain("dismissSearchPalette()");
     expect(appSource).toContain('ensureLazyComponent("searchPalette")');
     expect(appSource).toContain("shellReady || store.searchEngaged");
-    expect(appSource).toContain('.epigraph-app-shell .search-palette');
-    expect(appSource).toContain(":not(.search-palette)");
-    expect(appSource).toContain("animation-play-state: running !important");
+    // Idle motion only pauses looping decorations, so the palette never freezes mid-entrance.
+    expect(appSource).not.toContain('[data-epigraph-motion="idle"] .epigraph-app-shell *:not(');
   });
 
   test("keeps the topbar inputs controlled without a bind-value race", () => {
@@ -250,9 +249,9 @@ describe("SearchPalette contract", () => {
     expect(source).toContain("left: calc(var(--shell-sidebar-width) + var(--sp-2))");
     expect(source).toContain("right: var(--sp-3)");
     expect(source).toContain(".search-palette.is-open {");
-    expect(source).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(source).toMatch(/prefers-reduced-motion:[\s\S]*\.search-palette\.is-open[\s\S]*animation: none/);
-    expect(source).toMatch(/prefers-reduced-motion:[\s\S]*\.search-palette__result\.is-work-card[\s\S]*transition: none/);
+    // Reduced motion follows Settings › Appearance › Animations, then the system.
+    expect(source).toContain(':global(html[data-epigraph-reduced-motion="true"]) .search-palette.is-open,');
+    expect(source).toMatch(/data-epigraph-reduced-motion="true"\]\) \.search-palette__result\.is-work-card \{[^}]*animation: none;[^}]*transition: none;/);
   });
 
   test("uses the topbar as the only search field while the result panel is open", () => {

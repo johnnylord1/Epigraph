@@ -308,14 +308,14 @@ class ExtensionManager(
      * the Android Package Installer UI. Core reconciliation must never inherit a silent/private
      * installer preference.
      */
-    suspend fun installExtensionWithUserConfirmation(
+    suspend fun installExtensionWithoutPrompt(
         extension: ExtensionInfo,
         scope: CoroutineScope,
     ): Flow<ExtensionIntallInfo> = installer.downloadAndInstall(
         url = api.getApkUrl(extension),
         extension = extension,
         scope = scope,
-        requireUserConfirmation = true,
+        installWithoutPrompt = true,
     )
 
     /**
@@ -492,16 +492,19 @@ class ExtensionManager(
     private inner class InstallationListener : ExtensionInstallReceiver.Listener {
 
         override fun onExtensionInstalled(extension: Extension.Installed) {
+            installer.completeFromPackageState(extension.pkgName)
             registerNewExtension(extension.withUpdateCheck())
             preferences.extensionUpdatesCount().set(installedExtensionsFlow.value.count { it.hasUpdate })
         }
 
         override fun onExtensionUpdated(extension: Extension.Installed) {
+            installer.completeFromPackageState(extension.pkgName)
             registerUpdatedExtension(extension.withUpdateCheck())
             preferences.extensionUpdatesCount().set(installedExtensionsFlow.value.count { it.hasUpdate })
         }
 
         override fun onExtensionUntrusted(extension: Extension.Untrusted) {
+            installer.completeFromPackageState(extension.pkgName)
             val installedExtension = installedExtensionsFlow.value
                 .find { it.pkgName == extension.pkgName }
 
@@ -511,6 +514,11 @@ class ExtensionManager(
             } else {
                 _untrustedExtensionsFlow.value += extension
             }
+            // Lets open lists replace the install button with the trust prompt.
+            emitToInstaller(
+                "Finished/${extension.pkgName}",
+                ExtensionIntallInfo(InstallStep.Installed, null),
+            )
         }
 
         override fun onPackageUninstalled(pkgName: String) {

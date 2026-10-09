@@ -10,7 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
-  import { enterView } from "../../lib/motion/motion";
+  import { enterView, prefersReducedMotion } from "../../lib/motion/motion";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -69,7 +69,19 @@
   const detailComponentPromises = new Map<DetailKey, Promise<any>>();
   const pageComponentCache = new Map<PageKey, any>();
   const detailComponentCache = new Map<DetailKey, any>();
-  let libraryComponent = $state<any>(null);
+  // Pages that stay mounted once visited: switching back to them is a visibility change, not a
+  // rebuild of thousands of nodes and a refetch of their data. Downloads (global Escape handler and
+  // polling) and Settings are still mounted on demand.
+  const KEEP_ALIVE_PAGES = ["home", "library", "search"] as const;
+  type KeepAlivePage = (typeof KEEP_ALIVE_PAGES)[number];
+  function isKeepAlivePage(page: PageKey | null): page is KeepAlivePage {
+    return page !== null && (KEEP_ALIVE_PAGES as readonly string[]).includes(page);
+  }
+  let keptPages = $state<Partial<Record<KeepAlivePage, any>>>({});
+  let leavingPage = $state<KeepAlivePage | null>(null);
+  let leavingTimer: ReturnType<typeof setTimeout> | null = null;
+  let previousNavPage: PageKey | null = null;
+  const libraryComponent = $derived(keptPages.library ?? null);
   let pageComponent = $state<any>(null);
   let pageKey = $state<PageKey | null>(null);
   let pageLoadedKey = $state<PageKey | null>(null);
@@ -93,12 +105,12 @@
   // Every arrival of a page plays once; a kept-alive page replays when the user returns to it.
   $effect(() => {
     const page = navPage;
-    const ready = page === "library" ? !!libraryComponent : pageLoadedKey === page || !!cachedPageForNav;
+    const ready = isKeepAlivePage(page) ? !!keptPages[page] : pageLoadedKey === page || !!cachedPageForNav;
     if (!ready || !mainElement || page === enteredPage) return;
     const direction = NAV_ORDER.indexOf(page) >= NAV_ORDER.indexOf(enteredPage) ? 1 : -1;
     enteredPage = page;
     void tick().then(() => {
-      const root = page === "library"
+      const root = isKeepAlivePage(page)
         ? mainElement?.querySelector(":scope > .page-keepalive.is-active > *")
         : mainElement?.querySelector(":scope > :not(.page-keepalive):not(.detail-layer):not(.activity-overlay-pending)");
       enterView(root, { y: 24 * direction });
@@ -163,7 +175,7 @@
 
     const cachedComponent = pageComponentCache.get(nextKey);
     if (cachedComponent) {
-      if (nextKey === "library") libraryComponent = cachedComponent;
+      if (isKeepAlivePage(nextKey)) keptPages[nextKey] = cachedComponent;
       pageComponent = cachedComponent;
       pageLoadedKey = nextKey;
       return;
@@ -176,7 +188,7 @@
       const component = await getCachedComponent(pageComponentPromises, nextKey, pageLoaders[nextKey]);
       if (requestId !== pageLoadRequestId) return;
       pageComponentCache.set(nextKey, component);
-      if (nextKey === "library") libraryComponent = component;
+      if (isKeepAlivePage(nextKey)) keptPages[nextKey] = component;
       pageComponent = component;
       pageLoadedKey = nextKey;
     } catch (error) {
@@ -237,6 +249,25 @@
     void loadPage(nextPage);
   });
 
+  // The page being left fades out on top while the next one rises in (keep-alive pages only: the
+  // others are already gone). Purely visual; input goes to the new page at once.
+  $effect(() => {
+    const page = navPage;
+    const previous = previousNavPage;
+    previousNavPage = page;
+    if (previous === null || previous === page) return;
+    if (leavingTimer) clearTimeout(leavingTimer);
+    if (!isKeepAlivePage(previous) || !keptPages[previous] || prefersReducedMotion()) {
+      leavingPage = null;
+      return;
+    }
+    leavingPage = previous;
+    leavingTimer = setTimeout(() => {
+      leavingTimer = null;
+      leavingPage = null;
+    }, 200);
+  });
+
   $effect(() => {
     if (navPage === "settings" || navPage === "downloads") {
       detailKey = null;
@@ -273,7 +304,7 @@
       void getCachedComponent(pageComponentPromises, "library", pageLoaders.library)
         .then((component) => {
           pageComponentCache.set("library", component);
-          libraryComponent = component;
+          keptPages.library = component;
         })
         .catch((error) => {
           console.warn("Library preload did not complete; navigation will retry it.", error);
@@ -335,23 +366,27 @@
 <div class="root epigraph-app-shell">
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"} bind:this={mainElement}>
-    {#if libraryComponent}
-      {@const LibraryPage = libraryComponent}
-      <div
-        class="page-keepalive"
-        class:is-active={navPage === "library"}
-        aria-hidden={navPage !== "library"}
-        inert={navPage !== "library"}
-      >
-        <LibraryPage
-          {onOpenThemeEditor}
-          {backupAuditPlan}
-          {backupRestoreLaunchIntent}
-        />
-      </div>
-    {/if}
+    {#each KEEP_ALIVE_PAGES as key (key)}
+      {#if keptPages[key]}
+        {@const KeptPage = keptPages[key]}
+        <div
+          class="page-keepalive"
+          class:is-active={navPage === key}
+          class:is-leaving={leavingPage === key && navPage !== key}
+          data-keepalive-page={key}
+          aria-hidden={navPage !== key}
+          inert={navPage !== key}
+        >
+          <KeptPage
+            {onOpenThemeEditor}
+            {backupAuditPlan}
+            {backupRestoreLaunchIntent}
+          />
+        </div>
+      {/if}
+    {/each}
 
-    {#if navPage === "library" && !libraryComponent}
+    {#if isKeepAlivePage(navPage) && !keptPages[navPage]}
       {#if pageError}
         <div class="page-state">
           <NocturneState
@@ -369,13 +404,6 @@
             }]}
           />
         </div>
-      {:else if pageComponent && pageLoadedKey === navPage}
-        {@const Page = pageComponent}
-        <Page
-          {onOpenThemeEditor}
-          {backupAuditPlan}
-          {backupRestoreLaunchIntent}
-        />
       {:else}
         <div class="page-state">
           <NocturneState
@@ -388,7 +416,7 @@
           />
         </div>
       {/if}
-    {:else if navPage !== "library"}
+    {:else if !isKeepAlivePage(navPage)}
       {#key navPage}
         {#if pageError}
           <div class="page-state">
@@ -522,6 +550,16 @@
     pointer-events: none;
     overflow: hidden;
     contain: layout paint style;
+  }
+
+  .page-keepalive.is-leaving:not(.is-active) {
+    visibility: visible;
+    animation: pageLeave 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+
+  @keyframes pageLeave {
+    from { opacity: 1; transform: none; filter: blur(0); }
+    to { opacity: 0; transform: translateY(-8px) scale(0.99); filter: blur(4px); }
   }
 
   .detail-layer {

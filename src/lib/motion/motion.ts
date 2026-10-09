@@ -7,14 +7,31 @@ import { fade, fly, type FadeParams, type FlyParams, type TransitionConfig } fro
  * all of it is skipped when the user asks for less motion or the Web Animations API is missing.
  */
 
-/** True when the user asked for less motion or the environment cannot run the Web Animations API. */
-export function prefersReducedMotion(): boolean {
-  if (typeof Element === "undefined" || typeof Element.prototype.animate !== "function") return true;
+/**
+ * The app's own animation setting. `null` follows the system (Windows "Animation effects", which
+ * WebView2 reports as `prefers-reduced-motion`); `true`/`false` is the user's explicit choice in
+ * Settings › Appearance and wins over the system.
+ */
+let animationPreference: boolean | null = null;
+
+export function setAnimationPreference(enabled: boolean | null | undefined) {
+  animationPreference = typeof enabled === "boolean" ? enabled : null;
+}
+
+/** True when the system asks for less motion, regardless of the app setting. */
+export function systemPrefersReducedMotion(): boolean {
   try {
     return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch {
     return false;
   }
+}
+
+/** True when motion should be skipped: the app setting, then the system, or no Web Animations API. */
+export function prefersReducedMotion(): boolean {
+  if (typeof Element === "undefined" || typeof Element.prototype.animate !== "function") return true;
+  if (animationPreference !== null) return !animationPreference;
+  return systemPrefersReducedMotion();
 }
 
 /** Svelte's fade and fly, skipped entirely when motion is reduced. */

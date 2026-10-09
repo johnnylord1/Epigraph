@@ -9,18 +9,26 @@
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
+  import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
   import { groupRefreshedNovelChaptersForNotifications, refreshNovelLibraryFromSources } from "../../lib/novels/libraryRefresh";
   import {
     buildNovelDetailRecordFromLibrary,
     getNovelLibraryChapters,
+    getNovelReadingHistory,
+    loadNovelLibraryState,
     peekNovelLibraryState,
+    saveNovelLibraryState,
+    type NovelReadingHistoryItem,
   } from "../../lib/novels/libraryState";
+  import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
   import { toSuwayomiWebViewUrl } from "../../lib/suwayomiWebView";
   import {
     store,
     addToast,
     clearHistory,
+    mergeSyncedHistory,
     clearLibraryUpdateNotifications,
+    closeActivityPanel,
     clearSystemNotifications,
     openMangaDetail,
     recordLibraryUpdateIssues,
@@ -57,6 +65,9 @@
   const SESSION_GAP_MS = 30 * 60 * 1000;
 
   interface Session {
+    key:               string;
+    kind:              "comic" | "novel";
+    novelId:           string | null;
     mangaId:           number;
     mangaTitle:        string;
     thumbnailUrl:      string;
@@ -106,6 +117,9 @@
       }
       const latest = group[0], oldest = group[group.length - 1];
       sessions.push({
+        key:               `comic:${latest.chapterId}`,
+        kind:              "comic",
+        novelId:           null,
         mangaId:           latest.mangaId,
         mangaTitle:        latest.mangaTitle,
         thumbnailUrl:      latest.thumbnailUrl,
@@ -120,7 +134,57 @@
     return sessions;
   }
 
-  const sessions = $derived(buildSessions(store.history));
+  function buildNovelSessions(items: NovelReadingHistoryItem[]): Session[] {
+    const sessions: Session[] = [];
+    let i = 0;
+    while (i < items.length) {
+      const anchor = items[i];
+      let j = i + 1;
+      while (
+        j < items.length
+        && items[j].novel.id === anchor.novel.id
+        && anchor.entry.readAt - items[j].entry.readAt <= SESSION_GAP_MS
+      ) j++;
+      const oldest = items[j - 1];
+      sessions.push({
+        key:               `novel:${anchor.novel.id}:${anchor.entry.chapterId ?? anchor.entry.readAt}`,
+        kind:              "novel",
+        novelId:           anchor.novel.id,
+        mangaId:           0,
+        mangaTitle:        anchor.novel.title,
+        thumbnailUrl:      anchor.novel.coverUrl ?? "",
+        latestChapterId:   0,
+        latestChapterName: anchor.entry.chapterTitle ?? "",
+        firstChapterName:  oldest.entry.chapterTitle ?? "",
+        chapterCount:      j - i,
+        readAt:            anchor.entry.readAt,
+      });
+      i = j;
+    }
+    return sessions;
+  }
+
+  let novelLibraryState: PersistedNovelLibraryState | null = $state(null);
+  $effect(() => {
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    store.contentSetupVersion;
+    store.activeNovelReader;
+    void loadNovelLibraryState(scope).then((state) => { novelLibraryState = state; });
+  });
+
+  // Comic reads from paired devices reach Suwayomi through Epigraph Core, not this store.
+  $effect(() => {
+    if (!store.runtimeServerUrl) return;
+    store.contentSetupVersion;
+    void fetchSyncedComicHistory().then(mergeSyncedHistory).catch(() => {});
+  });
+
+  const sessions = $derived(
+    [
+      ...buildSessions(store.history),
+      ...buildNovelSessions(novelLibraryState ? getNovelReadingHistory(novelLibraryState) : []),
+    ].sort((left, right) => right.readAt - left.readAt),
+  );
   const updateNotifications = $derived((store.libraryUpdateNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
   const updateIssues = $derived((store.libraryUpdateIssues ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
   const systemNotifications = $derived((store.systemNotifications ?? []).filter((entry) => store.matchesRuntimeProfile(entry)));
@@ -199,6 +263,10 @@
   });
 
   function resume(session: Session) {
+    if (session.kind === "novel" && session.novelId) {
+      openNovel(session.novelId);
+      return;
+    }
     openMangaDetail({
       id:           session.mangaId,
       title:        session.mangaTitle,
@@ -207,19 +275,25 @@
     } as any);
   }
 
+  function openNovel(novelId: string) {
+    const state = peekNovelLibraryState({
+      profileId: store.runtimeResolvedLocalProfileId,
+      serverUrl: store.runtimeServerUrl,
+    });
+    const novel = state.entries.find((candidate) => candidate.id === novelId);
+    if (novel) {
+      // Like openMangaDetail, leave the activity panel so the detail is visible.
+      closeActivityPanel();
+      setActiveNovelDetail({
+        novel: buildNovelDetailRecordFromLibrary(novel, getNovelLibraryChapters(state, novel.id)),
+        inLibrary: true,
+      });
+    }
+  }
+
   function openUpdate(entry: UpdateEntry) {
     if (entry.isNovel && entry.notification.novelId) {
-      const state = peekNovelLibraryState({
-        profileId: store.runtimeResolvedLocalProfileId,
-        serverUrl: store.runtimeServerUrl,
-      });
-      const novel = state.entries.find((candidate) => candidate.id === entry.notification.novelId);
-      if (novel) {
-        setActiveNovelDetail({
-          novel: buildNovelDetailRecordFromLibrary(novel, getNovelLibraryChapters(state, novel.id)),
-          inLibrary: true,
-        });
-      }
+      openNovel(entry.notification.novelId);
       return;
     }
     const manga = entry.manga ?? {
@@ -357,18 +431,27 @@
     }
   }
 
+  // Novel reads live in the novel library state, not in the comics history, so clear both.
+  async function clearReadingHistory() {
+    clearHistory();
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    const state = await loadNovelLibraryState(scope);
+    if (state.history.length === 0) return;
+    novelLibraryState = await saveNovelLibraryState({ ...state, history: [] }, scope);
+  }
+
   function handleClear() {
     if (!confirmClear) { confirmClear = true; setTimeout(() => confirmClear = false, 3000); return; }
     if (activeTab === "all") {
       clearLibraryUpdateNotifications();
-      clearHistory();
+      void clearReadingHistory();
       clearSystemNotifications();
     } else if (activeTab === "updates") {
       clearLibraryUpdateNotifications();
     } else if (activeTab === "system") {
       clearSystemNotifications();
     } else {
-      clearHistory();
+      void clearReadingHistory();
     }
     confirmClear = false;
   }
@@ -398,7 +481,7 @@
         </button>
       </div>
 
-      {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && store.history.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
+      {#if (activeTab === "all" && totalVisibleCount > 0) || (activeTab === "updates" && (updateEntries.length > 0 || issueGroups.length > 0)) || (activeTab === "history" && sessions.length > 0) || (activeTab === "system" && systemEntries.length > 0)}
         <button class="clear-btn" class:confirm={confirmClear} onclick={handleClear}
           title={confirmClear ? $_("activity.clearConfirmHint") : activeTab === "all" ? $_("activity.clearAll") : activeTab === "updates" ? $_("activity.clearUpdates") : activeTab === "system" ? $_("activity.clearSystem") : $_("activity.clearHistory")}>
           <Trash size={14} weight="light" />
@@ -480,10 +563,14 @@
           <p class="compact-empty">{$_("ui_noReadingHistoryYet")}</p>
         {:else}
           <div class="event-list">
-            {#each sessions.slice(0, 8) as session (session.latestChapterId)}
+            {#each sessions.slice(0, 8) as session (session.key)}
               <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                 <div class="thumb-wrap">
-                  <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                  {#if session.thumbnailUrl}
+                    <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                  {:else}
+                    <span class="thumb" aria-hidden="true"></span>
+                  {/if}
                   {#if session.chapterCount > 1}
                     <span class="item-count">{session.chapterCount}</span>
                   {/if}
@@ -519,10 +606,14 @@
               <span>{label}</span>
             </div>
             <div class="event-list">
-              {#each items as session (session.latestChapterId)}
+              {#each items as session (session.key)}
                 <button class="activity-item with-thumb event" onclick={() => resume(session)}>
                   <div class="thumb-wrap">
-                    <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                    {#if session.thumbnailUrl}
+                      <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                    {:else}
+                      <span class="thumb" aria-hidden="true"></span>
+                    {/if}
                     {#if session.chapterCount > 1}
                       <span class="item-count">{session.chapterCount}</span>
                     {/if}

@@ -1207,6 +1207,8 @@ dependencies = [
  "url",
  "uuid 1.23.0",
  "walkdir",
+ "webview2-com",
+ "windows 0.61.3",
  "windows-sys 0.59.0",
  "winreg",
  "zip",

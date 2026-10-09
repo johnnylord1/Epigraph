@@ -521,21 +521,20 @@
   .mg-queue-item > .mg-pill { display: none; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mg-overlay,
-  .mg-modal,
-  .mg-skeleton,
-  .mg-list > .mg-skeleton,
-  .mg-list > .mg-row,
-  .mg-queue > .mg-queue-item,
-  .mg-empty,
-  .mg-progress,
-  .mg-compare > *,
-  .mg-summary,
-  .mg-footer > .mg-btn,
-  .mg-row.is-selected .mg-row-end > svg,
-  .mg-check > svg { animation: none; }
-  .mg-modal *,
-  .mg-modal *::before,
-  .mg-modal *::after { transition-duration: 0.01ms; }
-}
+/* Reduced motion follows the app setting, then the system (motion.ts). */
+html[data-epigraph-reduced-motion="true"] .mg-overlay,
+html[data-epigraph-reduced-motion="true"] .mg-modal,
+html[data-epigraph-reduced-motion="true"] .mg-skeleton,
+html[data-epigraph-reduced-motion="true"] .mg-list > .mg-skeleton,
+html[data-epigraph-reduced-motion="true"] .mg-list > .mg-row,
+html[data-epigraph-reduced-motion="true"] .mg-queue > .mg-queue-item,
+html[data-epigraph-reduced-motion="true"] .mg-empty,
+html[data-epigraph-reduced-motion="true"] .mg-progress,
+html[data-epigraph-reduced-motion="true"] .mg-compare > *,
+html[data-epigraph-reduced-motion="true"] .mg-summary,
+html[data-epigraph-reduced-motion="true"] .mg-footer > .mg-btn,
+html[data-epigraph-reduced-motion="true"] .mg-row.is-selected .mg-row-end > svg,
+html[data-epigraph-reduced-motion="true"] .mg-check > svg { animation: none; }
+html[data-epigraph-reduced-motion="true"] .mg-modal *,
+html[data-epigraph-reduced-motion="true"] .mg-modal *::before,
+html[data-epigraph-reduced-motion="true"] .mg-modal *::after { transition-duration: 0.01ms; }

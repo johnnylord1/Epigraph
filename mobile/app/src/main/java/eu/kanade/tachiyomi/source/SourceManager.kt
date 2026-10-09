@@ -213,6 +213,10 @@ class SourceManager(
             ?: novelPluginManager.installedSourcesFlow.value.firstOrNull { it.id == sourceKey }
     }
 
+    /** True once installed novel plugins have registered, so a missing novel source is really absent. */
+    val novelPluginsLoaded: Boolean
+        get() = novelPluginManager.loadedFlow.value
+
     fun getOrStub(sourceKey: Long): Source {
         sourcesMapFlow.value[sourceKey]?.let { return it }
 

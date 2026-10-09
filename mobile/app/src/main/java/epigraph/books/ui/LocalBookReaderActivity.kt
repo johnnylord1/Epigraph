@@ -66,6 +66,7 @@ import epigraph.books.reader.ReaderRange
 import epigraph.books.reader.ReaderTocEntry
 import epigraph.books.pdf.PdfReaderSession
 import epigraph.books.pdf.PdfOcrEngine
+import epigraph.books.pdf.PdfSelectionSegments
 import epigraph.books.pdf.PdfTextReflow
 import epigraph.books.pdf.PdfPageBitmapRenderer
 import epigraph.books.pdf.PdfPageView
@@ -235,11 +236,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 velocityX: Float,
                 velocityY: Float,
             ): Boolean {
-                if (!readerProgressIsPdf || readerSettingsPanel != null) return false
-                if (pdfSpreadPrimaryView == null && pdfReflowTextView == null) return false
+                if (readerSettingsPanel != null) return false
                 if (abs(velocityX) <= abs(velocityY) * 1.5f || abs(velocityX) < BOOK_PAGE_FLING_VELOCITY) {
                     return false
                 }
+                if (!readerProgressIsPdf) {
+                    // The paginated EPUB WebView does not page on a swipe by itself; scroll flow
+                    // keeps horizontal flings for the WebView.
+                    if (epubNavigator == null || epubFlow != EPUB_FLOW_PAGINATED) return false
+                    turnPage(forward = velocityX < 0f)
+                    return true
+                }
+                if (pdfSpreadPrimaryView == null && pdfReflowTextView == null) return false
                 navigateReader(if (velocityX < 0f) 1 else -1)
                 return true
             }
@@ -308,7 +316,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
         })
         title = getString(MR.strings.local_books_title)
-        setContentView(FrameLayout(this).apply { addView(ProgressBar(context)) })
+        setContentView(
+            FrameLayout(this).apply {
+                addView(
+                    ProgressBar(context),
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER,
+                    ),
+                )
+            },
+        )
         val bookId = intent.getStringExtra(EXTRA_BOOK_ID)
         if (bookId.isNullOrBlank()) {
             finishWithError(getString(MR.strings.book_reader_unavailable))
@@ -590,16 +609,13 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         secondary.visibility = if (secondPage == safeFirst) android.view.View.INVISIBLE else android.view.View.VISIBLE
         pdfSpreadRenderJob?.cancel()
         val generation = ++pdfSpreadGeneration
+        // Select from the page that was pressed; the spread itself stays where it is.
         primary.setOnLongClickListener {
-            pdfCurrentPage = safeFirst
-            showPdfTextSelectionDialog()
+            showPdfTextSelectionDialog(onlyPage = safeFirst)
             true
         }
         secondary.setOnLongClickListener {
-            if (secondPage != safeFirst) {
-                pdfCurrentPage = secondPage
-                showPdfTextSelectionDialog()
-            }
+            if (secondPage != safeFirst) showPdfTextSelectionDialog(onlyPage = secondPage)
             true
         }
         pdfSpreadRenderJob = lifecycleScope.launch {
@@ -713,7 +729,11 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val textView = pdfReflowTextView ?: return
         lifecycleScope.launch {
             val text = withContext(Dispatchers.IO) {
-                extractPdfText(reader, page)
+                extractPdfText(reader, page) {
+                    withContext(Dispatchers.Main) {
+                        if (pdfReflowTextView === textView) textView.text = getString(MR.strings.book_reader_pdf_reading_text)
+                    }
+                }
             }
             if (isFinishing || isDestroyed || pdfReflowTextView !== textView) return@launch
             val paragraphs = PdfTextReflow.paragraphs(text)
@@ -965,6 +985,9 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 override fun onPageLoaded() {
                     blockExternalEpubNetwork(navigator = epubNavigator)
                 }
+            },
+            configuration = EpubNavigatorFragment.Configuration().apply {
+                selectionActionModeCallback = epubSelectionActionModeCallback
             },
         )
         val navigator = supportFragmentManager.fragmentFactory.instantiate(
@@ -1589,14 +1612,6 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         )
     }
 
-    private fun showTextSelectionSurface() {
-        when {
-            pdfReflowTextView != null -> showPdfTextSelectionDialog()
-            epubNavigator != null -> captureEpubSelectionAndSave()
-            else -> showMessage(getString(MR.strings.book_reader_selection_unavailable))
-        }
-    }
-
     private fun pdfLocator(
         entityId: EpigraphEntityId,
         pageIndex: Int,
@@ -1609,23 +1624,45 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         characterOffset = characterOffset,
     ).withDocumentMetrics(readerProgressPageCount.coerceAtLeast(1))
 
-    private fun showPdfTextSelectionDialog() {
+    private fun showPdfTextSelectionDialog(onlyPage: Int? = null) {
         val reader = opened as? OpenedBookReader.Pdf ?: return
-        val page = pdfCurrentPage.coerceAtLeast(0)
+        val first = pdfCurrentPage.coerceAtLeast(0)
+        // A spread shows two pages, so both can be selected from unless one page was pressed.
+        val pages = onlyPage?.let { it..it }
+            ?: (first until min(first + pdfPagesShown(), readerProgressPageCount.coerceAtLeast(first + 1)))
         lifecycleScope.launch {
-            val text = withContext(Dispatchers.IO) {
-                extractPdfText(reader, page)
+            var ocrNoticeShown = false
+            val pageTexts = withContext(Dispatchers.IO) {
+                pages.map { page ->
+                    // OCR takes seconds on a slow device; say so instead of looking unresponsive.
+                    page to extractPdfText(reader, page) {
+                        if (!ocrNoticeShown) {
+                            ocrNoticeShown = true
+                            withContext(Dispatchers.Main) { showMessage(getString(MR.strings.book_reader_pdf_reading_text)) }
+                        }
+                    }
+                }.filter { (_, text) -> text.isNotBlank() }
             }
-            if (text.isBlank()) {
+            if (pageTexts.isEmpty()) {
                 showMessage(getString(MR.strings.book_reader_pdf_no_text))
                 return@launch
+            }
+            val segments = PdfSelectionSegments(pageTexts)
+            val text = segments.text
+            fun saveSelection(start: Int, end: Int) {
+                val selection = segments.resolve(start, end)
+                if (selection == null) {
+                    showMessage(getString(MR.strings.book_reader_select_text_first))
+                    return
+                }
+                savePdfHighlight(selection.page, selection.start, selection.end, selection.text)
             }
             val selection = TextView(this@LocalBookReaderActivity).apply {
                 setText(text)
                 setTextIsSelectable(true)
                 setPadding(24.dpToPx, 16.dpToPx, 24.dpToPx, 16.dpToPx)
                 installTextSelectionActions(this) { selected ->
-                    savePdfHighlight(page, selected.first, selected.second, selected.third)
+                    saveSelection(selected.first, selected.second)
                 }
             }
             this@LocalBookReaderActivity.materialAlertDialog()
@@ -1635,18 +1672,18 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
                 .setPositiveButton(getString(MR.strings.book_reader_highlight_selection)) { _, _ ->
                     val start = min(selection.selectionStart, selection.selectionEnd)
                     val end = max(selection.selectionStart, selection.selectionEnd)
-                    if (start >= 0 && end > start) {
-                        savePdfHighlight(page, start, end, text.substring(start, end))
-                    } else {
-                        showMessage(getString(MR.strings.book_reader_select_text_first))
-                    }
+                    saveSelection(start, end)
                 }
                 .show()
         }
     }
 
     /** Extract native PDF text first, then OCR the rendered page when the document is scanned. */
-    private suspend fun extractPdfText(reader: OpenedBookReader.Pdf, page: Int): String {
+    private suspend fun extractPdfText(
+        reader: OpenedBookReader.Pdf,
+        page: Int,
+        onOcrStart: suspend () -> Unit = {},
+    ): String {
         val safePage = page.coerceAtLeast(0)
         val locator = ReaderLocator.Pdf(reader.document.entityId, safePage)
         val native = runCatching {
@@ -1657,6 +1694,7 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         val renderer = reader.session as? PdfPageBitmapRenderer ?: return ""
         val bitmap = renderer.renderPageBitmap(safePage) ?: return ""
         return try {
+            onOcrStart()
             pdfOcrEngine.recognize(bitmap).trim()
         } catch (_: Throwable) {
             ""
@@ -1929,45 +1967,82 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
         }
     }
 
-    private fun captureEpubSelectionAndSave() {
-        val navigator = epubNavigator ?: return
-        val session = epubSession ?: return
-        val localBook = book ?: return
-        lifecycleScope.launch {
-            val selection = runCatching { navigator.currentSelection() }.getOrNull()
-            val readiumLocator = selection?.locator
-            val text = readiumLocator?.text?.highlight
-                ?.replace(Regex("\\s+"), " ")
-                ?.trim()
-                ?.take(MAX_HIGHLIGHT_TEXT)
-                .orEmpty()
-            if (readiumLocator == null || text.isBlank()) {
-                showMessage(getString(MR.strings.book_reader_select_text_first))
-                return@launch
-            }
-            val appLocator = session.toReaderLocator(readiumLocator)
-            val now = System.currentTimeMillis()
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    repository.addHighlight(
-                        BookHighlight(
-                            highlightId = UUID.randomUUID().toString(),
-                            bookId = localBook.bookId,
-                            start = appLocator,
-                            end = appLocator,
-                            selectedText = text,
-                            colorArgb = DEFAULT_HIGHLIGHT_COLOR,
-                            createdAt = now,
-                            updatedAt = now,
-                        ),
-                    )
-                    activeHighlights = repository.getHighlights(localBook.bookId)
-                    opened?.let { renderPersistedHighlights(it, activeHighlights) }
-                }
-                applyEpubHighlights()
-            }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
-                .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
+    /**
+     * Highlight straight from the EPUB selection toolbar: a tap on the page to reach the HUD
+     * would clear the WebView selection first.
+     */
+    private val epubSelectionActionModeCallback = object : ActionMode.Callback {
+        override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
+            menu.add(Menu.NONE, MENU_HIGHLIGHT_SELECTION, Menu.NONE, getString(MR.strings.book_reader_highlight))
+                .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+            return true
         }
+
+        override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+
+        override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean {
+            if (item.itemId != MENU_HIGHLIGHT_SELECTION) return false
+            // Finish only after Readium has read the selection, which finishing would clear.
+            captureEpubSelectionAndSave(onDone = mode::finish)
+            return true
+        }
+
+        override fun onDestroyActionMode(mode: ActionMode) = Unit
+    }
+
+    private fun captureEpubSelectionAndSave(onDone: () -> Unit = {}) {
+        val navigator = epubNavigator ?: return onDone()
+        val session = epubSession ?: return onDone()
+        val localBook = book ?: return onDone()
+        lifecycleScope.launch {
+            try {
+                saveEpubSelection(navigator, session, localBook)
+                // Drop the WebView selection so the new highlight shows instead of the handles.
+                runCatching { navigator.clearSelection() }
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    private suspend fun saveEpubSelection(
+        navigator: EpubNavigatorFragment,
+        session: EpubNavigatorSession,
+        localBook: LocalBook,
+    ) {
+        val selection = runCatching { navigator.currentSelection() }.getOrNull()
+        val readiumLocator = selection?.locator
+        val text = readiumLocator?.text?.highlight
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(MAX_HIGHLIGHT_TEXT)
+            .orEmpty()
+        if (readiumLocator == null || text.isBlank()) {
+            showMessage(getString(MR.strings.book_reader_select_text_first))
+            return
+        }
+        val appLocator = session.toReaderLocator(readiumLocator)
+        val now = System.currentTimeMillis()
+        runCatching {
+            withContext(Dispatchers.IO) {
+                repository.addHighlight(
+                    BookHighlight(
+                        highlightId = UUID.randomUUID().toString(),
+                        bookId = localBook.bookId,
+                        start = appLocator,
+                        end = appLocator,
+                        selectedText = text,
+                        colorArgb = DEFAULT_HIGHLIGHT_COLOR,
+                        createdAt = now,
+                        updatedAt = now,
+                    ),
+                )
+                activeHighlights = repository.getHighlights(localBook.bookId)
+                opened?.let { renderPersistedHighlights(it, activeHighlights) }
+            }
+            applyEpubHighlights()
+        }.onSuccess { showMessage(getString(MR.strings.book_reader_highlight_saved)) }
+            .onFailure { showMessage(it.message ?: getString(MR.strings.book_reader_highlight_failed)) }
     }
 
     private fun saveHighlight() {
@@ -1986,7 +2061,8 @@ class LocalBookReaderActivity : AppCompatActivity(), ReaderSettingsHost {
             }
             return
         }
-        if (pdfView != null) {
+        // Original-page modes (continuous or two pages) select from the page's text, OCR included.
+        if (pdfView != null || pdfSpreadPrimaryView != null) {
             showPdfTextSelectionDialog()
             return
         }

@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.data.preference.MANGA_NON_COMPLETED
 import eu.kanade.tachiyomi.data.preference.MANGA_NON_READ
 import eu.kanade.tachiyomi.data.preference.MANGA_OUTSIDE_RELEASE_PERIOD
 import eu.kanade.tachiyomi.data.preference.changesIn
+import epigraph.books.ui.LocalBooksController
 import eu.kanade.tachiyomi.ui.category.CategoryController
 import eu.kanade.tachiyomi.ui.library.LibraryPresenter
 import eu.kanade.tachiyomi.ui.library.display.TabbedLibraryDisplaySheet
@@ -99,10 +100,10 @@ class SettingsLibraryController : SettingsLegacyController() {
             }
         }
 
-        val dbCategories = cachedCategories ?: run {
-            loadCategoriesThenRebuild(this)
-            return@apply
-        }
+        // Build every section right away (the settings search indexes this first pass) and
+        // rebuild once the categories arrive from the database.
+        val categoriesLoaded = cachedCategories != null
+        val dbCategories = cachedCategories ?: emptyList<Category>().also { loadCategoriesThenRebuild(this) }
 
         preferenceCategory {
             titleRes = MR.strings.categories
@@ -110,7 +111,11 @@ class SettingsLibraryController : SettingsLegacyController() {
                 key = "edit_categories"
                 isPersistent = false
                 val catCount = dbCategories.size
-                titleRes = if (catCount > 0) MR.strings.edit_categories else MR.strings.add_categories
+                titleRes = when {
+                    !categoriesLoaded -> MR.strings.add_edit_categories
+                    catCount > 0 -> MR.strings.edit_categories
+                    else -> MR.strings.add_categories
+                }
                 if (catCount > 0) summary = context.getString(MR.plurals.category_plural, catCount, catCount)
                 onClick { router.pushController(CategoryController().withFadeTransaction()) }
             }
@@ -328,6 +333,24 @@ class SettingsLibraryController : SettingsLegacyController() {
                     summary = context.getString(MR.strings.pref_migration_parallel_summary, newValue as Int)
                     true
                 }
+            }
+        }
+
+        preferenceCategory {
+            titleRes = MR.strings.settings_more_screens
+            preference {
+                key = "pref_recents_screen"
+                isPersistent = false
+                titleRes = MR.strings.recents
+                summaryRes = MR.strings.settings_recents_summary
+                onClick { router.pushController(SettingsRecentsController().withFadeTransaction()) }
+            }
+            preference {
+                key = "pref_local_books_screen"
+                isPersistent = false
+                titleRes = MR.strings.settings_local_books
+                summaryRes = MR.strings.settings_local_books_summary
+                onClick { router.pushController(LocalBooksController().withFadeTransaction()) }
             }
         }
     }

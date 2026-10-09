@@ -5,6 +5,7 @@
   import { cubicIn, cubicInOut, cubicOut } from "svelte/easing";
   import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
   import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
+  import { prefersReducedMotion } from "../../lib/motion/motion";
 
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerVersions = new Map<string, number>();
@@ -83,11 +84,8 @@
     return kind === "error" ? "alert" : "status";
   }
 
-  // Motion is skipped when the user asks for less of it, or where Web Animations are unavailable.
-  function skipMotion() {
-    if (typeof Element === "undefined" || typeof Element.prototype.animate !== "function") return true;
-    return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  }
+  // Motion is skipped when animations are off (app setting, then system) or Web Animations are unavailable.
+  const skipMotion = prefersReducedMotion;
 
   // A dismissed toast drifts back out to the right and softens, then folds its space away so the
   // toasts above it settle down smoothly instead of jumping when it is removed.
@@ -613,19 +611,18 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .toast {
-      animation: none;
-      transition: none;
-    }
+  /* Reduced motion follows the app setting, then the system (motion.ts). */
+  :global(html[data-epigraph-reduced-motion="true"]) .toast {
+    animation: none;
+    transition: none;
+  }
 
-    .toast::before {
-      animation: none;
-    }
+  :global(html[data-epigraph-reduced-motion="true"]) .toast::before {
+    animation: none;
+  }
 
-    .icon,
-    .library-progress-fill {
-      transition: none;
-    }
+  :global(html[data-epigraph-reduced-motion="true"]) .icon,
+  :global(html[data-epigraph-reduced-motion="true"]) .library-progress-fill {
+    transition: none;
   }
 </style>

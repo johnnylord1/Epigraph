@@ -278,7 +278,15 @@ class ReaderViewModel(
                         // forever (chapterList stays uninitialized) yet manga is set, so
                         // we'd be wedged between "needs init" and "has state".
                         mutableState.update { it.copy(manga = null) }
-                        eventChannel.send(Event.SourceNotReady(manga.source))
+                        // A source that is simply not installed on this device will not appear by
+                        // waiting: name it so the overlay can say what to install. A novel source is
+                        // only known to be missing once the installed plugins have registered.
+                        val missing = sourceManager.getOrStub(manga.source)
+                        val missingName = missing.name.takeUnless {
+                            it == manga.source.toString() ||
+                                (missing.isNovelSource && !sourceManager.novelPluginsLoaded)
+                        }
+                        eventChannel.send(Event.SourceNotReady(manga.source, missingName))
                         return@withIOContext Result.failure(SourceNotReadyException(manga.source))
                     }
                     val context = get<Application>()
@@ -1667,7 +1675,7 @@ class ReaderViewModel(
          * can re-trigger init once the plugin manager has finished its background load
          * (issue #9). [sourceId] is included for diagnostics / future error-text hooks.
          */
-        data class SourceNotReady(val sourceId: Long) : Event()
+        data class SourceNotReady(val sourceId: Long, val missingExtensionName: String? = null) : Event()
 
         data class SavedImage(val result: SaveImageResult) : Event()
         data class ShareImage(val file: UniFile, val page: ReaderPage, val extraPage: ReaderPage? = null) : Event()

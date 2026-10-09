@@ -72,8 +72,9 @@ internal class ExtensionInstaller(private val context: Context) {
      * The currently requested downloads, with the package name (unique id) as key, and the id
      * returned by the download manager.
      */
-    val activeDownloads = hashMapOf<String, Long>()
-    private val visibleInstallerPackages = ConcurrentHashMap.newKeySet<String>()
+    val activeDownloads = ConcurrentHashMap<String, Long>()
+    private val promptlessInstallPackages = ConcurrentHashMap.newKeySet<String>()
+    private val completedFromPackageState = ConcurrentHashMap.newKeySet<String>()
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var installer: ShizukuInstaller? = null
@@ -104,7 +105,7 @@ internal class ExtensionInstaller(private val context: Context) {
     val downloadSharedFlow = _downloadsSharedFlow.asSharedFlow()
 
     /** Map of download id to installer session id */
-    val downloadInstallerMap = hashMapOf<String, Int>()
+    val downloadInstallerMap = ConcurrentHashMap<String, Int>()
     fun emitToFlow(name: String, extensionInfo: ExtensionIntallInfo) =
         ioScope.launch { _downloadsSharedFlow.emit(name to extensionInfo) }
 
@@ -119,12 +120,13 @@ internal class ExtensionInstaller(private val context: Context) {
         url: String,
         extension: ExtensionManager.ExtensionInfo,
         scope: CoroutineScope,
-        requireUserConfirmation: Boolean = false,
+        installWithoutPrompt: Boolean = false,
     ): Flow<ExtensionIntallInfo> {
         val pkgName = extension.pkgName
+        completedFromPackageState -= pkgName
 
-        if (requireUserConfirmation) {
-            visibleInstallerPackages += pkgName
+        if (installWithoutPrompt) {
+            promptlessInstallPackages += pkgName
         }
 
         val oldDownload = activeDownloads[pkgName]
@@ -205,7 +207,17 @@ internal class ExtensionInstaller(private val context: Context) {
                 val newDownloadState = try {
                     downloadManager.query(query)?.use { cursor ->
                         cursor.moveToFirst()
-                        cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS))
+                        val status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS))
+                        val reason = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_REASON))
+                        // A dropped connection parks the download for a retry minutes later with
+                        // no progress to show; fail it so the user can retry and batches move on.
+                        if (status == DownloadManager.STATUS_PAUSED &&
+                            reason == DownloadManager.PAUSED_WAITING_TO_RETRY
+                        ) {
+                            DownloadManager.STATUS_FAILED
+                        } else {
+                            status
+                        }
                     }
                 } catch (_: Exception) {
                     null
@@ -257,7 +269,7 @@ internal class ExtensionInstaller(private val context: Context) {
                 // written; until then getSessionInfo returns null. Keep polling while the
                 // PackageInstaller flow is still pending (user-confirmation installs launch
                 // ExtensionInstallActivity), so the APK is never deleted before it is read.
-                info.second != null || pkgName in visibleInstallerPackages ||
+                info.second != null || pkgName in promptlessInstallPackages ||
                     installer?.isInQueue(pkgName) == true
             } else {
                 true
@@ -279,18 +291,16 @@ internal class ExtensionInstaller(private val context: Context) {
      */
     fun installApk(downloadId: Long, uri: Uri) {
         val pkgName = activeDownloads.entries.find { it.value == downloadId }?.key
-        if (pkgName != null && pkgName in visibleInstallerPackages) {
-            setInstalling(pkgName, uri.hashCode())
-            context.startActivity(
-                Intent(context, ExtensionInstallActivity::class.java)
-                    .setDataAndType(uri, APK_MIME)
-                    .putExtra(EXTRA_DOWNLOAD_ID, downloadId)
-                    // Core reconciliation is an explicit user action. Keep that intent marked
-                    // all the way through PackageInstaller so Android cannot optimize this
-                    // session into a silent install on API 31+.
-                    .putExtra(EXTRA_REQUIRE_USER_ACTION, true)
-                    .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION),
-            )
+        if (pkgName != null && pkgName in promptlessInstallPackages) {
+            // "Install all" from Core reconciliation installs without a prompt per APK, as Mihon
+            // does: Shizuku when the user picked it, otherwise the private installer.
+            val basePreferences: BasePreferences by injectLazy()
+            if (basePreferences.extensionInstaller().get() == BasePreferences.ExtensionInstaller.SHIZUKU) {
+                setInstalling(pkgName, uri.hashCode())
+                shizukuInstaller?.addToQueue(downloadId, pkgName, uri)
+            } else {
+                installPrivately(downloadId, pkgName, uri)
+            }
             return
         }
         val useActivity =
@@ -428,6 +438,8 @@ internal class ExtensionInstaller(private val context: Context) {
      * @param result Whether the extension was installed or not.
      */
     fun setInstallationResult(pkgName: String, result: Boolean, cancelled: Boolean = false) {
+        // The package was already seen installed; a late failure from the installer is stale.
+        if (!result && completedFromPackageState.remove(pkgName)) return
         if (result) {
             deleteDownload(pkgName)
         }
@@ -441,12 +453,23 @@ internal class ExtensionInstaller(private val context: Context) {
     }
 
     /**
+     * Completes an install still in flight for a package that is now on the device. Android
+     * sometimes installs the APK without reporting the installer result, which otherwise leaves
+     * the extension shown as installing.
+     */
+    fun completeFromPackageState(pkgName: String) {
+        if (!activeDownloads.containsKey(pkgName) && !downloadInstallerMap.containsKey(pkgName)) return
+        completedFromPackageState += pkgName
+        setInstallationResult(pkgName, result = true)
+    }
+
+    /**
      * Deletes the download for the given package name.
      *
      * @param pkgName The package name of the download to delete.
      */
     private fun deleteDownload(pkgName: String) {
-        visibleInstallerPackages -= pkgName
+        promptlessInstallPackages -= pkgName
         val downloadId = activeDownloads.remove(pkgName)
         if (downloadId != null) {
             downloadManager.remove(downloadId)

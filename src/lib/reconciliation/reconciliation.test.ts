@@ -5,7 +5,7 @@ import { BACKUP_TOP_LEVEL_MANGA_FIELD, BACKUP_TOP_LEVEL_SOURCES_FIELD, createRec
 import { MIHON_BACKUP_PROTO } from "../backup/mihonProto";
 import { overlayEntryFromAnalysis } from "./analyze";
 import { DEFAULT_CLUSTER_INFERENCE_CONFIG } from "./constants";
-import { resolveExactCluster } from "./exact";
+import { buildOrphanSourceClusters, resolveExactCluster } from "./exact";
 import { rankRepresentativeManga, scoreClusterCandidates, shouldAutoSelectCandidate } from "./inference";
 import { buildRestoreReadiness } from "./readiness";
 import { buildExcludedSourceIds, buildSourceMapping } from "./restore";
@@ -222,6 +222,29 @@ describe("backup parser", () => {
 
     expect(parsed.backupManga.map((entry) => entry.title)).toEqual(["Library title"]);
     expect(parsed.mangaMessages).toHaveLength(2);
+  });
+
+  it("ignores sources and categories that only belong to titles outside the library", async () => {
+    const payload = BackupType.encode({
+      backupManga: [
+        { source: "123", url: "/library", title: "Library title", categories: [1] },
+        { source: "456", url: "/removed", title: "Removed title", favorite: false, categories: [1] },
+      ],
+      backupSources: [
+        { name: "MangaDex", sourceId: "123" },
+        { name: "Old source", sourceId: "456" },
+        { name: "Cached source", sourceId: "789" },
+      ],
+    }).finish();
+
+    const parsed = await parseMihonBackup(pako.gzip(payload), []);
+    const rebuilt = BackupType.toObject(BackupType.decode(pako.ungzip(createReconciledBackupPayload(parsed, {}))), { longs: String });
+
+    expect(buildOrphanSourceClusters(parsed).map((cluster) => cluster.orphanSourceId)).toEqual(["123"]);
+    expect(rebuilt.backupManga.map((entry: { title: string; categories?: string[] }) => [entry.title, entry.categories ?? []])).toEqual([
+      ["Library title", ["1"]],
+      ["Removed title", []],
+    ]);
   });
 
   it("preserves J2K custom manga metadata when rebuilding a reconciled backup", async () => {

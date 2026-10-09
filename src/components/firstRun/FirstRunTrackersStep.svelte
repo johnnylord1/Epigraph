@@ -11,6 +11,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { operationError } from "../../lib/i18n/operationPresentation";
   import type { FirstRunTrackerProvider, FirstRunTrackerWorkflow } from "../../lib/tracking/firstRunTrackerWorkflow";
+  import { epigraphMyAnimeListAuthUrl } from "../../lib/syncdTrackerCredentials";
 
   interface Props {
     workflow: FirstRunTrackerWorkflow;
@@ -85,7 +86,10 @@
       nativeSessionId = sessionId;
       const isCurrent = () => mounted && generation === authGeneration && active?.id === provider.id;
       opening = true;
+      let authUrl = provider.authUrl;
       try {
+        authUrl = (await epigraphMyAnimeListAuthUrl({ id: Number(provider.id), name: provider.name })) ?? provider.authUrl;
+        if (!isCurrent()) return;
         const unlistenCallback = await listen<{ url: string; sessionId?: string }>("tracker-oauth-callback", (event) => {
           if (isCurrent() && event.payload?.sessionId === sessionId && !busy && typeof event.payload.url === "string") void submit(event.payload.url);
         });
@@ -97,13 +101,13 @@
         if (!isCurrent()) { unlistenWindow(); return; }
         oauthListeners.push(unlistenWindow);
         autoCapturing = true;
-        await invoke("open_tracker_oauth_window", { url: provider.authUrl, sessionId });
+        await invoke("open_tracker_oauth_window", { url: authUrl, sessionId });
         if (!isCurrent()) await invoke("close_tracker_oauth_window", { sessionId });
       } catch {
         if (!isCurrent()) return;
         stopCapture();
         try {
-          await openUrl(provider.authUrl);
+          await openUrl(authUrl);
           if (mounted && active?.id === provider.id) error = { cause: null, fallback: "firstRun.trackers.automaticUnavailable" };
         } catch {
           if (mounted) error = { cause: null, fallback: "firstRun.trackers.loginWindowError" };

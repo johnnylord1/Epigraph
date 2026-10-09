@@ -19,7 +19,9 @@ class KitsuInterceptor(val kitsu: Kitsu) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
-        val currAuth = oauth ?: throw Exception("Not authenticated with Kitsu")
+        // A login installed without this interceptor (Epigraph Core tracker sync) is only in the preferences.
+        val currAuth = oauth ?: kitsu.restoreToken()?.also { oauth = it }
+            ?: throw Exception("Not authenticated with Kitsu")
 
         val refreshToken = currAuth.refreshToken!!
 

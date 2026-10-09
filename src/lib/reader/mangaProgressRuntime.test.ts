@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-const { gql } = vi.hoisted(() => ({ gql: vi.fn() }));
+const { gql, requestProgressMirror } = vi.hoisted(() => ({ gql: vi.fn(), requestProgressMirror: vi.fn() }));
 vi.mock("../client", () => ({ gql, getServerUrl: () => "http://test" }));
+vi.mock("../syncdProgressMirror", () => ({ requestProgressMirror }));
 import { adoptClosedWindowMangaProgress, configureDetachedMangaProgress, flushAllMangaProgress, getMangaProgressForScope, resetMangaProgressRuntimeForTests, resumePendingMangaProgress } from "./mangaProgressRuntime";
 import { readFileSync } from "node:fs";
 
@@ -50,9 +51,30 @@ describe("shared manga progress runtime", () => {
   });
 });
 
+describe("manga progress mirror requests", () => {
+  it("asks Core to mirror a save only when the main window changed Suwayomi", async () => {
+    resetMangaProgressRuntimeForTests();
+    requestProgressMirror.mockReset();
+    gql.mockReset();
+    gql.mockResolvedValueOnce({ chapter: { id: 7, lastPageRead: 1, isRead: false } });
+    gql.mockResolvedValueOnce({ updateChapters: { chapters: [] } });
+    gql.mockResolvedValueOnce({ chapter: { id: 8, lastPageRead: 9, isRead: true } });
+    const reader = getMangaProgressForScope("profile:one", memoryStorage());
+    reader.record(7, 5, true);
+    await reader.flushAll();
+    expect(requestProgressMirror).toHaveBeenCalledWith({ chapterIds: [7] });
+    // Suwayomi is already ahead, so nothing is written and nothing is mirrored.
+    reader.record(8, 4, false);
+    await reader.flushAll();
+    expect(requestProgressMirror).toHaveBeenCalledTimes(1);
+    resetMangaProgressRuntimeForTests();
+  });
+});
+
 describe("detached reader manga progress", () => {
   it("keeps a detached window's pending progress in its own journal and reports each save", async () => {
     resetMangaProgressRuntimeForTests();
+    requestProgressMirror.mockReset();
     gql.mockReset();
     gql.mockResolvedValueOnce({ chapter: { id: 7, lastPageRead: 1, isRead: false } });
     gql.mockResolvedValueOnce({ updateChapters: { chapters: [] } });
@@ -65,7 +87,9 @@ describe("detached reader manga progress", () => {
     expect(JSON.parse(storage.getItem(DETACHED_JOURNAL)!)).toEqual([{ chapterId: 7, lastPageRead: 5, isRead: false }]);
     expect(JSON.parse(storage.getItem(MAIN_JOURNAL)!)).toEqual([{ chapterId: 3, lastPageRead: 2, isRead: false }]);
     await flushAllMangaProgress();
-    expect(saved).toHaveBeenCalledWith("profile:one", { chapterId: 7, lastPageRead: 5, isRead: false });
+    expect(saved).toHaveBeenCalledWith("profile:one", { chapterId: 7, lastPageRead: 5, isRead: false }, true);
+    // Detached windows cannot invoke app commands; the main window asks Core to mirror the save.
+    expect(requestProgressMirror).not.toHaveBeenCalled();
     expect(JSON.parse(storage.getItem(DETACHED_JOURNAL)!)).toEqual([]);
     resetMangaProgressRuntimeForTests();
   });

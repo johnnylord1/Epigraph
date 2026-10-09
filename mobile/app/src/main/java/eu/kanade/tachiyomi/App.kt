@@ -14,6 +14,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Looper
+import android.os.SystemClock
 import android.webkit.WebView
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.app.ActivityCompat
@@ -37,6 +38,7 @@ import coil3.request.allowRgb565
 import coil3.request.crossfade
 import coil3.util.DebugLogger
 import epigraph.sync.core.epigraphSyncModule
+import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreLiveEventSupervisor
 import epigraph.sync.core.work.EpigraphCoreSyncWorker
 import epigraph.sync.core.extensions.InstalledExtensionRelinkObserver
@@ -291,6 +293,17 @@ open class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.F
         )
     }
 
+    /** Starts at process creation, whose sync wake [EpigraphCoreSyncWorker.setup] already queued. */
+    private var lastForegroundSyncWake = SystemClock.elapsedRealtime()
+
+    override fun onStart(owner: LifecycleOwner) {
+        // The live feed carries Core events only; desktop library changes arrive in a worker run.
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastForegroundSyncWake < FOREGROUND_SYNC_MIN_INTERVAL_MS) return
+        lastForegroundSyncWake = now
+        EpigraphCoreSyncWorker.enqueueImmediate(this, CoreBackgroundSyncReason.APP_START)
+    }
+
     override fun onPause(owner: LifecycleOwner) {
         if (!AuthenticatorUtil.isAuthenticating && preferences.lockAfter().get() >= 0) {
             SecureActivityDelegate.locked = true
@@ -417,3 +430,4 @@ fun buildLogWritersToAdd(
 ): List<LogWriter> = emptyList()
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"
+private const val FOREGROUND_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1_000L

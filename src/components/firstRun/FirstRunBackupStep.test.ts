@@ -7,9 +7,19 @@ import FirstRunBackupStep from "./FirstRunBackupStep.svelte";
 vi.mock("../../lib/backup/mangaRestoreDependencies", () => ({
   createProductionMangaDependencySession: async () => ({ inspect: async () => ({
     repositories: [], requiredRepositories: [], extensions: [], warnings: [],
-    sources: [{ orphanSourceId: "old", sourceName: "Shared source", candidates: [] }],
+    sources: [{ orphanSourceId: "old", sourceName: "Shared source", candidates: [{ sourceId: "new", displayName: "New source" }] }],
   }) }),
 }));
+vi.mock("../../lib/backup/restoreDependencies", () => ({
+  createProductionNovelDependencySession: async () => ({ inspect: async () => ({ plugins: [] }) }),
+}));
+
+// The dependency panels inspect as soon as they open; restoring waits until they are done.
+async function restoreAllWhenReady() {
+  const restore = screen.getByRole("button", { name: "Restore all" });
+  await waitFor(() => expect(restore.hasAttribute("disabled")).toBe(false));
+  await fireEvent.click(restore);
+}
 
 afterEach(() => { cleanup(); applyAppLanguage("en"); });
 
@@ -47,11 +57,8 @@ describe("FirstRunBackupStep", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Select" }));
     await screen.findByText("b.tachibk");
     await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
-    for (const button of screen.getAllByRole("button", { name: "Review Manga dependencies" })) {
-      await fireEvent.click(button);
-      await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
-    }
-    const selects = screen.getAllByRole("combobox", { name: "Shared source" }) as HTMLSelectElement[];
+    await waitFor(() => expect(screen.getAllByRole("combobox", { name: /Shared source/ })).toHaveLength(2));
+    const selects = screen.getAllByRole("combobox", { name: /Shared source/ }) as HTMLSelectElement[];
     await fireEvent.change(selects[0], { target: { value: "skip" } });
     expect(setMangaChoices).toHaveBeenLastCalledWith({ old: { mode: "skip" } }, entries[0].key);
     expect(selects[0].value).toBe("skip");
@@ -65,7 +72,7 @@ describe("FirstRunBackupStep", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Select" }));
     await screen.findByText("warnings.zip");
     await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Restore all" }));
+    await restoreAllWhenReady();
     await screen.findByText(translate("outcomes.statePreserved"));
     expect(onRestored).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
@@ -136,10 +143,10 @@ describe("FirstRunBackupStep", () => {
     expect(screen.getByText("4")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
     expect(screen.getByText("Comics, novels")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Review Novel dependencies" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Review Manga dependencies" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Review Novel dependencies" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Review Manga dependencies" })).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Restore all" }));
+    await restoreAllWhenReady();
     await waitFor(() => expect(onRestored).toHaveBeenCalledWith({
       hasLibrary: true,
       needsSourceKinds: ["manga", "novels"],

@@ -32,14 +32,19 @@ function keyframes(source: string, name: string) {
   return source.slice(start, source.indexOf("}\n", source.indexOf("50%", start)) + 1);
 }
 
+const REDUCED = 'html[data-epigraph-reduced-motion="true"]';
+
 describe("startup splash with reduced motion", () => {
-  // Windows with animation effects turned off reports reduced motion; the loading line then has to keep
-  // signalling progress without moving, instead of freezing mid-sweep.
+  // Windows with animation effects turned off reports reduced motion, and so does the app's own
+  // Animations switch; the loading line then has to keep signalling progress without moving,
+  // instead of freezing mid-sweep.
   test("the app splash loading line keeps breathing in place", () => {
     const port = readProjectFile("src/styles/nocturne-port.css");
-    const block = reducedMotionBlocks(port).find((candidate) => candidate.includes(".epigraph-port--splash *"));
-    expect(block).toBeDefined();
-    expect(block).toMatch(/\.epigraph-port--splash \.line span \{[^}]*animation: epigraph-splash-breathe [^;]*infinite !important;/);
+    expect(port).toContain(`${REDUCED} .epigraph-port--splash *,`);
+    expect(port).toMatch(
+      /html\[data-epigraph-reduced-motion="true"\] \.epigraph-port--splash \.line span \{[^}]*animation: epigraph-splash-breathe [^;]*infinite !important;/,
+    );
+    expect(port).not.toContain("@media (prefers-reduced-motion: reduce)");
     const breathe = keyframes(port, "epigraph-splash-breathe");
     expect(breathe).toContain("opacity");
     expect(breathe).not.toContain("transform");
@@ -57,15 +62,16 @@ describe("startup splash with reduced motion", () => {
 });
 
 describe("splash while the UI motion rests", () => {
-  // After five quiet seconds the app marks motion idle; the lock splash lives inside the shell and must keep
-  // its loading line moving instead of freezing on the first keyframe.
+  // After five quiet seconds the app marks motion idle. Idle only pauses a few looping decorations;
+  // the lock splash lives inside the shell and must keep its loading line moving.
   test("the idle pause of the app shell leaves the splash animating", () => {
     const app = readProjectFile("src/App.svelte");
-    const start = app.indexOf('[data-epigraph-motion="idle"] .epigraph-app-shell *:not(');
-    const pause = app.slice(start, app.indexOf("}", start));
+    const port = readProjectFile("src/styles/nocturne-port.css");
 
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(pause).toContain("animation-play-state: paused !important;");
-    expect(pause).toContain(":not(.epigraph-port--splash):not(.epigraph-port--splash *)) {");
+    expect(app).not.toContain('[data-epigraph-motion="idle"] .epigraph-app-shell *:not(');
+    const idleSplashSelectors = port
+      .split("\n")
+      .filter((line) => line.includes('[data-epigraph-motion="idle"]') && line.includes("epigraph-port--splash"));
+    expect(idleSplashSelectors).toEqual(['html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {']);
   });
 });

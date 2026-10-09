@@ -4181,7 +4181,8 @@ fn compare_versions_for_sort(left: &str, right: &str) -> std::cmp::Ordering {
 }
 
 fn normalize_server_url(raw: Option<&str>) -> String {
-    raw.unwrap_or("http://127.0.0.1:4567")
+    let fallback = format!("http://127.0.0.1:{}", crate::suwayomi_runtime::main_server_port());
+    raw.unwrap_or(&fallback)
         .trim()
         .trim_end_matches('/')
         .to_string()

@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -207,7 +208,9 @@ class CoreSyncStatusMonitor(
             }
         }.distinctUntilChanged()
         return combine(
-            pairing.state.map { it is CorePairingUiState.Paired },
+            // Loading means the stored credentials are still being read; reporting NotPaired then
+            // would tell an already paired user to pair again.
+            pairing.state.filter { it !is CorePairingUiState.Loading }.map { it is CorePairingUiState.Paired },
             activity,
             counts,
             runs.lastRun,

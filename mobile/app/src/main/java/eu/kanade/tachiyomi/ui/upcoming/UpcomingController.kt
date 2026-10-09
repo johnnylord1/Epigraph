@@ -78,9 +78,9 @@ import yokai.domain.manga.interactor.GetUpcomingManga
 import yokai.domain.manga.models.cover
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
-import yokai.presentation.YokaiAppBarTabs
 import yokai.presentation.YokaiScaffold
 import yokai.presentation.component.EmptyScreen
+import yokai.presentation.component.SegmentedSwitch
 import yokai.presentation.manga.components.MangaCover
 import yokai.presentation.manga.components.MangaCoverRatio
 import yokai.util.koin.get
@@ -172,7 +172,7 @@ private fun UpcomingScreen(
             .eachCount()
     }
     val headerIndexes = remember(monthItems) {
-        var index = 1 // Calendar is the first LazyColumn item; tabs live in the app bar.
+        var index = 1 // Calendar is the first LazyColumn item; the type switch lives in the app bar.
         monthItems.mapValues { (_, entries) ->
             index.also { index += entries.size + 1 }
         }
@@ -189,9 +189,7 @@ private fun UpcomingScreen(
                     contentDescription = stringResource(MR.strings.upcoming_guide),
                 )
             }
-        },
-        appBarBottomContent = {
-            UpcomingTypeTabs(
+            UpcomingTypeSwitch(
                 selected = selectedType,
                 onSelected = { selectedType = it },
             )
@@ -288,8 +286,9 @@ private const val EVENT_INDICATOR_SCALE = 12
 private const val MONTH_YEAR_CHANGE_ANIMATION_DURATION = 200
 private val CalendarFontSize = 16.sp
 
+/** All / Manga / Novels, in the same app bar place as every other content-type switch. */
 @Composable
-private fun UpcomingTypeTabs(
+private fun UpcomingTypeSwitch(
     selected: UpcomingType,
     onSelected: (UpcomingType) -> Unit,
 ) {
@@ -298,10 +297,11 @@ private fun UpcomingTypeTabs(
         UpcomingType.MANGA to stringResource(MR.strings.manga),
         UpcomingType.NOVELS to stringResource(MR.strings.novels),
     )
-    YokaiAppBarTabs(
-        labels = tabs.map { it.second },
-        selectedIndex = tabs.indexOfFirst { it.first == selected }.coerceAtLeast(0),
-        onSelected = { index -> onSelected(tabs[index].first) },
+    SegmentedSwitch(
+        options = tabs,
+        selected = selected,
+        onSelect = onSelected,
+        modifier = Modifier.padding(horizontal = 4.dp),
     )
 }
 

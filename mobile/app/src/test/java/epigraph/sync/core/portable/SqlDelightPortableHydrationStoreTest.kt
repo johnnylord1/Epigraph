@@ -4,12 +4,17 @@ import tachiyomi.data.Mangas
 import yokai.data.memoColumnAdapter
 
 import epigraph.contract.DecimalSourceId
+import epigraph.contract.EpigraphEntityId
+import epigraph.contract.ReaderLocator
+import kotlinx.serialization.json.Json
+import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import kotlinx.serialization.json.JsonObject
 import epigraph.contract.PortableResolution
 import epigraph.contract.PortableResolutionState
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
+import epigraph.sync.portable.PortableChapterBindingRecord
 import epigraph.sync.portable.PortableWorkBindingRecord
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import kotlinx.coroutines.Dispatchers
@@ -128,5 +133,261 @@ class SqlDelightPortableHydrationStoreTest {
         val snapshot = SqlDelightPortableHydrationStore(handler).load("server", "main", 10)
 
         assertEquals(listOf(record.portableId), snapshot.works.map { it.portableId })
+    }
+
+    @Test
+    fun `chapter states confirmed before their chapters were bound are applied on binding`() = runTest {
+        database.mangasQueries.insert(
+            source = 8531542650987673943,
+            url = "/series/165",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Restored comic",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        val work = PortableWorkRef.Comic(DecimalSourceId("8531542650987673943"), ProviderOwnedKey("/series/165"))
+        val workId = PortableIdentityV3.workId(work)
+        val bindings = epigraph.sync.portable.SqlDelightPortableBindingStore(database)
+        bindings.upsertWork(
+            PortableWorkBindingRecord(
+                portableId = workId,
+                ref = work,
+                localReference = mangaId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                titleHint = "Restored comic",
+                providerLabelHint = null,
+                attemptCount = 1,
+                updatedAt = 1,
+            ),
+        )
+        val chapters = listOf("/series/165/a", "/series/165/b").mapIndexed { index, key ->
+            database.chaptersQueries.insert(
+                mangaId = mangaId,
+                url = key,
+                name = "Chapter ${index + 1}",
+                scanlator = null,
+                read = false,
+                bookmark = false,
+                lastPageRead = 0,
+                pagesLeft = 0,
+                chapterNumber = index + 1.0,
+                sourceOrder = index.toLong(),
+                dateFetch = 0,
+                dateUpload = 0,
+                memo = JsonObject(emptyMap()),
+            )
+            val localId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+            val ref = PortableChapterRef.Comic(work, ProviderOwnedKey(key))
+            val chapterId = PortableIdentityV3.chapterId(ref)
+            val entityId = "comic.chapter_state::$workId::$chapterId"
+            database.aethon_syncQueries.upsertCoreReplicaRecord(
+                scopeId = "comics:profile:main",
+                entityType = "comic.chapter_state",
+                entityId = entityId,
+                serverVersion = 10L + index,
+                lamport = 1,
+                recordJson = """{"chapterId":"$chapterId","comicId":"$workId","read":true,""" +
+                    """"portableWorkRef":{"type":"comic","sourceId":"8531542650987673943","mangaKey":"/series/165"},""" +
+                    """"portableChapterRef":{"type":"comic","chapterKey":"$key",""" +
+                    """"work":{"type":"comic","sourceId":"8531542650987673943","mangaKey":"/series/165"}}}""",
+                payloadSha256 = "0".repeat(64),
+            )
+            PortableChapterBindingRecord(
+                portableChapterId = chapterId,
+                portableWorkId = workId,
+                ref = ref,
+                localReference = localId.toString(),
+                resolution = PortableResolution(PortableResolutionState.BOUND),
+                attemptCount = 1,
+                updatedAt = 1,
+            )
+        }
+
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = emptyList(),
+            chapters = chapters,
+        )
+
+        assertEquals(
+            listOf(true, true),
+            database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList().map { it.read },
+        )
+    }
+
+    @Test
+    fun `novel progress confirmed before its chapter was bound is applied on binding`() = runTest {
+        database.mangasQueries.insert(
+            source = 10003,
+            url = "/novel/shadow",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Restored novel",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val mangaId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/novel/shadow/1146",
+            name = "Chapter 1146",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 0,
+            chapterNumber = 1146.0,
+            sourceOrder = 0,
+            dateFetch = 0,
+            dateUpload = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        val work = PortableWorkRef.Novel("plugin.example", ProviderOwnedKey("/novel/shadow"))
+        val chapter = PortableChapterRef.Novel(work, ProviderOwnedKey("/novel/shadow/1146"))
+        val workId = PortableIdentityV3.workId(work)
+        val chapterId = PortableIdentityV3.chapterId(chapter)
+        database.aethon_syncQueries.upsertIdentity(
+            entityId = workId,
+            contentType = "NOVEL",
+            localReference = mangaId.toString(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+        database.aethon_syncQueries.upsertRemoteReaderProgress(
+            entityId = workId,
+            chapterEntityId = null,
+            locatorJson = Json.encodeToString(
+                ReaderLocator.serializer(),
+                ReaderLocator.Novel(
+                    entityId = EpigraphEntityId(workId),
+                    chapterId = chapterId,
+                    blockIndex = 12,
+                    textOffset = 0,
+                    progression = 0.36,
+                    portableWork = work,
+                    portableChapter = chapter,
+                ),
+            ),
+            chapterOrdinal = null,
+            progression = 0.36,
+            serverRevision = 5,
+            updatedAt = 1,
+        )
+
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = emptyList(),
+            chapters = listOf(
+                PortableChapterBindingRecord(
+                    portableChapterId = chapterId,
+                    portableWorkId = workId,
+                    ref = chapter,
+                    localReference = localChapterId.toString(),
+                    resolution = PortableResolution(PortableResolutionState.BOUND),
+                    attemptCount = 1,
+                    updatedAt = 1,
+                ),
+            ),
+        )
+
+        val stored = database.chaptersQueries.getChaptersById(localChapterId).executeAsOne()
+        assertEquals(36L, stored.last_page_read)
+        assertEquals(false, stored.read)
+    }
+
+    @Test
+    fun `tracking confirmed before its work had a local row reaches it once the work is persisted`() = runTest {
+        database.mangasQueries.insert(
+            source = 10002,
+            url = "/Manga/Tracked",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Tracked comic",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = null,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = null,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val localId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        val ref = PortableWorkRef.Comic(DecimalSourceId("10002"), ProviderOwnedKey("/Manga/Tracked"))
+        val workId = PortableIdentityV3.workId(ref)
+        database.aethon_syncQueries.upsertCoreReplicaRecord(
+            scopeId = "comics:profile:main",
+            entityType = "comic.tracking",
+            entityId = "comic.tracking::$workId::anilist",
+            serverVersion = 10,
+            lamport = 1,
+            recordJson = """{"comicId":"$workId","trackerKey":"anilist","remoteId":4242,"title":"Tracked",""" +
+                """"remoteUrl":"https://anilist.co/manga/4242","status":1,"progress":3.0,""" +
+                """"totalChapters":10,"score":7.0,"updatedAtMs":100}""",
+            payloadSha256 = "0".repeat(64),
+        )
+
+        SqlDelightPortableHydrationStore(handler).persist(
+            comicDependencies = emptyList(),
+            novelDependencies = emptyList(),
+            works = listOf(
+                PortableWorkBindingRecord(
+                    portableId = workId,
+                    ref = ref,
+                    localReference = localId.toString(),
+                    resolution = PortableResolution(PortableResolutionState.BOUND),
+                    titleHint = "Tracked comic",
+                    providerLabelHint = null,
+                    attemptCount = 1,
+                    updatedAt = 1,
+                ),
+            ),
+        )
+
+        assertEquals(4242L, database.manga_syncQueries.getAllByMangaId(localId).executeAsList().single().remote_id)
     }
 }

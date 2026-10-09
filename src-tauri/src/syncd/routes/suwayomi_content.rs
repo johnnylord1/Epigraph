@@ -18,10 +18,21 @@ const FETCH_MANGA_DOCUMENT: &str = r#"
   }
 "#;
 
+/// Read-only fallback when the source cannot be refreshed (blocked, offline): the details
+/// Suwayomi already stores, in the `fetchManga` shape.
+const STORED_MANGA_DOCUMENT: &str = r#"
+  query EpigraphCoreStoredManga($id: Int!) {
+    manga(id: $id) { id title description thumbnailUrl status author artist genre inLibrary realUrl }
+  }
+"#;
+
 const FETCH_CHAPTERS_DOCUMENT: &str = r#"
   mutation EpigraphCoreFetchChapters($mangaId: Int!) {
     fetchChapters(input: { mangaId: $mangaId }) {
-      chapters { id name chapterNumber sourceOrder pageCount mangaId uploadDate realUrl scanlator }
+      chapters {
+        id name chapterNumber sourceOrder pageCount mangaId uploadDate realUrl scanlator
+        isRead isBookmarked lastPageRead lastReadAt
+      }
     }
   }
 "#;
@@ -78,9 +89,19 @@ pub async fn post_content(
     let (document, variables) = normalized_content(&request.operation, request.id)?;
     // These upstream operations refresh source-owned state even though this Core boundary is
     // read-only to the mobile client, so they participate in the maintenance operation lease.
-    let data =
-        suwayomi_catalog::execute_graphql_document(&state, &session, document, variables, true)
-            .await?;
+    let data = match suwayomi_catalog::execute_graphql_document(
+        &state, &session, document, variables, true,
+    )
+    .await
+    {
+        Ok(data) => data,
+        Err(error) if request.operation == ContentOperation::FetchManga => {
+            stored_manga(&state, &session, request.id)
+                .await
+                .ok_or(error)?
+        }
+        Err(error) => return Err(error),
+    };
 
     Ok(Json(ContentResponse {
         schema_version: CONTENT_SCHEMA_VERSION,
@@ -89,6 +110,34 @@ pub async fn post_content(
         fetched_at_ms: db::now_ms(),
         data,
     }))
+}
+
+async fn stored_manga(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    id: i64,
+) -> Option<Value> {
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        session,
+        STORED_MANGA_DOCUMENT,
+        json!({ "id": id }),
+        false,
+    )
+    .await
+    .ok()?;
+    let fetched = stored_manga_as_fetched(data)?;
+    tracing::warn!(
+        profile = session.profile_id,
+        manga_id = id,
+        "source refresh failed; serving the manga details Suwayomi already stores"
+    );
+    Some(fetched)
+}
+
+fn stored_manga_as_fetched(data: Value) -> Option<Value> {
+    let manga = data.get("manga").filter(|manga| manga.is_object())?.clone();
+    Some(json!({ "fetchManga": { "manga": manga } }))
 }
 
 fn normalized_content(
@@ -114,6 +163,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stored_manga_fallback_is_read_only_and_keeps_the_fetch_shape() {
+        assert!(STORED_MANGA_DOCUMENT.trim_start().starts_with("query "));
+        let fetched =
+            stored_manga_as_fetched(json!({ "manga": { "id": 1, "title": "T" } })).unwrap();
+        assert_eq!(
+            fetched.pointer("/fetchManga/manga/title"),
+            Some(&json!("T"))
+        );
+        assert!(stored_manga_as_fetched(json!({ "manga": null })).is_none());
+        assert!(stored_manga_as_fetched(json!({})).is_none());
+    }
+
+    #[test]
     fn normalizes_only_fixed_content_operations() {
         let (details, details_variables) =
             normalized_content(&ContentOperation::FetchManga, 7).unwrap();
@@ -123,6 +185,11 @@ mod tests {
         let (chapters, chapter_variables) =
             normalized_content(&ContentOperation::FetchChapters, 8).unwrap();
         assert!(chapters.contains("mutation EpigraphCoreFetchChapters"));
+        // Paired phones mirror the desktop read state from this list; without it a Core manga
+        // read on the desktop opens on the phone at chapter one, and lastReadAt fills History.
+        for field in ["isRead", "isBookmarked", "lastPageRead", "lastReadAt"] {
+            assert!(chapters.contains(field), "fetchChapters must select {field}");
+        }
         assert_eq!(chapter_variables, json!({ "mangaId": 8 }));
 
         let (pages, page_variables) =

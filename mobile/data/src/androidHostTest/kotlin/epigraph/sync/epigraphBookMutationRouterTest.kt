@@ -108,9 +108,11 @@ class EpigraphBookMutationRouterTest {
     }
 
     @Test
-    fun `categories with negative local sort publish their non-negative rank`() = runTest {
+    fun `categories with negative local sort publish their non-negative rank among books folders`() = runTest {
         router.publish(snapshot(), "/private/$BOOK_HASH.epub", coverPath = null)
-        insertCategory("First", -1)
+        insertCategory("Comics", -5)
+        val first = insertCategory("First", -1)
+        database.aethon_syncQueries.upsertCategoryScope(first, "BOOK")
         val second = insertCategory("Second", 0)
 
         router.setCategory(BOOK_ID.value, second, enabled = true)

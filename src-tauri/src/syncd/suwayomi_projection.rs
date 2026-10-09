@@ -9,7 +9,8 @@ use sqlx::FromRow;
 use super::lifecycle::{wait_for_shutdown_request, ShutdownRequest};
 use super::models::{
     canonical_portable_chapter_id, canonical_portable_work_id, AppError, AuthenticatedSession,
-    PortableChapterRefV3, PortableResolutionStateV3, PortableWorkRefV3, SharedAppState,
+    PortableChapterRefV3, PortableResolutionStateV3, PortableWorkBindingRow, PortableWorkRefV3,
+    SharedAppState,
 };
 use super::routes::suwayomi_commands::{self, CommandOperation};
 use super::{db, routes::suwayomi_catalog};
@@ -18,6 +19,17 @@ const MAX_BATCH: usize = 8;
 const LEASE_MS: i64 = 60_000;
 const BASE_RETRY_MS: i64 = 30_000;
 const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
+/// Backoff ceiling while the local Suwayomi runtime is unreachable. Retrying rows count as pending
+/// in `/v1/sync/status` and mobile defers its whole catalog reconciliation meanwhile, so once the
+/// runtime is back the queue must clear within minutes instead of waiting out an hours-long delay.
+/// Probing a local runtime this often is cheap.
+const MAX_RUNTIME_RETRY_MS: i64 = 5 * 60 * 1_000;
+const RUNTIME_UNAVAILABLE: &str = "runtime_unavailable";
+/// While an earlier projection of the same profile is in its first retries (a Suwayomi restart,
+/// a brief outage), later ones wait so Suwayomi sees commands in commit order: removing a manga
+/// from a category must not land after the category itself is deleted. After this many attempts
+/// the earlier row stops holding the queue, so one failing command cannot stall a profile.
+const ORDERED_RETRY_ATTEMPTS: i64 = 3;
 /// Attempts after which a command the runtime rejected as non-retryable (for example a GraphQL
 /// error on an id Suwayomi no longer has) stops retrying. Retrying rows count as pending in
 /// `/v1/sync/status`, and mobile defers its catalog reconciliation while anything is pending, so a
@@ -32,11 +44,33 @@ const MAX_CONFIRMATION_ATTEMPTS: i64 = 5;
 /// changed). They get one fresh bounded cycle each time the daemon starts. Codes caused by the
 /// command itself (`command_rejected`, `invalid_variables`, `unsupported_operation`) stay blocked
 /// until a newer version supersedes them.
-const RECOVERABLE_BLOCKED_CODES: [&str; 2] = ["confirmation_mismatch", "command_failed"];
+const RECOVERABLE_BLOCKED_CODES: [&str; 3] = [
+    "confirmation_mismatch",
+    "command_failed",
+    PORTABLE_WORK_NOT_FOUND,
+];
+/// A device added a work Suwayomi could not find, for example because its extension is not
+/// installed here. Blocked after a few attempts so it stops counting as pending.
+const PORTABLE_WORK_NOT_FOUND: &str = "portable_work_not_found";
 const PORTABLE_CHAPTER_PAGE_SIZE: i64 = 250;
 const MAX_PORTABLE_CHAPTER_PAGES: usize = 80;
 const CATEGORY_ASSIGNMENT_PAGE_SIZE: i64 = 100;
 const MAX_CATEGORY_ASSIGNMENT_PAGES: usize = 20;
+
+const PORTABLE_COMIC_LOOKUP_QUERY: &str = r#"
+  query EpigraphResolvePortableComic($sourceId: LongString!, $url: String!) {
+    mangas(condition: { sourceId: $sourceId, url: $url }, first: 2) {
+      nodes { id url }
+    }
+  }
+"#;
+const PORTABLE_COMIC_SEARCH_MUTATION: &str = r#"
+  mutation EpigraphSearchPortableComic($source: LongString!, $query: String!) {
+    fetchSourceManga(input: { source: $source, type: SEARCH, query: $query, page: 1 }) {
+      mangas { id url }
+    }
+  }
+"#;
 
 const PORTABLE_CHAPTER_LOOKUP_QUERY: &str = r#"
   query EpigraphResolvePortableChapter($mangaId: Int!, $first: Int!, $offset: Int!) {
@@ -81,6 +115,13 @@ pub fn spawn_projection_task(
                     tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
                 }
             }
+            match rearm_runtime_retries(&state.pool, super::db::now_ms()).await {
+                Ok(0) => {}
+                Ok(count) => tracing::info!(count, "rearmed Suwayomi projections waiting on the runtime"),
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
+                }
+            }
         }
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -123,10 +164,7 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
                 completed += 1;
             }
             ProjectionOutcome::Retry(code) => {
-                let shift = row.attempt_count.clamp(0, 8) as u32;
-                let delay = BASE_RETRY_MS
-                    .saturating_mul(1_i64 << shift)
-                    .min(MAX_RETRY_MS);
+                let delay = retry_delay_ms(code, row.attempt_count);
                 let now = super::db::now_ms();
                 let _writer_guard = state.mutation_gate.lock().await;
                 sqlx::query(
@@ -165,6 +203,16 @@ async fn drain_ready(state: &SharedAppState) -> anyhow::Result<usize> {
     Ok(completed)
 }
 
+fn retry_delay_ms(code: &str, attempt_count: i64) -> i64 {
+    let shift = attempt_count.clamp(0, 8) as u32;
+    let ceiling = if code == RUNTIME_UNAVAILABLE {
+        MAX_RUNTIME_RETRY_MS
+    } else {
+        MAX_RETRY_MS
+    };
+    BASE_RETRY_MS.saturating_mul(1_i64 << shift).min(ceiling)
+}
+
 async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionRow>> {
     let _writer_guard = state.mutation_gate.lock().await;
     let now = super::db::now_ms();
@@ -185,13 +233,21 @@ async fn claim_next(state: &SharedAppState) -> anyhow::Result<Option<ProjectionR
     let row = sqlx::query_as::<_, ProjectionRow>(
         r#"
         SELECT operation_id, profile_id, operation_name, variables_json, attempt_count
-        FROM suwayomi_projection_outbox
+        FROM suwayomi_projection_outbox AS candidate
         WHERE status IN ('pending', 'retry') AND next_attempt_at_ms <= ?
+          AND NOT EXISTS (
+            SELECT 1 FROM suwayomi_projection_outbox AS earlier
+            WHERE earlier.profile_id = candidate.profile_id
+              AND earlier.source_server_version < candidate.source_server_version
+              AND earlier.status = 'retry'
+              AND earlier.attempt_count < ?
+          )
         ORDER BY source_server_version ASC
         LIMIT 1
         "#,
     )
     .bind(now)
+    .bind(ORDERED_RETRY_ATTEMPTS)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(row) = &row {
@@ -294,16 +350,38 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
         UPDATE suwayomi_projection_outbox
         SET status = 'retry', attempt_count = 0, next_attempt_at_ms = ?, lease_until_ms = NULL,
             updated_at_ms = ?
-        WHERE status = 'blocked' AND last_error IN (?, ?)
+        WHERE status = 'blocked' AND last_error IN (?, ?, ?)
         "#,
     )
     .bind(now)
     .bind(now)
     .bind(RECOVERABLE_BLOCKED_CODES[0])
     .bind(RECOVERABLE_BLOCKED_CODES[1])
+    .bind(RECOVERABLE_BLOCKED_CODES[2])
     .execute(pool)
     .await
     .context("failed to requeue recoverable blocked Suwayomi projections")?;
+    Ok(result.rows_affected())
+}
+
+/// Makes rows that were waiting on an unreachable runtime due now. Runs once at daemon start, which
+/// is when the owned Suwayomi is (re)started, so a backoff earned during an earlier outage does not
+/// keep the queue pending. Attempt counts are kept, so ordering and bounded-attempt rules hold.
+async fn rearm_runtime_retries(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<u64> {
+    let result = sqlx::query(
+        r#"
+        UPDATE suwayomi_projection_outbox
+        SET next_attempt_at_ms = ?, updated_at_ms = ?
+        WHERE status = 'retry' AND last_error = ? AND next_attempt_at_ms > ?
+        "#,
+    )
+    .bind(now)
+    .bind(now)
+    .bind(RUNTIME_UNAVAILABLE)
+    .bind(now)
+    .execute(pool)
+    .await
+    .context("failed to rearm Suwayomi projections waiting on the runtime")?;
     Ok(result.rows_affected())
 }
 
@@ -315,6 +393,9 @@ async fn resolve_portable_projection_identity(
     let Some(object) = variables.as_object_mut() else {
         return Err(ProjectionOutcome::Blocked("invalid_variables"));
     };
+    let title_hint = object
+        .remove(db::PORTABLE_TITLE_HINT_FIELD)
+        .and_then(|value| value.as_str().map(str::to_string));
     let work_value = object.get("portableWorkRef").cloned();
     let chapter_value = object.get("portableChapterRef").cloned();
     if work_value.is_none() && chapter_value.is_none() {
@@ -334,10 +415,17 @@ async fn resolve_portable_projection_identity(
     }
 
     let portable_work_id = canonical_portable_work_id(&work);
-    let binding = db::load_portable_work_binding(&state.pool, &row.profile_id, &portable_work_id)
-        .await
-        .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
-        .ok_or(ProjectionOutcome::Retry("portable_work_not_bound"))?;
+    let binding =
+        match db::load_portable_work_binding(&state.pool, &row.profile_id, &portable_work_id)
+            .await
+            .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
+        {
+            Some(binding) => binding,
+            None => {
+                bind_unseen_comic(state, row, &work, &portable_work_id, title_hint.as_deref())
+                    .await?
+            }
+        };
     if binding.portable_ref().ok().as_ref() != Some(&work) || binding.resolution_state != "BOUND" {
         return Err(ProjectionOutcome::Blocked("portable_work_binding_mismatch"));
     }
@@ -422,6 +510,90 @@ async fn resolve_portable_projection_identity(
     Ok(variables)
 }
 
+/// Binds a comic a device added that this desktop never listed. Suwayomi only knows works it has
+/// already fetched, so when the exact source and key are not there yet, searching the source for
+/// the title fetches it; only an exact key match is accepted.
+async fn bind_unseen_comic(
+    state: &SharedAppState,
+    row: &ProjectionRow,
+    work: &PortableWorkRefV3,
+    portable_work_id: &str,
+    title_hint: Option<&str>,
+) -> Result<PortableWorkBindingRow, ProjectionOutcome> {
+    let PortableWorkRefV3::Comic {
+        source_id,
+        manga_key,
+    } = work
+    else {
+        return Err(ProjectionOutcome::Blocked(
+            "portable_reference_type_mismatch",
+        ));
+    };
+    let session = projection_session(&row.profile_id);
+    let data = suwayomi_catalog::execute_graphql_document(
+        state,
+        &session,
+        PORTABLE_COMIC_LOOKUP_QUERY,
+        json!({ "sourceId": source_id, "url": manga_key }),
+        false,
+    )
+    .await
+    .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
+    let mut manga_id = exact_comic_match(data.pointer("/mangas/nodes"), manga_key);
+    if let (None, Some(title)) = (manga_id, title_hint) {
+        // An extension that is missing or failing here answers with an error; that is retried
+        // like a work that was not found.
+        if let Ok(data) = suwayomi_catalog::execute_graphql_document(
+            state,
+            &session,
+            PORTABLE_COMIC_SEARCH_MUTATION,
+            json!({ "source": source_id, "query": title }),
+            true,
+        )
+        .await
+        {
+            manga_id = exact_comic_match(data.pointer("/fetchSourceManga/mangas"), manga_key);
+        }
+    }
+    let Some(manga_id) = manga_id else {
+        return Err(if row.attempt_count >= MAX_CONFIRMATION_ATTEMPTS {
+            ProjectionOutcome::Blocked(PORTABLE_WORK_NOT_FOUND)
+        } else {
+            ProjectionOutcome::Retry("portable_work_not_bound")
+        });
+    };
+    let local_reference = manga_id.to_string();
+    db::upsert_portable_work_binding(
+        &state.pool,
+        &row.profile_id,
+        portable_work_id,
+        work,
+        None,
+        Some(&local_reference),
+        PortableResolutionStateV3::Bound,
+        None,
+        title_hint,
+        None,
+        0,
+        db::now_ms(),
+    )
+    .await
+    .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?;
+    db::load_portable_work_binding(&state.pool, &row.profile_id, portable_work_id)
+        .await
+        .map_err(|_| ProjectionOutcome::Retry("portable_binding_unavailable"))?
+        .ok_or(ProjectionOutcome::Retry("portable_binding_unavailable"))
+}
+
+fn exact_comic_match(nodes: Option<&Value>, manga_key: &str) -> Option<i64> {
+    nodes?
+        .as_array()?
+        .iter()
+        .filter(|node| node.get("url").and_then(Value::as_str) == Some(manga_key))
+        .filter_map(|node| node.get("id").and_then(Value::as_i64))
+        .find(|id| *id > 0 && *id <= i32::MAX as i64)
+}
+
 async fn resolve_chapter_id(
     state: &SharedAppState,
     profile_id: &str,
@@ -443,7 +615,7 @@ async fn resolve_chapter_id(
             false,
         )
         .await
-        .map_err(|_| ProjectionOutcome::Retry("runtime_unavailable"))?;
+        .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
         let chapters = data
             .get("chapters")
             .ok_or(ProjectionOutcome::Retry("portable_chapter_lookup_invalid"))?;
@@ -482,7 +654,7 @@ fn failed_command_outcome(error: &AppError, attempt_count: i64) -> ProjectionOut
     if non_retryable && attempt_count >= MAX_NON_RETRYABLE_ATTEMPTS {
         ProjectionOutcome::Blocked("command_failed")
     } else {
-        ProjectionOutcome::Retry("runtime_unavailable")
+        ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE)
     }
 }
 
@@ -520,7 +692,7 @@ async fn resolve_category_assignment_removal(
             false,
         )
         .await
-        .map_err(|_| ProjectionOutcome::Retry("runtime_unavailable"))?;
+        .map_err(|_| ProjectionOutcome::Retry(RUNTIME_UNAVAILABLE))?;
         let categories = data
             .get("categories")
             .ok_or(ProjectionOutcome::Retry("category_assignment_lookup_invalid"))?;
@@ -646,6 +818,8 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
                         == Some(expected)
                 })
         }
+        // Direct device commands only; the outbox projection never produces them.
+        CommandOperation::AddExtensionRepos | CommandOperation::InstallExtension => false,
         CommandOperation::CreateCategory => variables
             .get("name")
             .and_then(Value::as_str)
@@ -669,16 +843,30 @@ fn projection_confirmed(operation: CommandOperation, variables: &Value, data: &V
         }
         CommandOperation::UpdateCategoryOrder => {
             let expected_id = variables.get("id").and_then(Value::as_i64);
-            let expected_position = variables.get("position").and_then(Value::as_i64);
-            data.get("updateCategoryOrder")
+            let Some(expected_position) = variables.get("position").and_then(Value::as_i64) else {
+                return false;
+            };
+            let categories = data
+                .get("updateCategoryOrder")
                 .and_then(|value| value.get("categories"))
                 .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .any(|category| {
-                    category.get("id").and_then(Value::as_i64) == expected_id
-                        && category.get("order").and_then(Value::as_i64) == expected_position
-                })
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            // Suwayomi clamps a position past its last category instead of rejecting it, so an
+            // order counted on a device with more categories lands last. Confirm that slot, or the
+            // row blocks forever and keeps `/v1/sync/status` from ever turning ready.
+            let Some(last_order) = categories
+                .iter()
+                .filter_map(|category| category.get("order").and_then(Value::as_i64))
+                .max()
+            else {
+                return false;
+            };
+            let expected_position = Some(expected_position.min(last_order));
+            categories.iter().any(|category| {
+                category.get("id").and_then(Value::as_i64) == expected_id
+                    && category.get("order").and_then(Value::as_i64) == expected_position
+            })
         }
     }
 }
@@ -840,6 +1028,73 @@ mod tests {
     }
 
     #[test]
+    fn unseen_comics_bind_only_to_an_exact_key() {
+        let nodes = json!([
+            { "id": 4, "url": "/manga/a-b" },
+            { "id": 0, "url": "/manga/a" },
+            { "id": 9, "url": "/manga/a" },
+        ]);
+        assert_eq!(exact_comic_match(Some(&nodes), "/manga/a"), Some(9));
+        assert_eq!(exact_comic_match(Some(&nodes), "/manga/A"), None);
+        assert_eq!(exact_comic_match(None, "/manga/a"), None);
+    }
+
+    #[test]
+    fn runtime_outages_retry_within_minutes() {
+        assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 0), BASE_RETRY_MS);
+        assert_eq!(retry_delay_ms(RUNTIME_UNAVAILABLE, 9), MAX_RUNTIME_RETRY_MS);
+        assert_eq!(retry_delay_ms("confirmation_mismatch", 9), BASE_RETRY_MS << 8);
+    }
+
+    #[tokio::test]
+    async fn startup_rearms_only_rows_waiting_on_the_runtime() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, status, error, next) in [
+            ("outage", "retry", Some(RUNTIME_UNAVAILABLE), 9_000),
+            ("due", "retry", Some(RUNTIME_UNAVAILABLE), 100),
+            ("mismatch", "retry", Some("confirmation_mismatch"), 9_000),
+            ("blocked", "blocked", Some(RUNTIME_UNAVAILABLE), 9_000),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, 'main', 'UpdateManga', '{"id":7}', 'comic.library', ?, 1, ?, 9, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(id)
+            .bind(status)
+            .bind(next)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(rearm_runtime_retries(&pool, 500).await.unwrap(), 1);
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT operation_id, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("blocked".to_string(), 9, 9_000),
+                ("due".to_string(), 9, 100),
+                ("mismatch".to_string(), 9, 9_000),
+                ("outage".to_string(), 9, 500),
+            ]
+        );
+    }
+
+    #[test]
     fn delete_category_confirms_when_suwayomi_no_longer_has_it() {
         let variables = serde_json::json!({ "id": 7 });
         assert!(projection_confirmed(
@@ -923,6 +1178,28 @@ mod tests {
     }
 
     #[test]
+    fn category_order_past_the_end_confirms_at_the_clamped_last_slot() {
+        let categories = serde_json::json!({
+            "updateCategoryOrder": { "categories": [
+                { "id": 0, "order": 0 },
+                { "id": 1, "order": 1 },
+                { "id": 2, "order": 2 },
+                { "id": 3, "order": 3 }
+            ] }
+        });
+        assert!(projection_confirmed(
+            CommandOperation::UpdateCategoryOrder,
+            &serde_json::json!({ "id": 3, "position": 6 }),
+            &categories,
+        ));
+        assert!(!projection_confirmed(
+            CommandOperation::UpdateCategoryOrder,
+            &serde_json::json!({ "id": 2, "position": 4 }),
+            &categories,
+        ));
+    }
+
+    #[test]
     fn category_assignment_id_matches_mobile_derivation() {
         assert_eq!(
             comic_category_assignment_id(
@@ -983,7 +1260,10 @@ mod tests {
             CommandOperation::UpdateCategoryOrder,
             &serde_json::json!({ "id": 3, "position": 2 }),
             &serde_json::json!({
-                "updateCategoryOrder": { "categories": [{ "id": 3, "order": 1 }] }
+                "updateCategoryOrder": { "categories": [
+                    { "id": 1, "order": 2 },
+                    { "id": 3, "order": 1 }
+                ] }
             }),
         ));
     }

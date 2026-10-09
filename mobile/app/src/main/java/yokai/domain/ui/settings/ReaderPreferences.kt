@@ -1,7 +1,6 @@
 package yokai.domain.ui.settings
 
 import dev.icerock.moko.resources.StringResource
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
 import eu.kanade.tachiyomi.core.preference.getEnum
@@ -85,7 +84,7 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
 
     fun webtoonDoubleTapZoomEnabled() = preferenceStore.getBoolean("pref_enable_double_tap_zoom_webtoon", true)
 
-    fun debugMode() = preferenceStore.getBoolean("pref_enable_reader_debug_mode", BuildConfig.DEBUG)
+    fun debugMode() = preferenceStore.getBoolean("pref_enable_reader_debug_mode", false)
 
     // region Novel
     val novelFontSize: Preference<Int> = preferenceStore.getInt("pref_novel_font_size", 16)
@@ -283,8 +282,7 @@ class ReaderPreferences(private val preferenceStore: PreferenceStore) {
     // OrientationType.flagValue (matches the manga `defaultOrientationType` storage shape) so the
     // same `OrientationType.fromPreference()` decoder works for both. Per-novel overrides live on
     // `Manga.orientationType` and take precedence; this is the fallback used when the per-novel
-    // value is `OrientationType.DEFAULT.flagValue`. Key is referenced by string in
-    // SettingsMangaReaderController — keep both in sync.
+    // value is `OrientationType.DEFAULT.flagValue`. Shown under Reader › Novel › Display.
     val novelDefaultOrientationType: Preference<Int> = preferenceStore.getInt(
         "pref_novel_default_orientation_type_key",
         OrientationType.FREE.flagValue,

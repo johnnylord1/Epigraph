@@ -1,3 +1,4 @@
+mod cloudflare_solver;
 mod discord_cover;
 mod discord_rpc;
 mod compat;
@@ -84,6 +85,9 @@ fn tracker_oauth_window_label(session_id: Option<&str>) -> Result<String, String
 }
 
 fn is_tracker_oauth_callback(url: &Url) -> bool {
+    if syncd::myanimelist_oauth::is_login_callback(url) {
+        return true;
+    }
     let host_matches = url
         .host_str()
         .map(|host| host.eq_ignore_ascii_case("suwayomi.org"))
@@ -272,6 +276,7 @@ struct LaunchTarget(LaunchTargetInfo);
 struct AutomationLaunchOverrides {
     local_app_data_dir: Option<PathBuf>,
     syncd_port: Option<u16>,
+    local_server_ports: Option<(u16, u16)>,
     syncd_bootstrap_ttl_seconds: Option<u64>,
     webdriver_automation: bool,
 }
@@ -363,8 +368,27 @@ impl LocalServerProfile {
 
 fn default_local_server_port(profile: LocalServerProfile) -> u16 {
     match profile {
-        LocalServerProfile::Main => 4567,
-        LocalServerProfile::Test => 4667,
+        LocalServerProfile::Main => suwayomi_runtime::main_server_port(),
+        LocalServerProfile::Test => suwayomi_runtime::test_server_port(),
+    }
+}
+
+fn builtin_server_url(profile: LocalServerProfile) -> String {
+    format!("http://127.0.0.1:{}", default_local_server_port(profile))
+}
+
+#[derive(Serialize)]
+struct BuiltinServerPorts {
+    main: u16,
+    test: u16,
+}
+
+/// The MAIN and TEST ports this build uses, so the interface follows a debug build off the release's ports.
+#[tauri::command]
+fn get_builtin_server_ports() -> BuiltinServerPorts {
+    BuiltinServerPorts {
+        main: default_local_server_port(LocalServerProfile::Main),
+        test: default_local_server_port(LocalServerProfile::Test),
     }
 }
 
@@ -406,7 +430,7 @@ enum ManagedStartupOwner {
 }
 
 fn managed_startup_owner(profile_key: &str, port: u16) -> ManagedStartupOwner {
-    if profile_key.eq_ignore_ascii_case("main") && port == 4567 {
+    if profile_key.eq_ignore_ascii_case("main") && port == default_local_server_port(LocalServerProfile::Main) {
         ManagedStartupOwner::PersistentCore
     } else {
         ManagedStartupOwner::Desktop
@@ -1938,6 +1962,7 @@ fn book_asset_error(status: StatusCode, message: &str) -> Response<Cow<'static, 
 
 fn resolve_book_asset_path(
     request: &Request<Vec<u8>>,
+    root: &Path,
 ) -> Result<PathBuf, Response<Cow<'static, [u8]>>> {
     let encoded_path = request.uri().path();
     if encoded_path.len() <= 1 {
@@ -1958,7 +1983,6 @@ fn resolve_book_asset_path(
     }
 
     let candidate = PathBuf::from(decoded_path);
-    let root = books_data_dir();
 
     let canonical_root = root.canonicalize().map_err(|_| {
         book_asset_error(
@@ -2347,9 +2371,8 @@ mod tests {
 
     #[test]
     fn serve_book_asset_head_and_get_share_functional_header_contract() {
-        let folder = books_data_dir().join("test-assets");
-        let _ = std::fs::create_dir_all(&folder);
-        let path = folder.join("reader-contract.epub");
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("reader-contract.epub");
         std::fs::write(&path, b"epub-contract").unwrap();
         let uri = encode_book_asset_uri(&path);
 
@@ -2364,8 +2387,8 @@ mod tests {
             .body(Vec::<u8>::new())
             .unwrap();
 
-        let head_response = serve_book_asset(head_request);
-        let get_response = serve_book_asset(get_request);
+        let head_response = serve_book_asset_from(head_request, folder.path());
+        let get_response = serve_book_asset_from(get_request, folder.path());
 
         for header_name in [
             "Access-Control-Allow-Origin",
@@ -2389,9 +2412,8 @@ mod tests {
 
     #[test]
     fn serve_book_asset_range_returns_partial_content_with_exposed_headers() {
-        let folder = books_data_dir().join("test-assets");
-        let _ = std::fs::create_dir_all(&folder);
-        let path = folder.join("reader-contract.pdf");
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("reader-contract.pdf");
         std::fs::write(&path, b"0123456789").unwrap();
         let uri = encode_book_asset_uri(&path);
 
@@ -2402,7 +2424,7 @@ mod tests {
             .body(Vec::<u8>::new())
             .unwrap();
 
-        let response = serve_book_asset(request);
+        let response = serve_book_asset_from(request, folder.path());
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(
@@ -2779,6 +2801,9 @@ server.maxSourcesInParallel = 6
         apply_dev_data_isolation(&mut isolated, &root);
         assert_eq!(isolated.local_app_data_dir, Some(root.join("LocalAppData")));
         assert_eq!(isolated.syncd_port, Some(4988));
+        assert_eq!(isolated.local_server_ports, Some(DEV_LOCAL_SERVER_PORTS));
+        assert_ne!(DEV_LOCAL_SERVER_PORTS.0, 4567, "the release's MAIN server port");
+        assert_ne!(DEV_LOCAL_SERVER_PORTS.1, 4667, "the release's TEST server port");
         assert_eq!(
             automation_local_server_root(isolated.local_app_data_dir.as_ref().unwrap(), LocalServerProfile::Main),
             root.join("LocalServerMain")
@@ -2795,6 +2820,7 @@ server.maxSourcesInParallel = 6
         apply_dev_data_isolation(&mut explicit, &root);
         assert_eq!(explicit.local_app_data_dir, Some(PathBuf::from(r"C:\Temp\EpigraphHost")));
         assert_eq!(explicit.syncd_port, Some(4988));
+        assert_eq!(explicit.local_server_ports, None, "a gate's own --server-url picks its ports");
     }
 
     #[test]
@@ -2990,11 +3016,16 @@ server.maxSourcesInParallel = 6
 }
 
 fn serve_book_asset(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    serve_book_asset_from(request, &books_data_dir())
+}
+
+/// Serves a file under `root`; the tests pass a temporary folder so they never write into the user's books.
+fn serve_book_asset_from(request: Request<Vec<u8>>, root: &Path) -> Response<Cow<'static, [u8]>> {
     if request.method().as_str().eq_ignore_ascii_case("OPTIONS") {
         return book_asset_preflight_response();
     }
 
-    let path = match resolve_book_asset_path(&request) {
+    let path = match resolve_book_asset_path(&request, root) {
         Ok(path) => path,
         Err(response) => return response,
     };
@@ -3787,9 +3818,15 @@ fn local_server_profile_root(profile: LocalServerProfile) -> PathBuf {
     }
 }
 
+/// Follows `APPDATA` like the Core's `profile_roots_base`, so a debug build's redirected app data also holds its
+/// custom profiles instead of the installed release's roaming folder.
 fn local_server_custom_profile_root(profile_key: &str) -> PathBuf {
-    let base = dirs::data_dir().unwrap_or_else(|| suwayomi_data_dir());
-    base.join(format!("epigraph-profile-{profile_key}"))
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).or_else(dirs::data_dir);
+    #[cfg(not(target_os = "windows"))]
+    let base = dirs::data_dir();
+    base.unwrap_or_else(suwayomi_data_dir)
+        .join(format!("epigraph-profile-{profile_key}"))
 }
 
 fn local_server_root_for_profile_key(profile_key: &str) -> PathBuf {
@@ -3856,10 +3893,14 @@ fn resolve_local_server_target(
             Some("TEST") => Some("test".to_string()),
             _ => None,
         })
-        .or_else(|| match port {
-            4567 => Some("main".to_string()),
-            4667 => Some("test".to_string()),
-            _ => Some(format!("profile-{port}")),
+        .or_else(|| {
+            Some(if port == default_local_server_port(LocalServerProfile::Main) {
+                "main".to_string()
+            } else if port == default_local_server_port(LocalServerProfile::Test) {
+                "test".to_string()
+            } else {
+                format!("profile-{port}")
+            })
         })
         .unwrap_or_else(|| "test".to_string());
     let profile = local_server_builtin_profile_from_key(&profile_key);
@@ -4624,17 +4665,16 @@ async fn write_novel_repository_state(
         None
     };
     write_text_file_atomic(&path, &contents)?;
-    if server_url.as_deref().is_none_or(str::is_empty) {
-        if let Err(error) = syncd_replication::notify_novel_repository_state_written(
-            &app,
-            profile_id.as_deref(),
-            previous_contents,
-            &contents,
-        )
-        .await
-        {
-            eprintln!("Failed to publish LNReader repository state to Syncd: {error}");
-        }
+    // The profile owns this file even when the UI also passes its runtime server URL.
+    if let Err(error) = syncd_replication::notify_novel_repository_state_written(
+        &app,
+        profile_id.as_deref(),
+        previous_contents,
+        &contents,
+    )
+    .await
+    {
+        eprintln!("Failed to publish LNReader repository state to Syncd: {error}");
     }
     Ok(path.to_string_lossy().into_owned())
 }
@@ -6866,11 +6906,11 @@ fn parse_launch_target() -> LaunchTargetInfo {
         .map(|value| value.to_ascii_uppercase())
     {
         Some(profile) if profile == "MAIN" => {
-            server_url_override = Some("http://127.0.0.1:4567".to_string());
+            server_url_override = Some(builtin_server_url(LocalServerProfile::Main));
             profile_label_override = Some("MAIN".to_string());
         }
         Some(profile) if profile == "TEST" => {
-            server_url_override = Some("http://127.0.0.1:4667".to_string());
+            server_url_override = Some(builtin_server_url(LocalServerProfile::Test));
             profile_label_override = Some("TEST".to_string());
         }
         Some(profile) if !profile.is_empty() => {
@@ -7020,11 +7060,11 @@ fn parse_launch_target() -> LaunchTargetInfo {
                 restore_handoff_override = Some(true);
             }
             "--main" => {
-                server_url_override = Some("http://127.0.0.1:4567".to_string());
+                server_url_override = Some(builtin_server_url(LocalServerProfile::Main));
                 profile_label_override = Some("MAIN".to_string());
             }
             "--test" => {
-                server_url_override = Some("http://127.0.0.1:4667".to_string());
+                server_url_override = Some(builtin_server_url(LocalServerProfile::Test));
                 profile_label_override = Some("TEST".to_string());
             }
             _ => {}
@@ -7113,6 +7153,9 @@ where
 
 /// Core port of a debug build, so `pnpm tauri:dev` never answers as, or reaches, an installed release's Core.
 const DEV_SYNCD_PORT: u16 = 4787;
+/// MAIN and TEST Suwayomi ports of a debug build. Sharing 4567 let the development window attach to the
+/// installed release's server and show (and risk changing) the real library.
+const DEV_LOCAL_SERVER_PORTS: (u16, u16) = (4577, 4677);
 
 /// Where a debug build keeps its data unless `--local-app-data-dir` says otherwise: `EPIGRAPH_DEV_DATA_DIR`, or
 /// `Epigraph-dev` beside the real local app data. An installed release never uses this folder.
@@ -7138,6 +7181,12 @@ fn apply_dev_data_isolation(overrides: &mut AutomationLaunchOverrides, root: &Pa
     }
     if overrides.syncd_port.is_none() && std::env::var_os("EPIGRAPH_SYNCD_PORT").is_none() {
         overrides.syncd_port = Some(DEV_SYNCD_PORT);
+    }
+    if overrides.local_server_ports.is_none()
+        && std::env::var_os("EPIGRAPH_LOCAL_SERVER_MAIN_PORT").is_none()
+        && std::env::var_os("EPIGRAPH_LOCAL_SERVER_TEST_PORT").is_none()
+    {
+        overrides.local_server_ports = Some(DEV_LOCAL_SERVER_PORTS);
     }
 }
 
@@ -7169,6 +7218,11 @@ fn apply_automation_launch_overrides() {
 
     if let Some(port) = overrides.syncd_port {
         std::env::set_var("EPIGRAPH_SYNCD_PORT", port.to_string());
+    }
+
+    if let Some((main, test)) = overrides.local_server_ports {
+        std::env::set_var("EPIGRAPH_LOCAL_SERVER_MAIN_PORT", main.to_string());
+        std::env::set_var("EPIGRAPH_LOCAL_SERVER_TEST_PORT", test.to_string());
     }
 
     if let Some(ttl_seconds) = overrides.syncd_bootstrap_ttl_seconds {
@@ -7367,6 +7421,7 @@ pub fn run() {
         .manage(syncd_sidecar::SyncdState::default())
         .invoke_handler(main_window_commands_only(tauri::generate_handler![
             restore_commands::restore_context,
+            cloudflare_solver::builtin_cloudflare_solver_url,
             restore_commands::restore_session_admit,
             restore_commands::restore_session_release,
             restore_commands::restore_input_put,
@@ -7380,6 +7435,7 @@ pub fn run() {
             restore_commands::restore_operation_settle_terminal,
             session_control::session_page_attestation,
             get_launch_target,
+            get_builtin_server_ports,
             is_webdriver_automation,
             record_media_audit_event,
             discord_rpc::discord_rpc_start,
@@ -7395,7 +7451,13 @@ pub fn run() {
             syncd_desktop::syncd_resolve_pairing_pin,
             syncd_desktop::syncd_host_decide_pairing,
             syncd_desktop::syncd_list_paired_devices,
+            syncd_desktop::syncd_request_progress_mirror,
+            syncd_desktop::syncd_publish_tracker_login,
+            syncd_desktop::syncd_publish_tracker_logout,
+            syncd_desktop::syncd_start_myanimelist_login,
+            syncd_desktop::syncd_complete_myanimelist_login,
             syncd_desktop::syncd_update_paired_device_granted_scopes,
+            syncd_desktop::syncd_revoke_paired_device,
             syncd_desktop::syncd_list_persisted_sync_sessions,
             syncd_desktop::syncd_revalidate_persisted_sync_sessions,
             syncd_desktop::syncd_disconnect_persisted_session,
@@ -7495,6 +7557,7 @@ pub fn run() {
             // while legacy data is copied in the background.
             tauri::async_runtime::spawn_blocking(compat::migrate_legacy_storage);
             configure_webdriver_window(app.handle());
+            cloudflare_solver::start(app.handle());
             session_control::install(app.handle())
                 .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
             maybe_start_phase_gate_temporary_lan_session();

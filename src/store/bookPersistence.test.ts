@@ -30,3 +30,31 @@ it("restore refuses while a Book reader can still write progress", async () => {
   try { await expect(store.prepareBooksForRestore()).rejects.toThrow("RESTORE_BOOK_READER_ACTIVE"); }
   finally { store.activeBookReaderId = active; }
 });
+
+it("does not rewrite books state already on disk when the persist effect reruns for unrelated settings", async () => {
+  // Vitest runs Svelte server-side, so the persist effect is triggered by hand.
+  const queuePersist = () => (store as unknown as { queuePersistBooksLibraryState(): void }).queuePersistBooksLibraryState();
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  store.replaceBooksStateFromDisk({
+    books: [],
+    bookProgress: [],
+    bookBookmarks: [],
+    booksCategories: [{ id: "shelf", name: "Shelf", order: 0 }],
+    booksCategoryAssignments: { "novel:lorde": ["shelf"] },
+  });
+  const before = saved.length;
+
+  store.updateSettings({ launchIntoLibrary: !store.settings.launchIntoLibrary });
+  queuePersist();
+  await settle();
+  expect(saved.length).toBe(before);
+
+  store.updateSettings({ booksCategoryAssignments: {} });
+  queuePersist();
+  await settle();
+  expect(saved.length).toBe(before + 1);
+
+  queuePersist();
+  await settle();
+  expect(saved.length).toBe(before + 1);
+});

@@ -194,7 +194,7 @@ class EpigraphReaderProgressRouterTest {
         val queued = database.aethon_syncQueries
             .selectReadyMutations(Long.MAX_VALUE - 1, 10)
             .executeAsList()
-            .single()
+            .single { it.entity_type == "novel.progress" }
         val locator = Json.parseToJsonElement(queued.payload_json)
             .jsonObject["command"]!!
             .jsonObject["locator"]!!
@@ -254,7 +254,15 @@ class EpigraphReaderProgressRouterTest {
         val queued = database.aethon_syncQueries
             .selectReadyMutations(Long.MAX_VALUE - 1, 10)
             .executeAsList()
-        assertEquals(setOf("novel.progress", "novel.chapter", "novel.bookmark"), queued.map { it.entity_type }.toSet())
+        assertEquals(
+            setOf("novel.progress", "novel.history", "novel.chapter", "novel.bookmark"),
+            queued.map { it.entity_type }.toSet(),
+        )
+        val history = queued.single { it.entity_type == "novel.history" }
+        val historyCommand = Json.parseToJsonElement(history.payload_json).jsonObject["command"]!!.jsonObject
+        assertEquals("Chapter 3", historyCommand["chapterTitle"]!!.jsonPrimitive.content)
+        assertEquals("2000", historyCommand["visitedAtEpochMillis"]!!.jsonPrimitive.content)
+        assertEquals(portableWorkId, history.entity_id)
         val chapterState = Json.parseToJsonElement(queued.single { it.entity_type == "novel.chapter" }.payload_json)
             .jsonObject["command"]!!.jsonObject
         assertEquals("false", chapterState["unread"]!!.jsonPrimitive.content)

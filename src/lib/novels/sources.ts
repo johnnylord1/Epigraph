@@ -4,6 +4,7 @@ import { TauriNovelRuntimeHostAdapter } from "./runtimeHost";
 import { NovelRuntimeSession } from "./runtimeSession";
 import { loadNovelRepositoryState, type NovelRepositoryScopeInput } from "./repositoryState";
 import { resolveSearchResultsWithFallback } from "../search/queryFallback";
+import { translate } from "../i18n/runtime";
 import type { NovelCatalogEntry, NovelRepositoryRecord } from "./contracts";
 import {
   createNovelChapterId,
@@ -304,7 +305,8 @@ export async function readInstalledNovelDetails(
     novelPath,
   });
 
-  const title = normalizeText(details.name) ?? normalizeText(fallback.title);
+  const sourceTitle = normalizeText(details.name);
+  const title = sourceTitle ?? normalizeText(fallback.title);
   if (!title) {
     throw new Error("Novel details did not include a title.");
   }
@@ -327,6 +329,11 @@ export async function readInstalledNovelDetails(
       };
     })
     .filter((entry): entry is NovelDetailRecord["chapters"][number] => Boolean(entry));
+  // Plugins parse removed pages (404s) into an empty record instead of throwing. Report that as a source
+  // failure so callers keep the last-known-good library entry the user can migrate.
+  if (!sourceTitle && chapters.length === 0) {
+    throw new Error(translate("novelSources_errors_novelRemovedFromSource"));
+  }
 
   return {
     id,

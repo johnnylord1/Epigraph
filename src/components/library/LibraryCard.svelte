@@ -61,6 +61,9 @@
     cardActuallyVisible,
   }));
 
+  // Visibility comes only from the shared IntersectionObserver: it reports asynchronously and never
+  // forces layout. Measuring each card here (twice, plus two frames and a timer) made every card
+  // force a synchronous layout during the navigation frame.
   $effect(() => {
     const node = cardElement;
     const container = scrollElement;
@@ -68,39 +71,9 @@
       cardActuallyVisible = false;
       return;
     }
-
-    let firstFrame: number | null = null;
-    let secondFrame: number | null = null;
-    let fallbackTimer: number | null = null;
-
-    const syncGeometryVisibility = () => {
-      cardActuallyVisible = isCardInsideScrollViewport(node, container);
-    };
-
-    const unsubscribe = observeLibraryCardVisibility(node, (visible) => {
-      cardActuallyVisible = visible && isCardInsideScrollViewport(node, container, true);
+    return observeLibraryCardVisibility(node, (visible) => {
+      cardActuallyVisible = visible;
     }, container);
-
-    syncGeometryVisibility();
-    firstFrame = requestAnimationFrame(() => {
-      firstFrame = null;
-      syncGeometryVisibility();
-      secondFrame = requestAnimationFrame(() => {
-        secondFrame = null;
-        syncGeometryVisibility();
-      });
-    });
-    fallbackTimer = window.setTimeout(() => {
-      fallbackTimer = null;
-      syncGeometryVisibility();
-    }, 120);
-
-    return () => {
-      unsubscribe();
-      if (firstFrame !== null) cancelAnimationFrame(firstFrame);
-      if (secondFrame !== null) cancelAnimationFrame(secondFrame);
-      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
-    };
   });
 
   $effect(() => {
@@ -180,24 +153,6 @@
   function toCoverProgressWidth(percent: number | null | undefined): number {
     if (typeof percent !== "number" || !Number.isFinite(percent)) return 0;
     return Math.max(0, Math.min(100, percent * 100));
-  }
-
-  function isCardInsideScrollViewport(node: HTMLElement, container: HTMLElement, allowLayoutless = false): boolean {
-    const rect = node.getBoundingClientRect();
-    const root = container.getBoundingClientRect();
-    if (allowLayoutless
-      && rect.width === 0
-      && rect.height === 0
-      && root.width === 0
-      && root.height === 0) {
-      return true;
-    }
-    return rect.bottom > root.top
-      && rect.top < root.bottom
-      && rect.right > root.left
-      && rect.left < root.right
-      && rect.width > 0
-      && rect.height > 0;
   }
 
   function getLanguageFlag(lang: string | null | undefined, sourceName?: string | null): string {
@@ -864,8 +819,11 @@
     background-size: 74px 12px, 96px 12px;
     background-position: 0 0, 0 0;
     opacity: 0.6;
-    animation: coverProgressLiquidFlow 6.8s steps(96, end) infinite;
+    /* Moves the layer, not its background: a transform runs on the compositor, while an animated
+       background or mask position repaints every card on every frame. */
+    animation: coverProgressLiquidFlow 6.8s linear infinite;
     animation-play-state: paused;
+    will-change: transform;
   }
 
   .card.library-motion-running .cover-progress-fill::before {
@@ -880,8 +838,9 @@
     mask-size: 132px 100%;
     mask-position: 0 0;
     opacity: 0.6;
-    animation: coverProgressWaveFlow 6.8s steps(96, end) infinite;
+    animation: coverProgressWaveFlow 6.8s linear infinite;
     animation-play-state: paused;
+    will-change: transform;
   }
 
   .card.library-motion-running .cover-progress-wave {
@@ -895,13 +854,13 @@
   }
 
   @keyframes coverProgressLiquidFlow {
-    from { background-position: 0 0, 0 0; }
-    to { background-position: -132px 0, -132px 0; }
+    from { transform: translateX(0); }
+    to { transform: translateX(-132px); }
   }
 
   @keyframes coverProgressWaveFlow {
-    from { mask-position: 0 0; }
-    to { mask-position: -132px 0; }
+    from { transform: translateX(0); }
+    to { transform: translateX(-132px); }
   }
 
   :global([data-epigraph-idle="true"]) .cover-progress-fill,

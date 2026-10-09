@@ -6,8 +6,10 @@ import kotlinx.serialization.protobuf.ProtoNumber
 /**
  * Local publication metadata in an Epigraph backup.
  *
- * Private EPUB/PDF bytes are intentionally not embedded. A restore recreates the library entry
- * and reader state as a missing-file record, which the user can relink to a verified import.
+ * The private EPUB/PDF bytes are not part of this record. A backup made with book files stores
+ * them beside the payload in the backup container, named by [sha256], and a restore imports a
+ * missing file only when its bytes match that hash. Otherwise the restore recreates the library
+ * entry and reader state as a missing-file record, which the user can relink to a verified import.
  */
 @Serializable
 data class BackupLocalBook(

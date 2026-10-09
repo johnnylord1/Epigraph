@@ -4,7 +4,7 @@
   import RestoreMangaDependencies from "./RestoreMangaDependencies.svelte";
   import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { enterOnChange } from "../../lib/motion/motion";
+  import { enterOnChange, systemPrefersReducedMotion } from "../../lib/motion/motion";
   import "../pages/migrationModal.css";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
@@ -15,6 +15,13 @@
   import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
   import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import {
+    completeEpigraphMyAnimeListLogin,
+    epigraphMyAnimeListAuthUrl,
+    isEpigraphMyAnimeListCallback,
+    publishTrackerLogin,
+    publishTrackerLogout,
+  } from "../../lib/syncdTrackerCredentials";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -127,6 +134,11 @@
     startLocalFlareSolverrAndEnable,
   } from "../../lib/flaresolverr";
   import { isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
+
+  // The switch shows what the app does now: the user's choice, or the system setting until one is made.
+  const animationsOn = $derived(
+    typeof store.settings.uiAnimations === "boolean" ? store.settings.uiAnimations : !systemPrefersReducedMotion(),
+  );
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
     backupAuditPlan?: EpigraphRestorePlan | null;
@@ -460,7 +472,6 @@
   let categoriesDetailsPane = $state<"comics" | "books" | null>(null);
   let contentSourceRulesOpen = $state(false);
   let contentSourceRulesMode = $state<"allowed" | "blocked">("allowed");
-  let trackingSyncdOpen = $state(false);
   let aboutReleasesOpen = $state(false);
   let securityDetailPane = $state<"auth" | "socks" | "flare" | "pin" | "syncd" | null>(null);
   const currentGroup = $derived.by(
@@ -598,7 +609,6 @@
     categoriesDetailsPane = null;
     contentSourceRulesOpen = false;
     contentSourceRulesMode = "allowed";
-    trackingSyncdOpen = false;
     aboutReleasesOpen = false;
     securityDetailPane = null;
     advStorageOpen = false;
@@ -3315,6 +3325,7 @@
   }
   async function startOAuth(tracker: Tracker) {
     if (!tracker.authUrl) return;
+    const authUrl = (await epigraphMyAnimeListAuthUrl(tracker)) ?? tracker.authUrl;
     trackersError = null;
     hardcoverAuthOpen = false;
     credsTrackerId = null;
@@ -3336,12 +3347,12 @@
     });
 
     try {
-      await invoke("open_tracker_oauth_window", { url: tracker.authUrl, sessionId });
+      await invoke("open_tracker_oauth_window", { url: authUrl, sessionId });
     } catch (error) {
       oauthAutoCapturing = false;
       oauthAutoUnlisten?.();
       oauthAutoUnlisten = null;
-      await openUrl(tracker.authUrl);
+      await openUrl(authUrl);
       trackersError = operationFailure(null, "firstRun.trackers.automaticUnavailable");
     }
   }
@@ -3350,6 +3361,22 @@
     oauthSubmitting = true;
     try {
       const tracker = trackers.find((candidate) => candidate.id === oauthTrackerId) ?? null;
+      if (isEpigraphMyAnimeListCallback(oauthCallbackInput)) {
+        const trackerId = oauthTrackerId;
+        const confirmed = await completeEpigraphMyAnimeListLogin(oauthCallbackInput, async () => {
+          const res = await gql<{ trackers: { nodes: Tracker[] } }>(GET_TRACKERS);
+          return res.trackers.nodes.some((candidate) => candidate.id === trackerId && candidate.isLoggedIn);
+        });
+        cache.clear(CACHE_KEYS.TRACKERS);
+        await loadTrackers();
+        if (!confirmed) trackersError = operationFailure(null, "settings_inline_loginFailed");
+        oauthTrackerId     = null;
+        oauthCallbackInput = "";
+        oauthAutoCapturing = false;
+        oauthAutoUnlisten?.();
+        oauthAutoUnlisten = null;
+        return;
+      }
       const callbackUrl = normalizeTrackerOAuthInput(tracker, oauthCallbackInput);
       if (!callbackUrl) {
         trackersError = operationFailure(null, "settings_inline_callbackUrlHint");
@@ -3359,6 +3386,7 @@
         trackerId:   oauthTrackerId,
         callbackUrl,
       });
+      publishTrackerLogin({ id: oauthTrackerId, name: tracker?.name }, callbackUrl);
       await loadTrackers();
       oauthTrackerId     = null;
       oauthCallbackInput = "";
@@ -3413,6 +3441,7 @@
     loggingOut = trackerId;
     try {
       await gql(LOGOUT_TRACKER, { trackerId });
+      publishTrackerLogout({ id: trackerId, name: trackers.find((candidate) => candidate.id === trackerId)?.name });
       await loadTrackers();
     } catch (e: any) {
       trackersError = operationFailure(e, "firstRun.trackers.disconnectError");
@@ -4304,6 +4333,18 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_compactSidebarHint")}</p>
                   </div>
                   <button role="switch" aria-checked={store.settings.compactSidebar} aria-label={$_("settings_inline_compactSidebar")} class="settings-toggle" class:is-on={store.settings.compactSidebar} type="button" onclick={() => updateSettings({ compactSidebar: !store.settings.compactSidebar })}></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings_inline_animations")}</p>
+                    <p class="settings-mini-row__hint">
+                      {$_("settings_inline_animationsHint")}
+                      {#if typeof store.settings.uiAnimations !== "boolean"}
+                        {" "}{$_("settings_inline_animationsSystem")}.
+                      {/if}
+                    </p>
+                  </div>
+                  <button role="switch" aria-checked={animationsOn} aria-label={$_("settings_inline_animations")} class="settings-toggle" class:is-on={animationsOn} type="button" onclick={() => updateSettings({ uiAnimations: !animationsOn })}></button>
                 </div>
               </div>
             </div>
@@ -5501,7 +5542,7 @@
                         {:else}
                           <div class="settings-mini-row__body">
                             <p class="settings-mini-row__label">{cat.name}</p>
-                            <p class="settings-mini-row__hint">{booksCategoryCounts[cat.id] ?? 0} book{(booksCategoryCounts[cat.id] ?? 0) === 1 ? "" : "s"}{normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? " / skipped by updates" : ""}</p>
+                            <p class="settings-mini-row__hint">{(booksCategoryCounts[cat.id] ?? 0) === 1 ? translate("library_count_titleOne") : translate("library_count_titles", { count: booksCategoryCounts[cat.id] ?? 0 })}{normalizeBooksCategoryUpdateRule(cat.includeInUpdate) === "EXCLUDE" ? ` ${translate("ui_skippedByUpdates").trim()}` : ""}</p>
                           </div>
                           <div class="settings-section-actions settings-inline-actions settings-inline-actions--dense">
                             <button
@@ -5717,28 +5758,6 @@
                     </div>
                   </div>
                 {/if}
-              {/if}
-            </div>
-
-            <div class="settings-card">
-              <p class="settings-card__title">{$_("settings_inline_syncBehavior")}</p>
-              <div class="settings-card__stack">
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_desktopSyncPairing")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_desktopSyncPairingHint")}</p>
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = !trackingSyncdOpen)}>
-                    {trackingSyncdOpen ? $_("common_close") : $_("ui_manage")}
-                  </button>
-                </div>
-              </div>
-              {#if trackingSyncdOpen}
-                <SyncdConnectionPanel
-                  profileId={currentRuntimeProfileId}
-                  scopeLabel={currentSessionProfileSummary}
-                  onClose={() => (trackingSyncdOpen = false)}
-                />
               {/if}
             </div>
           </div>

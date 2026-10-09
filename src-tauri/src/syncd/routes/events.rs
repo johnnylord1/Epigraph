@@ -62,6 +62,13 @@ pub async fn get_changes(
             runtime.min_replayable_server_version,
         ));
     }
+    if query.since_version > runtime.current_server_version {
+        return Err(AppError::replay_cursor_ahead(
+            query.since_version,
+            runtime.current_server_version,
+            runtime.min_replayable_server_version,
+        ));
+    }
 
     let allowed_scopes =
         crate::syncd::middleware::filter_allowed_scopes(&session, query.scope_id.as_deref())?;

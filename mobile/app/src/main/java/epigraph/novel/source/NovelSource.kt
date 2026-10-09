@@ -76,12 +76,7 @@ class NovelSource(
 
     override fun toString() = "$name (${lang.uppercase()})"
 
-    override val id: Long by lazy {
-        val key = "novel/${pluginId.lowercase()}/$lang/1"
-        val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
-        (0..7).map { bytes[it].toLong() and 0xff shl (8 * (7 - it)) }
-            .reduce(Long::or) and Long.MAX_VALUE
-    }
+    override val id: Long by lazy { sourceIdFor(pluginId, lang) }
 
     override val supportsLatest: Boolean = true
 
@@ -418,17 +413,29 @@ class NovelSource(
         }
     }
 
-    private fun parseSourceNovel(jsonStr: String, existing: SManga): SManga {
+    internal fun parseSourceNovel(jsonStr: String, existing: SManga): SManga {
+        val obj = try {
+            json.decodeFromString<JsonObject>(jsonStr)
+        } catch (e: Exception) {
+            Logger.e(e) { "NovelSource: Failed to parse novel details" }
+            return existing
+        }
+        fun text(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+        // Plugins parse a removed page (404) into an empty record instead of throwing. Fail the
+        // refresh so the saved title, cover and chapters stay in the library for migration.
+        val chapters = obj["chapters"] as? JsonArray
+        if (text("name") == null && chapters.isNullOrEmpty()) {
+            throw IllegalStateException("Novel source returned no details; it may have been removed from the source")
+        }
         return try {
-            val obj = json.decodeFromString<JsonObject>(jsonStr)
             existing.apply {
-                obj["name"]?.jsonPrimitive?.contentOrNull?.let { title = it }
-                obj["author"]?.jsonPrimitive?.contentOrNull?.let { author = it }
-                obj["artist"]?.jsonPrimitive?.contentOrNull?.let { artist = it }
-                obj["summary"]?.jsonPrimitive?.contentOrNull?.let { description = stripHtmlIfPresent(it) }
-                obj["cover"]?.jsonPrimitive?.contentOrNull?.let { thumbnail_url = resolveUrl(it) }
+                text("name")?.let { title = it }
+                text("author")?.let { author = it }
+                text("artist")?.let { artist = it }
+                text("summary")?.let { description = stripHtmlIfPresent(it) }
+                text("cover")?.let { thumbnail_url = resolveUrl(it) }
 
-                genre = obj["genres"]?.jsonPrimitive?.contentOrNull?.let(::normalizeGenres)
+                text("genres")?.let(::normalizeGenres)?.let { genre = it }
 
                 status = when (obj["status"]?.jsonPrimitive?.contentOrNull) {
                     "Ongoing" -> SManga.ONGOING
@@ -778,6 +785,14 @@ class NovelSource(
         private const val FILTER_TYPE_CHECKBOX = "Checkbox"
         private const val FILTER_TYPE_XCHECKBOX = "XCheckbox"
         private const val DEFAULT_PICKER_LABEL = "Any"
+
+        /** Source id of [pluginId] in [lang]; novels synced from the desktop must use the same id. */
+        fun sourceIdFor(pluginId: String, lang: String): Long {
+            val key = "novel/${pluginId.lowercase()}/$lang/1"
+            val bytes = MessageDigest.getInstance("MD5").digest(key.toByteArray())
+            return (0..7).map { bytes[it].toLong() and 0xff shl (8 * (7 - it)) }
+                .reduce(Long::or) and Long.MAX_VALUE
+        }
 
         private fun orderedValues(options: List<LnFilterOption>, selected: Set<String>): List<String> {
             if (selected.isEmpty()) {

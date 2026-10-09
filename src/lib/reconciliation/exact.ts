@@ -22,9 +22,8 @@ export function buildOrphanSourceClusters(parsedBackup: ParsedBackup): OrphanSou
     bucket.push(manga);
     grouped.set(manga.sourceId, bucket);
   }
-  for (const source of parsedBackup.backupSources) {
-    if (!grouped.has(source.sourceId)) grouped.set(source.sourceId, []);
-  }
+  // Only sources that still own a library entry matter. Backups also list sources of
+  // removed/browsed titles and stale source metadata; those must not ask for extensions.
 
   return [...grouped.entries()].map(([sourceId, mangas]) => {
     const source = sourceMetaById.get(sourceId);

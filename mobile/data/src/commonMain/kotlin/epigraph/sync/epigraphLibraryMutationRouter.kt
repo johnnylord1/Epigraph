@@ -104,18 +104,19 @@ class EpigraphLibraryMutationRouter(
             }
             .firstOrNull()
         val suppliedPortableWork = mutation.portableWorkRef
-        val identityProvisioned = identity == null && suppliedPortableWork is PortableWorkRef.Novel
+        val identityProvisioned = identity == null && suppliedPortableWork != null
         if (identityProvisioned) {
-            val portableId = PortableIdentityV3.workId(suppliedPortableWork)
+            // A work first added on this device: its portable identity is its Epigraph identity.
+            val contentType = if (suppliedPortableWork is PortableWorkRef.Novel) "NOVEL" else "MANGA"
             aethon_syncQueries.upsertIdentity(
-                entityId = portableId,
-                contentType = "NOVEL",
+                entityId = PortableIdentityV3.workId(suppliedPortableWork!!),
+                contentType = contentType,
                 localReference = mutation.localMangaId.toString(),
                 createdAt = createdAtEpochMillis,
                 updatedAt = createdAtEpochMillis,
             )
             identity = aethon_syncQueries
-                .selectIdentityByLocalReference("NOVEL", mutation.localMangaId.toString())
+                .selectIdentityByLocalReference(contentType, mutation.localMangaId.toString())
                 .executeAsOne()
         }
         identity ?: error("manga ${mutation.localMangaId} has no Epigraph identity")
@@ -168,7 +169,7 @@ class EpigraphLibraryMutationRouter(
         val requestedCategoryIds = if (mutation.inLibrary) mutation.categoryIds else emptySet()
         val categoryList = categoriesQueries.findAll().executeAsList()
         val availableCategories = categoryList.associateBy { it._id }
-        val categoryPositions = categoryList.syncPositions()
+        val categoryPositions = if (isNovel) booksAndNovelsPositions(requestedCategoryIds) else categoryList.syncPositions()
         val unknownCategories = requestedCategoryIds - availableCategories.keys
         require(unknownCategories.isEmpty()) {
             "unknown local categories: ${unknownCategories.sorted().joinToString()}"
@@ -189,7 +190,7 @@ class EpigraphLibraryMutationRouter(
             requestedCategoryIds.forEach { categoryId ->
                 if (aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(categoryId, "NOVEL").executeAsOneOrNull() == null) {
                     val category = availableCategories.getValue(categoryId)
-                    val stableId = EpigraphEntityId("novel-category-local-$categoryId")
+                    val stableId = novelCategoryEntityId(categoryId)
                     aethon_syncQueries.upsertCategoryScope(categoryId, "NOVEL")
                     aethon_syncQueries.upsertCategoryIdentity(
                         entityId = stableId.value,
@@ -214,7 +215,7 @@ class EpigraphLibraryMutationRouter(
                     // Categories created locally before the first Core bootstrap still need a
                     // deterministic identity. Publishing the category merge in the same batch
                     // makes the following assignment lossless and order-independent.
-                    val stableId = EpigraphEntityId("novel-category-local-$categoryId")
+                    val stableId = novelCategoryEntityId(categoryId)
                     val category = availableCategories.getValue(categoryId)
                     aethon_syncQueries.upsertCategoryScope(categoryId, "NOVEL")
                     aethon_syncQueries.upsertCategoryIdentity(
@@ -327,6 +328,9 @@ class EpigraphLibraryMutationRouter(
                                     syncEntityId,
                                     mutation.inLibrary,
                                     comicWork,
+                                    titleHint = manga.title.trim()
+                                        .takeIf { mutation.inLibrary && it.isNotBlank() }
+                                        ?.take(MAX_TITLE_HINT_LENGTH),
                                 ),
                             )
                         }
@@ -433,9 +437,21 @@ class EpigraphLibraryMutationRouter(
             ),
             envelopes = envelopes,
             suwayomiMutations = suwayomiMutations,
+            // A comic added to a local-only category is published when a sync run creates that
+            // category on the Core, so start one now instead of waiting for the next scheduled run.
+            wakesSync = !isNovel && mutation.origin.emitsOutbox &&
+                addedCategoryIds.any { it !in categoryEntities },
         )
         }
     }
+
+    /** Books and novels share the folder: a desktop Books category bound for books keeps its one id. */
+    private fun yokai.data.Database.novelCategoryEntityId(categoryId: Long): EpigraphEntityId =
+        EpigraphEntityId(
+            aethon_syncQueries.selectCategoryIdentityByLocalIdAndScope(categoryId, "BOOK")
+                .executeAsOneOrNull()?.entity_id
+                ?: "novel-category-local-$categoryId",
+        )
 
     private fun novelEntrySnapshot(
         manga: tachiyomi.data.Mangas,
@@ -471,5 +487,6 @@ class EpigraphLibraryMutationRouter(
         val NOVEL_ENTRY = SyncEntityType("novel.entry")
         val NOVEL_CATEGORY = SyncEntityType("novel.category")
         val NOVEL_CATEGORY_ASSIGNMENT = SyncEntityType("novel.category_assignment")
+        const val MAX_TITLE_HINT_LENGTH = 512
     }
 }

@@ -6,9 +6,13 @@ import cafe.adriel.voyager.navigator.CurrentScreen
 import cafe.adriel.voyager.navigator.Navigator
 import epigraph.recommendations.DiscoverMode
 import eu.kanade.tachiyomi.ui.base.controller.BaseComposeController
+import eu.kanade.tachiyomi.ui.main.RootTabContent
 
-/** Library-based recommendations, the mobile counterpart of the desktop Discover page. */
-class DiscoverController(bundle: Bundle? = null) : BaseComposeController(bundle) {
+/**
+ * The Discover bottom navigation tab: library-based picks (For you) and everything the installed
+ * extensions list (Catalog), the mobile counterpart of the desktop Browse page.
+ */
+class DiscoverController(bundle: Bundle? = null) : BaseComposeController(bundle), RootTabContent {
 
     constructor(mode: DiscoverMode) : this(Bundle().apply { putString(MODE_KEY, mode.name) })
 

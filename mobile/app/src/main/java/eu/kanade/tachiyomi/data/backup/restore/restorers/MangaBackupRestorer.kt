@@ -19,9 +19,13 @@ import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil
 import eu.kanade.tachiyomi.util.manga.MangaUtil
-import eu.kanade.tachiyomi.util.system.launchNow
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.max
+import eu.kanade.tachiyomi.data.database.models.Category
+import yokai.data.DatabaseHandler
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
+import yokai.domain.category.interactor.InsertCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.chapter.interactor.GetChapter
 import yokai.domain.chapter.interactor.InsertChapter
@@ -53,6 +57,7 @@ class MangaBackupRestorer(
     private val getTrack: GetTrack = get(),
     private val insertTrack: InsertTrack = get(),
     private val seriesKnowledgeRepository: SeriesKnowledgeRepository = get(),
+    private val handler: DatabaseHandler = get(),
 ) {
     suspend fun restoreManga(
         backupManga: BackupManga,
@@ -62,7 +67,9 @@ class MangaBackupRestorer(
     ) {
         val manga = backupManga.getMangaImpl()
         val chapters = backupManga.getChaptersImpl()
-        val categories = backupManga.categories
+        // Titles removed from the library keep their history in J2K/Mihon backups, but their old
+        // category links are stale and must not come back as folder membership.
+        val categories = if (backupManga.favorite) backupManga.categories else emptyList()
         val history =
             backupManga.brokenHistory.map { BackupHistory(it.url, it.lastRead, it.readDuration) } + backupManga.history
         val tracks = backupManga.getTrackingImpl()
@@ -72,26 +79,48 @@ class MangaBackupRestorer(
         val novelQuotes = backupManga.novelQuotes
 
         try {
-            val dbManga = getManga.awaitByUrlAndSource(manga.url, manga.source)
-            if (dbManga == null) {
-                // Manga not in database
-                restoreNewManga(manga, chapters, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge, novelQuotes)
-            } else {
-                // Manga in database
-                // Copy information from manga already in database
-                manga.id = dbManga.id
-                manga.filtered_scanlators = dbManga.filtered_scanlators
-                manga.copyFrom(dbManga)
-                updateManga.await(manga.toMangaUpdate())
-                // Fetch rest of manga information
-                restoreExistingManga(manga, chapters, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge, novelQuotes)
+            // One transaction per title: an interrupted restore never leaves a title with only part
+            // of its chapters, history or tracking, and a failed title rolls back cleanly.
+            handler.await(inTransaction = true) {
+                restoreMangaRows(manga, chapters, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge)
             }
+            // Quotes may migrate legacy quote files, so they merge after the title commits.
+            restoreNovelQuotes(manga, novelQuotes)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             onError(manga, e)
         }
 
         onComplete(manga)
         LibraryUpdateJob.updateMutableFlow.tryEmit(manga.id)
+    }
+
+    private suspend fun restoreMangaRows(
+        manga: Manga,
+        chapters: List<Chapter>,
+        categories: List<Int>,
+        history: List<BackupHistory>,
+        tracks: List<Track>,
+        backupCategories: List<BackupCategory>,
+        filteredScanlators: List<String>,
+        customManga: CustomMangaInfo?,
+        seriesKnowledge: BackupSeriesKnowledge?,
+    ) {
+        val dbManga = getManga.awaitByUrlAndSource(manga.url, manga.source)
+        if (dbManga == null) {
+            // Manga not in database
+            restoreNewManga(manga, chapters, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge)
+        } else {
+            // Manga in database
+            // Copy information from manga already in database
+            manga.id = dbManga.id
+            manga.filtered_scanlators = dbManga.filtered_scanlators
+            manga.copyFrom(dbManga)
+            updateManga.await(manga.toMangaUpdate())
+            // Fetch rest of manga information
+            restoreExistingManga(manga, chapters, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge)
+        }
     }
 
     /**
@@ -111,7 +140,6 @@ class MangaBackupRestorer(
         filteredScanlators: List<String>,
         customManga: CustomMangaInfo?,
         seriesKnowledge: BackupSeriesKnowledge?,
-        novelQuotes: List<BackupNovelQuote>,
     ) {
         val fetchedManga = manga.also {
             it.initialized = it.description != null
@@ -120,7 +148,7 @@ class MangaBackupRestorer(
         fetchedManga.id ?: return
 
         restoreChapters(fetchedManga, chapters)
-        restoreExtras(fetchedManga, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge, novelQuotes)
+        restoreExtras(fetchedManga, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge)
     }
 
     private suspend fun restoreExistingManga(
@@ -133,10 +161,9 @@ class MangaBackupRestorer(
         filteredScanlators: List<String>,
         customManga: CustomMangaInfo?,
         seriesKnowledge: BackupSeriesKnowledge?,
-        novelQuotes: List<BackupNovelQuote>,
     ) {
         restoreChapters(backupManga, chapters)
-        restoreExtras(backupManga, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge, novelQuotes)
+        restoreExtras(backupManga, categories, history, tracks, backupCategories, filteredScanlators, customManga, seriesKnowledge)
     }
 
     private suspend fun restoreChapters(manga: Manga, chapters: List<Chapter>) {
@@ -175,7 +202,6 @@ class MangaBackupRestorer(
         filteredScanlators: List<String>,
         customManga: CustomMangaInfo?,
         seriesKnowledge: BackupSeriesKnowledge?,
-        novelQuotes: List<BackupNovelQuote>,
     ) {
         restoreCategories(manga, categories, backupCategories)
         restoreHistoryForManga(manga, history)
@@ -192,12 +218,10 @@ class MangaBackupRestorer(
         // EXH <--
         customManga?.let {
             it.mangaId = manga.id!!
-            launchNow {
-                customMangaManager.saveMangaInfo(it)
-            }
+            // Saved in the title's transaction, not on a detached coroutine.
+            customMangaManager.saveMangaInfo(it)
         }
         restoreSeriesKnowledge(manga, seriesKnowledge)
-        restoreNovelQuotes(manga, novelQuotes)
         if (preferences.smartUpdateEnabled().get()) {
             updateManga.awaitUpdateFetchInterval(manga)
         }
@@ -227,19 +251,34 @@ class MangaBackupRestorer(
      * @param manga the manga whose categories have to be restored.
      * @param categories the categories to restore.
      */
+    /** Only needed when a novel's folder must be created in Books & novels. */
+    private val insertCategories: InsertCategories by lazy { get() }
+
     private suspend fun restoreCategories(manga: Manga, categories: List<Int>, backupCategories: List<BackupCategory>) {
-        val dbCategories = getCategories.await()
+        // Comics and Books & novels keep separate folders; orders only identify a folder within
+        // one library, and older backups shared one list for both.
+        val library = CategoryLibrary.of(manga)
+        val dbCategories = getCategories.await(library).toMutableList()
         val mangaCategoriesToUpdate = ArrayList<MangaCategory>(categories.size)
         categories.forEach { backupCategoryOrder ->
-            backupCategories.firstOrNull {
-                it.order == backupCategoryOrder
-            }?.let { backupCategory ->
-                dbCategories.firstOrNull { dbCategory ->
-                    dbCategory.name == backupCategory.name
-                }?.let { dbCategory ->
-                    mangaCategoriesToUpdate += MangaCategory.create(manga, dbCategory)
+            val sameOrder = backupCategories.filter { it.order == backupCategoryOrder }
+            val backupCategory = sameOrder.firstOrNull { (it.library == CategoryLibrary.BOOKS.name) == (library == CategoryLibrary.BOOKS) }
+                ?: sameOrder.firstOrNull()
+                ?: return@forEach
+            val dbCategory = dbCategories.firstOrNull { it.name == backupCategory.name }
+                ?: if (library == CategoryLibrary.BOOKS) {
+                    // A novel folder from a shared-folder backup becomes a Books & novels folder.
+                    val created = Category.create(backupCategory.name).apply {
+                        order = (dbCategories.maxOfOrNull { it.order } ?: 0) + 1
+                        flags = backupCategory.flags
+                        mangaSort = backupCategory.mangaSort
+                    }
+                    created.id = insertCategories.awaitOne(created, library)?.toInt()
+                    created.takeIf { it.id != null }?.also { dbCategories += it }
+                } else {
+                    null
                 }
-            }
+            dbCategory?.let { mangaCategoriesToUpdate += MangaCategory.create(manga, it) }
         }
 
         // Update database

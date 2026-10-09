@@ -13,11 +13,18 @@
     <item android:id="@+id/action_filter"
         android:title="@string/filter"
         android:icon="@drawable/ic_filter_list_24dp"
-        app:showAsAction="ifRoom"/>
+        app:showAsAction="always"/>
+
+    <!-- Manga / Novel pill; its action view is set by BrowseController. -->
+    <item
+        android:id="@+id/action_content_type"
+        android:title="@string/novel"
+        android:icon="@drawable/ic_book_open_outline_24dp"
+        app:showAsAction="always" />
 
     <item
         android:id="@+id/action_more"
         android:icon="@drawable/ic_more_vert_24dp"
         android:title="@string/more"
-        app:showAsAction="ifRoom" />
+        app:showAsAction="always" />
 </menu>

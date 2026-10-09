@@ -207,7 +207,7 @@ export function normalizeNovelRepositoryState(
   const state = value as PersistedNovelRepositoryStateShape;
   const fallbackProfileId = normalizeScopeInput(scopeInput).profileId ?? fallback.scopeKey;
 
-  return {
+  return mergeCaseVariantRepositories({
     version: typeof state.version === "number" ? state.version : NOVEL_REPOSITORY_STATE_VERSION,
     scopeKey: normalizeText(state.scopeKey) ?? fallback.scopeKey,
     repositories: Array.isArray(state.repositories)
@@ -227,6 +227,44 @@ export function normalizeNovelRepositoryState(
       : [],
     languageFilter: normalizeLanguageFilter(Array.isArray(state.languageFilter) ? state.languageFilter : []),
     updatedAtMs: typeof state.updatedAtMs === "number" ? state.updatedAtMs : null,
+  });
+}
+
+/**
+ * States saved before feeds were matched case-insensitively can hold the same GitHub feed twice
+ * (LNReader backups spell it `lnreader/...`). The copies fold into one repository, preferring the
+ * built-in spelling, and its installed plugins move along instead of being lost with the copy.
+ */
+function mergeCaseVariantRepositories(state: PersistedNovelRepositoryState): PersistedNovelRepositoryState {
+  const builtinUrl = normalizeNovelRepositoryUrl(BUILTIN_LNREADER_REPOSITORY_URL);
+  const keptByKey = new Map<string, NovelRepositoryRecord>();
+  for (const repository of state.repositories) {
+    const key = novelRepositoryMatchKey(repository.normalizedUrl);
+    const kept = keptByKey.get(key);
+    if (!kept || (repository.normalizedUrl === builtinUrl && kept.normalizedUrl !== builtinUrl)) {
+      keptByKey.set(key, repository);
+    }
+  }
+  if (keptByKey.size === state.repositories.length) {
+    return state;
+  }
+  const keptIdById = new Map(state.repositories.map((repository) => [
+    repository.id,
+    keptByKey.get(novelRepositoryMatchKey(repository.normalizedUrl))!.id,
+  ]));
+  const installedPlugins: InstalledNovelPluginRecord[] = [];
+  for (const plugin of state.installedPlugins) {
+    const repositoryId = keptIdById.get(plugin.repositoryId) ?? plugin.repositoryId;
+    if (!installedPlugins.some((entry) => entry.repositoryId === repositoryId && entry.pluginId === plugin.pluginId)) {
+      installedPlugins.push({ ...plugin, repositoryId });
+    }
+  }
+  return {
+    ...state,
+    repositories: state.repositories.filter((repository) => keptIdById.get(repository.id) === repository.id),
+    // A dropped copy's catalog is stale; the kept repository's catalog (or its next refresh) covers it.
+    catalogEntries: state.catalogEntries.filter((entry) => (keptIdById.get(entry.repositoryId) ?? entry.repositoryId) === entry.repositoryId),
+    installedPlugins,
   };
 }
 
@@ -236,8 +274,8 @@ export function normalizeNovelRepositoryState(
  * in memory and persisted by the next save, so reading a state never writes to disk.
  */
 export function withBuiltinNovelRepository(state: PersistedNovelRepositoryState): PersistedNovelRepositoryState {
-  const normalizedUrl = normalizeNovelRepositoryUrl(BUILTIN_LNREADER_REPOSITORY_URL);
-  const existing = state.repositories.find((repository) => repository.normalizedUrl === normalizedUrl);
+  const builtinKey = novelRepositoryMatchKey(BUILTIN_LNREADER_REPOSITORY_URL);
+  const existing = state.repositories.find((repository) => novelRepositoryMatchKey(repository.normalizedUrl) === builtinKey);
   if (existing) {
     return existing.recommendedSeed
       ? state
@@ -261,6 +299,16 @@ export function withBuiltinNovelRepository(state: PersistedNovelRepositoryState)
 
 export function isBuiltinNovelRepository(repository: Pick<NovelRepositoryRecord, "normalizedUrl">): boolean {
   return repository.normalizedUrl === normalizeNovelRepositoryUrl(BUILTIN_LNREADER_REPOSITORY_URL);
+}
+
+/**
+ * GitHub owner and repository names are case-insensitive, so `lnreader/lnreader-plugins` and
+ * `LNReader/lnreader-plugins` are the same feed. Branch and file path stay case-sensitive.
+ */
+function novelRepositoryMatchKey(url: string): string {
+  const normalizedUrl = normalizeNovelRepositoryUrl(url);
+  const match = /^(https?:\/\/(?:raw\.githubusercontent\.com|github\.com)\/[^/]+\/[^/]+)(.*)$/i.exec(normalizedUrl);
+  return match ? match[1].toLowerCase() + match[2] : normalizedUrl;
 }
 
 export async function loadNovelRepositoryState(scopeInput: NovelRepositoryScopeInput = {}): Promise<PersistedNovelRepositoryState> {
@@ -318,8 +366,8 @@ export function addNovelRepositoryToState(
   state: PersistedNovelRepositoryState,
   input: Omit<Parameters<typeof createNovelRepositoryRecord>[0], "profileId"> & { profileId?: string | null },
 ): PersistedNovelRepositoryState {
-  const normalizedUrl = normalizeNovelRepositoryUrl(input.url);
-  if (state.repositories.some((repository) => repository.normalizedUrl === normalizedUrl)) {
+  const matchKey = novelRepositoryMatchKey(input.url);
+  if (state.repositories.some((repository) => novelRepositoryMatchKey(repository.normalizedUrl) === matchKey)) {
     throw new Error("This LNReader repository is already saved for the active profile.");
   }
 
