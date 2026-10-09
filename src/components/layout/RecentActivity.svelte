@@ -10,6 +10,7 @@
   import { retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
+  import { groupReadingSessions } from "../../lib/history/sessions";
   import { groupRefreshedNovelChaptersForNotifications, refreshNovelLibraryFromSources } from "../../lib/novels/libraryRefresh";
   import {
     buildNovelDetailRecordFromLibrary,
@@ -62,8 +63,6 @@
     return 1;
   }
 
-  const SESSION_GAP_MS = 30 * 60 * 1000;
-
   interface Session {
     key:               string;
     kind:              "comic" | "novel";
@@ -102,21 +101,9 @@
   type SystemEntry = SystemNotification;
 
   function buildSessions(entries: HistoryEntry[]): Session[] {
-    if (!entries.length) return [];
-    const sessions: Session[] = [];
-    let i = 0;
-    while (i < entries.length) {
-      const anchor = entries[i];
-      const group: HistoryEntry[] = [anchor];
-      let j = i + 1;
-      while (j < entries.length) {
-        const next = entries[j];
-        if (next.mangaId === anchor.mangaId && anchor.readAt - next.readAt <= SESSION_GAP_MS) {
-          group.push(next); j++;
-        } else break;
-      }
+    return groupReadingSessions(entries, (entry) => entry.mangaId, (entry) => entry.readAt).map((group) => {
       const latest = group[0], oldest = group[group.length - 1];
-      sessions.push({
+      return {
         key:               `comic:${latest.chapterId}`,
         kind:              "comic",
         novelId:           null,
@@ -128,25 +115,14 @@
         firstChapterName:  oldest.chapterName,
         chapterCount:      group.length,
         readAt:            latest.readAt,
-      });
-      i = j;
-    }
-    return sessions;
+      };
+    });
   }
 
   function buildNovelSessions(items: NovelReadingHistoryItem[]): Session[] {
-    const sessions: Session[] = [];
-    let i = 0;
-    while (i < items.length) {
-      const anchor = items[i];
-      let j = i + 1;
-      while (
-        j < items.length
-        && items[j].novel.id === anchor.novel.id
-        && anchor.entry.readAt - items[j].entry.readAt <= SESSION_GAP_MS
-      ) j++;
-      const oldest = items[j - 1];
-      sessions.push({
+    return groupReadingSessions(items, (item) => item.novel.id, (item) => item.entry.readAt).map((group) => {
+      const anchor = group[0], oldest = group[group.length - 1];
+      return {
         key:               `novel:${anchor.novel.id}:${anchor.entry.chapterId ?? anchor.entry.readAt}`,
         kind:              "novel",
         novelId:           anchor.novel.id,
@@ -156,12 +132,10 @@
         latestChapterId:   0,
         latestChapterName: anchor.entry.chapterTitle ?? "",
         firstChapterName:  oldest.entry.chapterTitle ?? "",
-        chapterCount:      j - i,
+        chapterCount:      group.length,
         readAt:            anchor.entry.readAt,
-      });
-      i = j;
-    }
-    return sessions;
+      };
+    });
   }
 
   let novelLibraryState: PersistedNovelLibraryState | null = $state(null);

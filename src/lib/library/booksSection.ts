@@ -87,12 +87,13 @@ function buildStatusFilteredBooks(
   if (statusFilter === "all") return books;
 
   return books.filter((book) => {
-    const pct = progressByBookId.get(book.id)?.progressPercent ?? 0;
+    const progress = progressByBookId.get(book.id);
+    const pct = progress?.progressPercent ?? 0;
     switch (statusFilter) {
       case "unopened":
-        return pct <= 0.001;
+        return !isBookOpened(progress);
       case "in_progress":
-        return isBookInProgress({ progressPercent: pct });
+        return isBookOpened(progress) && !isBookFinished({ progressPercent: pct });
       case "finished":
         return isBookFinished({ progressPercent: pct });
       default:
@@ -156,8 +157,15 @@ function getBookChapterCount(book: BookEntry): number {
 function getBookReadChapterCount(book: BookEntry, progress: BookProgress | null | undefined): number {
   const chapterCount = getBookChapterCount(book);
   if (chapterCount <= 0) return 0;
+  if (isBookFinished(progress)) return chapterCount;
+  // Only chapters wholly behind the reader count; a PDF is one chapter, so page 2 of 3 is not done.
   const pct = Math.max(0, Math.min(1, progress?.progressPercent ?? 0));
-  return Math.max(0, Math.min(chapterCount, Math.round(pct * chapterCount)));
+  return Math.max(0, Math.min(chapterCount - 1, Math.floor(pct * chapterCount)));
+}
+
+/** A book opened at its first page has no percent yet, but it has been read. */
+function isBookOpened(progress: BookProgress | null | undefined): boolean {
+  return isBookInProgress(progress) || isBookFinished(progress) || (progress?.lastReadAt ?? 0) > 0;
 }
 
 function buildBookWorkStatus(hasLocalAsset: boolean, isReadFinished: boolean, hasStarted: boolean): string {
@@ -284,7 +292,7 @@ export function buildBooksSectionState(input: BuildBooksSectionInput): BooksSect
           const badges = !hasLocalAsset
             ? [{ kind: "status" as const, label: "Missing file" }]
             : [];
-          const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0)];
+          const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, isBookOpened(progress))];
           if (!hasLocalAsset) metaChips.push("Metadata only");
 
           return {

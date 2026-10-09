@@ -1,14 +1,21 @@
-import { translate } from "./runtime";
+import { appliedAppLanguage, translate } from "./runtime";
 
 /** The locale applied by `applyAppLanguage`, so dates follow the selected app language. */
 export function currentAppLocale(): string {
   if (typeof document !== "undefined" && document.documentElement.lang) return document.documentElement.lang;
+  const applied = appliedAppLanguage();
+  if (applied) return applied;
   if (typeof navigator !== "undefined" && navigator.language) return navigator.language;
   return "en";
 }
 
 export function formatAppDate(value: number | Date, options: Intl.DateTimeFormatOptions): string {
   return new Intl.DateTimeFormat(currentAppLocale(), options).format(value);
+}
+
+/** "action and sci fi" with the conjunction of the app language. */
+export function formatAppList(items: readonly string[]): string {
+  return new Intl.ListFormat(currentAppLocale(), { style: "long", type: "conjunction" }).format(items);
 }
 
 /** "just now", "5 minutes ago", "yesterday"… in the app language; older dates fall back to a short date. */
@@ -41,8 +48,11 @@ export function formatWorkStatus(status: string | null | undefined): string {
   const statusKey = normalized.toLowerCase().replace(/\s+/g, "_");
   const translatedStatus = {
     ongoing: "library.status.ongoing",
+    // Trackers such as AniList say RELEASING and FINISHED.
+    releasing: "library.status.ongoing",
+    publishing: "library.status.ongoing",
     completed: "library.status.completed",
-    finished: "library.collections.finished",
+    finished: "library.status.completed",
     publishing_finished: "library.status.completed",
     cancelled: "library.status.cancelled",
     hiatus: "library.status.hiatus",

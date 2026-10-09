@@ -24,6 +24,7 @@ import {
   peekNovelLibraryState,
   resetNovelLibraryStateCacheForTests,
   saveNovelLibraryState,
+  setNovelChaptersRead,
   toggleNovelChapterBookmark,
   updateNovelReadingProgress,
   upsertNovelInLibrary,
@@ -373,6 +374,25 @@ describe("novel library state storage", () => {
       updatedAt: 30,
     });
     expect(nextChapter.progress[0]?.progressPercent).toBe(0.7);
+  });
+
+  it("marks chapters read or unread by hand without touching reading progress", () => {
+    const novelId = createNovelLibraryId("archiveofourown", "/works/1");
+    const state = createState();
+    state.chapters = [
+      state.chapters[0]!,
+      { ...state.chapters[0]!, id: "chapter:2", path: "/works/1/chapters/2", title: "Chapter 2", order: 1 },
+    ];
+
+    const read = setNovelChaptersRead(state, novelId, ["chapter:1", "chapter:2"], true);
+    expect(read.chapters.map((chapter) => chapter.unread)).toEqual([false, false]);
+    expect(read.progress).toEqual(state.progress);
+    expect(read.history).toEqual(state.history);
+
+    const unread = setNovelChaptersRead(read, novelId, ["chapter:2"], false);
+    expect(unread.chapters.map((chapter) => chapter.unread)).toEqual([false, true]);
+    expect(setNovelChaptersRead(unread, novelId, ["chapter:2"], false)).toBe(unread);
+    expect(setNovelChaptersRead(unread, "other-novel", ["chapter:2"], true)).toBe(unread);
   });
 
   it("accepts legacy chapter-only locators", () => {

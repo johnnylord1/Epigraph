@@ -4,7 +4,9 @@ import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.network.NetworkHelper
 import io.mockk.mockk
 import kotlinx.serialization.json.Json
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -93,6 +95,35 @@ class AppUpdateCheckerTest {
 
         assertFalse(isNewVersion("1.2.3-r1", "1.2.3-r1"))
         assertFalse(isNewVersion("r1", "1.2.4-r1"))
+    }
+
+    @Test
+    fun `Alpha builds named like 0_1_0-alpha_N compare by their number`() {
+        assertTrue(isNewVersion("0.1.0-alpha.2", "0.1.0-alpha.1"))
+        assertTrue(isNewVersion("0.1.0", "0.1.0-alpha.2"))
+        assertFalse(isNewVersion("0.1.0-alpha.1", "0.1.0-alpha.2"))
+        assertFalse(isNewVersion("0.1.0-alpha.2", "0.1.0-alpha.2"))
+    }
+
+    @Test
+    fun `App version comes from the APK names, not the desktop release tag`() {
+        fun release(vararg names: String) = GithubRelease(
+            version = "v0.0.3",
+            info = "",
+            releaseLink = "",
+            preRelease = false,
+            assets = names.map { GithubRelease.Assets("https://github.com/johnnylord1/Epigraph/releases/download/v0.0.3/$it") },
+        )
+
+        assertEquals(
+            "0.1.0-alpha.2",
+            release(
+                "Epigraph_0.0.3_x64-setup.exe",
+                "Epigraph-mobile_0.1.0-alpha.2_arm64-v8a.apk",
+                "Epigraph-mobile_0.1.0-alpha.2_universal.apk",
+            ).mobileVersion,
+        )
+        assertNull(release("Epigraph_0.0.3_x64-setup.exe", "latest.json").mobileVersion)
     }
 
     private fun isNewVersion(newVersion: String, currentVersion: String): Boolean {

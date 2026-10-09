@@ -16,6 +16,15 @@ import SeriesDetailV3Shell from "./SeriesDetailV3Shell.svelte";
 describe("SeriesDetailV3Shell", () => {
   afterEach(() => cleanup());
 
+  test("keeps the window controls in the detail topbar", () => {
+    render(SeriesDetailV3Shell, {
+      props: { mediaKind: "manga", title: "Dangerous Dungeon Escape", coverUrl: null, fallbackLabel: "Manga" },
+    });
+
+    const controls = document.querySelector(".n-topbar .window-controls-inline");
+    expect(controls?.querySelectorAll("button")).toHaveLength(3);
+  });
+
   test("retries a failed cover when Suwayomi reports ready", async () => {
     render(SeriesDetailV3Shell, {
       props: {

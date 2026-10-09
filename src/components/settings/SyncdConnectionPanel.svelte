@@ -1253,8 +1253,8 @@
               <div class="syncd-start-copy syncd-pane" data-testid="syncd-host-card">
                 <h3>{$_("syncd_modal_pairDesktop")}</h3>
                 <p>{$_("syncd_modal_createShortLivedQr")}</p>
-                <span class="syncd-hidden-value" data-testid="syncd-host-status">{statusLabel("idle")}</span>
-                <span class="syncd-hidden-value" data-testid="syncd-host-start-stage">{hostStartStage}</span>
+                <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-host-status">{statusLabel("idle")}</span>
+                <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-host-start-stage">{hostStartStage}</span>
               </div>
             {:else}
               <div class="syncd-start-copy syncd-pane" data-testid="syncd-options-view">
@@ -1287,7 +1287,7 @@
                 {/if}
                 <div class="syncd-pin-expiry" aria-live="off"><span class="syncd-pin-expiry__bar"><i style:transform={`scaleX(${Math.min(1, hostSecondsLeft / 300)})`}></i></span><small>{$_("syncd_modal_pinRenews", { time: formatCountdown(hostSecondsLeft) })}</small></div>
               </div>
-              <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
+              <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
             </div>
             <div class:syncd-disclosure--open={hostOptionsOpen} class="syncd-disclosure">
               <button type="button" aria-expanded={hostOptionsOpen} onclick={() => (hostOptionsOpen = !hostOptionsOpen)}><CaretRight size={13} weight="bold" class="syncd-disclosure__caret" />{$_("syncd_modal_pairingOptions")}</button>
@@ -1305,14 +1305,14 @@
             <div class="syncd-verification syncd-pane" data-testid="syncd-host-verification"><strong aria-label={$_("syncd_modal_verificationLabel")}>{hostVerificationCode}</strong><small>{approvalVerificationHint}</small></div>
             <ul class="syncd-scope-list syncd-pane" data-testid="syncd-requested-scopes">{#each host.requestedScopes as scope}<li><Check size={14} weight="bold" />{permissionScopeLabel(scope)}</li>{/each}</ul>
             {#if previousPairingsOfClaimant.length > 0}<label class="syncd-replace-previous syncd-pane" data-testid="syncd-replace-previous-pairings"><span>{$_("syncd_modal_replacePreviousPairings", { count: previousPairingsOfClaimant.length })}</span><input class="syncd-switch" type="checkbox" bind:checked={removePreviousPairings} disabled={hostDecisionBusy !== null} /></label>{/if}
-            <span class="syncd-hidden-value" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
+            <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-host-status-live" data-status={host.status}>{statusLabel(host.status)}</span>
           {:else}
             <div class="syncd-request syncd-pane"><span class="syncd-list__icon" aria-hidden="true"><Desktop size={20} /></span><div><strong>{remoteDeviceName}</strong><small>{overviewStatus.body}</small></div><span class="syncd-state" data-tone={overviewStatus.tone}>{statusLabel(replicationSnapshot?.replicationStatus ?? "connected")}</span></div>
-            <span class="syncd-hidden-value" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
-            <span class="syncd-hidden-value" data-testid="syncd-replication-status" data-status={replicationSnapshot?.replicationStatus ?? "idle"}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span>
+            <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-replication-active-session">{replicationSnapshot?.activeSessionKey ?? $_("ui_noneSelected")}</span>
+            <span class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-replication-status" data-status={replicationSnapshot?.replicationStatus ?? "idle"}>{statusLabel(replicationSnapshot?.replicationStatus ?? "idle")}</span>
           {/if}
 
-          {#if connect}<div class="syncd-hidden-value" data-testid="syncd-connect-state"><span data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>{#if connect.error}<span data-testid="syncd-connect-error">{connect.error}</span>{/if}</div>{/if}
+          {#if connect}<div class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-connect-state"><span data-testid="syncd-connect-status" data-status={connect.status}>{statusLabel(connect.status)}</span>{#if connect.error}<span data-testid="syncd-connect-error">{connect.error}</span>{/if}</div>{/if}
           {#if host?.error}<div data-testid="syncd-host-error"><NocturneState layout="compact" tone="danger" icon="warning" eyebrow={$_("syncd_modal_host")} title={$_("ui_hostPairingFailed")} body={host.error} /></div>{/if}
           {#if presentation === "embedded" && initialSyncError}
             <div class="syncd-inline-alert" role="alert" data-testid="syncd-initial-sync-error">
@@ -1355,7 +1355,7 @@
               {/if}
             </div>
           {/if}
-          {#if persistedSessions.length > 0}<div class="syncd-hidden-value" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
+          {#if persistedSessions.length > 0}<div class="syncd-hidden-value" aria-hidden="true" data-testid="syncd-persisted-sessions">{#each persistedSessions as session}<span data-testid="syncd-persisted-session-item">{session.sessionKey}</span>{/each}</div>{/if}
         </section>
       </div>
 

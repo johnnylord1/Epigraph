@@ -774,11 +774,21 @@
     );
     return mangaIds.size + bookIds.size;
   });
-  const thisWeekSeriesCount = $derived.by(() => {
+  // "This week" is the last seven days, today included.
+  function weekStartMs(): number {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     start.setDate(start.getDate() - 6);
-    const startMs = start.getTime();
+    return start.getTime();
+  }
+  const thisWeekReadLog = $derived.by(() => {
+    const startMs = weekStartMs();
+    return (store.readLog ?? []).filter((entry) => entry.readAt >= startMs);
+  });
+  const thisWeekChapterCount = $derived(new Set(thisWeekReadLog.map((entry) => entry.chapterId)).size);
+  const thisWeekMinutes = $derived(thisWeekReadLog.reduce((sum, entry) => sum + (Number(entry.minutes) || 0), 0));
+  const thisWeekSeriesCount = $derived.by(() => {
+    const startMs = weekStartMs();
     const unique = new Set<string>();
     for (const entry of store.history) {
       if (entry.readAt >= startMs) {
@@ -814,8 +824,9 @@
       if (idx >= 0) counts[idx] += 1;
     }
     const max = Math.max(...counts, 1);
+    const weekdayLabels = [translate("ui_sun"), translate("ui_mon"), translate("ui_tue"), translate("ui_wed"), translate("ui_thu"), translate("ui_fri"), translate("ui_sat")];
     return counts.map((count, index) => ({
-      label: [translate("ui_mon"), translate("ui_tue"), translate("ui_wed"), translate("ui_thu"), translate("ui_fri"), translate("ui_sat"), translate("ui_sun")][index],
+      label: weekdayLabels[new Date(days[index]).getDay()],
       height: `${Math.max(14, Math.round((count / max) * 100))}%`,
       isToday: index === 6,
     }));
@@ -1285,11 +1296,11 @@
               <div class="home-card home-week-card">
                 <div class="home-week-card__stats">
                   <div>
-                    <strong>{stats.totalChaptersRead}</strong>
+                    <strong>{thisWeekChapterCount}</strong>
                     <small>{$_("home.metrics.chapters")}</small>
                   </div>
                   <div>
-                    <strong>{formatReadTime(stats.totalMinutesRead)}</strong>
+                    <strong>{formatReadTime(thisWeekMinutes)}</strong>
                     <small>{$_("home.metrics.readTime")}</small>
                   </div>
                 <div>

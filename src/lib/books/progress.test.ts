@@ -8,6 +8,7 @@ import {
   normalizeBookBookmark,
   normalizeBookProgress,
   resolveBookResumeTarget,
+  resolveEpubDisplayTarget,
 } from "./progress";
 
 describe("normalizeBookProgress", () => {
@@ -220,6 +221,22 @@ describe("book progress precedence", () => {
       lastReadAt: 0,
       renderer: "epub",
     })).toBeNull();
+  });
+
+  it("turns the zip path of a section into the href epub.js knows", () => {
+    const hrefs = ["c1.xhtml", "c2.xhtml", "Text/notes.xhtml"];
+    const spine = {
+      spineItems: hrefs.map((href) => ({ href })),
+      get: (target: string) => hrefs.includes(target.split("#")[0]) ? {} : null,
+    };
+
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/c2.xhtml")).toBe("c2.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/c2.xhtml#part")).toBe("c2.xhtml#part");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/Text/notes.xhtml")).toBe("Text/notes.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "c1.xhtml")).toBe("c1.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "epubcfi(/6/4!/4/2)")).toBe("epubcfi(/6/4!/4/2)");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/missing.xhtml")).toBeUndefined();
+    expect(resolveEpubDisplayTarget(spine, null)).toBeUndefined();
   });
 
   it("keeps the strongest persisted progress across a serialize/hydrate roundtrip", () => {

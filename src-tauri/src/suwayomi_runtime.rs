@@ -261,7 +261,45 @@ pub fn managed_java_temp_dir(data_dir: &Path) -> PathBuf {
 pub fn managed_java_temp_dir_flag(data_dir: &Path) -> String {
     let temp_dir = managed_java_temp_dir(data_dir);
     let _ = std::fs::create_dir_all(&temp_dir);
+    drop_java_caches_from_other_databases(data_dir, &temp_dir);
     format!("-Djava.io.tmpdir={}", temp_dir.display())
+}
+
+const CACHE_GENERATION_FILE: &str = "epigraph-cache-generation";
+
+/// Suwayomi names its cached covers and pages after manga ids, so the temp caches only fit
+/// the database that filled them. A recreated database hands the same ids to other works and
+/// would show their old covers. The data folder carries a generation that changes whenever its
+/// database is created anew; caches recorded under another generation are dropped.
+fn drop_java_caches_from_other_databases(data_dir: &Path, temp_dir: &Path) {
+    let generation_path = data_dir.join(CACHE_GENERATION_FILE);
+    let recorded = std::fs::read_to_string(&generation_path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let generation = match recorded {
+        Some(generation) if data_dir.join("database.mv.db").exists() => generation,
+        _ => {
+            let generation = uuid::Uuid::new_v4().to_string();
+            if std::fs::create_dir_all(data_dir).is_err()
+                || std::fs::write(&generation_path, &generation).is_err()
+            {
+                return;
+            }
+            generation
+        }
+    };
+
+    let cache_marker = temp_dir.join(CACHE_GENERATION_FILE);
+    let cached = std::fs::read_to_string(&cache_marker).ok();
+    if cached.as_deref().map(str::trim) == Some(generation.as_str()) {
+        return;
+    }
+    let caches = temp_dir.join("Tachidesk");
+    for name in ["thumbnails", "manga-cache"] {
+        let _ = std::fs::remove_dir_all(caches.join(name));
+    }
+    let _ = std::fs::write(&cache_marker, &generation);
 }
 
 pub fn sanitize_log_line(line: &str, private_paths: &[&Path]) -> String {
@@ -382,6 +420,34 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn java_caches_survive_restarts_but_not_a_recreated_database() {
+        let data = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let thumbnails = cache.path().join("Tachidesk").join("thumbnails");
+        let put_cover = || {
+            std::fs::create_dir_all(&thumbnails).unwrap();
+            std::fs::write(thumbnails.join("126.webp"), b"cover").unwrap();
+        };
+
+        // First start of a fresh profile: nothing cached yet belongs to it.
+        put_cover();
+        drop_java_caches_from_other_databases(data.path(), cache.path());
+        assert!(!thumbnails.join("126.webp").exists());
+
+        // The server creates its database; later starts keep the cache.
+        std::fs::write(data.path().join("database.mv.db"), b"h2").unwrap();
+        put_cover();
+        drop_java_caches_from_other_databases(data.path(), cache.path());
+        drop_java_caches_from_other_databases(data.path(), cache.path());
+        assert!(thumbnails.join("126.webp").exists());
+
+        // The database is gone and will be recreated with reused ids.
+        std::fs::remove_file(data.path().join("database.mv.db")).unwrap();
+        drop_java_caches_from_other_databases(data.path(), cache.path());
+        assert!(!thumbnails.join("126.webp").exists());
+    }
 
     #[test]
     fn preflight_backup_copies_the_database_and_keeps_only_the_newest_copies() {

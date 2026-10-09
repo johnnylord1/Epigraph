@@ -97,6 +97,31 @@ export function resolveBookResumeTarget(progress: BookProgress | null | undefine
   return progress.location ?? progress.href ?? null;
 }
 
+type EpubSpineLike = {
+  get(target: string): unknown;
+  spineItems?: Array<{ href?: string }>;
+};
+
+/** The app keeps section hrefs as paths inside the EPUB zip; epub.js knows them relative to the package document. */
+export function resolveEpubDisplayTarget(
+  spine: EpubSpineLike | null | undefined,
+  target: string | null | undefined,
+): string | undefined {
+  if (!target) return undefined;
+  if (!spine || target.startsWith("epubcfi(") || spine.get(target)) return target;
+  const hashIndex = target.indexOf("#");
+  const path = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+  const hash = hashIndex >= 0 ? target.slice(hashIndex) : "";
+  const items = (spine.spineItems ?? []).filter((item): item is { href: string } => Boolean(item.href));
+  const byPath = items.filter((item) => path === item.href || path.endsWith(`/${item.href}`));
+  const basename = path.slice(path.lastIndexOf("/") + 1);
+  const byName = byPath.length > 0 ? byPath : items.filter((item) => item.href.slice(item.href.lastIndexOf("/") + 1) === basename);
+  // The longest suffix wins so "Text/c1.xhtml" is not mistaken for "Notes/c1.xhtml".
+  const match = byName.sort((left, right) => right.href.length - left.href.length);
+  if (byPath.length === 0 && byName.length !== 1) return undefined;
+  return match[0] ? `${match[0].href}${hash}` : undefined;
+}
+
 export function mergeBookProgress(
   current: BookProgress | null | undefined,
   incoming: BookProgress,

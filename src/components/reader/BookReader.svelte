@@ -39,7 +39,7 @@
     resolveBookSectionLabel,
     resolveBookSectionProgress,
   } from "../../lib/books/summary";
-  import { resolveBookResumeTarget } from "../../lib/books/progress";
+  import { resolveBookResumeTarget, resolveEpubDisplayTarget } from "../../lib/books/progress";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
   import type { BookBookmarkEntry, BookEntry, BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
@@ -402,7 +402,7 @@
 
   function resolveDiscordSectionFromProgress(sections: BookSectionSummaryItem[], progress: number): string | null {
     if (!sections.length) return null;
-    const index = Math.max(0, Math.min(sections.length - 1, Math.round(progress * (sections.length - 1))));
+    const index = Math.max(0, Math.min(sections.length - 1, Math.floor(progress * sections.length)));
     for (let i = index; i < sections.length; i += 1) {
       const label = normalizeDiscordBookLabel(sections[i]?.label);
       if (label) return label;
@@ -1037,7 +1037,7 @@
       stage: currentStage,
       sourceUrl,
     });
-    const target = resolveBookResumeTarget(activeProgress) ?? undefined;
+    const target = resolveEpubDisplayTarget(book.spine, resolveBookResumeTarget(activeProgress));
     if (target) await rendition.display(target);
     else await rendition.display();
     applyEpubTheme();
@@ -1325,7 +1325,7 @@
         void currentRendition?.display?.(cfi);
         return;
       }
-      const href = resolveEpubHrefFromPercentage(pct);
+      const href = resolveEpubDisplayTarget(currentBookRef?.spine, resolveEpubHrefFromPercentage(pct));
       if (href) void currentRendition?.display?.(href);
       return;
     }

@@ -25,6 +25,8 @@
   import { isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import { waitForSuwayomiGraphqlReady } from "../../lib/suwayomiReadiness";
   import { requestProgressMirror } from "../../lib/syncdProgressMirror";
+  import { listenSyncdComicLibraryChanged } from "../../lib/syncdDesktop";
+  import { normalizeLocalProfileId } from "../../lib/localProfiles";
 
   type MenuEntry = any;
 
@@ -828,8 +830,17 @@
   onMount(() => {
     void refreshDownloadQueue({ reschedule: true });
     window.addEventListener("focus", reloadChaptersOnFocus);
+    // Read state from another device reaches Suwayomi through the syncd projection a moment later.
+    let syncedReloadTimer: ReturnType<typeof setTimeout> | null = null;
+    const syncedUnlisten = listenSyncdComicLibraryChanged(({ localProfileId }) => {
+      if (localProfileId !== normalizeLocalProfileId(store.runtimeResolvedLocalProfileId)) return;
+      if (syncedReloadTimer) clearTimeout(syncedReloadTimer);
+      syncedReloadTimer = setTimeout(() => { syncedReloadTimer = null; reloadChaptersOnFocus(); }, 3000);
+    }).catch(() => null);
     return () => {
       window.removeEventListener("focus", reloadChaptersOnFocus);
+      if (syncedReloadTimer) clearTimeout(syncedReloadTimer);
+      void syncedUnlisten.then((unlisten) => unlisten?.());
       mangaAbort?.abort();
       chapterAbort?.abort();
       clearChapterReconnect();

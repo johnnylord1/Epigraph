@@ -2,6 +2,7 @@ package epigraph.sync.core
 
 import android.app.Application
 import android.content.Context
+import eu.kanade.tachiyomi.source.SourceManager
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
 import epigraph.contract.SyncScopeId
@@ -346,7 +347,16 @@ fun epigraphSyncModule(app: Application) = module {
     single { SuwayomiMutationQueueDrainer(get()) }
     single<CorePendingOutbox> { CoordinatorPendingOutbox(get(), get()) }
     single<CoreSyncWakeStore> { SqlDelightCoreSyncWakeStore(get()) }
-    single { EpigraphCoreDomainProjection(privateBookStorageDirectory = File(app.filesDir, "books")) }
+    single {
+        val sources = lazy { get<SourceManager>() }
+        EpigraphCoreDomainProjection(
+            privateBookStorageDirectory = File(app.filesDir, "books"),
+            rememberNovelSource = { id, name ->
+                sources.value.rememberNovelSources(listOf(id))
+                if (name != null) sources.value.rememberSourceNames(mapOf(id to name))
+            },
+        )
+    }
     single<CoreReplicaProjection> { get<EpigraphCoreDomainProjection>() }
     single { SqlDelightCoreReplicaStore(get(), get<CoreReplicaProjection>()) }
     single<CoreReplicaStore> { get<SqlDelightCoreReplicaStore>() }

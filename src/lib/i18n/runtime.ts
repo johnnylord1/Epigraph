@@ -31,6 +31,7 @@ const pendingCatalogs = new Map<string, Promise<void>>();
 let activeCatalog: Catalog = en;
 let activeMessageLocale = FALLBACK_LOCALE;
 let requestedMessageLocale = FALLBACK_LOCALE;
+let appliedAppLocale: string | null = null;
 let messagesReadyPromise: Promise<void> = Promise.resolve();
 
 function messageKey(id: string) {
@@ -99,10 +100,16 @@ export function messagesReady(): Promise<void> {
   return messagesReadyPromise;
 }
 
+/** The locale last passed through `applyAppLanguage`, or null before the app picks one. */
+export function appliedAppLanguage(): string | null {
+  return appliedAppLocale;
+}
+
 export function applyAppLanguage(language: unknown): string {
   const nextLocale = resolveAppLocale(language);
   const nextMessageLocale = resolveMessageLocale(nextLocale);
   requestedMessageLocale = nextMessageLocale;
+  appliedAppLocale = nextLocale;
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = nextLocale;

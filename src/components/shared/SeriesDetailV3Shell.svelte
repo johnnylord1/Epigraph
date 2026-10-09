@@ -4,6 +4,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
+  import WindowControlsInline from "../layout/WindowControlsInline.svelte";
 
   type SeriesDetailMetric = {
     label: string;
@@ -131,6 +132,7 @@
     </div>
     <div class="n-topbar-right">
       {@render topbarActions?.()}
+      <WindowControlsInline />
     </div>
   </header>
 

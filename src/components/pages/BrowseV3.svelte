@@ -4,7 +4,7 @@
   import { arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
-  import { formatWorkStatus } from "../../lib/i18n/format";
+  import { formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
@@ -2205,7 +2205,7 @@
   });
 
   const searchInsightLines = $derived.by(() => {
-    const tags = searchTasteTags.slice(0, 2).join(" and ").toLowerCase();
+    const tags = formatAppList(searchTasteTags.slice(0, 2)).toLowerCase();
     const trackerBacked = searchRecommendationItems.filter((item) => item.badge).length;
     const hardcoverBacked = searchRecommendationItems.filter((item) =>
       item.candidate.providers.some((provider) => provider.providerId === "hardcover" && provider.score),

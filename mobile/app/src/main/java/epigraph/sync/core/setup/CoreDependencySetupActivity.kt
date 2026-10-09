@@ -584,50 +584,35 @@ private fun CoreDependencySetupContent(
 
                         Step1BottomBar(
                             isBusy = isBusy,
-                            hasUnadded = if (showComics && showNovels) {
-                                if (tab == 0) comicRows.any { !it.added }
-                                else novelInventory!!.repositories.any {
+                            // "Add all" covers both tabs: adding only the visible one left the
+                            // other tab's repositories pending behind a "1 to add" summary.
+                            hasUnadded = (showComics && comicRows.any { !it.added }) ||
+                                (showNovels && novelInventory!!.repositories.any {
                                     it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED
-                                }
-                            } else if (showComics) {
-                                comicRows.any { !it.added }
-                            } else {
-                                novelInventory!!.repositories.any {
-                                    it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED
-                                }
-                            },
+                                }),
                             onAddAll = {
                                 error = false
                                 launchAction {
-                                    if (showComics && showNovels) {
-                                        if (tab == 0) {
-                                            comicRows.filter { !it.added }.forEach { row ->
-                                                coordinator.approveRepository(row.indexUrl)
-                                            }
-                                        } else {
-                                            novelInventory!!.repositories
-                                                .filter { it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED }
-                                                .forEach { item ->
-                                                    novelCoordinator.approveRepository(
-                                                        effectiveServerId!!,
-                                                        effectiveProfileId!!,
-                                                        item.requirement.repositoryId,
-                                                    )
-                                                }
-                                        }
-                                    } else if (showComics) {
+                                    if (showComics) {
                                         comicRows.filter { !it.added }.forEach { row ->
                                             coordinator.approveRepository(row.indexUrl)
                                         }
-                                    } else {
+                                    }
+                                    if (showNovels) {
                                         novelInventory!!.repositories
                                             .filter { it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED }
                                             .forEach { item ->
-                                                novelCoordinator.approveRepository(
+                                                val result = novelCoordinator.approveRepository(
                                                     effectiveServerId!!,
                                                     effectiveProfileId!!,
                                                     item.requirement.repositoryId,
                                                 )
+                                                if (
+                                                    result !is LnReaderRepositoryApprovalResult.Approved &&
+                                                    result !is LnReaderRepositoryApprovalResult.AlreadyApproved
+                                                ) {
+                                                    error = true
+                                                }
                                             }
                                     }
                                     comicRows = report?.let { coordinator.desktopRepositories(it) } ?: emptyList()
@@ -749,30 +734,23 @@ private fun CoreDependencySetupContent(
 
                         Step2BottomBar(
                             isBusy = isBusy,
-                            hasInstallable = if (showComics && showNovels) {
-                                if (tab == 0) report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }
-                                else novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }
-                            } else if (showComics) {
-                                report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }
-                            } else {
-                                novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }
-                            },
+                            // Like "Add all", "Install all" covers both tabs at once.
+                            hasInstallable = (showComics && report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }) ||
+                                (showNovels && novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }),
                             onBack = { step = STEP_REPOSITORIES },
                             onInstallAll = {
                                 error = false
                                 launchAction {
-                                    if (showComics && showNovels) {
-                                        if (tab == 0) {
-                                            coordinator.trustAllUntrusted()
-                                            coordinator.installAllMissing()
-                                        } else {
-                                            installNovelPlugins()
+                                    coroutineScope {
+                                        if (showComics) {
+                                            launch {
+                                                coordinator.trustAllUntrusted()
+                                                coordinator.installAllMissing()
+                                            }
                                         }
-                                    } else if (showComics) {
-                                        coordinator.trustAllUntrusted()
-                                        coordinator.installAllMissing()
-                                    } else {
-                                        installNovelPlugins()
+                                        if (showNovels) {
+                                            launch { installNovelPlugins() }
+                                        }
                                     }
                                     if (effectiveServerId != null && effectiveProfileId != null) {
                                         novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)

@@ -3305,7 +3305,7 @@
   "books_unread": "Unread",
   "books_progress": "progress",
   "profiles_portOutOfRange": "Use a local port between 1024 and 65535.",
-  "profiles_portInUse": "This port is already used by another profile.",
+  "profiles_portInUse": "This port is already used by Epigraph or another profile.",
   "profiles_defaultLabel": "Profile {port}",
   "flaresolverr_localUnreachable": "Local FlareSolverr did not become reachable.",
   "flaresolverr_dockerUnreachable": "Docker FlareSolverr did not become reachable.",

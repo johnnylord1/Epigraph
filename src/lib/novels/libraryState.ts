@@ -738,6 +738,23 @@ export function updateNovelReadingProgress(
   };
 }
 
+/** Marks chapters read or unread by hand; reading progress and history stay as the reader left them. */
+export function setNovelChaptersRead(
+  state: PersistedNovelLibraryState,
+  novelId: string,
+  chapterIds: Iterable<string>,
+  read: boolean,
+): PersistedNovelLibraryState {
+  const ids = new Set(chapterIds);
+  let changed = false;
+  const chapters = state.chapters.map((entry) => {
+    if (entry.novelId !== novelId || !ids.has(entry.id) || entry.unread === !read) return entry;
+    changed = true;
+    return { ...entry, unread: !read };
+  });
+  return changed ? { ...state, chapters, updatedAtMs: Date.now() } : state;
+}
+
 export function buildNovelDetailRecordFromLibrary(
   entry: PersistedNovelLibraryEntry,
   chapters: PersistedNovelChapterEntry[],

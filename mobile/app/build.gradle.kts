@@ -18,7 +18,7 @@ fun runCommand(command: String): String {
 }
 
 @Suppress("PropertyName")
-val _versionName = "0.1.0-alpha.1"
+val _versionName = "0.1.0-alpha.2"
 val betaCount by lazy {
     val betaTags = runCommand("git tag -l --sort=refname v${_versionName}-b*")
 
@@ -92,7 +92,7 @@ android {
     }
     defaultConfig {
         applicationId = "app.epigraph.mobile"
-        versionCode = 1
+        versionCode = 2
         versionName = _versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "COMMIT_COUNT", "\"${commitCount}\"")

@@ -48,6 +48,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdForgetPersistedSession: vi.fn(),
   syncdListDiscoveryCandidates: vi.fn(async () => []),
   syncdListPairedDevices: vi.fn(async () => []),
+  syncdRevokePairedDevice: vi.fn(),
   syncdPauseReplication: vi.fn(),
   syncdResumeReplication: vi.fn(),
   syncdRevalidateSession: vi.fn(),
@@ -97,10 +98,10 @@ describe("Syncd localization (browser)", () => {
   });
 
   test.each([
-    ["pt-BR", "Pareamento da sincronização entre computadores"],
-    ["es", "Emparejamiento de sincronización entre equipos"],
-    ["ja", "デスクトップ同期のペアリング"],
-    ["zh-CN", "桌面同步配对"],
+    ["pt-BR", "Pareamento de dispositivos"],
+    ["es", "Emparejamiento de dispositivos"],
+    ["ja", "デバイスのペアリング"],
+    ["zh-CN", "设备配对"],
   ] as const)("renders the main modal in %s without clipping", async (locale, heading) => {
     applyAppLanguage(locale);
     render(SyncdConnectionPanel, { props: { profileId: "main", scopeLabel: "MAIN" } });

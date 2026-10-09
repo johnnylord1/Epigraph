@@ -3610,7 +3610,11 @@ async fn apply_remote_envelopes(
                     outcome.comic_reader_changes.push(envelope.clone());
                 }
             }
-            "comic.entry" | "comic.category" | "comic.category_assignment" => {
+            // Chapter read state is projected into Suwayomi by syncd; the UI only has to refetch.
+            "comic.entry"
+            | "comic.category"
+            | "comic.category_assignment"
+            | "comic.chapter_state" => {
                 outcome.comic_library_changed = true;
                 continue;
             }
@@ -5062,15 +5066,28 @@ fn upsert_novel_chapter(state: &mut PersistedNovelLibraryState, record: NovelCha
         })
         .and_then(novel_chapter_entity_id)
         .unwrap_or_else(|| record.chapter_id.clone());
-    let next = json!({
-        "id": local_chapter_id,
-        "novelId": local_novel_id,
-        "path": record.path,
-        "title": record.title,
-        "order": desktop_novel_chapter_order(record.chapter_order_key),
-        "releaseTime": record.release_time_ms,
-        "unread": record.unread,
-    });
+    let listed = state
+        .chapters
+        .iter()
+        .find(|entry| novel_chapter_entity_id(entry).as_deref() == Some(local_chapter_id.as_str()));
+    // The plugin owns the title and numbering of a chapter listed here; other devices count chapters
+    // differently, so only the read state travels onto it.
+    let next = match listed {
+        Some(Value::Object(fields)) => {
+            let mut fields = fields.clone();
+            fields.insert("unread".to_string(), json!(record.unread));
+            Value::Object(fields)
+        }
+        _ => json!({
+            "id": local_chapter_id,
+            "novelId": local_novel_id,
+            "path": record.path,
+            "title": record.title,
+            "order": desktop_novel_chapter_order(record.chapter_order_key),
+            "releaseTime": record.release_time_ms,
+            "unread": record.unread,
+        }),
+    };
     let chapter_id = value_string_field(&next, "id").unwrap_or_default();
     let novel_id = value_string_field(&next, "novelId").unwrap_or_default();
     if let Some(index) = state
@@ -7519,6 +7536,40 @@ mod tests {
             "someone plugins"
         );
         assert_eq!(novel_repository_display_name("https://example.com"), "LNReader plugins");
+    }
+
+    #[test]
+    fn remote_novel_chapter_state_keeps_the_local_title_and_order() {
+        use super::*;
+        let mut state = PersistedNovelLibraryState {
+            chapters: vec![
+                json!({"id": "c-154", "novelId": "novel-1", "path": "fiction/1/chapter/154", "title": "154. Before", "order": 153.0, "unread": true}),
+                json!({"id": "c-155", "novelId": "novel-1", "path": "fiction/1/chapter/155", "title": "155. Signing off", "order": 154.0, "unread": true}),
+            ],
+            ..PersistedNovelLibraryState::default()
+        };
+
+        upsert_novel_chapter(
+            &mut state,
+            NovelChapterRecord {
+                chapter_id: "phone-chapter".to_string(),
+                novel_id: "novel-1".to_string(),
+                path: "fiction/1/chapter/155".to_string(),
+                title: "Signing off".to_string(),
+                chapter_order_key: 154.0,
+                release_time_ms: None,
+                unread: false,
+                record_lamport: 3,
+            },
+        );
+
+        assert_eq!(state.chapters.len(), 2);
+        let last = &state.chapters[1];
+        assert_eq!(last["id"], "c-155");
+        assert_eq!(last["title"], "155. Signing off");
+        assert_eq!(last["order"], 154.0);
+        assert_eq!(last["unread"], false);
+        assert_eq!(state.chapters[0]["unread"], true);
     }
 
     #[test]
