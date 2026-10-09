@@ -3,6 +3,7 @@ package epigraph.sync.core.suwayomi
 import epigraph.sync.core.credentials.CoreCredentialException
 import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.http.CoreHttpResult
+import epigraph.sync.core.protocol.CoreErrorDetail
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
 import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import epigraph.sync.core.protocol.SuwayomiCatalogOperation
@@ -370,8 +371,12 @@ class AuthenticatedEpigraphCoreSourceGateway(
     private fun CoreHttpResult.Failure.asSourceException() =
         EpigraphCoreSourceException(
             "Core request failed with HTTP $statusCode" +
-                (errorEnvelope?.let { " (${it.error.code})" } ?: ""),
+                (errorEnvelope?.error?.let { error -> " (${error.code}): ${error.reason()}" } ?: ""),
         )
+
+    // The source's own failure (e.g. "HTTP error 403") says more than the Core's generic message.
+    private fun CoreErrorDetail.reason(): String =
+        ((details as? JsonObject)?.get("upstreamError") as? JsonPrimitive)?.contentOrNull ?: message
 }
 
 class EpigraphCoreSourceException(message: String, cause: Throwable? = null) : Exception(message, cause)

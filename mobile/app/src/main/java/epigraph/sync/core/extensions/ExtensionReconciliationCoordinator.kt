@@ -249,6 +249,9 @@ class ExtensionReconciliationCoordinator(
                     setOf(indexUrl),
                 )
             }
+            // Installed extensions signed by this repository were blocked as untrusted while it
+            // was missing; the repository screen clears them the same way when a repo is added.
+            extensionManager.refreshTrust()
             extensionManager.findAvailableExtensions()
             refreshReportFromCatalog()
             relinkFromCachedInventories()

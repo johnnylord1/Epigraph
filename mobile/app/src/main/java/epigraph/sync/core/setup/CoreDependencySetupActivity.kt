@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
@@ -82,6 +83,7 @@ import epigraph.sync.core.novels.LnReaderPluginInstallResult
 import epigraph.sync.core.novels.LnReaderRepositoryApprovalResult
 import epigraph.sync.core.novels.LnReaderRepositoryParityStatus
 import epigraph.sync.core.pairing.CorePairingUiState
+import epigraph.sync.core.pairing.PairingStage
 import epigraph.sync.core.pairing.EpigraphCorePairingController
 import epigraph.sync.core.pairing.PairingSyncSelection
 import epigraph.sync.core.policy.SyncDomain
@@ -460,6 +462,7 @@ private fun CoreDependencySetupContent(
                 SyncProgressPage(
                     syncMonitor = syncMonitor,
                     requestedAtMs = syncRequestedAtMs,
+                    pairing = pairingState as? CorePairingUiState.Pairing,
                     onFinished = onSyncFinished,
                     modifier = Modifier.weight(1f),
                 )
@@ -1278,6 +1281,7 @@ private fun SelectionBottomBar(
 private fun SyncProgressPage(
     syncMonitor: CoreSyncStatusMonitor,
     requestedAtMs: Long,
+    pairing: CorePairingUiState.Pairing?,
     onFinished: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1300,9 +1304,21 @@ private fun SyncProgressPage(
     ) {
         CircularProgressIndicator()
         Spacer(Modifier.height(16.dp))
+        // Until the desktop approves the pairing nothing syncs; say what it is waiting for.
+        val title = when (pairing?.stage) {
+            null -> stringResource(MR.strings.epigraph_core_setup_syncing)
+            PairingStage.VALIDATING -> stringResource(MR.strings.epigraph_core_pairing_validating)
+            PairingStage.CLAIMING -> stringResource(MR.strings.epigraph_core_pairing_claiming)
+            PairingStage.WAITING_FOR_DESKTOP -> pairing?.verificationCode?.let { code ->
+                stringResource(MR.strings.epigraph_core_pairing_waiting_code, code)
+            } ?: stringResource(MR.strings.epigraph_core_pairing_waiting)
+            PairingStage.EXCHANGING_TOKEN -> stringResource(MR.strings.epigraph_core_pairing_exchanging)
+            PairingStage.SAVING_CREDENTIAL -> stringResource(MR.strings.epigraph_core_pairing_saving)
+        }
         Text(
-            stringResource(MR.strings.epigraph_core_setup_syncing),
+            title,
             style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
         )
         val detail = when (val current = status) {
             is CoreSyncStatus.Syncing ->

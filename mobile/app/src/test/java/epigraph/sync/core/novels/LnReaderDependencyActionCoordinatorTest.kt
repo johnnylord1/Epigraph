@@ -23,6 +23,21 @@ class LnReaderDependencyActionCoordinatorTest {
     }
 
     @Test
+    fun `approving a repository makes its unavailable plugins installable`() = runTest {
+        val store = InMemoryLnReaderDependencyInventoryStore().also {
+            it.replace(inventory(repositoryInstalled = false, LnReaderPluginParityStatus.MISSING_UNAVAILABLE))
+        }
+        val coordinator = LnReaderDependencyActionCoordinator(store, RecordingActionGateway())
+
+        coordinator.approveRepository(SERVER, PROFILE, REPOSITORY)
+
+        assertEquals(
+            LnReaderPluginParityStatus.MISSING_AVAILABLE,
+            store.get(SERVER, PROFILE)!!.plugins.single().status,
+        )
+    }
+
+    @Test
     fun `plugin installation is blocked until repository was approved`() = runTest {
         val gateway = RecordingActionGateway()
         val coordinator = LnReaderDependencyActionCoordinator(

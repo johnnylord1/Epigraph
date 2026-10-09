@@ -180,6 +180,24 @@ class LnReaderDependencyActionCoordinator(
                                 item
                             }
                         },
+                        // The inventory was compared before this repository existed, so its plugins
+                        // were marked unavailable; they can be installed from it now.
+                        plugins = inventory.plugins.map { item ->
+                            if (
+                                item.requirement.repositoryId == repositoryId &&
+                                item.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
+                            ) {
+                                item.copy(
+                                    status = if (item.installedVersion != null) {
+                                        LnReaderPluginParityStatus.UPDATE_AVAILABLE
+                                    } else {
+                                        LnReaderPluginParityStatus.MISSING_AVAILABLE
+                                    },
+                                )
+                            } else {
+                                item
+                            }
+                        },
                     ),
                 )
             }

@@ -24,6 +24,19 @@ class CoreEndpointResolverTest {
     }
 
     @Test
+    fun `development Core is never recovered through the installed Core port`() {
+        val session = fixture(
+            origin = "https://192.168.15.3:4787",
+            lastKnown = "https://192.168.15.3:4787",
+        )
+
+        assertEquals(
+            listOf("https://192.168.15.3:4787"),
+            pairedEndpointCandidates(session),
+        )
+    }
+
+    @Test
     fun `default Core origins are not duplicated`() {
         val session = fixture(
             origin = "https://192.168.15.3:4777",
