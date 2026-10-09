@@ -1605,7 +1605,7 @@
   "ui_githubRepoNotConfigured": "Epigraph の公式リポジトリ",
   "ui_setViteEpigraphGithubRepoAfterPublishingYour": "Epigraph は既定で johnnylord1/Epigraph を使用します。カスタムビルドでのみ VITE_EPIGRAPH_GITHUB_REPO を設定してください。",
   "ui_syncHostIsReady": "同期ホストの準備ができました",
-  "ui_theBootstrapBundleAndQrPayloadAreLive": "ブートストラップ バンドルと QR ペイロードはライブ状態で、2 番目のデスクトップがそれらを要求するのを待っています。",
+  "ui_theBootstrapBundleAndQrPayloadAreLive": "接続したいスマートフォンまたは別のパソコンでコードを入力するか、QR コードを読み取ってください。",
   "ui_syncPairingStarted": "同期ペアリングが開始されました",
   "ui_waitingForTheHostDesktopToApproveOr": "ホスト デスクトップがこの接続を承認または拒否するのを待っています。",
   "ui_approve": "承認する",

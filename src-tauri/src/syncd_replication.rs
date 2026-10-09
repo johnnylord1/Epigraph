@@ -3961,6 +3961,94 @@ async fn catch_up_novel_categories(
     Ok(())
 }
 
+/// A republish of the current local state fills in what the Core is missing; it is not an edit.
+/// Another device may have deleted (or, with `keep_existing`, changed) an entity while this
+/// desktop was off, and the republish runs before this desktop pulls that change, so entities the
+/// Core already settled are left to the Core.
+fn retain_republish_mutations(
+    mutations: Vec<SerializableMutationInput>,
+    snapshots: &[SnapshotResponse],
+    keep_existing: bool,
+) -> Vec<SerializableMutationInput> {
+    let settled = snapshots
+        .iter()
+        .flat_map(|snapshot| {
+            let tombstones = snapshot.tombstones.iter().map(move |tombstone| {
+                (&snapshot.scope_id, &tombstone.entity_type, &tombstone.entity_id)
+            });
+            let entities = snapshot
+                .entities
+                .iter()
+                .filter(move |_| keep_existing)
+                .map(move |entity| (&snapshot.scope_id, &entity.entity_type, &entity.entity_id));
+            tombstones.chain(entities)
+        })
+        .map(|(scope_id, entity_type, entity_id)| {
+            (scope_id.as_str(), entity_type.as_str(), entity_id.as_str())
+        })
+        .collect::<HashSet<_>>();
+    mutations
+        .into_iter()
+        .filter(|mutation| {
+            !settled.contains(&(
+                mutation.base().scope_id.as_str(),
+                mutation.entity_type_label(),
+                mutation.entity_id(),
+            ))
+        })
+        .collect()
+}
+
+async fn retain_republish_mutations_for_core(
+    app: &AppHandle,
+    profile_id: &str,
+    mutations: Vec<SerializableMutationInput>,
+    keep_existing: bool,
+) -> Vec<SerializableMutationInput> {
+    let authority = app
+        .state::<SyncdReplicationState>()
+        .runtime
+        .lock()
+        .await
+        .local_authority
+        .get(profile_id)
+        .cloned();
+    let Some(authority) = authority else {
+        return mutations;
+    };
+    let scope_ids = mutations
+        .iter()
+        .map(|mutation| mutation.base().scope_id.clone())
+        .collect::<HashSet<_>>();
+    let mut snapshots = Vec::new();
+    for scope_id in scope_ids {
+        let snapshot = match insecure_local_syncd_client() {
+            Ok(client) => {
+                fetch_authoritative_snapshot(
+                    &client,
+                    &authority.local_base_url,
+                    &authority.access_token,
+                    &scope_id,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        match snapshot {
+            Ok(snapshot) => snapshots.push(snapshot),
+            Err(error) => {
+                // Without the Core's view, keep the previous behaviour rather than skip the
+                // republish entirely.
+                replication_log(format!(
+                    "republish_filter profile_id={profile_id} scope_id={scope_id} status=skipped error={error}"
+                ));
+                return mutations;
+            }
+        }
+    }
+    retain_republish_mutations(mutations, &snapshots, keep_existing)
+}
+
 async fn publish_current_novel_category_state(
     app: &AppHandle,
     profile_id: &str,
@@ -4007,6 +4095,9 @@ async fn publish_current_novel_category_state(
     if already_published {
         return Ok(());
     }
+    // Folders and memberships carry no asset metadata to refresh, so the ones the Core already
+    // holds are left as they are there.
+    let mutations = retain_republish_mutations_for_core(app, profile_id, mutations, true).await;
     submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await?;
     update_profile_state(profile_id, |profile| {
         profile.last_local_snapshot_digest_novel_categories = Some(digest.clone());
@@ -4121,6 +4212,7 @@ async fn publish_current_novel_library_state(
 
     let mutations =
         diff_novel_mutations(profile_id, &PersistedNovelLibraryState::default(), &current);
+    let mutations = retain_republish_mutations_for_core(app, profile_id, mutations, false).await;
     submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await?;
     update_profile_state(profile_id, |profile| {
         profile.last_local_snapshot_digest_novels = Some(digest.clone());
@@ -4151,6 +4243,7 @@ async fn publish_current_book_library_state(
     }
 
     let mutations = diff_book_mutations(&empty, &current);
+    let mutations = retain_republish_mutations_for_core(app, profile_id, mutations, false).await;
     submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await?;
     update_profile_state(profile_id, |profile| {
         profile.last_local_snapshot_digest_books = Some(digest.clone());
@@ -9035,6 +9128,68 @@ mod tests {
             novel_key: "/novel/one".to_string(),
         });
         (novels, canonical)
+    }
+
+    #[test]
+    fn republish_leaves_entities_the_core_settled_alone() {
+        let assignment = |assignment_id: &str| SerializableMutationInput::NovelCategoryAssignment {
+            base: SerializableMutationBase {
+                client_mutation_id: Uuid::now_v7().to_string(),
+                scope_id: "novels:main".to_string(),
+                entity_id: assignment_id.to_string(),
+                op: MutationOperation::Merge,
+                lamport: now_ms(),
+            },
+            patch: Some(NovelCategoryAssignmentPatch {
+                assignment_id: assignment_id.to_string(),
+                novel_id: "novel".to_string(),
+                category_id: "category".to_string(),
+            }),
+        };
+        let snapshot = SnapshotResponse {
+            schema_version: SNAPSHOT_SCHEMA_VERSION,
+            snapshot_id: None,
+            complete: Some(true),
+            entity_count: Some(1),
+            tombstone_count: Some(1),
+            scope_id: "novels:main".to_string(),
+            snapshot_version: 3,
+            min_replayable_server_version: 1,
+            entities: vec![SnapshotEntity {
+                entity_type: "novel.category_assignment".to_string(),
+                entity_id: "kept".to_string(),
+                server_version: 2,
+                lamport: 2,
+                record: Value::Null,
+            }],
+            tombstones: vec![SnapshotTombstone {
+                entity_type: "novel.category_assignment".to_string(),
+                entity_id: "deleted-elsewhere".to_string(),
+                server_version: 3,
+                lamport: 3,
+                deleted_at_ms: 3,
+                reason_code: "deleted".to_string(),
+            }],
+        };
+        let mutations = || vec![assignment("kept"), assignment("deleted-elsewhere"), assignment("missing")];
+        let ids = |kept: Vec<SerializableMutationInput>| {
+            kept.iter().map(|mutation| mutation.entity_id().to_string()).collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            ids(retain_republish_mutations(mutations(), std::slice::from_ref(&snapshot), true)),
+            vec!["missing"]
+        );
+        assert_eq!(
+            ids(retain_republish_mutations(mutations(), std::slice::from_ref(&snapshot), false)),
+            vec!["kept", "missing"]
+        );
+        // A snapshot of another scope says nothing about these entities.
+        let other_scope = SnapshotResponse {
+            scope_id: "books".to_string(),
+            ..snapshot
+        };
+        assert_eq!(retain_republish_mutations(mutations(), &[other_scope], true).len(), 3);
     }
 
     #[test]

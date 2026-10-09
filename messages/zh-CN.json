@@ -1605,7 +1605,7 @@
   "ui_githubRepoNotConfigured": "Epigraph 官方存储库",
   "ui_setViteEpigraphGithubRepoAfterPublishingYour": "Epigraph 默认使用 johnnylord1/Epigraph。仅在自定义构建中设置 VITE_EPIGRAPH_GITHUB_REPO。",
   "ui_syncHostIsReady": "同步主机已准备就绪",
-  "ui_theBootstrapBundleAndQrPayloadAreLive": "引导程序包和 QR 有效负载处于活动状态，等待第二个桌面来认领它们。",
+  "ui_theBootstrapBundleAndQrPayloadAreLive": "在要连接的手机或其他电脑上输入代码或扫描二维码。",
   "ui_syncPairingStarted": "同步配对开始",
   "ui_waitingForTheHostDesktopToApproveOr": "等待主机桌面批准或拒绝此连接。",
   "ui_approve": "批准",

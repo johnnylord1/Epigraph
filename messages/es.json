@@ -1605,7 +1605,7 @@
   "ui_githubRepoNotConfigured": "Repositorio oficial de Epigraph",
   "ui_setViteEpigraphGithubRepoAfterPublishingYour": "Epigraph usa johnnylord1/Epigraph de forma predeterminada. Defina VITE_EPIGRAPH_GITHUB_REPO solo para builds personalizados.",
   "ui_syncHostIsReady": "El host de sincronización está listo",
-  "ui_theBootstrapBundleAndQrPayloadAreLive": "El paquete de arranque y la carga útil QR están activos y esperando que un segundo escritorio los reclame.",
+  "ui_theBootstrapBundleAndQrPayloadAreLive": "Introduce el código o escanea el código QR en el teléfono u otro ordenador que quieras conectar.",
   "ui_syncPairingStarted": "Se inició el emparejamiento de sincronización",
   "ui_waitingForTheHostDesktopToApproveOr": "Esperando a que el escritorio del host apruebe o rechace esta conexión.",
   "ui_approve": "aprobar",

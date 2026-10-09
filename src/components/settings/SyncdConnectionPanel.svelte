@@ -304,13 +304,15 @@
   const pairingStage = $derived.by(() => {
     if (host?.status === "claimed") return "approval" as const;
     if (connect?.status === "connected" || replicationSnapshot?.activeSessionKey) return "connected" as const;
-    if (host && ["pending", "approved"].includes(host.status)) return "waiting" as const;
+    // An approved code is spent; showing it again would invite a second device to reuse it.
+    if (host?.status === "pending") return "waiting" as const;
     return "start" as const;
   });
 
   /* Header status line: "no desktop yet" before pairing starts, the live overview after. */
-  const headerTone = $derived(pairingStage === "start" && !panelError ? "neutral" : overviewStatus.tone);
-  const headerStatus = $derived(pairingStage === "start" && !panelError ? translate("syncd_modal_noActiveDesktop") : overviewStatus.title);
+  const headerIdle = $derived(pairingStage === "start" && !panelError && host?.status !== "approved");
+  const headerTone = $derived(headerIdle ? "neutral" : overviewStatus.tone);
+  const headerStatus = $derived(headerIdle ? translate("syncd_modal_noActiveDesktop") : overviewStatus.title);
 
   /* The floating dialog glides between step heights; the first-run embedding keeps its sheet's height. */
   function glideWhenModal(node: HTMLElement) {
