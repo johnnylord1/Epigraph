@@ -3363,6 +3363,7 @@ async fn apply_remote_envelopes(
     let mut books_state = read_books_state()?;
     let books_before = books_state.clone();
     let mut novels_state = read_novels_state(launch_target, profile_id)?;
+    let novels_digest_before = novel_library_snapshot_digest(&novels_state)?;
     let mut classification_state = read_novel_classification_state(launch_target, profile_id)?;
     let novels_scope = novels_scope_id(novels_profile_id);
     let comics_scope = comics_scope_id(novels_profile_id);
@@ -3637,10 +3638,12 @@ async fn apply_remote_envelopes(
         books_state.updated_at_ms = Some(now_ms());
         write_books_state(&books_state)?;
     }
+    let mut novels_digest_after = None;
     if outcome.novels_changed {
         ensure_novel_scope_metadata(&mut novels_state, &format!("profile:{profile_id}"));
         novels_state.updated_at_ms = Some(now_ms());
         write_novels_state(launch_target, profile_id, &novels_state)?;
+        novels_digest_after = Some(novel_library_snapshot_digest(&novels_state)?);
     }
     if classification_state.updated_at_ms.is_some() {
         ensure_novel_classification_scope_metadata(
@@ -3660,6 +3663,23 @@ async fn apply_remote_envelopes(
         profile.last_applied_at_ms = Some(now_ms());
         profile.last_connected_at_ms = Some(now_ms());
         profile.last_error = None;
+        // Local writes advance the startup snapshot digests while this apply runs (its own echo
+        // arrives before the write's submit returns), so the copy loaded above must not put an
+        // older digest back.
+        if let Some(latest) = load_replication_state()?.profiles.remove(profile_id) {
+            profile.last_local_snapshot_digest_books = latest.last_local_snapshot_digest_books;
+            profile.last_local_snapshot_digest_novels = latest.last_local_snapshot_digest_novels;
+            profile.last_local_snapshot_digest_novel_categories =
+                latest.last_local_snapshot_digest_novel_categories;
+        }
+        // What a remote change wrote is already in the Core, so it is not republished at startup.
+        if let Some(digest) = novels_digest_after {
+            if profile.last_local_snapshot_digest_novels.as_deref()
+                == Some(novels_digest_before.as_str())
+            {
+                profile.last_local_snapshot_digest_novels = Some(digest);
+            }
+        }
         save_replication_state(&replication)?;
         let _ = emit_replication_state_for_profile(app, profile_id).await;
     }
@@ -4123,10 +4143,18 @@ pub async fn notify_novel_state_written(
     let next = serde_json::from_str::<PersistedNovelLibraryState>(next_contents)
         .map_err(|error| error.to_string())?;
     let diff = diff_novel_mutations(profile_id, &previous, &next);
-    if diff.is_empty() {
-        return Ok(());
+    if !diff.is_empty() {
+        submit_mutations_for_active_profiles(app, Some(profile_id), diff).await?;
     }
-    submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
+    // The edit was delivered or durably queued, so the startup republish has nothing new to send.
+    let previous_digest = novel_library_snapshot_digest(&previous)?;
+    let next_digest = novel_library_snapshot_digest(&next)?;
+    update_profile_state(profile_id, |profile| {
+        if profile.last_local_snapshot_digest_novels.as_deref() == Some(previous_digest.as_str()) {
+            profile.last_local_snapshot_digest_novels = Some(next_digest.clone());
+        }
+    })?;
+    Ok(())
 }
 
 pub async fn notify_novel_source_classification_state_written(
@@ -4193,14 +4221,18 @@ fn serialized_state_digest<T: Serialize>(state: &T) -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
+fn novel_library_snapshot_digest(state: &PersistedNovelLibraryState) -> Result<String, String> {
+    // The version makes snapshots published before chapter read flags were sent go out once more.
+    Ok(format!("v2:{}", serialized_state_digest(state)?))
+}
+
 async fn publish_current_novel_library_state(
     app: &AppHandle,
     profile_id: &str,
 ) -> Result<(), String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let current = read_novels_state(&launch_target, profile_id)?;
-    // The version makes snapshots published before chapter read flags were sent go out once more.
-    let digest = format!("v2:{}", serialized_state_digest(&current)?);
+    let digest = novel_library_snapshot_digest(&current)?;
     let already_published = load_replication_state()?
         .profiles
         .get(profile_id)
@@ -6416,6 +6448,20 @@ fn diff_novel_classification_mutations(
     mutations
 }
 
+/// Named after the owner of the repository path, the same way the mobile LNReader backup
+/// converter names it, because every GitHub-hosted repository shares one host.
+fn novel_repository_display_name(canonical_url: &str) -> String {
+    let owner = url::Url::parse(canonical_url).ok().and_then(|url| {
+        url.path_segments()?
+            .find(|segment| !segment.is_empty())
+            .map(ToString::to_string)
+    });
+    match owner {
+        Some(owner) if !owner.eq_ignore_ascii_case("lnreader") => format!("{owner} plugins"),
+        _ => "LNReader plugins".to_string(),
+    }
+}
+
 fn novel_repository_records(
     state: &PersistedNovelRepositoryState,
 ) -> BTreeMap<String, NovelRepositoryPatch> {
@@ -6430,11 +6476,7 @@ fn novel_repository_records(
             };
             let canonical_url = canonicalize_novel_repository_url(raw_url)?;
             let repository_id = canonical_novel_repository_id(&canonical_url);
-            let name = url::Url::parse(&canonical_url)
-                .ok()
-                .and_then(|url| url.host_str().map(ToString::to_string))
-                .map(|host| format!("{host} LNReader repository"))
-                .unwrap_or_else(|| "LNReader repository".to_string());
+            let name = novel_repository_display_name(&canonical_url);
             Some((
                 repository_id,
                 NovelRepositoryPatch {
@@ -7460,6 +7502,25 @@ async fn post_mutations_for_session(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn novel_repositories_are_named_after_their_owner() {
+        use super::*;
+
+        assert_eq!(
+            novel_repository_display_name(
+                "https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json"
+            ),
+            "LNReader plugins"
+        );
+        assert_eq!(
+            novel_repository_display_name(
+                "https://raw.githubusercontent.com/someone/novel-plugins/main/plugins.min.json"
+            ),
+            "someone plugins"
+        );
+        assert_eq!(novel_repository_display_name("https://example.com"), "LNReader plugins");
+    }
+
     #[test]
     fn novel_chapter_numbers_start_at_one_on_the_core() {
         use super::*;

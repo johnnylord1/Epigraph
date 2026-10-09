@@ -1010,7 +1010,12 @@
         { mangaId: entry.mangaId },
       );
       const chapters = [...data.chapters.nodes].sort((a, b) => a.sourceOrder - b.sourceOrder);
-      const chapter = chapters.find((candidate) => candidate.id === entry.chapterId) ?? chapters[0];
+      const lastIndex = chapters.findIndex((candidate) => candidate.id === entry.chapterId);
+      const last = chapters[lastIndex] ?? chapters[0];
+      // Like the phone, a finished chapter resumes at the next unread one after it.
+      const chapter = last?.isRead
+        ? chapters.slice(lastIndex + 1).find((candidate) => !candidate.isRead) ?? last
+        : last;
       if (chapter) {
         const mangaContext = {
           id: entry.mangaId,

@@ -1703,7 +1703,7 @@ class Store {
   booksLibraryHydrated: boolean = $state(!canUseDesktopBookStorage());
   private booksStatePersistQueued = false;
   private booksStatePersistTask: Promise<void> | null = null;
-  /** Books state as last read back from disk after a sync apply; see queuePersistBooksLibraryState. */
+  /** Books state as last written to or read back from disk; see queuePersistBooksLibraryState. */
   private booksStateDiskSignature: string | null = null;
 
   // ── Shared category list ──────────────────────────────────────────────────
@@ -1780,6 +1780,7 @@ class Store {
     this.booksStateScopeKey = profileId;
     this.booksStateHydrated = false;
     this.booksLibraryHydrated = false;
+    this.booksStateDiskSignature = null;
 
     try {
       const snapshot = await loadBookLibraryState({ profileId });
@@ -1824,13 +1825,9 @@ class Store {
 
   private queuePersistBooksLibraryState() {
     if (!this.booksStateHydrated || DETACHED_READER_WINDOW) return;
-    if (this.booksStateDiskSignature !== null) {
-      // State just reloaded after a sync apply is already on disk. Writing it back could land after
-      // the next apply and publish the removal of whatever that apply added.
-      const unchanged = this.booksStateDiskSignature === this.booksPersistSignature();
-      this.booksStateDiskSignature = null;
-      if (unchanged) return;
-    }
+    // The effect also reruns on unrelated settings changes. Rewriting books state that is already on
+    // disk could land right after a sync apply and publish the revert of whatever that apply changed.
+    if (this.booksStateDiskSignature === this.booksPersistSignature()) return;
     this.booksStatePersistQueued = true;
     if (this.booksStatePersistTask) return;
 
@@ -1845,6 +1842,7 @@ class Store {
       try {
         while (this.booksStatePersistQueued) {
           this.booksStatePersistQueued = false;
+          this.booksStateDiskSignature = this.booksPersistSignature();
           await saveBookLibraryState({
             version: 1 as const,
             books: this.books.map(toPersistedBookEntry),
@@ -1856,6 +1854,9 @@ class Store {
             updatedAtMs: Date.now(),
           }, { profileId: this.booksStateScopeKey ?? this.runtimeResolvedLocalProfileId ?? resolveSettingsProfileId(this.settings) });
         }
+      } catch (error) {
+        this.booksStateDiskSignature = null;
+        throw error;
       } finally {
         this.booksStatePersistTask = null;
       }

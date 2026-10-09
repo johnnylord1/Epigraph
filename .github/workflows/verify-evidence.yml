@@ -13,8 +13,6 @@ jobs:
   evidence:
     runs-on: windows-latest
     timeout-minutes: 10
-    env:
-      EPIGRAPH_VERIFICATION_ROOT: ${{ runner.temp }}/epigraph-verification
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,6 +22,9 @@ jobs:
         id: retention
         shell: pwsh
         run: |
+          # The runner context is not available in job-level env, so the root is exported here.
+          $env:EPIGRAPH_VERIFICATION_ROOT = Join-Path $env:RUNNER_TEMP "epigraph-verification"
+          "EPIGRAPH_VERIFICATION_ROOT=$env:EPIGRAPH_VERIFICATION_ROOT" >> $env:GITHUB_ENV
           $configured = if ($env:GITHUB_RETENTION_DAYS) { [int]$env:GITHUB_RETENTION_DAYS } else { 30 }
           $days = [Math]::Min(30, $configured)
           "days=$days" >> $env:GITHUB_OUTPUT
