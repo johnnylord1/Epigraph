@@ -472,7 +472,6 @@
   let categoriesDetailsPane = $state<"comics" | "books" | null>(null);
   let contentSourceRulesOpen = $state(false);
   let contentSourceRulesMode = $state<"allowed" | "blocked">("allowed");
-  let trackingSyncdOpen = $state(false);
   let aboutReleasesOpen = $state(false);
   let securityDetailPane = $state<"auth" | "socks" | "flare" | "pin" | "syncd" | null>(null);
   const currentGroup = $derived.by(
@@ -610,7 +609,6 @@
     categoriesDetailsPane = null;
     contentSourceRulesOpen = false;
     contentSourceRulesMode = "allowed";
-    trackingSyncdOpen = false;
     aboutReleasesOpen = false;
     securityDetailPane = null;
     advStorageOpen = false;
@@ -5760,28 +5758,6 @@
                     </div>
                   </div>
                 {/if}
-              {/if}
-            </div>
-
-            <div class="settings-card">
-              <p class="settings-card__title">{$_("settings_inline_syncBehavior")}</p>
-              <div class="settings-card__stack">
-                <div class="settings-row settings-mini-row">
-                  <div class="settings-mini-row__body">
-                    <p class="settings-mini-row__label">{$_("settings_inline_desktopSyncPairing")}</p>
-                    <p class="settings-mini-row__hint">{$_("settings_inline_desktopSyncPairingHint")}</p>
-                  </div>
-                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (trackingSyncdOpen = !trackingSyncdOpen)}>
-                    {trackingSyncdOpen ? $_("common_close") : $_("ui_manage")}
-                  </button>
-                </div>
-              </div>
-              {#if trackingSyncdOpen}
-                <SyncdConnectionPanel
-                  profileId={currentRuntimeProfileId}
-                  scopeLabel={currentSessionProfileSummary}
-                  onClose={() => (trackingSyncdOpen = false)}
-                />
               {/if}
             </div>
           </div>
