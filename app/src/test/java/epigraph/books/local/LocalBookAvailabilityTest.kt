@@ -10,7 +10,7 @@ class LocalBookAvailabilityTest {
 
     @Test
     fun `a synced book whose file is on Core downloads when opened instead of being missing`() {
-        val book = book(privatePath = "C:\missing\book.epub", remoteAvailable = true)
+        val book = book(privatePath = "/nonexistent/epigraph/book.epub", remoteAvailable = true)
 
         assertFalse(book.isAvailable)
         assertTrue(book.downloadsWhenOpened)
@@ -18,7 +18,7 @@ class LocalBookAvailabilityTest {
 
     @Test
     fun `a local import without its file and without a Core copy is missing`() {
-        assertFalse(book(privatePath = "C:\missing\book.epub", remoteAvailable = false).downloadsWhenOpened)
+        assertFalse(book(privatePath = "/nonexistent/epigraph/book.epub", remoteAvailable = false).downloadsWhenOpened)
     }
 
     @Test
