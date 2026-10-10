@@ -18,7 +18,9 @@ fun runCommand(command: String): String {
 }
 
 @Suppress("PropertyName")
-val _versionName = "0.1.0-alpha.2"
+// epigraph.versionName only exists to build an older-looking APK that exercises the in-app
+// updater against the published release; published builds always use the default.
+val _versionName = providers.gradleProperty("epigraph.versionName").orNull ?: "0.1.0-alpha.2"
 val betaCount by lazy {
     val betaTags = runCommand("git tag -l --sort=refname v${_versionName}-b*")
 
@@ -211,8 +213,8 @@ android {
 
     productFlavors {
         create("standard") {
-            // Keep the upstream updater disabled until Epigraph has its own signed feed.
-            buildConfigField("Boolean", "INCLUDE_UPDATER", "false")
+            // Updates come from the Epigraph GitHub releases, whose APKs carry the Epigraph release key.
+            buildConfigField("Boolean", "INCLUDE_UPDATER", "true")
             dimension = "default"
         }
         create("dev") {
