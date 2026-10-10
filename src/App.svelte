@@ -3,6 +3,7 @@
   import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
   import { enableBuiltinCloudflareSolver } from "./lib/flaresolverr";
+  import { mainWindowTitle } from "./lib/appTitle";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
@@ -2520,9 +2521,9 @@
       configureBuiltInLocalServerPorts(builtInPorts ?? fallbackBuiltInServerPorts(import.meta.env.MODE));
       applyLaunchTarget(launchTarget);
       const initialTarget = getServerTargetInfo();
-      document.title = `Epigraph [${initialTarget.title}]`;
+      document.title = mainWindowTitle(initialTarget.title);
       if (win) {
-        await win.setTitle(`Epigraph [${initialTarget.title}]`).catch(() => {});
+        await win.setTitle(mainWindowTitle(initialTarget.title)).catch(() => {});
       }
       if (cancelled) return;
       installAuditBridge();
@@ -2821,7 +2822,7 @@
 
   $effect(() => {
     const target = getServerTargetInfo();
-    const title = `Epigraph [${target.title}]`;
+    const title = mainWindowTitle(target.title);
     document.title = title;
     if (win) {
       void win.setTitle(title).catch(() => {});
@@ -3236,9 +3237,27 @@
       onRetry={handleRetry}
       onBypass={handleBypass} />
   {/if}
+  {#if import.meta.env.DEV}
+    <div class="dev-build-badge" aria-hidden="true">DEV</div>
+  {/if}
 {/if}
 
 <style>
+  .dev-build-badge {
+    position: fixed;
+    left: 10px;
+    bottom: 10px;
+    z-index: 2147483000;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--color-warning);
+    color: var(--color-surface);
+    font: 700 11px/16px system-ui, sans-serif;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    opacity: 0.9;
+  }
+
   .root {
     position: relative;
     height: 100%;

@@ -298,9 +298,10 @@
   // A popular page from a working LNReader source takes about 1-2.5 s. Results are shown as each source
   // answers, so this only bounds how long a slow source can hold up its batch.
   const NOVEL_SOURCE_REQUEST_TIMEOUT_MS = 4_000;
-  const NOVEL_DETAIL_ENRICHMENT_LIMIT = 3;
-  const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 1;
-  const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
+  // Source lists carry no genres; a details page does, and it is about as slow as a list page.
+  const NOVEL_DETAIL_ENRICHMENT_LIMIT = 8;
+  const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 2;
+  const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 2_500;
   const trackerScoreSearchCache = new Map<string, TrackSearch[]>();
   let malTrackerPausedUntil = 0;
   const hardcoverScoreSearchCache = new Map<string, RecommendationProviderSignal | null>();

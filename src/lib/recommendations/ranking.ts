@@ -234,6 +234,7 @@ export function buildRecommendationSections(
               && item.breakdown.trackerConsensus >= 0.82
               && qualityScore(item) >= 0.72
             )
+            || (proseUntaggedTasteCandidate(item, profile) && qualityScore(item) >= 0.6)
           )
         )),
       profile,
@@ -250,8 +251,13 @@ export function buildRecommendationSections(
         && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
         && (profile.seedCount === 0 || (
           fitsProfileComicFormat(item, profile)
-          && item.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN
-          && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+          && (
+            (
+              item.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN
+              && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
+            )
+            || proseUntaggedTasteCandidate(item, profile)
+          )
         )),
       profile,
     ),
@@ -501,6 +507,20 @@ function proseWarmStartCandidate(item: RecommendationItem, profile: TasteProfile
     && isProseContentType(item.candidate.contentType)
     && item.breakdown.sourceAvailability >= 0.45
     && (qualityScore(item) >= 0.35 || momentumScore(item) >= 0.08)
+    && item.candidate.title.trim().length > 0;
+}
+
+// Novel sources list titles without genres and only a few get their details
+// fetched, so most novels cannot show a tag match. For a reader whose profile
+// leans on prose, an untagged novel is judged by format fit and its source
+// signals instead of leaving the taste rows empty.
+function proseUntaggedTasteCandidate(item: RecommendationItem, profile: TasteProfile): boolean {
+  return profile.seedCount > 0
+    && isProseContentType(item.candidate.contentType)
+    && !hasTopicalTags(item)
+    && item.breakdown.sourceAvailability >= 0.45
+    && item.breakdown.contentTypeFit >= 0.3
+    && item.breakdown.negativeTagPenalty === 0
     && item.candidate.title.trim().length > 0;
 }
 

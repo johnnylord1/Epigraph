@@ -993,6 +993,63 @@ describe("recommendation sections", () => {
     expect(trendingIds).toHaveLength(0);
   });
 
+  it("fills the taste rows with untagged source novels for a reader of novels", () => {
+    const novelReader = buildTasteProfile([0, 1, 2, 3].map((index) => ({
+      id: `library-novel-${index}`, title: `Library Novel ${index}`, tags: ["Fantasy", "Cultivation"],
+      contentType: "novel" as const, userRating: 8, status: "reading" as const,
+    })));
+    const untaggedNovels = Array.from({ length: 24 }, (_, index) =>
+      candidate(`source-novel-${index}`, {
+        contentType: "novel",
+        tags: ["novel", "webnovel", "en"],
+        providers: [
+          {
+            providerId: "ln-central",
+            providerName: "Central Novels",
+            kind: "source",
+            availability: normalizeScore(1, 1, 0.82),
+            popularity: { value: 0.58 + ((index % 5) * 0.06), confidence: 0.36, method: "novel-source-result" },
+            trending: { value: 0.22, confidence: 0.28, method: "novel-source-result" },
+            recency: { value: 0.24, confidence: 0.3, method: "novel-source-result" },
+          },
+        ],
+      }),
+    );
+
+    const sections = buildRecommendationSections(untaggedNovels, novelReader, { nowMs: NOW, limitPerSection: 60 });
+    const sectionSize = (key: RecommendationSection["key"]) => sections.find((section) => section.key === key)?.items.length ?? 0;
+
+    expect(sectionSize("trendingNearYourTaste")).toBeGreaterThan(0);
+    expect(sectionSize("highConfidence")).toBeGreaterThan(0);
+  });
+
+  it("keeps untagged novels out of the taste rows of a comic reader", () => {
+    const comicReader = buildTasteProfile([0, 1, 2, 3].map((index) => ({
+      id: `library-manga-${index}`, title: `Library Manga ${index}`, tags: ["Action", "Murim"],
+      contentType: "manga" as const, userRating: 9, status: "completed" as const,
+    })));
+    const untaggedNovels = Array.from({ length: 12 }, (_, index) =>
+      candidate(`source-novel-${index}`, {
+        contentType: "novel",
+        tags: ["novel"],
+        providers: [
+          {
+            providerId: "ln-central",
+            providerName: "Central Novels",
+            kind: "source",
+            availability: normalizeScore(1, 1, 0.82),
+            popularity: { value: 0.8, confidence: 0.5, method: "novel-source-result" },
+          },
+        ],
+      }),
+    );
+
+    const sections = buildRecommendationSections(untaggedNovels, comicReader, { nowMs: NOW, limitPerSection: 60 });
+
+    expect(sections.find((section) => section.key === "trendingNearYourTaste")?.items).toHaveLength(0);
+    expect(sections.find((section) => section.key === "highConfidence")?.items).toHaveLength(0);
+  });
+
   it("matches one taste of an eclectic reader instead of diluting it across the whole profile", () => {
     const eclecticProfile = buildTasteProfile([
       ...[0, 1, 2].map((index) => ({

@@ -3364,7 +3364,7 @@ async fn apply_remote_envelopes(
         return Ok(());
     }
     let mut books_state = read_books_state()?;
-    let books_before = books_state.clone();
+    let mut books_before = books_state.clone();
     let mut novels_state = read_novels_state(launch_target, profile_id)?;
     let novels_digest_before = novel_library_snapshot_digest(&novels_state)?;
     let mut classification_state = read_novel_classification_state(launch_target, profile_id)?;
@@ -3642,6 +3642,13 @@ async fn apply_remote_envelopes(
     }
 
     if outcome.books_changed {
+        // Downloading assets can take a while, and the frontend may have written the books
+        // meanwhile; its write is kept and only what this apply changed goes on top of it.
+        let on_disk = read_books_state()?;
+        if serde_json::to_value(&on_disk).ok() != serde_json::to_value(&books_before).ok() {
+            books_state = rebase_books_apply(&books_before, &books_state, &on_disk)?;
+            books_before = on_disk;
+        }
         books_state.updated_at_ms = Some(now_ms());
         write_books_state(&books_state)?;
     }
@@ -3718,6 +3725,100 @@ async fn apply_remote_envelopes(
         );
     }
     Ok(())
+}
+
+/// Puts what an apply changed on top of the books state the frontend wrote while it ran.
+fn rebase_books_apply(
+    base: &PersistedBookLibraryState,
+    applied: &PersistedBookLibraryState,
+    on_disk: &PersistedBookLibraryState,
+) -> Result<PersistedBookLibraryState, String> {
+    let to_value = |state: &PersistedBookLibraryState| {
+        serde_json::to_value(state).map_err(|error| error.to_string())
+    };
+    let (base, ours, theirs) = (to_value(base)?, to_value(applied)?, to_value(on_disk)?);
+    let mut merged = theirs.clone();
+    if let Some(merged) = merged.as_object_mut() {
+        for (field, our_value) in ours.as_object().into_iter().flatten() {
+            let base_value = base.get(field).unwrap_or(&Value::Null);
+            let their_value = theirs.get(field).unwrap_or(&Value::Null);
+            if our_value == base_value {
+                continue;
+            }
+            let value = if their_value == base_value {
+                our_value.clone()
+            } else {
+                match field.as_str() {
+                    "books" | "booksCategories" => merge_keyed_items(base_value, our_value, their_value, "id"),
+                    "bookProgress" => merge_keyed_items(base_value, our_value, their_value, "bookId"),
+                    "bookBookmarks" => merge_keyed_items(base_value, our_value, their_value, "bookmarkId"),
+                    "bookHighlights" => merge_keyed_items(base_value, our_value, their_value, "highlightId"),
+                    "bookHistory" => merge_keyed_items(base_value, our_value, their_value, "historyId"),
+                    "booksCategoryAssignments" => merge_object_keys(base_value, our_value, their_value),
+                    _ => our_value.clone(),
+                }
+            };
+            merged.insert(field.clone(), value);
+        }
+    }
+    serde_json::from_value(merged).map_err(|error| error.to_string())
+}
+
+/// Items the apply changed or added come from the apply, items it removed go, and the rest are the
+/// frontend's. Items without a key are the frontend's.
+fn merge_keyed_items(base: &Value, ours: &Value, theirs: &Value, key: &str) -> Value {
+    let keyed = |items: &Value| -> BTreeMap<String, Value> {
+        items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let id = value_string_field(item, key)?;
+                Some((id, item.clone()))
+            })
+            .collect()
+    };
+    let (base_items, our_items) = (keyed(base), keyed(ours));
+    let apply_changed = |id: &str| our_items.get(id) != base_items.get(id);
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+    for item in theirs.as_array().into_iter().flatten() {
+        let Some(id) = value_string_field(item, key) else {
+            merged.push(item.clone());
+            continue;
+        };
+        seen.insert(id.clone());
+        if !apply_changed(&id) {
+            merged.push(item.clone());
+        } else if let Some(ours) = our_items.get(&id) {
+            merged.push(ours.clone());
+        }
+    }
+    for item in ours.as_array().into_iter().flatten() {
+        if let Some(id) = value_string_field(item, key) {
+            if !seen.contains(&id) && apply_changed(&id) {
+                merged.push(item.clone());
+            }
+        }
+    }
+    Value::Array(merged)
+}
+
+fn merge_object_keys(base: &Value, ours: &Value, theirs: &Value) -> Value {
+    let empty = serde_json::Map::new();
+    let base = base.as_object().unwrap_or(&empty);
+    let ours = ours.as_object().unwrap_or(&empty);
+    let mut merged = theirs.as_object().cloned().unwrap_or_default();
+    for key in base.keys().chain(ours.keys()) {
+        if ours.get(key) == base.get(key) {
+            continue;
+        }
+        match ours.get(key) {
+            Some(value) => merged.insert(key.clone(), value.clone()),
+            None => merged.remove(key),
+        };
+    }
+    Value::Object(merged)
 }
 
 /// A Books & novels folder value this desktop sent to a scope whose echo has not streamed back yet.
@@ -3889,6 +3990,16 @@ pub async fn notify_book_state_written(
     if !frontend_included_highlights {
         next.book_highlights = previous.book_highlights.clone();
     }
+    // Writes land in order, and each one's metadata is filled in before the next is compared
+    // against it.
+    let _ordered = BOOK_STATE_NOTIFY_LOCK.lock().await;
+    let mut previous = previous;
+    // The previous write may not have had its Rust-owned metadata filled in yet. Filling it the
+    // same way on both sides keeps that metadata from reading as an edit of every book.
+    let previous_snapshot = previous.clone();
+    let _ = enrich_book_asset_metadata(&previous_snapshot, &mut previous);
+    let _ = enrich_book_cover_assets(&previous_snapshot, &mut previous).await;
+    let remote_applies_kept = keep_remote_book_applies(&previous, &mut next);
     let asset_metadata_changed = enrich_book_asset_metadata(&previous, &mut next)?;
     let cover_assets_changed = enrich_book_cover_assets(&previous, &mut next).await?;
     let projected_history_changed = project_latest_book_history(&previous, &mut next);
@@ -3896,13 +4007,19 @@ pub async fn notify_book_state_written(
         || projected_history_changed
         || asset_metadata_changed
         || cover_assets_changed
+        || remote_applies_kept
     {
         // Keep the Rust-owned history collection in the canonical JSON even
         // while the current frontend is unaware of that field. This write does
-        // not call the Tauri command again, so it cannot recurse.
-        write_books_state(&next)?;
+        // not call the Tauri command again, so it cannot recurse. A newer write
+        // already on disk is left alone; its own notification fills it in.
+        let on_disk = fs::read_to_string(book_library_state_path()?).ok();
+        if on_disk.as_deref() == Some(next_contents) {
+            write_books_state(&next)?;
+        }
     }
     let mut diff = diff_book_mutations(&previous, &next);
+    drop_book_entries_the_core_has(&mut diff);
     diff.extend(diff_book_category_mutations(&previous, &next));
     replication_log(format!(
         "notify_book_state_written prev_progress={} next_progress={} prev_bookmarks={} next_bookmarks={} prev_history={} next_history={} diff_count={} diff=[{}]",
@@ -3915,11 +4032,15 @@ pub async fn notify_book_state_written(
         diff.len(),
         summarize_mutations(&diff)
     ));
+    drop(_ordered);
     if !diff.is_empty() {
-        submit_mutations_for_active_profiles(app, None, diff).await?;
+        submit_mutations_for_active_profiles(app, None, diff.clone()).await?;
+        note_book_entries_sent(&diff);
     }
     publish_novel_category_changes(app, &previous, &next).await
 }
+
+static BOOK_STATE_NOTIFY_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Desktop Books categories also hold novels; each profile's novels scope receives the novel side.
 async fn publish_novel_category_changes(
@@ -4628,9 +4749,11 @@ fn upsert_book_entry(
         .filter(|entry| entry.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
+    let superseded = existing.and_then(book_entry_patch_value).map(|(_, patch)| patch);
     if let (Some(target), Value::Object(fields)) = (next.as_object_mut(), synced) {
         target.extend(fields);
     }
+    note_remote_book_apply(superseded, &next);
     if let Some(index) = state
         .books
         .iter()
@@ -4639,6 +4762,174 @@ fn upsert_book_entry(
         state.books[index] = next;
     } else {
         state.books.push(next);
+    }
+}
+
+/// The synchronized fields of a desktop book entry, keyed the way its mutations are.
+fn book_entry_patch_value(entry: &Value) -> Option<(String, Value)> {
+    let book_id = canonical_book_id_for_entry(entry).or_else(|| book_entry_entity_id(entry))?;
+    let patch = serde_json::to_value(build_book_entry_patch(entry)?).ok()?;
+    Some((book_id, patch))
+}
+
+/// The book entry fields a remote apply writes; every other field belongs to this desktop.
+const BOOK_ENTRY_SYNCED_FIELDS: &[&str] = &[
+    "assetFingerprint",
+    "mimeType",
+    "byteSize",
+    "coverAssetSha256",
+    "coverAssetByteSize",
+    "coverAssetMimeType",
+    "title",
+    "author",
+    "description",
+    "subtype",
+    "pageCount",
+    "createdAt",
+    "updatedAt",
+    "tocCount",
+    "spineCount",
+    "sectionsSummary",
+    "sectionCount",
+    "hasCover",
+];
+
+/// A book entry a remote apply changed: the synced fields it replaced and the ones it wrote.
+struct RemoteBookApply {
+    superseded: Vec<Value>,
+    applied: Value,
+}
+
+/// The frontend keeps its own copy of the books until it reloads them after an apply. A write it
+/// makes in between still carries the replaced fields and would publish them as a revert of the
+/// other device's change, which that device then reapplies, and so on.
+static REMOTE_BOOK_APPLIES: std::sync::Mutex<BTreeMap<String, RemoteBookApply>> =
+    std::sync::Mutex::new(BTreeMap::new());
+const REMOTE_BOOK_APPLY_HISTORY: usize = 8;
+
+/// Synced fields of each book as the Core last streamed them or accepted them from this desktop.
+/// Sending the same fields again changes nothing on the Core but still appends to its change log,
+/// and every device then replays the echo.
+static CORE_BOOK_ENTRIES: std::sync::Mutex<BTreeMap<String, Value>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+fn note_remote_book_apply(superseded: Option<Value>, entry: &Value) {
+    let Some((book_id, applied)) = book_entry_patch_value(entry) else {
+        return;
+    };
+    CORE_BOOK_ENTRIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(book_id.clone(), applied.clone());
+    let Some(superseded) = superseded.filter(|patch| *patch != applied) else {
+        return;
+    };
+    let mut applies = REMOTE_BOOK_APPLIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let apply = applies.entry(book_id).or_insert_with(|| RemoteBookApply {
+        superseded: Vec::new(),
+        applied: applied.clone(),
+    });
+    apply.applied = applied;
+    if !apply.superseded.contains(&superseded) {
+        apply.superseded.push(superseded);
+    }
+    let current = apply.applied.clone();
+    apply.superseded.retain(|patch| *patch != current);
+    if apply.superseded.len() > REMOTE_BOOK_APPLY_HISTORY {
+        let excess = apply.superseded.len() - REMOTE_BOOK_APPLY_HISTORY;
+        apply.superseded.drain(..excess);
+    }
+}
+
+/// Keeps what a remote apply wrote when the frontend writes a book back with the fields that apply
+/// replaced. A book the frontend changed in any other way is its own edit and goes through.
+fn keep_remote_book_applies(
+    previous: &PersistedBookLibraryState,
+    next: &mut PersistedBookLibraryState,
+) -> bool {
+    let mut applies = REMOTE_BOOK_APPLIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if applies.is_empty() {
+        return false;
+    }
+    let on_disk: BTreeMap<String, (&Value, Value)> = previous
+        .books
+        .iter()
+        .filter_map(|entry| {
+            let (book_id, patch) = book_entry_patch_value(entry)?;
+            Some((book_id, (entry, patch)))
+        })
+        .collect();
+    let mut kept = false;
+    for entry in &mut next.books {
+        let Some((book_id, patch)) = book_entry_patch_value(entry) else {
+            continue;
+        };
+        let Some(apply) = applies.get(&book_id) else {
+            continue;
+        };
+        if patch == apply.applied || !apply.superseded.contains(&patch) {
+            // The frontend reloaded the apply, or edited the book after it.
+            applies.remove(&book_id);
+            continue;
+        }
+        let Some((disk_entry, disk_patch)) = on_disk.get(&book_id) else {
+            continue;
+        };
+        if *disk_patch != apply.applied {
+            continue;
+        }
+        if let (Some(target), Some(source)) = (entry.as_object_mut(), disk_entry.as_object()) {
+            for field in BOOK_ENTRY_SYNCED_FIELDS {
+                match source.get(*field) {
+                    Some(value) => {
+                        target.insert((*field).to_string(), value.clone());
+                    }
+                    None => {
+                        target.remove(*field);
+                    }
+                }
+            }
+            kept = true;
+        }
+    }
+    kept
+}
+
+fn drop_book_entries_the_core_has(mutations: &mut Vec<SerializableMutationInput>) {
+    let known = CORE_BOOK_ENTRIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    mutations.retain(|mutation| match mutation {
+        SerializableMutationInput::BookEntry {
+            base,
+            patch: Some(patch),
+        } if base.op == MutationOperation::Merge => {
+            known.get(&base.entity_id) != serde_json::to_value(patch).ok().as_ref()
+        }
+        _ => true,
+    });
+}
+
+fn note_book_entries_sent(mutations: &[SerializableMutationInput]) {
+    let mut known = CORE_BOOK_ENTRIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for mutation in mutations {
+        let SerializableMutationInput::BookEntry { base, patch } = mutation else {
+            continue;
+        };
+        match patch.as_ref().and_then(|patch| serde_json::to_value(patch).ok()) {
+            Some(patch) if base.op == MutationOperation::Merge => {
+                known.insert(base.entity_id.clone(), patch);
+            }
+            _ => {
+                known.remove(&base.entity_id);
+            }
+        }
     }
 }
 
@@ -4715,6 +5006,14 @@ async fn materialize_snapshot_book_assets(
 }
 
 fn delete_book_entry(state: &mut PersistedBookLibraryState, book_id: &str) {
+    CORE_BOOK_ENTRIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(book_id);
+    REMOTE_BOOK_APPLIES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(book_id);
     let local_book_id = local_book_id_for_canonical_id(state, book_id);
     state
         .books
@@ -10375,5 +10674,146 @@ mod tests {
         assert_eq!(delivery.settled, 0);
         assert!(delivery.retryable, "{error}");
         assert!(is_connection_error(&error), "{error}");
+    }
+
+    fn synced_pdf(fingerprint: &str, section_count: i64, updated_at: i64) -> BookEntryRecord {
+        BookEntryRecord {
+            book_id: format!("pdf:sha256:{fingerprint}"),
+            asset_fingerprint: Some(fingerprint.to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            byte_size: Some(7754),
+            cover_asset_sha256: None,
+            cover_asset_byte_size: None,
+            cover_asset_mime_type: None,
+            title: "QA PDF".to_string(),
+            author: None,
+            description: None,
+            subtype: "pdf".to_string(),
+            page_count: Some(3),
+            toc_count: Some(section_count),
+            spine_count: Some(0),
+            section_count: Some(section_count),
+            sections_summary_json: Some(Value::Array(
+                (0..section_count)
+                    .map(|index| json!({ "label": format!("Section {index}") }))
+                    .collect(),
+            )),
+            has_cover: false,
+            created_at_ms: 1,
+            book_updated_at_ms: updated_at,
+            record_lamport: updated_at,
+        }
+    }
+
+    fn local_pdf_state(fingerprint: &str) -> PersistedBookLibraryState {
+        let mut state = PersistedBookLibraryState::default();
+        upsert_book_entry(&mut state, synced_pdf(fingerprint, 0, 10), None, None);
+        state.books[0]["id"] = json!(format!("pdf-{fingerprint}"));
+        state.books[0]["metadataBackfillVersion"] = json!(2);
+        state
+    }
+
+    fn book_entry_mutations(mutations: &[SerializableMutationInput]) -> usize {
+        mutations
+            .iter()
+            .filter(|mutation| matches!(mutation, SerializableMutationInput::BookEntry { .. }))
+            .count()
+    }
+
+    #[test]
+    fn a_frontend_write_from_before_a_remote_apply_does_not_revert_it() {
+        let fingerprint = "a1".repeat(32);
+        let mut on_disk = local_pdf_state(&fingerprint);
+        let mut stale = on_disk.clone();
+        upsert_book_entry(&mut on_disk, synced_pdf(&fingerprint, 2, 20), None, None);
+        // The frontend has not reloaded the apply yet; a field only it tracks changed meanwhile.
+        stale.books[0]["hardcoverBookId"] = json!(7);
+
+        assert!(keep_remote_book_applies(&on_disk, &mut stale));
+
+        assert_eq!(stale.books[0]["sectionCount"], json!(2));
+        assert_eq!(stale.books[0]["updatedAt"], json!(20));
+        assert_eq!(stale.books[0]["hardcoverBookId"], json!(7));
+        assert_eq!(stale.books[0]["metadataBackfillVersion"], json!(2));
+        assert_eq!(book_entry_mutations(&diff_book_mutations(&on_disk, &stale)), 0);
+    }
+
+    #[test]
+    fn a_book_edited_after_a_remote_apply_is_published() {
+        let fingerprint = "b2".repeat(32);
+        let mut on_disk = local_pdf_state(&fingerprint);
+        upsert_book_entry(&mut on_disk, synced_pdf(&fingerprint, 2, 20), None, None);
+        let mut edited = on_disk.clone();
+        edited.books[0]["title"] = json!("Renamed");
+
+        assert!(!keep_remote_book_applies(&on_disk, &mut edited));
+
+        assert_eq!(edited.books[0]["title"], json!("Renamed"));
+        assert_eq!(book_entry_mutations(&diff_book_mutations(&on_disk, &edited)), 1);
+    }
+
+    #[test]
+    fn a_book_entry_the_core_already_has_is_not_sent_again() {
+        let fingerprint = "c3".repeat(32);
+        let streamed = local_pdf_state(&fingerprint);
+        let mut diff = diff_book_mutations(&PersistedBookLibraryState::default(), &streamed);
+        assert_eq!(book_entry_mutations(&diff), 1);
+
+        drop_book_entries_the_core_has(&mut diff);
+        assert_eq!(book_entry_mutations(&diff), 0);
+
+        let mut renamed = streamed.clone();
+        renamed.books[0]["title"] = json!("Renamed");
+        let mut diff = diff_book_mutations(&streamed, &renamed);
+        drop_book_entries_the_core_has(&mut diff);
+        assert_eq!(book_entry_mutations(&diff), 1);
+        note_book_entries_sent(&diff);
+
+        let mut repeated = diff_book_mutations(&streamed, &renamed);
+        drop_book_entries_the_core_has(&mut repeated);
+        assert_eq!(book_entry_mutations(&repeated), 0);
+    }
+
+    #[test]
+    fn an_apply_keeps_what_the_frontend_wrote_while_it_ran() {
+        let book = |id: &str, title: &str| json!({ "id": id, "title": title, "subtype": "epub" });
+        let progress = LocalBookProgress {
+            book_id: "epub-kept".to_string(),
+            location: Some("epubcfi(/6/4)".to_string()),
+            href: None,
+            progress_percent: 0.3,
+            last_read_at: 30,
+            page_index: None,
+            total_pages: None,
+            section_label: None,
+            renderer: Some("epub".to_string()),
+        };
+        let base = PersistedBookLibraryState {
+            books: vec![book("epub-kept", "Kept"), book("epub-gone", "Gone")],
+            ..PersistedBookLibraryState::default()
+        };
+        let applied = PersistedBookLibraryState {
+            books: vec![book("epub-kept", "Renamed on the phone")],
+            ..PersistedBookLibraryState::default()
+        };
+        let frontend = PersistedBookLibraryState {
+            books: vec![
+                book("epub-kept", "Kept"),
+                book("epub-gone", "Gone"),
+                book("epub-imported", "Imported"),
+            ],
+            book_progress: vec![progress.clone()],
+            ..PersistedBookLibraryState::default()
+        };
+
+        let merged = rebase_books_apply(&base, &applied, &frontend).unwrap();
+
+        let titles = merged
+            .books
+            .iter()
+            .map(|entry| value_string_field(entry, "title").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Renamed on the phone", "Imported"]);
+        assert_eq!(merged.book_progress, vec![progress]);
     }
 }

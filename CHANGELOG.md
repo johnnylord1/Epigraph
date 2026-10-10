@@ -4,6 +4,19 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-10
+
+### Changed
+
+- Development builds show "DEV" in the window title and a badge in the corner, so they are never mistaken for the installed app.
+
+### Fixed
+
+- The "Because you like" and "Near your taste" rows on Discover fill in for readers of novels, whose sources list titles without genres, and novel details are given enough time to load their tags.
+- A book changed on the phone is no longer reverted by the desktop when the desktop saves its books right before reloading them.
+- Books no longer sync again every few seconds while the app is in use when nothing about them changed.
+- Books imported or read on the desktop while a sync download is running are no longer lost when the download finishes.
+
 ## [0.0.3] - 2026-10-09
 
 ### Fixed
