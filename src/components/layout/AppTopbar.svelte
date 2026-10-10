@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { handleWindowDragMouseDown } from "../../lib/tauri/windowDrag";
 
   type Props = {
     className?: string;
@@ -35,18 +35,13 @@
     "[data-no-window-drag]",
   ].join(",");
 
-  function handleTopbarPointerDown(event: PointerEvent) {
-    if (event.button !== 0) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest(interactiveSelector)) return;
-
-    getCurrentWindow().startDragging().catch(() => {});
+  function handleTopbarMouseDown(event: MouseEvent) {
+    handleWindowDragMouseDown(event, interactiveSelector);
   }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag must start from empty topbar regions. -->
-<header class={`n-topbar ${className}`.trim()} data-tauri-drag-region onpointerdown={handleTopbarPointerDown}>
+<header class={`n-topbar ${className}`.trim()} onmousedown={handleTopbarMouseDown}>
   <div class="n-topbar__left">
     {@render left?.()}
   </div>

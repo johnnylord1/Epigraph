@@ -1003,7 +1003,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   border-image: var(--component-topbar-border-image);
   box-shadow: var(--component-topbar-shadow);
   z-index: var(--component-topbar-z-index);
-  -webkit-app-region: drag;
 }
 
 .n-topbar::before {
@@ -1033,7 +1032,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   display: flex;
   align-items: center;
   flex: 1;
-  -webkit-app-region: drag;
 }
 
 .n-topbar__left {
@@ -1825,7 +1823,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   align-items: center;
   gap: calc(16px * var(--hud-scale));
   padding: 0 var(--settings-shell-padding-x);
-  -webkit-app-region: drag;
 }
 
 .epigraph-port--settings .n-topbar--settings .n-topbar__left {
@@ -1836,7 +1833,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   display: flex;
   justify-content: center;
   min-width: 0;
-  -webkit-app-region: drag;
 }
 
 .epigraph-port--settings .n-topbar--settings .n-topbar__right {

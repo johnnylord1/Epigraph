@@ -319,7 +319,8 @@ export function enterView(root: Element | null | undefined, options: EnterOption
   for (let depth = 0; depth < 3 && blocks.length === 1 && blocks[0].children.length > 0 && blocks[0].children.length <= 8; depth += 1) {
     blocks = [...blocks[0].children].filter((child) => !child.matches(STATIC_CHROME));
   }
-  const settings = { y: 22, blur: 8, duration: 900, scale: 0.985, ...options };
+  // No scale: on a cover grid a shrunken start reads as the cards resizing in front of the user.
+  const settings = { y: 22, blur: 8, duration: 900, scale: 1, ...options };
   const stagger = options.stagger ?? 90;
   blocks.slice(0, 7).forEach((block, index) => playEnter(block, { ...settings, delay: (settings.delay ?? 0) + index * stagger }));
 }

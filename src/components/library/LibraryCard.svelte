@@ -285,7 +285,12 @@
     }
   }}
   oncontextmenu={onContextMenu ? ((event) => onContextMenu(vm.id, event)) : undefined}
-  onpointerdown={onPointerDown ? ((event) => onPointerDown(vm.id, event)) : undefined}
+  onpointerdown={(event) => {
+    // Enter opens on keydown and cancels the native click, so the flag can outlive the key press;
+    // a real press always clears it, or the next mouse click on this card would be swallowed.
+    suppressNextClick = false;
+    onPointerDown?.(vm.id, event);
+  }}
   onpointerup={onPointerUp ? ((event) => onPointerUp(vm.id, event)) : undefined}
   onpointerleave={onPointerLeave ? ((event) => onPointerLeave(vm.id, event)) : undefined}
   aria-label={vm.title}

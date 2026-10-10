@@ -1,7 +1,7 @@
 <script lang="ts">
   import { _, translate } from "../../lib/i18n/runtime";
   import { onMount, type Snippet } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { handleWindowDragMouseDown } from "../../lib/tauri/windowDrag";
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -85,10 +85,8 @@
   const interactiveSelector =
     "button, a, input, select, textarea, label, [role='button'], [role='menuitem'], [role='menuitemradio'], [contenteditable='true'], .n-icon-btn, [data-no-window-drag]";
 
-  function handleTopbarPointerDown(event: PointerEvent) {
-    if (event.button !== 0 || !(event.target instanceof Element)) return;
-    if (event.target.closest(interactiveSelector)) return;
-    getCurrentWindow().startDragging().catch(() => {});
+  function handleTopbarMouseDown(event: MouseEvent) {
+    handleWindowDragMouseDown(event, interactiveSelector);
   }
 
   const clampedProgress = $derived(Math.max(0, Math.min(100, progressPercent)));
@@ -130,7 +128,7 @@
 
 <div class="series-v3-root" data-media-kind={mediaKind}>
   <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag must start from empty detail topbar regions. -->
-  <header class="n-topbar" data-tauri-drag-region onpointerdown={handleTopbarPointerDown}>
+  <header class="n-topbar" onmousedown={handleTopbarMouseDown}>
     <div class="n-topbar-left">
       <button class="n-icon-btn" type="button" title={$_("ui_back")} onclick={onBack}>
         <ArrowLeft size={17} weight="light" />
@@ -312,7 +310,6 @@
     background: var(--component-detail-n-topbar-background);
     backdrop-filter: var(--component-detail-n-topbar-blur);
     box-shadow: var(--component-detail-n-topbar-box-shadow);
-    -webkit-app-region: drag;
   }
 
   .n-topbar::before {
