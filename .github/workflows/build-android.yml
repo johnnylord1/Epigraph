@@ -2,7 +2,8 @@ name: Build Android
 
 # Builds and checks the Android app in mobile/ on GitHub's servers: migration verification,
 # sync tests, unit tests, lint and the dev debug APK, which is kept as a downloadable artifact.
-# The signed standard release and the emulator smoke stay manual (mobile/docs/RELEASE_SIGNING.md).
+# A manual run with `release` also builds the standard release APKs unsigned; they are signed
+# locally with the release key, which never leaves that machine (mobile/docs/RELEASE_SIGNING.md).
 # GitHub only reads workflows from this root folder, so mobile/.github is not run.
 
 concurrency:
@@ -22,6 +23,11 @@ on:
       - "mobile/**"
       - ".github/workflows/build-android.yml"
   workflow_dispatch:
+    inputs:
+      release:
+        description: Also build the unsigned standard release APKs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -85,6 +91,19 @@ jobs:
         with:
           name: epigraph-mobile-dev-debug
           path: mobile/app/build/outputs/apk/dev/debug/app-dev-universal-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Assemble standard release (unsigned)
+        if: ${{ inputs.release }}
+        run: ./gradlew :app:assembleStandardRelease
+
+      - name: Upload unsigned standard release APKs
+        if: ${{ inputs.release }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: epigraph-mobile-standard-release-unsigned
+          path: mobile/app/build/outputs/apk/standard/release/*.apk
           if-no-files-found: error
           retention-days: 14
 
