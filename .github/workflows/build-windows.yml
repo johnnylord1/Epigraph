@@ -138,6 +138,8 @@ jobs:
           tagName: v${{ github.event.inputs.version }}
           releaseName: Epigraph v${{ github.event.inputs.version }}
           releaseBody: |
+            ## Windows
+
             Windows installer for Epigraph v${{ github.event.inputs.version }}.
             Download the `.exe` file below to install or update.
           releaseDraft: true

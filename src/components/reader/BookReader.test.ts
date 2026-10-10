@@ -54,4 +54,22 @@ describe("BookReader EPUB resume", () => {
     expect(load.slice(theme, redisplay)).toContain("fonts?.ready");
     expect(load.slice(theme, redisplay)).toContain("if (token !== loadToken || currentRendition !== rendition) return;");
   });
+
+  it("saves the position once, after opening settles on the saved spot", () => {
+    const load = source.slice(source.indexOf("async function loadEpub("), source.indexOf("async function renderPdfPage("));
+    const restoring = load.indexOf("epubRestoring = true;");
+    const relocated = load.indexOf('rendition.on("relocated"');
+    const lastDisplay = load.lastIndexOf("await rendition.display(target);");
+    const settled = load.indexOf("epubRestoring = false;");
+    expect(restoring).toBeGreaterThan(-1);
+    expect(relocated).toBeGreaterThan(restoring);
+    expect(load).toContain("updateEpubProgress(location, !epubRestoring);");
+    expect(settled).toBeGreaterThan(lastDisplay);
+    expect(load.indexOf("persistEpubProgress();", settled)).toBeGreaterThan(settled);
+    const locations = source.slice(
+      source.indexOf("async function generateEpubLocationsInBackground("),
+      source.indexOf("async function loadEpub("),
+    );
+    expect(locations).toContain("if (!epubRestoring && pageNumber !== shownPercent) persistEpubProgress();");
+  });
 });

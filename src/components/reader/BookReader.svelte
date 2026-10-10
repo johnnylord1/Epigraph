@@ -354,6 +354,8 @@
   let reflowLoadingPages = $state<Set<number>>(new Set());
   let suspendReflowProgressUntil = 0;
   let lastProgressSignature: string | null = null;
+  // Opening an EPUB moves through a few pages before it settles on the saved spot; only the settled one is saved.
+  let epubRestoring = false;
   let visiblePdfPages = new Map<number, VisibleReaderPage>();
   let visiblePdfProgressRafId: number | null = null;
   let reflowAnchorRafId: number | null = null;
@@ -708,6 +710,7 @@
     pdfRenderBusy = false;
     pendingPdfPage = null;
     lastProgressSignature = null;
+    epubRestoring = false;
     visiblePdfPages.clear();
     if (visiblePdfProgressRafId !== null) {
       cancelAnimationFrame(visiblePdfProgressRafId);
@@ -875,7 +878,7 @@
     el?.scrollIntoView({ behavior, block: "start" });
   }
 
-  function updateEpubProgress(location: any) {
+  function updateEpubProgress(location: any, persist = true) {
     if (!activeBook) return;
     const start = location?.start ?? {};
     currentLocation = start.cfi ?? null;
@@ -894,6 +897,10 @@
     totalPages = 100;
     canPrev = progressPercent > 0.001;
     canNext = progressPercent < 0.999;
+    if (persist) persistEpubProgress();
+  }
+
+  function persistEpubProgress() {
     persistProgress({
       location: currentLocation,
       href: currentHref,
@@ -924,17 +931,11 @@
         totalLocations: typeof book.locations?.length === "function" ? book.locations.length() : null,
       });
       if (currentLocation && typeof book.locations?.percentageFromCfi === "function") {
+        const shownPercent = pageNumber;
         progressPercent = Math.max(0, Math.min(1, book.locations.percentageFromCfi(currentLocation) || 0));
         pageNumber = Math.max(1, Math.min(100, Math.round(progressPercent * 100)));
-        persistProgress({
-          location: currentLocation,
-          href: currentHref,
-          progressPercent,
-          pageIndex: null,
-          totalPages: null,
-          sectionLabel: currentSectionLabel,
-          renderer: "epub",
-        });
+        // The exact percentage only replaces the estimate saved on open when the shown number changes.
+        if (!epubRestoring && pageNumber !== shownPercent) persistEpubProgress();
       }
     } catch (err) {
       if (token !== loadToken || currentBookRef !== book) return;
@@ -1035,9 +1036,10 @@
     currentBookRef = book;
     currentRendition = rendition;
     applyEpubTheme();
+    epubRestoring = true;
     rendition.on("relocated", (location: any) => {
       if (token !== loadToken || currentRendition !== rendition) return;
-      updateEpubProgress(location);
+      updateEpubProgress(location, !epubRestoring);
       const contents = rendition.getContents();
       if (contents && contents.length > 0) {
         const d = contents[0].document;
@@ -1073,6 +1075,9 @@
       if (token !== loadToken || currentRendition !== rendition) return;
       await rendition.display(target);
     }
+    if (token !== loadToken || currentRendition !== rendition) return;
+    epubRestoring = false;
+    persistEpubProgress();
     setStage("epub.displayed");
     auditReader("books.reader.epub.displayed", {
       stage: currentStage,

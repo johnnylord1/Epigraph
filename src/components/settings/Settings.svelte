@@ -123,6 +123,7 @@
   import { SETTINGS_EPIGRAPH_BACKUP_EXTENSION, loadSettingsStorageRuntime } from "./settingsStorageRuntime";
   import { APP_LANGUAGE_OPTIONS, appLanguageLabel, resolveAppLocale, type AppLanguageCode } from "../../lib/i18n/languages";
   import {
+    desktopReleaseNotes,
     isAuthorizedEpigraphUpdate,
     sortEpigraphReleaseHistory,
     type EpigraphReleaseInfo,
@@ -6522,6 +6523,7 @@
                       {#each releases as release}
                         {@const isCurrent = isCurrentVersion(release.tag_name)}
                         {@const isExpanded = expandedTag === release.tag_name}
+                        {@const notes = desktopReleaseNotes(release.body)}
                         <div class="release-row" class:current={isCurrent}>
                           <div class="release-header">
                             <div class="release-meta">
@@ -6534,14 +6536,14 @@
                               {/if}
                             </div>
                             <div class="release-actions">
-                              {#if release.body.trim()}
+                              {#if notes}
                                 <button class="release-changelog-btn" type="button" onclick={() => expandedTag = isExpanded ? null : release.tag_name}>{isExpanded ? $_("settings_about_hide") : $_("settings_about_changelog")}</button>
                               {/if}
                             </div>
                           </div>
-                          {#if isExpanded && release.body.trim()}
+                          {#if isExpanded && notes}
                             <div class="release-body">
-                              <pre class="release-body-pre">{release.body.trim()}</pre>
+                              <pre class="release-body-pre">{notes}</pre>
                             </div>
                           {/if}
                         </div>

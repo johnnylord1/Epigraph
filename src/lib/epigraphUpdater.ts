@@ -52,3 +52,23 @@ export function sortEpigraphReleaseHistory(releases: readonly EpigraphReleaseInf
     .slice()
     .sort((left, right) => compareEpigraphVersions(right.tag_name, left.tag_name));
 }
+
+const PLATFORM_HEADING = /^##\s+(windows|android)\b/i;
+
+/**
+ * Release notes list the Windows and Android changes under their own `## Windows` and
+ * `## Android` headings; the desktop shows only its part. Notes without them are shown whole.
+ */
+export function desktopReleaseNotes(body: string): string {
+  const kept: string[] = [];
+  let otherPlatform = false;
+  for (const line of body.split(/\r?\n/)) {
+    if (/^##\s/.test(line)) {
+      const platform = line.match(PLATFORM_HEADING)?.[1]?.toLowerCase();
+      otherPlatform = platform === "android";
+      if (platform) continue;
+    }
+    if (!otherPlatform) kept.push(line);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}

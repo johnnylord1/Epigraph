@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compareEpigraphVersions,
+  desktopReleaseNotes,
   isAuthorizedEpigraphUpdate,
   normalizeEpigraphVersion,
   sortEpigraphReleaseHistory,
@@ -45,5 +46,38 @@ describe("Epigraph updater release policy", () => {
     expect(isAuthorizedEpigraphUpdate(release("v1.2.0"), status)).toBe(true);
     expect(isAuthorizedEpigraphUpdate(release("v1.1.0"), status)).toBe(false);
     expect(isAuthorizedEpigraphUpdate(release("v1.3.0"), { ...status, update_available: false })).toBe(false);
+  });
+});
+
+describe("desktopReleaseNotes", () => {
+  it("shows only the Windows part of notes that cover both apps", () => {
+    const body = [
+      "## Windows",
+      "",
+      "`Epigraph_0.0.5_x64-setup.exe` updates an existing install.",
+      "",
+      "### Fixed",
+      "",
+      "- Desktop fix.",
+      "",
+      "## Android 0.1.0-alpha.3",
+      "",
+      "### Fixed",
+      "",
+      "- Phone fix.",
+    ].join("\r\n");
+
+    expect(desktopReleaseNotes(body)).toBe(
+      "`Epigraph_0.0.5_x64-setup.exe` updates an existing install.\n\n### Fixed\n\n- Desktop fix.",
+    );
+  });
+
+  it("keeps a section that comes after the Android one", () => {
+    expect(desktopReleaseNotes("## Android\n- Phone fix.\n## Windows\n- Desktop fix.")).toBe("- Desktop fix.");
+  });
+
+  it("shows notes without platform headings whole", () => {
+    const body = "## Downloads\n\n- Installer.\n\n### Fixed\n\n- Desktop fix.";
+    expect(desktopReleaseNotes(body)).toBe(body);
   });
 });
