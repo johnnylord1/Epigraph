@@ -28,6 +28,10 @@ on:
         description: Also build the unsigned standard release APKs
         type: boolean
         default: false
+      updater_test_version:
+        description: Also build the release as this older version, to test the in-app updater
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -106,6 +110,23 @@ jobs:
           path: mobile/app/build/outputs/apk/standard/release/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Assemble updater test release (unsigned)
+        if: ${{ inputs.release && inputs.updater_test_version != '' }}
+        env:
+          TEST_VERSION: ${{ inputs.updater_test_version }}
+        run: |
+          rm -rf app/build/outputs/apk/standard/release
+          ./gradlew :app:assembleStandardRelease "-Pepigraph.versionName=$TEST_VERSION"
+
+      - name: Upload updater test APKs
+        if: ${{ inputs.release && inputs.updater_test_version != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: epigraph-mobile-updater-test-unsigned
+          path: mobile/app/build/outputs/apk/standard/release/*.apk
+          if-no-files-found: error
+          retention-days: 3
 
       # Lint runs last, after the APK is kept.
       - name: Lint
