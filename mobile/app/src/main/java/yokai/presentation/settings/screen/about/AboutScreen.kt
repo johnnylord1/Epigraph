@@ -278,7 +278,7 @@ class AboutScreen : Screen() {
         when (result) {
             is AppUpdateResult.NewUpdate -> {
                 val data = NewUpdateData(
-                    result.release.info,
+                    result.release.changelog,
                     result.release.downloadLink,
                     result.release.preRelease == true
                 )

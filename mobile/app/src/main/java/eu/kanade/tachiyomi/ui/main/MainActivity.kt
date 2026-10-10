@@ -1270,7 +1270,7 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                 try {
                     val result = updateChecker.checkForUpdate(this@MainActivity, isUserPrompt = true)
                     if (result is AppUpdateResult.NewUpdate) {
-                        val body = result.release.info
+                        val body = result.release.changelog
                         val url = result.release.downloadLink
                         val isBeta = result.release.preRelease == true
 

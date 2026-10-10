@@ -126,6 +126,32 @@ class AppUpdateCheckerTest {
         assertNull(release("Epigraph_0.0.3_x64-setup.exe", "latest.json").mobileVersion)
     }
 
+    @Test
+    fun `The update changelog shows only the Android changes`() {
+        fun notes(info: String) =
+            GithubRelease(version = "v0.0.5", info = info, releaseLink = "", preRelease = false, assets = emptyList()).changelog
+
+        val both = listOf(
+            "## Windows",
+            "",
+            "### Fixed",
+            "",
+            "- Desktop fix.",
+            "",
+            "## Android 0.1.0-alpha.3",
+            "",
+            "`Epigraph-mobile_0.1.0-alpha.3_universal.apk` installs on any device.",
+            "",
+            "### Fixed",
+            "",
+            "- Phone fix.",
+        ).joinToString("\r\n")
+
+        assertEquals("`Epigraph-mobile_0.1.0-alpha.3_universal.apk` installs on any device.\n\n### Fixed\n\n- Phone fix.", notes(both))
+        assertEquals("- Phone fix.", notes("## Android\n- Phone fix.\n## Windows\n- Desktop fix."))
+        assertEquals("### Fixed\n\n- Something.", notes("### Fixed\n\n- Something.\n"))
+    }
+
     private fun isNewVersion(newVersion: String, currentVersion: String): Boolean {
         return appUpdateChecker.isNewVersion(newVersion, currentVersion)
     }

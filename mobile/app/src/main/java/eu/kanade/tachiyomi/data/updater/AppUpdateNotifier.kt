@@ -52,7 +52,7 @@ internal class AppUpdateNotifier(private val context: Context) {
     }
 
     fun promptUpdate(release: GithubRelease) {
-        val body = release.info
+        val body = release.changelog
         val url = release.downloadLink
         val releaseUrl = release.releaseLink
         val isBeta = release.preRelease == true
