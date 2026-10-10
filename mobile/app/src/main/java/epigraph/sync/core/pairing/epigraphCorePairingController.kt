@@ -113,8 +113,10 @@ class EpigraphCorePairingController(
             activeVerificationCode = null
             mutableState.value = CorePairingUiState.Loading
         }
-        mutableState.value = readPersistedState()
+        // The selection is read first: the endpoint probe in readPersistedState can wait out a
+        // connect timeout, and the settings items that need the selection would pop in after it.
         mutableSelection.value = readPersistedSelection()
+        mutableState.value = readPersistedState()
     }
 
     /** Pairing survives navigation and configuration changes for the lifetime of this singleton. */

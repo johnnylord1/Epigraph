@@ -187,8 +187,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
             result.contents?.takeIf(String::isNotBlank)?.let(::beginPairing)
         }
         val scannerPrompt = stringResource(MR.strings.epigraph_core_scan_qr_summary)
+        // Disabled items collapse out of the list. The short load when the screen opens is not
+        // busy, or the pairing items would grow back in under the finger.
         val busy = state is CorePairingUiState.Pairing ||
-            state is CorePairingUiState.Loading ||
             state is CorePairingUiState.Selecting
 
         if (showSelectionEditor) {
@@ -625,8 +626,8 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                 else -> stringResource(MR.strings.epigraph_core_extensions_no_inventory)
                             }
                         },
-                        enabled = state is CorePairingUiState.Paired &&
-                            (extensionState.report != null || novelInventory != null),
+                        // Shown as soon as paired; the desktop lists load later and only change the summary.
+                        enabled = state is CorePairingUiState.Paired,
                         onClick = {
                             context.startActivity(
                                 CoreDependencySetupActivity.intent(
