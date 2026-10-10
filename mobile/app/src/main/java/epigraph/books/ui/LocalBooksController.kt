@@ -341,7 +341,10 @@ private class LocalBooksAdapter(
                 append(book.contentType.name)
                 append(" · ")
                 append(Formatter.formatShortFileSize(context, book.byteSize))
-                if (!book.isAvailable) {
+                if (book.downloadsWhenOpened) {
+                    append(" · ")
+                    append(context.getString(MR.strings.local_books_downloads_when_opened))
+                } else if (!book.isAvailable) {
                     append(" · ")
                     inSpans(ForegroundColorSpan(context.getResourceColor(androidx.appcompat.R.attr.colorError))) {
                         append(context.getString(MR.strings.local_books_file_missing))
@@ -366,7 +369,7 @@ private class LocalBooksAdapter(
                 cover.setImageDrawable(placeholder)
             }
             root.setOnClickListener { if (book.isAvailable) onOpen(book) else onRecover(book) }
-            recover.isVisible = !book.isAvailable
+            recover.isVisible = !book.isAvailable && !book.downloadsWhenOpened
             recover.setOnClickListener { onRecover(book) }
             remove.setOnClickListener { onDelete(book) }
         }

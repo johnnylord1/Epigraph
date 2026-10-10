@@ -1368,6 +1368,10 @@ ON CONFLICT(sha256) DO UPDATE SET
 selectAssetManifest:
 SELECT * FROM aethon_asset_manifest WHERE sha256 = :sha256;
 
+selectRemoteAvailableBookShas:
+SELECT sha256 FROM aethon_asset_manifest
+WHERE content_type IN ('EPUB', 'PDF') AND remote_available = 1;
+
 selectPendingAssetUploads:
 SELECT * FROM aethon_asset_manifest
 WHERE state = 'PENDING_UPLOAD'

@@ -2491,6 +2491,7 @@
     <string name="local_books_remove_title">Remove book</string>
     <string name="local_books_remove_message">Remove %1$s and delete its file from this device?</string>
     <string name="local_books_file_missing">File missing</string>
+    <string name="local_books_downloads_when_opened">Downloads when opened</string>
     <string name="local_book_fallback_title">Book</string>
     <string name="local_book_download_failed_message">The synchronized book could not be downloaded.</string>
     <string name="local_book_bookmarks">Bookmarks</string>
