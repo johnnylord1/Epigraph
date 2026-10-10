@@ -1322,6 +1322,10 @@
     <string name="discover_include_nsfw">Incluir extensões NSFW</string>
     <string name="discover_empty_filtered">Nenhuma recomendação nova restou após filtrar sua biblioteca e títulos dos trackers.</string>
     <string name="discover_empty_filters">Nenhuma recomendação corresponde aos filtros atuais.</string>
+    <string name="discover_card_size">Tamanho dos cards</string>
+    <string name="discover_genres">Gêneros</string>
+    <string name="discover_genres_help">Só títulos com todos os gêneros selecionados. As fontes são buscadas pelo primeiro.</string>
+    <string name="discover_catalog_genre_empty">Nenhum título encontrado para esses gêneros.</string>
     <string name="nocturne_light">Nocturne Claro</string>
     <string name="nocturne">Nocturne</string>
     <!-- Momentos memoráveis (DESIGN.md §9) -->

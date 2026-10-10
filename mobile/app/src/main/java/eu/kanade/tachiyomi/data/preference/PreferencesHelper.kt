@@ -305,6 +305,9 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
 
     fun gridSize() = preferenceStore.getFloat(Keys.gridSize, 1f)
 
+    /** Discover card size, on the same scale as the library [gridSize]. */
+    fun discoverGridSize() = preferenceStore.getFloat(Keys.discoverGridSize, 1f)
+
     fun downloadBadge() = preferenceStore.getBoolean(Keys.downloadBadge, false)
 
     fun languageBadge() = preferenceStore.getBoolean(Keys.languageBadge, false)

@@ -2443,6 +2443,10 @@
     <string name="discover_include_nsfw">Include NSFW extensions</string>
     <string name="discover_empty_filtered">No new recommendations remain after filtering your library and tracker titles.</string>
     <string name="discover_empty_filters">No recommendations match the current filters.</string>
+    <string name="discover_card_size">Card size</string>
+    <string name="discover_genres">Genres</string>
+    <string name="discover_genres_help">Only titles with every selected genre. Sources are searched for the first one.</string>
+    <string name="discover_catalog_genre_empty">No titles found for these genres.</string>
     <!-- Memorable moments (DESIGN.md §9) -->
     <string name="moment_work_finished">Work finished</string>
     <string name="moment_reading_milestone">Reading milestone</string>

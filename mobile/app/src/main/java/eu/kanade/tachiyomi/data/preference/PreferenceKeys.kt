@@ -170,6 +170,8 @@ object PreferenceKeys {
 
     const val gridSize = "grid_size_float"
 
+    const val discoverGridSize = "discover_grid_size_float"
+
     const val uniformGrid = "uniform_grid"
 
     const val outlineOnCovers = "outline_on_covers"

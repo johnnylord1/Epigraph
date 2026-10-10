@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import epigraph.recommendations.DiscoverCatalogEntry
+import epigraph.recommendations.DiscoverGenreSearch
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.DiscoverPool
 import epigraph.recommendations.DiscoverRecommendationLoader
@@ -22,9 +23,11 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.domain.manga.interactor.GetManga
@@ -41,7 +44,14 @@ class DiscoverScreenModel(
     private val getManga: GetManga = get(),
     private val insertManga: InsertManga = get(),
     private val preferences: PreferencesHelper = get(),
-) : StateScreenModel<DiscoverScreenModel.State>(State(mode = initialMode, includeNsfw = preferences.showNsfwSources().get())) {
+) : StateScreenModel<DiscoverScreenModel.State>(
+    State(
+        mode = initialMode,
+        includeNsfw = preferences.showNsfwSources().get(),
+        gridSize = preferences.discoverGridSize().get(),
+        genreOptions = loader.genreOptions(preferences.showNsfwSources().get()),
+    ),
+) {
 
     @Immutable
     data class State(
@@ -56,10 +66,16 @@ class DiscoverScreenModel(
         val catalog: List<DiscoverCatalogEntry> = emptyList(),
         val catalogLoadingMore: Boolean = false,
         val catalogExhausted: Boolean = false,
+        /** Card size on the library grid scale: 1 is the default, each step is 1.5x larger. */
+        val gridSize: Float = 1f,
+        /** Catalog genre filter; every selected genre must match. */
+        val genres: List<String> = emptyList(),
+        val genreOptions: List<String> = emptyList(),
     )
 
     private var loadJob: Job? = null
     private var catalogJob: Job? = null
+    private var genreSearch: DiscoverGenreSearch? = null
     private val moreTriggeredAt = HashMap<RecommendationSectionKey, Long>()
     private val moreLoading = java.util.concurrent.ConcurrentHashMap.newKeySet<RecommendationSectionKey>()
 
@@ -78,10 +94,28 @@ class DiscoverScreenModel(
         load(force = false)
     }
 
+    fun setGridSize(value: Float) {
+        preferences.discoverGridSize().set(value)
+        mutableState.update { it.copy(gridSize = value) }
+    }
+
+    /** Re-filters the gathered works at once, then searches the sources for the genres. */
+    fun setGenres(genres: List<String>) {
+        if (genres == state.value.genres) return
+        catalogJob?.cancel()
+        genreSearch = null
+        mutableState.update { it.copy(genres = genres, catalogLoadingMore = false, catalogExhausted = false) }
+        val cached = cachedPool(state.value.mode) ?: return
+        mutableState.update { it.copy(catalog = catalog(cached)) }
+        loadMoreCatalog()
+    }
+
     fun load(force: Boolean) {
         val mode = state.value.mode
         val cached = cachedPool(mode)
         if (!force && cached != null) {
+            catalogJob?.cancel()
+            genreSearch = null
             mutableState.update {
                 it.copy(
                     loading = false,
@@ -90,8 +124,10 @@ class DiscoverScreenModel(
                     catalogExhausted = false,
                     error = null,
                     visibleLimits = emptyMap(),
+                    catalogLoadingMore = false,
                 )
             }
+            if (state.value.genres.isNotEmpty()) loadMoreCatalog()
             // The library may have changed since (a sync, or works added elsewhere): the picks
             // would still be built from the old one and suggest what is now in it.
             screenModelScope.launch(Dispatchers.IO) {
@@ -105,6 +141,7 @@ class DiscoverScreenModel(
         }
         loadJob?.cancel()
         catalogJob?.cancel()
+        genreSearch = null
         mutableState.update {
             it.copy(
                 loading = true,
@@ -124,6 +161,9 @@ class DiscoverScreenModel(
                 val catalogEntries = catalog(pool)
                 mutableState.update {
                     if (it.mode == mode) it.copy(loading = false, result = result, catalog = catalogEntries, visibleLimits = emptyMap()) else it
+                }
+                if (state.value.mode == mode && state.value.genres.isNotEmpty()) {
+                    withContext(Dispatchers.Main) { loadMoreCatalog() }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -145,7 +185,8 @@ class DiscoverScreenModel(
     fun setIncludeNsfw(value: Boolean) {
         if (value == state.value.includeNsfw) return
         preferences.showNsfwSources().set(value)
-        mutableState.update { it.copy(includeNsfw = value) }
+        val options = loader.genreOptions(value)
+        mutableState.update { it.copy(includeNsfw = value, genreOptions = options, genres = it.genres.filter { genre -> genre in options }) }
         load(force = true)
     }
 
@@ -206,8 +247,12 @@ class DiscoverScreenModel(
         if (catalogJob?.isActive == true) return
         val mode = current.mode
         val cached = cache[mode] ?: return
+        if (current.genres.isNotEmpty()) {
+            loadMoreGenreCatalog(mode, cached, current.genres)
+            return
+        }
         mutableState.update { it.copy(catalogLoadingMore = true) }
-        catalogJob = screenModelScope.launch(Dispatchers.IO) {
+        val job = screenModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             try {
                 val key = RecommendationSectionKey.HIGH_CONFIDENCE
                 val more = loader.loadMore(cached.pool, key, state.value.includeNsfw) { it.candidates.size }
@@ -226,16 +271,52 @@ class DiscoverScreenModel(
                 // Best effort, like the For you rails: the catalog simply stops growing.
                 mutableState.update { s -> if (s.mode != mode) s else s.copy(catalogExhausted = true) }
             } finally {
-                mutableState.update { it.copy(catalogLoadingMore = false) }
+                if (catalogJob === coroutineContext.job) mutableState.update { it.copy(catalogLoadingMore = false) }
             }
         }
+        catalogJob = job
+        job.start()
+    }
+
+    /** Catalog infinite scroll with genres: the next page of the genre search of every source. */
+    private fun loadMoreGenreCatalog(mode: DiscoverMode, cached: CachedPool, genres: List<String>) {
+        val search = genreSearch?.takeIf { it.mode == mode && it.genres == genres } ?: DiscoverGenreSearch(mode, genres)
+        if (search.exhausted) {
+            mutableState.update { it.copy(catalogExhausted = true) }
+            return
+        }
+        mutableState.update { it.copy(catalogLoadingMore = true) }
+        val job = screenModelScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            try {
+                val next = loader.searchGenre(cached.pool, search, state.value.includeNsfw)
+                if (state.value.mode != mode || state.value.genres != genres) return@launch
+                genreSearch = next
+                val catalogEntries = catalog(cache[mode]?.pool ?: cached.pool)
+                mutableState.update { s ->
+                    if (s.mode != mode || s.genres != genres) s else s.copy(catalog = catalogEntries, catalogExhausted = next.exhausted)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                mutableState.update { s -> if (s.mode != mode) s else s.copy(catalogExhausted = true) }
+            } finally {
+                if (catalogJob === coroutineContext.job) mutableState.update { it.copy(catalogLoadingMore = false) }
+            }
+        }
+        catalogJob = job
+        job.start()
     }
 
     private fun rank(pool: DiscoverPool): DiscoverResult =
         loader.rank(pool, state.value.includeLibrary, state.value.includeNsfw, System.currentTimeMillis())
 
-    private fun catalog(pool: DiscoverPool): List<DiscoverCatalogEntry> =
-        loader.catalog(pool, state.value.includeLibrary, state.value.includeNsfw, System.currentTimeMillis())
+    private fun catalog(pool: DiscoverPool): List<DiscoverCatalogEntry> {
+        val s = state.value
+        val now = System.currentTimeMillis()
+        if (s.genres.isEmpty()) return loader.catalog(pool, s.includeLibrary, s.includeNsfw, now)
+        val search = genreSearch?.takeIf { it.mode == pool.mode && it.genres == s.genres } ?: DiscoverGenreSearch(pool.mode, s.genres)
+        return loader.genreCatalog(pool, search, s.includeLibrary, s.includeNsfw, now)
+    }
 
     /**
      * The in-app entry for a recommendation: an installed source result is inserted like a Browse
