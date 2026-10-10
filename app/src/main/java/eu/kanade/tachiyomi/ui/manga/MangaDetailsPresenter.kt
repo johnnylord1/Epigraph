@@ -50,6 +50,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
+import epigraph.sync.core.protocol.SuwayomiCoreThumbnailReference
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.ui.manga.track.TrackItem
@@ -89,8 +90,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +103,7 @@ import yokai.domain.category.interactor.GetCategories
 import yokai.domain.chapter.interactor.GetAvailableScanlators
 import yokai.domain.chapter.interactor.GetChapter
 import epigraph.sync.core.SyncedChapterStateWriter
+import epigraph.sync.core.portable.needSourceFetch
 import yokai.domain.chapter.interactor.UpdateChapter
 import yokai.domain.history.interactor.GetHistory
 import yokai.domain.library.custom.model.CustomMangaInfo
@@ -174,6 +179,7 @@ class MangaDetailsPresenter(
     private var initialTracksJob: Job? = null
     private var initialContentJob: Job? = null
     private var trackingRefreshJob: Job? = null
+    private var chapterChangesJob: Job? = null
     private var tracks = emptyList<Track>()
 
     var trackList: List<TrackItem> = emptyList()
@@ -218,7 +224,6 @@ class MangaDetailsPresenter(
         val controller = view ?: return
 
         isLockedFromSearch = controller.shouldLockIfNeeded && SecureActivityDelegate.shouldBeLocked()
-        preloadCategories()
 
         if (::manga.isInitialized) {
             // Common path — manga was pre-initialised by the library push.
@@ -236,6 +241,8 @@ class MangaDetailsPresenter(
     }
 
     private fun finalizeOnCreate() {
+        // Comics and Books & novels have separate folders, so the list depends on the work.
+        preloadCategories()
         syncData()
 
         if (source is EpigraphCoreSource) {
@@ -297,8 +304,15 @@ class MangaDetailsPresenter(
                 controller.updateHeader()
             }
             val coreSessionAvailable = (source as? EpigraphCoreSource)?.hasActiveSession() != false
-            val fetchMangaNeeded = !manga.initialized && coreSessionAvailable
-            val fetchChaptersNeeded = getChaptersNow().isEmpty() && coreSessionAvailable
+            // A work synced from the desktop keeps the desktop's cover and details until its
+            // extension is asked, like a work restored from a backup.
+            val desktopDetails = source !is EpigraphCoreSource &&
+                manga.thumbnail_url?.let(SuwayomiCoreThumbnailReference::parse) != null
+            val fetchMangaNeeded = (!manga.initialized || desktopDetails) && coreSessionAvailable
+            // A synced novel holds only the chapters read on the desktop; list the rest from the plugin.
+            val fetchChaptersNeeded = getChaptersNow().let {
+                if (source is NovelSource) it.needSourceFetch() else it.isEmpty()
+            } && coreSessionAvailable
             val tasks = listOf(
                 async { if (fetchMangaNeeded) fetchMangaFromSource() },
                 async { if (fetchChaptersNeeded) fetchChaptersFromSource(false) },
@@ -311,6 +325,16 @@ class MangaDetailsPresenter(
 
             setTrackItems()
         }
+
+        // Sync projections write chapter state while this screen is open; reflect them here.
+        chapterChangesJob?.cancel()
+        chapterChangesJob = getChapter.subscribeAll(mangaId, false)
+            .map { chapters -> chapters.map { listOf(it.id, it.read, it.bookmark, it.last_page_read) } }
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { initialContentJob?.join(); refreshChapters(andTracking = false) }
+            .catch { error -> Logger.e(error) }
+            .launchIn(presenterScope)
 
         refreshTracking(false)
     }
@@ -631,7 +655,7 @@ class MangaDetailsPresenter(
                 manga.copyFrom(networkManga)
                 manga.initialized = true
 
-                updateManga.await(manga.toMangaUpdate())
+                updateManga.await(manga.toSourceDetailsUpdate())
 
                 presenterScope.launchNonCancellableIO {
                     val request =
@@ -649,6 +673,7 @@ class MangaDetailsPresenter(
             }
         } catch (e: Exception) {
             if (e is HttpException && e.code == 103) return
+            Logger.e(e) { "fetchMangaFromSource failed for manga ${manga.id}" }
             withUIContext {
                 view?.showError(trimException(e))
             }
@@ -941,7 +966,7 @@ class MangaDetailsPresenter(
     fun preloadCategories() {
         presenterScope.launchIO {
             val previous = cachedCategories
-            cachedCategories = getCategories.await()
+            cachedCategories = getCategories.awaitFor(manga)
             // If the header was bound before the IO finished, its drag-to-open popup captured
             // an empty category list — rebind so the "Edit categories" entry appears.
             if (previous.isEmpty() && cachedCategories.isNotEmpty()) {

@@ -97,6 +97,8 @@ sealed interface SyncCommand {
         override val entityId: EpigraphEntityId,
         val inLibrary: Boolean,
         val portableWorkRef: PortableWorkRef.Comic? = null,
+        /** Lets the Core find a work it has never seen in its source by searching its title. */
+        val titleHint: String? = null,
     ) : SyncCommand
 
     /**
@@ -305,6 +307,8 @@ sealed interface SyncCommand {
         val entryId: String,
         val locator: ReaderLocator,
         val visitedAtEpochMillis: Long,
+        /** Shown in the other device's history; older outbox rows omit it. */
+        val chapterTitle: String? = null,
     ) : SyncCommand {
         init {
             validateProtocolIdentifier(entryId, "history entry ID")

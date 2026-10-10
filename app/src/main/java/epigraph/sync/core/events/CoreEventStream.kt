@@ -104,9 +104,14 @@ class OkHttpCoreEventStream internal constructor(
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
-        // syncd keeps this response open; liveness is provided by ping events and reconnect policy.
-        .readTimeout(0, TimeUnit.MILLISECONDS)
+        // syncd keeps this response open and writes a ping every 30 s. A read that stays silent
+        // for several pings means a half-open socket (Wi-Fi handoff, desktop sleep), which would
+        // otherwise block forever; the timeout turns it into an IO_FAILURE reconnect.
+        .readTimeout(IDLE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
+
+    /** Longest silence tolerated on an open stream before it is treated as dead. */
+    internal val idleTimeoutMillis: Int get() = client.readTimeoutMillis
 
     init {
         require(baseUrl.isHttps) { "Epigraph Core base URL must use HTTPS" }
@@ -272,6 +277,9 @@ class OkHttpCoreEventStream internal constructor(
 
     private companion object {
         const val READ_BUFFER_CHARS = 4_096
+
+        /** Three missed syncd pings (`ping_interval` defaults to 30 s). */
+        const val IDLE_TIMEOUT_MS = 90_000L
         val DEFAULT_JSON = Json {
             ignoreUnknownKeys = true
             explicitNulls = false

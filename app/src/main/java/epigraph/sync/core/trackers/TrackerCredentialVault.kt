@@ -32,6 +32,9 @@ class TrackerSecret(
     val isEmpty: Boolean
         get() = username.isEmpty() && password.isEmpty() && token.isEmpty()
 
+    val isLogin: Boolean
+        get() = username.isNotEmpty() && password.isNotEmpty()
+
     override fun equals(other: Any?): Boolean =
         other is TrackerSecret && username == other.username && password == other.password && token == other.token
 

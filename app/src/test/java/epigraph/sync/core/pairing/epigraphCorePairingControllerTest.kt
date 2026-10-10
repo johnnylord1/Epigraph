@@ -98,11 +98,62 @@ class EpigraphCorePairingControllerTest {
             accepted.state.value,
         )
 
+        val expired = EpigraphCorePairingController(
+            activation = activation,
+            credentials = mockk { every { load() } returns null },
+            deviceProvider = mockk(),
+            syncScheduler = mockk(),
+            selections = mockk(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            pinResolver = resolver,
+            nowMs = { 100_000 },
+        )
+        expired.resolvePinAndPrepare(host, "377299")
+        expired.refresh()
+        assertSame(CorePairingUiState.Unpaired, expired.state.value)
+
         val withoutResolver = controller(null)
         withoutResolver.resolvePinAndPrepare(host, "377299")
         assertEquals(
             CorePairingUiState.PairingFailed(PairingErrorCode.HOST_NOT_FOUND),
             withoutResolver.state.value,
         )
+    }
+
+    @Test
+    fun `typed address adds the answering desktop or reports that nothing answered`() = runTest {
+        val probed = DiscoveredCoreHost(
+            instanceName = "192.168.15.3:4787",
+            serverId = "server-a",
+            tlsCertSha256 = "a".repeat(64),
+            origins = listOf("https://192.168.15.3:4787"),
+        )
+        val probedOrigins = mutableListOf<String>()
+        var answer: DiscoveredCoreHost? = null
+        val controller = EpigraphCorePairingController(
+            activation = mockk(),
+            credentials = mockk(),
+            deviceProvider = mockk(),
+            syncScheduler = mockk(),
+            selections = mockk(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            hostProbe = CoreHostProbe { origin -> probedOrigins += origin; answer },
+        )
+
+        controller.probeHostAddress("not an address")
+        assertEquals(CoreHostDiscoveryState.Found(emptyList(), addressFailed = true), controller.discovery.value)
+
+        controller.probeHostAddress("192.168.15.3:4787")
+        testScheduler.advanceUntilIdle()
+        assertEquals(CoreHostDiscoveryState.Found(emptyList(), addressFailed = true), controller.discovery.value)
+
+        answer = probed
+        controller.probeHostAddress("192.168.15.3:4787")
+        assertSame(CoreHostDiscoveryState.Searching, controller.discovery.value)
+        testScheduler.advanceUntilIdle()
+        assertEquals(CoreHostDiscoveryState.Found(listOf(probed)), controller.discovery.value)
+        assertEquals(listOf("https://192.168.15.3:4787", "https://192.168.15.3:4787"), probedOrigins)
     }
 }

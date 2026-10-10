@@ -26,7 +26,9 @@ class TrackManagerCredentialSource(
                 token = preferences.tokenPreference(syncId).get(),
             )
         }.getOrNull() ?: return null
-        return secret.takeUnless { it.isEmpty }
+        // Same rule as TrackService.isLogged: the default logout() clears only the username and
+        // password, so a leftover token alone is not a login.
+        return secret.takeIf { it.isLogin }
     }
 
     override fun apply(syncId: Long, secret: TrackerSecret?) {
@@ -34,7 +36,10 @@ class TrackManagerCredentialSource(
         val service = trackManager.getService(syncId) ?: return
         // logout() also drops the service's in-memory auth, so the next request reloads it.
         service.logout()
-        if (secret == null) return
+        if (secret == null || !secret.isLogin) {
+            preferences.tokenPreference(syncId).set("")
+            return
+        }
         preferences.usernamePreference(syncId).set(secret.username)
         preferences.passwordPreference(syncId).set(secret.password)
         preferences.tokenPreference(syncId).set(secret.token)

@@ -234,6 +234,62 @@ class OkHttpPairingTransportTest {
         assertEquals(PairingErrorCode.INVALID_RESPONSE, failureFor(200, "{}"))
     }
 
+    @Test
+    fun `address probe reads the public descriptor and pins the certificate that answered`() = runTest {
+        val leaf = "probed leaf".toByteArray()
+        var presented = leaf
+        var descriptorFingerprint = leaf.sha256Hex()
+        val requests = CopyOnWriteArrayList<Request>()
+        val probe = OkHttpCoreHostProbe(
+            probeClient = { trust ->
+                OkHttpClient.Builder().addInterceptor { chain ->
+                    val request = chain.request().also(requests::add)
+                    // Stands in for the TLS handshake the real client performs.
+                    trust.checkServerTrusted(arrayOf(FakeCertificate(presented)), "ECDHE_ECDSA")
+                    response(
+                        request,
+                        200,
+                        """{"descriptorVersion":1,"serverId":"server-a","tlsCertSha256":"$descriptorFingerprint",""" +
+                            """"advertisedOrigin":{"baseUrl":"https://192.168.15.3:4787","policyName":"lan"}}""",
+                    )
+                }.build()
+            },
+        )
+
+        val host = probe.probe("https://192.168.15.3:4787")!!
+        assertEquals("server-a", host.serverId)
+        assertEquals(leaf.sha256Hex(), host.tlsCertSha256)
+        assertEquals(listOf("https://192.168.15.3:4787"), host.origins)
+        assertEquals("GET", requests.single().method)
+        assertEquals("/v1/discovery/descriptor", requests.single().url.encodedPath)
+        assertEquals(null, requests.single().body)
+
+        // A descriptor that names a different certificate than the one presented is not a host.
+        presented = "interceptor leaf".toByteArray()
+        assertEquals(null, probe.probe("https://192.168.15.3:4787"))
+
+        presented = leaf
+        descriptorFingerprint = "not-a-fingerprint"
+        assertEquals(null, probe.probe("https://192.168.15.3:4787"))
+    }
+
+    @Test
+    fun `address probe treats errors and unreachable hosts as not found`() = runTest {
+        val notFound = OkHttpCoreHostProbe(
+            probeClient = { _ ->
+                OkHttpClient.Builder().addInterceptor { chain -> response(chain.request(), 404, "{}") }.build()
+            },
+        )
+        assertEquals(null, notFound.probe("https://192.168.15.3:4787"))
+
+        val unreachable = OkHttpCoreHostProbe(
+            probeClient = { _ ->
+                OkHttpClient.Builder().addInterceptor { throw java.net.ConnectException("refused") }.build()
+            },
+        )
+        assertEquals(null, unreachable.probe("https://192.168.15.3:4787"))
+    }
+
     private fun transportWith(interceptor: Interceptor) = OkHttpPairingTransport(
         pinnedClient = { OkHttpClient.Builder().addInterceptor(interceptor).build() },
     )

@@ -133,4 +133,9 @@
         <item quantity="many">%d plugins</item>
         <item quantity="other">%d plugins</item>
     </plurals>
+    <plurals name="epigraph_core_setup_works">
+        <item quantity="one">%d obra</item>
+        <item quantity="many">%d obras</item>
+        <item quantity="other">%d obras</item>
+    </plurals>
 </resources>

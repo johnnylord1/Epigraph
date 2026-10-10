@@ -643,7 +643,7 @@ private fun freshnessScore(item: RecommendationItem) = combineMetrics(
     ) + item.candidate.providers.map { it.recency },
 )?.value ?: 0.0
 
-private fun passesFilters(candidate: RecommendationCandidate, options: BuildRecommendationSectionsOptions): Boolean {
+internal fun passesFilters(candidate: RecommendationCandidate, options: BuildRecommendationSectionsOptions): Boolean {
     if (!options.includeInLibrary && (candidate.inLibrary || isKnownCandidate(candidate, options))) return false
     if (!options.includeNsfw &&
         (candidate.safety == RecommendationSafetyLevel.ADULT || candidate.safety == RecommendationSafetyLevel.EXPLICIT)

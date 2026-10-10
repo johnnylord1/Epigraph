@@ -78,10 +78,9 @@ class SettingsDownloadController : SettingsLegacyController() {
             showSeekBarValue = true
         }
 
-        val dbCategories = cachedCategories ?: run {
-            loadCategoriesThenRebuild(this)
-            return@apply
-        }
+        // Build every section right away (the settings search indexes this first pass) and
+        // rebuild once the categories arrive from the database.
+        val dbCategories = cachedCategories ?: emptyList<Category>().also { loadCategoriesThenRebuild(this) }
         val categories = listOf(Category.createDefault(context)) + dbCategories
 
         preferenceCategory {

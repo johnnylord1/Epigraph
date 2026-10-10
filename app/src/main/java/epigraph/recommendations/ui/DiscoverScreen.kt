@@ -1,5 +1,7 @@
 package epigraph.recommendations.ui
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -7,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,13 +26,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Button
@@ -59,6 +67,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,17 +78,19 @@ import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.stringResource
+import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverMode
+import epigraph.recommendations.RecommendationCandidate
 import epigraph.recommendations.RecommendationContentType
 import epigraph.recommendations.RecommendationItem
 import epigraph.recommendations.RecommendationSection
 import epigraph.recommendations.RecommendationSectionKey
 import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
+import epigraph.recommendations.TrackerScoreBadge
+import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
-import eu.kanade.tachiyomi.util.compose.LocalBackPress
 import eu.kanade.tachiyomi.util.compose.LocalRouter
-import eu.kanade.tachiyomi.util.compose.currentOrThrow
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import java.io.File
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -88,6 +101,7 @@ import yokai.i18n.MR
 import yokai.presentation.AppBarType
 import yokai.presentation.core.enterAlwaysCollapsedAppBarScrollBehavior
 import yokai.presentation.YokaiScaffold
+import yokai.presentation.component.SegmentedSwitch
 import yokai.presentation.manga.components.MangaCover
 import yokai.util.Screen
 
@@ -96,75 +110,42 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
 @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
-        val backPress = LocalBackPress.currentOrThrow
         val router = LocalRouter.current
+        val context = LocalContext.current
+        val mainActivity = remember(context) { context.findMainActivity() }
         val scope = rememberCoroutineScope()
         val screenModel = rememberScreenModel { DiscoverScreenModel(initialMode) }
         val state by screenModel.state.collectAsState()
         var showFilterSheet by remember { mutableStateOf(false) }
-
-        YokaiScaffold(
-            onNavigationIconClicked = backPress::invoke,
-            title = stringResource(MR.strings.discover_card_title),
-            navigationIcon = Icons.AutoMirrored.Outlined.ArrowBack,
-            appBarType = AppBarType.LARGE,
-            scrollBehavior = enterAlwaysCollapsedAppBarScrollBehavior(),
-            actions = {
-                IconButton(onClick = { showFilterSheet = true }) {
-                    Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
+        // The bottom navigation floats over the tab, so the lists end above it.
+        val bottomNavHeight = with(LocalDensity.current) {
+            (mainActivity?.takeIf { it.isBindingInitialized }?.binding?.bottomNav?.height ?: 0).toDp()
+        }
+        val openCandidate: (RecommendationCandidate) -> Unit = { candidate ->
+            scope.launch {
+                val manga = runCatching { screenModel.resolveLocalManga(candidate) }.getOrNull()
+                val controller = if (manga?.id != null) {
+                    MangaDetailsController(manga, fromCatalogue = true)
+                } else {
+                    GlobalSearchController(candidate.title)
                 }
-                IconButton(onClick = { screenModel.load(force = true) }, enabled = !state.loading) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
-                }
-            },
-            // Inside the app bar so the tabs take its scrolled tone too.
-            appBarBottomContent = { ModeSelector(state.mode, onSelect = screenModel::setMode) },
-        ) { contentPadding ->
-            Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
-                Spacer(Modifier.height(4.dp))
-                if (state.loading && state.result != null) {
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(2.dp)),
-                        color = MaterialTheme.colorScheme.secondary,
-                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                    )
-                }
-                val result = state.result
-                when {
-                    result == null && state.loading -> CenteredBox {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                    }
-                    result == null -> CenteredMessage(
-                        text = stringResource(MR.strings.discover_error) +
-                            state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
-                        onRetry = { screenModel.load(force = true) },
-                    )
-                    result.sections.isEmpty() -> CenteredMessage(
-                        text = stringResource(
-                            if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
-                        ),
-                        onRetry = { screenModel.load(force = true) },
-                    )
-                    else -> DiscoverSections(
-                        sections = result.sections,
-                        failedProviders = result.failedProviders,
-                        visibleLimits = state.visibleLimits,
-                        onNearEnd = screenModel::showMore,
-                        onClick = { item ->
-                            scope.launch {
-                                val manga = runCatching { screenModel.resolveLocalManga(item) }.getOrNull()
-                                val controller = if (manga?.id != null) {
-                                    MangaDetailsController(manga, fromCatalogue = true)
-                                } else {
-                                    GlobalSearchController(item.candidate.title)
-                                }
-                                router?.pushController(controller.withFadeTransaction())
-                            }
-                        },
-                    )
-                }
+                router?.pushController(controller.withFadeTransaction())
             }
         }
+
+        DiscoverContent(
+            state = state,
+            bottomPadding = bottomNavHeight,
+            onFilter = { showFilterSheet = true },
+            onRefresh = { screenModel.load(force = true) },
+            // Same overflow as the other tabs (settings, stats, about…).
+            onOverflow = { mainActivity?.showOverflowDialog() },
+            onSection = screenModel::setSection,
+            onMode = screenModel::setMode,
+            onShowMore = screenModel::showMore,
+            onLoadMoreCatalog = screenModel::loadMoreCatalog,
+            onOpen = openCandidate,
+        )
         if (showFilterSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showFilterSheet = false },
@@ -198,46 +179,132 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
     }
 }
 
+/**
+ * The Discover tab without its screen model: app bar, sub-tabs and the For you / Catalog bodies.
+ * [DiscoverScreen] feeds it; screenshot tests render it with fixed states.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModeSelector(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
-    val modes = listOf(DiscoverMode.COMICS to MR.strings.discover_comics, DiscoverMode.NOVELS to MR.strings.novels)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            modes.forEach { (value, label) ->
-                val selected = value == mode
-                val textColor by animateColorAsState(
-                    if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                    label = "discover-tab-text",
+internal fun DiscoverContent(
+    state: DiscoverScreenModel.State,
+    bottomPadding: Dp,
+    onFilter: () -> Unit,
+    onRefresh: () -> Unit,
+    onOverflow: () -> Unit,
+    onSection: (DiscoverSection) -> Unit,
+    onMode: (DiscoverMode) -> Unit,
+    onShowMore: (RecommendationSectionKey) -> Unit,
+    onLoadMoreCatalog: () -> Unit,
+    onOpen: (RecommendationCandidate) -> Unit,
+) {
+    YokaiScaffold(
+        onNavigationIconClicked = {},
+        title = stringResource(MR.strings.discover),
+        // A bottom navigation tab: nothing to go back to.
+        navigationIcon = null,
+        appBarType = AppBarType.LARGE,
+        scrollBehavior = enterAlwaysCollapsedAppBarScrollBehavior(),
+        actions = {
+            IconButton(onClick = onFilter) {
+                Icon(Icons.Outlined.FilterList, contentDescription = stringResource(MR.strings.filter))
+            }
+            IconButton(onClick = onRefresh, enabled = !state.loading) {
+                Icon(Icons.Outlined.Refresh, contentDescription = stringResource(MR.strings.refresh))
+            }
+            // Same place on every screen that switches content type: right before the overflow menu.
+            SegmentedSwitch(
+                options = listOf(
+                    DiscoverMode.COMICS to stringResource(MR.strings.discover_comics),
+                    DiscoverMode.NOVELS to stringResource(MR.strings.novels),
+                ),
+                selected = state.mode,
+                onSelect = onMode,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            IconButton(onClick = onOverflow) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = stringResource(MR.strings.more))
+            }
+        },
+        // Inside the app bar so the tabs take its scrolled tone too.
+        appBarBottomContent = {
+            DiscoverHeader(section = state.section, onSection = onSection)
+        },
+    ) { contentPadding ->
+        Column(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            Spacer(Modifier.height(4.dp))
+            if (state.loading && state.result != null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clip(RoundedCornerShape(2.dp)),
+                    color = MaterialTheme.colorScheme.secondary,
+                    trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                 )
-                val barColor by animateColorAsState(
-                    if (selected) MaterialTheme.colorScheme.secondary else Color.Transparent,
-                    label = "discover-tab-bar",
+            }
+            val result = state.result
+            when {
+                result == null && state.loading -> CenteredBox {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                }
+                result == null -> CenteredMessage(
+                    text = stringResource(MR.strings.discover_error) +
+                        state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
+                    onRetry = onRefresh,
                 )
-                Column(
-                    modifier = Modifier
-                        .width(IntrinsicSize.Max)
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(value) }
-                        .padding(top = 8.dp),
-                ) {
-                    Text(
-                        text = stringResource(label),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        color = textColor,
-                        modifier = Modifier.padding(bottom = 10.dp),
+                state.section == DiscoverSection.CATALOG -> if (state.catalog.isEmpty()) {
+                    CenteredMessage(
+                        text = stringResource(MR.strings.discover_catalog_empty),
+                        onRetry = onRefresh,
                     )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .background(barColor, RoundedCornerShape(1.dp)),
+                } else {
+                    DiscoverCatalogGrid(
+                        entries = state.catalog,
+                        loadingMore = state.catalogLoadingMore,
+                        exhausted = state.catalogExhausted,
+                        bottomPadding = bottomPadding,
+                        onNearEnd = onLoadMoreCatalog,
+                        onClick = onOpen,
                     )
                 }
+                result.sections.isEmpty() -> CenteredMessage(
+                    text = stringResource(
+                        if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
+                    ),
+                    onRetry = onRefresh,
+                )
+                else -> DiscoverSections(
+                    sections = result.sections,
+                    failedProviders = result.failedProviders,
+                    visibleLimits = state.visibleLimits,
+                    bottomPadding = bottomPadding,
+                    onNearEnd = onShowMore,
+                    onClick = { item -> onOpen(item.candidate) },
+                )
             }
         }
+    }
+}
+
+private tailrec fun Context.findMainActivity(): MainActivity? = when (this) {
+    is MainActivity -> this
+    is ContextWrapper -> baseContext.findMainActivity()
+    else -> null
+}
+
+/** The For you · Catalog tabs under the title. The Comics / Novels switch lives in the actions. */
+@Composable
+private fun DiscoverHeader(
+    section: DiscoverSection,
+    onSection: (DiscoverSection) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        UnderlineTabs(
+            options = listOf(
+                DiscoverSection.FOR_YOU to MR.strings.discover_card_title,
+                DiscoverSection.CATALOG to MR.strings.discover_catalog,
+            ),
+            selected = section,
+            onSelect = onSection,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -247,11 +314,115 @@ private fun ModeSelector(mode: DiscoverMode, onSelect: (DiscoverMode) -> Unit) {
     }
 }
 
+/** Underlined text tabs (For you · Catalog). */
+@Composable
+private fun <T> UnderlineTabs(
+    options: List<Pair<T, StringResource>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+        options.forEach { (value, label) ->
+            val isSelected = value == selected
+            val textColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                label = "discover-tab-text",
+            )
+            val barColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.secondary else Color.Transparent,
+                label = "discover-tab-bar",
+            )
+            Column(
+                modifier = Modifier
+                    .width(IntrinsicSize.Max)
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.Tab,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSelect(value) }
+                    .padding(top = 12.dp),
+            ) {
+                Text(
+                    text = stringResource(label),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    color = textColor,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(barColor, RoundedCornerShape(1.dp)),
+                )
+            }
+        }
+    }
+}
+
+/** Discover › Catalog: everything the installed extensions list, with tracker score badges. */
+@Composable
+private fun DiscoverCatalogGrid(
+    entries: List<DiscoverCatalogEntry>,
+    loadingMore: Boolean,
+    exhausted: Boolean,
+    bottomPadding: Dp,
+    onNearEnd: () -> Unit,
+    onClick: (RecommendationCandidate) -> Unit,
+) {
+    val gridState = rememberLazyGridState()
+    val currentOnNearEnd by rememberUpdatedState(onNearEnd)
+    // Restarts after every page, so a page that added nothing asks for the next one while the
+    // end of the grid is still on screen (until the sources are exhausted).
+    LaunchedEffect(gridState, exhausted, loadingMore) {
+        if (exhausted || loadingMore) return@LaunchedEffect
+        snapshotFlow {
+            val info = gridState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 6
+        }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { currentOnNearEnd() }
+    }
+    LazyVerticalGrid(
+        state = gridState,
+        columns = GridCells.Adaptive(minSize = 104.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = bottomPadding + 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(entries, key = { it.candidate.id }) { entry ->
+            CoverCard(
+                candidate = entry.candidate,
+                badge = entry.badge,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onClick(entry.candidate) },
+            )
+        }
+        if (loadingMore) {
+            item(key = "loading-more", span = { GridItemSpan(maxLineSpan) }) {
+                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun DiscoverSections(
     sections: List<RecommendationSection>,
     failedProviders: List<String>,
     visibleLimits: Map<RecommendationSectionKey, Int>,
+    bottomPadding: Dp,
     onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
 ) {
@@ -264,7 +435,7 @@ private fun DiscoverSections(
             ?: sections.firstOrNull()?.items?.firstOrNull()
     }
     LazyColumn(
-        contentPadding = PaddingValues(top = 16.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = bottomPadding + 32.dp),
         verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
         if (failedProviders.isNotEmpty()) {
@@ -408,7 +579,12 @@ private fun SectionRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(visibleItems, key = { it.candidate.id }) { item ->
-                    RecommendationCard(item, cardWidth = cardWidth, onClick = { onClick(item) })
+                    CoverCard(
+                        candidate = item.candidate,
+                        badge = item.badge,
+                        modifier = Modifier.width(cardWidth),
+                        onClick = { onClick(item) },
+                    )
                 }
             }
         }
@@ -416,8 +592,12 @@ private fun SectionRow(
 }
 
 @Composable
-private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick: () -> Unit) {
-    val candidate = item.candidate
+private fun CoverCard(
+    candidate: RecommendationCandidate,
+    badge: TrackerScoreBadge?,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -426,8 +606,7 @@ private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick:
         label = "recommendation-press",
     )
     Column(
-        modifier = Modifier
-            .width(cardWidth)
+        modifier = modifier
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -443,7 +622,7 @@ private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick:
                 shape = RoundedCornerShape(10.dp),
                 contentScale = ContentScale.Crop,
             )
-            item.badge?.let { badge ->
+            badge?.let { score ->
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -459,7 +638,7 @@ private fun RecommendationCard(item: RecommendationItem, cardWidth: Dp, onClick:
                         modifier = Modifier.width(11.dp).height(11.dp),
                     )
                     Spacer(Modifier.width(2.dp))
-                    Text(badge.displayScore, style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    Text(score.displayScore, style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
             }
         }

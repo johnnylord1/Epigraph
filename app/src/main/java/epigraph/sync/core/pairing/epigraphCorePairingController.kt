@@ -58,7 +58,11 @@ sealed interface CorePairingUiState {
 sealed interface CoreHostDiscoveryState {
     data object Idle : CoreHostDiscoveryState
     data object Searching : CoreHostDiscoveryState
-    data class Found(val hosts: List<DiscoveredCoreHost>) : CoreHostDiscoveryState
+    data class Found(
+        val hosts: List<DiscoveredCoreHost>,
+        /** The last address the user typed did not answer as an Epigraph Core. */
+        val addressFailed: Boolean = false,
+    ) : CoreHostDiscoveryState
 }
 
 enum class PairingStage {
@@ -85,7 +89,9 @@ class EpigraphCorePairingController(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val hostDiscovery: CoreHostDiscovery = CoreHostDiscovery { emptyList() },
     private val pinResolver: PairingPinResolver? = null,
+    private val hostProbe: CoreHostProbe = CoreHostProbe { null },
     private val pairingEndedListeners: List<CorePairingEndedListener> = emptyList(),
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private val lifetimeScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val operation = Mutex()
@@ -99,6 +105,14 @@ class EpigraphCorePairingController(
     val discovery: StateFlow<CoreHostDiscoveryState> = mutableDiscovery.asStateFlow()
 
     suspend fun refresh() = operation.withLock {
+        // An expired QR/PIN bundle cannot be claimed; never reopen its "Choose what to sync" dialog
+        // while the persisted state below is still loading.
+        val selecting = mutableState.value as? CorePairingUiState.Selecting
+        if (selecting != null && selecting.expiresAtMs <= nowMs()) {
+            pendingBootstrapBundle = null
+            activeVerificationCode = null
+            mutableState.value = CorePairingUiState.Loading
+        }
         mutableState.value = readPersistedState()
         mutableSelection.value = readPersistedSelection()
     }
@@ -121,6 +135,34 @@ class EpigraphCorePairingController(
                 emptyList()
             }
             mutableDiscovery.value = CoreHostDiscoveryState.Found(hosts)
+        }
+    }
+
+    /**
+     * Looks for a desktop at an address the user typed, when LAN discovery cannot reach it. A host
+     * that answers is added to the discovered list, where the user still compares its code.
+     */
+    fun probeHostAddress(rawAddress: String) {
+        val previous = (mutableDiscovery.value as? CoreHostDiscoveryState.Found)?.hosts.orEmpty()
+        if (mutableDiscovery.value == CoreHostDiscoveryState.Searching) return
+        val origin = CoreHostAddress.toOrigin(rawAddress) ?: run {
+            mutableDiscovery.value = CoreHostDiscoveryState.Found(previous, addressFailed = true)
+            return
+        }
+        mutableDiscovery.value = CoreHostDiscoveryState.Searching
+        lifetimeScope.launch {
+            val host = try {
+                hostProbe.probe(origin)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            mutableDiscovery.value = if (host == null) {
+                CoreHostDiscoveryState.Found(previous, addressFailed = true)
+            } else {
+                CoreHostDiscoveryState.Found(DiscoveredCoreHost.merge(previous + host))
+            }
         }
     }
 
@@ -300,14 +342,19 @@ class EpigraphCorePairingController(
 
     private suspend fun readPersistedState(): CorePairingUiState = try {
         withContext(ioDispatcher) { credentials.load() }?.use { session ->
-            val verifiedEndpoint = runCatching { endpoints.resolve(session) }.getOrNull()
-            CorePairingUiState.Paired(
-                origin = verifiedEndpoint?.origin ?: session.origin,
+            val stored = CorePairingUiState.Paired(
+                origin = session.origin,
                 profileId = session.profileId,
                 scopes = session.scopes,
                 inactivityExpiresAtMs = session.inactivityExpiresAtMs,
-                verifiedInThisProcess = verifiedEndpoint != null,
+                verifiedInThisProcess = false,
             )
+            // The endpoint probe can wait out a connect timeout when the desktop is off; show the
+            // stored pairing meanwhile instead of a loading state that reads as "not paired".
+            if (mutableState.value == CorePairingUiState.Loading) mutableState.value = stored
+            val verifiedEndpoint = runCatching { endpoints.resolve(session) }.getOrNull()
+            if (verifiedEndpoint == null) stored
+            else stored.copy(origin = verifiedEndpoint.origin, verifiedInThisProcess = true)
         } ?: CorePairingUiState.Unpaired
     } catch (failure: CoreCredentialException) {
         CorePairingUiState.CredentialFailed(failure.failure)

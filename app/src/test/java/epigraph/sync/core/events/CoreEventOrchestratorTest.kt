@@ -55,6 +55,39 @@ class CoreEventOrchestratorTest {
     }
 
     @Test
+    fun `a connection that delivered changes restarts the backoff series`() = runTest {
+        val retries = mutableListOf<Pair<Int, CoreReconnectReason>>()
+        var connections = 0
+        val orchestrator = CoreEventOrchestrator(
+            network = CoreNetworkGate {},
+            reconnect = CoreReconnectGate { attempt, reason -> retries += attempt to reason },
+            bootstrap = CoreFullBootstrap { error("must not bootstrap") },
+            connection = CoreEventConnection { current ->
+                connections += 1
+                when (connections) {
+                    1, 2 -> CoreEventStreamOutcome.Reconnect(current.checkpoint, CoreReconnectReason.IO_FAILURE)
+                    // The stream applied changes up to 9 before the socket went idle.
+                    3 -> CoreEventStreamOutcome.Reconnect(session(9).checkpoint, CoreReconnectReason.IO_FAILURE)
+                    4 -> CoreEventStreamOutcome.Reconnect(current.checkpoint, CoreReconnectReason.END_OF_STREAM)
+                    else -> CoreEventStreamOutcome.HttpFailure(current.checkpoint, statusCode = 401, retryable = false)
+                }
+            },
+        )
+
+        orchestrator.run(session(4))
+
+        assertEquals(
+            listOf(
+                1 to CoreReconnectReason.IO_FAILURE,
+                2 to CoreReconnectReason.IO_FAILURE,
+                1 to CoreReconnectReason.IO_FAILURE,
+                2 to CoreReconnectReason.END_OF_STREAM,
+            ),
+            retries,
+        )
+    }
+
+    @Test
     fun `cancellation is never converted to reconnect`() = runTest {
         val orchestrator = CoreEventOrchestrator(
             network = CoreNetworkGate {},

@@ -69,6 +69,8 @@ data class CoreCapabilities(
     val supportsComicDeleteProjectionWithoutRecord: Boolean = false,
     /** The Core accepts CreateCategory commands for phone-created comic categories. */
     val supportsSuwayomiCategoryCreate: Boolean = false,
+    /** The Core accepts AddExtensionRepos and InstallExtension commands from this phone. */
+    val supportsSuwayomiExtensionInstall: Boolean = false,
 )
 
 @Serializable

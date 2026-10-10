@@ -121,12 +121,14 @@ interface CoreReplicaTransaction {
 
     suspend fun hasAppliedInboxEvent(globalEventId: Long): Boolean
 
-    suspend fun upsertConfirmed(record: CoreConfirmedRecord)
+    /** Returns false when a newer version is already held and the record was ignored. */
+    suspend fun upsertConfirmed(record: CoreConfirmedRecord): Boolean
 
     /** Projects a confirmed merge after its replica row has been written. */
     suspend fun projectConfirmed(record: CoreConfirmedRecord) = Unit
 
-    suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone)
+    /** Returns false when a newer version is already held and the tombstone was ignored. */
+    suspend fun deleteConfirmed(tombstone: CoreConfirmedTombstone): Boolean
 
     /** Projects a confirmed delete. The prior record is optional for tombstones. */
     suspend fun projectDeleted(
@@ -135,6 +137,13 @@ interface CoreReplicaTransaction {
     ) = Unit
 
     suspend fun recordAppliedInboxEvent(event: CoreReplicaInboxEvent)
+
+    /**
+     * Drops inbox deduplication rows at or below every stored cursor. No coverage can receive those
+     * events again (`/v1/changes` and the live stream both resume after their cursor), so keeping them
+     * only grows the database.
+     */
+    suspend fun pruneAppliedInbox() = Unit
 
     /** Written last in the transaction and becomes visible only when that transaction commits. */
     suspend fun saveCheckpoint(checkpoint: CoreReplayCheckpoint)

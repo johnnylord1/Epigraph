@@ -44,7 +44,7 @@ fuzzywuzzy = { module = "me.xdrop:fuzzywuzzy", version.ref = "fuzzywuzzy" }
 flexbox = { module = "com.google.android.flexbox:flexbox", version = "3.0.0" }
 flexible-adapter-ui = { module = "com.github.arkon.FlexibleAdapter:flexible-adapter-ui", version.ref = "flexible-adapter" }
 flexible-adapter = { module = "com.github.arkon.FlexibleAdapter:flexible-adapter", version.ref = "flexible-adapter" }
-image-decoder = { module = "com.github.tachiyomiorg:image-decoder", version = "41c059e540" }
+image-decoder = { module = "com.github.mihonapp:image-decoder", version = "e03b81e18a" }
 
 kermit = { module = "co.touchlab:kermit", version.ref = "kermit" }
 
@@ -70,6 +70,9 @@ junit-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref 
 junit-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }
 junit-android = { module = "androidx.test.ext:junit", version = "1.3.0" }
+junit-vintage = { module = "org.junit.vintage:junit-vintage-engine", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version = "4.17" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version = "1.76.0" }
 androidx-test-runner = { module = "androidx.test:runner", version = "1.7.0" }
 mockk = { module = "io.mockk:mockk", version = "1.14.11" }
 

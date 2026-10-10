@@ -120,13 +120,24 @@ class MihonPortableProvider(
         dependencies.associateWith { providerDependency ->
             val dependency = (providerDependency as? ProviderDependency.Comic)?.dependency
                 ?: return@associateWith conflict()
-            if (!registry.isPackageInstalled(dependency.pkgName)) {
-                return@associateWith PortableResolution(
-                    PortableResolutionState.PENDING_DEPENDENCY,
-                    PortableResolutionReason.EXTENSION_NOT_FOUND,
-                )
-            }
             val sourceIds = dependency.requiredSourceIds.map { it.toLong() }
+            if (!registry.isPackageInstalled(dependency.pkgName)) {
+                // Forks republish a source under another package with the same id (a "revived"
+                // Manganato keeps the original id). The source id is what the works are keyed by,
+                // so an installed extension already loading every one of them serves them, the
+                // same as works whose manifest names no package at all.
+                val servedElsewhere = sourceIds.isNotEmpty() && sourceIds.all {
+                    registry.packageForSource(it) != null && registry.isSourceReady(it)
+                }
+                return@associateWith if (servedElsewhere) {
+                    PortableResolution(PortableResolutionState.READY)
+                } else {
+                    PortableResolution(
+                        PortableResolutionState.PENDING_DEPENDENCY,
+                        PortableResolutionReason.EXTENSION_NOT_FOUND,
+                    )
+                }
+            }
             when {
                 sourceIds.any { registry.packageForSource(it) != dependency.pkgName } -> PortableResolution(
                     PortableResolutionState.REQUIRES_USER_ACTION,
@@ -144,8 +155,8 @@ class MihonPortableProvider(
     override suspend fun resolveWork(ref: PortableWorkRef): WorkResolution {
         val comic = ref as? PortableWorkRef.Comic
             ?: return WorkResolution(ref, conflict())
-        val sourceId = comic.sourceId.toLong()
-        if (!registry.isSourceReady(sourceId)) {
+        resolveExistingWork(ref)?.let { return it }
+        if (!registry.isSourceReady(comic.sourceId.toLong())) {
             return WorkResolution(
                 ref,
                 PortableResolution(
@@ -154,12 +165,15 @@ class MihonPortableProvider(
                 ),
             )
         }
-        val localId = local.comicWork(sourceId, comic.mangaKey.value)
-        return if (localId != null) {
-            WorkResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
-        } else {
-            materializer?.materialize(ref) ?: unsupported(ref)
-        }
+        return materializer?.materialize(ref) ?: unsupported(ref)
+    }
+
+    // The exact source id and provider key identify the local row; binding to it reads nothing
+    // from the extension, so a restored title keeps syncing while its extension is not installed.
+    override suspend fun resolveExistingWork(ref: PortableWorkRef): WorkResolution? {
+        val comic = ref as? PortableWorkRef.Comic ?: return null
+        val localId = local.comicWork(comic.sourceId.toLong(), comic.mangaKey.value) ?: return null
+        return WorkResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
     }
 
     override suspend fun resolveChapter(ref: PortableChapterRef): ChapterResolution =
@@ -176,21 +190,18 @@ class MihonPortableProvider(
                 continue
             }
             val sourceId = comic.work.sourceId.toLong()
-            if (!registry.isSourceReady(sourceId)) {
-                resolved[ref] = ChapterResolution(
+            val localId = local.comicChapter(sourceId, comic.work.mangaKey.value, comic.chapterKey.value)
+            when {
+                localId != null -> resolved[ref] =
+                    ChapterResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
+                !registry.isSourceReady(sourceId) -> resolved[ref] = ChapterResolution(
                     ref,
                     PortableResolution(
                         PortableResolutionState.RETRYABLE_FAILURE,
                         PortableResolutionReason.SOURCE_NOT_LOADED,
                     ),
                 )
-                continue
-            }
-            val localId = local.comicChapter(sourceId, comic.work.mangaKey.value, comic.chapterKey.value)
-            if (localId != null) {
-                resolved[ref] = ChapterResolution(ref, PortableResolution(PortableResolutionState.BOUND), localId)
-            } else {
-                missing += ref
+                else -> missing += ref
             }
         }
         val materialized = chapterMaterializer?.materializeAll(missing)
@@ -323,10 +334,12 @@ private fun unsupported(ref: PortableWorkRef) = WorkResolution(
     ),
 )
 
+// The device lists a work's chapters through its extension when the work is opened, added or
+// updated, never from the sync pass; until then the chapter stays pending and binds on a later pass.
 private fun unsupported(ref: PortableChapterRef) = ChapterResolution(
     ref,
     PortableResolution(
         PortableResolutionState.PENDING_PROVIDER,
-        PortableResolutionReason.CHAPTER_RESOLUTION_FAILED,
+        PortableResolutionReason.CHAPTER_NOT_FOUND,
     ),
 )

@@ -4,7 +4,9 @@ import android.content.Context
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -35,6 +37,7 @@ import exh.source.handleSourceLibrary
 // EXH <--
 // NOVEL -->
 import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.source.NovelSource
 // NOVEL <--
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.reflect.KClass
@@ -88,6 +91,7 @@ class SourceManager(
 
     // EXH -->
     private val exhPreferences: ExhPreferences by injectLazy()
+    private val preferences: PreferencesHelper by injectLazy()
     // EXH <--
 
     // NOVEL -->
@@ -125,10 +129,11 @@ class SourceManager(
             combine(
                 extensionManager.installedExtensionsFlow,
                 exhPreferences.enableExhentai.changes(),
+                preferences.showNsfwSources().changes(),
                 novelPluginManager.installedSourcesFlow,
-            ) { extensions, enableExhentai, novelSources ->
-                Triple(extensions, enableExhentai, novelSources)
-            }.collectLatest { (extensions, enableExhentai, novelSources) ->
+            ) { extensions, enableExhentai, showNsfw, novelSources ->
+                SourceMapInputs(extensions, enableExhentai, showNsfw, novelSources)
+            }.collectLatest { (extensions, enableExhentai, showNsfw, novelSources) ->
                 val mutableMap = ConcurrentHashMap<Long, Source>(
                     mapOf(
                         LocalSource.ID to LocalSource(context),
@@ -137,8 +142,12 @@ class SourceManager(
                 )
 
                 // EXH -->
-                mutableMap[EH_SOURCE_ID] = EHentai(EH_SOURCE_ID, false, context)
-                if (enableExhentai) {
+                // E-Hentai is built in rather than an extension, so the NSFW toggle that keeps
+                // NSFW extensions from loading has to be applied here as well.
+                if (showNsfw) {
+                    mutableMap[EH_SOURCE_ID] = EHentai(EH_SOURCE_ID, false, context)
+                }
+                if (showNsfw && enableExhentai) {
                     mutableMap[EXH_SOURCE_ID] = EHentai(EXH_SOURCE_ID, true, context)
                 }
                 mutableMap[MERGED_SOURCE_ID] = MergedSource()
@@ -212,6 +221,10 @@ class SourceManager(
         return sourcesMapFlow.value[sourceKey]
             ?: novelPluginManager.installedSourcesFlow.value.firstOrNull { it.id == sourceKey }
     }
+
+    /** True once installed novel plugins have registered, so a missing novel source is really absent. */
+    val novelPluginsLoaded: Boolean
+        get() = novelPluginManager.loadedFlow.value
 
     fun getOrStub(sourceKey: Long): Source {
         sourcesMapFlow.value[sourceKey]?.let { return it }
@@ -329,6 +342,13 @@ class SourceManager(
             return id == other.id
         }
     }
+
+    private data class SourceMapInputs(
+        val extensions: List<Extension.Installed>,
+        val enableExhentai: Boolean,
+        val showNsfw: Boolean,
+        val novelSources: List<NovelSource>,
+    )
 
     private data class DelegatedSource(
         val urlName: String,

@@ -5,8 +5,12 @@ import android.content.Context
 import android.net.Uri
 import co.touchlab.kermit.Logger
 import com.hippo.unifile.UniFile
+import epigraph.books.local.LocalBookRepository
+import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.data.backup.BackupContainer
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
+import eu.kanade.tachiyomi.data.backup.models.BackupLocalBook
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
@@ -18,8 +22,11 @@ import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.SourcesBackupCreator
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.domain.manga.models.Manga
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileOutputStream
 import java.time.Instant
+import java.util.zip.GZIPOutputStream
 import kotlinx.serialization.protobuf.ProtoBuf
 import okio.buffer
 import okio.gzip
@@ -39,6 +46,7 @@ class BackupCreator(
     private val sourcesBackupCreator: SourcesBackupCreator = SourcesBackupCreator(),
     private val localBookBackupCreator: LocalBookBackupCreator = LocalBookBackupCreator(),
     private val getManga: GetManga = get(),
+    private val localBookRepository: LocalBookRepository = get(),
 ) {
 
     val parser = ProtoBuf
@@ -95,10 +103,28 @@ class BackupCreator(
                 throw IllegalStateException(context.getString(MR.strings.empty_backup_error))
             }
 
-            file.openOutputStream().also {
+            val bookFiles = if (options.bookFiles) storedBookFiles(backup.backupLocalBooks) else emptyList()
+            val output = file.openOutputStream().also {
                 // Force overwrite old file
                 (it as? FileOutputStream)?.channel?.truncate(0)
-            }.sink().gzip().buffer().use { it.write(byteArray) }
+            }
+            if (bookFiles.isEmpty()) {
+                output.sink().gzip().buffer().use { it.write(byteArray) }
+            } else {
+                // Book files need the unified container; the backup itself stays a gzipped payload.
+                val gzipped = ByteArrayOutputStream().also { bytes ->
+                    GZIPOutputStream(bytes).use { it.write(byteArray) }
+                }.toByteArray()
+                output.buffered().use {
+                    BackupContainer.write(
+                        output = it,
+                        gzippedBackup = gzipped,
+                        books = bookFiles,
+                        sourceFilename = finalName.substringBeforeLast('.') + ".tachibk",
+                        appVersion = BuildConfig.VERSION_NAME,
+                    )
+                }
+            }
 
             // Make sure it's a valid backup file
             BackupFileValidator().validate(context, file.uri)
@@ -164,7 +190,14 @@ class BackupCreator(
         return preferenceBackupCreator.createSource()
     }
 
-    private suspend fun backupLocalBooks(options: BackupOptions): List<eu.kanade.tachiyomi.data.backup.models.BackupLocalBook> {
+    /** The private files of the backed-up local books that are present on this device. */
+    private suspend fun storedBookFiles(books: List<BackupLocalBook>): List<BackupContainer.LocalBookFile> =
+        books.mapNotNull { backupBook ->
+            val book = localBookRepository.find(backupBook.bookId)?.takeIf { it.isAvailable } ?: return@mapNotNull null
+            BackupContainer.LocalBookFile(book.sha256, book.contentType.name, File(book.privatePath))
+        }
+
+    private suspend fun backupLocalBooks(options: BackupOptions): List<BackupLocalBook> {
         if (!options.libraryEntries) return emptyList()
         return localBookBackupCreator(options.categories)
     }

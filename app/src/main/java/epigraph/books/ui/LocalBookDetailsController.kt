@@ -705,7 +705,11 @@ class LocalBookDetailsController(bundle: Bundle? = null) :
         val loaded = book ?: return
         val positionLabel = bookProgressLabel(context, loaded, progress, structure)
         val availability = context.getString(
-            if (loaded.isAvailable) MR.strings.local_book_available_offline else MR.strings.local_book_file_unavailable,
+            when {
+                loaded.isAvailable -> MR.strings.local_book_available_offline
+                loaded.downloadsWhenOpened -> MR.strings.local_books_downloads_when_opened
+                else -> MR.strings.local_book_file_unavailable
+            },
         )
         context.materialAlertDialog()
             .setTitle(context.getString(MR.strings.local_book_file_info))
@@ -1001,7 +1005,11 @@ private class LocalBookDetailsAdapter(
                 append(bookProgressLabel(context, book, progress, structure))
             }
             mangaSource.text = context.getString(
-                if (book.isAvailable) MR.strings.local_book_local_file else MR.strings.local_book_file_unavailable,
+                when {
+                    book.isAvailable -> MR.strings.local_book_local_file
+                    book.downloadsWhenOpened -> MR.strings.local_books_downloads_when_opened
+                    else -> MR.strings.local_book_file_unavailable
+                },
             )
             mangaSummaryLabel.text = context.getString(
                 MR.strings.about_this_,

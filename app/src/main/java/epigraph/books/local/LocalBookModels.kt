@@ -27,6 +27,8 @@ data class LocalBook(
     val updatedAt: Long,
     /** Confirmed PDF outline entries projected by Epigraph Core; not synthetic page buckets. */
     val pdfSections: List<LocalBookPdfSection> = emptyList(),
+    /** The file is on Epigraph Core, so a missing local copy downloads when the book is opened. */
+    val remoteAvailable: Boolean = false,
 ) {
     init {
         require(contentType == ContentType.EPUB || contentType == ContentType.PDF) {
@@ -58,6 +60,10 @@ data class LocalBook(
 
     val isAvailable: Boolean
         get() = File(privatePath).isFile
+
+    /** Synced from Core but not downloaded yet: not a missing file. */
+    val downloadsWhenOpened: Boolean
+        get() = remoteAvailable && !isAvailable
 
     private companion object {
         val SHA_256 = Regex("[0-9a-f]{64}")

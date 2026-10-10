@@ -5,6 +5,7 @@ import epigraph.sync.EpigraphCategoryMutationRouter
 import eu.kanade.tachiyomi.data.database.models.Category
 import kotlinx.coroutines.flow.Flow
 import yokai.data.DatabaseHandler
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.CategoryRepository
 import yokai.domain.category.models.CategoryUpdate
 
@@ -21,6 +22,40 @@ class CategoryRepositoryImpl(
 
     override fun getAllAsFlow(): Flow<List<Category>> =
         handler.subscribeToList { categoriesQueries.findAll(Category::mapper) }
+
+    override suspend fun getAll(library: CategoryLibrary): List<Category> =
+        handler.awaitList {
+            when (library) {
+                CategoryLibrary.COMICS -> categoriesQueries.findAllComics(Category::mapper)
+                CategoryLibrary.BOOKS -> categoriesQueries.findAllBooks(Category::mapper)
+            }
+        }
+
+    override fun getAllAsFlow(library: CategoryLibrary): Flow<List<Category>> =
+        handler.subscribeToList {
+            when (library) {
+                CategoryLibrary.COMICS -> categoriesQueries.findAllComics(Category::mapper)
+                CategoryLibrary.BOOKS -> categoriesQueries.findAllBooks(Category::mapper)
+            }
+        }
+
+    override suspend fun insert(category: Category, library: CategoryLibrary): Long? {
+        if (library == CategoryLibrary.COMICS) return insert(category)
+        // A Books & novels folder is scoped on creation so Comics never lists it.
+        val insert: suspend yokai.data.Database.() -> Long = {
+            categoriesQueries.insert(
+                name = category.name,
+                mangaOrder = category.mangaOrderToString(),
+                sort = category.order.toLong(),
+                flags = category.flags.toLong(),
+            )
+            val id = categoriesQueries.selectLastInsertedRowId().executeAsOne()
+            aethon_syncQueries.upsertCategoryScope(id, "NOVEL")
+            id
+        }
+        val router = syncRouter ?: return handler.await(inTransaction = true) { insert() }
+        return router.createBooksFolder(insert)
+    }
 
     override suspend fun insert(category: Category): Long? =
         handler.awaitOneOrNullExecutable {

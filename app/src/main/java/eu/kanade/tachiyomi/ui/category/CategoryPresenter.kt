@@ -44,7 +44,7 @@ class CategoryPresenter(
         scope.launch(Dispatchers.IO) {
             categories.clear()
             categories.add(newCategory())
-            categories.addAll(getCategories.await())
+            categories.addAll(getCategories.await(controller.library))
             val catItems = categories.map(::CategoryItem)
             withContext(Dispatchers.Main) {
                 controller.setCategories(catItems)
@@ -84,8 +84,8 @@ class CategoryPresenter(
         // above already covers the only path that should return false.
         cat.mangaSort = LibrarySort.Title.categoryValue
         scope.launch {
-            insertCategories.awaitOne(cat)
-            val cats = getCategories.await()
+            insertCategories.awaitOne(cat, controller.library)
+            val cats = getCategories.await(controller.library)
             val newCat = cats.find { it.name == name } ?: return@launch
             withContext(Dispatchers.Main) {
                 categories.add(1, newCat)

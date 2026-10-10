@@ -201,15 +201,17 @@ CREATE TABLE aethon_category_scope (
     FOREIGN KEY(category_id) REFERENCES categories(_id) ON DELETE CASCADE
 );
 
--- One identity per folder and library: the desktop keeps separate comic, novel and book categories,
--- while a phone folder is shared by all libraries.
+-- One identity per folder and library. Comics folders and Books & novels folders are separate lists
+-- (see aethon_category_scope); novels and books share the Books & novels list, and a desktop Books
+-- category binds that folder under the same id in both libraries.
 CREATE TABLE aethon_category_identity (
-    entity_id TEXT NOT NULL PRIMARY KEY,
+    entity_id TEXT NOT NULL,
     local_category_id INTEGER NOT NULL,
     content_scope TEXT NOT NULL CHECK(content_scope IN ('ALL', 'MANGA', 'NOVEL', 'BOOK')),
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
+    PRIMARY KEY(entity_id, content_scope),
     UNIQUE(local_category_id, content_scope),
     FOREIGN KEY(local_category_id) REFERENCES categories(_id) ON DELETE CASCADE
 );
@@ -747,6 +749,22 @@ WHERE binding.ecosystem = 'SUWAYOMI'
   AND binding.normalized_url = :providerKey
   AND mangas.source = :coreSourceId;
 
+-- Reverse of selectAethonCoreMangaBySourceBinding: the not-yet-bound portable comic a Core-backed
+-- row stands in for.
+selectUnboundPortableComicIdsByCoreManga:
+SELECT DISTINCT work.portable_id
+FROM aethon_portable_work_binding AS work
+JOIN aethon_source_binding AS binding
+  ON binding.ecosystem = 'SUWAYOMI'
+  AND binding.source_id = work.source_id
+  AND binding.normalized_url = work.provider_key
+JOIN aethon_content_identity AS identity ON identity.entity_id = binding.entity_id
+JOIN mangas ON mangas._id = CAST(identity.local_reference AS INTEGER)
+WHERE work.ecosystem = 'SUWAYOMI'
+  AND work.resolution_state <> 'BOUND'
+  AND mangas._id = :mangaId
+  AND mangas.source = :coreSourceId;
+
 selectMangaByExactSourceBinding:
 SELECT mangas.*
 FROM aethon_source_binding AS binding
@@ -870,9 +888,8 @@ INSERT INTO aethon_category_identity(
 ) VALUES (
     :entityId, :localCategoryId, :contentScope, :name, :sortOrder, :updatedAt
 )
-ON CONFLICT(entity_id) DO UPDATE SET
+ON CONFLICT(entity_id, content_scope) DO UPDATE SET
     local_category_id = :localCategoryId,
-    content_scope = :contentScope,
     name = :name,
     sort_order = :sortOrder,
     updated_at = :updatedAt;
@@ -889,6 +906,10 @@ ORDER BY content_scope;
 deleteCategoryIdentity:
 DELETE FROM aethon_category_identity
 WHERE entity_id = :entityId;
+
+deleteCategoryIdentityInScope:
+DELETE FROM aethon_category_identity
+WHERE entity_id = :entityId AND content_scope = :contentScope;
 
 -- A category entity is live while the confirmed replica holds it or a local command for it is
 -- still queued. Anything else is left over from a previous pairing or never left the device.
@@ -927,9 +948,14 @@ SELECT EXISTS(
     SELECT 1 FROM local_books_categories WHERE category_id = :categoryId
 );
 
+-- Only for comic ids, which no other library shares; Books & novels ids may be bound once per library.
 selectCategoryIdentityByEntityId:
 SELECT * FROM aethon_category_identity
 WHERE entity_id = :entityId;
+
+selectCategoryIdentityByEntityIdAndScope:
+SELECT * FROM aethon_category_identity
+WHERE entity_id = :entityId AND content_scope = :contentScope;
 
 selectCategoryIdentitiesByEntityPrefix:
 SELECT * FROM aethon_category_identity
@@ -1117,6 +1143,27 @@ blockedMutationCount:
 SELECT COUNT(*) FROM aethon_sync_outbox
 WHERE status = 'ERROR' AND last_error LIKE 'blocked:%';
 
+selectBlockedMutations:
+SELECT sequence, scope_id, entity_type, entity_id, operation, last_error, created_at
+FROM aethon_sync_outbox
+WHERE status = 'ERROR' AND last_error LIKE 'blocked:%'
+ORDER BY sequence;
+
+retryBlockedMutation:
+UPDATE aethon_sync_outbox
+SET client_mutation_id = :newClientMutationId,
+    status = 'PENDING',
+    attempt_count = 0,
+    next_attempt_at = :now,
+    last_error = NULL,
+    in_flight_at = NULL,
+    lease_until = NULL
+WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
+discardBlockedMutation:
+DELETE FROM aethon_sync_outbox
+WHERE sequence = :sequence AND status = 'ERROR' AND last_error LIKE 'blocked:%';
+
 releaseMutationBackoff:
 UPDATE aethon_sync_outbox
 SET next_attempt_at = :now
@@ -1152,12 +1199,15 @@ SELECT entity_id FROM aethon_suwayomi_mutation_queue
 WHERE profile_id = :profileId
   AND status IN ('PENDING', 'IN_FLIGHT', 'ERROR');
 
+-- A row the Core refused for good no longer holds the entity because it will never be accepted, and
+-- remote updates keep arriving while it waits in settings for retry or discard.
 hasBlockingMutationForObservedVersion:
 SELECT EXISTS(
     SELECT 1 FROM aethon_sync_outbox
     WHERE scope_id = :scopeId
       AND entity_type = :entityType
       AND entity_id = :entityId
+      AND (status != 'ERROR' OR last_error IS NULL OR last_error NOT LIKE 'blocked:%')
     UNION ALL
     SELECT 1 FROM aethon_sync_replica_wait
     WHERE scope_id = :scopeId
@@ -1318,6 +1368,10 @@ ON CONFLICT(sha256) DO UPDATE SET
 selectAssetManifest:
 SELECT * FROM aethon_asset_manifest WHERE sha256 = :sha256;
 
+selectRemoteAvailableBookShas:
+SELECT sha256 FROM aethon_asset_manifest
+WHERE content_type IN ('EPUB', 'PDF') AND remote_available = 1;
+
 selectPendingAssetUploads:
 SELECT * FROM aethon_asset_manifest
 WHERE state = 'PENDING_UPLOAD'
@@ -1411,6 +1465,14 @@ WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityI
 selectCoreReplicaRecord:
 SELECT * FROM aethon_core_replica_record
 WHERE scope_id = :scopeId AND entity_type = :entityType AND entity_id = :entityId;
+
+selectCoreReplicaRecordsByEntity:
+SELECT * FROM aethon_core_replica_record
+WHERE entity_type = :entityType AND entity_id = :entityId;
+
+selectCoreReplicaRecordsOfType:
+SELECT * FROM aethon_core_replica_record
+WHERE entity_type = :entityType;
 
 selectCoreReplicaTombstoneVersion:
 SELECT server_version FROM aethon_core_replica_tombstone
@@ -1508,6 +1570,12 @@ DELETE FROM aethon_core_replica_checkpoint;
 deleteAllCoreReplicaInboxEvents:
 DELETE FROM aethon_core_replica_inbox;
 
+pruneCoreReplicaInboxBelowCheckpoints:
+DELETE FROM aethon_core_replica_inbox
+WHERE global_event_id <= (
+    SELECT COALESCE(MIN(last_global_event_id), -1) FROM aethon_core_replica_checkpoint
+);
+
 selectCoreLamport:
 SELECT last_lamport FROM aethon_core_lamport WHERE singleton_id = 0;
 
@@ -1582,10 +1650,27 @@ WHERE c._id > 0
       SELECT 1 FROM aethon_category_identity i
       WHERE i.local_category_id = c._id AND i.content_scope = 'MANGA'
   )
-  AND EXISTS (
-      SELECT 1 FROM mangas_categories mc
-      JOIN aethon_content_identity e
-        ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
-      WHERE mc.category_id = c._id
+  AND NOT EXISTS (
+      SELECT 1 FROM aethon_category_scope s
+      WHERE s.category_id = c._id AND s.content_scope IN ('NOVEL', 'BOOK')
+  )
+  AND (
+      EXISTS (
+          SELECT 1 FROM mangas_categories mc
+          JOIN aethon_content_identity e
+            ON e.content_type = 'MANGA' AND e.local_reference = CAST(mc.manga_id AS TEXT)
+          WHERE mc.category_id = c._id
+      )
+      -- A folder the user just created on the phone is still empty; it reaches the desktop too.
+      -- Folders bound to (or scoped to) another library, or holding anything, are not new comic folders.
+      OR (
+          NOT EXISTS (SELECT 1 FROM aethon_category_identity i WHERE i.local_category_id = c._id)
+          AND NOT EXISTS (
+              SELECT 1 FROM aethon_category_scope s
+              WHERE s.category_id = c._id AND s.content_scope NOT IN ('ALL', 'MANGA')
+          )
+          AND NOT EXISTS (SELECT 1 FROM mangas_categories mc WHERE mc.category_id = c._id)
+          AND NOT EXISTS (SELECT 1 FROM local_books_categories b WHERE b.category_id = c._id)
+      )
   )
 ORDER BY c.sort, c._id;

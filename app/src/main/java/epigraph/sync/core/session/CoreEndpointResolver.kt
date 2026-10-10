@@ -91,6 +91,8 @@ class AndroidCoreEndpointResolver(
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
+        } catch (stale: CorePairingStaleException) {
+            throw stale
         } catch (error: Throwable) {
             if (error.hasFingerprintMismatch()) {
                 throw CorePairingStaleException(
@@ -214,7 +216,8 @@ internal fun pairedEndpointCandidates(session: CoreCredentialSession): List<Stri
     configured.forEach { origin ->
         runCatching {
             val url = origin.toHttpUrl()
-            if (url.port != EPIGRAPH_CORE_DEFAULT_PORT) {
+            // A development Core keeps its own port and data; never probe the installed one for it.
+            if (url.port != EPIGRAPH_CORE_DEFAULT_PORT && url.port != EPIGRAPH_CORE_DEV_PORT) {
                 add(url.newBuilder().port(EPIGRAPH_CORE_DEFAULT_PORT).build().toString().removeSuffix("/"))
             }
         }
@@ -222,3 +225,4 @@ internal fun pairedEndpointCandidates(session: CoreCredentialSession): List<Stri
 }.distinct()
 
 private const val EPIGRAPH_CORE_DEFAULT_PORT = 4777
+private const val EPIGRAPH_CORE_DEV_PORT = 4787

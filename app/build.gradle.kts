@@ -18,7 +18,7 @@ fun runCommand(command: String): String {
 }
 
 @Suppress("PropertyName")
-val _versionName = "0.1.0-alpha.1"
+val _versionName = "0.1.0-alpha.2"
 val betaCount by lazy {
     val betaTags = runCommand("git tag -l --sort=refname v${_versionName}-b*")
 
@@ -75,10 +75,24 @@ val supportedAbis = setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 android {
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric screenshot tests (Roborazzi) need the merged resources, themes and menus.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all { test ->
+            // `./gradlew :app:testDevDebugUnitTest -Proborazzi.record=true` writes the screenshots to
+            // app/build/outputs/roborazzi; without it the screenshot tests only render.
+            test.systemProperty(
+                "roborazzi.test.record",
+                providers.gradleProperty("roborazzi.record").getOrElse("false"),
+            )
+            // Roborazzi's native renderer needs Java 21; on older JVMs (CI runs Java 17) the screenshots are skipped.
+            if (!org.gradle.api.JavaVersion.current().isCompatibleWith(org.gradle.api.JavaVersion.VERSION_21)) {
+                test.exclude("**/*ScreenshotTest*")
+            }
+        }
     }
     defaultConfig {
         applicationId = "app.epigraph.mobile"
-        versionCode = 1
+        versionCode = 2
         versionName = _versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "COMMIT_COUNT", "\"${commitCount}\"")
@@ -202,7 +216,9 @@ android {
             dimension = "default"
         }
         create("dev") {
-            androidResources.localeFilters.add("en")
+            // No locale filter here: `androidResources` in a flavor block resolves to the module-wide
+            // `android.androidResources`, so an "en" filter stripped every translation from all builds,
+            // release included.
             dimension = "default"
         }
     }
@@ -213,6 +229,8 @@ android {
         // no baseline or `checkOnly` shortcut is used to hide UAST failures.
         abortOnError = true
         checkReleaseBuilds = true
+        // Test sources never ship; analyzing them exhausted the CI runner (lintAnalyzeDevDebugUnitTest).
+        ignoreTestSources = true
     }
 
     namespace = "eu.kanade.tachiyomi"
@@ -359,6 +377,10 @@ dependencies {
     androidTestImplementation(libs.bundles.test.android)
     testImplementation(kotlinx.coroutines.test)
     testImplementation(libs.sqldelight.sqlite.driver)
+    // Screenshot tests on the JVM: Robolectric renders, Roborazzi captures. JUnit 4 runs on the vintage engine.
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testRuntimeOnly(libs.junit.vintage)
 
     // For detecting memory leaks
     // REF: https://square.github.io/leakcanary/

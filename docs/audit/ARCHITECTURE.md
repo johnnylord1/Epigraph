@@ -59,7 +59,7 @@ long-press routing used by Comics.
 - Android Keystore AES-GCM credential vault with authenticated versioned storage and atomic replacement for token rotation.
 - HTTPS Core client for capabilities, snapshots, changes and flat mutations, with bearer tokens supplied per call and redirects disabled.
 - Suwayomi authority boundary for comics: profile-scoped catalog pagination, authenticated cover references, typed mutation queue and confirmed server status.
-- Ordered bootstrap stages for extension inventory/repositories (review-only), portable bindings, catalog materialization and Core replica replay; APK installation remains an explicit Package Installer action.
+- Ordered bootstrap stages for extension inventory/repositories (review-only), portable bindings, catalog materialization and Core replica replay; APK installation runs after the user taps "Install all", through the private installer (or Shizuku) with no prompt per APK.
 - Core readiness is capability-gated by `suwayomi-confirmed-v1`; the mobile worker does not report a drained outbox while the desktop projection queue is pending or blocked.
 - Incremental SSE decoder/replay policy with durable two-phase checkpoint advancement and snapshot fallback after replay expiry.
 - Immutable Core asset transfer with resumable downloads, verified atomic publication and intentionally non-resumable whole-body uploads.

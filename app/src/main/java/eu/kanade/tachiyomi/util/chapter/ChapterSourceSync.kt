@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.util.chapter
 
 import epigraph.sync.core.protocol.SuwayomiCoreContentReference
+import epigraph.sync.core.suwayomi.BridgedChapterReadState
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.data.database.models.Chapter
@@ -47,6 +48,7 @@ suspend fun syncChaptersWithSource(
     handler: DatabaseHandler = get(),
     libraryPreferences: LibraryPreferences = get(),
     preferences: PreferencesHelper = get(),
+    bridgedReadState: BridgedChapterReadState = get(),
 ): Pair<List<Chapter>, List<Chapter>> {
     if (rawSourceChapters.isEmpty()) {
         throw Exception("No chapters found")
@@ -66,6 +68,40 @@ suspend fun syncChaptersWithSource(
                 source_order = i
             }
         }
+
+    // A Core manga is read on the paired desktop, and its chapter list carries Suwayomi's read
+    // state. It is folded in without ever un-reading a chapter finished on this device. Source
+    // refreshes are not user intent, so these writes stay local and never echo back to the Core.
+    // A Core work relinked to its own extension loses that state, so it reads the desktop's once,
+    // and again when new chapters appear, under the same rules.
+    val coreReadState = if (source.id == EpigraphCoreSource.ID) {
+        rawSourceChapters.associateBy { it.url }
+    } else {
+        val storedUrls = dbChapters.mapTo(HashSet()) { it.url }
+        val sourceUrls = rawSourceChapters.mapTo(HashSet()) { it.url }
+        manga.id?.let { mangaId ->
+            bridgedReadState.chapters(mangaId, hasNewChapters = !storedUrls.containsAll(sourceUrls))
+                .filterKeys(sourceUrls::contains)
+        }.orEmpty()
+    }
+    val readStateUpdates = mutableListOf<ChapterUpdate>()
+
+    // The History screen lists the history table, so the desktop's last read time is recorded
+    // as well. A newer read on this device is kept, and nothing here is sent back to the Core.
+    suspend fun recordCoreLastReads() {
+        val mangaId = manga.id ?: return
+        if (coreReadState.values.none { it.last_read_at > 0 }) return
+        handler.await(inTransaction = true) {
+            coreReadState.values.forEach { remote ->
+                val readAt = remote.last_read_at.takeIf { it > 0 } ?: return@forEach
+                val local = chaptersQueries.getChaptersByUrlAndMangaId(remote.url, mangaId, 0)
+                    .executeAsList()
+                    .firstOrNull()
+                    ?: return@forEach
+                historyQueries.upsertSyncedLastRead(local._id, readAt)
+            }
+        }
+    }
 
     // Chapters from the source not in db.
     val toAdd = mutableListOf<Chapter>()
@@ -101,8 +137,15 @@ suspend fun syncChaptersWithSource(
 
         // Add the chapter if not in db already, or update if the metadata changed.
         if (dbChapter == null) {
+            coreReadState[chapter.url]?.let { remote ->
+                chapter.read = remote.read
+                chapter.last_page_read = remote.last_page_read
+            }
             toAdd.add(chapter)
         } else {
+            coreReadState[chapter.url]?.let { remote ->
+                remoteReadStateUpdate(dbChapter, remote)?.let(readStateUpdates::add)
+            }
             if (shouldUpdateDbChapter(dbChapter, chapter)) {
                 if ((dbChapter.name != chapter.name || dbChapter.scanlator != chapter.scanlator) &&
                     downloadManager.isChapterDownloaded(dbChapter, manga)
@@ -125,8 +168,14 @@ suspend fun syncChaptersWithSource(
         managedUrls.add(chapter.url)
     }
 
+    // Read state is progress, not a chapter list change: it must not bump last_update.
+    if (readStateUpdates.isNotEmpty()) {
+        updateChapter.awaitAll(readStateUpdates)
+    }
+
     // Return if there's nothing to add, delete or change, avoid unnecessary db transactions.
     if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
+        recordCoreLastReads()
         if (preferences.smartUpdateEnabled().get() &&
             (manualFetch || manga.fetch_interval == 0 || manga.next_update < fetchWindow.first)
         ) {
@@ -173,7 +222,8 @@ suspend fun syncChaptersWithSource(
 
         if (!chapter.isRecognizedNumber || chapter.chapter_number !in deletedChapterNumbers) return@map chapter
 
-        chapter.read = chapter.chapter_number in deletedReadChapterNumbers
+        chapter.read = chapter.chapter_number in deletedReadChapterNumbers ||
+            coreReadState[chapter.url]?.read == true
         chapter.bookmark = chapter.chapter_number in deletedBookmarkedChapterNumbers
 
         // Try to use the fetch date it originally had to not pollute 'Updates' tab
@@ -259,6 +309,8 @@ suspend fun syncChaptersWithSource(
     manga.last_update = Date().time
     updateManga.await(MangaUpdate(manga.id!!, lastUpdate = manga.last_update))
 
+    recordCoreLastReads()
+
     val filteredScanlators = ChapterUtil.getScanlators(manga.filtered_scanlators).toHashSet()
 
     return Pair(
@@ -266,6 +318,21 @@ suspend fun syncChaptersWithSource(
             it.url in changedOrDuplicateReadUrls || it.scanlator in filteredScanlators
         },
         toDelete.filterNot { it.url in changedOrDuplicateReadUrls },
+    )
+}
+
+/**
+ * Returns the update that brings [local] up to the source's read state, or null when the source
+ * knows nothing newer. Reads only ever move forward: a chapter read here stays read.
+ */
+internal fun remoteReadStateUpdate(local: Chapter, remote: SChapter): ChapterUpdate? {
+    if (local.read) return null
+    val lastPageRead = remote.last_page_read.takeIf { it > local.last_page_read }
+    if (!remote.read && lastPageRead == null) return null
+    return ChapterUpdate(
+        local.id!!,
+        read = true.takeIf { remote.read },
+        lastPageRead = lastPageRead?.toLong(),
     )
 }
 

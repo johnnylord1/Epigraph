@@ -17,6 +17,9 @@ import eu.kanade.tachiyomi.util.awaitSingle
 import java.net.URI
 import java.net.URISyntaxException
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -226,7 +229,9 @@ abstract class HttpSource : CatalogueSource, KoinComponent {
      * @return the updated manga.
      */
     override suspend fun getMangaDetails(manga: SManga): SManga {
-        return getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+        return withMangaUpdateLock(manga) {
+            getMangaUpdate(manga, emptyList(), fetchDetails = true, fetchChapters = false).manga
+        }
     }
 
     @Deprecated("Use the non-RxJava API instead", replaceWith = ReplaceWith("getMangaDetails"))
@@ -263,8 +268,36 @@ abstract class HttpSource : CatalogueSource, KoinComponent {
      * @return the chapters for the manga.
      */
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
-        return getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+        return withMangaUpdateLock(manga) {
+            getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+        }
     }
+
+    /**
+     * lib 1.6 sources reject overlapping [getMangaUpdate] calls for the same manga, but the app
+     * asks for details and chapters at the same time (details screen, cover fetch, library
+     * update). Queue the calls per manga url instead of letting the second one fail.
+     */
+    private suspend fun <T> withMangaUpdateLock(manga: SManga, block: suspend () -> T): T {
+        val key = manga.url
+        val lock = mangaUpdateLocks.compute(key) { _, current ->
+            (current ?: MangaUpdateLock()).apply { users++ }
+        }!!
+        try {
+            return lock.mutex.withLock { block() }
+        } finally {
+            mangaUpdateLocks.compute(key) { _, current -> current?.takeIf { --it.users > 0 } }
+        }
+    }
+
+    private class MangaUpdateLock {
+        val mutex = Mutex()
+
+        /** Callers holding or waiting for [mutex]; only changed inside [ConcurrentHashMap.compute]. */
+        var users = 0
+    }
+
+    private val mangaUpdateLocks = ConcurrentHashMap<String, MangaUpdateLock>()
 
     /**
      * Combined manga update (details and/or chapters).

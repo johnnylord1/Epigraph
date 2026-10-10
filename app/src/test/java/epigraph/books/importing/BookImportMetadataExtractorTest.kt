@@ -6,6 +6,8 @@ import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -62,5 +64,33 @@ class BookImportMetadataExtractorTest {
         assertEquals("PDF title", metadata.title)
         assertEquals("PDF author", metadata.author)
         assertEquals(null, metadata.description)
+    }
+
+    @Test
+    fun `decodes utf-16 literal titles written with a byte order mark`() {
+        val pdf = File(directory, "scan.pdf")
+        val title = byteArrayOf(0xfe.toByte(), 0xff.toByte()) + "Livro Ç".toByteArray(Charsets.UTF_16BE)
+        Files.write(pdf.toPath(), "%PDF-1.4 /Title (".toByteArray() + title + ") /Author (A)".toByteArray())
+
+        assertEquals("Livro Ç", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
+    }
+
+    @Test
+    fun `recognizes titles saved with an undecoded byte order mark`() {
+        assertTrue(BookImportMetadataExtractor.isMisdecodedPdfTitle("\u00fe\u00ff\u0000L\u0000i"))
+        assertTrue(BookImportMetadataExtractor.isMisdecodedPdfTitle("\u00ef\u00bb\u00bfLivro"))
+        assertFalse(BookImportMetadataExtractor.isMisdecodedPdfTitle("Livro \u00c7"))
+    }
+
+    @Test
+    fun `finds the info dictionary at the end of a large pdf`() {
+        val pdf = File(directory, "large.pdf")
+        pdf.outputStream().use { output ->
+            output.write("%PDF-1.7\n".toByteArray())
+            output.write(ByteArray(5 * 1024 * 1024) { ' '.code.toByte() })
+            output.write("/Title (Tail title)".toByteArray())
+        }
+
+        assertEquals("Tail title", BookImportMetadataExtractor.extract(pdf, ContentType.PDF, pdf.name).title)
     }
 }

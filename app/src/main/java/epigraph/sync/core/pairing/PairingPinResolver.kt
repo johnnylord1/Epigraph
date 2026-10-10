@@ -1,5 +1,6 @@
 package epigraph.sync.core.pairing
 
+import java.net.URI
 import kotlinx.serialization.json.Json
 
 /**
@@ -64,6 +65,32 @@ data class DiscoveredCoreHost(
                 }
                 .sortedBy { it.instanceName.lowercase() }
 
+        /**
+         * Builds a host from the public discovery descriptor served at an address the user typed.
+         * [presentedTlsCertSha256] is the leaf the probe connection actually saw; the descriptor
+         * must name that same certificate, so the PIN request is pinned to the answering server.
+         */
+        fun fromDescriptor(
+            origin: String,
+            serverId: String,
+            descriptorTlsCertSha256: String,
+            presentedTlsCertSha256: String,
+            advertisedOrigin: String?,
+        ): DiscoveredCoreHost? {
+            val normalizedOrigin = normalizedOrNull(origin) ?: return null
+            val id = serverId.trim().takeIf(SERVER_ID::matches) ?: return null
+            val fingerprint = presentedTlsCertSha256.trim().takeIf(SHA_256::matches)?.lowercase()
+                ?: return null
+            if (!descriptorTlsCertSha256.trim().equals(fingerprint, ignoreCase = true)) return null
+            return DiscoveredCoreHost(
+                instanceName = normalizedOrigin.removePrefix("https://"),
+                serverId = id,
+                tlsCertSha256 = fingerprint,
+                origins = listOfNotNull(normalizedOrigin, advertisedOrigin?.let(::normalizedOrNull))
+                    .distinct(),
+            )
+        }
+
         private fun normalizedOrNull(raw: String): String? = try {
             BootstrapBundleParser.normalizeLanHttpsOrigin(raw)
         } catch (_: PairingBundleValidationException) {
@@ -77,6 +104,40 @@ data class DiscoveredCoreHost(
 /** Browses the LAN for desktop Cores that can be paired by PIN. */
 fun interface CoreHostDiscovery {
     suspend fun discover(): List<DiscoveredCoreHost>
+}
+
+/**
+ * Reaches a desktop Core at an address the user typed, for networks where DNS-SD does not cross
+ * (a phone and a computer behind different routers). Returns null when nothing usable answers.
+ */
+fun interface CoreHostProbe {
+    suspend fun probe(origin: String): DiscoveredCoreHost?
+}
+
+/** Turns "192.168.1.10" or "192.168.1.10:4787" into the LAN HTTPS origin of a desktop Core. */
+object CoreHostAddress {
+    /** Port of the installed desktop Core; development builds use another one, typed explicitly. */
+    const val DEFAULT_PORT = 4777
+
+    fun toOrigin(raw: String): String? {
+        val trimmed = raw.trim().removeSuffix("/")
+        if (trimmed.isEmpty() || trimmed.any(Char::isWhitespace)) return null
+        val withScheme = if (trimmed.contains("://")) trimmed else "https://$trimmed"
+        val uri = runCatching { URI(withScheme) }.getOrNull() ?: return null
+        if (uri.host == null) return null
+        // Only a host and port are accepted; never rebuild an origin that drops a typed path.
+        if (!uri.rawPath.isNullOrEmpty() || uri.rawQuery != null || uri.rawFragment != null) return null
+        val withPort = if (uri.port == -1) {
+            "${uri.scheme}://${uri.rawAuthority}:$DEFAULT_PORT"
+        } else {
+            withScheme
+        }
+        return try {
+            BootstrapBundleParser.normalizeLanHttpsOrigin(withPort)
+        } catch (_: PairingBundleValidationException) {
+            null
+        }
+    }
 }
 
 /**

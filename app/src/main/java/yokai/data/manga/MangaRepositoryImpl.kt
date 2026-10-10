@@ -4,6 +4,7 @@ import epigraph.sync.EpigraphLibraryMutationRouter
 import epigraph.sync.EpigraphMutationOrigin
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.LibraryMembershipMutation
+import epigraph.contract.DecimalSourceId
 import epigraph.contract.PortableWorkRef
 import epigraph.contract.ProviderOwnedKey
 import co.touchlab.kermit.Logger
@@ -13,6 +14,7 @@ import eu.kanade.tachiyomi.data.database.models.mapper
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import kotlinx.coroutines.flow.Flow
 import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.source.online.HttpSource
 import epigraph.novel.source.NovelSource
 import yokai.data.DatabaseHandler
 import yokai.data.memoColumnAdapter
@@ -116,10 +118,10 @@ class MangaRepositoryImpl(
     }
 
     /**
-     * Routes a favorite toggle for a row that already has an Epigraph identity. The router owns the
-     * local favorite/category write and records the outbox mutation in the same SQL transaction.
-     * Rows without an identity still use Epigraph's original local-only behavior until bootstrap has
-     * materialized their binding.
+     * Routes a favorite toggle to the Core. The router owns the local favorite/category write and
+     * records the outbox mutation in the same SQL transaction. A row without an Epigraph identity
+     * (a work first added on this device) is sent with its portable identity; rows that have none,
+     * such as local files, stay local-only.
      */
     private suspend fun routeFavoriteChange(update: MangaUpdate): Boolean {
         val favorite = update.favorite ?: return false
@@ -128,7 +130,7 @@ class MangaRepositoryImpl(
         // worker repair pass publishes any LNReader favorites that still lack an identity.
         val scopes = syncScopeProvider ?: return false
         if (runCatching { scopes.current() }.isFailure) return false
-        val portableWorkRef = if (hasEpigraphIdentity(update.id)) null else portableNovelRef(update.id)
+        val portableWorkRef = if (hasEpigraphIdentity(update.id)) null else portableWorkRef(update.id)
         if (portableWorkRef == null && !hasEpigraphIdentity(update.id)) return false
         val categoryIds = handler.await {
             categoriesQueries.findAllByMangaId(update.id).executeAsList().map { it._id }.toSet()
@@ -155,16 +157,25 @@ class MangaRepositoryImpl(
             }
     }
 
-    /** Returns the exact LNReader-owned identity for a row created locally by a novel plugin. */
-    private suspend fun portableNovelRef(mangaId: Long): PortableWorkRef.Novel? {
+    /**
+     * Returns the exact provider-owned identity for a row created locally: the LNReader plugin for
+     * a novel, the extension source for a comic. Other sources (local files) have none.
+     */
+    private suspend fun portableWorkRef(mangaId: Long): PortableWorkRef? {
         val manager = sourceManager ?: return null
         val manga = handler.await { mangasQueries.findById(mangaId).executeAsOneOrNull() } ?: return null
-        val source = manager.get(manga.source) as? NovelSource ?: return null
         return runCatching {
-            PortableWorkRef.Novel(
-                pluginId = source.pluginId,
-                novelKey = ProviderOwnedKey(manga.url),
-            )
+            when (val source = manager.get(manga.source)) {
+                is NovelSource -> PortableWorkRef.Novel(
+                    pluginId = source.pluginId,
+                    novelKey = ProviderOwnedKey(manga.url),
+                )
+                is HttpSource -> PortableWorkRef.Comic(
+                    sourceId = DecimalSourceId(source.id.toString()),
+                    mangaKey = ProviderOwnedKey(manga.url),
+                )
+                else -> null
+            }
         }.getOrNull()
     }
 

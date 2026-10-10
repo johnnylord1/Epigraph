@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.manga.chapter
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.content.Context
 import android.content.res.ColorStateList
 import android.view.View
 import androidx.core.animation.doOnEnd
@@ -111,11 +112,7 @@ class ChapterHolder(
                         chapter.last_page_read,
                     )
                 } else {
-                    itemView.context.getString(
-                        MR.strings.page_x_of_y,
-                        chapter.last_page_read + 1,
-                        chapter.pages_left + chapter.last_page_read,
-                    )
+                    itemView.context.pageProgress(chapter.last_page_read, chapter.pages_left)
                 },
             )
         }
@@ -279,5 +276,15 @@ class ChapterHolder(
         button.imageTintList = ColorStateList.valueOf(tint)
         button.isEnabled = !item.isTranslating
         button.alpha = if (item.isTranslating) 0.6f else 1f
+    }
+}
+
+/** "Page x of y", or just "Page x" when a synced page count is stale and smaller than the page read. */
+internal fun Context.pageProgress(lastPageRead: Int, pagesLeft: Int): String {
+    val total = lastPageRead + pagesLeft
+    return if (total > lastPageRead) {
+        getString(MR.strings.page_x_of_y, lastPageRead + 1, total)
+    } else {
+        getString(MR.strings.page_, lastPageRead + 1)
     }
 }

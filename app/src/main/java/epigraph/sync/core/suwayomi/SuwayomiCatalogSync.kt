@@ -174,8 +174,22 @@ class SuwayomiCatalogSync(
             mangaRecords
                 .filterNot { it.key.entityId in protectedEntityIds }
                 .forEach { record -> projection.upsert(this, record) }
-            categoryRecords.forEach { record -> projection.upsert(this, record) }
-            assignmentRecords
+            // Restored titles are adopted just above, so a same-name phone folder only now counts as
+            // holding comics. Its remote twin waits for the create hook to bind it by name instead
+            // of arriving as a second folder with the same name.
+            val deferredCategoryEntityIds = if (SuwayomiCategoryCreateHook.isEnabled(capabilities)) {
+                val kept = withoutCategoriesAwaitingBind(this, credentials, categories).toSet()
+                categories.filterNot { it in kept }
+                    .mapNotNullTo(HashSet()) { node -> node.long("id")?.let(categoryEntityIds::get) }
+            } else {
+                emptySet()
+            }
+            val appliedCategoryRecords = categoryRecords.filterNot { it.key.entityId in deferredCategoryEntityIds }
+            val appliedAssignmentRecords = assignmentRecords.filterNot { record ->
+                (record.record as JsonObject).getValue("categoryId").jsonPrimitive.content in deferredCategoryEntityIds
+            }
+            appliedCategoryRecords.forEach { record -> projection.upsert(this, record) }
+            appliedAssignmentRecords
                 .filterNot { record -> record.comicId() in protectedEntityIds }
                 .forEach { record -> projection.upsert(this, record) }
             projection.reconcileSuwayomiLibrary(
@@ -189,8 +203,8 @@ class SuwayomiCatalogSync(
                 database = this,
                 serverId = credentials.serverId,
                 profileId = credentials.profileId,
-                observedCategoryEntityIds = categoryRecords.mapTo(mutableSetOf()) { it.key.entityId },
-                observedAssignments = assignmentRecords.mapTo(mutableSetOf()) { record ->
+                observedCategoryEntityIds = appliedCategoryRecords.mapTo(mutableSetOf()) { it.key.entityId },
+                observedAssignments = appliedAssignmentRecords.mapTo(mutableSetOf()) { record ->
                     val payload = record.record as JsonObject
                     payload.getValue("comicId").jsonPrimitive.content to
                         payload.getValue("categoryId").jsonPrimitive.content

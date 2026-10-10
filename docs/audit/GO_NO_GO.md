@@ -38,6 +38,10 @@ labels and the novels-without-chapters warning. Still open before calling the ap
 
 API 24 install/onboarding/library/CBZ/EPUB/PDF reader smoke passed on 2026-09-28 (no fatal errors).
 
+Status 2026-10-06 (devDebug from CI against the desktop in dev mode, see `TASKS.md` §12): items 1–5
+passed; revocation needed a fix (the revoked token's 401 was swallowed by the endpoint probe and
+the phone kept retrying). Item 6 was not executed. Item 7 is out of scope for dev builds.
+
 ## Explicit non-claims
 
 This gate approves the current client foundation only. It does not claim a successful real Core pairing,

@@ -30,6 +30,7 @@ import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.policy.SyncPolicyResolver
 import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
+import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
 import epigraph.sync.core.replay.CoreReplayCoverage
 import epigraph.sync.core.session.CoreSessionTransportFactory
 import epigraph.sync.core.suwayomi.SuwayomiMutationDrainReport
@@ -179,6 +180,15 @@ fun interface CoreNegotiatedSessionHook {
     suspend fun onNegotiated(capabilities: CoreCapabilities, connection: CoreOutboxSyncConnection)
 }
 
+/**
+ * Runs after a replica pass applied the Core state, before the run counts what is still unsettled,
+ * so work queued here is reported and drained by the next run. Best effort, like
+ * [CoreNegotiatedSessionHook].
+ */
+fun interface CoreReplicaAppliedHook {
+    suspend fun onReplicaApplied(nowEpochMillis: Long)
+}
+
 fun interface CoreOutboxSyncConnectionFactory {
     suspend fun open(credentials: CoreCredentialSession): CoreOutboxSyncConnection
 }
@@ -287,6 +297,7 @@ class SnapshotCoreReplicaSync(
     private val endpoints: epigraph.sync.core.session.CoreEndpointResolver,
     private val applier: CoreReplicaApplier,
     private val checkpoints: CoreReplicaCheckpointReader,
+    private val historyResetter: CoreReplicaCheckpointResetter? = null,
 ) : CoreReplicaSyncPort {
     override suspend fun synchronize(
         credentials: CoreCredentialSession,
@@ -310,9 +321,35 @@ class SnapshotCoreReplicaSync(
                 try {
                     val coverage = CoreReplayCoverage.Filtered(scopeId)
                     val checkpoint = checkpoints.latestCheckpoint(coverage)
-                    when (val response = checkpoint?.let {
+                    val response = checkpoint?.let {
                         http.changes(accessToken, it.lastGlobalEventId, scopeId)
-                    }) {
+                    }
+                    // A Core whose change log was rewound publishes versions below cursors this
+                    // phone already holds. Every new change would then look already applied, so the
+                    // whole replica history is forgotten and each scope is rebuilt from a snapshot.
+                    val publishedVersion = when (response) {
+                        is CoreHttpResult.Success -> response.value.currentServerVersion
+                        is CoreHttpResult.Failure -> response.errorEnvelope?.error?.currentServerVersion
+                        null -> null
+                    }
+                    if (
+                        checkpoint != null &&
+                        publishedVersion != null &&
+                        publishedVersion < checkpoint.lastGlobalEventId &&
+                        historyResetter != null
+                    ) {
+                        historyResetter.reset()
+                        when (val snapshot = http.snapshot(accessToken, scopeId)) {
+                            is CoreHttpResult.Success -> applier.applySnapshot(
+                                snapshot.value,
+                                capabilities,
+                                credentials.serverId,
+                            )
+                            is CoreHttpResult.Failure -> return@withAccessTokenString snapshot.toReplicaOutcome()
+                        }
+                        continue
+                    }
+                    when (response) {
                         is CoreHttpResult.Success -> applier.applyChanges(
                             response.value,
                             coverage,
@@ -423,16 +460,6 @@ class CompositeCoreReplicaSync(
             nowEpochMillis = nowEpochMillis,
         ) else CoreReplicaSyncOutcome.DEFERRED
 
-        val novelPluginOutcome = if (
-            policy?.let { it.reconcileNovelRepositories || it.reconcileNovelPlugins } ?: hasNovelScope
-        ) synchronizeSafely(
-            name = "novelPlugins",
-            port = novelPlugins,
-            credentials = credentials,
-            capabilities = capabilities,
-            nowEpochMillis = nowEpochMillis,
-        ) else CoreReplicaSyncOutcome.DEFERRED
-
         val portableOutcome = if (policy?.syncComics ?: hasComicScope) synchronizeSafely(
             name = "portableManifest",
             port = portableManifest,
@@ -472,6 +499,17 @@ class CompositeCoreReplicaSync(
                 )
             }
         }
+        // LNReader declarations are read from the replica mirror, so the inventory is built only
+        // after this pass committed them; otherwise the first sync after pairing sees no repos.
+        val novelPluginOutcome = if (
+            policy?.let { it.reconcileNovelRepositories || it.reconcileNovelPlugins } ?: hasNovelScope
+        ) synchronizeSafely(
+            name = "novelPlugins",
+            port = novelPlugins,
+            credentials = credentials,
+            capabilities = capabilities,
+            nowEpochMillis = nowEpochMillis,
+        ) else CoreReplicaSyncOutcome.DEFERRED
         return when {
             replicaOutcome == CoreReplicaSyncOutcome.RETRY -> replicaOutcome
             portableOutcome == CoreReplicaSyncOutcome.RETRY -> portableOutcome
@@ -614,6 +652,7 @@ class CoreOutboxSyncRunner(
     private val replica: CoreReplicaSyncPort,
     private val policies: SyncPolicyResolver,
     private val negotiatedHooks: List<CoreNegotiatedSessionHook> = emptyList(),
+    private val replicaAppliedHooks: List<CoreReplicaAppliedHook> = emptyList(),
 ) {
     suspend fun run(
         nowEpochMillis: Long,
@@ -834,7 +873,7 @@ class CoreOutboxSyncRunner(
             } catch (failure: Throwable) {
                 reportCoreSyncFailure("connection.drain", failure)
                 return CoreOutboxSyncOutcome.Retry(
-                    pendingOutbox.count().also { require(it >= 0) },
+                    pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) },
                     CoreOutboxRetryReason.CONNECTION,
                 )
             }
@@ -857,6 +896,17 @@ class CoreOutboxSyncRunner(
                 }
             } else {
                 CoreReplicaSyncOutcome.DEFERRED
+            }
+            if (replicaOutcome == CoreReplicaSyncOutcome.APPLIED) {
+                replicaAppliedHooks.forEach { hook ->
+                    try {
+                        hook.onReplicaApplied(nowEpochMillis)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        reportCoreSyncFailure("replica.hook", failure)
+                    }
+                }
             }
             val unsettledAfter = pendingOutbox.unsettledCountActive(policy).also { require(it >= 0) }
             val remoteProjection = if (

@@ -133,6 +133,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setOnStateChangedListener(
                 object : SubsamplingScaleImageView.OnStateChangedListener {
                     override fun onScaleChanged(newScale: Float, origin: Int) {
+                        // Only the reader's zoom gestures: an automatic zoom (such as the landscape
+                        // zoom once a page loads) would close a menu the user just opened.
+                        if (origin == SubsamplingScaleImageView.ORIGIN_ANIM) return
                         this@ReaderPageImageView.onScaleChanged(newScale)
                     }
 

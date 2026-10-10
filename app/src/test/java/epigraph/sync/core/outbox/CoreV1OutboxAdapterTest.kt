@@ -739,6 +739,53 @@ class CoreV1OutboxAdapterTest {
     }
 
     @Test
+    fun `novel history carries the desktop chapter id and round-trips through the replica`() {
+        val portableWork = PortableWorkRef.Novel("mahoureader", ProviderOwnedKey("/series/352/Keep Case(1)"))
+        val portableChapter = PortableChapterRef.Novel(portableWork, ProviderOwnedKey("/series/352/cap-279!"))
+        val entryId = "novel.history::${PortableIdentityV3.workId(portableWork)}::" +
+            PortableIdentityV3.chapterId(portableChapter)
+        val command = SyncCommand.AppendHistory(
+            entityId = WORK_ID,
+            entryId = entryId,
+            locator = ReaderLocator.Novel(
+                entityId = WORK_ID,
+                chapterId = "local-chapter-279",
+                blockIndex = 4,
+                textOffset = 30,
+                progression = 0.12,
+                portableWork = portableWork,
+                portableChapter = portableChapter,
+            ),
+            visitedAtEpochMillis = 1_790_000_000_000,
+            chapterTitle = "Capítulo 279",
+        )
+
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.NOVEL_HISTORY, NOVEL_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.NOVEL_HISTORY)),
+                lamport = 13,
+            ),
+        )
+
+        val patch = requireNotNull(ready.mutation.patch)
+        assertEquals(entryId, ready.mutation.entityId)
+        assertEquals(PortableIdentityV3.workId(portableWork), patch["novelId"]?.jsonPrimitive?.content)
+        assertEquals(
+            "chapter:novel:mahoureader:%2Fseries%2F352%2FKeep%20Case(1):%2Fseries%2F352%2Fcap-279!",
+            patch["chapterId"]?.jsonPrimitive?.content,
+        )
+        assertEquals("Capítulo 279", patch["chapterTitle"]?.jsonPrimitive?.content)
+        assertEquals(1_790_000_000_000, patch["readAtMs"]?.jsonPrimitive?.content?.toLong())
+        assertEquals(
+            PortableIdentityV3.workId(portableWork) to "/series/352/cap-279!",
+            epigraph.sync.core.replica.novelHistoryChapter(patch),
+        )
+    }
+
+    @Test
     fun `blocks repository command because local v2 lacks required Core timestamps`() {
         val command = SyncCommand.UpsertRepository(
             REPOSITORY_ID,

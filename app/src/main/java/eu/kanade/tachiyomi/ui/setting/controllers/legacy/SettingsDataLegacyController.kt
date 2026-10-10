@@ -359,6 +359,11 @@ class SettingsDataLegacyController : SettingsLegacyController() {
                 ) { "- $it" }
                 }"
             }
+            if (results.newRepositories.isNotEmpty()) {
+                message += "\n\n${activity.getString(MR.strings.restore_new_repositories)}\n${
+                results.newRepositories.joinToString("\n") { "- $it" }
+                }"
+            }
 
             activity.materialAlertDialog()
                 .setTitle(MR.strings.restore_backup)

@@ -115,6 +115,8 @@ class PortableNovelManifestSync(
                             currentItem = null,
                             lastReason = response.errorEnvelope?.error?.code,
                         )
+                        // The cursor was dropped, so the next attempt starts a fresh snapshot.
+                        return CoreReplicaSyncOutcome.RETRY
                     }
                     return response.toOutcome()
                 }

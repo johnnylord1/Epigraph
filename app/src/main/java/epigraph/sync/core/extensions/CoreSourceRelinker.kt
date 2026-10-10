@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.SourceManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import yokai.data.Database
 import yokai.data.DatabaseHandler
 import yokai.data.memoColumnAdapter
 
@@ -37,6 +38,9 @@ interface CoreSourceRelinkStore {
     )
     suspend fun candidates(): List<CoreSourceRelinkCandidate>
     suspend fun relink(candidate: CoreSourceRelinkCandidate): Boolean
+
+    /** Relinks every candidate in one pass and returns how many are bound to their native source. */
+    suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): Int = candidates.count { relink(it) }
 }
 
 fun interface CoreSourceRegistry {
@@ -63,18 +67,19 @@ class CoreSourceRelinker(
             store.resolveUnknownPackages(scope.serverId, scope.profileId, scope.packagesBySourceId)
         }
         val candidates = store.candidates()
-        var relinked = 0
-        candidates.forEach { candidate ->
-            if (registry.isReady(candidate.packageName, candidate.sourceId) && store.relink(candidate)) {
-                relinked += 1
-            }
-        }
+        val relinked = store.relinkAll(
+            candidates.filter { registry.isReady(it.packageName, it.sourceId) },
+        )
         CoreSourceRelinkResult(
             observed = candidates.size,
             relinked = relinked,
             pending = candidates.size - relinked,
         )
     }
+
+    /** The desktop source of every work the Core bridged here, by local work id. */
+    suspend fun bridgedWorkSources(): Map<Long, Long> =
+        store.candidates().associate { it.localMangaId to it.sourceId }
 }
 
 class InstalledCoreSourceRegistry(
@@ -127,12 +132,21 @@ class SqlDelightCoreSourceRelinkStore(
     }
 
     override suspend fun relink(candidate: CoreSourceRelinkCandidate): Boolean = database.await(inTransaction = true) {
+        relinkRow(candidate)
+    }
+
+    // One transaction for the whole pass: per-row transactions re-ran every library query once per
+    // relinked work, which stalled the app for minutes after an extension install.
+    override suspend fun relinkAll(candidates: List<CoreSourceRelinkCandidate>): Int =
+        database.await(inTransaction = true) { candidates.count { relinkRow(it) } }
+
+    private fun Database.relinkRow(candidate: CoreSourceRelinkCandidate): Boolean {
         val identity = aethon_syncQueries.selectIdentityByEntityId(candidate.entityId).executeAsOneOrNull()
-            ?: return@await false
-        if (identity.local_reference.toLongOrNull() != candidate.localMangaId) return@await false
+            ?: return false
+        if (identity.local_reference.toLongOrNull() != candidate.localMangaId) return false
         val manga = mangasQueries.findById(candidate.localMangaId).executeAsOneOrNull()
-            ?: return@await false
-        if (manga.source == candidate.sourceId && manga.url == candidate.originalUrl) return@await true
+            ?: return false
+        if (manga.source == candidate.sourceId && manga.url == candidate.originalUrl) return true
         mangasQueries.update(
             source = candidate.sourceId,
             url = candidate.originalUrl,
@@ -158,6 +172,6 @@ class SqlDelightCoreSourceRelinkStore(
             memo = memoColumnAdapter.encode(JsonObject(emptyMap())),
             mangaId = candidate.localMangaId,
         )
-        true
+        return true
     }
 }

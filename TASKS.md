@@ -221,25 +221,33 @@ Pendente (exige ação do usuário ou está fora do escopo mobile):
 - [~] E2E real com o syncd do desktop (pareamento por PIN/QR, edição nos dois lados,
       offline/reconexão, revogação, convergência de dois aparelhos). O syncd estava ativo na
       4777, mas o pareamento exige aprovar no app desktop. Roteiro em `docs/audit/GO_NO_GO.md`.
-- [ ] Smoke manual da build de release além do onboarding (leitores, backup, pareamento) num
+- [~] Smoke manual da build de release além do onboarding (leitores, backup, pareamento) num
       aparelho real. O bloqueio anterior (permissão "instalar apps desconhecidos" obrigatória no
-      onboarding) foi removido: veja "Biblioteca e UI" acima.
-- [ ] Restauração de backup transacional/retomável e bytes de EPUB/PDF no backup (P1).
-- [ ] Seleção de texto/OCR em PDF (P2).
-- [ ] Testes de morte de processo no download de mangá (P2). Hoje cobertos indiretamente pelos
-      testes do finalizador atômico (nada publica antes de validar e renomear) e pela exclusão de
-      diretórios `_tmp` na leitura.
-- [ ] Trackers continuam locais (não sincronizam por decisão: tokens nunca entram no sync).
+      onboarding) foi removido: veja "Biblioteca e UI" acima. Sem aparelho real e sem build de
+      release autorizada; o mesmo roteiro passou no emulador com a build de debug do CI.
+- [x] Restauração de backup transacional/retomável e bytes de EPUB/PDF no backup (P1): veja a
+      Fase 6.
+- [x] Seleção de texto/OCR em PDF (P2): veja a Fase 6.
+- [x] Testes de morte de processo no download de mangá (P2): `DownloadFinalizerTest` cobre o
+      processo morto no meio de uma página (o `_tmp` não publica) e a retomada na execução seguinte
+      (publica uma vez completo); a contagem de páginas virou `DownloadFinalizer.countPageFiles`.
+- [x] Trackers sincronizam com o desktop (vínculos e login), conforme a Fase 3 abaixo.
+- [x] Importação de backup do LNReader no fluxo normal de restauração: novels, capítulos,
+      progresso e categorias; obras de plugins que não existem mais ficam na biblioteca para
+      migrar; os repositórios de plugins instalados ou usados são validados e adicionados, e o
+      diálogo de restauração lista quais serão adicionados.
+- [x] CI: `.github/workflows/build-android.yml` (na raiz do repositório) roda a verificação de
+      migrações, os testes de sync e unitários, o lint e a `assembleDevDebug` no GitHub, e guarda
+      o APK de debug como artefato. A release assinada e o smoke no emulador continuam manuais.
 - Versão: `0.1.0-alpha.1` / `versionCode 1` é a primeira release; não precisa de bump.
 
 ## 10. Onda de paridade com o desktop (plano)
 
 Decisões do usuário (2026-09-28):
 
-- Trackers sincronizam entre apps (vínculos obra → tracker e login). O syncd do desktop ainda não
-  tem entidade de tracker e este workspace não altera o desktop: o lado mobile fica pronto e só
-  liga quando o syncd anunciar a capacidade; a especificação para o desktop fica em
-  `docs/audit/TRACKER_SYNC_CONTRACT.md`.
+- Trackers sincronizam entre apps (vínculos obra → tracker e login). O lado mobile só liga quando
+  o syncd anuncia a capacidade, o que o syncd do desktop passou a fazer (2026-10-05); a
+  especificação fica em `docs/audit/TRACKER_SYNC_CONTRACT.md`.
 - Tokens de tracker trafegam só pelo canal TLS pareado e ficam cifrados no Android Keystore.
   Continuam fora do backup. A regra do `AGENTS.md` foi ajustada para essa exceção.
 
@@ -254,38 +262,58 @@ Fase 1 — Biblioteca
 
 Fase 2 — Leitores (verificar e corrigir)
 
-- [ ] Mangá (paginado e webtoon), novel, EPUB (páginas e rolagem).
-- [ ] PDF nos dois modos do desktop: página original (vertical, horizontal, duas páginas) e
-      texto refluído (com OCR quando a página não tem texto).
+- [x] Mangá (paginado e webtoon), novel, EPUB (páginas e rolagem). Verificado no emulador:
+      mangá local em RTL paginado (toque e arrasto) e faixa longa com transição de capítulo e
+      capítulos marcados como lidos; EPUB rolagem e paginado (o arrasto passou a virar página e a
+      seleção ganhou "Destacar", que limpa a seleção depois de gravar); novel restaurada do LNReader com capítulos, progresso e
+      marcador. Sem o plugin da fonte, o leitor de novel agora diz qual fonte instalar em vez de
+      "ainda carregando".
+- [x] PDF nos dois modos do desktop: página original (vertical, horizontal, duas páginas) e
+      texto refluído (com OCR quando a página não tem texto). Em duas páginas a seleção da página
+      da direita grava o destaque nela (`PdfSelectionSegments`); segurar uma página do spread
+      mostra só o texto dela, sem mover a página atual.
 
 Fase 3 — Trackers
 
-- [ ] Backup: obras (mangá e novel) restauram com os trackers; teste de ida e volta.
-- [ ] Sync dos vínculos (`comic.track`, `novel.track`) pelo outbox, na mesma transação.
-- [ ] Sync do login (`tracker.credential`) só pelo canal pareado, cifrado no Keystore; nunca em
-      backup; apagado ao desparear.
-- [ ] Contrato para o desktop.
+- [x] Backup: obras (mangá e novel) restauram com os trackers; teste de ida e volta
+      (`BackupTrackingRoundTripTest`).
+- [x] Sync dos vínculos (`comic.track`, `novel.track`) pelo outbox, na mesma transação, só quando
+      o Core anuncia as entidades; o mais recente vence contra a réplica.
+- [x] Sync do login (`tracker.credential`) só pelo canal pareado, cifrado no Keystore; nunca em
+      backup; apagado ao desparear (`CorePairingEndedListener` → `TrackerCredentialSyncer.wipe`).
+- [x] Contrato para o desktop (`docs/audit/TRACKER_SYNC_CONTRACT.md`), implementado no syncd
+      (migração 0026, rotas de credenciais de tracker).
+- [x] O desktop loga o próprio Suwayomi com os logins sincronizados (e publica os dele) para
+      todos os trackers em comum: AniList por OAuth; MAL, Kitsu, Shikimori, Bangumi e
+      MangaUpdates por `settings/tracker.xml`, reiniciando o Suwayomi gerenciado.
 
 Fase 4 — Tema, HUD e configurações
 
-- [ ] Tema "Epigraph Nocturne" com a paleta do desktop, padrão em instalações novas.
+- [x] Tema "Epigraph Nocturne" com a paleta do desktop, padrão em instalações novas (escuro,
+      `PreferencesHelper.lightTheme/darkTheme/nightMode`).
 - [x] HUD dos leitores mais próximo do desktop: folha inferior plana e larga, sem pílula (o usuário
       rejeitou botões e barras em pílula e texturas).
-- [ ] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
+- [x] Testar todos os temas (claro/escuro) e as telas de configurações; corrigir o que quebrar.
+      Todas as telas de configurações abertas nos dois temas sem crash; o carregamento do leitor
+      de livros mostrava o spinner esticado na tela inteira e agora fica centralizado.
 
 Fase 5 — Explorar
 
-- [ ] Reorganizar: Buscar / Descobrir / Fontes, com o seletor Quadrinhos / Livros.
-- [ ] Recomendações baseadas na biblioteca (port do motor do desktop: perfil de gosto por tags,
+- [x] Reorganizar: Descobrir virou aba própria (com sub-abas e o seletor Quadrinhos / Novels na
+      mesma linha); Fontes e a busca global ficam em Explorar.
+- [x] Recomendações baseadas na biblioteca (port do motor do desktop: perfil de gosto por tags,
       notas e status dos trackers, seções "Por causa da sua biblioteca", "Alta confiança",
       "Fora do habitual").
 
 Fase 6 — Itens adiados
 
-- [ ] Restauração de backup transacional e retomável.
-- [ ] Bytes de EPUB/PDF no backup (opcional, com verificação SHA-256).
-- [ ] PDF: seleção de texto e OCR verificados nos dois modos.
-- [ ] Testes de morte de processo no download de mangá.
+- [x] Restauração de backup transacional e retomável.
+- [x] Bytes de EPUB/PDF no backup (opcional, com verificação SHA-256). Backup criado no emulador
+      com os arquivos nomeados pelo SHA-256 e somas conferidas; restaurado numa instalação limpa,
+      os dois arquivos voltaram com o mesmo SHA-256. Títulos de PDF salvos com o BOM cru
+      ("þÿ...") por builds antigas são corrigidos no reparo da abertura.
+- [x] PDF: seleção de texto e OCR verificados nos dois modos.
+- [x] Testes de morte de processo no download de mangá.
 
 Fase 7 — Gates, smoke no emulador e documentação.
 
@@ -314,3 +342,48 @@ por cima da anterior:
 - [x] Fonte não instalada mantém o nome gravado no backup (restauração, detalhes e próximo
       backup) em vez do ID numérico.
 - [x] "1 repositories · 2 plugins" virou plural correto.
+
+## 12. E2E do sync com o desktop dev (2026-10-06)
+
+Build `devDebug` da CI contra o desktop em modo dev (syncd 4787, perfil
+`%LOCALAPPDATA%\Epigraph-dev`), emulador API 36, pareamento por pairing bundle.
+
+- [x] Pareamento, edições convergindo nos dois sentidos, offline/reconexão e concorrência
+      (itens 1–4 do `docs/audit/GO_NO_GO.md`).
+- [x] Revogação (item 5): o desktop ganhou "Revogar" por dispositivo pareado
+      (`/v1/pairing/devices/revoke`, dois cliques). Bug: o 401 do token revogado era engolido
+      pela sondagem de endpoints e o app ficava em "nova tentativa agendada". Agora vira
+      `CorePairingStaleException`; o app mostra "The pairing is no longer valid. Pair again…" e
+      não tenta de novo (60 s sem requisições). Re-parear depois funciona.
+- [x] Tracking desktop → celular: 2193 `comic.tracking` (AniList) no snapshot; as 402 obras
+      da biblioteca com tracking ganharam linha em `manga_sync` com os mesmos campos. O replay
+      acontece no ciclo de hydration seguinte, não no primeiro snapshot.
+- [x] Bookmark e "marcar como não lido" celular → desktop chegaram ao Suwayomi dev.
+- [x] Bug: o replay da hydration buscava `comic.tracking`/`comic.chapter_state` por entidade numa
+      tabela cuja PK começa pelo escopo (SCAN completo por obra × tracker, ~700 obras pendentes a
+      cada ciclo, numa transação). O banco ficava travado por minutos e uma edição local levou
+      ~3 min para sair do outbox. Agora há uma leitura por tipo de entidade por ciclo
+      (reinstalado e re-pareado: ciclo de 30 s sem contenção, bookmark no desktop em 4 s).
+- [ ] Tracking celular → desktop e `tracker.credential`: exigem login real num tracker; cobertos
+      só pelos testes automatizados.
+- [x] Bug: `comic.history` só atualizava o progresso de leitura e a aba Histórico ficava vazia.
+      A projeção agora grava `history_last_read` (sem regredir uma leitura local mais nova) e a
+      hydration reaplica o registro quando o capítulo é vinculado. Nas obras servidas pelo Core
+      (extensão ainda não instalada) os capítulos não se vinculam, então a lista de capítulos do
+      Core agora traz o `lastReadAt` do Suwayomi e grava o histórico ao abrir/atualizar a obra.
+- [x] Bug: abrir uma obra do Core cuja fonte responde 403 dava "HTTP 503" sem detalhe. O desktop
+      agora serve os detalhes que o Suwayomi já guarda (com WARN no log do syncd), o erro do
+      celular mostra o código do Core e `tauri:dev` recompila o sidecar antes de subir.
+- [ ] Item 6 (dois dispositivos) não executado: um segundo emulador sobrecarrega a máquina de teste.
+- [ ] Menores, ainda abertos:
+  - o modal do desktop mantém PIN/QR de uma sessão já expirada;
+  - parear por PIN não funciona no emulador (sem mDNS);
+  - o subtítulo de Categorias menciona "livros";
+  - a sondagem do endpoint tenta a porta 4777 (release) depois da 4787 do dev;
+  - dispositivos pareados antigos com o mesmo nome ficam ambíguos no botão de revogar;
+  - capítulos "Chapter 0";
+  - timeout da ponte do catálogo;
+  - o editor de categorias não atualiza ao vivo;
+  - "Page 18 of 17";
+  - entradas `novel.*` republicadas no change_log;
+  - `adb input text` trunca o bundle (só afeta o teste).

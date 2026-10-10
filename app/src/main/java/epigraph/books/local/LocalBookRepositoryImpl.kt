@@ -11,6 +11,7 @@ import epigraph.sync.BookBookmarkMutation
 import epigraph.sync.BookHighlightMutation
 import java.io.File
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -32,11 +33,17 @@ class LocalBookRepositoryImpl(
 ) : LocalBookRepository {
     private val coverMaterializer: BookCoverMaterializer? = privateStorageDirectory?.let(::BookCoverMaterializer)
     override fun observeBooks(): Flow<List<LocalBook>> =
-        handler.subscribeToList { local_booksQueries.findAll(::mapBook) }
+        handler.subscribeToList { local_booksQueries.findAll(::mapBook) }.withRemoteAvailability()
 
     override fun observeBooks(contentType: ContentType): Flow<List<LocalBook>> =
         handler.subscribeToList {
             local_booksQueries.findAllByType(contentType.name, ::mapBook)
+        }.withRemoteAvailability()
+
+    private fun Flow<List<LocalBook>>.withRemoteAvailability(): Flow<List<LocalBook>> =
+        combine(handler.subscribeToList { aethon_syncQueries.selectRemoteAvailableBookShas() }) { books, remote ->
+            val remoteShas = remote.toHashSet()
+            books.map { book -> if (book.sha256 in remoteShas) book.copy(remoteAvailable = true) else book }
         }
 
     override suspend fun find(bookId: String): LocalBook? = handler.await(inTransaction = true) {
@@ -64,8 +71,11 @@ class LocalBookRepositoryImpl(
                 bookId = bookId,
             )
         }
+        val remoteAvailable = aethon_syncQueries.selectAssetManifest(current.sha256)
+            .executeAsOneOrNull()?.remote_available == true
         local_booksQueries.findById(bookId, ::mapBook).executeAsOne().copy(
             pdfSections = payload?.pdfSections().orEmpty(),
+            remoteAvailable = remoteAvailable,
         )
     }
 
@@ -404,9 +414,12 @@ class LocalBookRepositoryImpl(
             if (coverChanged) coversMaterialized++
 
             val titleFromFile = book.displayName.endsWith(".epub", true) ||
-                book.displayName.endsWith(".pdf", true)
+                book.displayName.endsWith(".pdf", true) ||
+                BookImportMetadataExtractor.isMisdecodedPdfTitle(book.displayName)
             val title = if (titleFromFile) {
-                metadata.title?.takeIf(String::isNotBlank) ?: book.displayName
+                metadata.title
+                    ?.takeIf { it.isNotBlank() && !BookImportMetadataExtractor.isMisdecodedPdfTitle(it) }
+                    ?: book.displayName
             } else {
                 book.displayName
             }

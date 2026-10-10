@@ -21,6 +21,16 @@ class NovelChapterCoverageCheckTest {
     }
 
     @Test
+    fun `novels hydrated locally from their plugin are not reported`() {
+        val entries = listOf(
+            "novel:a" to """{"novelId":"novel:a","title":"Alpha"}""",
+            "novel:b" to """{"novelId":"novel:b","title":"Beta"}""",
+        )
+
+        assertEquals(listOf("Beta"), findNovelsWithoutChapters(entries, emptyList(), setOf("novel:a")))
+    }
+
+    @Test
     fun `untitled entries fall back to their id and malformed records are skipped`() {
         val entries = listOf(
             "novel:z" to """{"novelId":"novel:z","title":""}""",

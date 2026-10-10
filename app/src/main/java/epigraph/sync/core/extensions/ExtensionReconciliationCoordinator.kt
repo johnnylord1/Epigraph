@@ -11,6 +11,8 @@ import epigraph.sync.core.session.CoreEndpointResolver
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.sync.core.work.CoreDeviceIdentityProvider
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
@@ -19,11 +21,18 @@ import yokai.domain.extension.repo.interactor.GetExtensionRepo
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -32,7 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 data class ExtensionInstallationProgress(
-    val activePackageName: String? = null,
+    val activePackageNames: Set<String> = emptySet(),
     val completed: Int = 0,
     val total: Int = 0,
     val installed: Int = 0,
@@ -162,7 +171,8 @@ class ExtensionReconciliationCoordinator(
 
     /** Every repository the desktop inventory uses, plus the recommended fallback, with this phone's state. */
     suspend fun desktopRepositories(report: ExtensionParityReport): List<ComicRepositoryRow> {
-        val configuredBases = getExtensionRepo.getAll()
+        val configured = getExtensionRepo.getAll()
+        val configuredBases = configured
             .mapTo(mutableSetOf()) { ExtensionParityResolver.repositoryBaseUrl(it.baseUrl) }
         val candidates = (
             report.items.mapNotNull { it.repositoryHintUrl ?: it.storeIndexUrl } +
@@ -175,6 +185,8 @@ class ExtensionReconciliationCoordinator(
                 ComicRepositoryRow(
                     indexUrl = indexUrl,
                     name = repositoryLabel(indexUrl),
+                    // A mirror signed by the same key may serve other versions (and source ids),
+                    // so only the same repository address counts as added.
                     added = ExtensionParityResolver.repositoryBaseUrl(indexUrl) in configuredBases,
                 )
             }
@@ -201,14 +213,28 @@ class ExtensionReconciliationCoordinator(
         _state.value = _state.value.copy(
             repositoryApproval = RepositoryApprovalState(activeIndexUrl = indexUrl),
         )
+        var outcome = RepositoryApprovalOutcome.FAILED
+        try {
+            outcome = addRepository(indexUrl)
+        } finally {
+            // Also when the screen that started it is closed mid-way: this coordinator outlives it,
+            // and a leftover active repository keeps the setup screen locked as busy.
+            _state.value = _state.value.copy(
+                repositoryApproval = RepositoryApprovalState(outcome = outcome),
+            )
+        }
+    }
+
+    private suspend fun addRepository(indexUrl: String): RepositoryApprovalOutcome {
         val installableIndexUrl = ExtensionParityResolver.repositoryIndexUrl(indexUrl)
-        val outcome = when (createExtensionRepo.await(installableIndexUrl)) {
+        val outcome = when (val result = createExtensionRepo.await(installableIndexUrl)) {
             CreateExtensionRepo.Result.Success -> RepositoryApprovalOutcome.ADDED
             CreateExtensionRepo.Result.RepoAlreadyExists ->
                 RepositoryApprovalOutcome.ALREADY_CONFIGURED
             CreateExtensionRepo.Result.InvalidUrl -> RepositoryApprovalOutcome.INVALID
+            // Several repositories may share a signer now, so this only comes from an old database.
             is CreateExtensionRepo.Result.DuplicateFingerprint ->
-                RepositoryApprovalOutcome.DUPLICATE_FINGERPRINT
+                RepositoryApprovalOutcome.ALREADY_CONFIGURED
             CreateExtensionRepo.Result.Error -> RepositoryApprovalOutcome.FAILED
         }
         if (
@@ -223,19 +249,23 @@ class ExtensionReconciliationCoordinator(
                     setOf(indexUrl),
                 )
             }
+            // Installed extensions signed by this repository were blocked as untrusted while it
+            // was missing; the repository screen clears them the same way when a repo is added.
+            extensionManager.refreshTrust()
             extensionManager.findAvailableExtensions()
             refreshReportFromCatalog()
             relinkFromCachedInventories()
         }
-        _state.value = _state.value.copy(
-            repositoryApproval = RepositoryApprovalState(outcome = outcome),
-        )
+        return outcome
     }
 
     suspend fun relinkFromCachedInventories(): CoreSourceRelinkResult {
         val cached = withContext(Dispatchers.IO) { store.all() }
         return relinker.relinkAvailable(cached.map(::packageScope))
     }
+
+    /** Desktop source of each bridged work, so works still served by the Core count toward their extension. */
+    suspend fun bridgedWorkSources(): Map<Long, Long> = withContext(Dispatchers.IO) { relinker.bridgedWorkSources() }
 
     fun acknowledge() {
         _state.value.report?.let(store::acknowledge)
@@ -247,13 +277,78 @@ class ExtensionReconciliationCoordinator(
      * so it can be loaded and relinked. Used by the reconciliation flow to clear
      * [ExtensionParityStatus.UNTRUSTED_OR_BLOCKED] items coming from the desktop inventory.
      */
-    suspend fun trustUntrusted(packageName: String) {
-        val untrusted = extensionManager.untrustedExtensionsFlow.value
-            .firstOrNull { it.pkgName == packageName }
-            ?: return
-        extensionManager.trust(untrusted.pkgName, untrusted.versionCode, untrusted.signatureHash)
+    suspend fun trustUntrusted(packageName: String) = trustAndRelink(listOf(packageName))
+
+    /** Trusts every installed package the desktop needs that this device still blocks. */
+    suspend fun trustAllUntrusted() {
+        trustAndRelink(
+            _state.value.report?.items
+                ?.filter { it.status == ExtensionParityStatus.UNTRUSTED_OR_BLOCKED }
+                ?.map { it.packageName }
+                .orEmpty(),
+        )
+    }
+
+    // A relink walks the whole library, so a batch relinks once after every trust lands instead
+    // of once per extension.
+    private suspend fun trustAndRelink(packageNames: List<String>) {
+        val trusted = packageNames.filter { packageName ->
+            val untrusted = extensionManager.untrustedExtensionsFlow.value
+                .firstOrNull { it.pkgName == packageName }
+                ?: return@filter false
+            extensionManager.trust(untrusted.pkgName, untrusted.versionCode, untrusted.signatureHash)
+            true
+        }
+        if (trusted.isEmpty()) return
+        // Trusting loads the extension in the background; classifying before it lands showed the
+        // package as missing and offered to install it again.
+        withTimeoutOrNull(INSTALLED_FLOW_TIMEOUT_MS) {
+            extensionManager.installedExtensionsFlow.first { installed ->
+                trusted.all { packageName -> installed.any { it.pkgName == packageName } }
+            }
+        }
         refreshReportFromCatalog()
         relinkFromCachedInventories()
+    }
+
+    /**
+     * Keeps the report in step with this device while a screen shows it. The persisted report is
+     * from the last classification, so an extension installed, trusted or removed since then (or
+     * an install whose result arrived late) kept offering the old action until the next sync.
+     */
+    @OptIn(FlowPreview::class)
+    suspend fun followDeviceExtensions() {
+        refreshFromStore()
+        extensionManager.isInitialized.first { it }
+        if (extensionManager.availableExtensionsFlow.value.isEmpty()) {
+            extensionManager.findAvailableExtensions()
+        }
+        combine(
+            extensionManager.installedExtensionsFlow,
+            extensionManager.untrustedExtensionsFlow,
+            extensionManager.availableExtensionsFlow,
+        ) { installed, untrusted, available ->
+            Triple(
+                installed.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+                untrusted.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+                available.mapTo(mutableSetOf()) { it.pkgName to it.versionCode },
+            )
+        }
+            .distinctUntilChanged()
+            .debounce(DEVICE_STATE_DEBOUNCE_MS)
+            .collect {
+                // A failed pass keeps the last report; the next device change retries.
+                try {
+                    refreshReportFromCatalog()
+                    // A running batch relinks once when it ends.
+                    if (_state.value.installation.activePackageNames.isEmpty()) {
+                        relinkFromCachedInventories()
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                }
+            }
     }
 
     suspend fun installAllMissing() {
@@ -288,32 +383,70 @@ class ExtensionReconciliationCoordinator(
         var progress = ExtensionInstallationProgress(total = uniquePackages.size)
         _state.value = _state.value.copy(installation = progress)
 
-        for (packageName in uniquePackages) {
-            progress = progress.copy(activePackageName = packageName)
-            _state.value = _state.value.copy(installation = progress)
-            val outcome = installPackage(packageName)
-            progress = when (outcome) {
-                InstallOutcome.INSTALLED -> progress.copy(
-                    completed = progress.completed + 1,
-                    installed = progress.installed + 1,
-                )
-                InstallOutcome.CANCELLED -> progress.copy(
-                    completed = progress.completed + 1,
-                    cancelled = progress.cancelled + 1,
-                )
-                InstallOutcome.FAILED -> progress.copy(
-                    completed = progress.completed + 1,
-                    failed = progress.failed + 1,
-                )
-            }
-            refreshReportFromCatalog()
-            relinkFromCachedInventories()
-            _state.value = _state.value.copy(installation = progress)
+        try {
+            installEach(uniquePackages, progress) { progress = it }
+        } finally {
+            // Also when the screen that started it is closed mid-way: this coordinator outlives it,
+            // and a leftover active package keeps the setup screen locked as busy.
+            _state.value = _state.value.copy(installation = progress.copy(activePackageNames = emptySet()))
         }
-        _state.value = _state.value.copy(installation = progress.copy(activePackageName = null))
+        // Once per batch: relinking after every package re-ran the whole library pass each time.
+        try {
+            relinkFromCachedInventories()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+        }
     }
 
-    private suspend fun installPackage(packageName: String): InstallOutcome = coroutineScope {
+    private suspend fun installEach(
+        uniquePackages: List<String>,
+        initial: ExtensionInstallationProgress,
+        onProgress: (ExtensionInstallationProgress) -> Unit,
+    ) {
+        // Download every APK at once; each one installs as soon as its download lands,
+        // instead of one download and install at a time.
+        val progressMutex = Mutex()
+        var progress = initial.copy(activePackageNames = uniquePackages.toSet())
+        onProgress(progress)
+        _state.value = _state.value.copy(installation = progress)
+        coroutineScope {
+            uniquePackages.forEach { packageName ->
+                async {
+                    val outcome = installPackage(packageName)
+                    progressMutex.withLock {
+                        progress = progress.copy(
+                            activePackageNames = progress.activePackageNames - packageName,
+                            completed = progress.completed + 1,
+                            installed = progress.installed + if (outcome == InstallOutcome.INSTALLED) 1 else 0,
+                            cancelled = progress.cancelled + if (outcome == InstallOutcome.CANCELLED) 1 else 0,
+                            failed = progress.failed + if (outcome == InstallOutcome.FAILED) 1 else 0,
+                        )
+                        onProgress(progress)
+                        refreshReportFromCatalog()
+                        _state.value = _state.value.copy(installation = progress)
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun installPackage(packageName: String): InstallOutcome {
+        // The installer's status poller outlives the install it reports on: once the session is
+        // released it waits for a new one forever. Run it in a scope closed here, since as a child
+        // of this call it kept the batch (and the setup screen) busy after a finished install.
+        val installerJob = SupervisorJob(currentCoroutineContext()[Job])
+        return try {
+            installPackage(packageName, CoroutineScope(currentCoroutineContext() + installerJob))
+        } finally {
+            installerJob.cancel()
+        }
+    }
+
+    private suspend fun installPackage(
+        packageName: String,
+        installerScope: CoroutineScope,
+    ): InstallOutcome = coroutineScope {
         val available = extensionManager.availableExtensionsFlow.value
             .filter { it.pkgName == packageName }
             .maxByOrNull { it.versionCode }
@@ -330,14 +463,35 @@ class ExtensionReconciliationCoordinator(
         // on the installer event flow, which can drop the terminal emission and stall the batch
         // until the timeout. Extensions that land untrusted count as installed here; the report
         // refresh re-classifies them so the user can trust them in-flow.
-        val terminal = async {
-            extensionManager.installExtensionWithUserConfirmation(
+        var reachedInstaller = false
+        val terminal = installerScope.async {
+            extensionManager.installExtensionWithoutPrompt(
                 ExtensionManager.ExtensionInfo(available),
-                this@coroutineScope,
-            ).first { it.first.isCompleted() }
+                installerScope,
+            ).first {
+                if (it.first == InstallStep.Installing) reachedInstaller = true
+                it.first.isCompleted()
+            }
         }
+        // Cancelling Android's "install unknown apps" prompt (or backing out of the installer
+        // dialog on some builds) leaves the session pending without any status callback. Once
+        // the installer was shown and the user is back in Epigraph for a while with nothing
+        // installed, treat it as a cancellation instead of blocking the batch until the timeout.
+        val processLifecycle = ProcessLifecycleOwner.get().lifecycle
+        var leftForInstaller = false
+        var resumedSince = 0L
         val outcome: InstallOutcome? = withTimeoutOrNull(INSTALL_TIMEOUT_MS) {
             while (true) {
+                val resumed = withContext(Dispatchers.Main) {
+                    processLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+                }
+                if (!resumed) {
+                    if (reachedInstaller) leftForInstaller = true
+                    resumedSince = 0L
+                } else if (leftForInstaller) {
+                    val now = System.currentTimeMillis()
+                    if (resumedSince == 0L) resumedSince = now
+                }
                 val present = extensionManager.installedExtensionsFlow.value.any {
                     it.pkgName == packageName && it.versionCode >= targetVersion
                 } || extensionManager.untrustedExtensionsFlow.value.any {
@@ -352,6 +506,11 @@ class ExtensionReconciliationCoordinator(
                         InstallStep.Cancelled -> InstallOutcome.CANCELLED
                         else -> InstallOutcome.FAILED
                     }
+                }
+                if (resumedSince != 0L &&
+                    System.currentTimeMillis() - resumedSince >= INSTALLER_ABANDONED_MS
+                ) {
+                    return@withTimeoutOrNull InstallOutcome.CANCELLED
                 }
                 delay(500)
             }
@@ -369,11 +528,25 @@ class ExtensionReconciliationCoordinator(
                     extensionManager.setInstallationResult(packageName, result = true)
                     withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
                 }
+                // The installer can report success before the extension list has the package;
+                // wait for it so the refreshed report stops offering to install it.
+                withTimeoutOrNull(INSTALLED_FLOW_TIMEOUT_MS) {
+                    combine(
+                        extensionManager.installedExtensionsFlow,
+                        extensionManager.untrustedExtensionsFlow,
+                    ) { installed, untrusted ->
+                        installed.any { it.pkgName == packageName && it.versionCode >= targetVersion } ||
+                            untrusted.any { it.pkgName == packageName && it.versionCode >= targetVersion }
+                    }.first { it }
+                }
+            }
+            InstallOutcome.CANCELLED -> if (!terminal.isCompleted) {
+                // Abandoned installer prompt: release the canonical flow the same way.
+                extensionManager.setInstallationResult(packageName, result = false)
+                withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
             }
             null -> {
-                // Close the canonical flow after the user-confirmation deadline. Otherwise the
-                // child producer keeps this coroutineScope alive even though the batch already
-                // classified the item as failed.
+                // Close the canonical flow after the user-confirmation deadline.
                 extensionManager.setInstallationResult(packageName, result = false)
                 withTimeoutOrNull(INSTALLER_FLOW_SETTLE_MS) { terminal.await() }
             }
@@ -420,6 +593,7 @@ class ExtensionReconciliationCoordinator(
     private suspend fun refreshReportFromCatalog() {
         val current = _state.value.report ?: return
         val installed = extensionManager.installedExtensionsFlow.value.associateBy { it.pkgName }
+        val installedSourceIds = installed.values.flatMapTo(mutableSetOf()) { local -> local.sources.map { it.id } }
         val available = extensionManager.availableExtensionsFlow.value
             .groupBy { it.pkgName }
             .mapValues { (_, values) -> values.maxBy { it.versionCode } }
@@ -437,12 +611,19 @@ class ExtensionReconciliationCoordinator(
                 item.copy(
                     mobileVersionName = local?.versionName ?: update?.versionName,
                     status = when {
+                        // Same rule as ExtensionParityResolver: a newer build with the source fixes it.
+                        local != null && update != null && update.versionCode > local.versionCode &&
+                            expectedIds.intersect(localIds).isEmpty() &&
+                            update.sources.any { it.id in expectedIds } ->
+                            ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                         local != null && expectedIds.isNotEmpty() &&
                             expectedIds.intersect(localIds).isEmpty() ->
                             ExtensionParityStatus.SOURCE_ID_MISMATCH
                         local != null && update != null && update.versionCode > local.versionCode ->
                             ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                         local != null -> ExtensionParityStatus.INSTALLED
+                        expectedIds.isNotEmpty() && installedSourceIds.containsAll(expectedIds) ->
+                            ExtensionParityStatus.INSTALLED
                         item.packageName in untrusted -> ExtensionParityStatus.UNTRUSTED_OR_BLOCKED
                         update != null -> ExtensionParityStatus.MISSING_AVAILABLE
                         item.repositoryHintUrl != null &&
@@ -480,7 +661,9 @@ class ExtensionReconciliationCoordinator(
             "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json"
         val INSTALL_TIMEOUT_MS = TimeUnit.MINUTES.toMillis(10)
         val INSTALLER_FLOW_SETTLE_MS = TimeUnit.SECONDS.toMillis(5)
+        val INSTALLER_ABANDONED_MS = TimeUnit.SECONDS.toMillis(6)
         val INSTALLED_FLOW_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(15)
+        const val DEVICE_STATE_DEBOUNCE_MS = 500L
     }
 }
 

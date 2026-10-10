@@ -48,11 +48,17 @@ class ChapterSort(val manga: Manga, val chapterFilter: ChapterFilter = get(), va
 
     fun <T : Chapter> sortComparator(ignoreAsc: Boolean = false): Comparator<T> {
         val sortDescending = !ignoreAsc && manga.sortDescending(preferences)
+        // Chapters restored from a backup or the Core share source order 0 until the source list
+        // is fetched; their number keeps them in reading order meanwhile.
+        val newestFirst: (T, T) -> Int = { c1, c2 ->
+            c1.source_order.compareTo(c2.source_order).takeIf { it != 0 }
+                ?: c2.chapter_number.compareTo(c1.chapter_number)
+        }
         val sortFunction: (T, T) -> Int =
             when (manga.chapterOrder(preferences)) {
                 Manga.CHAPTER_SORTING_SOURCE -> when (sortDescending) {
-                    true -> { c1, c2 -> c1.source_order.compareTo(c2.source_order) }
-                    false -> { c1, c2 -> c2.source_order.compareTo(c1.source_order) }
+                    true -> newestFirst
+                    false -> { c1, c2 -> newestFirst(c2, c1) }
                 }
                 Manga.CHAPTER_SORTING_NUMBER -> when (sortDescending) {
                     true -> { c1, c2 -> c2.chapter_number.toString().compareToCaseInsensitiveNaturalOrder(c1.chapter_number.toString()) }
@@ -62,7 +68,7 @@ class ChapterSort(val manga: Manga, val chapterFilter: ChapterFilter = get(), va
                     true -> { c1, c2 -> c2.date_upload.compareTo(c1.date_upload) }
                     false -> { c1, c2 -> c1.date_upload.compareTo(c2.date_upload) }
                 }
-                else -> { c1, c2 -> c1.source_order.compareTo(c2.source_order) }
+                else -> newestFirst
             }
         return Comparator(sortFunction)
     }

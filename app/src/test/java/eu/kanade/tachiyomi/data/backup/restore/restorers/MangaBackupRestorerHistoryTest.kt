@@ -16,6 +16,7 @@ import io.mockk.slot
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import yokai.data.DatabaseHandler
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.chapter.interactor.GetChapter
@@ -112,6 +113,7 @@ class MangaBackupRestorerHistoryTest {
         getTrack = mockk<GetTrack>(relaxed = true),
         insertTrack = mockk<InsertTrack>(relaxed = true),
         seriesKnowledgeRepository = mockk<SeriesKnowledgeRepository>(relaxed = true),
+        handler = mockk<DatabaseHandler>(relaxed = true),
     )
 
     private fun manga(id: Long) = MangaImpl(id = id, source = 1L, url = "/series")

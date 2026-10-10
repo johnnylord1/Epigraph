@@ -21,6 +21,10 @@ class AnilistInterceptor(private val anilist: Anilist, private var token: String
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
+        // A login installed without this interceptor (Epigraph Core tracker sync) is only in the preferences.
+        if (token.isNullOrEmpty()) {
+            token = anilist.getPassword()
+        }
         if (token.isNullOrEmpty()) {
             throw Exception("Not authenticated with Anilist")
         }

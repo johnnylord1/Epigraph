@@ -5,6 +5,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.protobuf.ProtoNumber
 
 @Serializable
@@ -16,6 +17,8 @@ data class Backup(
     @ProtoNumber(104) var backupPreferences: List<BackupPreference> = emptyList(),
     @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
     @ProtoNumber(106) var backupLocalBooks: List<BackupLocalBook> = emptyList(),
+    /** Novel plugin repositories an imported LNReader backup used; never written to a backup. */
+    @Transient val novelRepositories: List<BackupNovelRepository> = emptyList(),
 ) {
 
     companion object {

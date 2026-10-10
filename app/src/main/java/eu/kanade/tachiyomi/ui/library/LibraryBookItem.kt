@@ -127,7 +127,10 @@ private abstract class LibraryBookHolder(
             append(" • ")
             append(it)
         }
-        if (!book.isAvailable) {
+        if (book.downloadsWhenOpened) {
+            append(" • ")
+            append(itemView.context.getString(MR.strings.local_books_downloads_when_opened))
+        } else if (!book.isAvailable) {
             append(" • ")
             append(itemView.context.getString(MR.strings.local_books_file_missing))
         }

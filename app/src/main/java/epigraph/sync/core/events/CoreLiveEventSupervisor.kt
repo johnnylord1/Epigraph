@@ -185,7 +185,7 @@ class CoreLiveEventSupervisor(
     ) {
         val coverage = CoreReplayCoverage.Filtered(scopeId)
         val network = AndroidCoreNetworkGate(connectivity)
-        val reconnect = ExponentialCoreReconnectGate()
+        val reconnect = ExponentialCoreReconnectGate(logger, scopeId)
         val sink = CoreDurableChangeSink { change, nextCheckpoint ->
             applier.applyChange(
                 change = change,
@@ -289,10 +289,15 @@ class CoreLiveEventSupervisor(
         }
     }
 
-    private class ExponentialCoreReconnectGate : CoreReconnectGate {
+    private class ExponentialCoreReconnectGate(
+        private val logger: Logger,
+        private val scopeId: String,
+    ) : CoreReconnectGate {
         override suspend fun awaitRetry(attempt: Int, reason: CoreReconnectReason) {
             val exponent = (attempt - 1).coerceIn(0, 5)
-            delay((1_000L shl exponent).coerceAtMost(MAX_RECONNECT_DELAY_MS))
+            val delayMs = (1_000L shl exponent).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+            logger.i { "scope $scopeId live feed reconnect #$attempt in ${delayMs}ms: $reason" }
+            delay(delayMs)
         }
     }
 

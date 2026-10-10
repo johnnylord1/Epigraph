@@ -373,6 +373,29 @@ class SuwayomiCatalogSyncTest {
     }
 
     @Test
+    fun `novel plugin inventory is built after the replica commits declarations`() = runTest {
+        val order = mutableListOf<String>()
+        val novelSession = session.copyWithServerMetadata(scopes = session.scopes + "novels:profile:$PROFILE")
+
+        val outcome = novelSession.use { selected ->
+            CompositeCoreReplicaSync(
+                replica = CoreReplicaSyncPort { _, _, _ ->
+                    order += "replica"
+                    CoreReplicaSyncOutcome.APPLIED
+                },
+                catalog = CoreReplicaSyncPort { _, _, _ -> CoreReplicaSyncOutcome.DEFERRED },
+                novelPlugins = CoreReplicaSyncPort { _, _, _ ->
+                    order += "novelPlugins"
+                    CoreReplicaSyncOutcome.APPLIED
+                },
+            ).synchronize(selected, capabilities(), 1000)
+        }
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(listOf("replica", "novelPlugins"), order)
+    }
+
+    @Test
     fun `confirmed comic state replays independently from the Suwayomi catalog`() = runTest {
         var replicaScopes = emptyList<String>()
         var catalogScopes = emptyList<String>()
@@ -1101,6 +1124,65 @@ class SuwayomiCatalogSyncTest {
         assertEquals(CoreReplicaSyncOutcome.APPLIED, materialized)
         assertTrue(
             database.aethon_syncQueries.selectCategoryIdentityByEntityId(remoteEntityId).executeAsOneOrNull() != null,
+        )
+    }
+
+    @Test
+    fun `a backup restored on the phone keeps one folder when its titles are adopted in the same run`() = runTest {
+        database.mangasQueries.insert(
+            source = 42,
+            url = "/manga/7",
+            artist = null,
+            author = null,
+            description = null,
+            genre = null,
+            title = "Suwayomi One",
+            status = 0,
+            thumbnailUrl = null,
+            favorite = true,
+            lastUpdate = 0,
+            initialized = true,
+            viewer = 0,
+            hideTitle = false,
+            chapterFlags = 0,
+            dateAdded = 0,
+            filteredScanlators = null,
+            updateStrategy = 0,
+            coverLastModified = 0,
+            nextUpdate = 0,
+            fetchInterval = 0,
+            memo = JsonObject(emptyMap()),
+        )
+        val restoredId = database.mangasQueries.selectLastInsertedRowId().executeAsOne()
+        database.categoriesQueries.insert("Remote Favorites", 0, 0, "a")
+        val localCategoryId = database.categoriesQueries.selectLastInsertedRowId().executeAsOne()
+        database.aethon_syncQueries.insertMangaCategoryAssignment(restoredId, localCategoryId)
+        // Before the catalog adopts the restored title it has no Core identity, so the folder does
+        // not look like it holds synced comics yet.
+        assertTrue(database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().isEmpty())
+
+        val handler = AndroidDatabaseHandler(database, driver, Dispatchers.IO, Dispatchers.IO)
+        val outcome = SuwayomiCatalogSync(
+            pages = FixturePages(includeSecondManga = false),
+            database = handler,
+            projection = EpigraphCoreDomainProjection(),
+            pageSize = 1,
+        ).synchronize(session, capabilities(categoryCreate = true), 1000)
+
+        assertEquals(CoreReplicaSyncOutcome.APPLIED, outcome)
+        assertEquals(restoredId, database.mangasQueries.findFavorites().executeAsList().single()._id)
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAll().executeAsList().filter { it.name == "Remote Favorites" }.map { it._id },
+        )
+        assertEquals(
+            listOf(localCategoryId),
+            database.categoriesQueries.findAllByMangaId(restoredId).executeAsList().map { it._id },
+        )
+        // The create hook binds the folder by name on the next session.
+        assertEquals(
+            listOf(localCategoryId),
+            database.aethon_syncQueries.selectUnpublishedComicCategories().executeAsList().map { it._id },
         )
     }
 

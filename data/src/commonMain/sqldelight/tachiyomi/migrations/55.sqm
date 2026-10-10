@@ -1,0 +1,21 @@
+-- The desktop (Suwayomi) keeps several repositories signed by the same key, e.g. Keiyoushi and a
+-- mirror that still serves extensions Keiyoushi removed. One repository per signing key made the
+-- phone keep only one of them, so it installed other versions with other source ids than the
+-- desktop. The signing key stays recorded, but no longer has to be unique.
+CREATE TABLE extension_repos_55 (
+    base_url TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    short_name TEXT,
+    website TEXT NOT NULL,
+    signing_key_fingerprint TEXT NOT NULL
+);
+
+INSERT INTO extension_repos_55(base_url, name, short_name, website, signing_key_fingerprint)
+SELECT base_url, name, short_name, website, signing_key_fingerprint
+FROM extension_repos;
+
+DROP TABLE extension_repos;
+
+ALTER TABLE extension_repos_55 RENAME TO extension_repos;
+
+CREATE INDEX extension_repos_signing_key_index ON extension_repos(signing_key_fingerprint);

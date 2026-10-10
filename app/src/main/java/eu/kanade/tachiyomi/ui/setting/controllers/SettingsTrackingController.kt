@@ -105,11 +105,17 @@ class SettingsTrackingController :
                 dialog.targetController = this@SettingsTrackingController
                 dialog.showDialog(router)
             }
-            trackPreference(trackManager.shikimori) {
-                activity?.openInBrowser(ShikimoriApi.authUrl(), trackManager.shikimori.getLogoColor(), true)
+            // Epigraph has no OAuth client of its own for these yet, so new logins would fail;
+            // keep them only so an existing login can still be shown and logged out.
+            if (trackManager.shikimori.isLogged) {
+                trackPreference(trackManager.shikimori) {
+                    activity?.openInBrowser(ShikimoriApi.authUrl(), trackManager.shikimori.getLogoColor(), true)
+                }
             }
-            trackPreference(trackManager.bangumi) {
-                activity?.openInBrowser(BangumiApi.authUrl(), trackManager.bangumi.getLogoColor(), true)
+            if (trackManager.bangumi.isLogged) {
+                trackPreference(trackManager.bangumi) {
+                    activity?.openInBrowser(BangumiApi.authUrl(), trackManager.bangumi.getLogoColor(), true)
+                }
             }
             infoPreference(MR.strings.tracking_info)
         }

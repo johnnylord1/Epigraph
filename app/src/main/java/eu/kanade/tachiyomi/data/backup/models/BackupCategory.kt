@@ -15,6 +15,8 @@ class BackupCategory(
 
     // J2K Specific values
     @ProtoNumber(800) var mangaSort: Char? = null,
+    // Epigraph: "BOOKS" for a Books & novels folder; null for Comics (and every older backup).
+    @ProtoNumber(900) var library: String? = null,
 ) {
     fun getCategoryImpl(): CategoryImpl {
         return CategoryImpl().apply {

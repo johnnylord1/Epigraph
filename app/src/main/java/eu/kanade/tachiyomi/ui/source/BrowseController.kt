@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.ui.source
 
-import epigraph.recommendations.DiscoverMode
-import epigraph.recommendations.ui.DiscoverController
 import android.app.Activity
 import android.os.Build
 import android.os.Parcelable
@@ -12,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.activity.BackEventCompat
 import androidx.appcompat.widget.SearchView
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.graphics.ColorUtils
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.isInvisible
@@ -39,8 +38,6 @@ import eu.kanade.tachiyomi.ui.main.BottomSheetController
 import eu.kanade.tachiyomi.ui.main.FloatingSearchInterface
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.main.RootSearchInterface
-import eu.kanade.tachiyomi.ui.base.TabItem
-import eu.kanade.tachiyomi.ui.base.TabMode
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsBrowseController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsSourcesController
 import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
@@ -79,6 +76,7 @@ import yokai.util.koin.injectLazy
 import yokai.domain.base.BasePreferences
 import yokai.domain.base.BasePreferences.ExtensionInstaller
 import yokai.i18n.MR
+import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.presentation.extension.repo.ExtensionRepoController
 import yokai.util.lang.getString
 import java.util.*
@@ -96,7 +94,6 @@ class BrowseController :
     RootSearchInterface,
     FloatingSearchInterface,
     eu.kanade.tachiyomi.ui.main.RootTabContent,
-    eu.kanade.tachiyomi.ui.main.TabbedInterface,
     eu.kanade.tachiyomi.ui.base.LocalAppBarOwner,
     BottomSheetController {
 
@@ -116,16 +113,8 @@ class BrowseController :
         appBar.lockYPos = false
         appBar.hideBigView(useSmall = false)
         appBar.setToolbarModeBy(this)
-        appBar.applyTabs(
-            items = BrowseSourceType.entries.map {
-                TabItem.Label(activity?.getString(it.stringRes).orEmpty())
-            },
-            selectedIndex = presenter.currentType.ordinal,
-            mode = TabMode.Fixed,
-            onSelected = { idx -> presenter.setCurrentType(BrowseSourceType.fromOrdinal(idx)) },
-            onReselected = { binding.sourceRecycler.smoothScrollToTop() },
-            pagerSync = null,
-        )
+        // Manga / Novel is the app bar pill (see updateContentTypeItem), not a tab strip.
+        appBar.clearTabs()
         appBar.y = 0f
         appBar.updateAppBarAfterY(binding.sourceRecycler)
         setupToolbarMenu()
@@ -133,6 +122,7 @@ class BrowseController :
 
     private fun setupToolbarMenu() {
         installLocalMenu(R.menu.catalogue_main)
+        updateContentTypeItem()
 
         val pill = searchToolbar() ?: return
         pill.searchQueryHint = view?.context?.getString(MR.strings.global_search)
@@ -142,7 +132,40 @@ class BrowseController :
         }
     }
 
-    override val showActivityTabs: Boolean = true
+    /** Drives the Manga / Novel pill in the app bar. */
+    private val contentTypeState = mutableStateOf(BrowseSourceType.Manga)
+
+    /**
+     * The Manga / Novel pill, in the same app bar slot as the other content-type switches. The
+     * collapsed app bar shows only the item's icon and title, which name the type it switches to.
+     */
+    private fun updateContentTypeItem() {
+        val item = appBar()?.mainToolbar?.menu?.findItem(R.id.action_content_type) ?: return
+        val context = view?.context ?: return
+        val current = presenter.currentType
+        contentTypeState.value = current
+        val other = if (current == BrowseSourceType.Manga) BrowseSourceType.Novel else BrowseSourceType.Manga
+        item.title = context.getString(other.stringRes)
+        item.setIcon(
+            if (other == BrowseSourceType.Novel) R.drawable.ic_book_open_outline_24dp
+            else R.drawable.ic_library_outline_24dp,
+        )
+        item.setSegmentedSwitchActionView(
+            context = context,
+            options = BrowseSourceType.entries.map { it to context.getString(it.stringRes) },
+            selected = contentTypeState,
+            onSelect = ::selectContentType,
+        )
+    }
+
+    private fun selectContentType(type: BrowseSourceType) {
+        if (type == presenter.currentType) {
+            binding.sourceRecycler.smoothScrollToTop()
+            return
+        }
+        presenter.setCurrentType(type)
+        updateContentTypeItem()
+    }
 
     private val basePreferences: BasePreferences by injectLazy()
 
@@ -409,7 +432,9 @@ class BrowseController :
                 binding.bottomSheet.root.currentSourceTitle
                     ?: view?.context?.getString(MR.strings.source_migration)
             } else {
-                view?.context?.getString(MR.strings.extensions)
+                // The selected tab right below already reads "Extensions", and the toolbar needs
+                // the room for search, options, languages and the Manga / Novels pill.
+                null
             }
         if (binding.bottomSheet.sheetToolbar.menu.findItem(if (!onMigrationTab) R.id.action_search else R.id.action_migration_guide) != null) {
             return
@@ -432,12 +457,42 @@ class BrowseController :
         }
         binding.bottomSheet.sheetToolbar.menu.findItem(id)?.isChecked = true
 
+        val sheet = binding.bottomSheet.root
+        view?.context?.let { context ->
+            binding.bottomSheet.sheetToolbar.menu.findItem(R.id.action_extension_type)?.setSegmentedSwitchActionView(
+                context = context,
+                options = listOf(false to context.getString(MR.strings.manga), true to context.getString(MR.strings.novels)),
+                selected = sheet.novelPluginsSelected,
+                onSelect = sheet::selectExtensionType,
+            )
+        }
+
         // Initialize search option.
         binding.bottomSheet.sheetToolbar.menu.findItem(R.id.action_search)?.let { searchItem ->
             val searchView = searchItem.actionView as SearchView
 
             // Change hint to show global search.
             searchView.queryHint = view?.context?.getString(MR.strings.search_extensions)
+            // Give the open search field the room of the options/language icons; the
+            // Manga/Novels pill stays so the type can still be switched while searching.
+            val menu = binding.bottomSheet.sheetToolbar.menu
+            fun showSideActions(visible: Boolean) {
+                menu.findItem(R.id.action_extension_repos_settings)?.isVisible = visible
+                menu.findItem(R.id.action_filter)?.isVisible = visible
+            }
+            searchItem.setOnActionExpandListener(
+                object : MenuItem.OnActionExpandListener {
+                    override fun onMenuItemActionExpand(item: MenuItem): Boolean {
+                        showSideActions(false)
+                        return true
+                    }
+
+                    override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                        showSideActions(true)
+                        return true
+                    }
+                },
+            )
             if (extQuery.isNotEmpty()) {
                 searchView.setOnQueryTextListener(null)
                 searchItem.expandActionView()
@@ -931,6 +986,12 @@ class BrowseController :
             R.id.action_filter -> {
                 router.pushController(SettingsSourcesController().withFadeTransaction())
             }
+            // Only reached from the collapsed app bar, which shows the item instead of the pill.
+            R.id.action_content_type -> {
+                selectContentType(
+                    if (presenter.currentType == BrowseSourceType.Manga) BrowseSourceType.Novel else BrowseSourceType.Manga,
+                )
+            }
             R.id.action_migration_guide -> {
                 activity?.openInBrowser(HELP_URL)
             }
@@ -982,14 +1043,6 @@ class BrowseController :
             // "Last used" title until the next refresh. The next updateDataSet rebuilds it once.
             adapter?.addItem(0, item.header)
         }
-        // addScrollableHeader inserts at position 0, so the header added last is on top:
-        // Discover sits above everything, like the desktop Browse page's recommendations.
-        adapter?.addScrollableHeader(DiscoverEntryItem(type, ::openDiscover))
-    }
-
-    private fun openDiscover(type: BrowseSourceType) {
-        val mode = if (type == BrowseSourceType.Novel) DiscoverMode.NOVELS else DiscoverMode.COMICS
-        router.pushController(DiscoverController(mode).withFadeTransaction())
     }
 
     @Parcelize

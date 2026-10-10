@@ -6,19 +6,27 @@ import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -43,28 +51,57 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
+import coil3.compose.AsyncImage
+import dev.icerock.moko.resources.compose.pluralStringResource
 import dev.icerock.moko.resources.compose.stringResource
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.source.NovelSource
 import epigraph.sync.core.extensions.ComicRepositoryRow
 import epigraph.sync.core.extensions.ExtensionParityItem
 import epigraph.sync.core.extensions.ExtensionParityReport
+import epigraph.sync.core.extensions.ExtensionParityResolver
 import epigraph.sync.core.extensions.ExtensionParityStatus
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.extensions.RepositoryApprovalOutcome
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyInventory
+import epigraph.sync.core.novels.LnReaderPluginInventoryItem
 import epigraph.sync.core.novels.LnReaderPluginParityStatus
 import epigraph.sync.core.novels.LnReaderPluginInstallResult
 import epigraph.sync.core.novels.LnReaderRepositoryApprovalResult
 import epigraph.sync.core.novels.LnReaderRepositoryParityStatus
+import epigraph.sync.core.pairing.CorePairingUiState
+import epigraph.sync.core.pairing.PairingStage
+import epigraph.sync.core.pairing.EpigraphCorePairingController
+import epigraph.sync.core.pairing.PairingSyncSelection
+import epigraph.sync.core.policy.SyncDomain
+import epigraph.sync.core.work.CoreSyncStatus
+import epigraph.sync.core.work.CoreSyncStatusMonitor
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.util.system.setThemeByPref
+import co.touchlab.kermit.Logger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
 import yokai.presentation.theme.YokaiTheme
 import yokai.util.koin.injectLazy
@@ -73,26 +110,41 @@ class CoreDependencySetupActivity : AppCompatActivity() {
     private val preferences: PreferencesHelper by injectLazy()
     private val coordinator: ExtensionReconciliationCoordinator by injectLazy()
     private val novelCoordinator: LnReaderDependencyActionCoordinator by injectLazy()
+    private val pairingController: EpigraphCorePairingController by injectLazy()
+    private val syncMonitor: CoreSyncStatusMonitor by injectLazy()
+    private val getManga: GetManga by injectLazy()
+    private val novelPluginManager: NovelPluginManager by injectLazy()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setThemeByPref(preferences)
-        lifecycleScope.launch { coordinator.refreshFromStore() }
+        // Follows installs, trusts and removals made while the screen is open or away from it.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) { coordinator.followDeviceExtensions() }
+        }
         val serverId = intent.getStringExtra(EXTRA_SERVER_ID)?.takeIf(String::isNotBlank)
         val profileId = intent.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank)
         val startAtExtensions = intent.getBooleanExtra(EXTRA_START_AT_EXTENSIONS, false)
+        val startWithPairing = intent.getBooleanExtra(EXTRA_START_WITH_PAIRING, false)
         setContent {
             YokaiTheme {
                 CoreDependencySetupContent(
                     coordinator = coordinator,
                     novelCoordinator = novelCoordinator,
+                    pairingController = pairingController,
+                    syncMonitor = syncMonitor,
+                    getManga = getManga,
+                    novelPluginManager = novelPluginManager,
                     serverId = serverId,
                     profileId = profileId,
+                    startWithPairing = startWithPairing,
                     startAtExtensions = startAtExtensions,
                     onClose = {
                         coordinator.acknowledge()
                         finish()
                     },
+                    // The sync goes on without the screen; its review notification brings the user back.
+                    onLeave = ::finish,
                 )
             }
         }
@@ -102,17 +154,24 @@ class CoreDependencySetupActivity : AppCompatActivity() {
         private const val EXTRA_SERVER_ID = "epigraph.dependency_setup.server_id"
         private const val EXTRA_PROFILE_ID = "epigraph.dependency_setup.profile_id"
         private const val EXTRA_START_AT_EXTENSIONS = "epigraph.dependency_setup.start_at_extensions"
+        private const val EXTRA_START_WITH_PAIRING = "epigraph.dependency_setup.start_with_pairing"
 
         fun intent(
             context: Context,
             serverId: String? = null,
             profileId: String? = null,
             startAtExtensions: Boolean = false,
+            /**
+             * Finishes a pairing waiting on "what to sync", follows the first sync, then shows
+             * repositories and extensions.
+             */
+            startWithPairing: Boolean = false,
         ): Intent = Intent(context, CoreDependencySetupActivity::class.java)
             .apply {
                 serverId?.let { putExtra(EXTRA_SERVER_ID, it) }
                 profileId?.let { putExtra(EXTRA_PROFILE_ID, it) }
                 putExtra(EXTRA_START_AT_EXTENSIONS, startAtExtensions)
+                putExtra(EXTRA_START_WITH_PAIRING, startWithPairing)
             }
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
@@ -123,24 +182,38 @@ class CoreDependencySetupActivity : AppCompatActivity() {
 private fun CoreDependencySetupContent(
     coordinator: ExtensionReconciliationCoordinator,
     novelCoordinator: LnReaderDependencyActionCoordinator,
+    pairingController: EpigraphCorePairingController,
+    syncMonitor: CoreSyncStatusMonitor,
+    getManga: GetManga,
+    novelPluginManager: NovelPluginManager,
     serverId: String?,
     profileId: String?,
+    startWithPairing: Boolean,
     startAtExtensions: Boolean,
     onClose: () -> Unit,
+    onLeave: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val uiState by coordinator.state.collectAsState()
     val report = uiState.report
 
-    var step by remember { mutableStateOf(if (startAtExtensions) 2 else 1) }
+    val firstStep = remember {
+        when {
+            startWithPairing -> STEP_SELECTION
+            startAtExtensions -> STEP_EXTENSIONS
+            else -> STEP_REPOSITORIES
+        }
+    }
+    var step by remember { mutableStateOf(firstStep) }
     var tab by remember { mutableStateOf(0) }
     var comicRows by remember { mutableStateOf<List<ComicRepositoryRow>>(emptyList()) }
     var novelInventory by remember { mutableStateOf<LnReaderDependencyInventory?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
 
-    val effectiveServerId = serverId ?: report?.serverId
-    val effectiveProfileId = profileId ?: report?.profileId
+    // Right after pairing the selection is persisted only once the pairing completes.
+    val persistedSelection by pairingController.selection.collectAsState()
+    val effectiveServerId = serverId ?: report?.serverId ?: persistedSelection?.serverId
+    val effectiveProfileId = profileId ?: report?.profileId ?: persistedSelection?.profileId
 
     LaunchedEffect(report) {
         if (report != null) {
@@ -148,21 +221,169 @@ private fun CoreDependencySetupContent(
         }
     }
 
-    LaunchedEffect(effectiveServerId, effectiveProfileId) {
+    // The novel inventory arrives with a sync, which may finish after the screen opened.
+    val syncStatus by remember(syncMonitor) { syncMonitor.status() }.collectAsState(initial = null)
+    val lastSyncAtMs = (syncStatus as? CoreSyncStatus.Synced)?.lastSyncAtMs
+    LaunchedEffect(effectiveServerId, effectiveProfileId, lastSyncAtMs) {
         if (effectiveServerId != null && effectiveProfileId != null) {
             novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
         }
     }
 
+    var syncRequestedAtMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    // The repositories page waits on the first sync after pairing, which brings the desktop's list.
+    var awaitingSync by remember { mutableStateOf(false) }
+    val pairingState by pairingController.state.collectAsState()
+    val selecting = pairingState as? CorePairingUiState.Selecting
+    var selectionDraft by remember { mutableStateOf(SyncSelectionDraft()) }
+    LaunchedEffect(pairingState) {
+        when {
+            // Expired or cancelled: there is nothing left to confirm.
+            step == STEP_SELECTION && pairingState !is CorePairingUiState.Selecting -> onClose()
+            // A failed pairing has nothing to sync; the Core screen shows why.
+            awaitingSync && pairingState is CorePairingUiState.PairingFailed -> onClose()
+        }
+    }
+    // Leaving before confirming "what to sync" cancels the pairing.
+    val close: () -> Unit = {
+        if (step == STEP_SELECTION) pairingController.cancelPairingSelection()
+        onClose()
+    }
+    val onConfirmSelection: () -> Unit = {
+        syncRequestedAtMs = System.currentTimeMillis()
+        awaitingSync = true
+        step = STEP_REPOSITORIES
+        pairingController.confirmPairing(selectionDraft.toPairingSelection())
+    }
+
+    // Library works per source, to show how many works each repository and extension serves.
+    var worksRefresh by remember { mutableStateOf(0) }
+    var worksBySource by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
+    LaunchedEffect(worksRefresh, lastSyncAtMs) {
+        worksBySource = try {
+            // Works still served by the Core count toward the desktop source they come from.
+            val bridged = coordinator.bridgedWorkSources()
+            withContext(Dispatchers.IO) {
+                getManga.awaitFavorites()
+                    .groupingBy { manga -> manga.id?.let(bridged::get) ?: manga.source }
+                    .eachCount()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Logger.e(failure) { "Could not count library works per source" }
+            emptyMap()
+        }
+    }
+    val comicRepositoryWorks = remember(report, worksBySource) {
+        report?.items.orEmpty()
+            .groupBy { it.repositoryIndexUrl() }
+            .mapNotNull { (indexUrl, items) ->
+                indexUrl?.let { it to items.sumOf { item -> item.works(worksBySource) } }
+            }
+            .toMap()
+    }
+    val comicExtensionWorks: (ExtensionParityItem) -> Int = { it.works(worksBySource) }
+    val installedNovelPlugins by novelPluginManager.installedPluginsFlow.collectAsState()
+    val availableNovelPlugins by novelPluginManager.availablePluginsFlow.collectAsState()
+    val novelPluginWorks: (LnReaderPluginInventoryItem) -> Int = { item ->
+        val requirement = item.requirement
+        val installed = installedNovelPlugins.firstOrNull {
+            it.id == requirement.pluginId || it.id == requirement.sourceId
+        }
+        val available = availableNovelPlugins.firstOrNull { it.id == requirement.pluginId }
+        val langSourceIds = listOfNotNull(requirement.lang, installed?.lang, available?.lang)
+            .filter(String::isNotBlank)
+            .map { NovelSource.sourceIdFor(requirement.pluginId, NovelPluginManager.langCode(it)) }
+        (listOfNotNull(installed?.source?.id) + langSourceIds)
+            .distinct()
+            .sumOf { worksBySource[it] ?: 0 }
+    }
+    val novelPluginIcon: (LnReaderPluginInventoryItem) -> Any? = { item ->
+        val requirement = item.requirement
+        val installed = installedNovelPlugins.firstOrNull {
+            it.id == requirement.pluginId || it.id == requirement.sourceId
+        }
+        installed?.iconFile?.takeIf { it.exists() }
+            ?: installed?.iconUrl
+            ?: availableNovelPlugins.firstOrNull { it.id == requirement.pluginId }?.iconUrl
+    }
+    val novelRepositoryWorks: (String) -> Int = { repositoryId ->
+        novelInventory?.plugins.orEmpty()
+            .filter { it.requirement.repositoryId == repositoryId }
+            .sumOf { novelPluginWorks(it) }
+    }
+
+    // Every action runs here so a failure is shown instead of crashing, and the screen never stays
+    // locked as busy after an action ends. Installs and refreshes outlive the screen, so the user
+    // may close it while they run.
+    val launchAction: (suspend () -> Unit) -> Unit = { action ->
+        busy = true
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
+            try {
+                action()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                Logger.e(failure) { "Dependency setup action failed" }
+                error = true
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    // The sync may have brought new works and a new desktop inventory.
+    val onSyncFinished: () -> Unit = {
+        if (awaitingSync) {
+            awaitingSync = false
+            launchAction {
+                coordinator.refreshFromStore()
+                if (effectiveServerId != null && effectiveProfileId != null) {
+                    novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
+                }
+                worksRefresh += 1
+            }
+        }
+    }
+
+    val installNovelPlugins: suspend () -> Unit = {
+        // In parallel: one at a time, each plugin's download and load added up to most of a minute.
+        val permits = Semaphore(NOVEL_PARALLEL_INSTALLS)
+        coroutineScope {
+            novelInventory?.plugins.orEmpty()
+                .filter { it.status in NOVEL_INSTALLABLE_STATUSES }
+                .map { item ->
+                    async {
+                        permits.withPermit {
+                            novelCoordinator.installPlugin(
+                                effectiveServerId!!,
+                                effectiveProfileId!!,
+                                item.requirement.pluginId,
+                            )
+                        }
+                    }
+                }
+                .awaitAll()
+        }.forEach { result ->
+            if (
+                result != LnReaderPluginInstallResult.Installed &&
+                result != LnReaderPluginInstallResult.AlreadyInstalled
+            ) {
+                error = true
+            }
+        }
+    }
+
     val isBusy = busy ||
-        uiState.installation.activePackageName != null ||
+        uiState.installation.activePackageNames.isNotEmpty() ||
         uiState.repositoryApproval.activeIndexUrl != null
 
-    BackHandler(enabled = !isBusy) {
-        if (step == 2) {
-            step = 1
-        } else {
-            onClose()
+    BackHandler {
+        when {
+            isBusy -> onClose()
+            step == STEP_EXTENSIONS -> step = STEP_REPOSITORIES
+            else -> close()
         }
     }
 
@@ -172,13 +393,17 @@ private fun CoreDependencySetupContent(
                 title = {
                     Text(
                         stringResource(
-                            if (step == 1) MR.strings.epigraph_core_setup_repositories
-                            else MR.strings.epigraph_core_setup_extensions,
+                            when {
+                                awaitingSync -> MR.strings.epigraph_core_sync_status_title
+                                step == STEP_SELECTION -> MR.strings.epigraph_core_sync_selection_title
+                                step == STEP_REPOSITORIES -> MR.strings.epigraph_core_setup_repositories
+                                else -> MR.strings.epigraph_core_setup_extensions
+                            },
                         ),
                     )
                 },
                 actions = {
-                    IconButton(onClick = onClose, enabled = !isBusy) {
+                    IconButton(onClick = close) {
                         Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_close))
                     }
                 },
@@ -187,11 +412,11 @@ private fun CoreDependencySetupContent(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             LinearProgressIndicator(
-                progress = { if (step == 1) 0.5f else 1f },
+                progress = { (step - firstStep + 1f) / (STEP_EXTENSIONS - firstStep + 1) },
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            val showTabs = report != null && novelInventory != null
+            val showTabs = step >= STEP_REPOSITORIES && !awaitingSync && report != null && novelInventory != null
             if (showTabs) {
                 TabRow(selectedTabIndex = tab) {
                     Tab(
@@ -214,9 +439,36 @@ private fun CoreDependencySetupContent(
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
+            } else if (isBusy) {
+                Text(
+                    stringResource(MR.strings.epigraph_core_setup_background_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
             }
 
-            if (report == null && novelInventory == null) {
+            if (step == STEP_SELECTION) {
+                SyncSelectionPage(
+                    selecting = selecting,
+                    draft = selectionDraft,
+                    onChange = { selectionDraft = it },
+                    modifier = Modifier.weight(1f),
+                )
+                SelectionBottomBar(
+                    enabled = selecting != null && selectionDraft.domains.isNotEmpty(),
+                    onContinue = onConfirmSelection,
+                )
+            } else if (awaitingSync) {
+                SyncProgressPage(
+                    syncMonitor = syncMonitor,
+                    requestedAtMs = syncRequestedAtMs,
+                    pairing = pairingState as? CorePairingUiState.Pairing,
+                    onFinished = onSyncFinished,
+                    modifier = Modifier.weight(1f),
+                )
+                SyncBottomBar(onContinueInBackground = onLeave)
+            } else if (report == null && novelInventory == null) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -225,7 +477,7 @@ private fun CoreDependencySetupContent(
                 }
             } else {
                 when (step) {
-                    1 -> {
+                    STEP_REPOSITORIES -> {
                         val showComics = report != null
                         val showNovels = novelInventory != null
                         Box(modifier = Modifier.weight(1f)) {
@@ -234,11 +486,11 @@ private fun CoreDependencySetupContent(
                                 ComicRepositoryList(
                                     rows = comicRows,
                                     isBusy = isBusy,
+                                    works = comicRepositoryWorks,
                                     activeIndexUrl = uiState.repositoryApproval.activeIndexUrl,
                                     onAdd = { row ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.approveRepository(row.indexUrl)
                                             val outcome = coordinator.state.value.repositoryApproval.outcome
                                             if (outcome != RepositoryApprovalOutcome.ADDED &&
@@ -255,10 +507,10 @@ private fun CoreDependencySetupContent(
                                 NovelRepositoryList(
                                     inventory = novelInventory!!,
                                     isBusy = isBusy,
+                                    worksFor = novelRepositoryWorks,
                                     onAdd = { repositoryId ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             val result = novelCoordinator.approveRepository(
                                                 effectiveServerId!!,
                                                 effectiveProfileId!!,
@@ -283,11 +535,11 @@ private fun CoreDependencySetupContent(
                             ComicRepositoryList(
                                 rows = comicRows,
                                 isBusy = isBusy,
+                                works = comicRepositoryWorks,
                                 activeIndexUrl = uiState.repositoryApproval.activeIndexUrl,
                                 onAdd = { row ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.approveRepository(row.indexUrl)
                                         val outcome = coordinator.state.value.repositoryApproval.outcome
                                         if (outcome != RepositoryApprovalOutcome.ADDED &&
@@ -304,10 +556,10 @@ private fun CoreDependencySetupContent(
                             NovelRepositoryList(
                                 inventory = novelInventory!!,
                                 isBusy = isBusy,
+                                worksFor = novelRepositoryWorks,
                                 onAdd = { repositoryId ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         val result = novelCoordinator.approveRepository(
                                             effectiveServerId!!,
                                             effectiveProfileId!!,
@@ -332,51 +584,35 @@ private fun CoreDependencySetupContent(
 
                         Step1BottomBar(
                             isBusy = isBusy,
-                            hasUnadded = if (showComics && showNovels) {
-                                if (tab == 0) comicRows.any { !it.added }
-                                else novelInventory!!.repositories.any {
+                            // "Add all" covers both tabs: adding only the visible one left the
+                            // other tab's repositories pending behind a "1 to add" summary.
+                            hasUnadded = (showComics && comicRows.any { !it.added }) ||
+                                (showNovels && novelInventory!!.repositories.any {
                                     it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED
-                                }
-                            } else if (showComics) {
-                                comicRows.any { !it.added }
-                            } else {
-                                novelInventory!!.repositories.any {
-                                    it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED
-                                }
-                            },
+                                }),
                             onAddAll = {
                                 error = false
-                                busy = true
-                                scope.launch {
-                                    if (showComics && showNovels) {
-                                        if (tab == 0) {
-                                            comicRows.filter { !it.added }.forEach { row ->
-                                                coordinator.approveRepository(row.indexUrl)
-                                            }
-                                        } else {
-                                            novelInventory!!.repositories
-                                                .filter { it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED }
-                                                .forEach { item ->
-                                                    novelCoordinator.approveRepository(
-                                                        effectiveServerId!!,
-                                                        effectiveProfileId!!,
-                                                        item.requirement.repositoryId,
-                                                    )
-                                                }
-                                        }
-                                    } else if (showComics) {
+                                launchAction {
+                                    if (showComics) {
                                         comicRows.filter { !it.added }.forEach { row ->
                                             coordinator.approveRepository(row.indexUrl)
                                         }
-                                    } else {
+                                    }
+                                    if (showNovels) {
                                         novelInventory!!.repositories
                                             .filter { it.status == LnReaderRepositoryParityStatus.APPROVAL_REQUIRED }
                                             .forEach { item ->
-                                                novelCoordinator.approveRepository(
+                                                val result = novelCoordinator.approveRepository(
                                                     effectiveServerId!!,
                                                     effectiveProfileId!!,
                                                     item.requirement.repositoryId,
                                                 )
+                                                if (
+                                                    result !is LnReaderRepositoryApprovalResult.Approved &&
+                                                    result !is LnReaderRepositoryApprovalResult.AlreadyApproved
+                                                ) {
+                                                    error = true
+                                                }
                                             }
                                     }
                                     comicRows = report?.let { coordinator.desktopRepositories(it) } ?: emptyList()
@@ -386,10 +622,10 @@ private fun CoreDependencySetupContent(
                                     busy = false
                                 }
                             },
-                            onNext = { step = 2 },
+                            onNext = { step = STEP_EXTENSIONS },
                         )
                     }
-                    2 -> {
+                    else -> {
                         val showComics = report != null
                         val showNovels = novelInventory != null
                         Box(modifier = Modifier.weight(1f)) {
@@ -398,19 +634,18 @@ private fun CoreDependencySetupContent(
                                 ComicExtensionList(
                                     items = report!!.items,
                                     isBusy = isBusy,
-                                    activePackageName = uiState.installation.activePackageName,
+                                    worksFor = comicExtensionWorks,
+                                    activePackageNames = uiState.installation.activePackageNames,
                                     onInstall = { packageName ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.installOne(packageName)
                                             busy = false
                                         }
                                     },
                                     onTrust = { packageName ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             coordinator.trustUntrusted(packageName)
                                             busy = false
                                         }
@@ -420,10 +655,11 @@ private fun CoreDependencySetupContent(
                                 NovelPluginList(
                                     inventory = novelInventory!!,
                                     isBusy = isBusy,
+                                    worksFor = novelPluginWorks,
+                                    iconFor = novelPluginIcon,
                                     onInstall = { pluginId ->
                                         error = false
-                                        busy = true
-                                        scope.launch {
+                                        launchAction {
                                             val result = novelCoordinator.installPlugin(
                                                 effectiveServerId!!,
                                                 effectiveProfileId!!,
@@ -448,19 +684,18 @@ private fun CoreDependencySetupContent(
                             ComicExtensionList(
                                 items = report!!.items,
                                 isBusy = isBusy,
-                                activePackageName = uiState.installation.activePackageName,
+                                worksFor = comicExtensionWorks,
+                                activePackageNames = uiState.installation.activePackageNames,
                                 onInstall = { packageName ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.installOne(packageName)
                                         busy = false
                                     }
                                 },
                                 onTrust = { packageName ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         coordinator.trustUntrusted(packageName)
                                         busy = false
                                     }
@@ -470,10 +705,11 @@ private fun CoreDependencySetupContent(
                             NovelPluginList(
                                 inventory = novelInventory!!,
                                 isBusy = isBusy,
+                                worksFor = novelPluginWorks,
+                                iconFor = novelPluginIcon,
                                 onInstall = { pluginId ->
                                     error = false
-                                    busy = true
-                                    scope.launch {
+                                    launchAction {
                                         val result = novelCoordinator.installPlugin(
                                             effectiveServerId!!,
                                             effectiveProfileId!!,
@@ -498,67 +734,23 @@ private fun CoreDependencySetupContent(
 
                         Step2BottomBar(
                             isBusy = isBusy,
-                            hasInstallable = if (showComics && showNovels) {
-                                if (tab == 0) report!!.items.any {
-                                    it.status == ExtensionParityStatus.MISSING_AVAILABLE ||
-                                        it.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
-                                }
-                                else novelInventory!!.plugins.any {
-                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                }
-                            } else if (showComics) {
-                                report!!.items.any {
-                                    it.status == ExtensionParityStatus.MISSING_AVAILABLE ||
-                                        it.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
-                                }
-                            } else {
-                                novelInventory!!.plugins.any {
-                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                }
-                            },
-                            onBack = { step = 1 },
+                            // Like "Add all", "Install all" covers both tabs at once.
+                            hasInstallable = (showComics && report!!.items.any { it.status in COMIC_ACTIONABLE_STATUSES }) ||
+                                (showNovels && novelInventory!!.plugins.any { it.status in NOVEL_INSTALLABLE_STATUSES }),
+                            onBack = { step = STEP_REPOSITORIES },
                             onInstallAll = {
                                 error = false
-                                busy = true
-                                scope.launch {
-                                    if (showComics && showNovels) {
-                                        if (tab == 0) {
-                                            coordinator.installAllMissing()
-                                        } else {
-                                            novelInventory!!.plugins
-                                                .filter {
-                                                    it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                                        it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                                        it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                                }
-                                                .forEach { item ->
-                                                    novelCoordinator.installPlugin(
-                                                        effectiveServerId!!,
-                                                        effectiveProfileId!!,
-                                                        item.requirement.pluginId,
-                                                    )
-                                                }
+                                launchAction {
+                                    coroutineScope {
+                                        if (showComics) {
+                                            launch {
+                                                coordinator.trustAllUntrusted()
+                                                coordinator.installAllMissing()
+                                            }
                                         }
-                                    } else if (showComics) {
-                                        coordinator.installAllMissing()
-                                    } else {
-                                        novelInventory!!.plugins
-                                            .filter {
-                                                it.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                                                    it.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                                                    it.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
-                                            }
-                                            .forEach { item ->
-                                                novelCoordinator.installPlugin(
-                                                    effectiveServerId!!,
-                                                    effectiveProfileId!!,
-                                                    item.requirement.pluginId,
-                                                )
-                                            }
+                                        if (showNovels) {
+                                            launch { installNovelPlugins() }
+                                        }
                                     }
                                     if (effectiveServerId != null && effectiveProfileId != null) {
                                         novelInventory = novelCoordinator.inventory(effectiveServerId, effectiveProfileId)
@@ -578,6 +770,7 @@ private fun CoreDependencySetupContent(
 @Composable
 private fun ComicRepositoryList(
     rows: List<ComicRepositoryRow>,
+    works: Map<String, Int>,
     isBusy: Boolean,
     activeIndexUrl: String?,
     onAdd: (ComicRepositoryRow) -> Unit,
@@ -597,10 +790,14 @@ private fun ComicRepositoryList(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(rows, key = { it.indexUrl }) { row ->
             ListItem(
+                leadingContent = { DependencyIcon(label = row.name, model = repositoryIconUrl(row.indexUrl)) },
                 headlineContent = { Text(row.name) },
                 supportingContent = {
                     Text(
-                        runCatching { java.net.URI(row.indexUrl).host }.getOrNull().orEmpty(),
+                        withWorks(
+                            runCatching { java.net.URI(row.indexUrl).host }.getOrNull().orEmpty(),
+                            works[row.indexUrl] ?: 0,
+                        ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -630,6 +827,7 @@ private fun ComicRepositoryList(
 @Composable
 private fun NovelRepositoryList(
     inventory: LnReaderDependencyInventory,
+    worksFor: (String) -> Int,
     isBusy: Boolean,
     onAdd: (String) -> Unit,
 ) {
@@ -648,10 +846,19 @@ private fun NovelRepositoryList(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(inventory.repositories, key = { it.requirement.repositoryId }) { item ->
             ListItem(
+                leadingContent = {
+                    DependencyIcon(
+                        label = item.requirement.displayName,
+                        model = repositoryIconUrl(item.requirement.canonicalUrl),
+                    )
+                },
                 headlineContent = { Text(item.requirement.displayName) },
                 supportingContent = {
                     Text(
-                        runCatching { java.net.URI(item.requirement.canonicalUrl).host }.getOrNull().orEmpty(),
+                        withWorks(
+                            runCatching { java.net.URI(item.requirement.canonicalUrl).host }.getOrNull().orEmpty(),
+                            worksFor(item.requirement.repositoryId),
+                        ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -732,8 +939,9 @@ private fun pluginStatusText(status: LnReaderPluginParityStatus): String = when 
 @Composable
 private fun ComicExtensionList(
     items: List<ExtensionParityItem>,
+    worksFor: (ExtensionParityItem) -> Int,
     isBusy: Boolean,
-    activePackageName: String?,
+    activePackageNames: Set<String>,
     onInstall: (String) -> Unit,
     onTrust: (String) -> Unit,
 ) {
@@ -770,17 +978,28 @@ private fun ComicExtensionList(
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(sorted, key = { it.packageName }) { item ->
             ListItem(
+                leadingContent = {
+                    DependencyIcon(
+                        label = item.displayName,
+                        model = item.iconUrl(),
+                        installedPackageName = item.packageName.takeIf {
+                            item.status == ExtensionParityStatus.INSTALLED ||
+                                item.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE ||
+                                item.status == ExtensionParityStatus.UNTRUSTED_OR_BLOCKED
+                        },
+                    )
+                },
                 headlineContent = { Text(item.displayName) },
                 supportingContent = {
                     Text(
-                        statusText(item.status),
+                        withWorks(statusText(item.status), worksFor(item)),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 },
                 trailingContent = {
                     when {
-                        activePackageName == item.packageName ->
+                        item.packageName in activePackageNames ->
                             CircularProgressIndicator(modifier = Modifier.size(20.dp))
                         item.status == ExtensionParityStatus.MISSING_AVAILABLE ||
                             item.status == ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE ->
@@ -810,6 +1029,8 @@ private fun ComicExtensionList(
 @Composable
 private fun NovelPluginList(
     inventory: LnReaderDependencyInventory,
+    worksFor: (LnReaderPluginInventoryItem) -> Int,
+    iconFor: (LnReaderPluginInventoryItem) -> Any?,
     isBusy: Boolean,
     onInstall: (String) -> Unit,
 ) {
@@ -820,10 +1041,9 @@ private fun NovelPluginList(
                     LnReaderPluginParityStatus.MISSING_AVAILABLE,
                     LnReaderPluginParityStatus.UPDATE_AVAILABLE,
                     LnReaderPluginParityStatus.MISSING_UNAVAILABLE,
-                    -> 0
                     LnReaderPluginParityStatus.IDENTITY_MISMATCH,
-                    LnReaderPluginParityStatus.UNTRUSTED_OR_BLOCKED,
-                    -> 1
+                    -> 0
+                    LnReaderPluginParityStatus.UNTRUSTED_OR_BLOCKED -> 1
                     LnReaderPluginParityStatus.INSTALLED -> 2
                 }
             },
@@ -844,16 +1064,20 @@ private fun NovelPluginList(
     }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         items(sorted, key = { it.requirement.pluginId }) { item ->
-            val canInstall = item.status == LnReaderPluginParityStatus.MISSING_AVAILABLE ||
-                item.status == LnReaderPluginParityStatus.UPDATE_AVAILABLE ||
-                item.status == LnReaderPluginParityStatus.MISSING_UNAVAILABLE
+            val canInstall = item.status in NOVEL_INSTALLABLE_STATUSES
             ListItem(
+                leadingContent = {
+                    DependencyIcon(
+                        label = item.requirement.name.ifBlank { item.requirement.pluginId },
+                        model = iconFor(item),
+                    )
+                },
                 headlineContent = {
                     Text(item.requirement.name.ifBlank { item.requirement.pluginId })
                 },
                 supportingContent = {
                     Text(
-                        pluginStatusText(item.status),
+                        withWorks(pluginStatusText(item.status), worksFor(item)),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -903,10 +1127,302 @@ private fun Step2BottomBar(
             ) { Text(stringResource(MR.strings.epigraph_core_setup_install_all)) }
             Spacer(Modifier.width(12.dp))
         }
+        // Installs go on after the screen closes.
         Button(
             shape = MaterialTheme.shapes.small,
-            enabled = !isBusy,
             onClick = onDone,
         ) { Text(stringResource(MR.strings.epigraph_core_setup_done)) }
     }
 }
+
+private const val STEP_SELECTION = 0
+private const val STEP_REPOSITORIES = 1
+private const val STEP_EXTENSIONS = 2
+
+/** "What to sync" while it is edited; the same rules as the Core screen's selection editor. */
+private data class SyncSelectionDraft(
+    val comics: Boolean = true,
+    val novels: Boolean = true,
+    val books: Boolean = true,
+    val comicRepositories: Boolean = true,
+    val comicExtensions: Boolean = true,
+    val novelRepositories: Boolean = true,
+    val novelPlugins: Boolean = true,
+) {
+    val domains: Set<SyncDomain>
+        get() = buildSet {
+            if (comics) add(SyncDomain.COMICS)
+            if (novels) add(SyncDomain.NOVELS)
+            if (books) add(SyncDomain.BOOKS)
+        }
+
+    fun toPairingSelection() = PairingSyncSelection(
+        enabledDomains = domains,
+        compareComicRepositories = comicRepositories,
+        compareComicExtensions = comicExtensions,
+        compareNovelRepositories = novelRepositories,
+        compareNovelPlugins = novelPlugins,
+    )
+}
+
+@Composable
+private fun SyncSelectionPage(
+    selecting: CorePairingUiState.Selecting?,
+    draft: SyncSelectionDraft,
+    onChange: (SyncSelectionDraft) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+    ) {
+        selecting?.let { VerificationCodeHeader(it.verificationCode, it.desktopName) }
+        Text(
+            stringResource(MR.strings.epigraph_core_sync_selection_summary),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        SyncDomainChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_comics),
+            summary = stringResource(MR.strings.epigraph_core_sync_comics_summary),
+            checked = draft.comics,
+            onCheckedChange = { onChange(draft.copy(comics = it)) },
+        )
+        InventoryChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_comic_repositories),
+            checked = draft.comicRepositories,
+            enabled = draft.comics && draft.comicExtensions,
+            onCheckedChange = { onChange(draft.copy(comicRepositories = it)) },
+        )
+        InventoryChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_comic_extensions),
+            checked = draft.comicExtensions,
+            enabled = draft.comics,
+            onCheckedChange = { onChange(draft.copy(comicExtensions = it)) },
+        )
+        SyncDomainChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_novels),
+            summary = stringResource(MR.strings.epigraph_core_sync_novels_summary),
+            checked = draft.novels,
+            onCheckedChange = { onChange(draft.copy(novels = it)) },
+        )
+        InventoryChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_novel_repositories),
+            checked = draft.novelRepositories,
+            enabled = draft.novels,
+            onCheckedChange = { onChange(draft.copy(novelRepositories = it)) },
+        )
+        InventoryChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_novel_plugins),
+            checked = draft.novelPlugins,
+            enabled = draft.novels,
+            onCheckedChange = { onChange(draft.copy(novelPlugins = it)) },
+        )
+        SyncDomainChoice(
+            title = stringResource(MR.strings.epigraph_core_sync_books),
+            summary = stringResource(MR.strings.epigraph_core_sync_books_summary),
+            checked = draft.books,
+            onCheckedChange = { onChange(draft.copy(books = it)) },
+        )
+        Text(
+            stringResource(MR.strings.epigraph_core_sync_selection_install_notice),
+            modifier = Modifier.padding(top = 8.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun SelectionBottomBar(
+    enabled: Boolean,
+    onContinue: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(
+            shape = MaterialTheme.shapes.small,
+            enabled = enabled,
+            onClick = onContinue,
+        ) { Text(stringResource(MR.strings.epigraph_core_sync_continue)) }
+    }
+}
+
+/**
+ * Follows the first sync after pairing and moves on once it ran: either a run was seen and has
+ * ended, or the last finished run is newer than the request.
+ */
+@Composable
+private fun SyncProgressPage(
+    syncMonitor: CoreSyncStatusMonitor,
+    requestedAtMs: Long,
+    pairing: CorePairingUiState.Pairing?,
+    onFinished: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val status by remember(syncMonitor) { syncMonitor.status() }.collectAsState(initial = null)
+    val currentOnFinished by rememberUpdatedState(onFinished)
+    var sawRunning by remember(requestedAtMs) { mutableStateOf(false) }
+    LaunchedEffect(status) {
+        val current = status ?: return@LaunchedEffect
+        if (current is CoreSyncStatus.Syncing || current is CoreSyncStatus.Queued) {
+            sawRunning = true
+            return@LaunchedEffect
+        }
+        val finishedSinceRequest = current is CoreSyncStatus.Synced && current.lastSyncAtMs >= requestedAtMs
+        if (sawRunning || finishedSinceRequest) currentOnFinished()
+    }
+    Column(
+        modifier = modifier.fillMaxWidth().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        CircularProgressIndicator()
+        Spacer(Modifier.height(16.dp))
+        // Until the desktop approves the pairing nothing syncs; say what it is waiting for.
+        val title = when (pairing?.stage) {
+            null -> stringResource(MR.strings.epigraph_core_setup_syncing)
+            PairingStage.VALIDATING -> stringResource(MR.strings.epigraph_core_pairing_validating)
+            PairingStage.CLAIMING -> stringResource(MR.strings.epigraph_core_pairing_claiming)
+            PairingStage.WAITING_FOR_DESKTOP -> pairing?.verificationCode?.let { code ->
+                stringResource(MR.strings.epigraph_core_pairing_waiting_code, code)
+            } ?: stringResource(MR.strings.epigraph_core_pairing_waiting)
+            PairingStage.EXCHANGING_TOKEN -> stringResource(MR.strings.epigraph_core_pairing_exchanging)
+            PairingStage.SAVING_CREDENTIAL -> stringResource(MR.strings.epigraph_core_pairing_saving)
+        }
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+        val detail = when (val current = status) {
+            is CoreSyncStatus.Syncing ->
+                stringResource(MR.strings.epigraph_core_sync_status_syncing, current.counts.unsettled)
+            is CoreSyncStatus.Queued ->
+                stringResource(MR.strings.epigraph_core_sync_status_queued, current.counts.unsettled)
+            else -> null
+        }
+        if (detail != null) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SyncBottomBar(
+    onContinueInBackground: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onContinueInBackground) {
+            Text(stringResource(MR.strings.epigraph_core_setup_continue_background))
+        }
+    }
+}
+
+/**
+ * The icon of a repository, extension or plugin: the installed app icon when there is one,
+ * otherwise [model] loaded over the first letter of [label].
+ */
+@Composable
+private fun DependencyIcon(
+    label: String,
+    model: Any?,
+    installedPackageName: String? = null,
+) {
+    val context = LocalContext.current
+    val appIcon = remember(installedPackageName) {
+        installedPackageName?.let { packageName ->
+            runCatching {
+                context.packageManager.getApplicationIcon(packageName).toBitmap(96, 96).asImageBitmap()
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (appIcon != null) {
+            Image(bitmap = appIcon, contentDescription = null, modifier = Modifier.fillMaxSize())
+        } else {
+            var loaded by remember(model) { mutableStateOf(false) }
+            if (!loaded) {
+                Text(
+                    label.trim().take(1).uppercase(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            if (model != null) {
+                AsyncImage(
+                    model = model,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                    onSuccess = { loaded = true },
+                )
+            }
+        }
+    }
+}
+
+/** The avatar of the GitHub owner serving a repository, when it is served from GitHub. */
+private fun repositoryIconUrl(url: String): String? = runCatching {
+    val uri = java.net.URI(url)
+    val host = uri.host?.lowercase() ?: return@runCatching null
+    val segments = uri.path.orEmpty().split('/').filter(String::isNotEmpty)
+    val owner = when {
+        host == "raw.githubusercontent.com" || host == "github.com" -> segments.firstOrNull()
+        host.endsWith(".github.io") -> host.removeSuffix(".github.io")
+        host == "cdn.jsdelivr.net" && segments.firstOrNull() == "gh" -> segments.getOrNull(1)
+        else -> null
+    }
+    owner?.let { "https://github.com/$it.png?size=96" }
+}.getOrNull()
+
+@Composable
+private fun withWorks(text: String, works: Int): String {
+    val count = pluralStringResource(MR.plurals.epigraph_core_setup_works, works, works)
+    return if (text.isBlank()) count else "$text · $count"
+}
+
+private fun ExtensionParityItem.repositoryIndexUrl(): String? =
+    (repositoryHintUrl ?: storeIndexUrl)?.let(ExtensionParityResolver::repositoryIndexUrl)
+
+private fun ExtensionParityItem.iconUrl(): String? =
+    repositoryIndexUrl()?.let { "${ExtensionParityResolver.repositoryBaseUrl(it)}/icon/$packageName.png" }
+
+private fun ExtensionParityItem.works(worksBySource: Map<Long, Int>): Int =
+    sourceIds.distinct().sumOf { worksBySource[it] ?: 0 }
+
+/** Comic statuses "install all" settles: untrusted packages are trusted, the rest installed. */
+private val COMIC_ACTIONABLE_STATUSES = setOf(
+    ExtensionParityStatus.MISSING_AVAILABLE,
+    ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE,
+    ExtensionParityStatus.UNTRUSTED_OR_BLOCKED,
+)
+
+private const val NOVEL_PARALLEL_INSTALLS = 4
+
+/** A mismatched version is replaced by the desktop's exact artifact. */
+private val NOVEL_INSTALLABLE_STATUSES = setOf(
+    LnReaderPluginParityStatus.MISSING_AVAILABLE,
+    LnReaderPluginParityStatus.UPDATE_AVAILABLE,
+    LnReaderPluginParityStatus.MISSING_UNAVAILABLE,
+    LnReaderPluginParityStatus.IDENTITY_MISMATCH,
+)

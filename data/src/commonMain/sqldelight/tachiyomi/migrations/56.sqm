@@ -1,0 +1,5 @@
+-- Synced novels were stored under a source id the installed LNReader plugin never has, so they
+-- opened as "source not installed". The id is an MD5 SQLite cannot compute: forgetting the novel
+-- checkpoint makes the next sync rebuild that scope from a snapshot, which writes the right id.
+DELETE FROM aethon_core_replica_checkpoint
+WHERE coverage_type = 'FILTERED' AND scope_id LIKE 'novels:%';

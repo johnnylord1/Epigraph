@@ -607,7 +607,7 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                         updateNovelChapterUi(event.chapter)
                     }
                     is ReaderViewModel.Event.SourceNotReady -> {
-                        showSourceNotReadyOverlay(event.sourceId)
+                        showSourceNotReadyOverlay(event.sourceId, event.missingExtensionName)
                     }
                     is ReaderViewModel.Event.ReadingMoment -> {
                         MomentOverlay.show(
@@ -2431,6 +2431,9 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      */
     private fun setInitialChapterError(error: Throwable) {
         Logger.e(error)
+        // The enter transition waits for a manga that will not load: release it or the
+        // window never shows and holds input focus until the system reports an ANR.
+        startPostponedEnterTransition()
         binding.pleaseWait.clearAnimation()
         binding.pleaseWait.isVisible = false
         binding.touchView.isVisible = false
@@ -2510,8 +2513,10 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      * so the user keeps their place in the navigation stack — they came here via History,
      * Continue Reading, or a recents tap and shouldn't be unceremoniously kicked back.
      */
-    private fun showSourceNotReadyOverlay(sourceId: Long) {
+    private fun showSourceNotReadyOverlay(sourceId: Long, missingExtensionName: String? = null) {
         Logger.w { "ReaderActivity: showing SourceNotReady overlay for source $sourceId" }
+        // Same as setInitialChapterError: no manga will release the postponed transition.
+        startPostponedEnterTransition()
         binding.pleaseWait.clearAnimation()
         binding.pleaseWait.isVisible = false
         binding.touchView.isVisible = false
@@ -2537,7 +2542,11 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
             gravity = Gravity.CENTER
         }
         val subtitle = TextView(this).apply {
-            text = getString(MR.strings.novel_source_not_ready, sourceId)
+            text = if (missingExtensionName != null) {
+                getString(MR.strings.source_missing_install_extension, missingExtensionName)
+            } else {
+                getString(MR.strings.novel_source_not_ready, sourceId)
+            }
             textSize = 14f
             gravity = Gravity.CENTER
             setPadding(0, 16.dpToPx, 0, 24.dpToPx)

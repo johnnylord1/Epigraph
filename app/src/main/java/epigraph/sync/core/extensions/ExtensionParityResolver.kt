@@ -15,6 +15,7 @@ internal object ExtensionParityResolver {
         configuredRepositoryBaseUrls: Set<String> = emptySet(),
     ): ExtensionParityReport {
         val installedByPackage = installed.associateBy { it.packageName }
+        val installedSourceIds = installed.flatMapTo(mutableSetOf()) { it.sourceIds }
         val availableByPackage = available
             .groupBy { it.packageName }
             .mapValues { (_, values) -> values.maxBy { it.versionCode } }
@@ -36,6 +37,14 @@ internal object ExtensionParityResolver {
                     requireNotNull(source.id.toLongOrNull()) { "extension source ID must fit signed 64-bit storage" }
                 }
                 val status = when {
+                    // An older build of the same package may lack the desktop's source id; when the
+                    // catalog's newer build has it, updating is the fix, not a dead end.
+                    mobileInstalled != null && mobileAvailable != null &&
+                        mobileAvailable.versionCode > mobileInstalled.versionCode &&
+                        mobileInstalled.sourceIds.intersect(expectedSourceIds).isEmpty() &&
+                        mobileAvailable.sourceIds.intersect(expectedSourceIds).isNotEmpty() -> {
+                        ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
+                    }
                     mobileInstalled != null && expectedSourceIds.isNotEmpty() &&
                         mobileInstalled.sourceIds.intersect(expectedSourceIds).isEmpty() -> {
                         ExtensionParityStatus.SOURCE_ID_MISMATCH
@@ -45,6 +54,10 @@ internal object ExtensionParityResolver {
                         ExtensionParityStatus.INSTALLED_UPDATE_AVAILABLE
                     }
                     mobileInstalled != null -> ExtensionParityStatus.INSTALLED
+                    // A fork republishing the source under another package (a "revived" Manganato)
+                    // already serves these works; installing the original would only duplicate it.
+                    expectedSourceIds.isNotEmpty() && installedSourceIds.containsAll(expectedSourceIds) ->
+                        ExtensionParityStatus.INSTALLED
                     desktop.packageName in untrustedPackages -> ExtensionParityStatus.UNTRUSTED_OR_BLOCKED
                     mobileAvailable != null -> ExtensionParityStatus.MISSING_AVAILABLE
                     repositoryHintUrl != null &&
@@ -109,6 +122,8 @@ internal object ExtensionParityResolver {
             .removeSuffix("/index.min.json")
             .removeSuffix("/index.json")
             .removeSuffix("/index.pb")
+            // Suwayomi stores some repositories by their repo.json metadata URL.
+            .removeSuffix("/repo.json")
         return runCatching {
             val uri = URI(base)
             val segments = uri.path.trim('/').split('/').filter(String::isNotEmpty)

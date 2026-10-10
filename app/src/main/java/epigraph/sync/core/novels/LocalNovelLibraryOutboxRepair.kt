@@ -134,6 +134,32 @@ class LocalNovelLibraryOutboxRepair(
                 )
                 repairedCount++
             }
+            aethon_syncQueries.selectBoundNovelWorkBindings().executeAsList().forEach { binding ->
+                val ownerId = aethon_syncQueries.selectIdentityByEntityId(binding.portable_id)
+                    .executeAsOneOrNull()
+                    ?.local_reference
+                    ?.toLongOrNull()
+                    ?: return@forEach
+                val owner = mangasQueries.findById(ownerId).executeAsOneOrNull() ?: return@forEach
+                // A placeholder re-keyed to the plugin source id shares url/source with the
+                // hydrated row; only the identity owner may stay visible in the library.
+                mangasQueries.findByUrlAndSource(owner.url, owner.source).executeAsList()
+                    .filter { twin ->
+                        twin._id != ownerId && twin.favorite &&
+                            aethon_syncQueries.selectIdentityByLocalReference("NOVEL", twin._id.toString())
+                                .executeAsOneOrNull() == null
+                    }
+                    .forEach { twin ->
+                        val assigned = categoriesQueries.findAllByMangaId(ownerId)
+                            .executeAsList()
+                            .mapTo(HashSet()) { it._id }
+                        categoriesQueries.findAllByMangaId(twin._id).executeAsList().forEach { category ->
+                            if (category._id !in assigned) mangas_categoriesQueries.insert(ownerId, category._id)
+                        }
+                        updateMangaReplicaFields(mangaId = twin._id, title = null, favorite = false)
+                        repairedCount++
+                    }
+            }
             repairedCount
         }
         if (repaired > 0) {

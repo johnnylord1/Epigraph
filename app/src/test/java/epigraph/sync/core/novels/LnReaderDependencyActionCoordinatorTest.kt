@@ -23,6 +23,21 @@ class LnReaderDependencyActionCoordinatorTest {
     }
 
     @Test
+    fun `approving a repository makes its unavailable plugins installable`() = runTest {
+        val store = InMemoryLnReaderDependencyInventoryStore().also {
+            it.replace(inventory(repositoryInstalled = false, LnReaderPluginParityStatus.MISSING_UNAVAILABLE))
+        }
+        val coordinator = LnReaderDependencyActionCoordinator(store, RecordingActionGateway())
+
+        coordinator.approveRepository(SERVER, PROFILE, REPOSITORY)
+
+        assertEquals(
+            LnReaderPluginParityStatus.MISSING_AVAILABLE,
+            store.get(SERVER, PROFILE)!!.plugins.single().status,
+        )
+    }
+
+    @Test
     fun `plugin installation is blocked until repository was approved`() = runTest {
         val gateway = RecordingActionGateway()
         val coordinator = LnReaderDependencyActionCoordinator(
@@ -64,6 +79,72 @@ class LnReaderDependencyActionCoordinatorTest {
 
         assertEquals(LnReaderPluginInstallResult.IdentityMismatch, result)
         assertEquals(0, gateway.pluginInstalls)
+    }
+
+    @Test
+    fun `desktop artifact installs a plugin whose repository was not added`() = runTest {
+        val gateway = RecordingActionGateway()
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = inventoryStore(repositoryInstalled = false),
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, coreInstalls)
+        assertEquals(0, gateway.pluginInstalls)
+    }
+
+    @Test
+    fun `desktop artifact replaces a plugin installed at another version`() = runTest {
+        val store = InMemoryLnReaderDependencyInventoryStore()
+        store.replace(inventory(repositoryInstalled = true, LnReaderPluginParityStatus.IDENTITY_MISMATCH))
+        val gateway = RecordingActionGateway()
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = store,
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, coreInstalls)
+        assertEquals(0, gateway.pluginInstalls)
+        assertEquals(
+            LnReaderPluginParityStatus.INSTALLED,
+            store.get(SERVER, PROFILE)?.plugins?.single()?.status,
+        )
+    }
+
+    @Test
+    fun `desktop artifact installs a plugin the repository republished with other bytes`() = runTest {
+        val gateway = RecordingActionGateway(installResult = LnReaderPluginInstallResult.ArtifactRejected)
+        var coreInstalls = 0
+        val coordinator = LnReaderDependencyActionCoordinator(
+            inventories = inventoryStore(repositoryInstalled = true),
+            gateway = gateway,
+            coreArtifacts = { _, _, _ ->
+                coreInstalls += 1
+                LnReaderPluginInstallResult.Installed
+            },
+        )
+
+        val result = coordinator.installPlugin(SERVER, PROFILE, PLUGIN)
+
+        assertEquals(LnReaderPluginInstallResult.Installed, result)
+        assertEquals(1, gateway.pluginInstalls)
+        assertEquals(1, coreInstalls)
     }
 
     @Test
@@ -125,7 +206,9 @@ class LnReaderDependencyActionCoordinatorTest {
         )
     }
 
-    private class RecordingActionGateway : LnReaderDependencyActionGateway {
+    private class RecordingActionGateway(
+        private val installResult: LnReaderPluginInstallResult = LnReaderPluginInstallResult.Installed,
+    ) : LnReaderDependencyActionGateway {
         var repositoryApprovals = 0
         var pluginInstalls = 0
         var lastRepositoryUrl: String? = null
@@ -145,7 +228,7 @@ class LnReaderDependencyActionCoordinatorTest {
             pluginInstalls += 1
             lastRepositoryUrl = repositoryIndexUrl
             lastPlugin = requirement
-            return LnReaderPluginInstallResult.Installed
+            return installResult
         }
     }
 

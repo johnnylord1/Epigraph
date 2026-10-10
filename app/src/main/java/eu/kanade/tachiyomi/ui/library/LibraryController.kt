@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.library
 
 import yokai.presentation.theme.ReducedMotion
+import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.util.koin.get
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
@@ -168,6 +169,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.ui.UiPreferences
 import yokai.domain.manga.MangaRepository
 import yokai.i18n.MR
@@ -260,17 +262,27 @@ open class LibraryController(
         }
     }
 
-    /** The toggle names and shows the library it switches to, so it must follow a menu re-inflate. */
+    /**
+     * Comics / Books pill in the app bar (the desktop's toggle), hosted as the action view of the
+     * books menu item. A menu re-inflate drops the view, so it is recreated here each time. The
+     * collapsed app bar shows only the item's icon and title, which name the library it switches to.
+     */
     private fun updateBooksToggleItem() {
-        appBar()?.mainToolbar?.menu?.findItem(R.id.action_books)?.apply {
-            title = view?.context?.getString(
-                if (booksMode) MR.strings.library_switch_to_comics else MR.strings.library_switch_to_books,
-            )
-            setIcon(
-                if (booksMode) R.drawable.ic_library_outline_24dp
-                else R.drawable.ic_book_open_outline_24dp,
-            )
-        }
+        val item = appBar()?.mainToolbar?.menu?.findItem(R.id.action_books) ?: return
+        val context = view?.context ?: return
+        item.title = context.getString(
+            if (booksMode) MR.strings.library_switch_to_comics else MR.strings.library_switch_to_books,
+        )
+        item.setIcon(if (booksMode) R.drawable.ic_library_outline_24dp else R.drawable.ic_book_open_outline_24dp)
+        item.setSegmentedSwitchActionView(
+            context = context,
+            options = listOf(
+                false to context.getString(MR.strings.library_comics),
+                true to context.getString(R.string.epigraph_books),
+            ),
+            selected = booksModeState,
+            onSelect = { setBooksMode(it) },
+        )
     }
 
     private fun refreshDisplayChrome() {
@@ -602,6 +614,13 @@ open class LibraryController(
     private var unifiedBooksView: UnifiedLibraryBooksView? = null
     private var booksAdapterObserver: RecyclerView.AdapterDataObserver? = null
     private var booksMode = false
+        set(value) {
+            field = value
+            booksModeState.value = value
+        }
+
+    /** Drives the Comics / Books pill in the app bar. */
+    private val booksModeState = androidx.compose.runtime.mutableStateOf(false)
     private var booksModeReconciledForView = false
     /** Books-only filter state; never persisted through the Comics preference set. */
     private var booksTypeFilter: String? = null
@@ -2960,8 +2979,16 @@ open class LibraryController(
         booksMode && unifiedBooksView?.novelsFor(catId)?.isNotEmpty() == true
 
     override fun manageCategory(position: Int) {
-        // Books & novels headers mirror Comics categories; they are managed from the Comics library.
-        if (booksMode) return
+        if (booksMode) {
+            // Books & novels folders are separate from Comics folders and are edited in place.
+            val books = unifiedBooksView ?: return
+            val header = books.libraryAdapter.getItem(position) as? LibraryHeaderItem ?: return
+            val category = books.realCategory(header.category.id) ?: return
+            ManageCategoryDialog(category, CategoryLibrary.BOOKS) {
+                books.reloadCategories()
+            }.showDialog(router)
+            return
+        }
         val category = (adapter.getItem(position) as? LibraryHeaderItem)?.category ?: return
         if (!category.isDynamic) {
             ManageCategoryDialog(category) {
@@ -3168,8 +3195,21 @@ open class LibraryController(
         val context = activity ?: return
         val books = unifiedBooksView ?: return
         val categories = books.assignableCategories
+        val createCategory = {
+            // Books & novels folders are their own list; a new one is created right here.
+            ManageCategoryDialog(null, CategoryLibrary.BOOKS) { newId ->
+                viewScope.launch {
+                    newId?.let {
+                        withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            localBookRepository.setCategory(book.bookId, it.toLong(), true)
+                        }
+                    }
+                    books.reloadCategories()
+                }
+            }.show(context)
+        }
         if (categories.isEmpty()) {
-            books.showStatus(context.getString(MR.strings.library_books_no_categories))
+            createCategory()
             return
         }
         val current = books.categoryIdsOf(book.bookId).toSet()
@@ -3180,6 +3220,7 @@ open class LibraryController(
                 checked[which] = isChecked
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(context.getString(MR.strings.new_category)) { _, _ -> createCategory() }
             .setPositiveButton(android.R.string.ok) { _, _ ->
                 viewScope.launch {
                     runCatching {
@@ -3223,7 +3264,8 @@ open class LibraryController(
         // The category hopper belongs to the Comics presenter; Books headers are few and inline.
         binding.categoryHopperFrame.isVisible = false
         binding.jumperCategoryText.isVisible = false
-        if (hasBooksContent) {
+        // Before the first snapshot lands the collection is unknown, not empty.
+        if (hasBooksContent || unifiedBooksView?.hasLoadedCollection != true) {
             binding.emptyView.hide()
             return
         }
@@ -3423,7 +3465,8 @@ open class LibraryController(
     }
 
     fun showCategoriesController() {
-        router.pushController(CategoryController().withFadeTransaction())
+        val library = if (booksMode) CategoryLibrary.BOOKS else CategoryLibrary.COMICS
+        router.pushController(CategoryController(library).withFadeTransaction())
         displaySheet?.dismiss()
     }
 

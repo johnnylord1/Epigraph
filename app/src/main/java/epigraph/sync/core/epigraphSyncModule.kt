@@ -2,6 +2,7 @@ package epigraph.sync.core
 
 import android.app.Application
 import android.content.Context
+import eu.kanade.tachiyomi.source.SourceManager
 import epigraph.contract.ClientMutationId
 import epigraph.contract.DeviceId
 import epigraph.contract.SyncScopeId
@@ -16,6 +17,7 @@ import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.core.credentials.CoreCredentialStore
 import epigraph.sync.core.credentials.EncryptedCoreCredentialStore
 import epigraph.sync.core.credentials.CoreCredentialScopeProvider
+import epigraph.sync.core.credentials.SharedPreferencesLastPairedProfileStore
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.events.CoreBackgroundSyncReason
@@ -32,6 +34,9 @@ import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
 import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
+import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
+import epigraph.sync.core.suwayomi.PhoneExtensionState
+import epigraph.sync.core.suwayomi.SharedPreferencesPublishedExtensionLedger
 import epigraph.sync.core.suwayomi.UnpublishedComicCategorySource
 import epigraph.sync.core.suwayomi.UnpublishedComicCategory
 import epigraph.sync.core.suwayomi.CreatedComicCategoryBinder
@@ -64,7 +69,6 @@ import epigraph.sync.core.portable.PortableHydrationStore
 import epigraph.sync.core.portable.SqlDelightPortableHydrationStore
 import epigraph.sync.core.portable.ComicDependencyRegistry
 import epigraph.sync.core.portable.EpigraphPortableLocalEntityLookup
-import epigraph.sync.core.portable.EpigraphPortableChapterMaterializer
 import epigraph.sync.core.portable.EpigraphPortableWorkMaterializer
 import epigraph.sync.core.portable.LnReaderNovelDependencyRegistry
 import epigraph.sync.core.portable.LnReaderPortableProvider
@@ -72,7 +76,6 @@ import epigraph.sync.core.portable.MihonComicDependencyRegistry
 import epigraph.sync.core.portable.MihonPortableProvider
 import epigraph.sync.core.portable.NovelDependencyRegistry
 import epigraph.sync.core.portable.PortableLocalEntityLookup
-import epigraph.sync.core.portable.PortableChapterMaterializer
 import epigraph.sync.core.portable.PortableWorkMaterializer
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
 import epigraph.contract.PortableContentProvider
@@ -94,6 +97,8 @@ import epigraph.sync.core.trackers.TrackerCredentialVault
 import epigraph.sync.core.trackers.TrackerSyncSessionHook
 import epigraph.sync.core.pairing.CoreHostDiscovery
 import epigraph.sync.core.pairing.AndroidCoreHostDiscovery
+import epigraph.sync.core.pairing.CoreHostProbe
+import epigraph.sync.core.pairing.transport.OkHttpCoreHostProbe
 import epigraph.sync.core.pairing.transport.OkHttpPairingTransport
 import epigraph.sync.core.pairing.transport.EpigraphCoreTlsClientFactory
 import epigraph.sync.core.replica.SqlDelightCoreLamportSource
@@ -120,6 +125,9 @@ import epigraph.sync.core.suwayomi.CoreCatalogCoverStore
 import epigraph.sync.core.suwayomi.CoreCoverByteSource
 import epigraph.sync.core.suwayomi.EpigraphCoreSource
 import epigraph.sync.core.suwayomi.AuthenticatedEpigraphCoreSourceGateway
+import epigraph.sync.core.suwayomi.BRIDGED_READ_BASELINE_PREFERENCES
+import epigraph.sync.core.suwayomi.BridgedChapterReadState
+import epigraph.sync.core.suwayomi.CoreBridgedChapterReadState
 import epigraph.sync.core.suwayomi.SuwayomiMutationQueueDrainer
 import epigraph.sync.core.work.CompositeCoreReplicaSync
 import epigraph.sync.core.work.AndroidCoreDeviceIdentityProvider
@@ -128,6 +136,7 @@ import epigraph.sync.core.work.CoreDeviceIdentityProvider
 import epigraph.sync.core.work.CoreOutboxDrainerFactory
 import epigraph.sync.core.work.CoreOutboxSyncConnectionFactory
 import epigraph.sync.core.work.CoreOutboxSyncRunner
+import epigraph.sync.core.work.CoreReplicaAppliedHook
 import epigraph.sync.core.work.CorePendingOutbox
 import epigraph.sync.core.work.CoreSyncWakeStore
 import epigraph.sync.core.assets.BookAssetCoordinator
@@ -163,13 +172,16 @@ fun epigraphSyncModule(app: Application) = module {
     single<PairingPinTransport> { get<OkHttpPairingTransport>() }
     single { PairingPinResolver(get()) }
     single<CoreHostDiscovery> { AndroidCoreHostDiscovery(app) }
+    single<CoreHostProbe> { OkHttpCoreHostProbe(get<OkHttpClient>(named(PAIRING_HTTP_CLIENT))) }
     single { EpigraphCorePairingEngine(get()) }
 
     single { EncryptedCoreCredentialStore.create(app) }
     single<CoreCredentialStore> { get<EncryptedCoreCredentialStore>() }
     single<DeviceSyncSelectionStore> { SqlDelightDeviceSyncSelectionStore(get()) }
     single { SyncPolicyResolver(get()) }
-    single<EpigraphSyncScopeProvider> { CoreCredentialScopeProvider(get()) }
+    single<EpigraphSyncScopeProvider> {
+        CoreCredentialScopeProvider(get(), SharedPreferencesLastPairedProfileStore(app))
+    }
     single { EpigraphCorePairingActivation(get(), get(), get(), get()) }
     single { AndroidPairingDeviceProvider(app) }
     single<CoreBackgroundSyncScheduler> { WorkManagerCoreBackgroundSyncScheduler(app) }
@@ -186,6 +198,7 @@ fun epigraphSyncModule(app: Application) = module {
             endpoints = get(),
             hostDiscovery = get(),
             pinResolver = get(),
+            hostProbe = get(),
             pairingEndedListeners = listOf(
                 get<CoreTrackingCapabilityCache>(),
                 CorePairingEndedListener { get<TrackerCredentialSyncer>().wipe() },
@@ -223,6 +236,13 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreCatalogCoverSink> { CoreCatalogCoverCache(get(), get()) }
     single { AuthenticatedEpigraphCoreSourceGateway(get(), get(), get()) }
     single { EpigraphCoreSource(get<AuthenticatedEpigraphCoreSourceGateway>()) }
+    single<BridgedChapterReadState> {
+        CoreBridgedChapterReadState(
+            get(),
+            get<AuthenticatedEpigraphCoreSourceGateway>(),
+            app.getSharedPreferences(BRIDGED_READ_BASELINE_PREFERENCES, Context.MODE_PRIVATE),
+        )
+    }
     single { SqlDelightCoreIdentityInventoryStore(get()) }
     single { ExtensionReconciliationStore(get()) }
     single { EpigraphCoreBridgeLabeler(get(), get()) }
@@ -299,6 +319,7 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
             scopeProvider = get(),
             gate = get(),
+            coreSourceId = EpigraphCoreSource.ID,
         )
     }
     single {
@@ -308,7 +329,12 @@ fun epigraphSyncModule(app: Application) = module {
             mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
         )
     }
-    single<CoreOutboxStore> { EpigraphCoordinatorOutboxStore(get()) }
+    single<CoreOutboxStore> {
+        EpigraphCoordinatorOutboxStore(
+            coordinator = get(),
+            projectHeldRecord = { key -> get<SqlDelightCoreReplicaStore>().projectHeldRecord(key) },
+        )
+    }
     single { CoreV1OutboxAdapter() }
     single<CoreLamportSource> { SqlDelightCoreLamportSource(get()) }
     single<CoreRequestIdSource> { UuidCoreRequestIdSource() }
@@ -321,7 +347,16 @@ fun epigraphSyncModule(app: Application) = module {
     single { SuwayomiMutationQueueDrainer(get()) }
     single<CorePendingOutbox> { CoordinatorPendingOutbox(get(), get()) }
     single<CoreSyncWakeStore> { SqlDelightCoreSyncWakeStore(get()) }
-    single { EpigraphCoreDomainProjection(privateBookStorageDirectory = File(app.filesDir, "books")) }
+    single {
+        val sources = lazy { get<SourceManager>() }
+        EpigraphCoreDomainProjection(
+            privateBookStorageDirectory = File(app.filesDir, "books"),
+            rememberNovelSource = { id, name ->
+                sources.value.rememberNovelSources(listOf(id))
+                if (name != null) sources.value.rememberSourceNames(mapOf(id to name))
+            },
+        )
+    }
     single<CoreReplicaProjection> { get<EpigraphCoreDomainProjection>() }
     single { SqlDelightCoreReplicaStore(get(), get<CoreReplicaProjection>()) }
     single<CoreReplicaStore> { get<SqlDelightCoreReplicaStore>() }
@@ -343,7 +378,7 @@ fun epigraphSyncModule(app: Application) = module {
             scheduler = get(),
         )
     }
-    single { SnapshotCoreReplicaSync(get(), get(), get(), get()) }
+    single { SnapshotCoreReplicaSync(get(), get(), get(), get(), get()) }
     single<CoreReplicaSyncPort>(named(CATALOG_REPLICA)) {
         SuwayomiCatalogSync(get(), get(), get(), get(), projectionStatus = get<CoreSuwayomiProjectionStatusSource>())
     }
@@ -355,14 +390,13 @@ fun epigraphSyncModule(app: Application) = module {
     }
     single<PortableLocalEntityLookup> { EpigraphPortableLocalEntityLookup(get(), get()) }
     single<PortableWorkMaterializer> { EpigraphPortableWorkMaterializer(get(), get(), get()) }
-    single<PortableChapterMaterializer> { EpigraphPortableChapterMaterializer(get(), get(), get()) }
     single<ComicDependencyRegistry> { MihonComicDependencyRegistry(get(), get()) }
     single<NovelDependencyRegistry> { LnReaderNovelDependencyRegistry(get()) }
     single<PortableContentProvider>(named(PORTABLE_COMICS_PROVIDER)) {
-        MihonPortableProvider(get(), get(), get(), get())
+        MihonPortableProvider(get(), get(), get())
     }
     single<PortableContentProvider>(named(PORTABLE_NOVELS_PROVIDER)) {
-        LnReaderPortableProvider(get(), get(), get(), get())
+        LnReaderPortableProvider(get(), get(), get())
     }
     single<PortableHydrationStore> { SqlDelightPortableHydrationStore(get()) }
     single {
@@ -415,6 +449,24 @@ fun epigraphSyncModule(app: Application) = module {
                         categoryRouter.bindCreatedComicCategory(localCategoryId, expectedName, categoryEntityId, suwayomiOrder)
                     },
                 ),
+                SuwayomiExtensionPublishHook(
+                    phone = {
+                        val extensions = get<eu.kanade.tachiyomi.extension.ExtensionManager>()
+                        PhoneExtensionState(
+                            packageNames = if (extensions.isInitialized.value) {
+                                extensions.installedExtensionsFlow.value.map { it.pkgName }
+                            } else {
+                                emptyList()
+                            },
+                            repoIndexUrls = get<yokai.domain.extension.repo.interactor.GetExtensionRepo>().getAll()
+                                .map { it.baseUrl.trimEnd('/') + "/index.min.json" },
+                        )
+                    },
+                    ledger = SharedPreferencesPublishedExtensionLedger(app),
+                ),
+            ),
+            replicaAppliedHooks = listOf(
+                CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
             ),
         )
     }

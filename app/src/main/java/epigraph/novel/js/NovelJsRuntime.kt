@@ -12,6 +12,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Manages a QuickJS runtime instance for a single LNReader plugin.
@@ -25,15 +26,16 @@ class NovelJsRuntime(
     private val userAgent: String = "",
     private val limits: NovelRuntimeLimits = NovelRuntimeLimits(),
 ) {
-    private var quickJs: QuickJs? = null
-    private var initialized = false
+    @Volatile private var quickJs: QuickJs? = null
+    @Volatile private var initialized = false
+    @Volatile private var jsThread: Thread? = null
 
     // Per-source single-thread executor with 8MB stack. Each NovelSource gets its own
     // dispatcher so that a slow `await __bridge.fetch(...)` in plugin A doesn't block
     // plugin B from running. Cheerio's recursive HTML parsing needs more than the default
     // ~1MB of stack, hence the large reservation.
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(null, runnable, "quickjs-$pluginId", 8L * 1024 * 1024)
+        Thread(null, runnable, "quickjs-$pluginId", 8L * 1024 * 1024).also { jsThread = it }
     }
     private val jsDispatcher = executor.asCoroutineDispatcher()
 
@@ -232,10 +234,10 @@ class NovelJsRuntime(
         if (!initialized) throw IllegalStateException("Plugin '$pluginId' not initialized")
 
         require(METHOD_NAME.matches(method)) { "Unsupported plugin method: $method" }
-        val timeout = if (method == "parseChapter" || method == "chapter") {
-            limits.chapterTimeoutMs
-        } else {
-            limits.operationTimeoutMs
+        val timeout = when (method) {
+            "parseChapter", "chapter" -> limits.chapterTimeoutMs
+            "parseNovel" -> limits.novelTimeoutMs
+            else -> limits.operationTimeoutMs
         }
         return try {
             withTimeout(timeout) {
@@ -324,12 +326,27 @@ class NovelJsRuntime(
      * neither of those wants to kill the dispatcher we're currently running on.
      */
     private fun closeQuickJsOnly() {
-        try {
-            quickJs?.close()
-        } catch (_: Exception) {
-        }
+        val qjs = quickJs ?: return
         quickJs = null
         initialized = false
+        val closeTask = Runnable {
+            try {
+                qjs.close()
+            } catch (_: Exception) {
+            }
+        }
+        // A timed-out or destroyed call may still be inside native evaluate on the JS thread;
+        // closing from here would make QuickJS throw into that JNI frame and abort the app.
+        // Queue the close behind it instead.
+        if (Thread.currentThread() === jsThread) {
+            closeTask.run()
+        } else {
+            try {
+                executor.execute(closeTask)
+            } catch (_: RejectedExecutionException) {
+                closeTask.run()
+            }
+        }
     }
 
     val isInitialized: Boolean get() = initialized
@@ -353,6 +370,8 @@ data class NovelRuntimeLimits(
     val initializationTimeoutMs: Long = 15_000,
     val operationTimeoutMs: Long = 15_000,
     val chapterTimeoutMs: Long = 30_000,
+    // A long-running novel page can list thousands of chapters in one multi-megabyte document.
+    val novelTimeoutMs: Long = 90_000,
     val maxPluginCodeBytes: Int = 2 * 1024 * 1024,
     val maxResultBytes: Int = 8 * 1024 * 1024,
     // Holds the bundled runtime libraries (cheerio, protobufjs, crypto-js...) plus a parsed

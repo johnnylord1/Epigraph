@@ -22,23 +22,28 @@ data class GithubRelease(
 ) {
 
     /**
+     * Version of the Android app in this release. Releases are tagged with the desktop version,
+     * so the app version comes from the APK names (`Epigraph-mobile_<version>_<abi>.apk`).
+     * Null when the release carries no Android build.
+     */
+    val mobileVersion: String?
+        get() = assets.firstNotNullOfOrNull { MOBILE_APK.find(it.downloadLink.substringAfterLast('/')) }
+            ?.groupValues?.get(1)
+
+    /**
      * Get download link of latest release from the assets.
      * @return download link of latest release.
      */
     val downloadLink: String
         get() {
-            val apkVariant = when (Build.SUPPORTED_ABIS[0]) {
-                "arm64-v8a" -> "-arm64-v8a"
-                "armeabi-v7a" -> "-armeabi-v7a"
-                "x86" -> "-x86"
-                "x86_64" -> "-x86_64"
-                else -> ""
-            }
-
-            return assets.find { it.downloadLink.contains("epigraph$apkVariant-") }?.downloadLink
+            val abi = Build.SUPPORTED_ABIS[0]
+            val apks = assets.filter { it.downloadLink.endsWith(".apk", ignoreCase = true) }
+            return apks.find { it.downloadLink.endsWith("_$abi.apk") }?.downloadLink
+                ?: apks.find { it.downloadLink.endsWith("_universal.apk") }?.downloadLink
                 // Releases published before the rebrand can still be installed manually.
-                ?: assets.find { it.downloadLink.contains("aethon$apkVariant-") }?.downloadLink
-                ?: assets.find { it.downloadLink.contains("hayai$apkVariant-") }?.downloadLink
+                ?: apks.find { it.downloadLink.contains("aethon-$abi-") }?.downloadLink
+                ?: apks.find { it.downloadLink.contains("hayai-$abi-") }?.downloadLink
+                ?: apks.firstOrNull()?.downloadLink
                 ?: assets[0].downloadLink
         }
 
@@ -49,3 +54,5 @@ data class GithubRelease(
     @Serializable
     data class Assets(@SerialName("browser_download_url") val downloadLink: String)
 }
+
+private val MOBILE_APK = Regex("""^Epigraph-mobile_(.+)_[^_]+\.apk$""")
