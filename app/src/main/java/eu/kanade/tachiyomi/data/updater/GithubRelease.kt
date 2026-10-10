@@ -31,6 +31,19 @@ data class GithubRelease(
             ?.groupValues?.get(1)
 
     /**
+     * Changes of the Android app. Release notes list the Windows and Android changes under their
+     * own `## Windows` and `## Android` headings; notes without an Android heading are shown whole.
+     */
+    val changelog: String
+        get() {
+            val lines = info.lines()
+            val start = lines.indexOfFirst { ANDROID_HEADING.containsMatchIn(it) }
+            if (start < 0) return info.trim()
+            val section = lines.drop(start + 1).takeWhile { !it.startsWith("## ") }
+            return section.joinToString("\n").replace(Regex("\n{3,}"), "\n\n").trim()
+        }
+
+    /**
      * Get download link of latest release from the assets.
      * @return download link of latest release.
      */
@@ -56,3 +69,4 @@ data class GithubRelease(
 }
 
 private val MOBILE_APK = Regex("""^Epigraph-mobile_(.+)_[^_]+\.apk$""")
+private val ANDROID_HEADING = Regex("""^##\s+android\b""", RegexOption.IGNORE_CASE)
