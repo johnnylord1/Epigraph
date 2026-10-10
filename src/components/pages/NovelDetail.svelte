@@ -1,9 +1,9 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
-  import { formatAppDate } from "../../lib/i18n/format";
+  import { formatAppDate, formatWorkStatus } from "../../lib/i18n/format";
   import { _ } from "../../lib/i18n/runtime";
   import { invoke } from "@tauri-apps/api/core";
-  import { ArrowSquareOut, ArrowsClockwise, ArrowsLeftRight, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, CircleNotch, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, Trash, X } from "phosphor-svelte";
+  import { ArrowSquareOut, ArrowsClockwise, ArrowsLeftRight, BookmarkSimple, CaretDown, ChartLineUp, Check, CheckCircle, Circle, CircleNotch, DownloadSimple, FolderSimplePlus, Link, List, Play, SortAscending, SortDescending, SquaresFour, Trash, X } from "phosphor-svelte";
   import {
     addToast,
     bumpContentSetupVersion,
@@ -27,6 +27,7 @@
     peekNovelLibraryState,
     removeNovelFromLibraryState,
     saveNovelLibraryState,
+    setNovelChaptersRead,
     upsertNovelInLibrary,
   } from "../../lib/novels/libraryState";
   import { loadNovelSourceClassificationState, peekNovelSourceClassificationState, type PersistedNovelSourceClassificationState } from "../../lib/novels/sourceClassificationState";
@@ -50,6 +51,7 @@
     toggleBookCategoryAssignment,
   } from "../../lib/library/domainCategories";
   import NovelMigrateModal from "./NovelMigrateModal.svelte";
+  import ContextMenu, { type MenuEntry } from "../shared/ContextMenu.svelte";
   import NovelTrackingPanel from "../shared/NovelTrackingPanel.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import SeriesDetailV3Shell from "../shared/SeriesDetailV3Shell.svelte";
@@ -65,6 +67,7 @@
   let chapterSortDir: "asc" | "desc" = $state("asc");
   let sortMenuOpen = $state(false);
   let viewMode: "list" | "grid" = $state("list");
+  let chapterMenu = $state<{ x: number; y: number; chapterId: string } | null>(null);
   let chapterPage = $state(1);
   let folderPickerOpen = $state(false);
   let folderCreating = $state(false);
@@ -200,6 +203,43 @@
     });
   }
 
+  async function setChaptersRead(chapterIds: string[], read: boolean) {
+    if (!activeDetail?.inLibrary || chapterIds.length === 0) return;
+    const novelId = activeDetail.novel.id;
+    try {
+      const state = await loadNovelLibraryState(scopeInput);
+      libraryState = await saveNovelLibraryState(setNovelChaptersRead(state, novelId, chapterIds, read), scopeInput);
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  function openChapterMenu(event: MouseEvent, chapterId: string) {
+    event.preventDefault();
+    // Read flags live in the library copy, so a novel only browsed has nothing to mark.
+    if (!activeDetail?.inLibrary) return;
+    chapterMenu = { x: event.clientX, y: event.clientY, chapterId };
+  }
+
+  function buildChapterMenu(chapterId: string): MenuEntry[] {
+    const index = sortedNovelChapters.findIndex((chapter) => chapter.id === chapterId);
+    const chapter = sortedNovelChapters[index];
+    if (!chapter) return [];
+    const above = sortedNovelChapters.slice(0, index + 1);
+    const below = sortedNovelChapters.slice(index);
+    const last = index === sortedNovelChapters.length - 1;
+    const withState = (list: typeof sortedNovelChapters, unread: boolean) => list.filter((entry) => entry.unread === unread).map((entry) => entry.id);
+    return [
+      { label: chapter.unread ? translate("ui_markAsRead") : translate("ui_markAsUnread"), icon: chapter.unread ? CheckCircle : Circle, onClick: () => void setChaptersRead([chapter.id], chapter.unread) },
+      { separator: true },
+      { label: translate("ui_markAboveAsRead"), icon: CheckCircle, onClick: () => void setChaptersRead(withState(above, true), true), disabled: withState(above, true).length === 0 },
+      { label: translate("ui_markAboveAsUnread"), icon: Circle, onClick: () => void setChaptersRead(withState(above, false), false), disabled: withState(above, false).length === 0 },
+      { separator: true },
+      { label: translate("ui_markBelowAsRead"), icon: CheckCircle, onClick: () => void setChaptersRead(withState(below, true), true), disabled: last || withState(below, true).length === 0 },
+      { label: translate("ui_markBelowAsUnread"), icon: Circle, onClick: () => void setChaptersRead(withState(below, false), false), disabled: last || withState(below, false).length === 0 },
+    ];
+  }
+
   async function removeFromLibrary() {
     if (!activeDetail) return;
     const state = await loadNovelLibraryState(scopeInput);
@@ -234,17 +274,8 @@
   }
 
   function localizeNovelStatus(status: string | null): string | null {
-    if (!status) return null;
-    const statusKeys: Record<string, string> = {
-      ongoing: "library.status.ongoing",
-      completed: "library.status.completed",
-      cancelled: "library.status.cancelled",
-      hiatus: "library.status.hiatus",
-      "on hiatus": "library.status.hiatus",
-      unknown: "library.status.unknown",
-    };
-    const key = statusKeys[status.trim().toLowerCase()];
-    return key ? $_(key) : status;
+    if (!status?.trim()) return null;
+    return formatWorkStatus(status);
   }
 
   function chapterNumberLabel(order: number): string {
@@ -796,7 +827,7 @@
     {#snippet detailsExtra()}
       <div class="v3-details-stack">
         {#if sourceName}<div class="detail-row"><span class="detail-key">{$_("detail_fields_source")}</span><span class="detail-val">{sourceName}</span></div>{/if}
-        {#if displayedNovel?.status}<div class="detail-row"><span class="detail-key">{$_("downloads_summary_status")}</span><span class="detail-val">{displayedNovel.status}</span></div>{/if}
+        {#if displayedNovel?.status}<div class="detail-row"><span class="detail-key">{$_("downloads_summary_status")}</span><span class="detail-val">{localizeNovelStatus(displayedNovel.status)}</span></div>{/if}
         {#if displayedNovel?.author}<div class="detail-row"><span class="detail-key">{$_("library_sort_author")}</span><span class="detail-val">{displayedNovel.author}</span></div>{/if}
         {#if activeDetail.novel.source.lang}<div class="detail-row"><span class="detail-key">{$_("sources_table_language")}</span><span class="detail-val">{activeDetail.novel.source.lang.toUpperCase()}</span></div>{/if}
         {#if activeDetail.inLibrary && lastReadChapterId}<div class="detail-row"><span class="detail-key">{$_("home_continue_resume")}</span><span class="detail-val">{$_("ui_lastSavedChapterAvailable")}</span></div>{/if}
@@ -837,7 +868,7 @@
             {#each sortedNovelChapters as chapter (chapter.id)}
               {@const isCurrent = chapter.id === lastReadChapterId}
               {@const isBookmarked = bookmarkedChapterIds.has(chapter.id)}
-              <button class="grid-cell novel-grid-cell" class:read={!chapter.unread} class:in-progress={isCurrent} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} title={chapterTitle(chapter)}>
+              <button class="grid-cell novel-grid-cell" class:read={!chapter.unread} class:in-progress={isCurrent} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} oncontextmenu={(event) => openChapterMenu(event, chapter.id)} title={chapterTitle(chapter)}>
                 <span class="grid-cell-title">{chapterPrimaryLabel(chapter)}</span>
                 {#if chapterSecondaryLabel(chapter)}<span class="grid-cell-sub">{chapterSecondaryLabel(chapter)}</span>{/if}
                 <span class="chapter-progress" class:is-empty={chapter.unread}><span class="chapter-progress__fill" style={`width: ${chapter.unread ? 0 : 100}%`}></span></span>
@@ -857,7 +888,7 @@
               {@const isCurrent = chapter.id === lastReadChapterId}
               {@const isBookmarked = bookmarkedChapterIds.has(chapter.id)}
               {@const isDownloaded = isChapterDownloaded(chapter)}
-              <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={!chapter.unread} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} onkeydown={(event) => event.key === "Enter" && openChapter(chapter.id, chapter.path, chapter.title)}>
+              <div role="button" tabindex="0" class="ch-row v3-ch-row" class:read={!chapter.unread} onclick={() => openChapter(chapter.id, chapter.path, chapter.title)} onkeydown={(event) => event.key === "Enter" && openChapter(chapter.id, chapter.path, chapter.title)} oncontextmenu={(event) => openChapterMenu(event, chapter.id)}>
                 <div class="ch-left">
                   <span class="ch-title">
                     <span class="ch-name">{chapterPrimaryLabel(chapter)}</span>
@@ -908,6 +939,8 @@
     {/snippet}
   </SeriesDetailV3Shell>
 {/if}
+
+{#if chapterMenu}<ContextMenu x={chapterMenu.x} y={chapterMenu.y} items={buildChapterMenu(chapterMenu.chapterId)} onClose={() => chapterMenu = null} />{/if}
 
 {#if trackingOpen && activeDetail && !metadataOnly}
   <NovelTrackingPanel

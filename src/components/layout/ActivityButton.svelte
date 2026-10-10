@@ -1,6 +1,7 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
   import { onMount } from "svelte";
+  import { groupReadingSessions } from "../../lib/history/sessions";
   import { openActivityPanel, store } from "../../store/state.svelte";
 
   const ACTIVITY_SEEN_STORAGE_KEY = "epigraph.home.activity.lastSeenReadAt";
@@ -27,8 +28,14 @@
     }
     return groups.size;
   });
+  // Count reading sessions as the activity list shows them, not every chapter read.
+  const newReadingSessionCount = $derived(groupReadingSessions(
+    historyEntries.filter((entry) => (Number(entry.readAt) || 0) > lastActivitySeenAt),
+    (entry) => entry.mangaId,
+    (entry) => Number(entry.readAt) || 0,
+  ).length);
   const newActivityCount = $derived(
-    historyEntries.filter((entry) => (Number(entry.readAt) || 0) > lastActivitySeenAt).length
+    newReadingSessionCount
     + updateNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length
     + newLibraryUpdateIssueGroupCount
     + systemNotifications.filter((entry) => (Number(entry.createdAt) || 0) > lastActivitySeenAt).length

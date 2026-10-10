@@ -12,7 +12,6 @@ const syncdSources = [
   "src/components/settings/SyncdSessionDetails.svelte",
 ];
 const syncdSettingsLauncherKeys = [
-  "settings_inline_desktopSyncPairingHint",
   "settings_inline_desktopSyncTrustHint",
   "common_close",
   "ui_manage",
@@ -56,7 +55,7 @@ describe("active Syncd translations", () => {
 
     const settingsSource = readFileSync(resolve("src/components/settings/Settings.svelte"), "utf8");
 
-    expect(keys).toHaveLength(122);
+    expect(keys).toHaveLength(121);
     expect(keys).toContain("settings_inline_desktopSyncPairing");
     expect(keys).toContain("settings_inline_connecting");
     expect(keys).toContain("syncd_status_tls_mismatch");

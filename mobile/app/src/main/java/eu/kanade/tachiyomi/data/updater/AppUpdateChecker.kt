@@ -37,13 +37,15 @@ class AppUpdateChecker(
                     .parseAs<List<GithubRelease>>()
                     .let { githubReleases ->
                         val releases =
-                            githubReleases.take(10).filter { isNewVersion(it.version) }
+                            githubReleases.take(10).filter { release ->
+                                release.mobileVersion?.let { isNewVersion(it) } == true
+                            }
                         // Check if any of the latest versions are newer than the current version
                         val release = releases
                             .maxWithOrNull { r1, r2 ->
                                 when {
-                                    r1.version == r2.version -> 0
-                                    isNewVersion(r2.version, r1.version) -> -1
+                                    r1.mobileVersion == r2.mobileVersion -> 0
+                                    isNewVersion(r2.mobileVersion!!, r1.mobileVersion!!) -> -1
                                     else -> 1
                                 }
                             }
@@ -64,7 +66,7 @@ class AppUpdateChecker(
                         preferences.lastAppCheck().set(Date().time)
 
                         // Check if latest version is newer than the current version
-                        if (isNewVersion(it.version)) {
+                        if (it.mobileVersion?.let { version -> isNewVersion(version) } == true) {
                             AppUpdateResult.NewUpdate(it)
                         } else {
                             AppUpdateResult.NoNewUpdate

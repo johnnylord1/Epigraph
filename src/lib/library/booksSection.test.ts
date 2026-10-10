@@ -106,6 +106,65 @@ describe("buildBooksSectionState", () => {
     expect(state.vm.typeOptions.map((entry) => entry.label)).toEqual(["All", "EPUB", "PDF", "Sources"]);
   });
 
+  it("keeps a PDF in progress until its last page", () => {
+    const pdf = book({
+      id: "pdf-gamma",
+      subtype: "pdf",
+      sectionCount: 0,
+      tocCount: 0,
+      spineCount: 0,
+      pageCount: 3,
+      sectionsSummary: [],
+    });
+    const stateAt = (progressPercent: number) => buildBooksSectionState({
+      librarySection: "books",
+      books: [pdf],
+      progressByBookId: new Map<string, BookProgress | undefined>([[pdf.id, progress(pdf.id, { progressPercent })]]),
+      coverSrcByBookId: new Map([[pdf.id, null]]),
+      categories: [],
+      categoryAssignments: {},
+      activeCategoryId: null,
+      typeFilter: "all",
+      search: "",
+      sortMode: "recentlyRead",
+      sortDir: "desc",
+      statusFilter: "all",
+      loading: false,
+      error: null,
+    }).vm.cards[0];
+
+    expect(stateAt(0.5).metaChips).toEqual(["In progress"]);
+    expect(stateAt(0.5).sourceMetricBanner?.newCount).toBe(1);
+    expect(stateAt(1).metaChips).toEqual(["Finished"]);
+  });
+
+  it("counts a book opened at its first page as in progress", () => {
+    const epub = book();
+    const stateWith = (entry: BookProgress | undefined, statusFilter: "all" | "unopened" | "in_progress") => buildBooksSectionState({
+      librarySection: "books",
+      books: [epub],
+      progressByBookId: new Map<string, BookProgress | undefined>([[epub.id, entry]]),
+      coverSrcByBookId: new Map([[epub.id, null]]),
+      categories: [],
+      categoryAssignments: {},
+      activeCategoryId: null,
+      typeFilter: "all",
+      search: "",
+      sortMode: "recentlyRead",
+      sortDir: "desc",
+      statusFilter,
+      loading: false,
+      error: null,
+    }).vm.cards;
+    const opened = progress(epub.id, { progressPercent: 0 });
+
+    expect(stateWith(opened, "all")[0].metaChips).toEqual(["In progress"]);
+    expect(stateWith(opened, "in_progress")).toHaveLength(1);
+    expect(stateWith(opened, "unopened")).toHaveLength(0);
+    expect(stateWith(undefined, "all")[0].metaChips).toEqual(["Not started"]);
+    expect(stateWith(undefined, "unopened")).toHaveLength(1);
+  });
+
   it("keeps category, type, and status filters independent", () => {
     const alpha = book();
     const beta = book({

@@ -383,6 +383,7 @@
   const proseContentWidth = $derived(store.settings.proseReaderContentWidth ?? 760);
   const proseFontFamily = $derived(store.settings.proseReaderFontFamily || "Georgia, serif");
   const proseTextAlign = $derived(store.settings.proseReaderTextAlign ?? "left");
+  const proseTextAlignLabel = $derived(proseTextAlign === "justify" ? $_("ui_justified") : $_("ui_left"));
   const prosePalette = $derived.by(() => {
     const textColor: string = store.settings.proseReaderTextColor ?? DEFAULT_PROSE_READER_TEXT_COLOR;
     const backgroundColor: string = store.settings.proseReaderBackgroundColor ?? DEFAULT_PROSE_READER_BACKGROUND_COLOR;
@@ -829,7 +830,7 @@
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "layout"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "layout"; }}>
               <dt>{$_("library_display_layout")}</dt>
-              <dd>{store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`} · {proseTextAlign} <span class="popover-chevron">&gt;</span></dd>
+              <dd>{store.settings.proseReaderFullWidth ? $_("ui_full") : `${proseContentWidth}px`} · {proseTextAlignLabel} <span class="popover-chevron">&gt;</span></dd>
             </div>
             <div class="popover-tts-row" onclick={() => activeSubPanel = "tts"} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") activeSubPanel = "tts"; }}>
               <dt>{$_("ui_textToSpeech")}</dt>
@@ -1018,7 +1019,7 @@
           <div>
             <dt>{$_("ui_align")}</dt>
             <dd>
-              <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlign}</button>
+              <button class="popover-btn" onclick={() => updateSettings({ proseReaderTextAlign: proseTextAlign === "justify" ? "left" : "justify" })}>{proseTextAlignLabel}</button>
             </dd>
           </div>
           <div>

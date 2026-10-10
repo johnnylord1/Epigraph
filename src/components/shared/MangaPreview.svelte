@@ -95,6 +95,8 @@
   const uploadDates     = $derived(chapters.map((c) => c.uploadDate ? new Date(c.uploadDate).getTime() : null).filter((d): d is number => d !== null && !isNaN(d)));
   const firstUpload     = $derived(uploadDates.length ? new Date(Math.min(...uploadDates)) : null);
   const lastUpload      = $derived(uploadDates.length ? new Date(Math.max(...uploadDates)) : null);
+  // Some sources send blank genre entries; they render as empty chips.
+  const genres          = $derived((displayManga?.genre ?? []).map((g) => g.trim()).filter(Boolean));
   const statusLabel     = $derived(displayManga?.status ? formatWorkStatus(displayManga.status) : null);
   const assignedFolders = $derived(normalizeCategories(mangaCategories).filter(c => c.id !== 0));
 
@@ -105,9 +107,9 @@
   const continueChapter = $derived.by(() => {
     if (!chapters.length) return null;
     const inProgress = chapters.find((c) => !c.isRead && (c.lastPageRead ?? 0) > 0);
-    if (inProgress) return { ch: inProgress, label: `Continue · Ch.${inProgress.chapterNumber}` };
+    if (inProgress) return { ch: inProgress, label: translate("detail_actions_continueChapter", { chapter: inProgress.chapterNumber, page: "" }) };
     const firstUnread = chapters.find((c) => !c.isRead);
-    if (firstUnread) return { ch: firstUnread, label: `Start · Ch.${firstUnread.chapterNumber}` };
+    if (firstUnread) return { ch: firstUnread, label: `${translate("detail_actions_startReading")} · ${translate("browse_chapterShort", { count: firstUnread.chapterNumber })}` };
     return { ch: chapters[0], label: translate("detail_actions_readAgain") };
   });
 
@@ -327,7 +329,7 @@
 
         <button class="action-btn" class:active={linkedIds.length > 0} onclick={openLinkPicker}>
           <span class="action-icon"><LinkSimpleHorizontalBreak size={13} weight={linkedIds.length > 0 ? "fill" : "light"} /></span>
-          <span class="action-label">{linkedIds.length > 0 ? `Series Link (${linkedIds.length})` : $_("ui_seriesLink")}</span>
+          <span class="action-label">{linkedIds.length > 0 ? `${$_("ui_seriesLink")} (${linkedIds.length})` : $_("ui_seriesLink")}</span>
         </button>
 
       </div>
@@ -365,8 +367,8 @@
             {#if statusLabel}<span class="badge" class:badge-green={displayManga?.status === "ONGOING"}>{statusLabel}</span>{/if}
             {#if displayManga?.source}<span class="badge">{displayManga.source.displayName}</span>{/if}
             {#if inLibrary}<span class="badge badge-accent">{$_("detail_status_inLibrary")}</span>{/if}
-            {#if !loadingChapters && unreadCount > 0}<span class="badge badge-unread">{unreadCount} {$_("ui_unread")}</span>{/if}
-            {#if !loadingChapters && bookmarkCount > 0}<span class="badge">{bookmarkCount} {$_("ui_bookmarked")}</span>{/if}
+            {#if !loadingChapters && unreadCount > 0}<span class="badge badge-unread">{$_("preview_unreadCount", { count: unreadCount })}</span>{/if}
+            {#if !loadingChapters && bookmarkCount > 0}<span class="badge">{$_("preview_bookmarkedCount", { count: bookmarkCount })}</span>{/if}
           </div>
         {/if}
 
@@ -421,9 +423,9 @@
           </div>
         {/if}
 
-        {#if !loadingDetail && displayManga?.genre?.length}
+        {#if !loadingDetail && genres.length}
           <div class="genres">
-            {#each displayManga.genre as g}
+            {#each genres as g}
               <button class="genre-tag" onclick={() => { openSearchBrowseFeatured(g); close(); }}>{g}</button>
             {/each}
           </div>

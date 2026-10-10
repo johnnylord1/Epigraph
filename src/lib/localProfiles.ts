@@ -169,6 +169,12 @@ export class LocalProfileInputError extends Error {
   }
 }
 
+/**
+ * Ports the Epigraph Core and the servers of a release or a debug build listen on (`DEFAULT_SYNCD_PORT`,
+ * `DEV_SYNCD_PORT` and `DEV_LOCAL_SERVER_PORTS` in Rust); a profile server there could not start.
+ */
+const EPIGRAPH_SERVICE_PORTS: readonly number[] = [4567, 4667, 4577, 4677, 4777, 4787];
+
 export function createCustomLocalProfile(
   input: { label: string; port: number; fallbackLabel?: string },
   existing: readonly CustomLocalProfile[] = [],
@@ -179,12 +185,13 @@ export function createCustomLocalProfile(
     ...normalizedExisting.map((profile) => profile.id),
   ]);
   const usedPorts = new Set([
+    ...EPIGRAPH_SERVICE_PORTS,
     ...RESERVED_LOCAL_PROFILES.map((profile) => profile.port),
     ...normalizedExisting.map((profile) => profile.port),
   ]);
   const port = normalizeProfilePort(input.port);
   if (!port) throw new LocalProfileInputError("port-out-of-range", "Use a local port between 1024 and 65535.");
-  if (usedPorts.has(port)) throw new LocalProfileInputError("port-in-use", "This port is already used by another profile.");
+  if (usedPorts.has(port)) throw new LocalProfileInputError("port-in-use", "This port is already used by Epigraph or another profile.");
 
   const label = normalizeProfileLabel(input.label, input.fallbackLabel ?? `Profile ${port}`);
   const baseId = slugifyLocalProfileId(label) || `profile-${port}`;

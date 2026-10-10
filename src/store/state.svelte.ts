@@ -735,6 +735,15 @@ const LEGACY_DEFAULT_BLOCKED_TAGS = [
   ["adult", "mature", "hentai", "erotic", "pornograph", "18+", "smut", "lemon", "explicit", "sexual violence"],
 ];
 
+function sameBookEntry(left: BookEntry, right: BookEntry): boolean {
+  const a = toPersistedBookEntry(left) as unknown as Record<string, unknown>;
+  const b = toPersistedBookEntry(right) as unknown as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) return false;
+  }
+  return true;
+}
+
 function normalizeBlockedTags(value: unknown): string[] {
   if (!Array.isArray(value)) return DEFAULT_SETTINGS.nsfwFilteredTags;
   const tags = value
@@ -2223,6 +2232,16 @@ class Store {
       bumpContentSetupVersion();
     }
 
+  /** An explicit jump (e.g. picking a chapter) replaces the position instead of merging by precision. */
+  replaceBookProgress(next: BookProgress) {
+    const normalized = normalizeBookProgress(next);
+    const idx = this.bookProgress.findIndex(progress => progress.bookId === next.bookId);
+    this.bookProgress = idx >= 0
+      ? this.bookProgress.map((progress, index) => index === idx ? normalized : progress)
+      : [...this.bookProgress, normalized];
+    bumpContentSetupVersion();
+  }
+
   getBookProgress(bookId: string): BookProgress | undefined {
     return this.bookProgress.find(progress => progress.bookId === bookId);
   }
@@ -2269,8 +2288,14 @@ class Store {
       snapshot.bookProgress.map((progress) => normalizeLoadedBookProgress(progress)),
     );
     const validBookIds = new Set(reconciled.books.map((book) => book.id));
+    const loadedBooks = new Map(this.books.map((book) => [book.id, book]));
 
-    this.books = reconciled.books;
+    // A reload that brings back the same book keeps the loaded entry, so screens holding it
+    // (an open reader above all) do not treat a sync echo as a different book.
+    this.books = reconciled.books.map((book) => {
+      const loaded = loadedBooks.get(book.id);
+      return loaded && sameBookEntry(loaded, book) ? loaded : book;
+    });
     this.bookProgress = reconciled.bookProgress;
     this.bookBookmarks = snapshot.bookBookmarks
       .map((bookmark) => normalizeLoadedBookBookmark(bookmark))
@@ -2990,6 +3015,7 @@ export function clearHistoryForManga(mangaId: number)                    { store
 export function upsertBook(entry: BookEntry)                             { store.upsertBook(entry); }
 export function removeBook(bookId: string)                              { store.removeBook(bookId); }
 export function setBookProgress(next: BookProgress)                     { store.setBookProgress(next); }
+export function replaceBookProgress(next: BookProgress)                 { store.replaceBookProgress(next); }
 export function getBookProgress(bookId: string)                         { return store.getBookProgress(bookId); }
 export function flushBookLibraryPersistence()                          { return store.flushBookLibraryPersistence(); }
 export function addBookBookmark(entry: Omit<BookBookmarkEntry, "savedAt">, label?: string) { store.addBookBookmark(entry, label); }

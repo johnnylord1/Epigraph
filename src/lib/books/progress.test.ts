@@ -7,7 +7,9 @@ import {
   mergeBookProgress,
   normalizeBookBookmark,
   normalizeBookProgress,
+  parseReadiumLocator,
   resolveBookResumeTarget,
+  resolveEpubDisplayTarget,
 } from "./progress";
 
 describe("normalizeBookProgress", () => {
@@ -193,6 +195,28 @@ describe("book progress precedence", () => {
     });
   });
 
+  it("reads the chapter and depth from a position saved on the phone", () => {
+    const location = JSON.stringify({
+      href: "OEBPS/ch3.xhtml",
+      type: "application/xhtml+xml",
+      title: "Capitulo 3",
+      locations: { progression: 0.132, position: 21, totalProgression: 0.74 },
+    });
+    expect(parseReadiumLocator(location)).toEqual({ href: "OEBPS/ch3.xhtml", progression: 0.132 });
+    expect(resolveBookResumeTarget({
+      bookId: "book-1",
+      location,
+      href: null,
+      progressPercent: 0.74,
+      lastReadAt: 123,
+      renderer: "epub",
+    })).toBe("OEBPS/ch3.xhtml");
+    expect(parseReadiumLocator(JSON.stringify({ href: "c1.xhtml", locations: { fragments: ["note-2"] } })))
+      .toEqual({ href: "c1.xhtml#note-2", progression: null });
+    expect(parseReadiumLocator("epubcfi(/6/2)")).toBeNull();
+    expect(parseReadiumLocator("{not json")).toBeNull();
+  });
+
   it("prefers the precise resume target when both precise and fallback values exist", () => {
     expect(resolveBookResumeTarget({
       bookId: "book-1",
@@ -220,6 +244,22 @@ describe("book progress precedence", () => {
       lastReadAt: 0,
       renderer: "epub",
     })).toBeNull();
+  });
+
+  it("turns the zip path of a section into the href epub.js knows", () => {
+    const hrefs = ["c1.xhtml", "c2.xhtml", "Text/notes.xhtml"];
+    const spine = {
+      spineItems: hrefs.map((href) => ({ href })),
+      get: (target: string) => hrefs.includes(target.split("#")[0]) ? {} : null,
+    };
+
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/c2.xhtml")).toBe("c2.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/c2.xhtml#part")).toBe("c2.xhtml#part");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/Text/notes.xhtml")).toBe("Text/notes.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "c1.xhtml")).toBe("c1.xhtml");
+    expect(resolveEpubDisplayTarget(spine, "epubcfi(/6/4!/4/2)")).toBe("epubcfi(/6/4!/4/2)");
+    expect(resolveEpubDisplayTarget(spine, "OEBPS/missing.xhtml")).toBeUndefined();
+    expect(resolveEpubDisplayTarget(spine, null)).toBeUndefined();
   });
 
   it("keeps the strongest persisted progress across a serialize/hydrate roundtrip", () => {

@@ -37,8 +37,12 @@ interface StorageLike {
 }
 
 function storageOrNull(): StorageLike | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage;
+  try {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function canUseDesktopNovelStorage(): boolean {
@@ -736,6 +740,23 @@ export function updateNovelReadingProgress(
     ].slice(0, 200),
     updatedAtMs: updatedAt,
   };
+}
+
+/** Marks chapters read or unread by hand; reading progress and history stay as the reader left them. */
+export function setNovelChaptersRead(
+  state: PersistedNovelLibraryState,
+  novelId: string,
+  chapterIds: Iterable<string>,
+  read: boolean,
+): PersistedNovelLibraryState {
+  const ids = new Set(chapterIds);
+  let changed = false;
+  const chapters = state.chapters.map((entry) => {
+    if (entry.novelId !== novelId || !ids.has(entry.id) || entry.unread === !read) return entry;
+    changed = true;
+    return { ...entry, unread: !read };
+  });
+  return changed ? { ...state, chapters, updatedAtMs: Date.now() } : state;
 }
 
 export function buildNovelDetailRecordFromLibrary(

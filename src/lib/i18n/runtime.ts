@@ -31,6 +31,7 @@ const pendingCatalogs = new Map<string, Promise<void>>();
 let activeCatalog: Catalog = en;
 let activeMessageLocale = FALLBACK_LOCALE;
 let requestedMessageLocale = FALLBACK_LOCALE;
+let appliedAppLocale: string | null = null;
 let messagesReadyPromise: Promise<void> = Promise.resolve();
 
 function messageKey(id: string) {
@@ -99,16 +100,34 @@ export function messagesReady(): Promise<void> {
   return messagesReadyPromise;
 }
 
+/** index.html reads this before any script loads, so the boot screen speaks the app language. */
+export const BOOT_MESSAGE_LOCALE_KEY = "epigraph.bootMessageLocale";
+
+function rememberBootMessageLocale(locale: string): void {
+  try {
+    if (typeof localStorage !== "undefined") localStorage.setItem(BOOT_MESSAGE_LOCALE_KEY, locale);
+  } catch {
+    // Storage can be unavailable; the boot screen then stays in English.
+  }
+}
+
+/** The locale last passed through `applyAppLanguage`, or null before the app picks one. */
+export function appliedAppLanguage(): string | null {
+  return appliedAppLocale;
+}
+
 export function applyAppLanguage(language: unknown): string {
   const nextLocale = resolveAppLocale(language);
   const nextMessageLocale = resolveMessageLocale(nextLocale);
   requestedMessageLocale = nextMessageLocale;
+  appliedAppLocale = nextLocale;
 
   if (typeof document !== "undefined") {
     document.documentElement.lang = nextLocale;
     document.documentElement.dir = /^(ar|fa|he|ur)(-|$)/i.test(nextLocale) ? "rtl" : "ltr";
     document.documentElement.dataset.appLocale = nextLocale;
   }
+  rememberBootMessageLocale(nextMessageLocale);
 
   if (catalogs.has(nextMessageLocale)) {
     activateMessageLocale(nextMessageLocale);

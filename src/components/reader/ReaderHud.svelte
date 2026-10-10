@@ -118,11 +118,11 @@
 
   <!-- Floating UI HUD Overlay -->
   <div class="reader-hud-overlay" class:hidden={!effectiveHudVisible}>
-    <button class="reader-back-link" onclick={onclose} title={$_("ui_backToLibrary")}>
+    <button class="reader-back-link" onclick={onclose} title={$_("ui_back")}>
       <span class="reader-back-icon" aria-hidden="true">
         <CaretLeft size={14} weight="bold" />
       </span>
-      <span>{$_("library_error_eyebrow")}</span>
+      <span>{$_("ui_back")}</span>
     </button>
 
     <!-- Series / Chapter Title Metadata (Centered above capsule) -->

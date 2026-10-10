@@ -1,5 +1,6 @@
 import { translate } from "../i18n/runtime";
 import { BookAssetResolver } from "./assets";
+import { BOOK_FINISHED_PROGRESS } from "./progress";
 import {
   findBookSectionIndex,
   getBookSectionCount,
@@ -56,12 +57,14 @@ function resolveReadSectionCount(
   readPercent: number,
 ): number {
   if (sectionCount <= 0) return 0;
-  if (readPercent >= 1) return sectionCount;
+  if (readPercent >= BOOK_FINISHED_PROGRESS) return sectionCount;
 
+  // Only chapters wholly behind the reader count as read, as in the library badges; the chapter
+  // being read is still unread until the book is finished.
   const sectionIndex = findBookSectionIndex(getBookSectionsSummary(book), progress?.href);
-  if (sectionIndex >= 0) return sectionIndex + 1;
+  if (sectionIndex >= 0) return Math.min(sectionCount - 1, sectionIndex);
   if (readPercent <= 0) return 0;
-  return Math.max(1, Math.min(sectionCount, Math.round(readPercent * sectionCount)));
+  return Math.max(0, Math.min(sectionCount - 1, Math.floor(readPercent * sectionCount)));
 }
 
 function resolveReadPageCount(

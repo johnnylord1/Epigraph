@@ -52,6 +52,8 @@ class EpigraphCoreDomainProjection(
         isLenient = false
     },
     private val privateBookStorageDirectory: File? = null,
+    /** Records a synced novel's plugin as a novel source, so it shows by name before it is installed. */
+    private val rememberNovelSource: (sourceId: Long, name: String?) -> Unit = { _, _ -> },
 ) : CoreReplicaProjection {
     override suspend fun replaceScope(
         database: Database,
@@ -1292,6 +1294,7 @@ class EpigraphCoreDomainProjection(
         val title = record.string("title")?.takeIf { it.isNotBlank() } ?: return
         val url = record.string("path") ?: record.string("identityKey") ?: novelId
         val source = novelPluginSourceId(record) ?: stableSourceId(record)
+        rememberNovelSource(source, novelSourceName(record))
         val localId = ensureManga(
             database = database,
             entityId = novelId,
@@ -1598,52 +1601,77 @@ class EpigraphCoreDomainProjection(
         val title = record.string("title")?.takeIf { it.isNotBlank() } ?: path
         val ordinal = record.double("chapterOrderKey") ?: 0.0
         val existing = database.aethon_syncQueries.selectChapterBindingByEntityId(entityId).executeAsOneOrNull()
-        val localChapterId = existing?.local_chapter_id ?: database.aethon_syncQueries
+        val boundChapterId = existing?.local_chapter_id ?: database.aethon_syncQueries
             .selectChapterBindingByWorkAndUrl(novelId, path)
             .executeAsOneOrNull()
             ?.local_chapter_id
-            ?: run {
-                database.chaptersQueries.insert(
-                    mangaId = mangaId,
-                    url = path,
-                    name = title,
-                    scanlator = null,
-                    read = !(record.boolean("unread") ?: true),
-                    bookmark = false,
-                    lastPageRead = 0,
-                    pagesLeft = 100,
-                    chapterNumber = ordinal,
-                    sourceOrder = 0,
-                    dateFetch = now(record),
-                    dateUpload = record.long("releaseTimeMs") ?: 0,
-                    memo = JsonObject(emptyMap()),
-                )
-                database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
-            }
+        // The chapter the plugin listed here is the oldest row with this url. Earlier syncs could bind
+        // a twin of it; the state moves back onto the plugin's row and the unread twin goes away.
+        val sameUrlIds = database.chaptersQueries
+            .getChaptersByUrlAndMangaId(path, mangaId, 0)
+            .executeAsList()
+            .map { it._id }
+        val listedChapterId = sameUrlIds.minOrNull()
+        if (boundChapterId != null && listedChapterId != null && boundChapterId != listedChapterId &&
+            boundChapterId in sameUrlIds
+        ) {
+            database.chaptersQueries.deleteUnreadTwin(boundChapterId)
+        }
+        val localChapterId = listedChapterId ?: boundChapterId ?: run {
+            database.chaptersQueries.insert(
+                mangaId = mangaId,
+                url = path,
+                name = title,
+                scanlator = null,
+                read = !(record.boolean("unread") ?: true),
+                bookmark = false,
+                lastPageRead = 0,
+                pagesLeft = 100,
+                chapterNumber = ordinal,
+                sourceOrder = 0,
+                dateFetch = now(record),
+                dateUpload = record.long("releaseTimeMs") ?: 0,
+                memo = JsonObject(emptyMap()),
+            )
+            database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        }
+        // Only the read state travels; the plugin owns titles and numbering, which other devices count differently.
         database.chaptersQueries.update(
             chapterId = localChapterId,
             mangaId = mangaId,
             url = path,
-            name = title,
+            name = null,
             scanlator = null,
             read = record.boolean("unread")?.not(),
             bookmark = null,
             lastPageRead = null,
             pagesLeft = null,
-            chapterNumber = ordinal,
+            chapterNumber = null,
             sourceOrder = null,
             dateFetch = null,
-            dateUpload = record.long("releaseTimeMs"),
+            dateUpload = null,
             memo = null,
         )
-        database.aethon_syncQueries.upsertChapterBinding(
-            chapterEntityId = entityId,
-            workEntityId = novelId,
-            localChapterId = localChapterId,
-            normalizedUrl = path,
-            ordinal = ordinal,
-            updatedAt = now(record),
-        )
+        // Each device names a chapter its own way, so another entity may already bind this chapter;
+        // the url lookup above keeps finding it, and a second binding would break the unique keys.
+        val boundToAnother = database.aethon_syncQueries
+            .selectChapterBindingByWorkAndUrl(novelId, path)
+            .executeAsOneOrNull()
+            ?.let { it.chapter_entity_id != entityId } == true ||
+            database.aethon_syncQueries
+                .selectChapterBindingByLocalChapterId(localChapterId)
+                .executeAsList()
+                .any { it.work_entity_id == novelId && it.chapter_entity_id != entityId }
+        if (!boundToAnother) {
+            database.aethon_syncQueries.upsertChapterBinding(
+                chapterEntityId = entityId,
+                workEntityId = novelId,
+                localChapterId = localChapterId,
+                normalizedUrl = path,
+                ordinal = ordinal,
+                updatedAt = now(record),
+            )
+        }
     }
 
     private fun projectNovelProgress(database: Database, recordKey: CoreConfirmedRecord, record: JsonObject) {
@@ -2377,6 +2405,12 @@ class EpigraphCoreDomainProjection(
         val pluginId = source.string("pluginId")?.takeIf { it.isNotBlank() } ?: return null
         val lang = source.string("lang")?.takeIf { it.isNotBlank() } ?: return null
         return NovelSource.sourceIdFor(pluginId, NovelPluginManager.langCode(lang))
+    }
+
+    private fun novelSourceName(record: JsonObject): String? {
+        val source = record["source"] as? JsonObject ?: return null
+        return listOf("pluginName", "sourceName", "name")
+            .firstNotNullOfOrNull { key -> source.string(key)?.takeIf { it.isNotBlank() } }
     }
 
     private fun stableSourceId(record: JsonObject, fallbackSeed: String? = null): Long {

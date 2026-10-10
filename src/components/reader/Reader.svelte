@@ -650,10 +650,12 @@
     const bookmark  = store.bookmarks.find(b => b.chapterId === id);
     const persistedResumePage = (lastPageRead: number | null | undefined) =>
       typeof lastPageRead === "number" && lastPageRead > 0 ? Math.trunc(lastPageRead) + 1 : 0;
+    // A finished chapter opens from the start (re-reading, or picking it again from the list), like Mihon.
+    const finished  = chapterProgress?.isRead === true || savedProgress?.isRead === true;
     const resumeTo  = Math.max(
       bookmark?.pageNumber ?? 0,
-      persistedResumePage(chapterProgress?.lastPageRead),
-      persistedResumePage(savedProgress?.lastPageRead),
+      finished ? 0 : persistedResumePage(chapterProgress?.lastPageRead),
+      finished ? 0 : persistedResumePage(savedProgress?.lastPageRead),
     );
     resumePage      = resumeTo > 1 ? resumeTo : 0;
     resumeDismissed  = false;

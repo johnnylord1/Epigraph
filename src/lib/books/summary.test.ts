@@ -116,7 +116,10 @@ describe("buildBookSectionSummary", () => {
 
     expect(findBookSectionIndex(sections, "./Text/ch2.xhtml#frag")).toBe(1);
     expect(resolveBookSectionLabel(sections, "./Text/ch2.xhtml#frag")).toBe("Chapter 2");
-    expect(resolveBookSectionProgress(sections, "./Text/ch2.xhtml#frag")).toBe(0.5);
+    expect(resolveBookSectionProgress(sections, "./Text/ch2.xhtml#frag")).toBeCloseTo(1 / 3);
+    expect(resolveBookSectionProgress(sections, "OPS/Text/ch3.xhtml")).toBeCloseTo(2 / 3);
     expect(resolveBookSectionHrefFromProgress(sections, 0.49)).toBe("OPS/Text/ch2.xhtml");
+    expect(resolveBookSectionHrefFromProgress(sections, 2 / 3)).toBe("OPS/Text/ch3.xhtml");
+    expect(resolveBookSectionHrefFromProgress(sections, 1)).toBe("OPS/Text/ch3.xhtml");
   });
 });

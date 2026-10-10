@@ -14,6 +14,7 @@
   import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
   import { BOOK_IMPORT_EXTENSIONS, importLocalBookFile, isSupportedBookImportPath } from "../../lib/books/importFile";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
+  import { isBookFinished } from "../../lib/books/progress";
   import { presentBookWithCoverSrc } from "../../lib/books/presentation";
   import { getBookSectionCount } from "../../lib/books/summary";
   import { createBookLibraryCardId } from "../../lib/library/cardIdentity";
@@ -125,8 +126,10 @@
   function getBookReadChapterCount(book: BookEntry, progress: BookProgress | null | undefined): number {
     const chapterCount = getBookChapterCount(book);
     if (chapterCount <= 0) return 0;
+    if (isBookFinished(progress)) return chapterCount;
+    // Only chapters wholly behind the reader count; a PDF is one chapter, so page 2 of 3 is not done.
     const pct = Math.max(0, Math.min(1, progress?.progressPercent ?? 0));
-    return Math.max(0, Math.min(chapterCount, Math.round(pct * chapterCount)));
+    return Math.max(0, Math.min(chapterCount - 1, Math.floor(pct * chapterCount)));
   }
 
   function formatBookFileSource(book: BookEntry): string {
@@ -175,7 +178,7 @@
     const badges = !hasLocalAsset
       ? [{ kind: "status" as const, label: translate("ui_missingFile") }]
       : [];
-    const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0)];
+    const metaChips = [buildBookWorkStatus(hasLocalAsset, readCount >= chapterCount && chapterCount > 0, (progress?.progressPercent ?? 0) > 0 || (progress?.lastReadAt ?? 0) > 0)];
     if (!hasLocalAsset) metaChips.push("Metadata only");
 
     return {

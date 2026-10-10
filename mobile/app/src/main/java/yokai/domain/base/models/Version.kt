@@ -66,8 +66,9 @@ data class Version(
                         else -> Stage.RELEASE
                     }
             }
+            // "b2", "r15" and "alpha.2" all carry the build as their last number.
             val cleanBuild = stageCandidate
-                ?.replace("[^\\d.-]".toRegex(), "")  // remove the prefix
+                ?.let { "\\d+".toRegex().findAll(it).lastOrNull()?.value }
                 ?.toInt()
             val candidate = split.first()
                 .replace("[^\\d.-]".toRegex(), "")  // remove the prefix

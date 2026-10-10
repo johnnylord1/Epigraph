@@ -4,7 +4,8 @@
   import { arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
-  import { formatWorkStatus } from "../../lib/i18n/format";
+  import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
+  import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
@@ -218,11 +219,12 @@
   function catalogFeedLabel(feed: CatalogFeed) {
     if (feed === "latest") return $_("ui_latest");
     if (feed === "popular") return $_("ui_popular");
-    return $_("ui_all");
+    return $_("downloads_filter_all");
   }
 
+  // Same names as the Comics/Books switch above the page.
   function activeContentTypeLabel() {
-    return activeContentType === "novels" ? $_("ui_novels") : $_("ui_manga");
+    return activeContentType === "novels" ? $_("common_books") : $_("common_comics");
   }
 
   function sourceSearchPlaceholder() {
@@ -293,7 +295,9 @@
   const HARDCOVER_BACKGROUND_ENRICHMENT_DELAY_MS = 4500;
   const HARDCOVER_BACKGROUND_ENRICHMENT_MIN_GAP_MS = 15 * 60 * 1000;
   const HARDCOVER_BACKGROUND_ENRICHMENT_ERROR_COOLDOWN_MS = 10 * 60 * 1000;
-  const NOVEL_SOURCE_REQUEST_TIMEOUT_MS = 850;
+  // A popular page from a working LNReader source takes about 1-2.5 s. Results are shown as each source
+  // answers, so this only bounds how long a slow source can hold up its batch.
+  const NOVEL_SOURCE_REQUEST_TIMEOUT_MS = 4_000;
   const NOVEL_DETAIL_ENRICHMENT_LIMIT = 3;
   const NOVEL_DETAIL_ENRICHMENT_CONCURRENCY = 1;
   const NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS = 850;
@@ -2193,7 +2197,7 @@
   });
 
   const searchTasteTags = $derived.by(() =>
-    searchRecommendationResult.profile.topTags.slice(0, 6).map(formatTasteTag),
+    searchRecommendationResult.profile.topTags.slice(0, 6).map((tag) => tasteTagLabel(tag, currentAppLocale())),
   );
 
   const searchDiversityValue = $derived.by(() => {
@@ -2205,7 +2209,7 @@
   });
 
   const searchInsightLines = $derived.by(() => {
-    const tags = searchTasteTags.slice(0, 2).join(" and ").toLowerCase();
+    const tags = formatAppList(searchTasteTags.slice(0, 2)).toLocaleLowerCase(currentAppLocale());
     const trackerBacked = searchRecommendationItems.filter((item) => item.badge).length;
     const hardcoverBacked = searchRecommendationItems.filter((item) =>
       item.candidate.providers.some((provider) => provider.providerId === "hardcover" && provider.score),

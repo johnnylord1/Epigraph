@@ -249,7 +249,8 @@ export function resolveBookSectionProgress(
 ): number {
   const index = findBookSectionIndex(sections, href);
   if (index < 0 || sections.length <= 1) return 0;
-  return index / (sections.length - 1);
+  // A section starts after the ones before it, so opening the last one does not finish the book.
+  return index / sections.length;
 }
 
 export function resolveBookSectionHrefFromProgress(
@@ -259,7 +260,7 @@ export function resolveBookSectionHrefFromProgress(
   if (!sections.length) return null;
   const index = Math.max(
     0,
-    Math.min(sections.length - 1, Math.round(progressPercent * (sections.length - 1))),
+    Math.min(sections.length - 1, Math.floor(progressPercent * sections.length)),
   );
   return sections[index]?.href ?? null;
 }

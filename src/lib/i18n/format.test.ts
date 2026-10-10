@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { applyAppLanguage } from "./runtime";
-import { formatRelativeTime } from "./format";
+import { formatAppList, formatRelativeTime, formatWorkStatus } from "./format";
 
 beforeEach(() => applyAppLanguage("en"));
 afterEach(() => applyAppLanguage("en"));
@@ -23,5 +23,24 @@ describe("formatRelativeTime", () => {
   it("switches to minutes once a full minute has passed", () => {
     expect(formatRelativeTime(now - 60_000, now)).not.toBe("Just now");
     expect(formatRelativeTime(now - 60_000, now)).toMatch(/1/);
+  });
+});
+
+describe("formatAppList", () => {
+  it("joins with the conjunction of the app language", () => {
+    expect(formatAppList(["Action", "Sci Fi"])).toBe("Action and Sci Fi");
+    applyAppLanguage("pt-BR");
+    expect(formatAppList(["Action", "Sci Fi"])).toBe("Action e Sci Fi");
+    expect(formatAppList(["Action"])).toBe("Action");
+  });
+});
+
+describe("formatWorkStatus", () => {
+  it("reads the statuses trackers use", () => {
+    applyAppLanguage("pt-BR");
+    expect(formatWorkStatus("RELEASING")).toBe("Em andamento");
+    expect(formatWorkStatus("Releasing")).toBe("Em andamento");
+    expect(formatWorkStatus("FINISHED")).toBe("Concluído");
+    expect(formatWorkStatus("ONGOING")).toBe("Em andamento");
   });
 });

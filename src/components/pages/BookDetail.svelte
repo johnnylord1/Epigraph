@@ -21,6 +21,7 @@
     getBookProgress,
     openBookReader,
     removeBook,
+    replaceBookProgress,
     setActiveBookId,
     setBookProgress,
     store,
@@ -39,7 +40,7 @@
   import type { BookEntry, BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
   import { createPdfPageHref, parsePdfPageHref } from "../../lib/books/pdf";
   import { BookAssetResolver } from "../../lib/books/assets";
-  import { getBookProgressPrecision, resolveBookResumeTarget } from "../../lib/books/progress";
+  import { getBookProgressPrecision, resolveBookResumeTarget, resolveEpubDisplayTarget } from "../../lib/books/progress";
   import {
     classifyBookRuntimeFailure,
     probeBookRuntimeSource,
@@ -153,7 +154,7 @@
       if (labelIndex >= 0) return labelIndex;
     }
     if (typeof activeProgress?.progressPercent === "number" && activeProgress.progressPercent > 0) {
-      return Math.max(0, Math.min(baseSections.length - 1, Math.round(activeProgress.progressPercent * (baseSections.length - 1))));
+      return Math.max(0, Math.min(baseSections.length - 1, Math.floor(activeProgress.progressPercent * baseSections.length)));
     }
     return -1;
   });
@@ -162,7 +163,7 @@
     const hrefIndex = findBookSectionIndex(baseSections, currentBookmark?.href);
     if (hrefIndex >= 0) return hrefIndex;
     if (typeof currentBookmark?.progressPercent === "number" && currentBookmark.progressPercent > 0) {
-      return Math.max(0, Math.min(baseSections.length - 1, Math.round(currentBookmark.progressPercent * (baseSections.length - 1))));
+      return Math.max(0, Math.min(baseSections.length - 1, Math.floor(currentBookmark.progressPercent * baseSections.length)));
     }
     return -1;
   });
@@ -175,7 +176,7 @@
         ? (pageNumber && (activeBook.pageCount ?? activeProgress?.totalPages ?? 0) > 1
           ? (pageNumber - 1) / Math.max(1, (activeBook.pageCount ?? activeProgress?.totalPages ?? 1) - 1)
           : 0)
-        : (count > 1 ? index / (count - 1) : 0);
+        : (count > 1 ? index / count : 0);
       const isCurrent = activeBook.subtype === "pdf"
         ? !!pageNumber && activeProgress?.pageIndex === pageNumber
         : currentEpubSectionIndex === index;
@@ -396,7 +397,7 @@
     if (!activeBook || !bookFileAvailable) return;
     closePreview();
     const pageNumber = activeBook.subtype === "pdf" ? section.pageNumber : null;
-    setBookProgress({
+    replaceBookProgress({
       bookId: activeBook.id,
       location: null,
       href: activeBook.subtype === "epub" ? section.href : null,
@@ -534,7 +535,7 @@
       await book.ready;
       setPreviewStage("epub.ready");
       tracePreview("books.preview.epub.ready");
-      const targetLocation = resolveBookResumeTarget(activeProgress) ?? undefined;
+      const targetLocation = resolveEpubDisplayTarget(book.spine, resolveBookResumeTarget(activeProgress));
       await rendition.display(targetLocation);
       setPreviewStage("epub.displayed");
       tracePreview("books.preview.epub.displayed", {

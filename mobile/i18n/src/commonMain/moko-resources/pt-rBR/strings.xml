@@ -1372,6 +1372,7 @@
     <string name="local_books_remove_title">Remover livro</string>
     <string name="local_books_remove_message">Remover %1$s e apagar o arquivo deste aparelho?</string>
     <string name="local_books_file_missing">Arquivo ausente</string>
+    <string name="local_books_downloads_when_opened">Baixa ao abrir</string>
     <string name="local_book_fallback_title">Livro</string>
     <string name="local_book_download_failed_message">Não foi possível baixar o livro sincronizado.</string>
     <string name="local_book_bookmarks">Marcadores</string>

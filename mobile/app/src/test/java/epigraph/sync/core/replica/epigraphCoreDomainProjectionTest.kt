@@ -1617,6 +1617,134 @@ class EpigraphCoreDomainProjectionTest {
     }
 
     @Test
+    fun `desktop novel chapter state marks the chapter the plugin listed instead of adding a twin`() = runTest {
+        projection.upsert(database, novelEntryRecord())
+        val mangaId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID)
+            .executeAsOne().local_reference.toLong()
+        database.chaptersQueries.insert(
+            mangaId = mangaId,
+            url = "/novel/epigraph/chapter-1",
+            name = "1. The beginning",
+            scanlator = null,
+            read = false,
+            bookmark = false,
+            lastPageRead = 0,
+            pagesLeft = 100,
+            chapterNumber = 0.0,
+            sourceOrder = 154,
+            dateFetch = 1,
+            dateUpload = 7,
+            memo = JsonObject(emptyMap()),
+        )
+        val pluginChapterId = database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+
+        projection.upsert(database, novelChapterRecord(unread = false))
+
+        val chapters = database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList()
+        assertEquals(listOf(pluginChapterId), chapters.map { it._id })
+        val chapter = chapters.single()
+        assertTrue(chapter.read)
+        assertEquals("1. The beginning", chapter.name)
+        assertEquals(0.0, chapter.chapter_number)
+        assertEquals(7L, chapter.date_upload)
+        assertEquals(
+            pluginChapterId,
+            database.aethon_syncQueries.selectChapterBindingByEntityId("chapter-1").executeAsOne().local_chapter_id,
+        )
+
+        projection.upsert(database, novelChapterRecord(unread = true, serverVersion = 3))
+        val replayed = database.chaptersQueries.getChaptersById(pluginChapterId).executeAsOne()
+        assertFalse(replayed.read)
+        assertEquals("1. The beginning", replayed.name)
+        assertEquals(0.0, replayed.chapter_number)
+        assertEquals(1, database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList().size)
+    }
+
+    @Test
+    fun `a twin bound by an earlier sync gives the state back to the plugin chapter and goes away`() = runTest {
+        projection.upsert(database, novelEntryRecord())
+        val mangaId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID)
+            .executeAsOne().local_reference.toLong()
+        fun insertChapter(name: String): Long {
+            database.chaptersQueries.insert(
+                mangaId = mangaId,
+                url = "/novel/epigraph/chapter-1",
+                name = name,
+                scanlator = null,
+                read = false,
+                bookmark = false,
+                lastPageRead = 0,
+                pagesLeft = 100,
+                chapterNumber = 1.0,
+                sourceOrder = 0,
+                dateFetch = 1,
+                dateUpload = 1,
+                memo = JsonObject(emptyMap()),
+            )
+            return database.chaptersQueries.selectLastInsertedRowId().executeAsOne()
+        }
+        val pluginChapterId = insertChapter("1. The beginning")
+        val twinId = insertChapter("Chapter 1")
+        database.aethon_syncQueries.upsertChapterBinding(
+            chapterEntityId = "chapter-1",
+            workEntityId = CANONICAL_NOVEL_ID,
+            localChapterId = twinId,
+            normalizedUrl = "/novel/epigraph/chapter-1",
+            ordinal = 1.0,
+            updatedAt = 1,
+        )
+
+        projection.upsert(database, novelChapterRecord(unread = false))
+
+        val chapters = database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList()
+        assertEquals(listOf(pluginChapterId), chapters.map { it._id })
+        assertTrue(chapters.single().read)
+        assertEquals(
+            pluginChapterId,
+            database.aethon_syncQueries.selectChapterBindingByEntityId("chapter-1").executeAsOne().local_chapter_id,
+        )
+    }
+
+    @Test
+    fun `the same novel chapter named differently by two devices shares one local chapter`() = runTest {
+        projection.upsert(database, novelEntryRecord())
+        projection.upsert(database, novelChapterRecord(unread = false))
+        val desktopNamed = novelChapterRecord(unread = true, serverVersion = 3).let {
+            it.copy(key = it.key.copy(entityId = "desktop-chapter-1"))
+        }
+
+        projection.upsert(database, desktopNamed)
+
+        val chapterId = database.aethon_syncQueries.selectChapterBindingByEntityId("chapter-1")
+            .executeAsOne().local_chapter_id
+        assertFalse(database.chaptersQueries.getChaptersById(chapterId).executeAsOne().read)
+        assertNull(database.aethon_syncQueries.selectChapterBindingByEntityId("desktop-chapter-1").executeAsOneOrNull())
+        val mangaId = database.chaptersQueries.getChaptersById(chapterId).executeAsOne().manga_id
+        assertEquals(1, database.chaptersQueries.getChaptersByMangaId(mangaId, 0).executeAsList().size)
+    }
+
+    @Test
+    fun `synced novel records its plugin as a named novel source`() = runTest {
+        val remembered = mutableListOf<Pair<Long, String?>>()
+        val recording = EpigraphCoreDomainProjection(rememberNovelSource = { id, name -> remembered += id to name })
+        val record = novelEntryRecord().let {
+            it.copy(
+                record = JsonObject(
+                    (it.record as JsonObject) + ("source" to buildJsonObject {
+                        put("pluginId", "Illusia")
+                        put("pluginName", "Illusia")
+                        put("lang", "Português")
+                    }),
+                ),
+            )
+        }
+
+        recording.upsert(database, record)
+
+        assertEquals(listOf(NovelSource.sourceIdFor("illusia", "pt") to "Illusia"), remembered)
+    }
+
+    @Test
     fun `re-keyed novel placeholder joins the hydrated plugin row instead of duplicating it`() = runTest {
         projection.upsert(database, novelEntryRecord())
         val placeholderId = database.aethon_syncQueries.selectIdentityByEntityId(CANONICAL_NOVEL_ID)

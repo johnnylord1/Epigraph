@@ -171,6 +171,15 @@ async function buildCanonicalPatch(book: BookEntry): Promise<CanonicalBookPatch 
 
   if (needsBookSectionBackfill(book) && (rawToc.length || rawSpine.length)) {
     Object.assign(patch, createBookSectionSnapshot(rawToc, rawSpine));
+  } else if (book.subtype === "epub" && needsBookSectionBackfill(book)) {
+    // Books restored from a backup or synced from the phone carry counts but no
+    // section list, so the contents come from the file itself.
+    try {
+      const parsed = await getParsedEpub();
+      Object.assign(patch, createBookSectionSnapshot(parsed.toc, parsed.spine));
+    } catch {
+      // Unreadable asset: keep the stored counts rather than blocking the book.
+    }
   } else {
     if (typeof book.tocCount !== "number" && typeof patch.tocCount !== "number") patch.tocCount = rawToc.length;
     if (typeof book.spineCount !== "number" && typeof patch.spineCount !== "number") patch.spineCount = rawSpine.length;

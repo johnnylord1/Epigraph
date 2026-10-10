@@ -1,7 +1,9 @@
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
   import { closeActivityPanel, store } from "../../store/state.svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import RecentActivity from "./RecentActivity.svelte";
+  import WindowControlsInline from "./WindowControlsInline.svelte";
   import { enterViewOnMount } from "../../lib/motion/motion";
 
   function backLabel() {
@@ -11,14 +13,22 @@
     if (store.activityPanelReturnPage === "settings") return $_("home.activity.backToSettings");
     return $_("home.activity.backToHome");
   }
+
+  // The overlay covers the page header, so it carries the window controls and drag area that header had.
+  function dragWindow(event: PointerEvent) {
+    if (event.button !== 0 || event.target !== event.currentTarget) return;
+    getCurrentWindow().startDragging().catch(() => {});
+  }
 </script>
 
 <div class="activity-overlay" role="dialog" aria-label={$_("ui_recentActivity")} use:enterViewOnMount>
-  <div class="activity-overlay__header">
+  <!-- svelte-ignore a11y_no_static_element_interactions: desktop window drag must start from the empty header. -->
+  <div class="activity-overlay__header" data-tauri-drag-region onpointerdown={dragWindow}>
     <button class="activity-overlay__back" type="button" onclick={closeActivityPanel}>
       <span class="material-symbols-outlined" aria-hidden="true">arrow_back</span>
       {backLabel()}
     </button>
+    <WindowControlsInline />
   </div>
   <div class="activity-overlay__content">
     <RecentActivity />
@@ -45,6 +55,7 @@
   .activity-overlay__header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     flex-shrink: 0;
   }
 

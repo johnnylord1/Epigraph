@@ -57,6 +57,8 @@
   } from "../../lib/library/contracts";
   import type { LibraryPreferredGridColumns, LibraryViewMode } from "../../lib/libraryDisplay";
   import { _ } from "../../lib/i18n/runtime";
+  import { currentAppLocale } from "../../lib/i18n/format";
+  import { genreDisplayLabel } from "../../lib/recommendations/genreLabels";
   import { dedupeMangaById } from "../../lib/util";
   import { createBookLibraryCardId, createComicLibraryCardId } from "../../lib/library/cardIdentity";
   import {
@@ -2211,10 +2213,10 @@
                           class:is-active={chip.active}
                           data-library-genre
                           data-genre-label={chip.label}
-                          title={`${chip.label} (${chip.count})`}
+                          title={`${genreDisplayLabel(chip.label, currentAppLocale())} (${chip.count})`}
                           onclick={(event) => handleGenreClick(chip.label, event)}
                         >
-                          <span class="library-genre-chip__label">{chip.label}</span>
+                          <span class="library-genre-chip__label">{genreDisplayLabel(chip.label, currentAppLocale())}</span>
                         </button>
                       {/each}
                     </div>

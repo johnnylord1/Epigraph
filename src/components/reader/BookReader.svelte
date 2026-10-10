@@ -39,7 +39,7 @@
     resolveBookSectionLabel,
     resolveBookSectionProgress,
   } from "../../lib/books/summary";
-  import { resolveBookResumeTarget } from "../../lib/books/progress";
+  import { parseReadiumLocator, resolveBookResumeTarget, resolveEpubDisplayTarget } from "../../lib/books/progress";
   import { hasBookLocalAsset, MISSING_BOOK_ASSET_MESSAGE } from "../../lib/books/availability";
   import { mediaAuditEnabled, traceMediaAudit } from "../../lib/mediaAudit";
   import type { BookBookmarkEntry, BookEntry, BookProgress, BookSectionSummaryItem } from "../../lib/books/types";
@@ -346,6 +346,8 @@
   let currentPdfDoc: any = null;
   let currentPdfJsLib: typeof import("pdfjs-dist") | null = null;
   let pdfRenderTask: any = null;
+  // Set before the page is fetched so a second render cannot start on the same canvas meanwhile.
+  let pdfRenderBusy = false;
   let pdfDocumentGeneration = $state(0);
   let pendingPdfPage: number | null = null;
   let reflowedPages = $state<ReflowedPage[]>([]);
@@ -402,7 +404,7 @@
 
   function resolveDiscordSectionFromProgress(sections: BookSectionSummaryItem[], progress: number): string | null {
     if (!sections.length) return null;
-    const index = Math.max(0, Math.min(sections.length - 1, Math.round(progress * (sections.length - 1))));
+    const index = Math.max(0, Math.min(sections.length - 1, Math.floor(progress * sections.length)));
     for (let i = index; i < sections.length; i += 1) {
       const label = normalizeDiscordBookLabel(sections[i]?.label);
       if (label) return label;
@@ -451,6 +453,20 @@
 
   function resolveEpubHrefFromPercentage(pct: number) {
     return resolveBookSectionHrefFromProgress(epubSections, pct);
+  }
+
+  function cfiAtSectionProgression(rendition: any, progression: number): string | null {
+    const contents = rendition.getContents?.()?.[0];
+    const doc: Document | undefined = contents?.document;
+    if (!contents || !doc?.body) return null;
+    const blocks = [...doc.body.querySelectorAll("p, li, blockquote, h1, h2, h3, h4, h5, h6, pre, figure")];
+    if (!blocks.length) return null;
+    const element = blocks[Math.min(blocks.length - 1, Math.floor(progression * blocks.length))];
+    try {
+      return contents.cfiFromNode(element) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   function applyEpubTheme() {
@@ -689,6 +705,7 @@
       currentPdfDoc?.destroy?.();
     } catch {}
     pdfRenderTask = null;
+    pdfRenderBusy = false;
     pendingPdfPage = null;
     lastProgressSignature = null;
     visiblePdfPages.clear();
@@ -1037,10 +1054,17 @@
       stage: currentStage,
       sourceUrl,
     });
-    const target = resolveBookResumeTarget(activeProgress) ?? undefined;
+    let target = resolveEpubDisplayTarget(book.spine, resolveBookResumeTarget(activeProgress));
     if (target) await rendition.display(target);
     else await rendition.display();
     applyEpubTheme();
+    const phonePosition = parseReadiumLocator(activeProgress?.location);
+    if (target && phonePosition?.progression) {
+      // A position saved on the phone only knows its chapter and how far into it; point at the
+      // paragraph at that depth so the reader lands where the phone left off.
+      const cfi = cfiAtSectionProgression(rendition, phonePosition.progression);
+      if (cfi) target = cfi;
+    }
     if (target) {
       // epub.js picks the page before the reader stylesheet lands, and the reflow can push the
       // saved spot onto the next page; show it again once the text has settled so reopening does not step back.
@@ -1073,22 +1097,50 @@
       return;
     }
     if (!currentPdfDoc || !canvasEl || !activeBook) return;
-    if (pdfRenderTask) {
+    if (pdfRenderBusy) {
       pendingPdfPage = targetPage;
       try {
-        pdfRenderTask.cancel();
+        pdfRenderTask?.cancel();
       } catch {}
       return;
     }
 
+    pdfRenderBusy = true;
+    let rendered = false;
+    try {
+      rendered = await drawPdfPage(targetPage);
+    } finally {
+      pdfRenderBusy = false;
+      pdfRenderTask = null;
+    }
+    const queuedPage = pendingPdfPage;
+    pendingPdfPage = null;
+    if (queuedPage !== null) {
+      await renderPdfPage(queuedPage);
+      return;
+    }
+    if (!rendered) return;
+    syncPdfProgress(targetPage);
+    setStage("pdf.page.rendered");
+    auditReader("books.reader.pdf.page.rendered", {
+      stage: currentStage,
+      sourceUrl: currentSourceUrl,
+      pageNumber: targetPage,
+      totalPages,
+      sectionLabel: currentSectionLabel,
+    });
+  }
+
+  /** Draws one page on the canvas; false when it was cancelled or the book changed meanwhile. */
+  async function drawPdfPage(targetPage: number): Promise<boolean> {
     const token = loadToken;
     const documentRef = currentPdfDoc;
-    const bookId = activeBook.id;
+    const bookId = activeBook?.id;
     const page = await documentRef.getPage(targetPage);
-    if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
+    if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id || !canvasEl) return false;
     const canvas = canvasEl;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return false;
 
     const nativeViewport = page.getViewport({ scale: 1 });
     const stage = canvas.parentElement;
@@ -1119,28 +1171,10 @@
     try {
       await renderTask.promise;
     } catch (err: any) {
-      if (err?.name !== "RenderingCancelledException") throw err;
-    } finally {
-      if (pdfRenderTask !== renderTask) return;
-      pdfRenderTask = null;
-      const queuedPage = pendingPdfPage;
-      pendingPdfPage = null;
-      if (queuedPage !== null) {
-        await renderPdfPage(queuedPage);
-        return;
-      }
+      if (err?.name === "RenderingCancelledException") return false;
+      throw err;
     }
-
-    if (token !== loadToken || documentRef !== currentPdfDoc || bookId !== activeBook?.id) return;
-    syncPdfProgress(targetPage);
-    setStage("pdf.page.rendered");
-    auditReader("books.reader.pdf.page.rendered", {
-      stage: currentStage,
-      sourceUrl: currentSourceUrl,
-      pageNumber: targetPage,
-      totalPages,
-      sectionLabel: currentSectionLabel,
-    });
+    return token === loadToken && documentRef === currentPdfDoc && bookId === activeBook?.id;
   }
 
   async function loadPdf(token: number) {
@@ -1325,7 +1359,7 @@
         void currentRendition?.display?.(cfi);
         return;
       }
-      const href = resolveEpubHrefFromPercentage(pct);
+      const href = resolveEpubDisplayTarget(currentBookRef?.spine, resolveEpubHrefFromPercentage(pct));
       if (href) void currentRendition?.display?.(href);
       return;
     }
@@ -1480,28 +1514,41 @@
     }
   }
 
+  // Sync and library reloads hand back a fresh copy of the same book; only a different book or
+  // file means reopening it, or the reader would jump back on every reload.
+  const activeBookLoadKey = $derived(
+    activeBook ? `${activeBook.id}|${activeBook.subtype}|${activeBook.assetPath}` : null,
+  );
+  // Settings are replaced as a whole on many unrelated changes; only the flow itself matters here.
+  const activeBookReaderFlow = $derived(store.settings.bookReaderFlow);
+
   $effect(() => {
-    const book = activeBook;
-    const flow = store.settings.bookReaderFlow;
-    if (!book) return;
-    if (auditOpenBookId !== book.id) {
-      auditOpenBookId = book.id;
-      auditCloseSent = false;
-      traceMediaAudit({
-        event: "books.reader.opened",
-        bookId: book.id,
-        title: book.title,
-        subtype: book.subtype,
-      });
-    }
-    if (book.subtype === "epub" && !hostEl) return;
-    if (
-      book.subtype === "pdf"
-      && !canvasEl
-      && !pdfReflowMode
-      && flow !== "scrolled"
-    ) return;
+    const key = activeBookLoadKey;
+    const flow = activeBookReaderFlow;
+    const host = hostEl;
+    const canvas = canvasEl;
+    const reflow = pdfReflowMode;
+    if (!key) return;
     untrack(() => {
+      const book = activeBook;
+      if (!book) return;
+      if (auditOpenBookId !== book.id) {
+        auditOpenBookId = book.id;
+        auditCloseSent = false;
+        traceMediaAudit({
+          event: "books.reader.opened",
+          bookId: book.id,
+          title: book.title,
+          subtype: book.subtype,
+        });
+      }
+      if (book.subtype === "epub" && !host) return;
+      if (
+        book.subtype === "pdf"
+        && !canvas
+        && !reflow
+        && flow !== "scrolled"
+      ) return;
       void loadActiveBook();
     });
   });

@@ -4159,7 +4159,7 @@
                       class="settings-text-input settings-text-input--short"
                       bind:value={profileCreatePort}
                       inputmode="numeric"
-                      placeholder="4777"
+                      placeholder="4867"
                       oninput={(event) => (profileCreatePort = event.currentTarget.value.replace(/\D/g, "").slice(0, 5))}
                       onkeydown={(event) => event.key === "Enter" && createLocalProfileFromSettings()}
                     />
@@ -5869,7 +5869,7 @@
                     <p class="settings-mini-row__hint">{$_("settings_inline_proxyModeHint")}</p>
                   </div>
                   <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={() => (securityDetailPane = securityDetailPane === "flare" ? null : "flare")}>
-                    {flareDockerStatus?.running ? $_("settings_security_flareDocker") : flareLocalStatus?.running ? $_("settings_security_flareLocal") : $_("settings_security_flareCustom")}
+                    {!flareEnabled ? $_("common_off") : flareDockerStatus?.running ? $_("settings_security_flareDocker") : flareLocalStatus?.running ? $_("settings_security_flareLocal") : $_("settings_security_flareCustom")}
                   </button>
                 </div>
                 <div class="settings-row settings-mini-row">

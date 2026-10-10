@@ -25,6 +25,16 @@ describe("BookReader PDF initialization", () => {
     expect(source).toContain("selectDominantReaderPage(visiblePdfPages.values())");
   });
 
+  it("never starts a second page render on the canvas while one is still fetching the page", () => {
+    const render = source.slice(source.indexOf("async function renderPdfPage("), source.indexOf("async function drawPdfPage("));
+    const guard = render.indexOf("if (pdfRenderBusy) {");
+    const claim = render.indexOf("pdfRenderBusy = true;");
+    expect(guard).toBeGreaterThan(-1);
+    expect(claim).toBeGreaterThan(guard);
+    expect(claim).toBeLessThan(render.indexOf("await drawPdfPage(targetPage)"));
+    expect(render).toContain("await renderPdfPage(queuedPage);");
+  });
+
   it("flushes authoritative book progress when the reader closes or the app exits", () => {
     expect(source).toContain("flushBookLibraryPersistence");
     expect(source).toContain('window.addEventListener("pagehide", flushBookProgress)');

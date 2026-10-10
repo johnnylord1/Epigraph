@@ -39,8 +39,8 @@ describe("Library warm snapshot reconciliation", () => {
     expect(genreChipRule).not.toMatch(/cqw|width: var\(/);
     expect(librarySource).not.toMatch(/\.library-genre-chip\.fit-(?:sm|xs)/);
     expect(labelRule).toContain("text-overflow: ellipsis;");
-    expect(librarySource).toContain('<span class="library-genre-chip__label">{chip.label}</span>');
-    expect(librarySource).toMatch(/title=\{`\$\{chip\.label\} \(\$\{chip\.count\}\)`\}/);
+    expect(librarySource).toContain('<span class="library-genre-chip__label">{genreDisplayLabel(chip.label, currentAppLocale())}</span>');
+    expect(librarySource).toContain('title={`${genreDisplayLabel(chip.label, currentAppLocale())} (${chip.count})`}');
   });
 
   it("turns a vertical mouse wheel over the genre row into sideways scrolling until an end is reached", () => {

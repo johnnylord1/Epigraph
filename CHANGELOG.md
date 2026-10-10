@@ -4,6 +4,24 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-09
+
+### Fixed
+
+- Reading progress synced from the phone shows up on the desktop right away, also when it arrives while Home is open.
+- Picking a chapter from a book's contents opens that chapter, even when a more precise position was saved further ahead.
+- Book progress counts only the chapters behind the current one as read, and synced EPUBs list their chapters again.
+- The PDF reader no longer draws two pages over each other when pages are turned quickly.
+- Books synced from the Core keep their ISBNs, genres and metadata, so they are not reprocessed and synced again on every start.
+- A finished manga chapter opens from the first page, like Mihon.
+- Genre chips and tags from sources appear in the app language, and the novel reader text alignment is translated.
+- The reading week on Home and in History counts chapters and minutes from the whole history.
+- The app starts in the saved language without flashing English first.
+- Replacing a data file on Windows retries briefly when an antivirus or another write still holds it.
+- Pairing a phone no longer expires while it is still downloading a large library.
+
+## [0.0.2] - 2026-10-09
+
 ### Added
 
 - The manga, novel and book readers can open in their own window from the reader bar, so the app stays usable while reading and several chapters, of the same work or different ones, can be open at once.

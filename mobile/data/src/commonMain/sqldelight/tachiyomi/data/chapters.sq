@@ -107,6 +107,11 @@ deleteBulk:
 DELETE FROM chapters
 WHERE _id IN :chapterIds;
 
+deleteUnreadTwin:
+DELETE FROM chapters
+WHERE _id = :chapterId
+AND NOT EXISTS (SELECT 1 FROM history WHERE history_chapter_id = :chapterId);
+
 update:
 UPDATE chapters SET
     manga_id = coalesce(:mangaId, manga_id),
