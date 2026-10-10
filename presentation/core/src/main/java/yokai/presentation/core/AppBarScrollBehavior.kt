@@ -5,7 +5,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 
 /**
@@ -44,23 +43,14 @@ fun enterAlwaysAppBarScrollBehavior(
 @Composable
 fun enterAlwaysCollapsedAppBarScrollBehavior(
     canScroll: () -> Boolean = { true },
-    isAtTop: () -> Boolean = { true },
 ): AppBarScrollBehavior {
     val state = rememberTopAppBarState()
-    val atTop = isAtTop()
-    val scrollable = canScroll()
-
-    LaunchedEffect(atTop, scrollable) {
-        if (atTop || !scrollable) {
-            state.heightOffset = 0f
-            state.contentOffset = 0f
-        }
-    }
-
     return AppBarScrollBehavior(
         TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
             state = state,
-            canScroll = canScroll,
+            // The bar opens with the finger once the list reaches the top. A collapsed bar can always
+            // be pulled open, even when the content now fits without scrolling.
+            canScroll = { canScroll() || state.heightOffset < 0f },
         )
     )
 }

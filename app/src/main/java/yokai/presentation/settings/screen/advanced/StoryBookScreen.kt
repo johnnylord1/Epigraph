@@ -31,7 +31,6 @@ class StoryBookScreen : Screen() {
             appBarType = if (useLargeAppBar) AppBarType.LARGE else AppBarType.SMALL,
             appBarScrollBehavior = if (useLargeAppBar) enterAlwaysCollapsedAppBarScrollBehavior(
                 canScroll = { listState.canScrollForward || listState.canScrollBackward },
-                isAtTop = { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 },
             ) else null,
             textFieldState = textFieldState,
             content = { contentPadding ->

@@ -317,13 +317,44 @@ class DiscoverRecommendationLoader(
     fun catalog(pool: DiscoverPool, includeInLibrary: Boolean, includeNsfw: Boolean, nowMs: Long): List<DiscoverCatalogEntry> =
         buildDiscoverCatalog(pool.candidates, filterOptions(pool, includeInLibrary, includeNsfw, nowMs))
 
+    /** Catalog with genres: the pool's works tagged with them, then the genre search results; no network. */
+    fun genreCatalog(
+        pool: DiscoverPool,
+        search: DiscoverGenreSearch,
+        includeInLibrary: Boolean,
+        includeNsfw: Boolean,
+        nowMs: Long,
+    ): List<DiscoverCatalogEntry> {
+        val searchCandidates = search.entries.map { entry ->
+            val candidate = entryToRecommendationCandidate(entry, nowMs, novelSourceResult = pool.mode == DiscoverMode.NOVELS)
+            if (entry.sourceId in pool.nsfwSourceIds) candidate.asAdult() else candidate
+        }
+        return buildDiscoverGenreCatalog(
+            pool.candidates,
+            searchCandidates,
+            filterOptions(pool, includeInLibrary, includeNsfw, nowMs),
+            search.genres,
+        )
+    }
+
+    /** Next page of the Catalog genre search, over the same sources the pool was gathered from. */
+    suspend fun searchGenre(pool: DiscoverPool, search: DiscoverGenreSearch, includeNsfw: Boolean): DiscoverGenreSearch =
+        fetchGenreSearchPage(sourceManager, search, pool.nsfwSourceIds, includeNsfw)
+
+    /** Genres the Catalog filter offers, without the ones the user blocked. */
+    fun genreOptions(includeNsfw: Boolean): List<String> =
+        discoverGenreOptions(includeNsfw, blockedTags())
+
+    private fun blockedTags(): List<String> =
+        if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList()
+
     private fun filterOptions(pool: DiscoverPool, includeInLibrary: Boolean, includeNsfw: Boolean, nowMs: Long) =
         BuildRecommendationSectionsOptions(
             includeInLibrary = includeInLibrary,
             knownTitleKeys = pool.knownTitleKeys,
             knownProviderKeys = pool.knownProviderKeys,
             includeNsfw = includeNsfw,
-            blockedTags = if (preferences.filterBlockedTags().get()) preferences.blockedTags().get().toList() else emptyList(),
+            blockedTags = blockedTags(),
             nowMs = nowMs,
             limitPerSection = SEARCH_RECOMMENDATION_MAX_LIMIT,
         )

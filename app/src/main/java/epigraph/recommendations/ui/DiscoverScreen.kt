@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,27 +36,38 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.InputChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +100,8 @@ import epigraph.recommendations.RecommendationSection
 import epigraph.recommendations.RecommendationSectionKey
 import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import epigraph.recommendations.TrackerScoreBadge
+import epigraph.recommendations.discoverGridColumns
+import kotlin.math.roundToInt
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
@@ -144,6 +159,8 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             onMode = screenModel::setMode,
             onShowMore = screenModel::showMore,
             onLoadMoreCatalog = screenModel::loadMoreCatalog,
+            onRemoveGenre = { genre -> screenModel.setGenres(state.genres - genre) },
+            onClearGenres = { screenModel.setGenres(emptyList()) },
             onOpen = openCandidate,
         )
         if (showFilterSheet) {
@@ -153,9 +170,11 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             ) {
                 Column(
                     modifier = Modifier
+                        .verticalScroll(rememberScrollState())
                         .navigationBarsPadding()
                         .padding(bottom = 16.dp),
                 ) {
+                    DiscoverGridSizeRow(gridSize = state.gridSize, onGridSizeChange = screenModel::setGridSize)
                     DiscoverFilterRows(
                         mode = state.mode,
                         includeLibrary = state.includeLibrary,
@@ -172,6 +191,15 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                         }
+                    }
+                    // Genres narrow the Catalog only; For you ranks by the library profile.
+                    if (state.section == DiscoverSection.CATALOG && state.genreOptions.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                        DiscoverGenreFilter(
+                            options = state.genreOptions,
+                            selected = state.genres,
+                            onSelectedChange = screenModel::setGenres,
+                        )
                     }
                 }
             }
@@ -196,6 +224,8 @@ internal fun DiscoverContent(
     onShowMore: (RecommendationSectionKey) -> Unit,
     onLoadMoreCatalog: () -> Unit,
     onOpen: (RecommendationCandidate) -> Unit,
+    onRemoveGenre: (String) -> Unit = {},
+    onClearGenres: () -> Unit = {},
 ) {
     YokaiScaffold(
         onNavigationIconClicked = {},
@@ -249,20 +279,34 @@ internal fun DiscoverContent(
                         state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
                     onRetry = onRefresh,
                 )
-                state.section == DiscoverSection.CATALOG -> if (state.catalog.isEmpty()) {
-                    CenteredMessage(
-                        text = stringResource(MR.strings.discover_catalog_empty),
-                        onRetry = onRefresh,
-                    )
-                } else {
-                    DiscoverCatalogGrid(
-                        entries = state.catalog,
-                        loadingMore = state.catalogLoadingMore,
-                        exhausted = state.catalogExhausted,
-                        bottomPadding = bottomPadding,
-                        onNearEnd = onLoadMoreCatalog,
-                        onClick = onOpen,
-                    )
+                state.section == DiscoverSection.CATALOG -> Column(modifier = Modifier.fillMaxSize()) {
+                    if (state.genres.isNotEmpty()) {
+                        SelectedGenres(genres = state.genres, onRemove = onRemoveGenre)
+                    }
+                    when {
+                        state.catalog.isNotEmpty() -> DiscoverCatalogGrid(
+                            entries = state.catalog,
+                            gridSize = state.gridSize,
+                            loadingMore = state.catalogLoadingMore,
+                            exhausted = state.catalogExhausted,
+                            bottomPadding = bottomPadding,
+                            onNearEnd = onLoadMoreCatalog,
+                            onClick = onOpen,
+                        )
+                        // The genre search is still asking the sources.
+                        state.genres.isNotEmpty() && !state.catalogExhausted -> CenteredBox {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                        }
+                        state.genres.isNotEmpty() -> CenteredMessage(
+                            text = stringResource(MR.strings.discover_catalog_genre_empty),
+                            actionLabel = stringResource(MR.strings.clear_filters),
+                            onAction = onClearGenres,
+                        )
+                        else -> CenteredMessage(
+                            text = stringResource(MR.strings.discover_catalog_empty),
+                            onRetry = onRefresh,
+                        )
+                    }
                 }
                 result.sections.isEmpty() -> CenteredMessage(
                     text = stringResource(
@@ -274,6 +318,7 @@ internal fun DiscoverContent(
                     sections = result.sections,
                     failedProviders = result.failedProviders,
                     visibleLimits = state.visibleLimits,
+                    gridSize = state.gridSize,
                     bottomPadding = bottomPadding,
                     onNearEnd = onShowMore,
                     onClick = { item -> onOpen(item.candidate) },
@@ -366,6 +411,7 @@ private fun <T> UnderlineTabs(
 @Composable
 private fun DiscoverCatalogGrid(
     entries: List<DiscoverCatalogEntry>,
+    gridSize: Float,
     loadingMore: Boolean,
     exhausted: Boolean,
     bottomPadding: Dp,
@@ -387,30 +433,35 @@ private fun DiscoverCatalogGrid(
             .filter { it }
             .collect { currentOnNearEnd() }
     }
-    LazyVerticalGrid(
-        state = gridState,
-        columns = GridCells.Adaptive(minSize = 104.dp),
-        contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = bottomPadding + 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        modifier = Modifier.fillMaxSize(),
-    ) {
-        items(entries, key = { it.candidate.id }) { entry ->
-            CoverCard(
-                candidate = entry.candidate,
-                badge = entry.badge,
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onClick(entry.candidate) },
-            )
-        }
-        if (loadingMore) {
-            item(key = "loading-more", span = { GridItemSpan(maxLineSpan) }) {
-                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.secondary,
-                    )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val columns = discoverGridColumns(maxWidth.value, gridSize)
+        // Tighter gaps once the cards get small, so the covers keep most of the width.
+        val gap = if (columns >= 5) 8.dp else 12.dp
+        LazyVerticalGrid(
+            state = gridState,
+            columns = GridCells.Fixed(columns),
+            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = bottomPadding + 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            items(entries, key = { it.candidate.id }) { entry ->
+                CoverCard(
+                    candidate = entry.candidate,
+                    badge = entry.badge,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = { onClick(entry.candidate) },
+                )
+            }
+            if (loadingMore) {
+                item(key = "loading-more", span = { GridItemSpan(maxLineSpan) }) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.secondary,
+                        )
+                    }
                 }
             }
         }
@@ -422,6 +473,7 @@ private fun DiscoverSections(
     sections: List<RecommendationSection>,
     failedProviders: List<String>,
     visibleLimits: Map<RecommendationSectionKey, Int>,
+    gridSize: Float,
     bottomPadding: Dp,
     onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
@@ -456,6 +508,7 @@ private fun DiscoverSections(
             SectionRow(
                 section,
                 visibleLimit = visibleLimits[section.key] ?: SEARCH_RECOMMENDATION_BASE_LIMIT,
+                gridSize = gridSize,
                 onNearEnd = { onNearEnd(section.key) },
                 onClick = onClick,
                 heroId = hero?.candidate?.id,
@@ -544,6 +597,7 @@ private fun HeroPick(item: RecommendationItem, onClick: () -> Unit) {
 private fun SectionRow(
     section: RecommendationSection,
     visibleLimit: Int,
+    gridSize: Float,
     onNearEnd: () -> Unit,
     onClick: (RecommendationItem) -> Unit,
     heroId: String?,
@@ -572,11 +626,14 @@ private fun SectionRow(
         )
         Spacer(Modifier.height(12.dp))
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val cardWidth = (maxWidth - 16.dp - 12.dp * 3) / 3.3f
+            // As many cards as a Catalog row, plus a peek of the next one to show the rail scrolls.
+            val columns = discoverGridColumns(maxWidth.value, gridSize)
+            val gap = if (columns >= 5) 8.dp else 12.dp
+            val cardWidth = (maxWidth - 16.dp - gap * columns) / (columns + 0.3f)
             LazyRow(
                 state = listState,
                 contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(gap),
             ) {
                 items(visibleItems, key = { it.candidate.id }) { item ->
                     CoverCard(
@@ -660,6 +717,105 @@ private fun CoverCard(
     }
 }
 
+/**
+ * Card size, on the library grid scale and with its slider steps: -0.5..3 in halves, shown as
+ * cards per row. The size applies when the thumb is released, like the library.
+ */
+@Composable
+private fun DiscoverGridSizeRow(gridSize: Float, onGridSizeChange: (Float) -> Unit) {
+    var slider by remember(gridSize) { mutableFloatStateOf(((gridSize + .5f) * 2f).roundToInt().toFloat()) }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val perRow = discoverGridColumns(maxWidth.value, slider / 2f - .5f)
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(MR.strings.discover_card_size),
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = stringResource(MR.strings._per_row, perRow),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = { slider = 3f; onGridSizeChange(1f) }, enabled = slider != 3f) {
+                    Text(stringResource(MR.strings.reset))
+                }
+            }
+            Slider(
+                value = slider,
+                onValueChange = { slider = it },
+                onValueChangeFinished = { onGridSizeChange(slider / 2f - .5f) },
+                valueRange = 0f..7f,
+                steps = 6,
+            )
+        }
+    }
+}
+
+/** Catalog genre chips (desktop Browse genre list): every selected genre must match. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DiscoverGenreFilter(
+    options: List<String>,
+    selected: List<String>,
+    onSelectedChange: (List<String>) -> Unit,
+) {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(MR.strings.discover_genres),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { onSelectedChange(emptyList()) }, enabled = selected.isNotEmpty()) {
+                Text(stringResource(MR.strings.clear))
+            }
+        }
+        Text(
+            text = stringResource(MR.strings.discover_genres_help),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { genre ->
+                val isSelected = genre in selected
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { onSelectedChange(if (isSelected) selected - genre else selected + genre) },
+                    label = { Text(genre) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/** The active genre filter above the Catalog grid; a tap removes that genre. */
+@Composable
+private fun SelectedGenres(genres: List<String>, onRemove: (String) -> Unit) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+        items(genres, key = { it }) { genre ->
+            InputChip(
+                selected = true,
+                onClick = { onRemove(genre) },
+                label = { Text(genre) },
+                trailingIcon = {
+                    Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(InputChipDefaults.IconSize))
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun DiscoverFilterRows(
     mode: DiscoverMode,
@@ -726,6 +882,11 @@ private fun CenteredBox(content: @Composable () -> Unit) {
 
 @Composable
 private fun CenteredMessage(text: String, onRetry: () -> Unit) {
+    CenteredMessage(text = text, actionLabel = stringResource(MR.strings.retry), onAction = onRetry)
+}
+
+@Composable
+private fun CenteredMessage(text: String, actionLabel: String, onAction: () -> Unit) {
     CenteredBox {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
             Text(
@@ -735,7 +896,7 @@ private fun CenteredMessage(text: String, onRetry: () -> Unit) {
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onRetry, shape = MaterialTheme.shapes.small) { Text(stringResource(MR.strings.retry)) }
+            Button(onClick = onAction, shape = MaterialTheme.shapes.small) { Text(actionLabel) }
         }
     }
 }

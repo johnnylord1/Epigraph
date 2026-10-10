@@ -92,7 +92,6 @@ fun SettingsScaffold(
         appBarActions = appBarActions,
         appBarScrollBehavior = if (useLargeAppBar) enterAlwaysCollapsedAppBarScrollBehavior(
             canScroll = { listState.canScrollForward || listState.canScrollBackward },
-            isAtTop = { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 },
         ) else null,
         textFieldState = textFieldState,
         searchResult = searchResult,
