@@ -49,7 +49,19 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   optimizeDeps: {
-    include: ["@tauri-apps/api/webviewWindow"],
+    // The novel runtime host window is the only page that loads the first five, and the book readers
+    // load the rest lazily. Discovered late, they trigger a re-optimization that answers the pending
+    // imports with 504s ("Failed to fetch dynamically imported module").
+    include: [
+      "@tauri-apps/api/webviewWindow",
+      "cheerio",
+      "htmlparser2",
+      "@noble/ciphers/aes.js",
+      "@noble/ciphers/utils.js",
+      "epubjs",
+      "jszip",
+      "pdfjs-dist",
+    ],
   },
   build: {
     target: ["es2021", "chrome100", "safari13"],

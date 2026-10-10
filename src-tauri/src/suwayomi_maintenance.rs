@@ -402,17 +402,27 @@ pub(crate) fn atomic_replace_file(from: &Path, to: &Path) -> std::io::Result<()>
 
     let from_w = win32_long_path(from)?;
     let to_w = win32_long_path(to)?;
-    let result = unsafe {
-        MoveFileExW(
-            from_w.as_ptr(),
-            to_w.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if result == 0 {
-        return Err(std::io::Error::last_os_error());
+    let mut attempt = 0;
+    loop {
+        let result = unsafe {
+            MoveFileExW(
+                from_w.as_ptr(),
+                to_w.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        // Access denied / sharing violation: another replace of the same file is still releasing
+        // it, or a scanner has it open for a moment. Both clear within milliseconds.
+        attempt += 1;
+        if attempt >= 6 || !matches!(error.raw_os_error(), Some(5) | Some(32)) {
+            return Err(error);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(15 * attempt));
     }
-    Ok(())
 }
 
 /// `MoveFileExW` receives raw paths, so unlike `std::fs` it fails with "path not found" once a

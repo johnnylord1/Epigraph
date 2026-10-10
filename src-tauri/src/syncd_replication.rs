@@ -2738,7 +2738,7 @@ fn materialize_book_snapshot(
             "book.entry" => {
                 let record = serde_json::from_value::<BookEntryRecord>(entity.record.clone())
                     .map_err(|error| error.to_string())?;
-                let local_asset_path = current
+                let local_entry = current
                     .books
                     .iter()
                     .find(|entry| {
@@ -2746,8 +2746,11 @@ fn materialize_book_snapshot(
                             || canonical_book_id_for_entry(entry).as_deref()
                                 == Some(record.book_id.as_str())
                     })
+                    .cloned();
+                let local_asset_path = local_entry
+                    .as_ref()
                     .and_then(|entry| value_string_field(entry, "assetPath"));
-                upsert_book_entry(&mut next, record, local_asset_path);
+                upsert_book_entry(&mut next, record, local_asset_path, local_entry);
             }
             "book.category" => upsert_book_category(
                 &mut next,
@@ -3406,7 +3409,7 @@ async fn apply_remote_envelopes(
                         .map_err(|error| error.to_string())?;
                     let asset_path =
                         materialize_book_entry_asset(asset_endpoint, &books_state, &record).await?;
-                    upsert_book_entry(&mut books_state, record, asset_path);
+                    upsert_book_entry(&mut books_state, record, asset_path, None);
                 } else {
                     delete_book_entry(&mut books_state, &envelope.entity_id);
                 }
@@ -4568,12 +4571,17 @@ fn upsert_book_entry(
     state: &mut PersistedBookLibraryState,
     record: BookEntryRecord,
     materialized_asset_path: Option<String>,
+    fallback_local_entry: Option<Value>,
 ) {
     let remote_book_id = record.book_id.clone();
-    let existing = state.books.iter().find(|entry| {
-        book_entry_entity_id(entry).as_deref() == Some(remote_book_id.as_str())
-            || canonical_book_id_for_entry(entry).as_deref() == Some(remote_book_id.as_str())
-    });
+    let existing = state
+        .books
+        .iter()
+        .find(|entry| {
+            book_entry_entity_id(entry).as_deref() == Some(remote_book_id.as_str())
+                || canonical_book_id_for_entry(entry).as_deref() == Some(remote_book_id.as_str())
+        })
+        .or(fallback_local_entry.as_ref());
     let book_id = existing
         .and_then(book_entry_entity_id)
         .unwrap_or(remote_book_id);
@@ -4588,7 +4596,7 @@ fn upsert_book_entry(
     let preserved_cover_url = existing
         .and_then(|entry| entry.get("coverUrl").cloned())
         .unwrap_or(Value::Null);
-    let next = json!({
+    let synced = json!({
         "id": book_id,
         "assetFingerprint": record.asset_fingerprint,
         "mimeType": record.mime_type,
@@ -4613,6 +4621,16 @@ fn upsert_book_entry(
         "sectionCount": record.section_count,
         "hasCover": record.has_cover,
     });
+    // Fields the Core does not carry (ISBNs, genres, the metadata backfill mark) belong to this
+    // desktop. Dropping them made every echo look like a book still waiting to be migrated, and
+    // the migration's own write echoed back again.
+    let mut next = existing
+        .filter(|entry| entry.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let (Some(target), Value::Object(fields)) = (next.as_object_mut(), synced) {
+        target.extend(fields);
+    }
     if let Some(index) = state
         .books
         .iter()
@@ -4691,7 +4709,7 @@ async fn materialize_snapshot_book_assets(
         let record = serde_json::from_value::<BookEntryRecord>(entity.record.clone())
             .map_err(|error| error.to_string())?;
         let asset_path = materialize_book_entry_asset(endpoint, state, &record).await?;
-        upsert_book_entry(state, record, asset_path);
+        upsert_book_entry(state, record, asset_path, None);
     }
     Ok(())
 }
@@ -9014,6 +9032,58 @@ mod tests {
             derive_comic_server_fingerprint(&tls, "main"),
             derive_comic_server_fingerprint(&tls, "secondary")
         );
+    }
+
+    #[test]
+    fn remote_book_entry_keeps_fields_only_this_desktop_tracks() {
+        let local = json!({
+            "id": "epub-local",
+            "title": "Old title",
+            "subtype": "epub",
+            "assetPath": "C:/books/local.epub",
+            "isbns": ["9780000000001"],
+            "genres": ["Fantasy"],
+            "metadataBackfillVersion": 2,
+        });
+        let record = BookEntryRecord {
+            book_id: "epub-local".to_string(),
+            asset_fingerprint: None,
+            mime_type: None,
+            byte_size: None,
+            cover_asset_sha256: None,
+            cover_asset_byte_size: None,
+            cover_asset_mime_type: None,
+            title: "New title".to_string(),
+            author: None,
+            description: None,
+            subtype: "epub".to_string(),
+            page_count: None,
+            toc_count: Some(3),
+            spine_count: Some(3),
+            section_count: None,
+            sections_summary_json: None,
+            has_cover: false,
+            created_at_ms: 1,
+            book_updated_at_ms: 2,
+            record_lamport: 3,
+        };
+
+        let mut live = PersistedBookLibraryState {
+            books: vec![local.clone()],
+            ..PersistedBookLibraryState::default()
+        };
+        upsert_book_entry(&mut live, record.clone(), None, None);
+        let mut restored = PersistedBookLibraryState::default();
+        upsert_book_entry(&mut restored, record, None, Some(local));
+
+        for state in [&live, &restored] {
+            let entry = &state.books[0];
+            assert_eq!(entry["title"], "New title");
+            assert_eq!(entry["assetPath"], "C:/books/local.epub");
+            assert_eq!(entry["isbns"], json!(["9780000000001"]));
+            assert_eq!(entry["genres"], json!(["Fantasy"]));
+            assert_eq!(entry["metadataBackfillVersion"], 2);
+        }
     }
 
     #[test]

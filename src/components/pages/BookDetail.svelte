@@ -21,6 +21,7 @@
     getBookProgress,
     openBookReader,
     removeBook,
+    replaceBookProgress,
     setActiveBookId,
     setBookProgress,
     store,
@@ -396,7 +397,7 @@
     if (!activeBook || !bookFileAvailable) return;
     closePreview();
     const pageNumber = activeBook.subtype === "pdf" ? section.pageNumber : null;
-    setBookProgress({
+    replaceBookProgress({
       bookId: activeBook.id,
       location: null,
       href: activeBook.subtype === "epub" ? section.href : null,

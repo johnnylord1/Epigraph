@@ -2760,6 +2760,7 @@
 
     const shouldListenToSyncdReplication =
       store.navPage === "settings" ||
+      store.navPage === "home" ||
       store.librarySection === "books" ||
       !!store.activeBookReaderId ||
       !!store.activeNovelReader ||
@@ -2771,6 +2772,7 @@
           const {
             listenSyncdReplicationError,
             listenSyncdReplicationState,
+            syncdGetReplicationState,
           } = await import("./lib/syncdDesktop");
           const replicationStateUnlisten = await listenSyncdReplicationState((payload) => {
             void handleReplicationState(payload);
@@ -2793,6 +2795,17 @@
           }
 
           syncdListenersAttached = true;
+
+          // Changes applied while nothing was listening (e.g. a phone sync while Home was open)
+          // only reach the store through this catch-up.
+          const profileId = store.runtimeResolvedLocalProfileId;
+          if (profileId) {
+            await syncdGetReplicationState(profileId)
+              .then((snapshot) => handleReplicationState(snapshot))
+              .catch((error) => {
+                console.warn("syncd replication catch-up failed:", error);
+              });
+          }
         })().finally(() => {
           syncdListenersPromise = null;
         });

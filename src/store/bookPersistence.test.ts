@@ -58,3 +58,15 @@ it("does not rewrite books state already on disk when the persist effect reruns 
   await settle();
   expect(saved.length).toBe(before + 1);
 });
+
+it("lets a picked chapter replace a precise position that a reader fallback could not overwrite", () => {
+  const precise = { bookId: "epub-jump", location: "epubcfi(/6/6!/4/2)", href: "ch3.xhtml", progressPercent: 0.8, lastReadAt: 100, sectionLabel: "Chapter 3", renderer: "epub" as const };
+  const picked = { bookId: "epub-jump", location: null, href: "ch1.xhtml", progressPercent: 0.1, lastReadAt: 200, sectionLabel: "Chapter 1", renderer: "epub" as const };
+  store.setBookProgress(precise);
+
+  store.setBookProgress(picked);
+  expect(store.getBookProgress("epub-jump")?.href).toBe("ch3.xhtml");
+
+  store.replaceBookProgress(picked);
+  expect(store.getBookProgress("epub-jump")).toMatchObject({ location: null, href: "ch1.xhtml", progressPercent: 0.1 });
+});

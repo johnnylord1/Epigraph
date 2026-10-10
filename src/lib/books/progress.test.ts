@@ -7,6 +7,7 @@ import {
   mergeBookProgress,
   normalizeBookBookmark,
   normalizeBookProgress,
+  parseReadiumLocator,
   resolveBookResumeTarget,
   resolveEpubDisplayTarget,
 } from "./progress";
@@ -192,6 +193,28 @@ describe("book progress precedence", () => {
       lastReadAt: 150,
       renderer: "epub",
     });
+  });
+
+  it("reads the chapter and depth from a position saved on the phone", () => {
+    const location = JSON.stringify({
+      href: "OEBPS/ch3.xhtml",
+      type: "application/xhtml+xml",
+      title: "Capitulo 3",
+      locations: { progression: 0.132, position: 21, totalProgression: 0.74 },
+    });
+    expect(parseReadiumLocator(location)).toEqual({ href: "OEBPS/ch3.xhtml", progression: 0.132 });
+    expect(resolveBookResumeTarget({
+      bookId: "book-1",
+      location,
+      href: null,
+      progressPercent: 0.74,
+      lastReadAt: 123,
+      renderer: "epub",
+    })).toBe("OEBPS/ch3.xhtml");
+    expect(parseReadiumLocator(JSON.stringify({ href: "c1.xhtml", locations: { fragments: ["note-2"] } })))
+      .toEqual({ href: "c1.xhtml#note-2", progression: null });
+    expect(parseReadiumLocator("epubcfi(/6/2)")).toBeNull();
+    expect(parseReadiumLocator("{not json")).toBeNull();
   });
 
   it("prefers the precise resume target when both precise and fallback values exist", () => {

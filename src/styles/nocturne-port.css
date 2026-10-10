@@ -3620,15 +3620,17 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 }
 
 /* Light Theme overrides specifically for Search Banners */
+/* The light themes swap these tokens (the "light" pill token is the dark ink),
+   so the pill stays dark with light text and a light rim, and reads on bright covers. */
 [data-theme="light"] .searchRecommendationCard .source-metric-pill,
 [data-theme="light-contrast"] .searchRecommendationCard .source-metric-pill {
-  background: color-mix(in srgb, var(--component-sources-metric-recommendation-dark-source) 75%, transparent);
-  border: 0.5cqw solid color-mix(in srgb, var(--color-shadow-source) 20%, transparent);
+  background: color-mix(in srgb, var(--component-sources-metric-recommendation-light-source) 82%, transparent);
+  border: 0.5cqw solid color-mix(in srgb, var(--component-sources-metric-recommendation-dark-source) 35%, transparent);
   box-shadow: 0 1cqw 3cqw color-mix(in srgb, var(--color-shadow-source) 15%, transparent);
 }
 [data-theme="light"] .searchRecommendationCard .source-metric-downloaded,
 [data-theme="light-contrast"] .searchRecommendationCard .source-metric-downloaded {
-  color: var(--color-highlight-source);
+  color: var(--component-sources-metric-recommendation-ink-source);
 }
 
 /* Nocturne success state theme override for Settings */

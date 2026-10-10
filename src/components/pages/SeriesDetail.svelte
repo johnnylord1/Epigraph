@@ -1,6 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
-  import { formatAppDate } from "../../lib/i18n/format";
+  import { currentAppLocale, formatAppDate } from "../../lib/i18n/format";
+  import { genreDisplayLabel } from "../../lib/recommendations/genreLabels";
   import { onMount, untrack } from "svelte";
   import { BookmarkSimple, Download, CheckCircle, Circle, ArrowSquareOut, CircleNotch, Play, SortAscending, SortDescending, CaretDown, ArrowsClockwise, ArrowsLeftRight, List, SquaresFour, FolderSimplePlus, Trash, DownloadSimple, X, LinkSimpleHorizontalBreak, ChartLineUp } from "phosphor-svelte";
   import { gql } from "../../lib/client";
@@ -905,6 +906,7 @@
     sourceLine={(manga?.source?.displayName ?? store.activeManga.source?.displayName) ? $_("detail.sourceLine", { source: manga?.source?.displayName ?? store.activeManga.source?.displayName }) : null}
     description={manga?.description ?? null}
     tags={manga?.genre ?? []}
+    tagLabel={(tag) => genreDisplayLabel(tag, currentAppLocale())}
     loading={loadingManga}
     progressLabel={totalCount > 0 ? $_("detail.progressRead", { read: readCount, total: totalCount }) : null}
     progressPercent={progressPct}

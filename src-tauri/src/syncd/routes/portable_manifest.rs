@@ -24,7 +24,8 @@ use crate::syncd::routes::{suwayomi_catalog, suwayomi_extensions};
 const PORTABLE_MANIFEST_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_PAGE_SIZE: i64 = 100;
 const MAX_PAGE_SIZE: i64 = 250;
-const MANIFEST_SNAPSHOT_TTL_MS: i64 = 2 * 60 * 1000;
+// A slow phone can spend minutes applying one page; an expired snapshot restarts the whole walk.
+const MANIFEST_SNAPSHOT_TTL_MS: i64 = 10 * 60 * 1000;
 const MAX_MANIFEST_SNAPSHOT_ITEMS: usize = 20_000;
 const MAX_MANIFEST_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_MANIFEST_SNAPSHOT_CACHE_BYTES: usize = 32 * 1024 * 1024;

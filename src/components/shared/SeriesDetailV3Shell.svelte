@@ -5,6 +5,7 @@
   import { ArrowLeft, BookOpen, Info } from "phosphor-svelte";
   import { SERVER_READY_EVENT } from "../../lib/serverLifecycle";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
+  import { store } from "../../store/state.svelte";
 
   type SeriesDetailMetric = {
     label: string;
@@ -31,6 +32,8 @@
     emptyDetailsLabel?: string;
     onBack?: () => void;
     onTagClick?: (tag: string) => void;
+    /** How a tag reads on screen; clicks still pass the tag as the source wrote it. */
+    tagLabel?: (tag: string) => string;
     onDetailsToggle?: () => void;
     topbarActions?: Snippet;
     primaryAction?: Snippet;
@@ -62,6 +65,7 @@
     emptyDetailsLabel = translate("detail_noExtraDetails"),
     onBack = () => {},
     onTagClick = () => {},
+    tagLabel = (tag: string) => tag,
     onDetailsToggle = () => {},
     topbarActions,
     primaryAction,
@@ -96,6 +100,13 @@
     const values = [statusLabel, ...tags].filter((value): value is string => hasRealText(value));
     return [...new Set(values.map((value) => value.trim()))].slice(0, 12);
   });
+  // Details open over the page they came from (Explore, Home...), and Back returns there.
+  const originLabel = $derived($_({
+    home: "shell.navigation.home",
+    search: "shell.navigation.browse",
+    downloads: "shell.navigation.downloads",
+    settings: "shell.navigation.settings",
+  }[store.navPage as string] ?? "shell.navigation.library"));
   const titleText = $derived(title?.trim() || $_("ui_untitled"));
   const subtitleText = $derived(hasRealText(subtitle) ? subtitle!.trim() : null);
   const sourceNameText = $derived(hasRealText(sourceLabel) ? sourceLabel!.trim() : hasRealText(languageLabel) ? languageLabel!.trim() : null);
@@ -125,7 +136,7 @@
         <ArrowLeft size={17} weight="light" />
       </button>
       <div class="crumbs">
-        <span>{$_("library_error_eyebrow")}</span>
+        <span>{originLabel}</span>
         <span class="crumb-sep">/</span>
         <strong>{titleText}</strong>
       </div>
@@ -181,7 +192,7 @@
           {#if visibleTags.length}
             <div class="tags">
               {#each visibleTags as tag, index}
-                <button class="tag" class:tag-strong={index === 0} type="button" onclick={() => onTagClick(tag)}>{tag}</button>
+                <button class="tag" class:tag-strong={index === 0} type="button" onclick={() => onTagClick(tag)}>{tagLabel(tag)}</button>
               {/each}
             </div>
           {/if}

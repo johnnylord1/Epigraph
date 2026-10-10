@@ -16,7 +16,7 @@ const {
   ),
   mockedCanRenderEmbeddedImage: vi.fn(async () => true),
   mockedCanRenderBookCoverPath: vi.fn(async () => true),
-  mockedParseEpubArchive: vi.fn(async (_buffer: ArrayBuffer, fallbackTitle: string) => ({
+  mockedParseEpubArchive: vi.fn(async (_buffer: ArrayBuffer, fallbackTitle: string): Promise<ParsedEpubBook> => ({
     title: fallbackTitle,
     author: null,
     description: null,
@@ -71,7 +71,7 @@ import {
   needsCanonicalBookMigration,
   toPersistedBookEntry,
 } from "./assets";
-import type { BookEntry } from "./types";
+import type { BookEntry, ParsedEpubBook } from "./types";
 
 beforeEach(() => {
   mockedReadFileAsArrayBuffer.mockClear();
@@ -394,6 +394,39 @@ describe("BookAssetResolver.ensureCanonicalBookEntry", () => {
       isbns: ["9780306406157"],
       metadataBackfillVersion: 2,
     });
+  });
+
+  it("rebuilds the section list from the file for a synced EPUB that only carries counts", async () => {
+    mockedParseEpubArchive.mockImplementationOnce(async (_buffer: ArrayBuffer, fallbackTitle: string) => ({
+      title: fallbackTitle,
+      author: null,
+      description: null,
+      genres: [],
+      isbns: [],
+      cover: null,
+      toc: [
+        { id: "t1", label: "Chapter 1", href: "OEBPS/ch1.xhtml", depth: 0 },
+        { id: "t2", label: "Chapter 2", href: "OEBPS/ch2.xhtml", depth: 0 },
+      ],
+      spine: [
+        { id: "s1", label: "ch1.xhtml", href: "OEBPS/ch1.xhtml" },
+        { id: "s2", label: "ch2.xhtml", href: "OEBPS/ch2.xhtml" },
+      ],
+    }));
+    const patch = await BookAssetResolver.ensureCanonicalBookEntry(
+      makeBook({
+        coverUrl: undefined,
+        toc: undefined,
+        spine: undefined,
+        sectionsSummary: [],
+        sectionCount: 2,
+        tocCount: 2,
+        spineCount: 2,
+      }),
+    );
+
+    expect(patch?.sectionsSummary?.map((item) => item.label)).toEqual(["Chapter 1", "Chapter 2"]);
+    expect(patch?.sectionCount).toBe(2);
   });
 
   it("migrates a legacy local book into the canonical asset model in one pass", async () => {

@@ -19,8 +19,12 @@ interface StorageLike {
 }
 
 function storageOrNull(): StorageLike | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage;
+  try {
+    if (typeof localStorage === "undefined") return null;
+    return localStorage;
+  } catch {
+    return null;
+  }
 }
 
 export function resolveNovelsProfileScope(input: {

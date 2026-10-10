@@ -53,6 +53,7 @@
   import type { HistoryEntry, LibrarySortDir, LibrarySortMode } from "../../store/state.svelte";
   import type { BookEntry, BookProgress } from "../../lib/books/types";
   import type { Manga, Category, Source, Tracker, Extension } from "../../lib/types";
+  import { summarizeReadingWeek } from "../../lib/history/week";
   import RecentActivity from "../layout/RecentActivity.svelte";
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
@@ -781,12 +782,9 @@
     start.setDate(start.getDate() - 6);
     return start.getTime();
   }
-  const thisWeekReadLog = $derived.by(() => {
-    const startMs = weekStartMs();
-    return (store.readLog ?? []).filter((entry) => entry.readAt >= startMs);
-  });
-  const thisWeekChapterCount = $derived(new Set(thisWeekReadLog.map((entry) => entry.chapterId)).size);
-  const thisWeekMinutes = $derived(thisWeekReadLog.reduce((sum, entry) => sum + (Number(entry.minutes) || 0), 0));
+  const thisWeekReading = $derived(summarizeReadingWeek(store.readLog ?? [], store.history, weekStartMs()));
+  const thisWeekChapterCount = $derived(thisWeekReading.chapterCount);
+  const thisWeekMinutes = $derived(thisWeekReading.minutes);
   const thisWeekSeriesCount = $derived.by(() => {
     const startMs = weekStartMs();
     const unique = new Set<string>();

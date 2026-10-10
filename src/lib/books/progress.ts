@@ -92,8 +92,33 @@ function precisionWeight(precision: BookProgressPrecision): number {
   }
 }
 
+export interface ReadiumLocatorPosition {
+  href: string;
+  /** Position inside the section, 0..1. */
+  progression: number | null;
+}
+
+/** The phone saves EPUB positions as Readium locators (JSON) instead of epub.js CFIs. */
+export function parseReadiumLocator(location: string | null | undefined): ReadiumLocatorPosition | null {
+  if (!location || !location.trimStart().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(location) as { href?: unknown; locations?: { progression?: unknown; fragments?: unknown } };
+    if (typeof parsed.href !== "string" || !parsed.href) return null;
+    const fragment = Array.isArray(parsed.locations?.fragments) && typeof parsed.locations.fragments[0] === "string"
+      ? parsed.locations.fragments[0]
+      : null;
+    const href = fragment && !parsed.href.includes("#") ? `${parsed.href}#${fragment}` : parsed.href;
+    const progression = readOptionalNumber(parsed.locations?.progression);
+    return { href, progression: progression === null ? null : Math.max(0, Math.min(1, progression)) };
+  } catch {
+    return null;
+  }
+}
+
 export function resolveBookResumeTarget(progress: BookProgress | null | undefined): string | null {
   if (!progress) return null;
+  const readium = parseReadiumLocator(progress.location);
+  if (readium) return readium.href;
   return progress.location ?? progress.href ?? null;
 }
 

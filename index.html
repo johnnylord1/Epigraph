@@ -291,6 +291,24 @@
         const bootSplash = document.getElementById("boot-splash");
         if (!bootSplash) return;
 
+        // Mirrors startup_initializing in messages/*.json; the app stores its locale on every language change.
+        try {
+          const bootMessages = {
+            "pt-BR": "Inicializando perfil",
+            es: "Inicializando perfil",
+            ja: "プロファイルを初期化中",
+            "zh-CN": "正在初始化配置",
+          };
+          const bootLocale = localStorage.getItem("epigraph.bootMessageLocale");
+          const bootValue = bootSplash.querySelector(".boot-splash__value");
+          if (bootValue && bootLocale && bootMessages[bootLocale]) {
+            bootValue.textContent = bootMessages[bootLocale];
+            document.documentElement.lang = bootLocale;
+          }
+        } catch {
+          // Storage can be unavailable; keep the English text.
+        }
+
         let dismissed = false;
         let fallbackTimer = null;
         let observer = null;

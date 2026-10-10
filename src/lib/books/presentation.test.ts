@@ -49,10 +49,19 @@ describe("presentBookWithCoverSrc", () => {
     expect(presented.coverSrc).toBe("book://cover");
     expect(presented.authorLabel).toBe("Author");
     expect(presented.sectionCount).toBe(10);
-    expect(presented.progressSummary).toBe("3 / 10 read");
-    expect(presented.progressValueLabel).toBe("3");
+    // Reading chapter 3: only the two chapters behind it are read.
+    expect(presented.progressSummary).toBe("2 / 10 read");
+    expect(presented.progressValueLabel).toBe("2");
     expect(presented.progressTotalLabel).toBe("/ 10 chapters");
     expect(presented.sectionCountLabel).toBe("10 chapters");
+  });
+
+  it("counts the chapter being read only once the book is finished", () => {
+    const lastChapter = { ...progress, href: "chapter-10.xhtml" };
+
+    expect(presentBookWithCoverSrc(book, { ...lastChapter, progressPercent: 0.9 }, null).readSectionCount).toBe(9);
+    expect(presentBookWithCoverSrc(book, { ...lastChapter, progressPercent: 0.99 }, null).readSectionCount).toBe(10);
+    expect(presentBookWithCoverSrc(book, { ...progress, href: "chapter-1.xhtml", progressPercent: 0.05 }, null).progressValueLabel).toBe("5%");
   });
 
   it("prefers page count labels for PDFs without outline sections", () => {
