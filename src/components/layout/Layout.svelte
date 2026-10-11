@@ -256,6 +256,10 @@
     const previous = previousNavPage;
     previousNavPage = page;
     if (previous === null || previous === page) return;
+    // Hidden pages are not marked inert: toggling inert restyles the whole page on every switch.
+    // content-visibility already keeps them out of the Tab order, so only a focus left behind needs to go.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.closest(`[data-keepalive-page="${previous}"]`)) focused.blur();
     if (leavingTimer) clearTimeout(leavingTimer);
     if (!isKeepAlivePage(previous) || !keptPages[previous] || prefersReducedMotion()) {
       leavingPage = null;
@@ -375,7 +379,6 @@
           class:is-leaving={leavingPage === key && navPage !== key}
           data-keepalive-page={key}
           aria-hidden={navPage !== key}
-          inert={navPage !== key}
         >
           <KeptPage
             {onOpenThemeEditor}
@@ -539,6 +542,9 @@
     min-width: 0;
     min-height: 0;
     position: relative;
+    /* Pages scroll inside themselves. Without the clip, a page rising in overflowed .main for the length of
+       its entrance: a scrollbar came and went, narrowing the Library grid and re-laying out every card twice. */
+    overflow: clip;
   }
 
   .page-keepalive:not(.is-active) {

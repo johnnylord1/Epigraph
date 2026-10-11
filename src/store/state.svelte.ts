@@ -1598,6 +1598,40 @@ const reconciledSavedBooks = reconcileBookIdentityState(
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Pages reload the library from cache each time they open; a reload that brings back the same data must
+ * not hand every kept-alive page a new snapshot, or each one recomputes its sections behind the page the
+ * user is opening.
+ */
+export function sameSnapshotData(a: unknown, b: unknown): boolean {
+  return untrack(() => sameData(a, b));
+}
+
+function isPlainRecord(value: object) {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index += 1) {
+      if (!sameData(a[index], b[index])) return false;
+    }
+    return true;
+  }
+  if (Array.isArray(b) || !isPlainRecord(a) || !isPlainRecord(b)) return false;
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!sameData((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) return false;
+  }
+  return true;
+}
+
 class Store {
   private navigationListeners = new Set<() => void>();
   navPage:           NavPage          = $state(normalizeNavPage(saved?.navPage));
@@ -2434,10 +2468,12 @@ class Store {
   setLibraryUpdateInFlight(next: boolean)      { this.libraryUpdateInFlight = next; }
   bumpLibraryCoverCacheGeneration()            { this.libraryCoverCacheGeneration += 1; }
   setCategories(cats: Category[])              {
-    this.categories = cats;
+    if (!sameSnapshotData(this.categories, cats)) this.categories = cats;
     cache.set(CACHE_KEYS.CATEGORIES, cats, CACHE_GROUPS.LIBRARY);
   }
-  setLibraryMangaSnapshot(next: Manga[])       { this.libraryMangaSnapshot = next; }
+  setLibraryMangaSnapshot(next: Manga[])       {
+    if (!sameSnapshotData(this.libraryMangaSnapshot, next)) this.libraryMangaSnapshot = next;
+  }
   setSearchNovelLibrarySnapshot(
     entries: PersistedNovelLibraryEntry[],
     chapters: PersistedNovelChapterEntry[],
@@ -2484,7 +2520,7 @@ class Store {
     if (trackingSummary !== null) this.libraryTrackingSummarySnapshot = trackingSummary;
   }
   setLibraryTrackingSummarySnapshot(next: TrackerCompletionTracker[]) {
-    this.libraryTrackingSummarySnapshot = next;
+    if (!sameSnapshotData(this.libraryTrackingSummarySnapshot, next)) this.libraryTrackingSummarySnapshot = next;
     cache.set(CACHE_KEYS.LIBRARY_TRACKING_SUMMARY, next, CACHE_GROUPS.LIBRARY);
   }
   setActiveDownloads(next: ActiveDownload[])     { this.activeDownloads = next; }
