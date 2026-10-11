@@ -712,7 +712,7 @@ body.epigraph-search-engaged .n-topbar .n-search .n-search__icon {
 
 body.epigraph-search-engaged .n-topbar .n-search .n-search__input {
   border-color: var(--component-search-border-focus) !important;
-  box-shadow: none !important;
+  box-shadow: inset 0 0 0 1.5px var(--component-search-ring-focus) !important;
 }
 
 /* Page-entry animations already end at the component's base styles. Keeping
@@ -828,9 +828,10 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   background: var(--component-nav-item-active-bg);
   pointer-events: none;
   z-index: 0;
+  will-change: transform;
   transition:
-    transform 650ms var(--ui-spring),
-    opacity 250ms ease;
+    transform 460ms var(--ui-spring),
+    opacity 200ms ease;
 }
 
 .n-sidebar__indicator.is-hidden {
@@ -889,9 +890,14 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   transform: translateY(-1px) scale(1.08);
 }
 
+.n-sidebar-btn:active {
+  background: var(--component-nav-item-press-bg);
+  transition-duration: 60ms;
+}
+
 .n-sidebar-btn:active .n-icon {
   transform: scale(0.84);
-  transition-duration: 120ms;
+  transition-duration: 90ms;
 }
 
 .n-sidebar-btn.is-active {
@@ -1054,11 +1060,37 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   height: var(--shell-search-height);
   border-radius: calc(12px * var(--hud-scale));
   transition:
-    width 560ms var(--ui-out),
-    box-shadow 480ms var(--ui-out);
+    width 220ms var(--ui-out),
+    box-shadow 240ms var(--ui-out);
   z-index: 52;
   margin: 0 auto;
+  cursor: text;
   -webkit-app-region: no-drag;
+}
+
+/* Shortcut hint at the end of a resting, empty field: says what the field is and how to reach it
+   without the mouse. Gone as soon as the field is focused or holds a query. */
+.n-topbar .n-search::before {
+  content: var(--shell-search-shortcut-label);
+  position: absolute;
+  right: calc(10px * var(--hud-scale));
+  top: 50%;
+  z-index: 1;
+  padding: calc(2px * var(--hud-scale)) calc(6px * var(--hud-scale));
+  border-radius: calc(6px * var(--hud-scale));
+  background: var(--component-search-kbd-bg);
+  color: var(--component-search-kbd-fg);
+  font-size: calc(11px * var(--hud-scale));
+  font-weight: 600;
+  line-height: 1.4;
+  transform: translateY(-50%);
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+
+.n-topbar .n-search:focus-within::before,
+.n-topbar .n-search:has(.n-search__input:not(:placeholder-shown))::before {
+  opacity: 0;
 }
 
 /* The focus underline grows from where the field was clicked. */
@@ -1073,7 +1105,7 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent) 80%, transparent);
   transform: scaleX(0);
   transform-origin: var(--fr-origin, 50%) 50%;
-  transition: transform 640ms var(--ui-out);
+  transition: transform 200ms var(--ui-out);
   pointer-events: none;
   z-index: 2;
 }
@@ -1100,7 +1132,11 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   font-size: var(--shell-search-icon-size);
   pointer-events: none;
   z-index: 1;
-  transition: color 260ms ease, opacity 260ms ease, transform 520ms var(--ui-spring);
+  transition: color 120ms ease, opacity 120ms ease, transform 360ms var(--ui-spring);
+}
+
+.n-search:hover .n-search__icon {
+  color: var(--component-search-icon-hover-fg);
 }
 
 .n-search:focus-within:not(.is-search-focus-restored) .n-search__icon {
@@ -1119,12 +1155,15 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 .n-search:focus-within:not(.is-search-focus-restored) .n-search__input {
   background: var(--component-search-bg) !important;
-  box-shadow: none !important;
+  box-shadow: inset 0 0 0 1.5px var(--component-search-ring-focus) !important;
 }
 
+/* Focus handed back after the palette closes keeps the caret without engaging the search; a soft
+   accent ring still shows where typing goes. */
 .n-search.is-search-focus-restored .n-search__input:focus,
 .n-search.is-search-focus-restored .n-search__input:focus-visible {
   outline: none;
+  box-shadow: inset 0 0 0 1px var(--component-search-ring-restored) !important;
 }
 
 .n-search__input {
@@ -1141,9 +1180,17 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   font-weight: 500;
   letter-spacing: 0;
   outline: none;
-  box-shadow: none;
-  transition: background 300ms ease;
+  box-shadow: inset 0 0 0 1px var(--component-search-ring);
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
   -webkit-app-region: no-drag;
+}
+
+/* The field answers the pointer like every other control: a stronger surface and edge on hover. */
+.n-search:hover:not(:focus-within) .n-search__input {
+  background: var(--component-search-bg-hover) !important;
+  box-shadow: inset 0 0 0 1px var(--component-search-ring-hover);
 }
 
 .n-topbar button,
@@ -1161,12 +1208,12 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 .n-search__input::placeholder {
   color: var(--component-search-placeholder-fg);
   font-weight: 400;
-  transition: opacity 450ms ease, transform 700ms var(--ui-out);
+  transition: opacity 160ms ease, transform 240ms var(--ui-out);
 }
 
 .n-search__input:focus::placeholder {
-  opacity: 0.45;
-  transform: translateX(6px);
+  opacity: 0.8;
+  transform: translateX(4px);
 }
 
 /* Pages kept alive in the background share the engaged selectors; their hidden fields snap instead
@@ -1495,6 +1542,13 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   color: var(--accent-fg);
 }
 
+.n-pill.is-active:hover,
+.n-chip.is-active:hover,
+.n-genre-chip.is-active:hover {
+  background: var(--component-chip-active-hover-bg);
+  color: var(--accent-fg);
+}
+
 .n-pill:active,
 .n-chip:active,
 .n-genre-chip:active {
@@ -1525,7 +1579,23 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 .n-inline-segmented:has(> .n-segmented__thumb) > .n-inline-segment {
   border-radius: 9999px;
   padding: 0 calc(16px * var(--hud-scale));
-  transition: color 350ms ease;
+  transition:
+    color 180ms ease,
+    background 120ms ease,
+    transform 360ms var(--ui-spring);
+}
+
+/* The free half lights up under the pointer and both halves sink on press, so the switch answers
+   before the thumb arrives. */
+.n-segmented:has(> .n-segmented__thumb) > .n-segmented__btn:hover:not(.is-active),
+.n-inline-segmented:has(> .n-segmented__thumb) > .n-inline-segment:hover:not(.is-selected) {
+  background: var(--component-segmented-hover-bg);
+}
+
+.n-segmented:has(> .n-segmented__thumb) > .n-segmented__btn:active,
+.n-inline-segmented:has(> .n-segmented__thumb) > .n-inline-segment:active {
+  transform: scale(0.95);
+  transition-duration: 180ms, 60ms, 90ms;
 }
 
 .n-segmented:has(> .n-segmented__thumb) > .n-segmented__btn.is-active,
@@ -1543,7 +1613,8 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   border-radius: 9999px;
   background: var(--accent);
   box-shadow: none;
-  transition: transform 600ms var(--ui-spring);
+  will-change: transform;
+  transition: transform 440ms var(--ui-spring);
   pointer-events: none;
   z-index: 0;
 }
@@ -1585,6 +1656,11 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 .n-library-card:hover {
   transform: translateY(-2px);
+}
+
+.n-library-card:active {
+  transform: translateY(0) scale(0.975);
+  transition-duration: 90ms;
 }
 
 .n-library-card__cover {

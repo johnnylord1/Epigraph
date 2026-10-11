@@ -1,7 +1,7 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { arrive, enterView, playEnter } from "../../lib/motion/motion";
+  import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
@@ -744,6 +744,19 @@
   function openRepoManagerFlow() {
     activeBrowseTab = "source";
     setExtensionsPanelHint("repos");
+  }
+
+  // The switch thumb moves in the click's frame; the catalogue swap renders after it paints.
+  let pendingContentType = $state<"manga" | "novels" | null>(null);
+  const shownContentType = $derived(pendingContentType ?? activeContentType);
+
+  function pickContentType(next: "manga" | "novels") {
+    if (shownContentType === next) return;
+    pendingContentType = next;
+    afterPaint(() => {
+      selectContentType(next);
+      if (pendingContentType === next) pendingContentType = null;
+    });
   }
 
   function selectContentType(next: "manga" | "novels") {
@@ -5205,21 +5218,21 @@
 <div class="root" class:root--embedded={presentation === "embedded"} bind:this={browseRoot}>
   <AppTopbar className="browse-topbar">
     {#snippet left()}
-      <nav class="n-segmented" data-active={activeContentType === "novels" ? "novels" : "manga"} aria-label={$_("browse.contentType")}>
+      <nav class="n-segmented" data-active={shownContentType === "novels" ? "novels" : "manga"} aria-label={$_("browse.contentType")}>
         <span class="n-segmented__thumb" aria-hidden="true"></span>
         <button
           type="button"
           class="n-segmented__btn"
-          class:is-active={activeContentType === "manga"}
-          onclick={() => selectContentType("manga")}
+          class:is-active={shownContentType === "manga"}
+          onclick={() => pickContentType("manga")}
         >
           {$_("common.comics")}
         </button>
         <button
           type="button"
           class="n-segmented__btn"
-          class:is-active={activeContentType === "novels"}
-          onclick={() => selectContentType("novels")}
+          class:is-active={shownContentType === "novels"}
+          onclick={() => pickContentType("novels")}
         >
           {$_("common.books")}
         </button>

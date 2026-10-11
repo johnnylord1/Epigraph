@@ -681,6 +681,10 @@ vi.mock("../../lib/novels/libraryState", () => ({
 import BrowseV3 from "./BrowseV3.svelte";
 import { openMangaDetail as openMangaDetailMock, store as browseStore } from "../../store/state.svelte";
 
+/** The content-type switch commits after the click's frame paints (the thumb moves first). */
+const afterContentTypeCommit = () =>
+  new Promise<void>((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+
 describe("BrowseV3", () => {
   beforeEach(() => {
     gqlMock.mockClear();
@@ -1345,6 +1349,7 @@ describe("BrowseV3", () => {
     expect(screen.getByPlaceholderText("Filter Discover...")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Books" }));
+    await afterContentTypeCommit();
 
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: /All sources/i }).length).toBeGreaterThan(0);
@@ -1357,6 +1362,7 @@ describe("BrowseV3", () => {
     expect(screen.getByPlaceholderText("Filter Discover...")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Comics" }));
+    await afterContentTypeCommit();
 
     await waitFor(() => {
       expect(screen.getAllByRole("button", { name: /All sources/i }).length).toBeGreaterThan(0);

@@ -404,13 +404,21 @@
   --component-topbar-search-content-z-index: 540;
   --component-search-shadow-focus:
     0 18px 44px -20px color-mix(in srgb, var(--color-shadow-source) 70%, transparent);
-  --component-search-icon-fg: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+  --component-search-icon-fg: color-mix(in srgb, var(--text-secondary) 60%, transparent);
+  --component-search-icon-hover-fg: color-mix(in srgb, var(--text-secondary) 85%, transparent);
   --component-search-icon-focus-fg: var(--accent-bright);
   --component-search-border: color-mix(in srgb, var(--text-secondary) 8%, transparent);
   --component-search-border-focus: color-mix(in srgb, var(--accent-bright) 68%, transparent);
   --component-search-bg: color-mix(in srgb, var(--color-search-field-surface-source) 80%, transparent);
+  --component-search-bg-hover: color-mix(in srgb, var(--color-search-field-surface-source) 90%, var(--text-primary));
+  --component-search-ring: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  --component-search-ring-hover: color-mix(in srgb, var(--text-secondary) 34%, transparent);
+  --component-search-ring-focus: color-mix(in srgb, var(--accent-bright) 75%, transparent);
+  --component-search-ring-restored: color-mix(in srgb, var(--accent-bright) 42%, transparent);
+  --component-search-kbd-bg: color-mix(in srgb, var(--text-secondary) 8%, transparent);
+  --component-search-kbd-fg: color-mix(in srgb, var(--text-secondary) 55%, transparent);
   --component-search-fg: var(--text-primary);
-  --component-search-placeholder-fg: color-mix(in srgb, var(--text-secondary) 40%, transparent);
+  --component-search-placeholder-fg: color-mix(in srgb, var(--text-secondary) 62%, transparent);
   --component-toolbar-icon-bg: transparent;
   --component-toolbar-icon-bg-hover: var(--ui-surface-strong);
   --component-toolbar-icon-bg-active: color-mix(in srgb, var(--accent-bright) 10%, transparent);

@@ -24,6 +24,7 @@ describe("LibraryHeader", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: /Books/i }));
 
-    expect(onSectionChange).toHaveBeenCalledWith("books");
+    // The thumb moves first; the section change follows once that frame has painted.
+    await vi.waitFor(() => expect(onSectionChange).toHaveBeenCalledWith("books"));
   });
 });

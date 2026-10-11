@@ -13,7 +13,7 @@ const EXPECTED_FAMILY_COUNTS = {
   browse: 444,
   button: 3,
   card: 3,
-  chip: 1,
+  chip: 2,
   detail: 255,
   downloads: 137,
   focus: 1,
@@ -26,13 +26,14 @@ const EXPECTED_FAMILY_COUNTS = {
   migrate: 2,
   migration: 58,
   modal: 4,
-  nav: 15,
+  nav: 16,
   "nocturne-state": 126,
   novel: 1,
   overlay: 1,
   popover: 11,
   reader: 168,
-  search: 9,
+  search: 17,
+  segmented: 1,
   settings: 109,
   sidebar: 8,
   soft: 1,
@@ -212,9 +213,9 @@ describe("exhaustive component theme inventory", () => {
   const scoped = inventory.entries;
 
   test("classifies every definition without inferring dead tokens", () => {
-    expect(inventory.entries).toHaveLength(2598);
-    expect(scoped).toHaveLength(2598);
-    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2564);
+    expect(inventory.entries).toHaveLength(2609);
+    expect(scoped).toHaveLength(2609);
+    expect(scoped.filter(({ status }) => status === "Active")).toHaveLength(2575);
     expect(scoped.filter(({ status }) => status === "Legacy")).toHaveLength(34);
     expect(inventory.entries.every(({ status }) => ["Active", "Legacy"].includes(status))).toBe(true);
     expect(inventory.entries.some(({ status }) => (status as string) === "Dead")).toBe(false);
@@ -227,8 +228,8 @@ describe("exhaustive component theme inventory", () => {
         .map(([family, entries]) => [family, entries.length]),
     );
     expect(families).toEqual(EXPECTED_FAMILY_COUNTS);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2340);
-    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(258);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback+nocturne")).toHaveLength(2348);
+    expect(scoped.filter(({ layers }) => layers.join("+") === "fallback")).toHaveLength(261);
     expect(scoped.filter(({ layers }) => layers.join("+") === "nocturne")).toHaveLength(0);
   });
 
@@ -239,7 +240,7 @@ describe("exhaustive component theme inventory", () => {
     const unconsumed = legacy.filter(({ consumption }) => consumption === "none");
     const dynamic = scoped.filter(({ consumption }) => consumption === "dynamic");
 
-    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2547);
+    expect(active.filter(({ consumption }) => consumption === "static")).toHaveLength(2558);
     expect(active.filter(({ consumption }) => consumption === "dynamic")).toHaveLength(1);
     expect(active.filter(({ consumption }) => consumption === "transitive")).toHaveLength(16);
     expect(legacyOnly).toHaveLength(0);

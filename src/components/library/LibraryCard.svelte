@@ -513,6 +513,11 @@
     transform: translateY(-2px);
   }
 
+  .card.n-library-card:active {
+    transform: scale(0.975);
+    transition-duration: 90ms;
+  }
+
   .card-list {
     display: grid;
     grid-template-columns: calc(76px * var(--component-library-scale, 1)) minmax(0, 1fr);

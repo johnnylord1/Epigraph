@@ -3,6 +3,7 @@
   import splashMark from "../../assets/epigraph-splash-mark.png";
   import { store, setNavPage, setSettingsOpen, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
+  import { afterPaint } from "../../lib/motion/motion";
 
   const MAIN_TABS: Array<{ id: Exclude<NavPage, "settings">; labelKey: string }> = [
     { id: "home", labelKey: "shell.navigation.home" },
@@ -19,7 +20,7 @@
   };
 
   function sidebarIcon(id: Exclude<NavPage, "settings"> | "settings") {
-    return store.navPage === id ? SIDEBAR_ICONS[id].active : SIDEBAR_ICONS[id].idle;
+    return shownNav === id ? SIDEBAR_ICONS[id].active : SIDEBAR_ICONS[id].idle;
   }
 
   const activeDownloadCount = $derived(
@@ -31,8 +32,25 @@
   const hasDownloadActivity = $derived(activeDownloadCount > 0);
   const hasDownloadError = $derived(!hasDownloadActivity && failedDownloadCount > 0);
 
+  // The pressed destination lights up in the click's frame; the page swap (a heavy render) waits
+  // for that frame to paint so the highlight glides instead of jumping after the render.
+  let pendingNav = $state<NavPage | null>(null);
+  const shownNav = $derived(pendingNav ?? store.navPage);
+
+  function commitNav(id: NavPage, commit: () => void) {
+    if (pendingNav === id || (pendingNav === null && store.navPage === id)) {
+      commit();
+      return;
+    }
+    pendingNav = id;
+    afterPaint(() => {
+      commit();
+      if (pendingNav === id) pendingNav = null;
+    });
+  }
+
   function navigate(id: Exclude<NavPage, "settings">) {
-    setNavPage(id);
+    commitNav(id, () => setNavPage(id));
   }
 
   function goHome() {
@@ -44,7 +62,7 @@
   let navElement = $state<HTMLElement>();
   let indicatorOffset = $state<number | null>(null);
   $effect(() => {
-    const page = store.navPage;
+    const page = shownNav;
     const nav = navElement;
     if (!nav) return;
     const measure = () => {
@@ -80,7 +98,7 @@
     {#each MAIN_TABS as tab}
     <button
       class="n-sidebar-btn"
-      class:is-active={store.navPage === tab.id}
+      class:is-active={shownNav === tab.id}
       class:download-active={tab.id === "downloads" && hasDownloadActivity}
       class:download-error={tab.id === "downloads" && hasDownloadError}
       data-nav-id={tab.id}
@@ -102,12 +120,12 @@
   <div class="n-sidebar__footer">
     <button
       class="n-sidebar-btn"
-      class:is-active={store.navPage === "settings"}
+      class:is-active={shownNav === "settings"}
       data-nav-id="settings"
       data-tooltip={$_("shell.navigation.settings")}
       type="button"
       aria-label={$_("shell.navigation.settings")}
-      onclick={() => setSettingsOpen(true)}
+      onclick={() => commitNav("settings", () => setSettingsOpen(true))}
     >
       <span class="n-icon material-symbols-outlined" aria-hidden="true">{sidebarIcon("settings")}</span>
     </button>

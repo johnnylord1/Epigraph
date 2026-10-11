@@ -2999,6 +2999,18 @@
     }
   }
 
+  // Ctrl+K (Cmd+K on macOS) jumps to the search field of the page on screen.
+  function handleSearchShortcut(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "k") return;
+    if (hasActiveReaderCommandScope() || document.querySelector('[aria-modal="true"]')) return;
+    const input = [...document.querySelectorAll<HTMLInputElement>(".n-search__input")]
+      .find((field) => field.getClientRects().length > 0 && !field.closest("[inert]"));
+    if (!input) return;
+    e.preventDefault();
+    input.focus();
+    input.select();
+  }
+
   async function exitFullscreen() {
     if (!win) return;
     await win.setFullscreen(false).catch((error) => {
@@ -3035,6 +3047,14 @@
   $effect(() => {
     window.addEventListener("keydown", handleZoomKey);
     return () => window.removeEventListener("keydown", handleZoomKey);
+  });
+
+  $effect(() => {
+    if (/mac/i.test(navigator.platform)) {
+      document.documentElement.style.setProperty("--shell-search-shortcut-label", '"⌘ K"');
+    }
+    window.addEventListener("keydown", handleSearchShortcut);
+    return () => window.removeEventListener("keydown", handleSearchShortcut);
   });
 
   $effect(() => {

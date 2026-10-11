@@ -173,6 +173,15 @@ export function countUp(node: HTMLElement, value: number) {
   };
 }
 
+/**
+ * Runs `commit` once the current frame has painted. Callers flip a cheap visual state first (a
+ * highlight or thumb starting its transform transition) and defer the heavy page change here, so
+ * the motion is already on the compositor when the render blocks the main thread.
+ */
+export function afterPaint(commit: () => void) {
+  requestAnimationFrame(() => setTimeout(commit, 0));
+}
+
 /** Controls that answer a press with a ripple. */
 const PRESSABLE = [
   ".fr-btn", ".fr-link", ".fr-card",

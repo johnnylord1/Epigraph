@@ -1275,15 +1275,22 @@
     pendingGenreClickLabel = getGenreButtonLabel(event.target);
     genreDragStartX = event.clientX;
     genreDragStartScrollLeft = genreScrollEl.scrollLeft;
-    genreScrollEl.setPointerCapture(event.pointerId);
   }
 
   function handleGenrePointerMove(event: PointerEvent) {
     if (!genreDragActive || !genreScrollEl) return;
+    // Released outside the row before a drag started (no capture yet): drop the stale press.
+    if (event.buttons === 0) {
+      genreDragActive = false;
+      pendingGenreClickLabel = null;
+      return;
+    }
     const delta = event.clientX - genreDragStartX;
     if (Math.abs(delta) > 4) {
       suppressNextGenreClick = true;
       pendingGenreClickLabel = null;
+      // Capture only once a drag begins, so a plain press keeps the chip's hover and pressed look.
+      if (!genreScrollEl.hasPointerCapture(event.pointerId)) genreScrollEl.setPointerCapture(event.pointerId);
     }
     genreScrollEl.scrollLeft = genreDragStartScrollLeft - delta;
   }
