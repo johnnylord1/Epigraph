@@ -10,7 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
-  import { enterView, prefersReducedMotion } from "../../lib/motion/motion";
+  import { enterView } from "../../lib/motion/motion";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -78,8 +78,6 @@
     return page !== null && (KEEP_ALIVE_PAGES as readonly string[]).includes(page);
   }
   let keptPages = $state<Partial<Record<KeepAlivePage, any>>>({});
-  let leavingPage = $state<KeepAlivePage | null>(null);
-  let leavingTimer: ReturnType<typeof setTimeout> | null = null;
   let previousNavPage: PageKey | null = null;
   const libraryComponent = $derived(keptPages.library ?? null);
   let pageComponent = $state<any>(null);
@@ -249,8 +247,9 @@
     void loadPage(nextPage);
   });
 
-  // The page being left fades out on top while the next one rises in (keep-alive pages only: the
-  // others are already gone). Purely visual; input goes to the new page at once.
+  // The page being left disappears at once; only the next one animates in. A fade-out overlay used to
+  // play on top, but ending it re-locked that page and restyled ~2,000 elements in the middle of the
+  // entrance, which was most of the stutter when switching pages.
   $effect(() => {
     const page = navPage;
     const previous = previousNavPage;
@@ -260,16 +259,6 @@
     // content-visibility already keeps them out of the Tab order, so only a focus left behind needs to go.
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused.closest(`[data-keepalive-page="${previous}"]`)) focused.blur();
-    if (leavingTimer) clearTimeout(leavingTimer);
-    if (!isKeepAlivePage(previous) || !keptPages[previous] || prefersReducedMotion()) {
-      leavingPage = null;
-      return;
-    }
-    leavingPage = previous;
-    leavingTimer = setTimeout(() => {
-      leavingTimer = null;
-      leavingPage = null;
-    }, 200);
   });
 
   $effect(() => {
@@ -376,7 +365,6 @@
         <div
           class="page-keepalive"
           class:is-active={navPage === key}
-          class:is-leaving={leavingPage === key && navPage !== key}
           data-keepalive-page={key}
           aria-hidden={navPage !== key}
         >
@@ -559,16 +547,6 @@
     pointer-events: none;
     overflow: hidden;
     contain: layout paint style;
-  }
-
-  .page-keepalive.is-leaving:not(.is-active) {
-    content-visibility: visible;
-    animation: pageLeave 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
-  }
-
-  @keyframes pageLeave {
-    from { opacity: 1; transform: none; filter: blur(0); }
-    to { opacity: 0; transform: translateY(-8px) scale(0.99); filter: blur(4px); }
   }
 
   .detail-layer {
