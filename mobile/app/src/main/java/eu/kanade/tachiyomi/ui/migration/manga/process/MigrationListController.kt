@@ -24,6 +24,7 @@ import eu.kanade.tachiyomi.smartsearch.SmartSearchEngine
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.ui.base.SmallToolbarInterface
 import eu.kanade.tachiyomi.ui.base.controller.BaseLegacyController
@@ -142,7 +143,7 @@ class MigrationListController(bundle: Bundle? = null) :
         val useSourceWithMost = preferences.useSourceWithMost().get()
 
         val sources = preferences.migrationSources().get().split("/").mapNotNull {
-            val value = it.toLongOrNull() ?: return
+            val value = it.toLongOrNull() ?: return@mapNotNull null
             sourceManager.get(value) as? CatalogueSource
         }
         if (config == null) return
@@ -168,10 +169,12 @@ class MigrationListController(bundle: Bundle? = null) :
 
                             val result = try {
                                 CoroutineScope(manga.migrationJob).async {
-                                    val validSources = if (sources.size == 1) {
-                                        sources
+                                    // The saved list holds comic and novel picks alike.
+                                    val kindSources = sources.filter { it.isNovelSource() == mangaSource.isNovelSource() }
+                                    val validSources = if (kindSources.size == 1) {
+                                        kindSources
                                     } else {
-                                        sources.filter { it.id != mangaSource.id }
+                                        kindSources.filter { it.id != mangaSource.id }
                                     }
                                     if (useSourceWithMost) {
                                         val sourceSemaphore = Semaphore(3)
@@ -345,7 +348,7 @@ class MigrationListController(bundle: Bundle? = null) :
                     val sources = preferences.migrationSources().get().split("/").mapNotNull {
                         val value = it.toLongOrNull() ?: return@mapNotNull null
                         sourceManager.get(value) as? CatalogueSource
-                    }
+                    }.filter { it.isNovelSource() == sourceManager.getOrStub(manga.source).isNovelSource() }
                     val validSources = if (sources.size == 1) {
                         sources
                     } else {
