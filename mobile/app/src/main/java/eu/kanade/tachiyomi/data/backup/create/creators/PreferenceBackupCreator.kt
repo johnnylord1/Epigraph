@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.backup.create.creators
 import yokai.util.koin.get
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.data.backup.BackupPreferencePolicy
 import eu.kanade.tachiyomi.data.backup.BackupSecretPolicy
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
@@ -24,7 +25,11 @@ class PreferenceBackupCreator(
     private val preferenceStore: PreferenceStore = get(),
 ) {
     fun createApp(): List<BackupPreference> {
-        return preferenceStore.getAll().toBackupPreferences()
+        val origin = BackupPreference(
+            BackupPreferencePolicy.ORIGIN_KEY,
+            StringPreferenceValue(BackupPreferencePolicy.ORIGIN_VALUE),
+        )
+        return preferenceStore.getAll().toBackupPreferences() + origin
     }
 
     fun createSource(): List<BackupSourcePreferences> {
@@ -40,7 +45,9 @@ class PreferenceBackupCreator(
 
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> {
-        return this.filterKeys { !Preference.isAppState(it) && !BackupSecretPolicy.isSecret(it) }
+        return this.filterKeys {
+            !Preference.isAppState(it) && !BackupSecretPolicy.isSecret(it) && !BackupPreferencePolicy.isDeviceOnly(it)
+        }
             .mapNotNull { (key, value) ->
                 // j2k fork differences
                 if (key == "library_sorting_mode" && value is Int) {

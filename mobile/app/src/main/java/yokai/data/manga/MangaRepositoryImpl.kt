@@ -55,8 +55,10 @@ class MangaRepositoryImpl(
     override suspend fun getLibraryManga(): List<LibraryManga> =
         handler.awaitList { library_viewQueries.findAll(LibraryManga::mapper) }
 
+    // The library view joins every chapter; a restore or sync writing thousands of titles
+    // must not run it again for each one.
     override fun getLibraryMangaAsFlow(): Flow<List<LibraryManga>> =
-        handler.subscribeToList { library_viewQueries.findAll(LibraryManga::mapper) }
+        handler.subscribeToListThrottled(LIBRARY_REFRESH_MILLIS) { library_viewQueries.findAll(LibraryManga::mapper) }
 
     override suspend fun getDuplicateFavorite(title: String, source: Long): Manga? =
         handler.awaitFirstOrNull { mangasQueries.findDuplicateFavorite(title.lowercase(), source, Manga::mapper) }
@@ -257,3 +259,6 @@ class MangaRepositoryImpl(
         }
     }
 }
+
+/** How often the library query may run again while a restore or sync keeps writing. */
+private const val LIBRARY_REFRESH_MILLIS = 1_000L
