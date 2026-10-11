@@ -842,8 +842,11 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   z-index: 1;
 }
 
+/* The indicator is the only highlight: the destination drops its hover fill at once instead of
+   fading it out while the indicator slides in, which read as two squares. */
 .n-sidebar__nav .n-sidebar-btn.is-active {
   background: transparent;
+  transition-property: color, transform;
 }
 
 .n-sidebar__nav .n-sidebar-btn.is-active::before {
@@ -888,11 +891,6 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 .n-sidebar-btn:hover .n-icon {
   transform: translateY(-1px) scale(1.08);
-}
-
-.n-sidebar-btn:active {
-  background: var(--component-nav-item-press-bg);
-  transition-duration: 60ms;
 }
 
 .n-sidebar-btn:active .n-icon {

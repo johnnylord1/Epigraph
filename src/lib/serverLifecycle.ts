@@ -6,6 +6,9 @@ export const SERVER_READY_EVENT = "epigraph:server-ready";
 const SERVER_READY_NOTIFY_DEBOUNCE_MS = 10_000;
 
 let lastReadyNotification: { serverUrl: string; at: number } | null = null;
+// Servers already announced since they were last seen down. A wake that finds one of them still answering
+// has nothing new to announce: re-announcing made every visit to Browse reload its whole catalog.
+const serversKnownReady = new Set<string>();
 
 async function resetManagedSourceRuntimeCache() {
   const { resetManagedSourceRuntime } = await import("./manga/runtime/managed");
@@ -33,6 +36,7 @@ export interface ServerLifecycleInput {
 
 export function notifyServerReady(serverUrl: string | null | undefined) {
   if (!serverUrl || typeof window === "undefined") return;
+  serversKnownReady.add(serverUrl);
   const now = Date.now();
   if (
     lastReadyNotification?.serverUrl === serverUrl
@@ -120,9 +124,10 @@ async function wakeServer(
   input: ServerLifecycleInput,
 ) {
   if (await probeServerHealth(serverUrl)) {
-    notifyServerReady(serverUrl);
+    if (!serversKnownReady.has(serverUrl)) notifyServerReady(serverUrl);
     return true;
   }
+  serversKnownReady.delete(serverUrl);
   if (!isLoopbackServerUrl(serverUrl)) return false;
 
   await invoke<void>("spawn_server", {
@@ -179,6 +184,7 @@ export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
   const serverUrl = input.serverUrl ?? null;
   if (!isLoopbackServerUrl(serverUrl)) return false;
   if (!(await probeServerHealth(serverUrl))) return false;
+  serversKnownReady.delete(serverUrl);
   await invoke<void>("kill_server", { serverUrl });
   await resetManagedSourceRuntimeCache();
   return true;

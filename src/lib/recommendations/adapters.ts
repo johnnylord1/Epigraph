@@ -293,8 +293,13 @@ export function mergeRecommendationCandidates(
     }
     mergedCandidate = mergeCandidateValues(mergedCandidate, incoming);
 
-    for (const [key, recordIndex] of identityToRecord) {
-      if (matchingRecords.has(recordIndex)) identityToRecord.delete(key);
+    // Only the merged records' own keys can point at them; scanning the whole map here made the
+    // merge quadratic on large libraries.
+    for (const recordIndex of matchingRecords) {
+      for (const key of records[recordIndex].identityKeys) {
+        const owner = identityToRecord.get(key);
+        if (owner !== undefined && matchingRecords.has(owner)) identityToRecord.delete(key);
+      }
     }
 
     const identityKeys = new Set(recommendationCandidateIdentityKeys(mergedCandidate));

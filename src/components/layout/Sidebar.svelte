@@ -102,6 +102,7 @@
       class:download-active={tab.id === "downloads" && hasDownloadActivity}
       class:download-error={tab.id === "downloads" && hasDownloadError}
       data-nav-id={tab.id}
+      data-ripple="off"
       data-tooltip={$_(tab.labelKey)}
       type="button"
         aria-label={$_(tab.labelKey)}

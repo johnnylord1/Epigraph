@@ -17,6 +17,7 @@ describe("server lifecycle notifications", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.doUnmock("@tauri-apps/api/core");
+    vi.doUnmock("./manga/runtime/managed");
     vi.resetModules();
   });
 
@@ -73,6 +74,45 @@ describe("server lifecycle notifications", () => {
     // Once that wake settles, the next request checks the server again.
     await expect(ensureServerAwakeFor("reader", input)).resolves.toBe(true);
     expect(invoke).toHaveBeenCalledTimes(4);
+  });
+
+  it("announces a woken server only when it comes back, not on every wake that finds it up", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", { dispatchEvent });
+    vi.stubGlobal("CustomEvent", class {
+      type: string;
+      detail: unknown;
+
+      constructor(type: string, init?: { detail?: unknown }) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    });
+    let healthy = true;
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "probe_server_health") return healthy;
+      if (command === "spawn_server") healthy = true;
+      return undefined;
+    });
+    vi.doMock("@tauri-apps/api/core", () => ({ invoke }));
+    vi.doMock("./manga/runtime/managed", () => ({ resetManagedSourceRuntime: vi.fn() }));
+    const { ensureServerAwakeFor } = await import("./serverLifecycle");
+    const input = { serverUrl: "http://127.0.0.1:4567", profileId: "main" };
+
+    await expect(ensureServerAwakeFor("browse", input)).resolves.toBe(true);
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
+
+    // Revisiting a page past the dedupe window must not reload it while the server stayed up.
+    vi.advanceTimersByTime(10_001);
+    await expect(ensureServerAwakeFor("browse", input)).resolves.toBe(true);
+    expect(dispatchEvent).toHaveBeenCalledTimes(1);
+
+    // Once it went down and was woken again, pages hear about it.
+    healthy = false;
+    const wake = ensureServerAwakeFor("browse", input);
+    await vi.runAllTimersAsync();
+    await expect(wake).resolves.toBe(true);
+    expect(dispatchEvent).toHaveBeenCalledTimes(2);
   });
 
   it("dedupes repeated ready notifications for the same server", async () => {

@@ -545,7 +545,10 @@
     position: absolute;
     inset: 0;
     z-index: var(--component-app-keepalive-hidden-z-index);
-    visibility: hidden;
+    /* content-visibility instead of visibility: toggling an inherited visibility left WebView2 holding a
+       stale `hidden` style on blocks that were animating in, so parts of a returning page stayed blank.
+       It also skips rendering the hidden pages altogether. */
+    content-visibility: hidden;
     opacity: 0;
     pointer-events: none;
     overflow: hidden;
@@ -553,7 +556,7 @@
   }
 
   .page-keepalive.is-leaving:not(.is-active) {
-    visibility: visible;
+    content-visibility: visible;
     animation: pageLeave 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
   }
 

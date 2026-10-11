@@ -933,7 +933,6 @@
   --component-topbar-search-z-index: var(--z-settings);
   --component-topbar-search-content-z-index: var(--z-tooltip);
   --component-search-shadow-focus: 0 16px 40px -22px color-mix(in srgb, var(--color-shadow-source) 45%, transparent);
-  --component-nav-item-press-bg: color-mix(in srgb, var(--text-primary) 10%, transparent);
   --component-segmented-hover-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
   --component-chip-active-hover-bg: color-mix(in srgb, var(--accent-muted) 100%, var(--accent) 9%);
   --component-search-icon-fg: var(--text-muted);

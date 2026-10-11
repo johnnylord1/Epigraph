@@ -97,7 +97,21 @@ export function combineMetrics(metrics: Array<NormalizedMetric | undefined | nul
   return normalizedMetric(value, confidence, "weighted-consensus");
 }
 
+// Titles and tags are normalized again on every recommendation pass; a bounded cache keeps the
+// repeated passes over a large library cheap.
+const normalizedTokenCache = new Map<string, string>();
+const NORMALIZED_TOKEN_CACHE_LIMIT = 20_000;
+
 export function normalizeToken(value: string): string {
+  const cached = normalizedTokenCache.get(value);
+  if (cached !== undefined) return cached;
+  const normalized = normalizeTokenUncached(value);
+  if (normalizedTokenCache.size >= NORMALIZED_TOKEN_CACHE_LIMIT) normalizedTokenCache.clear();
+  normalizedTokenCache.set(value, normalized);
+  return normalized;
+}
+
+function normalizeTokenUncached(value: string): string {
   return value
     .trim()
     .toLowerCase()
