@@ -46,17 +46,14 @@
   } from "../../lib/novels/hardcover";
   import {
     buildSearchRecommendations,
-    buildTasteProfile,
     dedupeRecommendationItems,
     inferMangaRecommendationContentType,
-    mangaToTasteProfileSeed,
-    novelToTasteProfileSeed,
-    bookToTasteProfileSeed,
     mangaToRecommendationCandidate,
     novelSourceResultToRecommendationCandidate,
     recommendationTitleKey,
     recommendationTrackerRemoteKey,
     trackRecordSeedStatus,
+    trackerSeedsOutsideLibrary,
     type RecommendationCandidate,
     type RecommendationItem,
     type RecommendationProviderSignal,
@@ -679,6 +676,7 @@
   let searchTrackRecords: TrackRecord[] = $state([]);
   // libraryMangaId: set when the tracked work is in the library, which already seeds the profile.
   let searchTrackerSeedItems: Array<TasteProfileSeedItem & { libraryMangaId?: number }> = $state([]);
+  let searchTrackRecordsLoading = $state(false);
   let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
   let searchSourceSeedResults: Manga[] = $state([]);
   let searchFreshSourceSeedResults: Manga[] = $state([]);
@@ -1243,6 +1241,7 @@
   }
 
   async function refreshSearchTrackRecords() {
+    searchTrackRecordsLoading = true;
     try {
       const data = await gql<{
         trackers: {
@@ -1295,6 +1294,8 @@
       searchTrackRecords = [];
       searchTrackerSeedItems = [];
       searchTrackerRecordCandidates = [];
+    } finally {
+      searchTrackRecordsLoading = false;
     }
   }
 
@@ -1945,9 +1946,7 @@
   );
 
   function searchTrackerSeedsOutsideLibrary(): TasteProfileSeedItem[] {
-    const libraryIds = new Set(searchLibraryManga.map((manga) => manga.id));
-    return searchTrackerSeedItems
-      .filter((seed) => seed.libraryMangaId === undefined || !libraryIds.has(seed.libraryMangaId));
+    return trackerSeedsOutsideLibrary(searchTrackerSeedItems, new Set(searchLibraryManga.map((manga) => manga.id)));
   }
 
   const searchRecommendationResult = $derived.by(() => {
@@ -2047,26 +2046,6 @@
 
   let isInsightsOpen = $state(false);
 
-  const libraryOnlyProfile = $derived.by(() => {
-    const seeds: TasteProfileSeedItem[] = [];
-    seeds.push(
-      ...(searchLibraryManga ?? []).map((manga) =>
-        mangaToTasteProfileSeed(manga, { trackRecordsByMangaId: searchTrackRecordsByMangaId }),
-      )
-    );
-    seeds.push(
-      ...(novelLibraryState?.entries ?? []).map(novelToTasteProfileSeed)
-    );
-    seeds.push(
-      ...(store.books ?? []).map((book) =>
-        bookToTasteProfileSeed(book, {
-          progressByBookId: searchBookProgressById,
-        })
-      )
-    );
-    return buildTasteProfile(seeds);
-  });
-
   const searchHasAnyRecommendationCandidates = $derived.by(() =>
     activeContentType === "novels"
       ? searchHasLiveNovelRecommendationData
@@ -2083,9 +2062,12 @@
       return waitingForNovelSeeds;
     }
 
+    // Tracker scores and statuses weigh every library seed; ranking before they arrive shows rows built
+    // from a flat, rating-blind profile that reshuffle a moment later.
     const waitingForMangaSeeds = searchSourceSeedLoading
       || loadingSources
       || loadingTrackers
+      || searchTrackRecordsLoading
       || searchTrackerTrendingLoading
       || (searchRecommendationSourcePool.length > 0 && !searchSourceSeedKey && searchSourceMangaPool.length === 0);
     return waitingForMangaSeeds;
@@ -6347,9 +6329,10 @@
     </div>
   {/if}
 
-  {#if isInsightsOpen && libraryOnlyProfile}
+  {#if isInsightsOpen}
+    <!-- The profile behind the rows on screen, so the analysis never describes a different taste. -->
     <TasteInsightsModal
-      profile={libraryOnlyProfile}
+      profile={searchRecommendationResult.profile}
       items={searchRecommendationItems}
       contentType={activeContentType}
       onClose={() => isInsightsOpen = false}

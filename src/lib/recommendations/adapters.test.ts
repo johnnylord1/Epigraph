@@ -10,6 +10,7 @@ import {
   novelSourceResultToRecommendationCandidate,
   trackRecordSeedStatus,
   trackerSearchToRecommendationCandidate,
+  trackerSeedsOutsideLibrary,
 } from ".";
 
 describe("recommendation adapters", () => {
@@ -355,6 +356,23 @@ describe("recommendation adapters", () => {
     expect(trackRecordSeedStatus(inProgress)).toBe("reading");
     expect(trackRecordSeedStatus({ ...inProgress, finishDate: "1767225600000" })).toBe("completed");
     expect(trackRecordSeedStatus({ ...inProgress, lastChapterRead: 0 })).toBe("planning");
+  });
+
+  it("counts each tracker entry once and leaves library works to the library seeds", () => {
+    const seed = (id: string, libraryMangaId?: number) => ({ id, title: id, tags: ["Action"], contentType: "manga" as const, libraryMangaId });
+    const seeds = [
+      seed("tracker:1:10", 7),
+      // Other local copies of the library work bound to the same tracker entry.
+      seed("tracker:1:10"),
+      seed("tracker:1:10"),
+      seed("tracker:1:20"),
+      seed("tracker:1:20"),
+      // Bound to a manga that has since left the library.
+      seed("tracker:1:30", 99),
+    ];
+
+    expect(trackerSeedsOutsideLibrary(seeds, new Set([7])).map((entry) => entry.id))
+      .toEqual(["tracker:1:20", "tracker:1:30"]);
   });
 });
 

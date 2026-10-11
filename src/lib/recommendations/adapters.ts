@@ -501,6 +501,27 @@ export function trackRecordSeedStatus(
   return "planning";
 }
 
+/**
+ * Tracker history seeds that add something beyond the library. One tracker entry is often bound to
+ * several local copies of the same work (other sources, migration leftovers); counting each copy let
+ * that history outweigh the library several times over. Entries already bound to a library work are
+ * counted through that work, and every other entry counts once.
+ */
+export function trackerSeedsOutsideLibrary<T extends TasteProfileSeedItem & { libraryMangaId?: number }>(
+  seeds: readonly T[],
+  libraryMangaIds: ReadonlySet<number>,
+): T[] {
+  const libraryEntryIds = new Set(seeds
+    .filter((seed) => seed.libraryMangaId !== undefined && libraryMangaIds.has(seed.libraryMangaId))
+    .map((seed) => seed.id));
+  const seen = new Set<string>();
+  return seeds.filter((seed) => {
+    if (libraryEntryIds.has(seed.id) || seen.has(seed.id)) return false;
+    seen.add(seed.id);
+    return true;
+  });
+}
+
 function hasTrackRecordDate(value: string | null | undefined): boolean {
   const normalized = value?.trim() ?? "";
   if (!normalized || normalized === "0") return false;

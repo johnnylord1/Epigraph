@@ -225,15 +225,18 @@ const PRESSABLE = [
   ".n-popover-item", ".n-sidebar-btn", "[data-ripple]",
   ".series-primary", ".series-action", ".series-utility", ".series-icon", ".series-toolbar-btn",
 ].join(", ");
-/** Filled primary actions that lean slightly toward the pointer. */
-const MAGNETIC = ".fr-btn--primary, .n-btn-primary";
+/**
+ * First-run primary actions that lean slightly toward the pointer. App buttons stay put: the pull grows
+ * with the button's size, so wide in-app actions (Home's "Resume") visibly chased the cursor.
+ */
+const MAGNETIC = ".fr-btn--primary";
 /** Fields whose focus underline grows from the click position. */
 const FIELD = ".fr-field, .n-field, .n-search";
 /** Nested roots (the first run inside the app shell) handle each pointer event once, innermost first. */
 const handledEvents = new WeakSet<Event>();
 
 /**
- * Pointer effects delegated from a root: press ripples, a slight magnetic pull on primary actions,
+ * Pointer effects delegated from a root: press ripples, a slight magnetic pull on first-run primary actions,
  * tilt on `[data-tilt]` tiles, a spotlight on `[data-spotlight]` surfaces and field underlines that
  * grow from the click position. One set of listeners serves the whole subtree.
  */
