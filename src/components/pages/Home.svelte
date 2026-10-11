@@ -112,6 +112,9 @@
   let loadingLibrary = $state(true);
   let setupState: SetupState | null = $state(null);
   let loadLibraryRequest: Promise<void> | null = null;
+  // The cache hands back the same arrays until it refetches. Applying them again would deep-compare the
+  // whole library and rebuild the tracking sets on every return to Home, right under its entrance.
+  let appliedLibrary: { mangas: unknown; snapshot: unknown; trackingSummary: unknown } | null = null;
   let loadHomeMetaRequest: Promise<void> | null = null;
   let setupStateController: AbortController | null = null;
   let componentActive = true;
@@ -431,15 +434,20 @@
     ])
       .then(([mangas, categories, trackingSummary]) => {
         if (!componentActive) return;
-        const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
-        setLibraryMangaSnapshot(mangas.map((manga: any) => ({
-          ...manga,
-          chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
-        })));
+        if (!appliedLibrary || appliedLibrary.mangas !== mangas || appliedLibrary.snapshot !== store.libraryMangaSnapshot) {
+          const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
+          setLibraryMangaSnapshot(mangas.map((manga: any) => ({
+            ...manga,
+            chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
+          })));
+        }
         setCategories(normalizeCategories(categories));
-        trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
-        trackedMangaIds = collectTrackedMangaIds(trackingSummary);
-        trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
+        if (appliedLibrary?.trackingSummary !== trackingSummary) {
+          trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);
+          trackedMangaIds = collectTrackedMangaIds(trackingSummary);
+          trackedChapterTotalsByMangaId = collectTrackedChapterTotalsByMangaId(trackingSummary);
+        }
+        appliedLibrary = { mangas, snapshot: store.libraryMangaSnapshot, trackingSummary };
         scheduleHomeMetaLoad();
       })
       .catch(console.error)

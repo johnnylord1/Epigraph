@@ -308,6 +308,8 @@ export class SuwayomiTransport implements GraphQLTransport {
       );
     }
 
+    // Encoding a large response only to measure it is costly, so it is measured once and only when traced.
+    const responseBytes = this.options.traceObserver ? new TextEncoder().encode(responseText).byteLength : 0;
     this.trace({
       requestId,
       operationName: operation.name,
@@ -316,7 +318,7 @@ export class SuwayomiTransport implements GraphQLTransport {
       stage: "response",
       durationMs: this.now() - startedAt,
       httpStatus: response.status,
-      responseBytes: new TextEncoder().encode(responseText).byteLength,
+      responseBytes,
     });
 
     if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
@@ -344,7 +346,7 @@ export class SuwayomiTransport implements GraphQLTransport {
       stage: "decode",
       durationMs: this.now() - startedAt,
       httpStatus: response.status,
-      responseBytes: new TextEncoder().encode(responseText).byteLength,
+      responseBytes,
     });
     const result = operation.decode(envelope.data);
     this.trace({
@@ -355,7 +357,7 @@ export class SuwayomiTransport implements GraphQLTransport {
       stage: "complete",
       durationMs: this.now() - startedAt,
       httpStatus: response.status,
-      responseBytes: new TextEncoder().encode(responseText).byteLength,
+      responseBytes,
     });
     return result;
   }

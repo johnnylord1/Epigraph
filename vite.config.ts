@@ -49,9 +49,10 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   optimizeDeps: {
-    // The novel runtime host window is the only page that loads the first five, and the book readers
-    // load the rest lazily. Discovered late, they trigger a re-optimization that answers the pending
-    // imports with 504s ("Failed to fetch dynamically imported module").
+    // The novel runtime host window is the only page that loads the first five, the book readers load
+    // the next three lazily and Settings (backups, sync pairing) the last four. Discovered late, they
+    // trigger a re-optimization that answers the pending imports with 504s ("Failed to fetch
+    // dynamically imported module").
     include: [
       "@tauri-apps/api/webviewWindow",
       "cheerio",
@@ -61,6 +62,10 @@ export default defineConfig({
       "epubjs",
       "jszip",
       "pdfjs-dist",
+      "pako",
+      "long",
+      "jsqr",
+      "qrcode",
     ],
   },
   build: {
