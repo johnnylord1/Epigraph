@@ -15,6 +15,9 @@ import eu.kanade.tachiyomi.util.system.withUIContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.i18n.MR
@@ -65,6 +68,15 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         // Novel tab shows cached data immediately on first tap instead of rendering empty
         // then filling in once refreshNovelPlugins finishes.
         refreshNovelPlugins()
+        // Installing or removing an extension or novel plugin rebuilds the source map; the
+        // migration list must follow it, or a just-installed source stays "not installed".
+        presenterScope.launch {
+            sourceManager.catalogueSources
+                .map { sources -> sources.mapTo(HashSet()) { it.id } }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { refreshMigrations() }
+        }
         presenterScope.launch {
             extensionManager.downloadSharedFlow
                 .collect {

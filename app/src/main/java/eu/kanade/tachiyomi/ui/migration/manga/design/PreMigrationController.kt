@@ -64,6 +64,9 @@ class PreMigrationController(bundle: Bundle? = null) :
      */
     private var isNovelMigration: Boolean = false
 
+    /** Ids of every source of this migration's kind; set by [getEnabledSources]. */
+    private var kindSourceIds: Set<Long> = emptySet()
+
     private var showingOptions = false
 
     private var dialog: BottomSheetDialog? = null
@@ -137,10 +140,10 @@ class PreMigrationController(bundle: Bundle? = null) :
     }
 
     override fun startMigration(extraParam: String?) {
-        val listOfSources = adapter?.items?.filter {
-            it.sourceEnabled
-        }?.joinToString("/") { it.source.id.toString() } ?: ""
-        prefs.migrationSources().set(listOfSources)
+        val selected = adapter?.items?.filter { it.sourceEnabled }?.map { it.source.id }.orEmpty()
+        prefs.migrationSources().set(
+            MigrationSourceSelection.merge(prefs.migrationSources().get(), kindSourceIds, selected),
+        )
 
         router.replaceTopController(
             MigrationListController.create(
@@ -178,32 +181,29 @@ class PreMigrationController(bundle: Bundle? = null) :
      */
     private fun getEnabledSources(): List<CatalogueSource> {
         val languages = prefs.enabledLanguages().get()
-        val sourcesSaved = prefs.migrationSources().get().split("/")
-        var sources = sourceManager.getVisibleCatalogueSources()
+        val kindSources = sourceManager.getVisibleCatalogueSources()
             .filter { source ->
                 if (isNovelMigration) source.isNovelSource() else source is HttpSource && !source.isNovelSource()
             }
+        kindSourceIds = kindSources.mapTo(HashSet()) { it.id }
+        val sourcesSaved = MigrationSourceSelection.ofKind(prefs.migrationSources().get(), kindSourceIds)
+        var sources = kindSources
             .filter { it.lang in languages }
             .sortedBy { "(${it.lang}) ${it.name}" }
         sources =
-            sources.filter { isEnabled(it.id.toString()) }.sortedBy {
-            sourcesSaved.indexOf(
-                it.id
-                    .toString(),
-            )
-        } +
+            sources.filter { isEnabled(it.id.toString()) }.sortedBy { sourcesSaved.indexOf(it.id) } +
             sources.filterNot { isEnabled(it.id.toString()) }
 
         return sources
     }
 
     fun isEnabled(id: String): Boolean {
-        val sourcesSaved = prefs.migrationSources().get()
+        val sourcesSaved = MigrationSourceSelection.ofKind(prefs.migrationSources().get(), kindSourceIds)
         val hiddenCatalogues = prefs.hiddenSources().get()
         return if (sourcesSaved.isEmpty()) {
             id !in hiddenCatalogues
         } else {
-            sourcesSaved.split("/").contains(id)
+            id.toLongOrNull()?.let { it in sourcesSaved } == true
         }
     }
 
