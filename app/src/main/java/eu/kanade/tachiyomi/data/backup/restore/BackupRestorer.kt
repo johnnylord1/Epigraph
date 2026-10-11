@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.backup.restore
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import co.touchlab.kermit.Logger
 import epigraph.books.importing.LocalBookStreamSource
 import epigraph.novel.plugin.NovelPluginManager
@@ -51,6 +52,7 @@ class BackupRestorer(
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
+    private var lastProgressNotification = 0L
 
     /**
      * Mapping of source ID to source name from backup data
@@ -231,6 +233,11 @@ class BackupRestorer(
         amount: Int,
         title: String,
     ) {
+        // A large library restores several titles per second; Android drops a notification
+        // posted more often than that and logs each one, so post at most twice a second.
+        val now = SystemClock.elapsedRealtime()
+        if (progress < amount && now - lastProgressNotification < PROGRESS_NOTIFICATION_INTERVAL_MS) return
+        lastProgressNotification = now
         notifier.showRestoreProgress(title, progress, amount)
     }
 
@@ -264,5 +271,9 @@ class BackupRestorer(
             // Empty
         }
         return File("")
+    }
+
+    private companion object {
+        const val PROGRESS_NOTIFICATION_INTERVAL_MS = 500L
     }
 }

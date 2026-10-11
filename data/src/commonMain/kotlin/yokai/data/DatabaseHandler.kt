@@ -40,6 +40,13 @@ interface DatabaseHandler {
 
     fun <T : Any> subscribeToList(block: Database.() -> Query<T>): Flow<List<T>>
 
+    /**
+     * Like [subscribeToList], but while its tables keep changing the query runs at most once per
+     * [periodMillis], always for the newest state. For large queries that a bulk write, such as a
+     * restore or a sync, would otherwise run again for every row it writes.
+     */
+    fun <T : Any> subscribeToListThrottled(periodMillis: Long, block: Database.() -> Query<T>): Flow<List<T>>
+
     fun <T : Any> subscribeToOne(block: Database.() -> Query<T>): Flow<T>
 
     fun <T : Any> subscribeToOneOrNull(block: Database.() -> Query<T>): Flow<T?>

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
@@ -127,14 +128,15 @@ class SettingsDataLegacyController : SettingsLegacyController() {
                     (activity as? AppCompatActivity)?.lifecycleScope?.launchIO {
                         extensionManager.getExtensionUpdates(true)
                     }
-                    val intent = Intent(Intent.ACTION_GET_CONTENT)
+                    // OPEN_DOCUMENT: its grant can be made persistent, so a restore that resumes
+                    // after the app restarts can still read the file.
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
                     intent.addCategory(Intent.CATEGORY_OPENABLE)
+                    intent.type = "*/*"
                     storageManager.getBackupsDirectory()?.let {
-                        intent.setDataAndType(it.uri, "*/*")
+                        intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, it.uri)
                     }
-                    val title = activity?.getString(MR.strings.select_backup_file)
-                    val chooser = Intent.createChooser(intent, title)
-                    startActivityForResult(chooser, CODE_BACKUP_RESTORE)
+                    startActivityForResult(intent, CODE_BACKUP_RESTORE)
                 } else {
                     context.toast(MR.strings.restore_in_progress)
                 }

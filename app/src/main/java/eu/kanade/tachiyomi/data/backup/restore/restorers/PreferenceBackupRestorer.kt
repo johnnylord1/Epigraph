@@ -5,6 +5,7 @@ import android.content.Context
 import eu.kanade.tachiyomi.core.preference.AndroidPreferenceStore
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
+import eu.kanade.tachiyomi.data.backup.BackupPreferencePolicy
 import eu.kanade.tachiyomi.data.backup.BackupSecretPolicy
 import eu.kanade.tachiyomi.core.preference.getEnum
 import eu.kanade.tachiyomi.data.backup.create.BackupCreatorJob
@@ -18,6 +19,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.extension.ExtensionUpdateJob
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.ui.library.LibrarySort
@@ -27,9 +29,18 @@ import yokai.domain.ui.settings.ReaderPreferences
 class PreferenceBackupRestorer(
     private val context: Context,
     private val preferenceStore: PreferenceStore = get(),
+    private val preferencesHelper: PreferencesHelper = get(),
 ) {
     fun restoreAppPreferences(preferences: List<BackupPreference>, onComplete: () -> Unit) {
-        restorePreferences(preferences, preferenceStore)
+        val restorable = BackupPreferencePolicy.restorableAppPreferences(preferences) { key ->
+            // The languages default to the device language until they are first changed.
+            if (key == PreferenceKeys.enabledLanguages) {
+                preferencesHelper.enabledLanguages().get()
+            } else {
+                preferenceStore.getStringSet(key).get()
+            }
+        }
+        restorePreferences(restorable, preferenceStore)
 
         ExtensionUpdateJob.setupTask(context)
         LibraryUpdateJob.setupTask(context)
@@ -53,6 +64,7 @@ class PreferenceBackupRestorer(
         toRestore.forEach { (key, value) ->
             // A backup file is untrusted input: it must never plant credentials or app state.
             if (Preference.isAppState(key) || BackupSecretPolicy.isSecret(key)) return@forEach
+            if (BackupPreferencePolicy.isDeviceOnly(key)) return@forEach
 
             // j2k fork differences
             if (key == "library_sorting_mode" && value is StringPreferenceValue &&

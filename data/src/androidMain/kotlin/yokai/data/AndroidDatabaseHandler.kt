@@ -11,7 +11,10 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.paging3.QueryPagingSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.withContext
 import yokai.data.util.executeAsFirstOrNull
 import yokai.data.util.mapToFirstOrNull
@@ -73,6 +76,20 @@ class AndroidDatabaseHandler(
 
     override fun <T : Any> subscribeToList(block: Database.() -> Query<T>): Flow<List<T>> {
         return block(db).asFlow().mapToList(queryDispatcher)
+    }
+
+    override fun <T : Any> subscribeToListThrottled(
+        periodMillis: Long,
+        block: Database.() -> Query<T>,
+    ): Flow<List<T>> {
+        // The change notifications are conflated before the query runs, so the writes made
+        // during the pause cost nothing and the next run reads the state after all of them.
+        return block(db).asFlow()
+            .conflate()
+            .transform { query ->
+                emit(withContext(queryDispatcher) { query.executeAsList() })
+                delay(periodMillis)
+            }
     }
 
     override fun <T : Any> subscribeToOne(block: Database.() -> Query<T>): Flow<T> {

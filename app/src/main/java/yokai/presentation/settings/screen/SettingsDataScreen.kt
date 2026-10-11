@@ -1,8 +1,6 @@
 package yokai.presentation.settings.screen
 
 import android.content.ActivityNotFoundException
-import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -114,15 +112,10 @@ object SettingsDataScreen : ComposableSettings() {
         val extensionManager = remember { GlobalContext.get().get<ExtensionManager>() }
         val storageManager = remember { GlobalContext.get().get<StorageManager>() }
 
-        val chooseBackup = rememberLauncherForActivityResult(
-            object : ActivityResultContracts.GetContent() {
-                override fun createIntent(context: Context, input: String): Intent {
-                    val intent = super.createIntent(context, input)
-                    intent.addCategory(Intent.CATEGORY_OPENABLE)
-                    return Intent.createChooser(intent, context.getString(MR.strings.select_backup_file))
-                }
-            },
-        ) {
+        // OPEN_DOCUMENT, not GET_CONTENT: only its grants can be made persistent, and the restore
+        // job must still read the file after the app restarts (a Downloads file otherwise fails
+        // with "Permission Denial" once the restore resumes).
+        val chooseBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
             if (it == null) return@rememberLauncherForActivityResult
 
             val results = try {
@@ -182,7 +175,7 @@ object SettingsDataScreen : ComposableSettings() {
                             }
 
                             scope.launch { extensionManager.getExtensionUpdates(true) }
-                            chooseBackup.launch("*/*")
+                            chooseBackup.launch(arrayOf("*/*"))
                         } else {
                             context.toast(MR.strings.restore_in_progress)
                         }
