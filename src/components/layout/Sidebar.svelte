@@ -3,7 +3,8 @@
   import splashMark from "../../assets/epigraph-splash-mark.png";
   import { store, setNavPage, setSettingsOpen, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
-  import { afterPaint } from "../../lib/motion/motion";
+  import { flushSync } from "svelte";
+  import { swapAfterPageLeave } from "../../lib/motion/motion";
 
   const MAIN_TABS: Array<{ id: Exclude<NavPage, "settings">; labelKey: string }> = [
     { id: "home", labelKey: "shell.navigation.home" },
@@ -33,7 +34,7 @@
   const hasDownloadError = $derived(!hasDownloadActivity && failedDownloadCount > 0);
 
   // The pressed destination lights up in the click's frame; the page swap (a heavy render) waits
-  // for that frame to paint so the highlight glides instead of jumping after the render.
+  // while the old page fades out, so the highlight glides instead of jumping after the render.
   let pendingNav = $state<NavPage | null>(null);
   const shownNav = $derived(pendingNav ?? store.navPage);
 
@@ -43,9 +44,10 @@
       return;
     }
     pendingNav = id;
-    afterPaint(() => {
+    swapAfterPageLeave(() => {
       commit();
       if (pendingNav === id) pendingNav = null;
+      flushSync();
     });
   }
 

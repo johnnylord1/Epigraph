@@ -1216,9 +1216,9 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 /* Pages kept alive in the background share the engaged selectors; their hidden fields snap instead
    of laying out every frame of the glide. */
-.page-keepalive[inert] .n-search,
-.page-keepalive[inert] .n-search::after,
-.page-keepalive[inert] .n-search__icon {
+.page-keepalive:not(.is-front) .n-search,
+.page-keepalive:not(.is-front) .n-search::after,
+.page-keepalive:not(.is-front) .n-search__icon {
   transition: none;
 }
 
@@ -3740,4 +3740,15 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 .epigraph-port--settings .settings-text-input::placeholder {
   color: var(--component-settings-input-placeholder);
+}
+
+/* Covers the page being left while it fades out (swapAfterPageLeave). */
+.page-leave-veil {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  z-index: var(--component-activity-overlay-z-index);
+  background: var(--component-app-bg);
+  opacity: 0;
+  pointer-events: none;
 }

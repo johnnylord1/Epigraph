@@ -1,7 +1,6 @@
 <script lang="ts">
   import { translate } from "../../lib/i18n/runtime";
   import { flushSync, onMount } from "svelte";
-  import { staggerIn } from "../../lib/motion/motion";
   import { _ } from "../../lib/i18n/runtime";
   import { gql } from "../../lib/client";
   import { GET_LIBRARY, GET_CATEGORIES_SUMMARY, GET_LIBRARY_TRACKING_SUMMARY, GET_SOURCES, GET_TRACKERS, GET_EXTENSIONS } from "../../lib/queries";
@@ -1130,7 +1129,7 @@
     {/snippet}
   </AppTopbar>
 
-  <div class="body n-content" data-view-static>
+  <div class="body n-content">
     {#if store.homePanelHint === "history"}
       <div class="home-history-view">
         <div class="home-history-view__header">
@@ -1144,7 +1143,7 @@
         </div>
       </div>
     {:else}
-      <div class="home-dashboard" use:staggerIn={{ settle: true, baseDelay: 60 }}>
+      <div class="home-dashboard">
         <section class="home-section">
           <div class="home-section__header">
             <h2 class="home-section__title">{$_("home.continue.title")}</h2>
@@ -1153,7 +1152,7 @@
             </button>
           </div>
           {#if continueDisplayCards.length === 0}
-            <div class="home-empty" data-enter>
+            <div class="home-empty">
               <span class="home-empty__icon material-symbols-outlined" aria-hidden="true">auto_stories</span>
               <div class="home-empty__copy">
                 <strong>{$_("home.continue.emptyTitle")}</strong>
@@ -1167,7 +1166,7 @@
           {:else}
           <div class="home-continue-grid" data-count={continueDisplayCards.length}>
             {#each continueDisplayCards as item, index (index)}
-              <article class="home-card home-continue-card" data-enter>
+              <article class="home-card home-continue-card">
                 <button
                   class="home-continue-card__cover"
                   class:home-continue-card__cover--blank={!item.coverUrl}
@@ -1213,7 +1212,7 @@
           {/if}
         </section>
 
-        <section class="home-quick-actions" data-enter>
+        <section class="home-quick-actions">
           <button class="home-quick-action" type="button" onclick={() => openSearchSources("browse")}>
             <span class="material-symbols-outlined" aria-hidden="true">explore</span>
             <div>
@@ -1244,7 +1243,7 @@
           </button>
         </section>
 
-        <div class="home-main-grid" data-enter>
+        <div class="home-main-grid">
           <section class="home-column home-updates">
             <div class="home-column__header">
               <h2 class="home-column__title">

@@ -182,6 +182,42 @@ export function afterPaint(commit: () => void) {
   requestAnimationFrame(() => setTimeout(commit, 0));
 }
 
+const PAGE_LEAVE_MS = 100;
+let pageLeave: { swap: () => void } | null = null;
+
+/**
+ * Fades the page out under a veil of the app background, then swaps it (the next page runs its own
+ * entrance). The veil is one flat layer: fading the page itself kept ~2,000 of its elements styled
+ * through the switch and roughly doubled its cost. Clicks during the fade retarget the pending swap.
+ */
+export function swapAfterPageLeave(swap: () => void) {
+  if (pageLeave) {
+    pageLeave.swap = swap;
+    return;
+  }
+  const main = document.querySelector<HTMLElement>(".main");
+  if (!main || prefersReducedMotion()) {
+    afterPaint(swap);
+    return;
+  }
+  const veil = document.createElement("div");
+  veil.className = "page-leave-veil";
+  veil.setAttribute("aria-hidden", "true");
+  veil.style.top = `${main.scrollTop}px`;
+  veil.style.height = `${main.clientHeight}px`;
+  main.append(veil);
+  const animation = veil.animate({ opacity: [0, 1] }, { duration: PAGE_LEAVE_MS, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" });
+  const pending = { swap };
+  pageLeave = pending;
+  const finish = () => {
+    if (pageLeave !== pending) return;
+    pageLeave = null;
+    veil.remove();
+    pending.swap();
+  };
+  animation.finished.then(finish, finish);
+}
+
 /** Controls that answer a press with a ripple. */
 const PRESSABLE = [
   ".fr-btn", ".fr-link", ".fr-card",
@@ -491,7 +527,7 @@ export function playShellEntrance(root: ParentNode | null | undefined) {
       { opacity: 1, transform: "none" },
     ], { duration: 620, delay: 120, easing: SPRING_EASING, fill: "backwards" });
   });
-  const page = root.querySelector(".main > .page-keepalive.is-active > *, .main > :not(.page-keepalive):not(.detail-layer), .first-run-shell");
+  const page = root.querySelector(".main > .page-keepalive.is-front > *, .main > :not(.page-keepalive):not(.detail-layer), .first-run-shell");
   enterView(page, { delay: 180, y: 16, blur: 8 });
 }
 

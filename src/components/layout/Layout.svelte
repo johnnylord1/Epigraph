@@ -109,7 +109,7 @@
     enteredPage = page;
     void tick().then(() => {
       const root = isKeepAlivePage(page)
-        ? mainElement?.querySelector(":scope > .page-keepalive.is-active > *")
+        ? mainElement?.querySelector(":scope > .page-keepalive.is-front > *")
         : mainElement?.querySelector(":scope > :not(.page-keepalive):not(.detail-layer):not(.activity-overlay-pending)");
       enterView(root, { y: 24 * direction });
     });
@@ -364,7 +364,7 @@
         {@const KeptPage = keptPages[key]}
         <div
           class="page-keepalive"
-          class:is-active={navPage === key}
+          class:is-front={navPage === key}
           data-keepalive-page={key}
           aria-hidden={navPage !== key}
         >
@@ -535,7 +535,9 @@
     overflow: clip;
   }
 
-  .page-keepalive:not(.is-active) {
+  /* `is-front` rather than the shared `is-active`: rules such as `.n-icon-btn.is-active svg` made every switch
+     re-check each icon inside both pages. */
+  .page-keepalive:not(.is-front) {
     position: absolute;
     inset: 0;
     z-index: var(--component-app-keepalive-hidden-z-index);
