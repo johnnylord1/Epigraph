@@ -4,6 +4,19 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-10
+
+### Changed
+
+- The release history in Settings → About lists only the Windows changes.
+
+### Fixed
+
+- Buttons in the Library no longer stop responding after switching pages. The window is still moved from the empty part of the top bar, and a double click there maximizes it.
+- Library covers keep their size when the page opens instead of growing into place.
+- A mouse click on a library card right after opening it with Enter is no longer ignored.
+- Opening an EPUB saves the position once, instead of several times while the book is laid out.
+
 ## [0.0.4] - 2026-10-10
 
 ### Changed
