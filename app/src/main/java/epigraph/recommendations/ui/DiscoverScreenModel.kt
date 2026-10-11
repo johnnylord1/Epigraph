@@ -105,7 +105,9 @@ class DiscoverScreenModel(
         catalogJob?.cancel()
         genreSearch = null
         mutableState.update { it.copy(genres = genres, catalogLoadingMore = false, catalogExhausted = false) }
-        val cached = cachedPool(state.value.mode) ?: return
+        // A pool past its TTL is reloaded, and the load searches the genres once it is in;
+        // returning here left the Catalog spinning with nothing asking the sources.
+        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(catalog = catalog(cached)) }
         loadMoreCatalog()
     }
@@ -173,11 +175,11 @@ class DiscoverScreenModel(
         }
     }
 
-    /** Re-ranks the cached pool; no network. No-op until the first successful load. */
+    /** Re-ranks the cached pool; no network unless it expired. */
     fun setIncludeLibrary(value: Boolean) {
         if (value == state.value.includeLibrary) return
         mutableState.update { it.copy(includeLibrary = value) }
-        val cached = cachedPool(state.value.mode) ?: return
+        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(result = rank(cached), catalog = catalog(cached), visibleLimits = emptyMap()) }
     }
 
@@ -305,6 +307,11 @@ class DiscoverScreenModel(
         }
         catalogJob = job
         job.start()
+    }
+
+    /** The pool expired: load it again. A load already running applies the new filters when it lands. */
+    private fun reloadExpiredPool() {
+        if (!state.value.loading) load(force = false)
     }
 
     private fun rank(pool: DiscoverPool): DiscoverResult =
