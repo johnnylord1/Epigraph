@@ -26,6 +26,7 @@ export {
 } from "./managed";
 export {
   fetchSourceChapterPages,
+  fetchSourceFilters,
   fetchSourceMangaChapters,
   fetchSourceMangaDetails,
   searchSourceManga,

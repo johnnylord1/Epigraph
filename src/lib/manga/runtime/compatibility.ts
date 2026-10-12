@@ -18,6 +18,9 @@ import type {
   ExtensionStore,
   RuntimeContract,
   SourceChapter,
+  SourceFilter,
+  SourceFilterChange,
+  SourceFilterKind,
   SourceItemDetails,
   SourcePage,
   SourcePreference,
@@ -43,6 +46,14 @@ interface SourceSearchVariables {
   type: "SEARCH" | "POPULAR" | "LATEST";
   page: number;
   query?: string;
+}
+
+interface SourceFilteredSearchVariables extends SourceSearchVariables {
+  filters: readonly SourceFilterChange[];
+}
+
+interface SourceFiltersVariables {
+  id: string;
 }
 
 interface MangaVariables {
@@ -100,6 +111,8 @@ export interface CompatibilityProfileOperations {
   updateExtension: GraphQLOperation<ExtensionActionVariables, void>;
   uninstallExtension: GraphQLOperation<ExtensionActionVariables, void>;
   search: GraphQLOperation<SourceSearchVariables, SourceSearchResult>;
+  filteredSearch: GraphQLOperation<SourceFilteredSearchVariables, SourceSearchResult>;
+  sourceFilters: GraphQLOperation<SourceFiltersVariables, readonly SourceFilter[]>;
   details: GraphQLOperation<MangaVariables, SourceItemDetails>;
   chapters: GraphQLOperation<ChapterVariables, readonly SourceChapter[]>;
   pages: GraphQLOperation<PageVariables, readonly SourcePage[]>;
@@ -338,6 +351,78 @@ function extensionAction(
   };
 }
 
+const SOURCE_SEARCH_FIELDS = `
+  mangas {
+    id title thumbnailUrl inLibrary status
+    source { id name lang displayName iconUrl isNsfw supportsLatest isConfigurable extension { pkgName } }
+  }
+  hasNextPage
+`;
+
+const SOURCE_FILTER_LEAF_FIELDS = `
+  __typename
+  ... on CheckBoxFilter { name }
+  ... on TriStateFilter { name }
+  ... on SelectFilter { name values }
+  ... on SortFilter { name values }
+  ... on TextFilter { name }
+  ... on HeaderFilter { name }
+  ... on SeparatorFilter { name }
+`;
+
+const SOURCE_FILTER_KINDS: Readonly<Record<string, SourceFilterKind>> = {
+  CheckBoxFilter: "checkbox",
+  TriStateFilter: "tristate",
+  SelectFilter: "select",
+  SortFilter: "sort",
+  TextFilter: "text",
+  GroupFilter: "group",
+  HeaderFilter: "header",
+  SeparatorFilter: "separator",
+};
+
+function decodeSourceFilters(value: unknown, path: string): SourceFilter[] {
+  return array(value, path).map((item, index) => {
+    const itemPath = `${path}[${index}]`;
+    const raw = record(item, itemPath);
+    // A kind this app does not know still holds its position.
+    const kind = SOURCE_FILTER_KINDS[string(field(raw, "__typename", itemPath), `${itemPath}.__typename`)] ?? "header";
+    return {
+      kind,
+      name: nullableString(raw.name, `${itemPath}.name`) ?? "",
+      values: Array.isArray(raw.values)
+        ? array(raw.values, `${itemPath}.values`).map((entry, entryIndex) => string(entry, `${itemPath}.values[${entryIndex}]`))
+        : [],
+      filters: kind === "group" && raw.filters !== undefined ? decodeSourceFilters(raw.filters, `${itemPath}.filters`) : [],
+    };
+  });
+}
+
+function decodeSourceSearch(value: unknown): SourceSearchResult {
+  const root = record(value, "data");
+  const payload = record(field(root, "fetchSourceManga", "data"), "data.fetchSourceManga");
+  const items = array(field(payload, "mangas", "data.fetchSourceManga"), "data.fetchSourceManga.mangas").map(
+    (item, index) => {
+      const path = `data.fetchSourceManga.mangas[${index}]`;
+      const raw = record(item, path);
+      const source = raw.source === null ? null : decodeSource(raw.source, `${path}.source`);
+      return {
+        id: integer(field(raw, "id", path), `${path}.id`),
+        sourceId: source?.id ?? "",
+        title: string(field(raw, "title", path), `${path}.title`),
+        thumbnailUrl: nullableString(raw.thumbnailUrl, `${path}.thumbnailUrl`),
+        inLibrary: boolean(field(raw, "inLibrary", path), `${path}.inLibrary`),
+        status: nullableString(raw.status, `${path}.status`),
+        source,
+      };
+    },
+  );
+  return {
+    items,
+    hasNextPage: boolean(field(payload, "hasNextPage", "data.fetchSourceManga"), "data.fetchSourceManga.hasNextPage"),
+  };
+}
+
 function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "listStores" | "addStore" | "removeStore"> {
   const decodeExtensions = (value: unknown, path: string): readonly ExtensionRef[] =>
     nodes(value, path).map(
@@ -461,37 +546,47 @@ function commonOperations(v23: boolean): Omit<CompatibilityProfileOperations, "l
           $query: String
         ) {
           fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query }) {
-            mangas {
-              id title thumbnailUrl inLibrary status
-              source { id name lang displayName iconUrl isNsfw supportsLatest isConfigurable extension { pkgName } }
+            ${SOURCE_SEARCH_FIELDS}
+          }
+        }
+      `,
+      decode: decodeSourceSearch,
+    },
+    filteredSearch: {
+      name: "EpigraphSourceFilteredSearch",
+      kind: "mutation",
+      document: `
+        mutation EpigraphSourceFilteredSearch(
+          $source: LongString!
+          $type: FetchSourceMangaType!
+          $page: Int!
+          $query: String
+          $filters: [FilterChangeInput!]
+        ) {
+          fetchSourceManga(input: { source: $source, type: $type, page: $page, query: $query, filters: $filters }) {
+            ${SOURCE_SEARCH_FIELDS}
+          }
+        }
+      `,
+      decode: decodeSourceSearch,
+    },
+    sourceFilters: {
+      name: "EpigraphSourceFilters",
+      kind: "query",
+      document: `
+        query EpigraphSourceFilters($id: LongString!) {
+          source(id: $id) {
+            filters {
+              ${SOURCE_FILTER_LEAF_FIELDS}
+              ... on GroupFilter { name filters { ${SOURCE_FILTER_LEAF_FIELDS} } }
             }
-            hasNextPage
           }
         }
       `,
       decode(value) {
         const root = record(value, "data");
-        const payload = record(field(root, "fetchSourceManga", "data"), "data.fetchSourceManga");
-        const items = array(field(payload, "mangas", "data.fetchSourceManga"), "data.fetchSourceManga.mangas").map(
-          (item, index) => {
-            const path = `data.fetchSourceManga.mangas[${index}]`;
-            const raw = record(item, path);
-            const source = raw.source === null ? null : decodeSource(raw.source, `${path}.source`);
-            return {
-              id: integer(field(raw, "id", path), `${path}.id`),
-              sourceId: source?.id ?? "",
-              title: string(field(raw, "title", path), `${path}.title`),
-              thumbnailUrl: nullableString(raw.thumbnailUrl, `${path}.thumbnailUrl`),
-              inLibrary: boolean(field(raw, "inLibrary", path), `${path}.inLibrary`),
-              status: nullableString(raw.status, `${path}.status`),
-              source,
-            };
-          },
-        );
-        return {
-          items,
-          hasNextPage: boolean(field(payload, "hasNextPage", "data.fetchSourceManga"), "data.fetchSourceManga.hasNextPage"),
-        };
+        const source = record(field(root, "source", "data"), "data.source");
+        return decodeSourceFilters(field(source, "filters", "data.source"), "data.source.filters");
       },
     },
     details: {
@@ -643,7 +738,7 @@ const V21_CONTRACT: RuntimeContract = {
       "extension",
     ],
   },
-  optionalCapabilities: ["sourcePreferences", "sourcePreferenceWrite"],
+  optionalCapabilities: ["sourcePreferences", "sourcePreferenceWrite", "sourceFilters"],
 };
 
 const V23_CONTRACT: RuntimeContract = {
@@ -702,6 +797,7 @@ const V23_CONTRACT: RuntimeContract = {
     "extensionApi16",
     "sourcePreferences",
     "sourcePreferenceWrite",
+    "sourceFilters",
   ],
 };
 

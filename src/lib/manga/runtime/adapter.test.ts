@@ -203,6 +203,23 @@ function writablePreferencesSchema() {
   return schema;
 }
 
+function filterSchema() {
+  const schema = compatibleSchema();
+  schema.__schema.types[3]!.fields.push(schemaField("filters"));
+  const input = (name: string, fields: string[]) => schema.__schema.types.push({
+    kind: "INPUT_OBJECT", name, fields: [], inputFields: fields.map(schemaInputField), enumValues: null,
+  });
+  input("FetchSourceMangaInput", ["source", "type", "page", "query", "filters"]);
+  input("FilterChangeInput", ["position", "checkBoxState", "triState", "selectState", "groupChange"]);
+  schema.__schema.types.push(
+    { kind: "OBJECT", name: "GroupFilter", fields: ["name", "filters"].map(schemaField), inputFields: null, enumValues: null },
+    { kind: "OBJECT", name: "SelectFilter", fields: ["name", "values", "default"].map(schemaField), inputFields: null, enumValues: null },
+  );
+  return schema;
+}
+
+const EMPTY_SEARCH = { fetchSourceManga: { mangas: [], hasNextPage: false } };
+
 class FixtureTransport implements GraphQLTransport {
   readonly calls: string[] = [];
 
@@ -527,5 +544,63 @@ describe("SuwayomiAdapter", () => {
       "EpigraphLegacyExtensionStores",
       "EpigraphLegacyRemoveExtensionStore",
     ]);
+  });
+
+  test("reads a source's filters and searches with them when the runtime has them", async () => {
+    const transport = new FixtureTransport({
+      EpigraphRuntimeContract: filterSchema(),
+      EpigraphSourceFilters: {
+        source: {
+          filters: [
+            { __typename: "HeaderFilter", name: "Note" },
+            { __typename: "SelectFilter", name: "Category", values: ["All", "Action"] },
+            { __typename: "GroupFilter", name: "Genres", filters: [
+              { __typename: "CheckBoxFilter", name: "Fantasy" },
+              { __typename: "TriStateFilter", name: "Horror" },
+            ] },
+            { __typename: "SomeNewFilter", name: "Later" },
+          ],
+        },
+      },
+      EpigraphSourceFilteredSearch: EMPTY_SEARCH,
+    });
+    const executeSpy = vi.spyOn(transport, "execute");
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    await expect(adapter.getCapabilities()).resolves.toMatchObject({ sourceFilters: true });
+    await expect(adapter.getSourceFilters("7")).resolves.toEqual([
+      { kind: "header", name: "Note", values: [], filters: [] },
+      { kind: "select", name: "Category", values: ["All", "Action"], filters: [] },
+      { kind: "group", name: "Genres", values: [], filters: [
+        { kind: "checkbox", name: "Fantasy", values: [], filters: [] },
+        { kind: "tristate", name: "Horror", values: [], filters: [] },
+      ] },
+      { kind: "header", name: "Later", values: [], filters: [] },
+    ]);
+
+    const filters = [{ position: 2, groupChange: { position: 0, checkBoxState: true } }];
+    await adapter.search({ sourceId: "7", mode: "SEARCH", page: 1, query: "", filters });
+    expect(executeSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "EpigraphSourceFilteredSearch" }),
+      { source: "7", type: "SEARCH", page: 1, query: "", filters },
+      expect.anything(),
+    );
+  });
+
+  test("keeps the plain search and refuses filters when the runtime has none", async () => {
+    const transport = new FixtureTransport({
+      EpigraphRuntimeContract: compatibleSchema(),
+      EpigraphSourceSearch: EMPTY_SEARCH,
+    });
+    const adapter = new SuwayomiAdapter(transport, new CompatibilityProfileV21());
+
+    await adapter.search({ sourceId: "7", mode: "POPULAR", page: 1 });
+    await expect(adapter.getSourceFilters("7")).rejects.toMatchObject({ code: "RUNTIME_INCOMPATIBLE" });
+    await expect(adapter.search({
+      sourceId: "7", mode: "SEARCH", page: 1, filters: [{ position: 0, checkBoxState: true }],
+    })).rejects.toMatchObject({ code: "RUNTIME_INCOMPATIBLE" });
+    expect(transport.calls).toContain("EpigraphSourceSearch");
+    expect(transport.calls).not.toContain("EpigraphSourceFilters");
+    expect(transport.calls).not.toContain("EpigraphSourceFilteredSearch");
   });
 });

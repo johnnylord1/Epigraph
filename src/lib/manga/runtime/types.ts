@@ -5,7 +5,8 @@ export type RuntimeCapability =
   | "directJarInstall"
   | "extensionApi16"
   | "sourcePreferences"
-  | "sourcePreferenceWrite";
+  | "sourcePreferenceWrite"
+  | "sourceFilters";
 
 export type SourcePreferenceAccess = "unsupported" | "read-only" | "read-write";
 
@@ -16,6 +17,8 @@ export interface RuntimeCapabilities {
   sourcePreferences: boolean;
   sourcePreferenceWrite: boolean;
   sourcePreferenceAccess: SourcePreferenceAccess;
+  /** Search can apply a source's own filters (genre, demographic, ...). */
+  sourceFilters: boolean;
   supported: readonly RuntimeCapability[];
 }
 
@@ -201,11 +204,44 @@ export interface SourcePreferenceGroup {
 
 export type SourceSearchMode = "SEARCH" | "POPULAR" | "LATEST";
 
+export type SourceFilterKind =
+  | "checkbox"
+  | "tristate"
+  | "select"
+  | "sort"
+  | "text"
+  | "group"
+  | "header"
+  | "separator";
+
+/** A search filter a source offers, in the source's own words. Its position is its index. */
+export interface SourceFilter {
+  kind: SourceFilterKind;
+  name: string;
+  /** The options of a select or sort filter. */
+  values: readonly string[];
+  /** The filters inside a group, each at its own index. */
+  filters: readonly SourceFilter[];
+}
+
+export type SourceFilterTriState = "IGNORE" | "INCLUDE" | "EXCLUDE";
+
+/** A change to one filter, by position; a group's change names the filter inside it. */
+export interface SourceFilterChange {
+  position: number;
+  checkBoxState?: boolean;
+  triState?: SourceFilterTriState;
+  selectState?: number;
+  groupChange?: SourceFilterChange;
+}
+
 export interface SourceSearchInput {
   sourceId: string;
   mode: SourceSearchMode;
   page: number;
   query?: string;
+  /** Source filters to apply; only a SEARCH reads them. */
+  filters?: readonly SourceFilterChange[];
   signal?: AbortSignal;
 }
 
@@ -282,6 +318,7 @@ export interface SourceRuntime {
   listSources(signal?: AbortSignal): Promise<readonly SourceRef[]>;
   getSourcePreferences(sourceId: string, signal?: AbortSignal): Promise<readonly SourcePreference[]>;
   updateSourcePreference(input: SourcePreferenceUpdateInput): Promise<readonly SourcePreference[]>;
+  getSourceFilters(sourceId: string, signal?: AbortSignal): Promise<readonly SourceFilter[]>;
   installExtension(input: ExtensionInstallInput): Promise<void>;
   updateExtension(input: ExtensionUpdateInput): Promise<void>;
   uninstallExtension(packageName: string, signal?: AbortSignal): Promise<void>;

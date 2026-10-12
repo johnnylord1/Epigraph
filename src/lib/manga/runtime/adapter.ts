@@ -18,6 +18,7 @@ import type {
   RuntimeFingerprint,
   SourceChapter,
   SourceChapterRef,
+  SourceFilter,
   SourceItemDetails,
   SourceItemRef,
   SourcePage,
@@ -366,16 +367,37 @@ export class SuwayomiAdapter implements SourceRuntime {
 
   async search(input: SourceSearchInput): Promise<SourceSearchResult> {
     await this.requireCompatible();
-    return this.transport.execute(
-      this.profile.operations.search,
-      {
-        source: input.sourceId,
-        type: input.mode,
-        page: input.page,
-        ...(input.query === undefined ? {} : { query: input.query }),
-      },
-      { signal: input.signal },
-    );
+    const variables = {
+      source: input.sourceId,
+      type: input.mode,
+      page: input.page,
+      ...(input.query === undefined ? {} : { query: input.query }),
+    };
+    if (input.filters?.length) {
+      await this.requireSourceFilters();
+      return this.transport.execute(
+        this.profile.operations.filteredSearch,
+        { ...variables, filters: input.filters },
+        { signal: input.signal },
+      );
+    }
+    return this.transport.execute(this.profile.operations.search, variables, { signal: input.signal });
+  }
+
+  async getSourceFilters(sourceId: string, signal?: AbortSignal): Promise<readonly SourceFilter[]> {
+    await this.requireCompatible();
+    await this.requireSourceFilters();
+    return this.transport.execute(this.profile.operations.sourceFilters, { id: sourceId }, { signal });
+  }
+
+  private async requireSourceFilters(): Promise<void> {
+    const capabilities = await this.getCapabilities();
+    if (!capabilities.sourceFilters) {
+      throw new SourceRuntimeError(
+        "RUNTIME_INCOMPATIBLE",
+        "This Suwayomi runtime does not expose source filters.",
+      );
+    }
   }
 
   async getDetails(input: SourceItemRef, signal?: AbortSignal): Promise<SourceItemDetails> {

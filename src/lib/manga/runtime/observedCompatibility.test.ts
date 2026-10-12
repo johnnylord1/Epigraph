@@ -30,6 +30,7 @@ function runtime(): SourceRuntime {
     listExtensions: vi.fn(),
     refreshExtensions: vi.fn(),
     getSourcePreferences: vi.fn(async () => []),
+    getSourceFilters: vi.fn(async () => []),
     updateSourcePreference: vi.fn(async () => []),
     listSources: vi.fn(async () => [{
       id: "7",

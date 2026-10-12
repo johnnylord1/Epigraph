@@ -124,6 +124,17 @@ const CAPABILITY_REQUIREMENTS: Readonly<
       ExtensionType: ["contentWarning", "versionCodeLong"],
     },
   },
+  sourceFilters: {
+    requiredQueries: ["source"],
+    requiredMutations: ["fetchSourceManga"],
+    requiredFields: {
+      SourceType: ["filters"],
+      FetchSourceMangaInput: ["filters"],
+      FilterChangeInput: ["position", "checkBoxState", "triState", "selectState", "groupChange"],
+      GroupFilter: ["name", "filters"],
+      SelectFilter: ["name", "values"],
+    },
+  },
   sourcePreferences: {
     requiredQueries: ["source"],
     requiredMutations: [],
@@ -326,6 +337,7 @@ export function canonicalRuntimeCapabilitiesJson(capabilities: RuntimeCapabiliti
     sourcePreferences: capabilities.sourcePreferences,
     sourcePreferenceWrite: capabilities.sourcePreferenceWrite,
     sourcePreferenceAccess: capabilities.sourcePreferenceAccess,
+    sourceFilters: capabilities.sourceFilters,
     supported: [...capabilities.supported].sort((left, right) => left.localeCompare(right)),
   });
 }
@@ -391,6 +403,7 @@ export function evaluateRuntimeContract(
       : capabilitySet.has("sourcePreferences")
         ? "read-only"
         : "unsupported",
+    sourceFilters: capabilitySet.has("sourceFilters"),
     supported,
   };
 

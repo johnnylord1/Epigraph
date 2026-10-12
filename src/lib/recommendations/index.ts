@@ -6,5 +6,6 @@ export * from "./exploration";
 export * from "./identity";
 export * from "./normalization";
 export * from "./ranking";
+export * from "./sourceGenreFilters";
 export * from "./tasteProfile";
 export * from "./types";

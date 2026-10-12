@@ -155,6 +155,7 @@ describe("GraphQL runtime contract", () => {
       sourcePreferences: true,
       sourcePreferenceWrite: false,
       sourcePreferenceAccess: "read-only",
+      sourceFilters: false,
       supported: ["sourcePreferences"],
     }));
     await expect(runtimeCapabilitiesSha256(capabilities)).resolves.toMatch(

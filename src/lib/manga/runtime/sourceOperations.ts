@@ -2,6 +2,8 @@ import type { Chapter, Manga } from "../../types";
 import { getManagedSourceRuntime } from "./managed";
 import type {
   SourceChapter,
+  SourceFilter,
+  SourceFilterChange,
   SourceItemDetails,
   SourceSearchInput,
   SourceSearchItem,
@@ -12,6 +14,8 @@ export interface SourceMangaSearchVariables {
   type: SourceSearchInput["mode"];
   page: number;
   query?: string | null;
+  /** A source's own filters (genre, demographic, ...), read only by a SEARCH. */
+  filters?: readonly SourceFilterChange[];
 }
 
 function toMangaSource(source: SourceSearchItem["source"]): Manga["source"] {
@@ -75,6 +79,7 @@ export async function searchSourceManga(
     mode: input.type,
     page: input.page,
     ...(input.query == null ? {} : { query: input.query }),
+    ...(input.filters?.length ? { filters: input.filters } : {}),
     signal,
   });
   return {
@@ -83,6 +88,14 @@ export async function searchSourceManga(
       hasNextPage: result.hasNextPage,
     },
   };
+}
+
+/** The filters a source's search takes, or none when the runtime cannot read them. */
+export async function fetchSourceFilters(sourceId: string, signal?: AbortSignal): Promise<readonly SourceFilter[]> {
+  const runtime = await getManagedSourceRuntime();
+  const capabilities = await runtime.getCapabilities();
+  if (!capabilities.sourceFilters) return [];
+  return runtime.getSourceFilters(sourceId, signal);
 }
 
 export async function fetchSourceMangaDetails(
