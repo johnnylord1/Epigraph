@@ -1,20 +1,25 @@
 import type { Manga } from "../types";
 import { inferMangaRecommendationContentType } from "./adapters";
-import { isAniListTitlePending, matchAniListTitles, type AniListTitleMatchEntry } from "./anilistMedia";
+import type { AniListTitleMatchEntry } from "./anilistMedia";
+import { titleProviderChain, type TitleProvider, type TitleProviderOutcome, type TitleProviderTracker } from "./titleProviders";
 
 /**
- * Matches library works to AniList in the background, so the recommendations already know every
- * work's genres and other names when the search page opens. Each work is looked up once: the first
- * library seen after app start queues every work not looked up yet, and later library changes queue
- * only the works that were added (removed works simply leave the queue). Titles go ten per request,
- * two requests per batch, a batch every 20s: under a quarter of AniList's per-minute allowance. A
- * batch that makes no progress (rate limit, AniList down) waits longer before the next one.
+ * Recognises library works in the background, so the recommendations already know every work's
+ * genres and other names when the search page opens. Each work is looked up once: the first library
+ * seen after app start queues every work not looked up yet, and later library changes queue only the
+ * works that were added (removed works simply leave the queue).
+ *
+ * Works go through the providers in order (AniList, Kitsu, MyAnimeList, other logged-in trackers):
+ * a work one provider does not know moves on to the next. Every provider works through its own queue
+ * at its own pace, all at once, so the misses of the first never wait for the whole library. A
+ * provider that stops answering is skipped for the rest of the session; works only it could still
+ * recognise wait for the next session (or a visit to the search page).
  */
 
 type LibraryWork = Pick<Manga, "id" | "title" | "genre"> & Partial<Pick<Manga, "source">>;
 
 export interface AniListLibraryLookupProgress {
-  /** "running" while works are looked up, "done" once all are, "paused" when AniList stopped answering. */
+  /** "running" while works are looked up, "done" once all are, "paused" when providers stopped answering. */
   phase: "running" | "done" | "paused";
   /** Works this run looks up. */
   total: number;
@@ -25,30 +30,41 @@ export interface AniListLibraryLookupProgress {
 
 export type AniListLibraryLookupListener = (progress: AniListLibraryLookupProgress) => void;
 
-export const ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS = 45_000;
-export const ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS = 10_000;
-const BATCH_DELAY_MS = 20_000;
-const REQUESTS_PER_BATCH = 2;
-const MAX_BACKOFF_MS = 10 * 60_000;
-const MAX_IDLE_BATCHES = 5;
+export const ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS = 15_000;
+export const ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS = 5_000;
+const START_RETRY_MS = 20_000;
+const MAX_START_FAILURES = 5;
+const PROVIDER_RETRY_MS = 5_000;
+const MAX_PROVIDER_FAILURES = 3;
+const PROGRESS_REPORT_MS = 1_000;
 
-const ANILIST_TRACKED_WORKS = `
-  query AniListTrackedWorks {
-    trackers { nodes { name trackRecords { nodes { manga { id } } } } }
+const LOOKUP_TRACKERS = `
+  query LibraryLookupTrackers {
+    trackers { nodes { id name isLoggedIn trackRecords { nodes { manga { id } } } } }
   }
 `;
 
-// Works waiting for a lookup, by library id, and the library ids seen so far (null before the first).
+
+interface ActiveWork { work: LibraryWork; entry: AniListTitleMatchEntry; stage: number }
+interface ProviderHealth { busy: boolean; nextAt: number; failures: number; down: boolean }
+interface LookupTrackers { trackers: TitleProviderTracker[]; aniListTrackedIds: Set<number> }
+
+// Works waiting for a run, by library id, and the library ids seen so far (null before the first).
 const queue = new Map<number, LibraryWork>();
 let seenWorkIds: Set<number> | null = null;
 let listener: AniListLibraryLookupListener | null = null;
-let timer: ReturnType<typeof setTimeout> | undefined;
-let running = false;
-let backoffMs = BATCH_DELAY_MS;
-let idleBatches = 0;
-// The current run: its AniList-tracked works (fetched once per run) and what it has done so far.
-let trackedIds: Set<number> | null = null;
-let run: { total: number; matched: number; missed: number; announced: boolean } | null = null;
+let startTimer: ReturnType<typeof setTimeout> | undefined;
+let pumpTimer: ReturnType<typeof setTimeout> | undefined;
+let starting = false;
+let startFailures = 0;
+// Bumped by stop, so answers to requests sent before it are ignored.
+let generation = 0;
+let chain: TitleProvider[] = [];
+const health = new Map<string, ProviderHealth>();
+// Works being looked up, each at the provider it waits for, and works waiting for a provider that is down.
+const active = new Map<number, ActiveWork>();
+const blocked = new Map<number, LibraryWork>();
+let run: { total: number; matched: number; missed: number; announced: boolean; reportedAt: number } | null = null;
 
 /**
  * Library works worth looking up, the ones with fewest genres first since they gain the most. Works
@@ -69,33 +85,39 @@ export function aniListLibraryLookupEntries(
     .sort((a, b) => a.genres.length - b.genres.length);
 }
 
-/** Library works with an AniList tracker entry. */
-export async function aniListTrackedMangaIds(): Promise<Set<number>> {
+/** The Suwayomi trackers (for the provider chain) and the library works with an AniList entry. */
+async function lookupTrackers(): Promise<LookupTrackers> {
   const { gql } = await import("../startupClient");
   const data = await gql<{
-    trackers?: { nodes?: Array<{ name?: string | null; trackRecords?: { nodes?: Array<{ manga?: { id?: number } | null }> } | null }> };
-  }>(ANILIST_TRACKED_WORKS);
-  const ids = new Set<number>();
+    trackers?: {
+      nodes?: Array<TitleProviderTracker & { trackRecords?: { nodes?: Array<{ manga?: { id?: number } | null }> } | null }>;
+    };
+  }>(LOOKUP_TRACKERS);
+  const trackers: TitleProviderTracker[] = [];
+  const aniListTrackedIds = new Set<number>();
   for (const tracker of data.trackers?.nodes ?? []) {
+    trackers.push({ id: tracker.id, name: String(tracker.name ?? ""), isLoggedIn: tracker.isLoggedIn });
     if (!String(tracker.name ?? "").toLowerCase().includes("anilist")) continue;
     for (const record of tracker.trackRecords?.nodes ?? []) {
-      if (typeof record.manga?.id === "number") ids.add(record.manga.id);
+      if (typeof record.manga?.id === "number") aniListTrackedIds.add(record.manga.id);
     }
   }
-  return ids;
+  return { trackers, aniListTrackedIds };
 }
 
 /**
  * Follows the library: queues the works not seen before and drops the removed ones. Works already
- * looked up in an earlier session leave the queue at the first batch without a request.
+ * looked up in an earlier session leave the queue without a request.
  */
 export function syncLibraryAniListLookup(works: readonly LibraryWork[], onProgress?: AniListLibraryLookupListener) {
   if (onProgress) listener = onProgress;
   if (works.length === 0) return;
   const firstSync = seenWorkIds === null;
   const ids = new Set(works.map((work) => work.id));
-  for (const id of queue.keys()) {
-    if (!ids.has(id)) queue.delete(id);
+  for (const map of [queue, active, blocked]) {
+    for (const id of map.keys()) {
+      if (!ids.has(id)) map.delete(id);
+    }
   }
   let added = 0;
   for (const work of works) {
@@ -104,102 +126,205 @@ export function syncLibraryAniListLookup(works: readonly LibraryWork[], onProgre
     added += 1;
   }
   seenWorkIds = ids;
-  if (added > 0) schedule(firstSync ? ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
+  if (added > 0) scheduleStart(firstSync ? ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
+  else if (run) pump();
 }
 
-/** Restarts a lookup that paused after AniList stopped answering. */
+/** Asks the providers that stopped answering again, for the works that wait for them. */
 export function resumeLibraryAniListLookup() {
-  if (queue.size > 0) schedule(ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
+  if (blocked.size === 0 && queue.size === 0) return;
+  for (const [id, work] of blocked) queue.set(id, work);
+  blocked.clear();
+  for (const [id, state] of health) {
+    if (state.down) health.delete(id);
+  }
+  startFailures = 0;
+  scheduleStart(ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
 }
 
 export function stopAniListLibraryLookup() {
-  clearTimeout(timer);
-  timer = undefined;
+  generation += 1;
+  clearTimeout(startTimer);
+  clearTimeout(pumpTimer);
+  startTimer = undefined;
+  pumpTimer = undefined;
+  starting = false;
+  startFailures = 0;
   queue.clear();
+  active.clear();
+  blocked.clear();
+  health.clear();
+  chain = [];
   seenWorkIds = null;
   listener = null;
-  trackedIds = null;
   run = null;
 }
 
-function schedule(delayMs: number) {
-  idleBatches = 0;
-  if (running || timer !== undefined) return;
-  backoffMs = BATCH_DELAY_MS;
-  timer = setTimeout(runBatch, delayMs);
+function scheduleStart(delayMs: number) {
+  if (starting || startTimer !== undefined) return;
+  startTimer = setTimeout(() => void startRun(), delayMs);
 }
 
-function report(phase: AniListLibraryLookupProgress["phase"], remaining: number) {
-  if (!run) return;
+/** Moves the queued works into the run, at the first provider still to be asked about each. */
+async function startRun() {
+  startTimer = undefined;
+  if (queue.size === 0) return;
+  starting = true;
+  const startedGeneration = generation;
+  let trackers: LookupTrackers;
+  try {
+    trackers = await lookupTrackers();
+  } catch {
+    // Suwayomi not ready (app starting): try again later, then wait for the next library change.
+    if (startedGeneration !== generation) return;
+    starting = false;
+    startFailures += 1;
+    if (startFailures < MAX_START_FAILURES) scheduleStart(START_RETRY_MS * startFailures);
+    return;
+  }
+  if (startedGeneration !== generation) return;
+  starting = false;
+  startFailures = 0;
+  // The chain follows the trackers the user is logged in to; providers already running keep their pace.
+  const nextChain = titleProviderChain(trackers.trackers);
+  if (nextChain.map((provider) => provider.id).join() !== chain.map((provider) => provider.id).join()) {
+    chain = nextChain;
+    for (const work of active.values()) settle(work);
+  }
+
+  const works = new Map(queue);
+  queue.clear();
+  const entries = aniListLibraryLookupEntries([...works.values()], trackers.aniListTrackedIds);
+  let added = 0;
+  for (const entry of entries) {
+    const id = Number(entry.key);
+    if (active.has(id)) continue;
+    const work: ActiveWork = { work: works.get(id)!, entry, stage: 0 };
+    // Works every provider already answered about leave without a request or a count.
+    const result = advance(work);
+    if (result === "waiting") {
+      active.set(id, work);
+      added += 1;
+    } else if (result === "blocked") {
+      blocked.set(id, works.get(id)!);
+    }
+  }
+  if (added > 0) {
+    run ??= { total: 0, matched: 0, missed: 0, announced: false, reportedAt: 0 };
+    run.total += added;
+    if (!run.announced) {
+      run.announced = true;
+      report("running", true);
+    }
+  }
+  pump();
+}
+
+/**
+ * Moves a work to the first provider that has not answered about it and is answering. "blocked" when
+ * only providers that are down are left to ask: the work waits for them rather than counting as a miss.
+ */
+function advance(work: ActiveWork): "matched" | "missed" | "waiting" | "blocked" {
+  let skippedDown = false;
+  for (let index = 0; index < chain.length; index += 1) {
+    const status = chain[index].status(work.entry);
+    if (status === "matched") return "matched";
+    if (status === "missed") continue;
+    if (healthOf(chain[index].id).down) {
+      skippedDown = true;
+      continue;
+    }
+    work.stage = index;
+    return "waiting";
+  }
+  return skippedDown ? "blocked" : "missed";
+}
+
+function healthOf(id: string): ProviderHealth {
+  let state = health.get(id);
+  if (!state) {
+    state = { busy: false, nextAt: 0, failures: 0, down: false };
+    health.set(id, state);
+  }
+  return state;
+}
+
+/** Sends a request to every provider that is free, due and has works waiting for it. */
+function pump() {
+  clearTimeout(pumpTimer);
+  pumpTimer = undefined;
+  const now = Date.now();
+  let wakeAt = Infinity;
+  let busy = false;
+  chain.forEach((provider, index) => {
+    const state = healthOf(provider.id);
+    if (state.busy) busy = true;
+    if (state.busy || state.down) return;
+    const batch: ActiveWork[] = [];
+    for (const work of active.values()) {
+      if (work.stage !== index) continue;
+      batch.push(work);
+      if (batch.length >= provider.batchSize) break;
+    }
+    if (batch.length === 0) return;
+    if (now < state.nextAt) {
+      wakeAt = Math.min(wakeAt, state.nextAt);
+      return;
+    }
+    busy = true;
+    void lookUp(provider, state, batch);
+  });
+  if (wakeAt < Infinity) pumpTimer = setTimeout(pump, wakeAt - now);
+  else if (!busy && active.size === 0 && run) finishRun();
+}
+
+async function lookUp(provider: TitleProvider, state: ProviderHealth, batch: ActiveWork[]) {
+  const startedGeneration = generation;
+  state.busy = true;
+  let outcome: TitleProviderOutcome;
+  try {
+    outcome = await provider.lookUp(batch.map((work) => work.entry));
+  } catch {
+    outcome = { ok: false };
+  }
+  if (startedGeneration !== generation) return;
+  state.busy = false;
+  if (outcome.ok) {
+    state.failures = 0;
+    state.nextAt = Date.now() + (outcome.nextDelayMs ?? provider.intervalMs);
+  } else {
+    state.failures += 1;
+    state.down = state.failures >= MAX_PROVIDER_FAILURES;
+    state.nextAt = Date.now() + Math.max(outcome.retryAfterMs ?? 0, PROVIDER_RETRY_MS * 2 ** (state.failures - 1));
+  }
+  // A provider that is down hands every work waiting for it to the next one.
+  const moved = state.down ? [...active.values()].filter((work) => chain[work.stage]?.id === provider.id) : batch;
+  for (const work of moved) settle(work);
+  report("running");
+  pump();
+}
+
+function settle(work: ActiveWork) {
+  const id = Number(work.entry.key);
+  if (active.get(id) !== work || !run) return;
+  const result = advance(work);
+  if (result === "waiting") return;
+  active.delete(id);
+  if (result === "matched") run.matched += 1;
+  else if (result === "missed") run.missed += 1;
+  else blocked.set(id, work.work);
+}
+
+function report(phase: AniListLibraryLookupProgress["phase"], force = false) {
+  if (!run?.announced) return;
+  const now = Date.now();
+  if (!force && phase === "running" && now - run.reportedAt < PROGRESS_REPORT_MS) return;
+  run.reportedAt = now;
+  const remaining = phase === "running" ? active.size : phase === "paused" ? blocked.size : 0;
   listener?.({ phase, total: run.total, remaining, matched: run.matched, missed: run.missed });
 }
 
-function finishRun(phase: "done" | "paused", remaining: number) {
-  if (run?.announced) report(phase, remaining);
+function finishRun() {
+  report(blocked.size > 0 ? "paused" : "done", true);
   run = null;
-  trackedIds = null;
-}
-
-async function runBatch() {
-  timer = undefined;
-  running = true;
-  let next: number | null = null;
-  try {
-    // Works known from earlier lookups leave the queue without a request; the tracker list is only
-    // read when something is left to look up.
-    let pending = aniListLibraryLookupEntries([...queue.values()]).filter((entry) => isAniListTitlePending(entry.title));
-    if (pending.length > 0) {
-      trackedIds ??= await aniListTrackedMangaIds();
-      const tracked = trackedIds;
-      pending = pending.filter((entry) => !tracked.has(Number(entry.key)));
-    }
-    const pendingKeys = new Set(pending.map((entry) => entry.key));
-    for (const id of [...queue.keys()]) {
-      if (!pendingKeys.has(String(id))) queue.delete(id);
-    }
-    if (pending.length === 0) {
-      finishRun("done", 0);
-    } else {
-      run ??= { total: pending.length, matched: 0, missed: 0, announced: false };
-      run.total = Math.max(run.total, run.matched + run.missed + pending.length);
-      if (!run.announced) {
-        run.announced = true;
-        report("running", pending.length);
-      }
-      const matches = await matchAniListTitles(pending, { maxRequests: REQUESTS_PER_BATCH });
-      let resolved = 0;
-      for (const entry of pending) {
-        if (isAniListTitlePending(entry.title)) continue;
-        queue.delete(Number(entry.key));
-        resolved += 1;
-        if (matches.has(entry.key)) run.matched += 1;
-        else run.missed += 1;
-      }
-      const remaining = pending.length - resolved;
-      if (resolved > 0) {
-        backoffMs = BATCH_DELAY_MS;
-        idleBatches = 0;
-      } else {
-        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
-        idleBatches += 1;
-      }
-      if (remaining === 0) finishRun("done", 0);
-      else if (idleBatches >= MAX_IDLE_BATCHES) finishRun("paused", remaining);
-      else {
-        report("running", remaining);
-        next = backoffMs;
-      }
-    }
-  } catch {
-    // Library or tracker list unavailable (server starting): try again later.
-    backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
-    idleBatches += 1;
-    if (idleBatches < MAX_IDLE_BATCHES) next = backoffMs;
-    else finishRun("paused", queue.size);
-  } finally {
-    running = false;
-  }
-  // Works added while this batch ran wait for the next one.
-  if (next === null && queue.size > 0 && idleBatches < MAX_IDLE_BATCHES) next = ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS;
-  if (next !== null) timer = setTimeout(runBatch, next);
 }

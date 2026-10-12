@@ -16,7 +16,7 @@
   } from "../../lib/queries";
   import { addToast } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
-  import { cachedAniListTitleMatch } from "../../lib/recommendations/anilistMedia";
+  import { cachedLibraryTitleMatch } from "../../lib/recommendations/titleProviders";
   import type { Tracker, TrackRecord, TrackSearch } from "../../lib/types";
 
   let { mangaId, mangaTitle, onClose }: {
@@ -39,8 +39,8 @@
   let searching:     boolean       = $state(false);
   let searchInited:  Set<number>   = $state(new Set());
   let searchRequestId = 0;
-  // The work recommendations already matched this title to on AniList, if any.
-  const likelyMatch = $derived(cachedAniListTitleMatch(mangaTitle));
+  // The work recommendations already recognised this title as (on AniList or another provider), if any.
+  const likelyMatch = $derived(cachedLibraryTitleMatch(mangaTitle));
   let likelyRemoteId: string | null = $state(null);
 
   let binding:        boolean       = $state(false);
@@ -139,8 +139,9 @@
 
   function likelyRemoteIdFor(trackerId: number): string | null {
     if (!likelyMatch) return null;
+    if (likelyMatch.trackerRemote?.trackerId === trackerId) return likelyMatch.trackerRemote.remoteId;
     const name = (trackerFor(trackerId)?.name ?? "").toLowerCase();
-    if (name.includes("anilist")) return String(likelyMatch.id);
+    if (name.includes("anilist")) return likelyMatch.id > 0 ? String(likelyMatch.id) : null;
     if ((name.includes("myanimelist") || name === "mal") && likelyMatch.idMal) return String(likelyMatch.idMal);
     return null;
   }

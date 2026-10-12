@@ -17,6 +17,10 @@ export interface AniListMediaProfile {
   titles: string[];
   /** Romaji, English and native titles alone, when the profile comes from a search. */
   mainTitles?: string[];
+  /** Where a work AniList does not know was found ("kitsu", "mal", "tracker:7"); absent for AniList. */
+  provider?: string;
+  /** The work's entry on the Suwayomi tracker it was found on, when that tracker is not AniList or MAL. */
+  trackerRemote?: { trackerId: number; remoteId: string };
 }
 
 interface AniListMediaPayload {
@@ -35,6 +39,18 @@ interface TitleMatchEntry {
   at: number;
   /** Matching rules the entry was made with; misses from older rules are looked up again. */
   v?: number;
+  /** 1 when the whole title found nothing and its first words are still to be searched. */
+  s?: 1;
+}
+
+/** How an AniList request went, for pacing the next one. */
+export interface AniListResponseInfo {
+  ok: boolean;
+  status: number;
+  retryAfterMs: number | null;
+  /** Requests AniList currently allows per minute, and how many are left in this minute. */
+  perMinute: number | null;
+  remaining: number | null;
 }
 
 /** What the library already says about a work, used to tell apart AniList works sharing its name. */
@@ -46,11 +62,17 @@ export interface AniListTitleHints {
 
 export type AniListTitleMatchEntry = { key: string; title: string } & AniListTitleHints;
 
-type FetchOptions = { signal?: AbortSignal; maxRequests?: number; fetchImpl?: typeof fetch };
+type FetchOptions = {
+  signal?: AbortSignal;
+  maxRequests?: number;
+  fetchImpl?: typeof fetch;
+  onResponse?: (info: AniListResponseInfo) => void;
+};
 
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 const ID_PAGE_SIZE = 50;
-const TITLES_PER_SEARCH_REQUEST = 10;
+// AniList refuses queries above 500 complexity points; each title's two searches cost 24.
+const TITLES_PER_SEARCH_REQUEST = 20;
 const RESULTS_PER_TITLE = 5;
 const MAX_STORED_SYNONYMS = 12;
 const MEDIA_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistMedia.v1";
@@ -138,7 +160,12 @@ function loadTitleMatchCache(): Map<string, TitleMatchEntry> {
   for (const [key, value] of Object.entries(readStoredRecord(TITLE_MATCH_CACHE_STORAGE_KEY))) {
     const entry = value as Partial<TitleMatchEntry> | null;
     if (entry && typeof entry.id === "number" && typeof entry.at === "number") {
-      titleMatchCache.set(key, { id: entry.id, at: entry.at, ...(typeof entry.v === "number" ? { v: entry.v } : {}) });
+      titleMatchCache.set(key, {
+        id: entry.id,
+        at: entry.at,
+        ...(typeof entry.v === "number" ? { v: entry.v } : {}),
+        ...(entry.s === 1 ? { s: 1 as const } : {}),
+      });
     }
   }
   return titleMatchCache;
@@ -173,15 +200,45 @@ function resolveFetch(options: FetchOptions) {
   return options.fetchImpl ?? (typeof fetch === "function" ? fetch.bind(globalThis) : undefined);
 }
 
-async function postAniList(fetchImpl: typeof fetch, query: string, variables: Record<string, unknown>, signal?: AbortSignal) {
-  const response = await fetchImpl(ANILIST_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ query, variables }),
-    signal,
-  });
-  if (!response.ok) return null;
+function headerNumber(response: Response, name: string): number | null {
+  const raw = response.headers?.get?.(name);
+  const value = raw == null || raw === "" ? NaN : Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+async function postAniList(
+  fetchImpl: typeof fetch,
+  query: string,
+  variables: Record<string, unknown>,
+  signal?: AbortSignal,
+  onResponse?: FetchOptions["onResponse"],
+) {
+  let response: Response;
+  try {
+    response = await fetchImpl(ANILIST_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query, variables }),
+      signal,
+    });
+  } catch (error) {
+    onResponse?.({ ok: false, status: 0, retryAfterMs: null, perMinute: null, remaining: null });
+    throw error;
+  }
+  const retryAfter = headerNumber(response, "retry-after");
+  const info: AniListResponseInfo = {
+    ok: response.ok,
+    status: response.status,
+    retryAfterMs: retryAfter === null ? null : retryAfter * 1000,
+    perMinute: headerNumber(response, "x-ratelimit-limit"),
+    remaining: headerNumber(response, "x-ratelimit-remaining"),
+  };
+  if (!response.ok) {
+    onResponse?.(info);
+    return null;
+  }
   const payload = await response.json() as { data?: Record<string, { media?: AniListMediaPayload[] } | null> | null };
+  onResponse?.({ ...info, ok: Boolean(payload.data) });
   return payload.data ?? null;
 }
 
@@ -207,7 +264,7 @@ export async function fetchAniListMediaProfiles(
     try {
       const data = await postAniList(fetchImpl, `query MediaProfiles($ids: [Int]) {
         Page(perPage: ${ID_PAGE_SIZE}) { media(id_in: $ids, type: MANGA) { ${MEDIA_PROFILE_FIELDS} } }
-      }`, { ids: batch }, options.signal);
+      }`, { ids: batch }, options.signal, options.onResponse);
       const media = data?.Page?.media;
       if (!media) break;
       const found = new Map<number, AniListMediaProfile>();
@@ -371,7 +428,11 @@ function pickAmongSameNamedWorks(works: AniListMediaProfile[], hints: AniListTit
 }
 
 function isSettledMiss(entry: TitleMatchEntry): boolean {
-  return entry.id === 0 && (entry.v ?? 1) >= TITLE_MATCH_VERSION;
+  return entry.id === 0 && !entry.s && (entry.v ?? 1) >= TITLE_MATCH_VERSION;
+}
+
+function isShortQueryPending(entry: TitleMatchEntry | undefined): boolean {
+  return entry?.id === 0 && entry.s === 1 && entry.v === TITLE_MATCH_VERSION;
 }
 
 /**
@@ -413,8 +474,12 @@ export async function matchAniListTitles(
   }
   let changed = false;
   // A title the whole search finds nothing for is searched again by its first words, ahead of the
-  // titles not searched yet; it stays unresolved (and is retried later) if the budget runs out first.
-  const jobs: Array<{ matchKey: string; shortQuery: string | null }> = queue.map((matchKey) => ({ matchKey, shortQuery: null }));
+  // titles not searched yet. The pending short search is stored, so a call that runs out of budget
+  // first leaves it for the next call instead of repeating the whole search.
+  const jobs: Array<{ matchKey: string; shortQuery: string | null }> = queue.map((matchKey) => ({
+    matchKey,
+    shortQuery: isShortQueryPending(matches.get(matchKey)) ? shortSearchQuery(matchKey) : null,
+  }));
   const record = (matchKey: string, match: AniListMediaProfile | null) => {
     matches.set(matchKey, { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION });
     if (!match) return;
@@ -437,7 +502,7 @@ export async function matchAniListTitles(
     }
     fragment MediaProfile on Media { ${MEDIA_PROFILE_FIELDS} }`;
     try {
-      const data = await postAniList(fetchImpl, query, variables, options.signal);
+      const data = await postAniList(fetchImpl, query, variables, options.signal, options.onResponse);
       if (!data) break;
       batch.forEach(({ matchKey, shortQuery }, index) => {
         const page = data[`r${index}`];
@@ -445,6 +510,7 @@ export async function matchAniListTitles(
         const found = [...page.media, ...(data[`a${index}`]?.media ?? [])];
         const retryQuery = shortQuery ? null : shortSearchQuery(matchKey);
         if (found.length === 0 && retryQuery) {
+          matches.set(matchKey, { id: 0, at: nowMs, v: TITLE_MATCH_VERSION, s: 1 });
           retries.push({ matchKey, shortQuery: retryQuery });
           return;
         }
@@ -475,13 +541,18 @@ export function cachedAniListTitleMatch(title: string): AniListMediaProfile | nu
   return cached && cached.id > 0 ? loadMediaCache().get(cached.id) ?? null : null;
 }
 
+/** Whether AniList matched a title, settled that it has no such work, or is still to be asked. */
+export function aniListTitleStatus(title: string): "matched" | "missed" | "pending" {
+  const key = aniListTitleMatchKey(title);
+  if (!key) return "missed";
+  const cached = loadTitleMatchCache().get(key);
+  if (cached && cached.id > 0 && loadMediaCache().get(cached.id)) return "matched";
+  return cached && isSettledMiss(cached) ? "missed" : "pending";
+}
+
 /** Whether a title still waits for its lookup (never looked up, or missed under older rules). */
 export function isAniListTitlePending(title: string): boolean {
-  const key = aniListTitleMatchKey(title);
-  if (!key) return false;
-  const cached = loadTitleMatchCache().get(key);
-  if (cached && cached.id > 0 && loadMediaCache().get(cached.id)) return false;
-  return !(cached && isSettledMiss(cached));
+  return aniListTitleStatus(title) === "pending";
 }
 
 /** Number of titles still waiting for a lookup, for scheduling follow-up batches. */

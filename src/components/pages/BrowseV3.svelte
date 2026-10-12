@@ -4,6 +4,7 @@
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
+  import { cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
@@ -55,8 +56,6 @@
     explorationGenres,
     fetchAniListMediaProfiles,
     inferMangaRecommendationContentType,
-    matchAniListTitles,
-    pendingAniListTitleCount,
     withAniListGenres,
     mangaToRecommendationCandidate,
     novelSourceResultToRecommendationCandidate,
@@ -1412,14 +1411,14 @@
   }
 
   /**
-   * Matches found so far apply at once. Unknown titles are looked up by the app-wide background
-   * lookup and shape the rows on the next visit instead of reshuffling the ones on screen; a visit
-   * restarts that lookup if it gave up after AniList stopped answering.
+   * Matches found so far (on AniList or a fallback provider) apply at once. Unknown titles are looked
+   * up by the app-wide background lookup and shape the rows on the next visit instead of reshuffling
+   * the ones on screen; a visit asks again the providers that stopped answering.
    */
-  async function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
-    const known = await matchAniListTitles(entries, { cachedOnly: true });
+  function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
+    const known = cachedLibraryTitleMatches(entries);
     searchAniListTitleMatches = new Map([...known].map(([key, profile]) => [Number(key), profile]));
-    if (pendingAniListTitleCount(entries.map((entry) => entry.title)) > 0) resumeLibraryAniListLookup();
+    resumeLibraryAniListLookup();
   }
 
   async function refreshSearchHardcoverRecords() {
@@ -2011,7 +2010,6 @@
 
   const searchTitleMatchRequest = $derived.by(() => {
     if (!searchTrackRecordsLoaded || activeContentType !== "manga" || searchLibraryManga.length === 0) return null;
-    if (searchTrackerIdsOfKind("anilist").size === 0) return null;
     const entries = searchAniListTitleMatchEntries();
     return entries.length > 0 ? { key: entries.map((entry) => entry.key).join(","), entries } : null;
   });
@@ -2024,7 +2022,7 @@
     untrack(() => {
       const request = searchTitleMatchRequest;
       if (request?.key !== key) return;
-      void refreshSearchAniListTitleMatches(request.entries);
+      refreshSearchAniListTitleMatches(request.entries);
       searchTitleMatchLoadedKey = key;
     });
   });
@@ -2064,11 +2062,16 @@
       const key = recommendationTrackerRemoteKey(record.trackerId, record.remoteId);
       if (key) keys.add(key);
     }
-    // A library work matched to AniList is known to every AniList and MyAnimeList feed.
+    // A recognised library work is known to every AniList and MyAnimeList feed, and to the feed of
+    // the tracker it was found on.
     const aniListTrackerIds = searchTrackerIdsOfKind("anilist");
     const malTrackerIds = searchTrackerIdsOfKind("mal");
     for (const profile of searchKnownAniListProfiles) {
-      for (const trackerId of aniListTrackerIds) {
+      if (profile.trackerRemote) {
+        const key = recommendationTrackerRemoteKey(profile.trackerRemote.trackerId, profile.trackerRemote.remoteId);
+        if (key) keys.add(key);
+      }
+      for (const trackerId of profile.id > 0 ? aniListTrackerIds : []) {
         const key = recommendationTrackerRemoteKey(trackerId, profile.id);
         if (key) keys.add(key);
       }

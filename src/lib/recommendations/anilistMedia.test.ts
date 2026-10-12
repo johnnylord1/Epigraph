@@ -127,6 +127,23 @@ describe("AniList media profiles", () => {
     expect(pendingAniListTitleCount(["Mamahaha no Tsurego ga Moto Kanodatta", "Unknown Long Work Title"])).toBe(0);
   });
 
+  it("keeps a pending short search for the next call instead of repeating the whole search", async () => {
+    const queries: string[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const { variables } = JSON.parse(String(init?.body)) as { variables: SearchVariables };
+      queries.push(variables.q0);
+      const found = variables.q0 === "mamahaha no tsurego" ? [media(51, "Mamahaha no Tsurego ga Motokano datta")] : [];
+      return new Response(JSON.stringify({ data: { r0: { media: found }, a0: { media: [] } } }), { status: 200 });
+    });
+    const entries = [{ key: "1", title: "Mamahaha no Tsurego ga Moto Kanodatta" }];
+    const options = { fetchImpl: fetchImpl as unknown as typeof fetch, maxRequests: 1 };
+
+    expect((await matchAniListTitles(entries, options)).size).toBe(0);
+    expect(pendingAniListTitleCount(["Mamahaha no Tsurego ga Moto Kanodatta"])).toBe(1);
+    expect((await matchAniListTitles(entries, options)).get("1")?.id).toBe(51);
+    expect(queries).toEqual(["Mamahaha no Tsurego ga Moto Kanodatta", "mamahaha no tsurego"]);
+  });
+
   it("looks up again titles that older matching rules missed", () => {
     const stored = new Map<string, string>([["epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify({
       "aristocrat s revenge": { id: 0, at: 1_000, v: 4 },
@@ -252,13 +269,19 @@ describe("AniList media profiles", () => {
   });
 
   it("caps title lookups per call and stops on a rate limit", async () => {
-    const fetchImpl = vi.fn(async () => new Response("", { status: 429 }));
+    const fetchImpl = vi.fn(async () => new Response("", {
+      status: 429,
+      headers: { "Retry-After": "42", "X-RateLimit-Limit": "30", "X-RateLimit-Remaining": "0" },
+    }));
     const entries = Array.from({ length: 35 }, (_, index) => ({ key: String(index), title: `Work number ${index}` }));
+    const onResponse = vi.fn();
 
-    const matches = await matchAniListTitles(entries, { fetchImpl: fetchImpl as unknown as typeof fetch, maxRequests: 3 });
+    const matches = await matchAniListTitles(entries, { fetchImpl: fetchImpl as unknown as typeof fetch, maxRequests: 3, onResponse });
 
     expect(matches.size).toBe(0);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // The caller learns how long AniList asks it to wait and how many requests a minute it allows.
+    expect(onResponse).toHaveBeenCalledWith({ ok: false, status: 429, retryAfterMs: 42_000, perMinute: 30, remaining: 0 });
     expect(pendingAniListTitleCount(entries.map((entry) => entry.title))).toBe(35);
   });
 
