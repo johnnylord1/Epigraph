@@ -1845,8 +1845,8 @@
     new Map((store.bookProgress ?? []).map((progress) => [progress.bookId, progress])),
   );
 
-  // Library novels and books the background analysis recognised for certain on Hardcover: their
-  // genres shape the recommendations and their other names are known titles.
+  // Library novels and books the background analysis recognised for certain (on Kitsu, Open Library or
+  // Hardcover): their genres shape the recommendations and their other names and ids are known.
   const searchRecognisedNovels = $derived.by(() => {
     const novels = (novelLibraryState?.entries ?? []).map((entry) => ({ entry, profile: cachedLibraryTitleMatch(entry.title, "novel") }));
     const books = (Array.isArray(store.books) ? store.books : []).map((book) => ({ book, profile: cachedLibraryTitleMatch(book.title, "novel") }));
@@ -2182,9 +2182,12 @@
       const key = recommendationTrackerRemoteKey("hardcover", record.bookId);
       if (key) keys.add(key);
     }
+    // A recognised library novel is known to the feed of the catalogue it was found in.
     for (const profile of searchRecognisedNovelProfiles) {
-      const key = profile.hardcoverId ? recommendationTrackerRemoteKey("hardcover", profile.hardcoverId) : null;
-      if (key) keys.add(key);
+      const hardcover = profile.hardcoverId ? recommendationTrackerRemoteKey("hardcover", profile.hardcoverId) : null;
+      const kitsu = profile.kitsuId ? recommendationTrackerRemoteKey("kitsu", profile.kitsuId) : null;
+      if (hardcover) keys.add(hardcover);
+      if (kitsu) keys.add(kitsu);
     }
     return keys;
   });

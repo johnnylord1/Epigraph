@@ -1,5 +1,6 @@
 import {
   aniListSearchQuery,
+  aniListTitleMatchKey,
   aniListTitleStatus,
   cachedAniListTitleCandidate,
   cachedAniListTitleMatch,
@@ -13,15 +14,17 @@ import {
   type TitleMatchStatus,
   type TitleMedium,
 } from "./anilistMedia";
-import { splitCredits } from "./credits";
-import { KitsuRequestError, kitsuNovelProfile, searchKitsuNovels } from "./kitsuNovels";
+import { creditRelation, splitCredits } from "./credits";
+import { KitsuRequestError, kitsuNovelProfile, searchKitsuNovels, type KitsuNovel } from "./kitsuNovels";
+import { haveSameWords, isTranslatedTitle, titleCognates } from "./translatedTitles";
 
 /**
  * Where library works are looked up, in order. Comics: AniList, then Kitsu, then MyAnimeList, then
  * the other trackers the user is logged in to on Suwayomi. Novels and books: Hardcover, the novel
  * section's own tracker, while it is connected, then Kitsu's novel catalogue (light and web novels)
- * and Open Library (books), which need no account. NovelUpdates has no API and turns programs away.
- * AniList is never asked about novels.
+ * and Open Library (books), which need no account, and last the author's works, for a novel a source
+ * lists under a translated title. NovelUpdates has no API and turns programs away. AniList is never
+ * asked about novels.
  * A work one provider does not know for certain is searched on the next, and so on until one
  * recognises it. Every provider's answer (misses and likely works included) is kept, so each work is
  * asked about once per provider. Nothing is ever tracked: a recognised work only feeds the
@@ -100,9 +103,11 @@ const JIKAN_FAILURES_BEFORE_TRACKER = 2;
 // Trackers whose Suwayomi search finds works by name. AniList, Kitsu and MyAnimeList are asked
 // directly; library trackers (Komga, Kavita, Suwayomi) have no catalogue to search.
 const SEARCHABLE_TRACKER_PATTERN = /mangaupdates|manga updates|shikimori|bangumi/i;
-const NOVEL_PROVIDERS = new Set(["hardcover", "kitsu", "openlibrary"]);
+const NOVEL_PROVIDERS = new Set(["hardcover", "kitsu", "openlibrary", "author"]);
 // Open Library asks for no more than one request a second.
 const OPEN_LIBRARY_INTERVAL_MS = 1_100;
+// An author's books on Open Library, one listing per edition or volume.
+const AUTHOR_BOOKS_LIMIT = 20;
 // Open Library's subjects mix genres with places, people and list names; only the genres are kept.
 const OPEN_LIBRARY_GENRES: ReadonlyArray<[RegExp, string]> = [
   [/^(epic |high |urban |dark )?fantasy( fiction)?$/i, "Fantasy"],
@@ -132,6 +137,8 @@ const KITSU_SUBTYPES: Record<string, { format: string; country: string }> = {
 };
 
 let providerMatches: Map<string, Record<string, ProviderMatchEntry>> | null = null;
+// Each author's books, asked for once a session however many of their novels the library has.
+const authorBooks = new Map<string, AniListMediaProfile[]>();
 
 function strings(list: unknown): string[] {
   return Array.isArray(list) ? list.filter((item): item is string => typeof item === "string") : [];
@@ -195,6 +202,7 @@ function saveProviderMatches() {
 
 export function resetTitleProviderCacheForTests() {
   providerMatches = null;
+  authorBooks.clear();
 }
 
 /**
@@ -279,6 +287,7 @@ function providerRank(provider: string): number {
   if (provider === "mal") return 1;
   if (provider === "hardcover") return 2;
   if (provider === "openlibrary") return 3;
+  if (provider === "author") return 3.5;
   return 4 + Number(provider.replace(/^tracker:/, "") || 0) / 1e6;
 }
 
@@ -527,6 +536,106 @@ async function searchOpenLibrary(fetchImpl: typeof fetch, query: string): Promis
   return answer.ok ? { ok: true, profiles: openLibraryProfiles(answer.json) } : answer;
 }
 
+async function searchOpenLibraryAuthor(fetchImpl: typeof fetch, author: string): Promise<ProviderSearch> {
+  const key = author.trim().toLowerCase();
+  const known = authorBooks.get(key);
+  if (known) return { ok: true, profiles: known };
+  const fields = "key,title,subtitle,alternative_title,author_name,subject";
+  const answer = await fetchJson(
+    fetchImpl,
+    `https://openlibrary.org/search.json?author=${encodeURIComponent(author)}&limit=${AUTHOR_BOOKS_LIMIT}&fields=${fields}`,
+    { Accept: "application/json" },
+  );
+  if (!answer.ok) return answer;
+  const profiles = openLibraryProfiles(answer.json);
+  authorBooks.set(key, profiles);
+  return { ok: true, profiles };
+}
+
+/** The series a volume belongs to: "Lord of Mysteries, Vol. 2" is "Lord of Mysteries". */
+export function seriesTitle(title: string): string {
+  return title
+    .replace(/[\s,:–-]*\b(?:vol(?:ume)?|book|part|livro)\.?\s*\d+\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+type AuthorJudgement = { ok: true; judgement: TitleJudgement } | { ok: false; retryAfterMs: number | null };
+
+/**
+ * An author's series as Kitsu's novel catalogue lists it, for its id and genres; null when Kitsu has
+ * none by those words. The author already settled which work it is, so a main title with the same
+ * words is enough, or else one that only adds a subtitle ("Apocalypse Bringer Mynoghra: World Conquest
+ * Starts with…"). Kitsu's other names are left out: they name sequels after the first work.
+ */
+async function kitsuSeries(fetchImpl: typeof fetch, name: string): Promise<KitsuNovel | null> {
+  const novels = await searchKitsuNovels(name, RESULTS_PER_TITLE, { fetchImpl });
+  const withTitle = (same: (title: string) => boolean) => novels.find((novel) => novel.mainTitles.some(same));
+  return withTitle((title) => haveSameWords(name, title))
+    ?? withTitle((title) => haveSameWords(name, title.split(/\s*[:：~]\s*/)[0]))
+    ?? null;
+}
+
+/**
+ * Which of its author's works a novel listed under a translated title is ("Lorde dos Mistérios" is
+ * Cuttlefish That Loves Diving's "Lord of Mysteries"). A work counts only when the library's author
+ * wrote it and its title reads as a translation of the library's; one work of several is never picked
+ * on a guess. Otherwise the author's closest work is a hint at most and the novel stays pending.
+ * It costs one request per author, and one on Kitsu once a work is recognised; titles are compared here.
+ */
+async function judgeByAuthorWorks(fetchImpl: typeof fetch, entry: AniListTitleMatchEntry): Promise<AuthorJudgement> {
+  const none: AuthorJudgement = { ok: true, judgement: { match: null, candidate: null } };
+  const author = entry.credits?.[0];
+  if (!author) return none;
+  const answer = await searchOpenLibraryAuthor(fetchImpl, author);
+  if (!answer.ok) return answer;
+  // One listing per series, written by the library's author; manga adaptations are other works.
+  const series = new Map<string, AniListMediaProfile>();
+  for (const book of answer.profiles) {
+    const title = book.mainTitles?.[0] ?? book.titles[0];
+    if (!title || /\(manga\)/i.test(title) || creditRelation(entry.credits, book.credits) !== "match") continue;
+    const name = seriesTitle(title);
+    const key = aniListTitleMatchKey(name);
+    if (key && !series.has(key)) series.set(key, { ...book, titles: cleanTitles([name, ...book.titles]), mainTitles: [name] });
+  }
+  const works = [...series.values()];
+  if (works.length === 0) return none;
+
+  const translated = works.filter((work) => work.titles.some((title) => isTranslatedTitle(entry.title, title)));
+  if (translated.length === 1) {
+    // The work as Kitsu's novel catalogue lists it, for its id and genres, when it does.
+    const [work] = translated;
+    try {
+      const novel = await kitsuSeries(fetchImpl, work.mainTitles![0]);
+      return { ok: true, judgement: { match: novel ? { ...kitsuNovelProfile(novel), credits: work.credits } : work, candidate: null } };
+    } catch (error) {
+      return { ok: false, retryAfterMs: error instanceof KitsuRequestError ? error.retryAfterMs : null };
+    }
+  }
+  const closeness = (work: AniListMediaProfile) => Math.max(0, ...work.titles.map((title) => titleCognates(entry.title, title).pairs));
+  const [closest] = [...(translated.length > 0 ? translated : works)].sort((a, b) => closeness(b) - closeness(a));
+  // A work is suggested only when its title shares words with the library's; being the author's only one is no sign.
+  const hinted = translated.length > 0 || closeness(closest) > 0;
+  return { ok: true, judgement: { match: null, candidate: hinted ? closest : null } };
+}
+
+function authorWorksProvider(fetchImpl: typeof fetch): TitleProvider {
+  return {
+    id: "author",
+    batchSize: 1,
+    intervalMs: OPEN_LIBRARY_INTERVAL_MS,
+    status: (entry) => providerTitleStatus("author", entry.title, "novel"),
+    async lookUp(entries) {
+      for (const entry of entries) {
+        const answer = await judgeByAuthorWorks(fetchImpl, entry);
+        if (!answer.ok) return { ok: false, retryAfterMs: answer.retryAfterMs };
+        recordProviderTitleJudgement("author", entry.title, answer.judgement, "novel");
+      }
+      return { ok: true };
+    },
+  };
+}
+
 async function searchJikan(fetchImpl: typeof fetch, query: string): Promise<ProviderSearch> {
   const answer = await fetchJson(fetchImpl, `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(query)}&limit=${RESULTS_PER_TITLE}`, { Accept: "application/json" });
   return answer.ok ? { ok: true, profiles: jikanProfiles(answer.json) } : answer;
@@ -604,7 +713,7 @@ async function searchHardcover(hardcover: HardcoverTitleSearch, query: string): 
  * The providers to ask, in order. AniList and Kitsu are public; MyAnimeList is asked through Jikan,
  * or through the user's MyAnimeList tracker while Jikan is down; MangaUpdates, Shikimori and Bangumi
  * only through a tracker the user is logged in to. Novels: Hardcover while it is connected, then
- * Kitsu's novel catalogue and Open Library, both public.
+ * Kitsu's novel catalogue and Open Library, both public, then the author's works on both.
  */
 export function titleProviderChain(
   trackers: readonly TitleProviderTracker[],
@@ -619,6 +728,7 @@ export function titleProviderChain(
     if (fetchImpl) {
       novelChain.push(singleTitleProvider("kitsu", KITSU_INTERVAL_MS, medium, (query) => searchKitsuNovelCatalogue(fetchImpl, query)));
       novelChain.push(singleTitleProvider("openlibrary", OPEN_LIBRARY_INTERVAL_MS, medium, (query) => searchOpenLibrary(fetchImpl, query)));
+      novelChain.push(authorWorksProvider(fetchImpl));
     }
     return novelChain;
   }

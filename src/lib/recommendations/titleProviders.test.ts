@@ -5,6 +5,7 @@ import {
   cachedLibraryTitleCandidate,
   cachedLibraryTitleMatch,
   hardcoverProfiles,
+  seriesTitle,
   jikanProfiles,
   kitsuProfiles,
   openLibraryProfiles,
@@ -167,7 +168,7 @@ describe("title providers after AniList", () => {
       })
       : json({ docs: [] }));
     const chain = titleProviderChain([{ id: 2, name: "AniList", isLoggedIn: true }], { fetchImpl: fetchImpl as unknown as typeof fetch }, "novel");
-    expect(chain.map((provider) => provider.id)).toEqual(["kitsu", "openlibrary"]);
+    expect(chain.map((provider) => provider.id)).toEqual(["kitsu", "openlibrary", "author"]);
 
     await expect(chain[0].lookUp([{ key: "novel:a", title: "Chrysalis", credits: ["RinoZ"] }])).resolves.toEqual({ ok: true });
     expect(String(fetchImpl.mock.calls[0][0])).toContain("filter%5Bsubtype%5D=novel");
@@ -196,7 +197,7 @@ describe("title providers after AniList", () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
 
     const chain = titleProviderChain([{ id: 7, name: "MangaUpdates", isLoggedIn: true }, { id: 2, name: "AniList", isLoggedIn: true }], { fetchImpl, hardcover }, "novel");
-    expect(chain.map((provider) => provider.id)).toEqual(["hardcover", "kitsu", "openlibrary"]);
+    expect(chain.map((provider) => provider.id)).toEqual(["hardcover", "kitsu", "openlibrary", "author"]);
 
     expect(hardcoverProfiles([{ id: 6, title: "Chrysalis", authors: ["RinoZ"] }])[0]).toMatchObject({ format: "NOVEL", hardcoverId: 6, credits: ["RinoZ"] });
     await expect(chain[0].lookUp([{ key: "novel:a", title: "Chrysalis", credits: ["RinoZ"] }])).resolves.toEqual({ ok: true });
@@ -209,5 +210,69 @@ describe("title providers after AniList", () => {
     // A novel another site knows is not used: novels are recognised on the novel trackers only.
     recordProviderTitleJudgement("mal", "Lord of the Mysteries", { match: kitsuProfiles(kitsuAnswer)[1], candidate: null }, "novel");
     expect(cachedLibraryTitleMatch("Lord of the Mysteries", "novel")).toBeNull();
+  });
+
+  it("recognises a novel listed under a translated title among its author's works, and only for certain", async () => {
+    const books: Record<string, unknown[]> = {
+      "Cuttlefish That Loves Diving": [
+        { key: "/works/OL1W", title: "Lord of Mysteries, Vol. 1", author_name: ["Cuttlefish That Loves Diving"] },
+        { key: "/works/OL2W", title: "Lord of Mysteries, Vol. 2", author_name: ["Cuttlefish That Loves Diving"] },
+        { key: "/works/OL3W", title: "Circle of Inevitability", author_name: ["Cuttlefish That Loves Diving"] },
+      ],
+      "Kazuno Fehu": [{ key: "/works/OL7W", title: "Apocalypse Bringer Mynoghra, Vol. 1", author_name: ["Kazuno Fehu"] }],
+      "Jung Yoon-Kang": [{ key: "/works/OL8W", title: "Gugak", author_name: ["Jung Yoon-Kang"] }],
+      Guiltythree: [
+        { key: "/works/OL4W", title: "Shadow Slave, Book 1", author_name: ["Guiltythree"] },
+        { key: "/works/OL5W", title: "Shadow Slave (manga)", author_name: ["Guiltythree"] },
+        { key: "/works/OL6W", title: "Another Story", author_name: ["Guiltythree"] },
+      ],
+    };
+    const kitsu: Record<string, { id: string; title: string }> = {
+      "Lord of Mysteries": { id: "56175", title: "Lord of the Mysteries" },
+      "Apocalypse Bringer Mynoghra": { id: "60377", title: "Apocalypse Bringer Mynoghra: World Conquest Starts with the Civilization of Ruin" },
+    };
+    // Kitsu answers the sequel first, under its other name "Lord of Mysteries 2: …".
+    const sequel = { id: "67135", type: "manga", attributes: { canonicalTitle: "Circle of Inevitability", titles: { en: "Circle of Inevitability" }, abbreviatedTitles: ["Lord of Mysteries 2: Circle of Inevitability"], subtype: "novel" } };
+    const fetchImpl = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === "openlibrary.org") return json({ docs: books[url.searchParams.get("author") ?? ""] ?? [] });
+      const query = url.searchParams.get("filter[text]") ?? "";
+      const novel = kitsu[query];
+      const found = novel ? [{ id: novel.id, type: "manga", attributes: { canonicalTitle: novel.title, titles: { en: novel.title }, subtype: "novel" } }] : [];
+      return json({ data: query === "Lord of Mysteries" ? [sequel, ...found] : found });
+    });
+    const author = titleProviderChain([], { fetchImpl: fetchImpl as unknown as typeof fetch }, "novel").find((provider) => provider.id === "author")!;
+    const asked = (host: string) => fetchImpl.mock.calls.filter(([url]) => String(url).includes(host)).length;
+
+    // The title reads as a translation of one work: matched, as Kitsu lists it.
+    await expect(author.lookUp([{ key: "novel:a", title: "Lorde dos Mistérios", credits: ["Cuttlefish That Loves Diving"] }])).resolves.toEqual({ ok: true });
+    expect(cachedLibraryTitleMatch("Lorde dos Mistérios", "novel")).toMatchObject({ kitsuId: 56175, provider: "author", credits: ["Cuttlefish That Loves Diving"] });
+
+    // The same author's books are asked for once; a title close to one work only hints at it.
+    await author.lookUp([{ key: "novel:b", title: "O Círculo", credits: ["Cuttlefish That Loves Diving"] }]);
+    expect(asked("openlibrary.org")).toBe(1);
+    expect(cachedLibraryTitleMatch("O Círculo", "novel")).toBeNull();
+    expect(cachedLibraryTitleCandidate("O Círculo", "novel")).toMatchObject({ mainTitles: ["Circle of Inevitability"], provider: "author" });
+
+    // Nothing in the title says which of the author's works it is: it stays pending, without a guess or Kitsu.
+    const kitsuAsked = asked("kitsu.io");
+    await author.lookUp([{ key: "novel:c", title: "Escravo das Sombras", credits: ["Guiltythree"] }]);
+    expect(cachedLibraryTitleMatch("Escravo das Sombras", "novel")).toBeNull();
+    expect(providerTitleStatus("author", "Escravo das Sombras", "novel")).toBe("missed");
+    expect(asked("kitsu.io")).toBe(kitsuAsked);
+
+    // Kitsu's title may carry a subtitle.
+    await author.lookUp([{ key: "novel:d", title: "Isekai Apocalypse Mynoghra ~ Conquistando o Mundo ~", credits: ["Kazuno Fehu"] }]);
+    expect(cachedLibraryTitleMatch("Isekai Apocalypse Mynoghra ~ Conquistando o Mundo ~", "novel")).toMatchObject({ kitsuId: 60377, provider: "author" });
+
+    // Being the author's only work known is no sign it is this one.
+    await author.lookUp([{ key: "novel:e", title: "Sobrevivendo no Jogo como um Bárbaro", credits: ["Jung Yoon-Kang"] }]);
+    expect(providerTitleStatus("author", "Sobrevivendo no Jogo como um Bárbaro", "novel")).toBe("missed");
+
+    // A novel with no author is not looked for this way.
+    await author.lookUp([{ key: "novel:e", title: "Sem Autor" }]);
+    expect(providerTitleStatus("author", "Sem Autor", "novel")).toBe("missed");
+    expect(seriesTitle("Lord of Mysteries, Vol. 2")).toBe("Lord of Mysteries");
+    expect(seriesTitle("Shadow Slave Book 1: Rise")).toBe("Shadow Slave");
   });
 });
