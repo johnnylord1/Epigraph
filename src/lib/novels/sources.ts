@@ -148,6 +148,23 @@ export async function readInstalledNovelSourceRuntimeSummary(
   };
 }
 
+/** The filters a source's popular list takes, as the plugin declares them with their defaults. */
+export async function readInstalledNovelSourceFilters(
+  scopeInput: NovelRepositoryScopeInput,
+  sourceId: string,
+): Promise<Record<string, unknown>> {
+  const source = (await loadTrustedInstalledNovelSources(scopeInput)).find((entry) => entry.pluginId === sourceId);
+  if (!source) {
+    throw new Error("Novel source is not installed, enabled, and trusted.");
+  }
+
+  const payload = await readPluginPayload(source);
+  const result = await runtimeHost.invoke<typeof payload, {
+    filters?: Record<string, unknown>;
+  }>("source.filters.read", payload);
+  return result.filters && typeof result.filters === "object" ? result.filters : {};
+}
+
 function createSourceIdentity(source: InstalledNovelSourceDescriptor) {
   return {
     repositoryUrl: source.repositoryUrl,
@@ -238,6 +255,7 @@ export async function browseInstalledNovelSource(
   scopeInput: NovelRepositoryScopeInput,
   sourceId: string,
   pageNo = 1,
+  filters?: Record<string, unknown>,
 ): Promise<NovelSourceSearchResult[]> {
   const source = (await loadTrustedInstalledNovelSources(scopeInput)).find((entry) => entry.pluginId === sourceId);
   if (!source) {
@@ -245,11 +263,13 @@ export async function browseInstalledNovelSource(
   }
 
   const payload = await readPluginPayload(source);
-  const result = await runtimeHost.invoke<typeof payload & { pageNo: number }, {
+  const result = await runtimeHost.invoke<typeof payload & { pageNo: number; options?: Record<string, unknown> }, {
     results: Array<NovelSourceRuntimeEntry>;
   }>("source.popular", {
     ...payload,
     pageNo,
+    // The plugin's own filters with some values changed; without them it reads its defaults.
+    ...(filters ? { options: { showLatestNovels: false, filters } } : {}),
   });
 
   return (result.results ?? [])

@@ -30,7 +30,7 @@
   import AppTopbar from "../layout/AppTopbar.svelte";
   import ActivityButton from "../layout/ActivityButton.svelte";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
-  import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
+  import { browseInstalledNovelSource, loadTrustedInstalledNovelSources, readInstalledNovelDetails, readInstalledNovelSourceFilters, searchInstalledNovelSource, shutdownInstalledNovelSourcesRuntime } from "../../lib/novels/sources";
   import { createNovelLibraryId, type ActiveNovelDetailState, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
@@ -69,6 +69,7 @@
     comicFormatCountries,
     explorationGenres,
     sourceGenreFilterChange,
+    novelSourceGenreFilters,
     tasteCatalogRequests,
     fetchAniListMediaProfiles,
     fetchAniListMediaProfilesByMalId,
@@ -328,6 +329,11 @@
   const SEARCH_TRACKER_SOURCE_INITIAL_TITLES = 8;
   const SEARCH_TRACKER_SOURCE_SCROLL_TITLES = 8;
   const SEARCH_TRACKER_SOURCE_CONCURRENCY = 3;
+  // Novel sources run their plugins for every list, and the rows' popular pages and details load
+  // through the same plugins at the same time: as long as the runtime gives a request.
+  const SEARCH_NOVEL_GENRE_SOURCE_TIMEOUT_MS = 15_000;
+  // A source that fails or times out this many times in a row is not asked again.
+  const SEARCH_NOVEL_GENRE_SOURCE_MAX_MISSES = 3;
   const TRACKER_SCORE_BATCH_SIZE = 12;
   const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 3;
   const TRACKER_SCORE_MAL_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
@@ -844,6 +850,44 @@
   // The trackers' entries under the title an extension gives the same work, so the two are one.
   let searchTrackerSourceLinks: TrackSearch[] = $state([]);
   let searchGenreSourceScrollInFlight = false;
+  // The same for novels: works a novel source listed under one of the reader's genres, with those
+  // genres per result, and Kitsu's entry for the works found in a source by their Kitsu title.
+  interface SearchNovelGenreSourceCursor {
+    source: BrowseSourceEntry;
+    genre: string;
+    filters: Record<string, unknown>;
+    page: number;
+    done: boolean;
+  }
+  interface SearchNovelGenreSourceFeed {
+    key: string;
+    taste: SearchNovelGenreSourceCursor[];
+    explore: SearchNovelGenreSourceCursor[];
+    tasteGenres: string[];
+    exploreGenres: string[];
+    sources: BrowseSourceEntry[];
+    // Each source's first page per genre: two genres listing the same page mean the source ignores
+    // its genre filter.
+    firstPages: Map<string, Map<string, string>>;
+    ignoringSources: Set<string>;
+    // Failed or too slow requests in a row, per use and source.
+    misses: Map<string, number>;
+    // Kitsu works already looked up in the sources, and the results that were found that way.
+    lookedUp: Set<string>;
+    linkedKeys: Set<string>;
+    lookingUp: Set<"taste" | "explore">;
+    lookedUpCount: { taste: number; explore: number };
+  }
+  let searchNovelGenreSourceResults: NovelSourceSearchResult[] = $state([]);
+  let searchNovelGenreSourceTags: Map<string, string[]> = $state(new Map());
+  let searchNovelGenreSourceKey = $state("");
+  let searchNovelGenreSourceReadyKey = $state("");
+  let searchNovelGenreSourceAbortCtrl: AbortController | null = null;
+  let searchNovelGenreSourceFeed: SearchNovelGenreSourceFeed | null = null;
+  let searchNovelGenreSourceScrollInFlight = false;
+  // Kitsu's entry and genres for a source novel found by its Kitsu title, by the source title's key.
+  let searchNovelKitsuSourceLinks: Map<string, { provider: RecommendationProviderSignal; tags: string[] }> = $state(new Map());
+  const searchNovelSourceFilterCache = new Map<string, Promise<Record<string, unknown>>>();
   const searchSourceFilterCache = new Map<string, Promise<readonly SourceFilter[]>>();
   let searchSourceSeedFetchedAt: number | null = $state(null);
   let searchNovelSourceSeedResults: NovelSourceSearchResult[] = $state([]);
@@ -1933,7 +1977,8 @@
     );
     if (searchGenreSourceResults.length === 0) return seeds;
     // Searched by genre: their own share per source, so full popular pages do not push them out.
-    const byGenre = balanceMangaBySource(searchGenreSourceResults.filter(visible));
+    // The scroll's latest pages come last, so the feed's own cap is the only one.
+    const byGenre = balanceMangaBySource(searchGenreSourceResults.filter(visible), SEARCH_GENRE_SOURCE_RESULT_CAP);
     return dedupeMangaByTitle(
       dedupeMangaById([...seeds, ...byGenre]).map((manga) => {
         const genres = searchGenreSourceTags.get(manga.id);
@@ -1975,9 +2020,16 @@
     new Map(allNovelSources.map((source) => [source.pluginId, source])),
   );
 
-  const searchNovelSourcePool = $derived.by(() => balanceNovelSourceResults(dedupeNovelSourceResults([
-    ...searchNovelSourceSeedResults,
-  ])));
+  const searchNovelSourcePool = $derived.by(() => {
+    // Some plugins read a site's sign-in and menu links as works; those come without a cover.
+    const seeds = balanceNovelSourceResults(dedupeNovelSourceResults([
+      ...searchNovelSourceSeedResults,
+    ]).filter((result) => result.coverUrl));
+    if (searchNovelGenreSourceResults.length === 0) return seeds;
+    // Listed by genre: their own share per source, so full popular pages do not push them out.
+    // The scroll's latest pages come last, so the feed's own cap is the only one.
+    return dedupeNovelSourceResults([...seeds, ...balanceNovelSourceResults(searchNovelGenreSourceResults, SEARCH_GENRE_SOURCE_RESULT_CAP)]);
+  });
 
   const searchHardcoverProviderByTitleKey = $derived.by(() => {
     const providers = new Map<string, RecommendationProviderSignal>();
@@ -1996,11 +2048,14 @@
     searchNovelSourcePool.map((result) => {
       const candidate = novelSourceResultToRecommendationCandidate(result, searchNovelSourceById.get(result.sourceId));
       const titleKey = recommendationTitleKey(result.title, "novel");
-      const trackerProviders = [searchHardcoverProviderByTitleKey.get(titleKey), searchKitsuNovelScoreResults.get(titleKey)]
+      // A work found by its Kitsu title is that Kitsu entry; a rating found by the source's title may not be.
+      const kitsuLink = searchNovelKitsuSourceLinks.get(titleKey);
+      const trackerProviders = [searchHardcoverProviderByTitleKey.get(titleKey), kitsuLink?.provider ?? searchKitsuNovelScoreResults.get(titleKey)]
         .filter((provider): provider is RecommendationProviderSignal => Boolean(provider));
       const detailTags = [
         ...(searchNovelDetailTagsByKey.get(novelSourceResultKey(result)) ?? []),
-        ...(searchKitsuNovelTagsByTitleKey.get(titleKey) ?? []),
+        ...(kitsuLink?.tags ?? searchKitsuNovelTagsByTitleKey.get(titleKey) ?? []),
+        ...(searchNovelGenreSourceTags.get(novelSourceResultKey(result)) ?? []),
       ];
       const detailUpdatedAtMs = searchNovelDetailUpdatedAtByKey.get(novelSourceResultKey(result));
       return {
@@ -2221,6 +2276,66 @@
       });
     }, KITSU_NOVEL_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
+  });
+
+  // The genres Kitsu is asked for, asked of the novel sources with their own filters: the reader's
+  // strongest genres feed the rows that follow their taste, the rarely read ones "outside your usual
+  // reads". The Kitsu novels of those genres are looked up by title in the sources that cannot list
+  // them, so the reader can open them there.
+  const searchNovelGenreSourceRequest = $derived.by(() => {
+    if (activeContentType !== "novels") return null;
+    const profile = searchNovelProfileOnly;
+    const taste = [...new Set(profile.topTags
+      .map((tag) => formatTasteTag(tag).trim())
+      .filter(isUsefulHardcoverDiscoveryTag)
+      .slice(0, KITSU_NOVEL_TASTE_CATEGORY_LIMIT))];
+    const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    // Every rarely read genre, in the order Kitsu reads them: the first ones now, the rest on scroll.
+    const explore = explorationGenres(profile, { rotation: day, limit: Number.MAX_SAFE_INTEGER })?.include ?? [];
+    if (taste.length + explore.length === 0) return null;
+    const sources = searchRecommendationSourcePool
+      .filter((entry) => entry.novelSource)
+      .slice(0, SEARCH_GENRE_SOURCE_LIMIT);
+    if (sources.length === 0) return null;
+    return {
+      key: JSON.stringify({
+        scope: searchRuntimeScopeKey,
+        sources: sources.map((source) => source.id),
+        taste,
+        explore,
+      }),
+      taste,
+      explore,
+      sources,
+    };
+  });
+
+  const searchNovelGenreSourceRequestKey = $derived(searchNovelGenreSourceRequest?.key ?? "");
+
+  $effect(() => {
+    if (!searchRecommendationsReady) return;
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    const key = searchNovelGenreSourceRequestKey;
+    if (!key || key === searchNovelGenreSourceKey) return;
+    const timer = window.setTimeout(() => {
+      untrack(() => {
+        const request = searchNovelGenreSourceRequest;
+        if (request?.key === key) void refreshSearchNovelGenreSourceFeed(request);
+      });
+    }, SEARCH_EXPLORE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  });
+
+  // Kitsu's genre feeds arrive on their own time; their first novels are looked up in the sources
+  // as they do.
+  $effect(() => {
+    const ready = searchNovelGenreSourceReadyKey;
+    const arrived = searchKitsuNovelDiscoveryResults.length;
+    if (!ready || ready !== searchNovelGenreSourceKey || arrived === 0) return;
+    untrack(() => {
+      void topUpSearchNovelKitsuSourceLookups("taste");
+      void topUpSearchNovelKitsuSourceLookups("explore");
+    });
   });
 
   const searchTrackerScoreTitles = $derived.by(() => {
@@ -3351,12 +3466,14 @@
       }
     }
 
-    // Novel rows read their genres on Kitsu the way comic rows read them on AniList, and the sources'
-    // next pages only once those stop growing the row. "Fresh" follows the sources alone.
+    // Novel rows read their genres on Kitsu and in the sources' genre lists the way comic rows read
+    // them on AniList and the extensions, and the sources' popular pages only once those stop growing
+    // the row. "Fresh" follows the sources alone.
     if (activeContentType === "novels" && sectionKey !== "freshInYourSources") {
       searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys, key]);
+      const kind = sectionKey === "outsideYourUsualReads" ? "explore" : "taste";
       try {
-        await loadMoreSearchKitsuNovels(sectionKey === "outsideYourUsualReads" ? "explore" : "taste");
+        await Promise.all([loadMoreSearchKitsuNovels(kind), loadMoreSearchNovelGenreSources(kind)]);
       } finally {
         searchRecommendationMoreLoadingKeys = new Set([...searchRecommendationMoreLoadingKeys].filter((entry) => entry !== key));
       }
@@ -5497,6 +5614,24 @@
     } finally {
       if (current()) searchKitsuNovelLoading = false;
     }
+    // Novels the sources listed by genre before Kitsu was ready.
+    if (current()) void rateSearchNovelGenreSourceTitles(searchNovelGenreSourceResults.map((result) => result.title));
+  }
+
+  // Kitsu's rating and genres for novels the sources listed by genre.
+  async function rateSearchNovelGenreSourceTitles(titles: string[]) {
+    const cursors = searchKitsuNovelCursors;
+    const ctrl = searchKitsuNovelAbortCtrl;
+    if (!cursors || !ctrl || cursors.key !== searchKitsuNovelKey) return;
+    const unrated = dedupeScoreTitles(titles.map((title) => title?.trim()))
+      .filter((title) => !cursors.rated.has(recommendationTitleKey(title, "novel")))
+      .slice(0, SEARCH_GENRE_SCORE_TITLE_LIMIT);
+    if (unrated.length === 0) return;
+    const rated = await rateKitsuNovelTitles(unrated, cursors, ctrl.signal);
+    // A newer request keeps the same ratings, so a refresh in between does not lose them.
+    if (ctrl.signal.aborted || searchKitsuNovelCursors?.rated !== cursors.rated) return;
+    searchKitsuNovelScoreResults = new Map([...searchKitsuNovelScoreResults, ...rated.providers]);
+    searchKitsuNovelTagsByTitleKey = new Map([...searchKitsuNovelTagsByTitleKey, ...rated.categories]);
   }
 
   // Kitsu's rating and genres for each title it recognises.
@@ -5507,6 +5642,7 @@
   ) {
     const providers = new Map<string, RecommendationProviderSignal>();
     const categories = new Map<string, string[]>();
+    const finished = new Set<string>();
     for (const title of titles) cursors.rated.add(recommendationTitleKey(title, "novel"));
     await runConcurrentLimited(titles, KITSU_NOVEL_SCORE_CONCURRENCY, async (title) => {
       for (const searchTitle of canonicalNovelTitleCandidates(title)) {
@@ -5521,10 +5657,16 @@
           const titleKey = recommendationTitleKey(title, "novel");
           providers.set(titleKey, kitsuNovelToProvider(match));
           if (match.categories.length > 0) categories.set(titleKey, match.categories);
+          finished.add(title);
           return;
         }
       }
+      if (!signal.aborted) finished.add(title);
     }, signal);
+    // A title whose lookup was cut short is rated by a later round.
+    for (const title of titles) {
+      if (!finished.has(title)) cursors.rated.delete(recommendationTitleKey(title, "novel"));
+    }
     return { providers, categories };
   }
 
@@ -5695,6 +5837,339 @@
     searchGenreSourceCursors = null;
     searchGenreSourceReadyKey = "";
     searchTrackerSourceLinks = [];
+    searchNovelGenreSourceAbortCtrl?.abort();
+    searchNovelGenreSourceAbortCtrl = null;
+    searchNovelGenreSourceResults = [];
+    searchNovelGenreSourceTags = new Map();
+    searchNovelGenreSourceKey = "";
+    searchNovelGenreSourceReadyKey = "";
+    searchNovelGenreSourceFeed = null;
+    searchNovelKitsuSourceLinks = new Map();
+  }
+
+  function searchNovelSourceScopeInput() {
+    return { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+  }
+
+  function novelSourceFiltersFor(entry: BrowseSourceEntry): Promise<Record<string, unknown>> {
+    const pluginId = entry.novelSource?.pluginId;
+    if (!pluginId) return Promise.resolve({});
+    const cacheKey = `${searchRuntimeScopeKey}:${pluginId}`;
+    let pending = searchNovelSourceFilterCache.get(cacheKey);
+    if (!pending) {
+      pending = readInstalledNovelSourceFilters(searchNovelSourceScopeInput(), pluginId);
+      // A failed read is tried again by the next search.
+      pending.catch(() => searchNovelSourceFilterCache.delete(cacheKey));
+      searchNovelSourceFilterCache.set(cacheKey, pending);
+    }
+    return pending;
+  }
+
+  async function searchNovelGenreSourceCursorsFor(
+    sources: BrowseSourceEntry[],
+    genres: string[],
+  ): Promise<SearchNovelGenreSourceCursor[]> {
+    const settled = await Promise.allSettled(sources.map(async (source) => ({ source, filters: await novelSourceFiltersFor(source) })));
+    const readable = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    // Genre by genre, so the first searches already cover every genre.
+    return genres.flatMap((genre) => readable.flatMap(({ source, filters }) => {
+      const genreFilters = novelSourceGenreFilters(filters, genre);
+      return genreFilters ? [{ source, genre, filters: genreFilters, page: 1, done: false }] : [];
+    }));
+  }
+
+  async function refreshSearchNovelGenreSourceFeed(request: {
+    key: string;
+    taste: string[];
+    explore: string[];
+    sources: BrowseSourceEntry[];
+  }) {
+    searchNovelGenreSourceAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    searchNovelGenreSourceAbortCtrl = ctrl;
+    const { key } = request;
+    searchNovelGenreSourceKey = key;
+    searchNovelGenreSourceFeed = null;
+    searchNovelGenreSourceReadyKey = "";
+
+    const [taste, explore] = await Promise.all([
+      searchNovelGenreSourceCursorsFor(request.sources, request.taste),
+      searchNovelGenreSourceCursorsFor(request.sources, request.explore),
+    ]);
+    if (ctrl.signal.aborted || searchNovelGenreSourceKey !== key) return;
+    const feed: SearchNovelGenreSourceFeed = {
+      key,
+      taste,
+      explore,
+      tasteGenres: request.taste,
+      exploreGenres: request.explore,
+      sources: request.sources,
+      firstPages: new Map(),
+      ignoringSources: new Set(),
+      misses: new Map(),
+      lookedUp: new Set(),
+      linkedKeys: new Set(),
+      lookingUp: new Set(),
+      lookedUpCount: { taste: 0, explore: 0 },
+    };
+    searchNovelGenreSourceFeed = feed;
+    searchNovelGenreSourceReadyKey = key;
+    const firstExplore = new Set(request.explore.slice(0, SEARCH_GENRE_SOURCE_INITIAL_EXPLORE));
+    await loadSearchNovelGenreSourcePages(
+      [...taste, ...explore.filter((cursor) => firstExplore.has(cursor.genre))],
+      feed,
+      ctrl.signal,
+    );
+  }
+
+  // Listing by genre and searching by title fail apart: a plugin may break with filters and still
+  // search, or the other way around.
+  function searchNovelGenreSourceUsable(feed: SearchNovelGenreSourceFeed, source: BrowseSourceEntry, use: "list" | "search") {
+    return (feed.misses.get(`${use}:${source.id}`) ?? 0) < SEARCH_NOVEL_GENRE_SOURCE_MAX_MISSES;
+  }
+
+  function missSearchNovelGenreSource(feed: SearchNovelGenreSourceFeed, source: BrowseSourceEntry, use: "list" | "search") {
+    const key = `${use}:${source.id}`;
+    feed.misses.set(key, (feed.misses.get(key) ?? 0) + 1);
+  }
+
+  // A source busy with the rows' other pages misses now and then; only one that keeps failing is left out.
+  function answerSearchNovelGenreSource(feed: SearchNovelGenreSourceFeed, source: BrowseSourceEntry, use: "list" | "search") {
+    feed.misses.delete(`${use}:${source.id}`);
+  }
+
+  // A source that lists the same first page for two genres ignores its genre filter: its lists are
+  // dropped, since the genre they carry would be wrong, and its works are looked up by title instead.
+  function dropSearchNovelGenreSource(feed: SearchNovelGenreSourceFeed, source: BrowseSourceEntry) {
+    feed.ignoringSources.add(source.id);
+    for (const cursor of [...feed.taste, ...feed.explore]) {
+      if (cursor.source.id === source.id) cursor.done = true;
+    }
+    const prefix = `${source.novelSource?.pluginId}:`;
+    const listed = (key: string) => key.startsWith(prefix) && !feed.linkedKeys.has(key);
+    searchNovelGenreSourceResults = searchNovelGenreSourceResults.filter((result) => !listed(novelSourceResultKey(result)));
+    searchNovelGenreSourceTags = new Map([...searchNovelGenreSourceTags].filter(([key]) => !listed(key)));
+  }
+
+  // Reads the next page of each list, a few at a time. Returns how many works were new.
+  async function loadSearchNovelGenreSourcePages(
+    cursors: SearchNovelGenreSourceCursor[],
+    feed: SearchNovelGenreSourceFeed,
+    signal: AbortSignal,
+  ) {
+    let added = 0;
+    const live = () => !signal.aborted && searchNovelGenreSourceFeed === feed;
+    for (let start = 0; start < cursors.length; start += SEARCH_GENRE_SOURCE_CONCURRENCY) {
+      if (!live()) return added;
+      const wave = cursors
+        .slice(start, start + SEARCH_GENRE_SOURCE_CONCURRENCY)
+        .filter((cursor) => !cursor.done && !feed.ignoringSources.has(cursor.source.id) && searchNovelGenreSourceUsable(feed, cursor.source, "list"));
+      if (wave.length === 0) continue;
+      const pages = await Promise.all(wave.map((cursor) => withSoftTimeout<NovelSourceSearchResult[] | null>(
+        browseInstalledNovelSource(searchNovelSourceScopeInput(), cursor.source.novelSource!.pluginId, cursor.page, cursor.filters)
+          .catch(() => null),
+        SEARCH_NOVEL_GENRE_SOURCE_TIMEOUT_MS,
+        null,
+      )));
+      if (!live()) return added;
+      const incoming: Array<{ result: NovelSourceSearchResult; genre: string; sourceId: string }> = [];
+      const known = new Set(searchNovelGenreSourceResults.map(novelSourceResultKey));
+      wave.forEach((cursor, index) => {
+        const results = pages[index];
+        // Failed or too slow (a plugin that breaks with filters, a site behind a challenge): the
+        // next scroll asks again, until the source misses too often.
+        if (!results) {
+          missSearchNovelGenreSource(feed, cursor.source, "list");
+          return;
+        }
+        answerSearchNovelGenreSource(feed, cursor.source, "list");
+        if (cursor.page === 1 && results.length > 0) {
+          const signature = results.slice(0, 8).map(novelSourceResultKey).join("|");
+          const pagesByGenre = feed.firstPages.get(cursor.source.id) ?? new Map<string, string>();
+          feed.firstPages.set(cursor.source.id, pagesByGenre);
+          if ([...pagesByGenre].some(([genre, page]) => genre !== cursor.genre && page === signature)) {
+            dropSearchNovelGenreSource(feed, cursor.source);
+            return;
+          }
+          pagesByGenre.set(cursor.genre, signature);
+        }
+        cursor.page += 1;
+        // A page past the last one comes back empty or repeats one already read.
+        if (results.length === 0 || results.every((result) => known.has(novelSourceResultKey(result)))) cursor.done = true;
+        incoming.push(...results.map((result) => ({ result, genre: cursor.genre, sourceId: cursor.source.id })));
+      });
+      added += addSearchNovelGenreSourceResults(incoming.filter((entry) => !feed.ignoringSources.has(entry.sourceId)));
+    }
+    return added;
+  }
+
+  function addSearchNovelGenreSourceResults(incoming: Array<{ result: NovelSourceSearchResult; genre: string }>, rate = true) {
+    if (incoming.length === 0) return 0;
+    const tags = new Map(searchNovelGenreSourceTags);
+    for (const { result, genre } of incoming) {
+      const key = novelSourceResultKey(result);
+      const genres = tags.get(key) ?? [];
+      if (!genres.includes(genre)) tags.set(key, [...genres, genre]);
+    }
+    const known = new Set(searchNovelGenreSourceResults.map(novelSourceResultKey));
+    const fresh = dedupeNovelSourceResults(incoming.map((entry) => entry.result))
+      .filter((result) => result.coverUrl && !known.has(novelSourceResultKey(result)));
+    searchNovelGenreSourceTags = tags;
+    // The latest pages are the ones a row is waiting for.
+    searchNovelGenreSourceResults = [...searchNovelGenreSourceResults, ...fresh].slice(-SEARCH_GENRE_SOURCE_RESULT_CAP);
+    if (fresh.length > 0 && rate) void rateSearchNovelGenreSourceTitles(fresh.map((result) => result.title));
+    return fresh.length;
+  }
+
+  // The next pages of the reader's genres in the novel sources, for a row being scrolled.
+  async function loadMoreSearchNovelGenreSources(kind: "taste" | "explore") {
+    const feed = searchNovelGenreSourceFeed;
+    const ctrl = searchNovelGenreSourceAbortCtrl;
+    if (!feed || !ctrl || feed.key !== searchNovelGenreSourceKey || searchNovelGenreSourceScrollInFlight) return 0;
+    const next = feed[kind]
+      .filter((cursor) => !cursor.done && !feed.ignoringSources.has(cursor.source.id) && searchNovelGenreSourceUsable(feed, cursor.source, "list"))
+      .sort((a, b) => a.page - b.page)
+      .slice(0, SEARCH_GENRE_SOURCE_SCROLL_SEARCHES);
+    searchNovelGenreSourceScrollInFlight = true;
+    try {
+      const [paged, found] = await Promise.all([
+        next.length > 0 ? loadSearchNovelGenreSourcePages(next, feed, ctrl.signal) : 0,
+        lookUpSearchNovelKitsuWorks(kind, SEARCH_TRACKER_SOURCE_SCROLL_TITLES),
+      ]);
+      return paged + found;
+    } finally {
+      searchNovelGenreSourceScrollInFlight = false;
+    }
+  }
+
+  async function topUpSearchNovelKitsuSourceLookups(kind: "taste" | "explore") {
+    const feed = searchNovelGenreSourceFeed;
+    if (!feed || feed.key !== searchNovelGenreSourceKey) return;
+    const missing = SEARCH_TRACKER_SOURCE_INITIAL_TITLES - feed.lookedUpCount[kind];
+    if (missing <= 0) return;
+    await lookUpSearchNovelKitsuWorks(kind, missing);
+    // Kitsu novels that arrived during the lookup are taken by the next round.
+    if (searchNovelGenreSourceFeed !== feed || feed.lookingUp.has(kind)) return;
+    if (feed.lookedUpCount[kind] < SEARCH_TRACKER_SOURCE_INITIAL_TITLES && searchNovelKitsuSourcePending(feed, kind).length > 0) {
+      void topUpSearchNovelKitsuSourceLookups(kind);
+    }
+  }
+
+  // Kitsu novels of the reader's genres the sources have not been asked for yet, with the genre that
+  // brought them and the sources to ask: those that cannot list that genre themselves.
+  function searchNovelKitsuSourcePending(feed: SearchNovelGenreSourceFeed, kind: "taste" | "explore") {
+    const genres = kind === "taste" ? feed.tasteGenres : feed.exploreGenres;
+    const cursors = feed[kind];
+    const present = new Set(searchNovelSourcePool.map((result) => recommendationTitleKey(result.title, "novel")));
+    const sourcesFor = (genre: string) => feed.sources.filter((source) =>
+      searchNovelGenreSourceUsable(feed, source, "search")
+      && (feed.ignoringSources.has(source.id)
+        || !cursors.some((cursor) => cursor.source.id === source.id && cursor.genre === genre)),
+    );
+    return searchKitsuNovelDiscoveryResults
+      .filter((candidate) => !feed.lookedUp.has(candidate.id))
+      .filter((candidate) => ![candidate.title, ...(candidate.alternativeTitles ?? [])]
+        .map((title) => recommendationTitleKey(title, "novel"))
+        .some((titleKey) => searchKnownTitleKeys.has(titleKey) || present.has(titleKey)))
+      .flatMap((candidate) => {
+        const genre = genres.find((entry) => candidate.tags.includes(entry));
+        const sources = genre ? sourcesFor(genre) : [];
+        return genre && sources.length > 0 ? [{ candidate, genre, sources }] : [];
+      });
+  }
+
+  // Kitsu novels of the reader's genres, looked up by title in the sources that cannot list those
+  // genres: they become novels the reader can open, with Kitsu's rating and genres. Returns how many
+  // were new.
+  async function lookUpSearchNovelKitsuWorks(kind: "taste" | "explore", limit: number) {
+    const feed = searchNovelGenreSourceFeed;
+    const ctrl = searchNovelGenreSourceAbortCtrl;
+    if (!feed || !ctrl || feed.key !== searchNovelGenreSourceKey || feed.lookingUp.has(kind)) return 0;
+    const pending = searchNovelKitsuSourcePending(feed, kind);
+    // Genre by genre, each in the order Kitsu gave it.
+    const genres = kind === "taste" ? feed.tasteGenres : feed.exploreGenres;
+    const byGenre = genres.map((genre) => pending.filter((entry) => entry.genre === genre));
+    const next: typeof pending = [];
+    for (let index = 0; next.length < limit && byGenre.some((list) => index < list.length); index += 1) {
+      for (const list of byGenre) {
+        if (list[index] && next.length < limit) next.push(list[index]);
+      }
+    }
+    if (next.length === 0) return 0;
+    for (const { candidate } of next) feed.lookedUp.add(candidate.id);
+    feed.lookedUpCount[kind] += next.length;
+
+    const live = () => !ctrl.signal.aborted && searchNovelGenreSourceFeed === feed;
+    feed.lookingUp.add(kind);
+    let added = 0;
+    try {
+      for (let start = 0; start < next.length; start += SEARCH_TRACKER_SOURCE_CONCURRENCY) {
+        if (!live()) return added;
+        const wave = next.slice(start, start + SEARCH_TRACKER_SOURCE_CONCURRENCY);
+        const matches = await Promise.all(wave.map((entry) =>
+          findSearchNovelKitsuWorkInSources(entry.candidate, entry.sources, feed, ctrl.signal),
+        ));
+        if (!live()) return added;
+        const found = wave.flatMap((entry, index) => {
+          const result = matches[index];
+          return result ? [{ ...entry, result }] : [];
+        });
+        if (found.length === 0) continue;
+        const links = new Map(searchNovelKitsuSourceLinks);
+        for (const { candidate, result } of found) {
+          const provider = candidate.providers.find((entry) => entry.kind === "tracker");
+          if (!provider) continue;
+          links.set(recommendationTitleKey(result.title, "novel"), {
+            provider,
+            tags: candidate.tags.filter((tag) => tag !== "novel"),
+          });
+          feed.linkedKeys.add(novelSourceResultKey(result));
+          // Already Kitsu's entry: the title is not rated again.
+          searchKitsuNovelCursors?.rated.add(recommendationTitleKey(result.title, "novel"));
+        }
+        searchNovelKitsuSourceLinks = links;
+        added += addSearchNovelGenreSourceResults(found.map(({ result, genre }) => ({ result, genre })), false);
+      }
+    } finally {
+      feed.lookingUp.delete(kind);
+    }
+    return added;
+  }
+
+  async function findSearchNovelKitsuWorkInSources(
+    candidate: RecommendationCandidate,
+    sources: BrowseSourceEntry[],
+    feed: SearchNovelGenreSourceFeed,
+    signal: AbortSignal,
+  ): Promise<NovelSourceSearchResult | null> {
+    const titles = [candidate.title, ...(candidate.alternativeTitles ?? [])];
+    // Kitsu's title and its first other name in Latin letters: the canonical title is often
+    // romanised, while the sources list the English one.
+    const queries = [...new Map(titles
+      .filter((title, index) => index === 0 || /^[\p{Script=Latin}\p{N}\p{P}\p{Zs}]+$/u.test(title))
+      .map((title) => [recommendationTitleKey(title, "novel"), title] as const)).values()].slice(0, 2);
+    for (const source of sources) {
+      for (const query of queries) {
+        if (signal.aborted || searchNovelGenreSourceFeed !== feed) return null;
+        if (!searchNovelGenreSourceUsable(feed, source, "search")) break;
+        const results = await withSoftTimeout<NovelSourceSearchResult[] | null>(
+          searchInstalledNovelSource(searchNovelSourceScopeInput(), source.novelSource!.pluginId, query, 1).catch(() => null),
+          SEARCH_NOVEL_GENRE_SOURCE_TIMEOUT_MS,
+          null,
+        );
+        if (signal.aborted) return null;
+        if (!results) {
+          missSearchNovelGenreSource(feed, source, "search");
+          continue;
+        }
+        answerSearchNovelGenreSource(feed, source, "search");
+        for (const title of titles) {
+          const match = bestTrackerTitleMatch(title, results);
+          if (match) return match;
+        }
+      }
+    }
+    return null;
   }
 
   function sourceFiltersFor(entry: BrowseSourceEntry): Promise<readonly SourceFilter[]> {
