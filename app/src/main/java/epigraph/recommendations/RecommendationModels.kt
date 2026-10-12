@@ -57,6 +57,8 @@ data class RecommendationCandidate(
     val tags: List<String> = emptyList(),
     val contentType: RecommendationContentType,
     val status: String? = null,
+    /** Publication format reported by a tracker (AniList `ONE_SHOT`, `MANGA`, ...), when known. */
+    val format: String? = null,
     val providers: List<RecommendationProviderSignal> = emptyList(),
     val inLibrary: Boolean = false,
     val safety: RecommendationSafetyLevel = RecommendationSafetyLevel.SAFE,
@@ -119,10 +121,14 @@ data class TrackerScoreBadge(
     val confidence: Double,
 )
 
+/** A new series, or a work that comes after one (sequel, side story) or stands alone (one-shot). */
+enum class RecommendationReleaseKind { SERIES, CONTINUATION, ONE_SHOT }
+
 data class RecommendationItem(
     val candidate: RecommendationCandidate,
     val breakdown: RecommendationScoreBreakdown,
     val badge: TrackerScoreBadge?,
+    val releaseKind: RecommendationReleaseKind = RecommendationReleaseKind.SERIES,
 )
 
 enum class RecommendationSectionKey {

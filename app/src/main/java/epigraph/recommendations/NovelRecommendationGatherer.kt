@@ -152,7 +152,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
     }
 
     /** All visible novel sources, interleaved by normalized name; NSFW only when opted in. */
-    private fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
+    internal fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
         val visible = sourceManager.getVisibleCatalogueSources()
             .filter { it.isNovelSource() && it.id != LOCAL_SOURCE_ID }
             .filter { includeNsfw || it.id !in nsfwSourceIds }

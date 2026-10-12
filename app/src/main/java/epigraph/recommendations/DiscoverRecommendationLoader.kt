@@ -20,6 +20,7 @@ import exh.source.EXH_SOURCE_ID
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.GetLibraryManga
@@ -71,6 +72,15 @@ data class DiscoverPool(
     val exhausted: Set<RecommendationSectionKey> = emptySet(),
     /** Per source list (see [sourceCursorKey]): next page cursor, or [SOURCE_CURSOR_END]. */
     val sourceCursors: Map<String, Long> = emptyMap(),
+    /** The extensions' genre lists and the tracker (comics) or Kitsu (novels) works found in them by title. */
+    val genreFeed: GenreSourceFeed? = null,
+    /** Comics: AniList works of the reader's strongest genres, per comic format the library holds. */
+    val trackerTaste: List<TrackerCatalogInput> = emptyList(),
+    /** Comics: AniList searches of the rarely read genres, and what they found. */
+    val trackerExplore: AniListExploreFeed? = null,
+    val trackerExploreResults: List<TrackerCatalogInput> = emptyList(),
+    /** Novels: Kitsu's lists of the reader's taste and rare genres, and its ratings. */
+    val kitsuFeed: KitsuNovelFeed? = null,
 )
 
 /** Desktop BrowseV3 constants for the For you rails. */
@@ -133,30 +143,66 @@ private data class SourceParts(
     val sourceCursors: Map<String, Long> = emptyMap(),
 )
 
+/** A work the reader already has: one of its titles or tracker entries is in their library. */
+internal fun isKnownRecommendationCandidate(
+    candidate: RecommendationCandidate,
+    knownTitleKeys: Set<String>,
+    knownProviderKeys: Set<String>,
+): Boolean =
+    candidate.titleKeys().any { it in knownTitleKeys } || candidate.providers.any { it.remoteKey() in knownProviderKeys }
+
+/** The genre feed a row's scroll reads, or null for the rows fed only by source pages and trending. */
+internal fun genreFeedKind(mode: DiscoverMode, key: RecommendationSectionKey): GenreFeedKind? = when {
+    key == RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS -> GenreFeedKind.EXPLORE
+    key == RecommendationSectionKey.FRESH_IN_YOUR_SOURCES -> null
+    mode == DiscoverMode.COMICS && key == RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE -> null
+    else -> GenreFeedKind.TASTE
+}
+
+/** Whether a row's genre feeds still have lists to read, so the row is not exhausted yet. */
+internal fun hasGenreFeedLeft(pool: DiscoverPool, kind: GenreFeedKind): Boolean {
+    val genre = pool.genreFeed?.let { feed -> feed.cursors.any { it.kind == kind && !it.done && it.sourceId !in feed.ignoringSources } } == true
+    val kitsu = pool.kitsuFeed?.let { feed ->
+        feed.cursors(kind).any { !it.done } || (kind == GenreFeedKind.EXPLORE && feed.later.isNotEmpty())
+    } == true
+    val explore = kind == GenreFeedKind.EXPLORE &&
+        pool.trackerExplore?.let { feed -> feed.searches.any { !it.done } || feed.later.isNotEmpty() } == true
+    return genre || kitsu || explore
+}
+
 /** Rebuilds the pool's candidates from its parts, exactly as [DiscoverRecommendationLoader.gather] does. */
 internal fun assembleDiscoverCandidates(pool: DiscoverPool): List<RecommendationCandidate> {
     val sourceCandidates = when (pool.mode) {
         DiscoverMode.COMICS -> {
-            val comicCandidates = pool.comicEntries.map { (entry, fromLatest) ->
+            val comicCandidates = mergeComicGenreEntries(pool.comicEntries, pool.genreFeed).map { (entry, fromLatest) ->
                 var candidate = entryToRecommendationCandidate(entry, pool.gatheredAtMs)
                 if (fromLatest) candidate = applyLatestFeedRank(listOf(candidate)).single()
                 // Adult extensions rarely tag their entries, so the extension flag is the safety signal.
                 if (entry.sourceId in pool.nsfwSourceIds) candidate = candidate.asAdult()
                 candidate
             }
-            comicCandidates + (pool.trackerTrending + pool.trackerScores).map { trackerCatalogToRecommendationCandidate(it, pool.gatheredAtMs) }
+            // Tracker works an extension answered for by title come under the extension's title too, so they merge.
+            val trackers = dedupeTrackSearches(pool.trackerTrending + pool.trackerScores + pool.trackerExploreResults + pool.trackerTaste) +
+                pool.genreFeed?.trackerLinks.orEmpty()
+            comicCandidates + trackers.map { trackerCatalogToRecommendationCandidate(it, pool.gatheredAtMs) }
         }
         DiscoverMode.NOVELS -> {
-            val novelCandidates = pool.novelEntries.map { entry ->
+            val genreTags = pool.genreFeed?.tags.orEmpty()
+            val kitsuLinks = pool.genreFeed?.kitsuLinks.orEmpty()
+            val kitsu = pool.kitsuFeed
+            val novelCandidates = mergeNovelGenreEntries(pool.novelEntries, pool.genreFeed).map { entry ->
                 var candidate = entryToRecommendationCandidate(entry, pool.gatheredAtMs, novelSourceResult = true)
                 if (entry.sourceId in pool.nsfwSourceIds) candidate = candidate.asAdult()
-                candidate
+                val key = recommendationTitleKey(candidate.title, RecommendationContentType.NOVEL)
+                val link = kitsuLinks[key]
+                val providers = listOfNotNull(pool.hardcoverScores[key], link?.provider ?: kitsu?.scores?.get(key))
+                val tags = (link?.tags ?: kitsu?.categories?.get(key)).orEmpty() + genreTags[genreEntryKey(entry)].orEmpty()
+                candidate.copy(
+                    providers = candidate.providers + providers,
+                    tags = if (tags.isEmpty()) candidate.tags else mergeTags(candidate.tags, tags),
+                )
             }
-            val scored = novelCandidates.map { candidate ->
-                val provider = pool.hardcoverScores[recommendationTitleKey(candidate.title, RecommendationContentType.NOVEL)]
-                if (provider == null) candidate else candidate.copy(providers = candidate.providers + provider)
-            }
-            scored + pool.hardcoverCandidates
+            novelCandidates + kitsu?.discovered?.values.orEmpty().take(KITSU_NOVEL_DISCOVERY_CAP) + pool.hardcoverCandidates
         }
     }
     return mergeRecommendationCandidates(pool.libraryCandidates + sourceCandidates + pool.trackerRecordCandidates)
@@ -182,6 +228,7 @@ class DiscoverRecommendationLoader(
     private val extensionManager: ExtensionManager = get(),
     private val trackerGatherer: TrackerRecommendationGatherer = TrackerRecommendationGatherer(),
     private val hardcoverGatherer: HardcoverRecommendationGatherer = HardcoverRecommendationGatherer(),
+    private val genreFeeds: GenreRecommendationFeeds = GenreRecommendationFeeds(sourceManager),
 ) {
     /**
      * Network + library reads only; ranking happens in [rank] so the UI can re-rank the cached
@@ -247,9 +294,66 @@ class DiscoverRecommendationLoader(
             .filter { it.isNsfw }
             .flatMapTo(HashSet()) { ext -> ext.sources.map { it.id } }
             .apply { add(EH_SOURCE_ID); add(EXH_SOURCE_ID) }
+        val includeNsfw = preferences.showNsfwSources().get()
+        val rotation = explorationRotation(nowMs)
+        val knownTitles = knownTitleKeys(seeds)
+        val knownProviders = knownProviderKeys(libraryEntries) + trackerRemoteKeys +
+            hardcoverBooks?.books.orEmpty().mapNotNull { recommendationTrackerRemoteKey("hardcover", it.bookId.toString()) }
+
+        // The extensions the reader uses most list their genres first.
+        val sourceUse = libraryEntries.groupingBy { it.sourceId }.eachCount()
+        val genreSources = if (mode == DiscoverMode.COMICS) {
+            ComicRecommendationGatherer(sourceManager).browseSources(nsfwSourceIds, includeNsfw)
+        } else {
+            NovelRecommendationGatherer(sourceManager).browseSources(nsfwSourceIds, includeNsfw)
+        }.sortedByDescending { sourceUse[it.id] ?: 0 }
+        val (tasteGenres, exploreGenres) = if (mode == DiscoverMode.COMICS) {
+            comicGenreFeedGenres(profile, rotation)
+        } else {
+            novelTasteGenres(profile) to novelExploreGenres(profile, rotation)
+        }
+        val genreRun = GenreSourceFeedRun(
+            runCatching { genreFeeds.buildFeed(genreSources, tasteGenres, exploreGenres, novels = mode == DiscoverMode.NOVELS) }
+                .getOrElse { GenreSourceFeed(mode == DiscoverMode.NOVELS, emptyList(), tasteGenres, exploreGenres) },
+        )
+        val exploreRun = if (mode == DiscoverMode.COMICS) aniListExploreFeed(profile, rotation)?.let { AniListExploreRun(it) } else null
+        val kitsuRun = if (mode == DiscoverMode.NOVELS) KitsuNovelRun(initialKitsuNovelFeed(profile, rotation)) else null
+        val tasteSink = mutableListOf<TrackerCatalogInput>()
+        // Desktop BrowseV3 genre feeds: read alongside the source pages, each landing as it arrives.
+        val feedJob = async {
+            coroutineScope {
+                launch {
+                    withTimeoutOrNull(GENRE_FEED_BUDGET_MS) {
+                        if (mode == DiscoverMode.COMICS) {
+                            genreFeeds.readComicPages(genreRun, initialGenreCursors(genreRun.feed))
+                        } else {
+                            genreFeeds.readNovelPages(genreRun, initialGenreCursors(genreRun.feed))
+                        }
+                    }
+                }
+                if (mode == DiscoverMode.COMICS) {
+                    launch {
+                        withTimeoutOrNull(GENRE_FEED_BUDGET_MS) {
+                            trackerGatherer.fetchTasteFeed(
+                                tasteCatalogRequests(profile),
+                                includeNsfw,
+                                { isKnownTrackerResult(it, knownTitles, knownProviders) },
+                                tasteSink,
+                            )
+                        }
+                    }
+                }
+                exploreRun?.let { state ->
+                    launch { withTimeoutOrNull(GENRE_FEED_BUDGET_MS) { trackerGatherer.startExploreFeed(state, includeNsfw) } }
+                }
+                kitsuRun?.let { state ->
+                    launch { withTimeoutOrNull(GENRE_FEED_BUDGET_MS) { genreFeeds.startKitsuFeeds(state, includeNsfw) } }
+                }
+            }
+        }
         val sourceJobs = async {
             if (mode == DiscoverMode.COMICS) {
-                val gathered = ComicRecommendationGatherer(sourceManager).gather(libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get())
+                val gathered = ComicRecommendationGatherer(sourceManager).gather(libraryEntries, profile, nsfwSourceIds, includeNsfw)
                 synchronized(failures) { failures += gathered.failedSources }
                 val trackerResult = trackerGatherer.gather(gathered.entries.map { it.first.title })
                 synchronized(failures) { failures += trackerResult.failed }
@@ -261,7 +365,7 @@ class DiscoverRecommendationLoader(
                 )
             } else {
                 val gathered = NovelRecommendationGatherer(sourceManager).gather(
-                    libraryEntries, profile, nsfwSourceIds, preferences.showNsfwSources().get(),
+                    libraryEntries, profile, nsfwSourceIds, includeNsfw,
                 )
                 synchronized(failures) { failures += gathered.failedSources }
                 val hardcover = hardcoverBooks?.let { userBooks ->
@@ -279,13 +383,68 @@ class DiscoverRecommendationLoader(
         }
 
         val parts = sourceJobs.await()
+        feedJob.await()
+        val trackerTaste = capProviderResults(dedupeTrackSearches(synchronized(tasteSink) { tasteSink.toList() }))
+        // Then the works the trackers (comics) or Kitsu (novels) found in those genres are looked up by
+        // title in the extensions that cannot list the genre, and the new works get their ratings.
+        val extraScores = coroutineScope {
+            if (mode == DiscoverMode.COMICS) {
+                val poolKeys = parts.comicEntries.mapTo(HashSet()) { recommendationTitleKey(it.first.title, RecommendationContentType.MANGA) }
+                val isKnown = { item: TrackerCatalogInput ->
+                    isKnownTrackerResult(item, knownTitles, knownProviders) ||
+                        recommendationTitleKey(item.title, RecommendationContentType.MANGA) in poolKeys
+                }
+                val genreTitles = genreRun.feed.entries.map { it.title }
+                launch {
+                    withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                        genreFeeds.lookUpTrackerWorks(genreRun, GenreFeedKind.TASTE, trackerTaste, isKnown, SEARCH_TRACKER_SOURCE_INITIAL_TITLES)
+                    }
+                }
+                exploreRun?.let { state ->
+                    launch {
+                        withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                            genreFeeds.lookUpTrackerWorks(genreRun, GenreFeedKind.EXPLORE, state.results, isKnown, SEARCH_TRACKER_SOURCE_INITIAL_TITLES)
+                        }
+                    }
+                }
+                withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                    trackerGatherer.fetchScores(genreTitles, SEARCH_GENRE_SCORE_TITLE_LIMIT)
+                }.orEmpty()
+            } else {
+                kitsuRun?.let { state ->
+                    val novelKeys = parts.novelEntries.mapTo(HashSet()) { recommendationTitleKey(it.title, RecommendationContentType.NOVEL) }
+                    val isKnown = { candidate: RecommendationCandidate ->
+                        isKnownRecommendationCandidate(candidate, knownTitles, knownProviders) || candidate.titleKeys().any { it in novelKeys }
+                    }
+                    val genreTitles = genreRun.feed.entries.map { it.title }
+                    launch {
+                        withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                            genreFeeds.rateKitsuTitles(state, parts.novelEntries.map { it.title }, KITSU_NOVEL_SCORE_LIMIT)
+                        }
+                    }
+                    launch {
+                        withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                            genreFeeds.rateKitsuTitles(state, genreTitles, SEARCH_GENRE_SCORE_TITLE_LIMIT)
+                        }
+                    }
+                    for (kind in GenreFeedKind.entries) {
+                        launch {
+                            withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                                genreFeeds.lookUpKitsuWorks(genreRun, state, kind, isKnown, SEARCH_TRACKER_SOURCE_INITIAL_TITLES)
+                            }
+                        }
+                    }
+                }
+                emptyList<TrackerCatalogInput>()
+            }
+        }
         val pool = DiscoverPool(
             mode = mode,
             candidates = emptyList(),
             profile = profile,
             seedCount = seeds.size,
-            knownTitleKeys = knownTitleKeys(seeds),
-            knownProviderKeys = knownProviderKeys(libraryEntries) + trackerRemoteKeys + hardcoverBooks?.books.orEmpty().mapNotNull { recommendationTrackerRemoteKey("hardcover", it.bookId.toString()) },
+            knownTitleKeys = knownTitles,
+            knownProviderKeys = knownProviders,
             failedProviders = failures.toList(),
             libraryCandidates = libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } + books.map { bookToRecommendationCandidate(it, nowMs) },
             trackerRecordCandidates = trackerRecordCandidates,
@@ -293,12 +452,17 @@ class DiscoverRecommendationLoader(
             sourceCursors = parts.sourceCursors,
             novelEntries = parts.novelEntries,
             trackerTrending = parts.trackerTrending,
-            trackerScores = parts.trackerScores,
+            trackerScores = mergeTrackerScoreResults(parts.trackerScores, extraScores),
             hardcoverScores = parts.hardcoverScores,
             hardcoverCandidates = parts.hardcoverCandidates,
             nsfwSourceIds = nsfwSourceIds,
             gatheredAtMs = nowMs,
             librarySignature = librarySignature,
+            genreFeed = genreRun.feed,
+            trackerTaste = trackerTaste,
+            trackerExplore = exploreRun?.feed,
+            trackerExploreResults = exploreRun?.results.orEmpty(),
+            kitsuFeed = kitsuRun?.feed,
         )
         pool.copy(candidates = assembleDiscoverCandidates(pool))
     }
@@ -370,6 +534,106 @@ class DiscoverRecommendationLoader(
         sectionSizeOf: (DiscoverPool) -> Int,
     ): DiscoverMoreResult {
         if (key in pool.exhausted) return DiscoverMoreResult(pool, false)
+        val kind = genreFeedKind(pool.mode, key) ?: return loadMoreFromSources(pool, key, includeNsfw, sectionSizeOf)
+
+        // Desktop: a row's scroll reads its genre feeds first, then the next source pages.
+        val startingSize = sectionSizeOf(pool)
+        val scrolled = reassembled(scrollGenreFeeds(pool, kind, includeNsfw))
+        if (sectionSizeOf(scrolled) > startingSize) return DiscoverMoreResult(scrolled, true)
+        val more = loadMoreFromSources(scrolled, key, includeNsfw, sectionSizeOf)
+        // A row whose genre lists still have pages is not done, however the source pages ran.
+        return if (key in more.pool.exhausted && hasGenreFeedLeft(more.pool, kind)) {
+            more.copy(pool = more.pool.copy(exhausted = more.pool.exhausted - key))
+        } else {
+            more
+        }
+    }
+
+    /**
+     * Desktop `loadMoreSearchGenreSources` with the tracker (comics) or Kitsu (novels) feeds of the
+     * row: the next pages of its genre lists, more of its tracker works looked up by title, and
+     * ratings for the new works.
+     */
+    private suspend fun scrollGenreFeeds(pool: DiscoverPool, kind: GenreFeedKind, includeNsfw: Boolean): DiscoverPool {
+        val genreRun = pool.genreFeed?.let(::GenreSourceFeedRun)
+        val before = pool.genreFeed?.entries.orEmpty().mapTo(HashSet(), ::genreEntryKey)
+        fun freshTitles() = genreRun?.feed?.entries.orEmpty().filter { genreEntryKey(it) !in before }.map { it.title }
+        if (pool.mode == DiscoverMode.COMICS) {
+            val exploreRun = if (kind == GenreFeedKind.EXPLORE) {
+                pool.trackerExplore?.let { AniListExploreRun(it, pool.trackerExploreResults) }
+            } else {
+                null
+            }
+            val poolKeys = pool.comicEntries.mapTo(HashSet()) { recommendationTitleKey(it.first.title, RecommendationContentType.MANGA) }
+            val isKnown = { item: TrackerCatalogInput ->
+                isKnownTrackerResult(item, pool.knownTitleKeys, pool.knownProviderKeys) ||
+                    recommendationTitleKey(item.title, RecommendationContentType.MANGA) in poolKeys
+            }
+            val results = if (kind == GenreFeedKind.TASTE) pool.trackerTaste else pool.trackerExploreResults
+            coroutineScope {
+                genreRun?.let { state ->
+                    launch { withTimeoutOrNull(GENRE_FEED_BUDGET_MS) { genreFeeds.readComicPages(state, scrollGenreCursors(state.feed, kind)) } }
+                    launch {
+                        withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                            genreFeeds.lookUpTrackerWorks(state, kind, results, isKnown, SEARCH_TRACKER_SOURCE_SCROLL_TITLES)
+                        }
+                    }
+                }
+                exploreRun?.let { state ->
+                    launch { withTimeoutOrNull(GENRE_FEED_BUDGET_MS) { trackerGatherer.scrollExploreFeed(state, pool.profile, includeNsfw) } }
+                }
+            }
+            val fresh = freshTitles()
+            val scores = if (fresh.isEmpty()) {
+                emptyList()
+            } else {
+                withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) { trackerGatherer.fetchScores(fresh, SEARCH_GENRE_SCORE_TITLE_LIMIT) }.orEmpty()
+            }
+            return pool.copy(
+                genreFeed = genreRun?.feed ?: pool.genreFeed,
+                trackerExplore = exploreRun?.feed ?: pool.trackerExplore,
+                trackerExploreResults = exploreRun?.results ?: pool.trackerExploreResults,
+                trackerScores = mergeTrackerScoreResults(pool.trackerScores, scores),
+            )
+        }
+
+        val kitsuRun = pool.kitsuFeed?.let(::KitsuNovelRun)
+        val novelKeys = pool.novelEntries.mapTo(HashSet()) { recommendationTitleKey(it.title, RecommendationContentType.NOVEL) }
+        val isKnown = { candidate: RecommendationCandidate ->
+            isKnownRecommendationCandidate(candidate, pool.knownTitleKeys, pool.knownProviderKeys) || candidate.titleKeys().any { it in novelKeys }
+        }
+        coroutineScope {
+            kitsuRun?.let { state ->
+                launch {
+                    withTimeoutOrNull(GENRE_FEED_BUDGET_MS) {
+                        genreFeeds.scrollKitsu(state, kind, includeNsfw, pool.novelEntries.map { it.title })
+                    }
+                }
+            }
+            genreRun?.let { state ->
+                launch { withTimeoutOrNull(GENRE_FEED_BUDGET_MS) { genreFeeds.readNovelPages(state, scrollGenreCursors(state.feed, kind)) } }
+                kitsuRun?.let { kitsuState ->
+                    launch {
+                        withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) {
+                            genreFeeds.lookUpKitsuWorks(state, kitsuState, kind, isKnown, SEARCH_TRACKER_SOURCE_SCROLL_TITLES)
+                        }
+                    }
+                }
+            }
+        }
+        val fresh = freshTitles()
+        if (kitsuRun != null && fresh.isNotEmpty()) {
+            withTimeoutOrNull(GENRE_LOOKUP_BUDGET_MS) { genreFeeds.rateKitsuTitles(kitsuRun, fresh, SEARCH_GENRE_SCORE_TITLE_LIMIT) }
+        }
+        return pool.copy(genreFeed = genreRun?.feed ?: pool.genreFeed, kitsuFeed = kitsuRun?.feed ?: pool.kitsuFeed)
+    }
+
+    private suspend fun loadMoreFromSources(
+        pool: DiscoverPool,
+        key: RecommendationSectionKey,
+        includeNsfw: Boolean,
+        sectionSizeOf: (DiscoverPool) -> Int,
+    ): DiscoverMoreResult {
 
         // COMICS + TRENDING_NEAR_YOUR_TASTE
         if (pool.mode == DiscoverMode.COMICS && key == RecommendationSectionKey.TRENDING_NEAR_YOUR_TASTE) {
@@ -396,7 +660,7 @@ class DiscoverRecommendationLoader(
             }
             val comicEntries = mergeComicMore(pool.comicEntries, incoming, latest = false)
             val scores = trackerGatherer.fetchScores(incoming.map { it.title })
-            val trackerScores = capProviderResults(dedupeTrackSearches(pool.trackerScores + scores))
+            val trackerScores = mergeTrackerScoreResults(pool.trackerScores, scores)
             val updated = next.copy(comicEntries = comicEntries, trackerScores = trackerScores)
             return DiscoverMoreResult(reassembled(updated), true)
         }
@@ -564,5 +828,9 @@ class DiscoverRecommendationLoader(
     companion object {
         private const val SOURCE_TIMEOUT_MS = 20_000L
         private const val HARDCOVER_LOADER_BUDGET_MS = 15_000L
+        /** Genre lists and tracker/Kitsu feeds: what arrived by then is kept, the rest is read on scroll. */
+        private const val GENRE_FEED_BUDGET_MS = 22_000L
+        /** Title lookups and ratings of the genre feeds' works. */
+        private const val GENRE_LOOKUP_BUDGET_MS = 10_000L
     }
 }
