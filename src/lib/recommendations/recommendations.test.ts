@@ -1038,6 +1038,30 @@ describe("recommendation sections", () => {
       const manga = section.items.filter((item) => item.candidate.contentType === "manga").length;
       expect(manga, section.key).toBeLessThanOrEqual(Math.ceil(manhwa / 2));
     }
+
+    // "Fresh" too: the reader's sources publish mostly manga, and the row still follows the library.
+    const published = (id: string, contentType: RecommendationCandidate["contentType"], daysAgo: number) =>
+      candidate(id, {
+        title: id,
+        tags: ["Action", "Fantasy"],
+        contentType,
+        providers: [{
+          providerId: "source",
+          providerName: "Source",
+          kind: "source",
+          availability: normalizeScore(1, 1, 0.8),
+          recency: normalizeRecency(NOW - (daysAgo * 86_400_000), NOW, 14, 0.9),
+        }],
+      });
+    const fresh = buildRecommendationSections([
+      ...Array.from({ length: 6 }, (_, index) => published(`new-manhwa-${index}`, "manhwa", 3 + (index % 3))),
+      ...Array.from({ length: 40 }, (_, index) => published(`new-manga-${index}`, "manga", index % 3)),
+    ], manhwaProfile, { nowMs: NOW, limitPerSection: 40 }).find((row) => row.key === "freshInYourSources")?.items ?? [];
+    const freshManhwa = fresh.filter((item) => item.candidate.contentType === "manhwa").length;
+    expect(freshManhwa).toBeGreaterThan(0);
+    expect(fresh.length - freshManhwa).toBeLessThanOrEqual(freshManhwa);
+    // A few days older, the manhwa still lead the row of the manhwa reader.
+    expect(fresh[0]?.candidate.contentType).toBe("manhwa");
   });
 
   it("lists one work of a series instead of its episodes and side novels", () => {
@@ -1063,7 +1087,7 @@ describe("recommendation sections", () => {
     expect(listed).toContain("Spice & Wolf");
   });
 
-  it("keeps the library's comic format mix in each row, each format listed by rating", () => {
+  it("keeps the library's comic format mix in each row and orders it by the reader's priority, not by turns", () => {
     const mixedProfile = buildTasteProfile([
       ...Array.from({ length: 6 }, (_, index) => ({
         id: `manhwa-seed-${index}`,
@@ -1095,27 +1119,34 @@ describe("recommendation sections", () => {
           trending: normalizeScore(score, 100, 0.8),
         }],
       });
-    // Global trackers rank Japanese titles higher, which used to fill the first cards with manga.
-    const candidates = [
-      ...Array.from({ length: 30 }, (_, index) => tracked(`manga-${index}`, "manga", 95 - (index % 5))),
-      ...Array.from({ length: 30 }, (_, index) => tracked(`manhwa-${index}`, "manhwa", 75 - (index % 5))),
-    ];
+    const rows = (mangaScore: number, manhwaScore: number) => {
+      const sections = buildRecommendationSections([
+        ...Array.from({ length: 30 }, (_, index) => tracked(`manga-${index}`, "manga", mangaScore - (index % 5))),
+        ...Array.from({ length: 30 }, (_, index) => tracked(`manhwa-${index}`, "manhwa", manhwaScore - (index % 5))),
+      ], mixedProfile, { nowMs: NOW, limitPerSection: 20 });
+      return (["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const).map((key) => ({
+        key,
+        items: sections.find((section) => section.key === key)?.items ?? [],
+      }));
+    };
 
-    const sections = buildRecommendationSections(candidates, mixedProfile, { nowMs: NOW, limitPerSection: 20 });
-    for (const key of ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const) {
-      const items = sections.find((section) => section.key === key)?.items ?? [];
+    // Global trackers rate Japanese titles far higher: the row still holds the library's share of
+    // manhwa, and the far better rated manga lead it instead of taking forced turns with them.
+    for (const { key, items } of rows(95, 75)) {
       const formats = items.map((item) => item.candidate.contentType);
       const ratings = items.map((item) => item.badge?.score ?? 0);
       expect(items.length, key).toBeGreaterThan(0);
-      // Global trackers rate Japanese titles higher; the row still holds plenty of manhwa like the library.
       expect(formats.filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(items.length * 0.4);
-      expect(formats.filter((format) => format === "manga").length, key).toBeGreaterThanOrEqual(1);
-      // The first cards already show the mix instead of a block of higher-rated manga.
-      expect(formats.slice(0, 5).filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(2);
+      expect(formats.slice(0, 3), key).toEqual(["manga", "manga", "manga"]);
       for (const format of ["manga", "manhwa"] as const) {
         const formatRatings = ratings.filter((_, index) => formats[index] === format);
         expect(formatRatings, `${key} ${format}`).toEqual([...formatRatings].sort((a, b) => b - a));
       }
+    }
+
+    // A point or less apart, or rated alike, the format the reader reads most comes first.
+    for (const { key, items } of [...rows(90, 80), ...rows(85, 85)]) {
+      expect(items[0]?.candidate.contentType, key).toBe("manhwa");
     }
   });
 

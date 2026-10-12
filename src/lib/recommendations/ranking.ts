@@ -60,6 +60,13 @@ const SECTION_DRAFT_ORDER: RecommendationSectionKey[] = [
 // Sequels, side stories and one-shots may be recommended, but new series come first: they rank a
 // little lower when a row picks its works, and sit after the new series in the row.
 const SECONDARY_RELEASE_FACTOR = 0.9;
+// A row's order adds the work's fit to the reader's profile to the card's rating (0..1): closeness to
+// the genres they rated well is worth up to PRIORITY_AFFINITY_BONUS, and how much of the work's format
+// they read up to PRIORITY_FORMAT_BONUS. Global trackers rate Japanese titles higher, so without the
+// format bonus a manhwa reader's rows would open with manga; with it, the format they read most leads
+// while a much better rated work of another format still moves ahead.
+const PRIORITY_AFFINITY_BONUS = 0.25;
+const PRIORITY_FORMAT_BONUS = 0.3;
 // "Episode 1" starts a series told in episodes (Umineko); a later episode or act continues it, as
 // does a later "Dai N-wa" (Higurashi's Japanese episode numbering).
 const CONTINUATION_TITLE_PATTERN = /\b(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*(\d+|[ivx]+)\b|(episode|act)\s*(0*[2-9]|[1-9]\d+|ii|iii|iv|v|vi|vii|viii|ix|x)\b|dai\s*0*([2-9]|[1-9]\d+)\s*-?\s*(wa|shou|bu|kan)\b|side\s*stor(y|ies)|gaiden|spin[\s-]?offs?|after\s*stor(y|ies)|extra\s*stor(y|ies))/i;
@@ -322,10 +329,11 @@ export function buildRecommendationSections(
     const sectionItems = mixed
       ? applyProfileComicMix(drafted[key], profile, requestedLimit, true).slice(0, requestedLimit)
       : drafted[key];
-    // "Fresh" is about what came out lately and stays newest first.
-    const ordered = key === "freshInYourSources"
-      ? sectionItems
-      : mixed ? orderByRatingInMix(sectionItems, profile) : orderByRating(sectionItems);
+    // "Fresh" is about what came out lately: how recent a work is takes the place of its rating.
+    const ordered = orderByProfilePriority(
+      sectionItems,
+      key === "freshInYourSources" ? freshnessScore : displayedRating,
+    );
     return { key, title: meta.title, reason: meta.reason, items: ordered };
   });
 }
@@ -381,32 +389,39 @@ function displayedRating(item: RecommendationItem): number | null {
 }
 
 /**
- * A row reads best to worst: new series before sequels and one-shots, then by the rating on the card,
- * highest first, with unrated works last. Equal ratings keep the row's relevance order.
+ * How close a work is to the reader: the genres of what they rated well, and how much of the work's
+ * format the library holds (a manhwa reader's manhwa fits better than a manga of the same genres).
  */
-function orderByRating(items: RecommendationItem[]): RecommendationItem[] {
-  return items
-    .map((item, index) => ({ item, index, rating: displayedRating(item), secondary: isSecondaryRelease(item) ? 1 : 0 }))
-    .sort((a, b) =>
-      (a.secondary - b.secondary)
-      || ((b.rating ?? -1) - (a.rating ?? -1))
-      || (a.index - b.index))
-    .map((entry) => entry.item);
+function profileBonus(item: RecommendationItem): number {
+  return (clamp01(item.breakdown.personalRatingAffinity) * PRIORITY_AFFINITY_BONUS)
+    + (clamp01(item.breakdown.contentTypeFit) * PRIORITY_FORMAT_BONUS);
 }
 
 /**
- * Rating order that keeps the library's comic mix: each format is listed best to worst, and the
- * formats take turns by their share, so a sort by rating does not push all the manhwa behind the manga.
- * New series still come before sequels and one-shots.
+ * A row reads by the reader's priority: new series before sequels and one-shots, then by the rating
+ * on the card (or, for "Fresh", how recent the work is) raised by how close the work is to the
+ * reader's profile, so the formats and genres they read most come first without forcing turns
+ * between formats. Unrated works go last; equal priorities keep the row's relevance order.
  */
-function orderByRatingInMix(items: RecommendationItem[], profile: TasteProfile | undefined): RecommendationItem[] {
-  const rated = orderByRating(items);
-  const series = rated.filter((item) => !isSecondaryRelease(item));
-  const secondary = rated.filter(isSecondaryRelease);
-  return [
-    ...applyProfileComicMix(series, profile, series.length),
-    ...applyProfileComicMix(secondary, profile, secondary.length),
-  ];
+function orderByProfilePriority(
+  items: RecommendationItem[],
+  baseScore: (item: RecommendationItem) => number | null,
+): RecommendationItem[] {
+  return items
+    .map((item, index) => {
+      const rating = baseScore(item);
+      return {
+        item,
+        index,
+        priority: rating === null ? null : rating + profileBonus(item),
+        secondary: isSecondaryRelease(item) ? 1 : 0,
+      };
+    })
+    .sort((a, b) =>
+      (a.secondary - b.secondary)
+      || ((b.priority ?? -1) - (a.priority ?? -1))
+      || (a.index - b.index))
+    .map((entry) => entry.item);
 }
 
 export function buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge | null {
@@ -576,11 +591,9 @@ function draftUniqueSectionItems(
   return picked;
 }
 
-// "Fresh" lists what the reader's sources published lately, whatever its format; every other row
-// follows the library's comic mix. "Outside" does too (other genres, not other formats), unless the
-// library is almost all one format: then the other formats are what lies outside it.
+// Every row follows the library's comic mix. "Outside" does too (other genres, not other formats),
+// unless the library is almost all one format: then the other formats are what lies outside it.
 function shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey, profile: TasteProfile | undefined): boolean {
-  if (sectionKey === "freshInYourSources") return false;
   if (sectionKey !== "outsideYourUsualReads" || !profile) return true;
   const dominant = dominantComicContentType(profile);
   return !dominant || dominant.share < COMIC_FORMAT_EXCLUSIVE_SHARE;
@@ -710,9 +723,10 @@ function comicContentTypeDistribution(profile: TasteProfile): {
 }
 
 /**
- * Lays a row out in the library's comic format proportions, interleaved so every visible window
- * shows the mix: a manhwa-heavy library sees manhwa in the first cards, not after a block of manga.
- * Each format keeps its own ranking order; the next slot goes to the format furthest behind its share.
+ * Picks a row's works in the library's comic format proportions, so a manhwa-heavy library is not
+ * handed a row of higher-rated manga. Each format keeps its own ranking order; the next pick goes to
+ * the format furthest behind its share. The row's display order is set afterwards by the reader's
+ * priority (orderByProfilePriority), not by these turns.
  *
  * When a format runs out, the formats the library reads less of stop at their share of it: a row
  * for a manhwa-heavy library ends when the manhwa does instead of going on with manga. A format the

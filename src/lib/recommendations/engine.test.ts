@@ -42,7 +42,7 @@ describe("search recommendation engine", () => {
           coverUrl: null,
           summary: null,
           publishingStatus: "RELEASING",
-          publishingType: "MANHWA",
+          publishingType: "MANGA",
           startDate: "2026-01-01",
           totalChapters: 0,
           trackingUrl: null,
@@ -54,7 +54,7 @@ describe("search recommendation engine", () => {
           id: "tracker-scored",
           title: "Tracker Scored",
           tags: ["Action"],
-          contentType: "manhwa",
+          contentType: "manga",
           providers: [
             {
               providerId: "10",
