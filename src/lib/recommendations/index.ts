@@ -1,6 +1,7 @@
 export * from "./adapters";
 export * from "./comicOrigin";
 export * from "./engine";
+export * from "./exploration";
 export * from "./identity";
 export * from "./normalization";
 export * from "./ranking";

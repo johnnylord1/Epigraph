@@ -22,7 +22,12 @@ const PROFILE_MATCH_MIN = 0.3;
 const HIGH_CONFIDENCE_PROFILE_MIN = 0.2;
 const TRENDING_PROFILE_MIN = 0.15;
 const OUTSIDE_PROFILE_OVERLAP_MAX = 0.16;
-const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.2;
+// Every genre a large library touches keeps some weight, and a title shares at least one with
+// almost any reader, so "outside" allows a weak match rather than demanding none.
+const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.35;
+// A weak overall match can still hide one of the reader's main genres (a title tagged only
+// "Fantasy" for a fantasy reader). Tags weighing this share of the strongest one are core.
+const OUTSIDE_CORE_TAG_SHARE = 0.72;
 // A tag the reader actively dislikes (dropped/low-rated works) keeps a title out
 // of the "like what you read" rows even when other tags match.
 const PROFILE_NEGATIVE_MAX = 0.35;
@@ -202,6 +207,7 @@ export function buildRecommendationSections(
       badge: buildTrackerScoreBadge(candidate),
     }))
     .filter((item) => !isAffinityGroupMismatch(item, profile));
+  const coreTags = profileCoreTags(profile);
 
   const ranked: Record<RecommendationSectionKey, RecommendationItem[]> = {
     becauseYouRatedHighly: rankSectionItems(items, requestedLimit, "becauseYouRatedHighly", (item) =>
@@ -285,9 +291,9 @@ export function buildRecommendationSections(
       (item) => profile.seedCount > 0
         && hasExternalProvider(item)
         && outsideUsualEligibility(item, profile)
-        && item.breakdown.diversityBucket === "divergent"
         && item.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX
         && item.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX
+        && !hasCoreTag(item, coreTags)
         // Divergent, not disliked: a tag from dropped or low-rated works only
         // passes when the title is exceptionally well regarded.
         && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
@@ -706,6 +712,21 @@ function hasTopicalTags(item: RecommendationItem): boolean {
   return item.candidate.tags
     .flatMap(recommendationTagTokens)
     .some((tag) => !isRecommendationMetadataTag(tag));
+}
+
+function profileCoreTags(profile: TasteProfile): Set<string> {
+  let strongest = 0;
+  for (const weight of profile.tagWeights.values()) strongest = Math.max(strongest, weight);
+  const core = new Set<string>();
+  if (strongest <= 0) return core;
+  for (const [tag, weight] of profile.tagWeights) {
+    if (weight >= strongest * OUTSIDE_CORE_TAG_SHARE) core.add(tag);
+  }
+  return core;
+}
+
+function hasCoreTag(item: RecommendationItem, coreTags: ReadonlySet<string>): boolean {
+  return coreTags.size > 0 && item.candidate.tags.flatMap(recommendationTagTokens).some((tag) => coreTags.has(tag));
 }
 
 function outsideUsualEligibility(item: RecommendationItem, profile: TasteProfile): boolean {

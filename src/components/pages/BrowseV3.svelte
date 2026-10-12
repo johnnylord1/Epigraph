@@ -49,6 +49,7 @@
     comicOriginKey,
     comicTypeFromCountry,
     dedupeRecommendationItems,
+    explorationGenres,
     fetchAniListCountries,
     inferMangaRecommendationContentType,
     mangaToRecommendationCandidate,
@@ -58,6 +59,7 @@
     trackRecordSeedStatus,
     trackerSeedsOutsideLibrary,
     type ComicContentType,
+    type ExplorationGenres,
     type RecommendationCandidate,
     type RecommendationItem,
     type RecommendationProviderSignal,
@@ -285,6 +287,11 @@
   const TRACKER_SCORE_BATCH_SIZE = 12;
   const TRACKER_SCORE_MAL_FALLBACK_LIMIT = 3;
   const TRACKER_SCORE_MAL_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 1000;
+  // Jikan stalls for the full connect timeout (~21s) when it is down; give up well before that.
+  const JIKAN_REQUEST_TIMEOUT_MS = 6000;
+  const SEARCH_EXPLORE_PER_GENRE = 16;
+  const SEARCH_EXPLORE_MIN_POPULARITY = 4000;
+  const SEARCH_EXPLORE_DEBOUNCE_MS = 1500;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
   const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
@@ -670,6 +677,10 @@
   let searchTrackerTrendingResults = $state<TrackSearch[]>([]);
   let searchTrackerTrendingLoading = $state(false);
   let searchTrackerTrendingKey = $state("");
+  let searchTrackerExploreResults = $state<TrackSearch[]>([]);
+  let searchTrackerExploreKey = $state("");
+  const searchTrackerExploreCache = new Map<string, TrackSearch[]>();
+  let searchTrackerExploreAbortCtrl: AbortController | null = null;
   let searchTrackerTrendingPage = $state(2);
   let searchTrackerScoreLoading = $state(false);
   let searchTrackerScoreKey = $state("");
@@ -805,6 +816,8 @@
     searchSourceSeedKey = "";
     searchSourceSeedLoading = false;
     searchTrackerTrendingResults = [];
+    searchTrackerExploreResults = [];
+    searchTrackerExploreKey = "";
     searchTrackerTrendingLoading = false;
     searchTrackerTrendingKey = "";
     searchTrackerTrendingPage = 2;
@@ -827,6 +840,7 @@
 
   function releaseSearchRecommendationTransientState() {
     clearHardcoverBackgroundTimer();
+    searchTrackerExploreAbortCtrl?.abort();
     searchTrackerScoreAbortCtrl?.abort();
     searchSourceSeedAbortCtrl?.abort();
     searchTrackerScoreAbortCtrl = null;
@@ -834,6 +848,8 @@
 
     searchTrackerScoreResults = [];
     searchTrackerTrendingResults = [];
+    searchTrackerExploreResults = [];
+    searchTrackerExploreKey = "";
     searchTrackerRecordCandidates = [];
     searchTrackerSeedItems = [];
     searchSourceSeedResults = [];
@@ -898,6 +914,8 @@
     trackerCatalogResults = [];
     searchTrackerScoreResults = [];
     searchTrackerTrendingResults = [];
+    searchTrackerExploreResults = [];
+    searchTrackerExploreKey = "";
     searchTrackerRecordCandidates = [];
     searchTrackerSeedItems = [];
     searchSourceSeedResults = [];
@@ -1006,6 +1024,8 @@
     searchNovelSeedAutofillLoading = false;
     searchNovelSeedAutofillExhausted = false;
     searchTrackerTrendingResults = [];
+    searchTrackerExploreResults = [];
+    searchTrackerExploreKey = "";
     searchTrackerTrendingLoading = false;
     searchTrackerTrendingKey = "";
     searchTrackerTrendingPage = 2;
@@ -2015,7 +2035,12 @@
     return buildSearchRecommendations({
       libraryManga: searchLibraryManga,
       sourceResults: searchSourceMangaPool,
-      trackerResults: dedupeTrackSearches([...searchTrackerTrendingResults, ...trackerCatalogResults, ...searchTrackerScoreResults]),
+      trackerResults: dedupeTrackSearches([
+        ...searchTrackerTrendingResults,
+        ...trackerCatalogResults,
+        ...searchTrackerScoreResults,
+        ...searchTrackerExploreResults,
+      ]),
       trackers: allTrackers,
       trackRecordsByMangaId: searchTrackRecordsByMangaId,
       comicOrigins: searchComicOrigins,
@@ -2031,6 +2056,41 @@
       blockedTags: store.settings.filterBlockedTags ? store.settings.nsfwFilteredTags ?? [] : [],
       limitPerSection: SEARCH_RECOMMENDATION_MAX_LIMIT,
     });
+  });
+
+  // Catalog feeds follow what is popular, which for a heavy reader is mostly what they already
+  // read. This search feeds "outside your usual reads" with well rated works in genres the reader
+  // skips, rotating daily through those genres.
+  const searchExploreRequest = $derived.by(() => {
+    if (activeContentType !== "manga") return null;
+    const tracker = usableSearchTrackers(searchScoreTrackers).find((entry) => trackerProviderKind(entry) === "anilist");
+    if (!tracker) return null;
+    const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    const genres = explorationGenres(searchRecommendationResult.profile, { rotation: day });
+    if (!genres) return null;
+    return {
+      key: JSON.stringify({ tracker: tracker.id, nsfw: includeNsfwSources, ...genres }),
+      tracker,
+      genres,
+    };
+  });
+
+  // The request object is rebuilt on every profile update; only a change of genres matters.
+  const searchExploreKey = $derived(searchExploreRequest?.key ?? "");
+
+  $effect(() => {
+    if (!searchRecommendationsReady) return;
+    if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    const key = searchExploreKey;
+    if (!key || key === searchTrackerExploreKey) return;
+    // The genres can still shift while the library and tracker records load; wait for them to settle.
+    const timer = window.setTimeout(() => {
+      untrack(() => {
+        const request = searchExploreRequest;
+        if (request?.key === key) void refreshSearchTrackerExploreFeed(key, request.tracker, request.genres);
+      });
+    }, SEARCH_EXPLORE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   });
 
   const searchRecommendationCompositionKey = $derived.by(() => JSON.stringify({
@@ -4146,6 +4206,32 @@
     malTrackerPausedUntil = Date.now() + TRACKER_SCORE_MAL_RATE_LIMIT_COOLDOWN_MS;
   }
 
+  // Jikan is a volunteer MyAnimeList mirror that goes down or rate limits for minutes at a time.
+  // Every MAL feed waits on it, so a stalled or failing request backs all of them off instead of
+  // holding the recommendations for the full network timeout. Null means "skip MAL for now".
+  async function fetchJikan(url: string, signal?: AbortSignal): Promise<Response | null> {
+    if (isMalTrackerPaused()) return null;
+    const ctrl = new AbortController();
+    const abort = () => ctrl.abort();
+    const timer = setTimeout(abort, JIKAN_REQUEST_TIMEOUT_MS);
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
+      if (response.status === 429 || response.status >= 500) {
+        pauseMalTrackerRequests();
+        return null;
+      }
+      return response;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      pauseMalTrackerRequests();
+      return null;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
   function comparableRecommendationTitle(title: string) {
     return recommendationTitleKey(title, "manga")
       .replace(/^comic:/, "")
@@ -4271,24 +4357,15 @@
     const url = catalogFeed === "latest"
       ? `https://api.jikan.moe/v4/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}&order_by=start_date&sort=desc`
       : `https://api.jikan.moe/v4/top/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}${catalogFeed === "popular" ? "&filter=bypopularity" : ""}`;
-    const response = await fetch(url, { headers: { Accept: "application/json" } });
-    if (response.status === 429) {
-      pauseMalTrackerRequests();
-      return [];
-    }
+    const response = await fetchJikan(url);
+    if (!response) return [];
     if (!response.ok) throw new Error(`MyAnimeList catalog failed (${response.status})`);
     const data: MalTrackerResponse = await response.json();
     const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
     return items.map((item) => mapMalMediaToTrackSearch(item, tracker));
   }
 
-  async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number, country?: "KR" | "CN") {
-    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
-    const countryFilter = country ? `, countryOfOrigin: ${country}` : "";
-    const query = `
-      query SearchTrendingTrackerCatalog($page: Int!, $perPage: Int!) {
-        Page(page: $page, perPage: $perPage) {
-          media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC]${adultFilter}${countryFilter}) {
+  const ANILIST_SEARCH_MEDIA_FIELDS = `
             id
             title { romaji english native }
             coverImage { large extraLarge }
@@ -4303,6 +4380,54 @@
             trending
             genres
             startDate { year month day }
+  `;
+
+  // Highest rated works in one genre the reader rarely reads, leaving out the reader's core genres.
+  // AniList's genre_in requires every listed genre, so each genre is its own request.
+  async function fetchSearchExploreAniListCatalog(
+    tracker: BrowseTrackerEntry,
+    genre: string,
+    excludedGenres: string[],
+    signal: AbortSignal,
+  ) {
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const query = `
+      query SearchExploreTrackerCatalog($genre: String!, $excluded: [String], $perPage: Int!, $minPopularity: Int!) {
+        Page(page: 1, perPage: $perPage) {
+          media(type: MANGA, genre: $genre, genre_not_in: $excluded, popularity_greater: $minPopularity, sort: [SCORE_DESC, POPULARITY_DESC]${adultFilter}) {
+            ${ANILIST_SEARCH_MEDIA_FIELDS}
+          }
+        }
+      }
+    `;
+    const response = await fetch("https://graphql.anilist.co", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        query,
+        variables: {
+          genre,
+          excluded: excludedGenres.length > 0 ? excludedGenres : null,
+          perPage: SEARCH_EXPLORE_PER_GENRE,
+          minPopularity: SEARCH_EXPLORE_MIN_POPULARITY,
+        },
+      }),
+      signal,
+    });
+    if (!response.ok) throw new Error(`AniList explore catalog failed (${response.status})`);
+    const data: AniListTrackerResponse = await response.json();
+    const media = data?.data?.Page?.media ?? [];
+    return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
+  }
+
+  async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number, country?: "KR" | "CN") {
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const countryFilter = country ? `, countryOfOrigin: ${country}` : "";
+    const query = `
+      query SearchTrendingTrackerCatalog($page: Int!, $perPage: Int!) {
+        Page(page: $page, perPage: $perPage) {
+          media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC]${adultFilter}${countryFilter}) {
+            ${ANILIST_SEARCH_MEDIA_FIELDS}
           }
         }
       }
@@ -4327,11 +4452,8 @@
   async function fetchSearchTrendingMalCatalog(tracker: BrowseTrackerEntry, page: number) {
     if (isMalTrackerPaused()) return [];
     const url = `https://api.jikan.moe/v4/top/manga?page=${page}&limit=${TRACKER_CATALOG_PAGE_SIZE}`;
-    const response = await fetch(url, { headers: { Accept: "application/json" } });
-    if (response.status === 429) {
-      pauseMalTrackerRequests();
-      return [];
-    }
+    const response = await fetchJikan(url);
+    if (!response) return [];
     if (!response.ok) throw new Error(`MyAnimeList trending catalog failed (${response.status})`);
     const data: MalTrackerResponse = await response.json();
     const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
@@ -4474,12 +4596,8 @@
   async function fetchMalTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
     if (isMalTrackerPaused()) return [];
     const url = `https://api.jikan.moe/v4/manga?q=${encodeURIComponent(title)}&limit=5`;
-    const response = await fetch(url, { headers: { Accept: "application/json" }, signal });
-    if (response.status === 429) {
-      pauseMalTrackerRequests();
-      return [];
-    }
-    if (!response.ok) return [];
+    const response = await fetchJikan(url, signal);
+    if (!response?.ok) return [];
     const data: MalTrackerResponse = await response.json();
     const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
     const candidates = items.map((item) => ({
@@ -4754,6 +4872,27 @@
     return true;
   }
 
+  async function refreshSearchTrackerExploreFeed(key: string, tracker: BrowseTrackerEntry, genres: ExplorationGenres) {
+    searchTrackerExploreAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    searchTrackerExploreAbortCtrl = ctrl;
+    searchTrackerExploreKey = key;
+
+    const cached = searchTrackerExploreCache.get(key);
+    if (cached) {
+      searchTrackerExploreResults = cached;
+      return;
+    }
+
+    const results = (await Promise.all(genres.include.map((genre) =>
+      fetchSearchExploreAniListCatalog(tracker, genre, genres.exclude, ctrl.signal).catch(() => [] as TrackSearch[]),
+    ))).flat();
+    if (ctrl.signal.aborted || searchTrackerExploreKey !== key) return;
+    const unique = capProviderResults(dedupeTrackSearches(results));
+    if (unique.length > 0) searchTrackerExploreCache.set(key, unique);
+    searchTrackerExploreResults = unique;
+  }
+
   async function refreshSearchTrackerTrendingFeed(key: string, trackers: BrowseTrackerEntry[]) {
     searchTrackerTrendingKey = key;
     searchTrackerTrendingLoading = true;
@@ -4776,9 +4915,15 @@
             fetchSearchTrendingAniListCatalog(tracker, 1, country).catch(() => [] as TrackSearch[]))
           : []),
       ]);
-      const results = (await Promise.all(requests)).flat();
+      // Publish each page as it lands so one slow tracker does not hold back the others.
+      let collected: TrackSearch[] = [];
+      await Promise.all(requests.map(async (request) => {
+        const results = await request;
+        if (searchTrackerTrendingKey !== key || results.length === 0) return;
+        collected = [...collected, ...results];
+        searchTrackerTrendingResults = capProviderResults(dedupeTrackSearches(collected));
+      }));
       if (searchTrackerTrendingKey !== key) return;
-      searchTrackerTrendingResults = capProviderResults(dedupeTrackSearches(results));
       searchTrackerTrendingPage = 2;
       window.setTimeout(() => {
         if (searchTrackerTrendingKey === key) void prefetchSearchTrackerTrendingPages(3, 2);

@@ -394,6 +394,31 @@ describe("recommendation sections", () => {
     expect(outsideIds).not.toContain("familiar-action");
   });
 
+  it("keeps the reader's main genre out of outside usual reads even among unfamiliar tags", () => {
+    const sections = buildRecommendationSections([
+      candidate("diluted-action", {
+        tags: ["Action", "Cooking", "Sports", "Music", "Space", "Mecha", "Idol", "Aliens", "Survival", "Gourmet"],
+        providers: [
+          { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+          { providerId: "tracker", providerName: "AniList", kind: "tracker", score: normalizeScore(84, 100, 0.8) },
+        ],
+      }),
+      candidate("sports-pick", {
+        tags: ["Sports", "Music"],
+        providers: [
+          { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+          { providerId: "tracker", providerName: "AniList", kind: "tracker", score: normalizeScore(84, 100, 0.8) },
+        ],
+      }),
+    ], profile, { nowMs: NOW });
+
+    const outside = sections.find((section) => section.key === "outsideYourUsualReads")?.items ?? [];
+    const outsideIds = outside.map((item) => item.candidate.id);
+
+    expect(outsideIds).toContain("sports-pick");
+    expect(outsideIds).not.toContain("diluted-action");
+  });
+
 
   it("respects blocked tags, NSFW visibility, and library inclusion filters", () => {
     const sections = buildRecommendationSections([
