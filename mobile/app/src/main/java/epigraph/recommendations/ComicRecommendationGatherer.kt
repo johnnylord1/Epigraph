@@ -126,7 +126,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
     }
 
     /** All visible non-novel sources; NSFW sources only when the user opted in. */
-    private fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
+    internal fun browseSources(nsfwSourceIds: Set<Long>, includeNsfw: Boolean): List<CatalogueSource> {
         return sourceManager.getVisibleCatalogueSources()
             .filter { !it.isNovelSource() && it.id != LOCAL_SOURCE_ID }
             .filter { includeNsfw || it.id !in nsfwSourceIds }

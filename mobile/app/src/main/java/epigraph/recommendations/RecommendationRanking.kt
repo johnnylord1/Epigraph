@@ -6,20 +6,29 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val PROFILE_MATCH_MIN = 0.3
 private const val HIGH_CONFIDENCE_PROFILE_MIN = 0.2
 private const val TRENDING_PROFILE_MIN = 0.15
 private const val OUTSIDE_PROFILE_OVERLAP_MAX = 0.16
-private const val OUTSIDE_PERSONAL_AFFINITY_MAX = 0.2
+// Every genre a large library touches keeps some weight, and a title shares at least one with
+// almost any reader, so "outside" allows a weak match rather than demanding none.
+private const val OUTSIDE_PERSONAL_AFFINITY_MAX = 0.35
+// A weak overall match can still hide one of the reader's main genres (a title tagged only
+// "Fantasy" for a fantasy reader). Tags weighing this share of the strongest one are core.
+private const val OUTSIDE_CORE_TAG_SHARE = 0.72
+// The genres the page shows as the reader's main ones are core too, however their weights compare.
+private const val PRINCIPAL_TASTE_TAG_COUNT = 6
 // A tag the reader actively dislikes (dropped/low-rated works) keeps a title out
 // of the "like what you read" rows even when other tags match.
 private const val PROFILE_NEGATIVE_MAX = 0.35
 private const val SECTION_NEGATIVE_MAX = 0.5
 private const val NEGATIVE_WEIGHT_SCALE = 1.2
 private const val MATCHED_TAG_MIN = 0.25
+// Only a library this dominated by one comic format keeps the other formats out of the taste rows;
+// below it the rows follow the library's format mix.
+private const val COMIC_FORMAT_EXCLUSIVE_SHARE = 0.75
 // Maximal Marginal Relevance (Carbonell & Goldstein): trade a little relevance
 // for fewer near-identical titles next to each other inside a row.
 private const val MMR_LAMBDA = 0.8
@@ -36,6 +45,27 @@ private val SECTION_DRAFT_ORDER = listOf(
     RecommendationSectionKey.FRESH_IN_YOUR_SOURCES,
     RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS,
 )
+// Sequels, side stories and one-shots may be recommended, but new series come first: they rank a
+// little lower when a row picks its works, and sit after the new series in the row.
+private const val SECONDARY_RELEASE_FACTOR = 0.9
+// A row's order adds the work's fit to the reader's profile to the card's rating (0..1): closeness to
+// the genres they rated well is worth up to PRIORITY_AFFINITY_BONUS, and how much of the work's format
+// they read up to PRIORITY_FORMAT_BONUS. Global trackers rate Japanese titles higher, so without the
+// format bonus a manhwa reader's rows would open with manga; with it, the format they read most leads
+// while a much better rated work of another format still moves ahead.
+private const val PRIORITY_AFFINITY_BONUS = 0.25
+private const val PRIORITY_FORMAT_BONUS = 0.3
+// "Episode 1" starts a series told in episodes (Umineko); a later episode or act continues it, as
+// does a later "Dai N-wa" (Higurashi's Japanese episode numbering).
+private val CONTINUATION_TITLE_PATTERN = Regex(
+    "\\b(season\\s*\\d+|\\d+(st|nd|rd|th)\\s+season|part\\s*(\\d+|[ivx]+)\\b|(episode|act)\\s*(0*[2-9]|[1-9]\\d+|ii|iii|iv|v|vi|vii|viii|ix|x)\\b|dai\\s*0*([2-9]|[1-9]\\d+)\\s*-?\\s*(wa|shou|bu|kan)\\b|side\\s*stor(y|ies)|gaiden|spin[\\s-]?offs?|after\\s*stor(y|ies)|extra\\s*stor(y|ies))",
+    RegexOption.IGNORE_CASE,
+)
+// "Series: Subtitle", "Series - Subtitle" or "Series (Subtitle)" continue a known series. Short names
+// ("Re", "Gate") start too many unrelated titles to count.
+private val SERIES_PREFIX_PATTERN = Regex("^(.+?)\\s*(?::|\\s[-–—]\\s|[(（\\[])")
+private const val SERIES_PREFIX_MIN_LENGTH = 6
+private val ONE_SHOT_TAGS = setOf("one shot", "oneshot")
 private val SECTION_DISPLAY_ORDER = listOf(
     RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY,
     RecommendationSectionKey.HIGH_CONFIDENCE,
@@ -163,9 +193,17 @@ fun buildRecommendationSections(
     val limit = options.limitPerSection
     val items = candidates
         .filter { passesFilters(it, options) }
-        .map { RecommendationItem(it, scoreRecommendationCandidate(it, profile, options.nowMs), buildTrackerScoreBadge(it)) }
+        .map {
+            RecommendationItem(
+                candidate = it,
+                breakdown = scoreRecommendationCandidate(it, profile, options.nowMs),
+                badge = buildTrackerScoreBadge(it),
+                releaseKind = recommendationReleaseKind(it, options.knownTitleKeys),
+            )
+        }
         .filterNot { isAffinityGroupMismatch(it, profile) }
     val seeded = profile.seedCount > 0
+    val coreTags = profileCoreTags(profile)
 
     val ranked = mapOf(
         RecommendationSectionKey.BECAUSE_YOU_RATED_HIGHLY to rankSectionItems(
@@ -184,7 +222,7 @@ fun buildRecommendationSections(
             score = { (qualityScore(it) * 0.42) + (it.breakdown.trackerConsensus * 0.2) + (providerEvidenceScore(it) * 0.18) + (profileAffinityScore(it) * 0.12) + (it.breakdown.sourceAvailability * 0.08) },
             eligible = {
                 hasExternalProvider(it) &&
-                    (qualityScore(it) >= 0.52 || proseWarmStartCandidate(it, profile)) &&
+                    qualityScore(it) >= 0.52 &&
                     (seeded == false || (
                         fitsProfileComicFormat(it, profile) && (
                             (it.breakdown.personalRatingAffinity >= HIGH_CONFIDENCE_PROFILE_MIN && it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX) ||
@@ -199,8 +237,8 @@ fun buildRecommendationSections(
             score = { (momentumScore(it) * 0.52) + (it.breakdown.trendingVelocity * 0.18) + (it.breakdown.recency * 0.1) + (profileAffinityScore(it) * 0.1) + (qualityScore(it) * 0.06) + (it.breakdown.sourceAffinity * 0.04) },
             eligible = {
                 hasExternalProvider(it) &&
-                    (momentumScore(it) >= 0.08 || proseWarmStartCandidate(it, profile)) &&
-                    (qualityScore(it) >= 0.42 || proseWarmStartCandidate(it, profile)) &&
+                    momentumScore(it) >= 0.08 &&
+                    qualityScore(it) >= 0.42 &&
                     (seeded == false || (fitsProfileComicFormat(it, profile) && it.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN && it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX))
             },
             profile,
@@ -210,7 +248,7 @@ fun buildRecommendationSections(
             score = { (freshnessScore(it) * 0.62) + (it.breakdown.personalRatingAffinity * 0.14) + (it.breakdown.sourceAvailability * 0.1) + (it.breakdown.sourceAffinity * 0.06) + (it.breakdown.contentTypeFit * 0.04) + (qualityScore(it) * 0.04) },
             eligible = {
                 hasExternalProvider(it) &&
-                    (freshnessScore(it) >= 0.12 || proseSourceAvailabilityCandidate(it, profile)) &&
+                    freshnessScore(it) >= 0.12 &&
                     (seeded == false || fitsProfileComicFormat(it, profile)) &&
                     it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX
             },
@@ -221,9 +259,9 @@ fun buildRecommendationSections(
             score = { (it.breakdown.novelty * 0.64) + (qualityScore(it) * 0.18) + (it.breakdown.sourceAvailability * 0.1) + (freshnessScore(it) * 0.08) },
             eligible = {
                 seeded && hasExternalProvider(it) && outsideUsualEligibility(it, profile) &&
-                    it.breakdown.diversityBucket == RecommendationDiversityBucket.DIVERGENT &&
                     it.breakdown.profileTagOverlap < OUTSIDE_PROFILE_OVERLAP_MAX &&
                     it.breakdown.personalRatingAffinity < OUTSIDE_PERSONAL_AFFINITY_MAX &&
+                    !hasCoreTag(it, coreTags) &&
                     // Divergent, not disliked: a tag from dropped or low-rated works only
                     // passes when the title is exceptionally well regarded.
                     it.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX &&
@@ -234,14 +272,98 @@ fun buildRecommendationSections(
     )
     val drafted = draftUniqueSectionItems(ranked, limit)
     return SECTION_DISPLAY_ORDER.map { key ->
-        val sectionItems = if (shouldApplyProfileComicMix(key)) {
-            applyProfileComicMix(drafted.getValue(key), profile, limit).take(limit)
+        val mixed = shouldApplyProfileComicMix(key, profile)
+        // A row ends where the library's main format runs out rather than filling up with another.
+        val sectionItems = if (mixed) {
+            applyProfileComicMix(drafted.getValue(key), profile, limit, trim = true).take(limit)
         } else {
             drafted.getValue(key)
         }
-        RecommendationSection(key, sectionItems)
+        // "Fresh" is about what came out lately: how recent a work is takes the place of its rating.
+        val ordered = if (key == RecommendationSectionKey.FRESH_IN_YOUR_SOURCES) {
+            orderByProfilePriority(sectionItems) { freshnessScore(it) }
+        } else {
+            orderByProfilePriority(sectionItems, ::displayedRating)
+        }
+        RecommendationSection(key, ordered)
     }
 }
+
+/**
+ * Whether a work is a new series or comes after one: a one-shot, or a sequel/spin-off by its title
+ * ("Season 2", "Side Story") or by being named "<a series the reader knows>: <subtitle>".
+ */
+fun recommendationReleaseKind(
+    candidate: RecommendationCandidate,
+    knownTitleKeys: Set<String> = emptySet(),
+): RecommendationReleaseKind {
+    if (candidate.format.orEmpty().uppercase(Locale.ROOT) == "ONE_SHOT") return RecommendationReleaseKind.ONE_SHOT
+    if (candidate.tags.any { normalizeToken(it) in ONE_SHOT_TAGS }) return RecommendationReleaseKind.ONE_SHOT
+    val titles = listOf(candidate.title) + candidate.alternativeTitles
+    if (titles.any { CONTINUATION_TITLE_PATTERN.containsMatchIn(it) }) return RecommendationReleaseKind.CONTINUATION
+    if (knownTitleKeys.isNotEmpty() && titles.any { continuesKnownSeries(it, candidate, knownTitleKeys) }) {
+        return RecommendationReleaseKind.CONTINUATION
+    }
+    return RecommendationReleaseKind.SERIES
+}
+
+private fun continuesKnownSeries(title: String, candidate: RecommendationCandidate, knownTitleKeys: Set<String>): Boolean {
+    val prefix = SERIES_PREFIX_PATTERN.find(title)?.groupValues?.get(1) ?: return false
+    if (normalizeToken(prefix).replace(" ", "").length < SERIES_PREFIX_MIN_LENGTH) return false
+    return recommendationTitleKey(prefix, candidate.contentType) in knownTitleKeys
+}
+
+/**
+ * The series a work belongs to, by its title before a subtitle ("Higurashi no Naku Koro ni - Dai 3-wa",
+ * "Yakusoku no Neverland: Norman kara no Tegami"). Rows other than "fresh" list one work of a series,
+ * so one series' episodes or side novels do not fill a row.
+ */
+private fun seriesClaimKey(item: RecommendationItem): String? {
+    val title = item.candidate.title
+    val prefix = SERIES_PREFIX_PATTERN.find(title)?.groupValues?.get(1)
+    val series = if (prefix != null && normalizeToken(prefix).replace(" ", "").length >= SERIES_PREFIX_MIN_LENGTH) prefix else title
+    val key = recommendationTitleKey(series, item.candidate.contentType)
+    return if (key.isNotEmpty()) "series:$key" else null
+}
+
+private fun isSecondaryRelease(item: RecommendationItem) =
+    item.releaseKind == RecommendationReleaseKind.CONTINUATION || item.releaseKind == RecommendationReleaseKind.ONE_SHOT
+
+/** The rating shown on the card: the trackers' consensus, else the best-backed source score. */
+private fun displayedRating(item: RecommendationItem): Double? {
+    item.badge?.let { return it.score }
+    return item.candidate.providers
+        .filter { it.kind == RecommendationProviderKind.SOURCE && (it.score?.confidence ?: 0.0) > 0 }
+        .maxByOrNull { it.score!!.confidence }
+        ?.score?.value
+}
+
+/**
+ * How close a work is to the reader: the genres of what they rated well, and how much of the work's
+ * format the library holds (a manhwa reader's manhwa fits better than a manga of the same genres).
+ */
+private fun profileBonus(item: RecommendationItem): Double =
+    (clamp01(item.breakdown.personalRatingAffinity) * PRIORITY_AFFINITY_BONUS) +
+        (clamp01(item.breakdown.contentTypeFit) * PRIORITY_FORMAT_BONUS)
+
+/**
+ * A row reads by the reader's priority: new series before sequels and one-shots, then by the rating
+ * on the card (or, for "Fresh", how recent the work is) raised by how close the work is to the
+ * reader's profile, so the formats and genres they read most come first without forcing turns
+ * between formats. Unrated works go last; equal priorities keep the row's relevance order.
+ */
+private fun orderByProfilePriority(
+    items: List<RecommendationItem>,
+    baseScore: (RecommendationItem) -> Double?,
+): List<RecommendationItem> =
+    items.withIndex()
+        .map { (index, item) -> Triple(item, index, baseScore(item)?.let { it + profileBonus(item) }) }
+        .sortedWith(
+            compareBy<Triple<RecommendationItem, Int, Double?>> { if (isSecondaryRelease(it.first)) 1 else 0 }
+                .thenByDescending { it.third ?: -1.0 }
+                .thenBy { it.second },
+        )
+        .map { it.first }
 
 fun buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge? {
     val trackerSignals = candidate.providers.filter {
@@ -293,9 +415,13 @@ fun rerankForDiversity(entries: List<Pair<RecommendationItem, Double>>): List<Re
     return (selected + remaining + tail).map { it.first }
 }
 
-private fun shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey): Boolean =
-    sectionKey != RecommendationSectionKey.FRESH_IN_YOUR_SOURCES &&
-        sectionKey != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS
+// Every row follows the library's comic mix. "Outside" does too (other genres, not other formats),
+// unless the library is almost all one format: then the other formats are what lies outside it.
+private fun shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey, profile: TasteProfile): Boolean {
+    if (sectionKey != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS) return true
+    val dominant = dominantComicContentType(profile) ?: return true
+    return dominant.second < COMIC_FORMAT_EXCLUSIVE_SHARE
+}
 
 private fun topicalTagSet(item: RecommendationItem): Set<String> =
     item.candidate.tags
@@ -371,8 +497,11 @@ private fun draftUniqueSectionItems(
                     cursor += 1
                     val identityKeys = identityKeysOf(item)
                     if (identityKeys.any { it in claimed }) continue
+                    val series = if (key == RecommendationSectionKey.FRESH_IN_YOUR_SOURCES) null else seriesClaimKey(item)
+                    if (series != null && series in claimed) continue
                     if (respectPreference && rankedFarHigherElsewhere(item, key, rank)) continue
                     claimed += identityKeys
+                    if (series != null) claimed += series
                     picked.getValue(key).add(item)
                     progressed = true
                     break
@@ -415,7 +544,7 @@ private fun rankSectionItems(
 ): List<RecommendationItem> {
     if (limit <= 0) return emptyList()
     val scored = items
-        .map { it to score(it) }
+        .map { it to score(it) * (if (isSecondaryRelease(it)) SECONDARY_RELEASE_FACTOR else 1.0) }
         .filter { (item, value) -> value > 0 && eligible(item) }
         .sortedWith(
             compareByDescending<Pair<RecommendationItem, Double>> { it.second }
@@ -430,25 +559,12 @@ private fun rankSectionItems(
     } else {
         rerankForDiversity(unique)
     }
-    return if (shouldApplyProfileComicMix(sectionKey)) applyProfileComicMix(ordered, profile, limit) else ordered
+    return if (shouldApplyProfileComicMix(sectionKey, profile)) applyProfileComicMix(ordered, profile, limit) else ordered
 }
 
 private fun hasExternalProvider(item: RecommendationItem) = item.candidate.providers.any {
     it.kind == RecommendationProviderKind.SOURCE || it.kind == RecommendationProviderKind.TRACKER
 }
-
-private fun proseWarmStartCandidate(item: RecommendationItem, profile: TasteProfile) =
-    profile.seedCount == 0 &&
-        item.candidate.contentType.isProse &&
-        item.breakdown.sourceAvailability >= 0.45 &&
-        (qualityScore(item) >= 0.35 || momentumScore(item) >= 0.08) &&
-        item.candidate.title.isNotBlank()
-
-private fun proseSourceAvailabilityCandidate(item: RecommendationItem, profile: TasteProfile) =
-    item.candidate.contentType.isProse &&
-        item.breakdown.sourceAvailability >= 0.45 &&
-        item.candidate.title.isNotBlank() &&
-        (profile.seedCount == 0 || item.breakdown.contentTypeFit >= 0.18)
 
 private fun profileAffinityScore(item: RecommendationItem) = clamp01(
     (item.breakdown.personalRatingAffinity * 0.58) + (item.breakdown.profileTagOverlap * 0.24) +
@@ -497,7 +613,7 @@ private fun dominantComicContentType(profile: TasteProfile): Pair<Recommendation
 private fun matchesDominantComicFormat(item: RecommendationItem, profile: TasteProfile): Boolean {
     if (!item.candidate.contentType.isComic) return true
     val (dominant, share) = dominantComicContentType(profile) ?: return true
-    if (dominant == RecommendationContentType.MANGA || share < 0.48) return true
+    if (dominant == RecommendationContentType.MANGA || share < COMIC_FORMAT_EXCLUSIVE_SHARE) return true
     return item.candidate.contentType == dominant
 }
 
@@ -506,44 +622,78 @@ private fun fitsProfileComicFormat(item: RecommendationItem, profile: TasteProfi
     val distribution = comicDistribution(profile)
     if (distribution.total <= 0) return true
     val (dominant, share) = dominantComicContentType(profile) ?: return true
-    if (share < 0.48 || dominant == RecommendationContentType.MANGA) return true
+    if (share < COMIC_FORMAT_EXCLUSIVE_SHARE || dominant == RecommendationContentType.MANGA) return true
     if (item.candidate.contentType == dominant) return true
     return (distribution.shares[item.candidate.contentType] ?: 0.0) >= 0.18 || item.breakdown.contentTypeFit >= 0.45
 }
 
-private fun applyProfileComicMix(items: List<RecommendationItem>, profile: TasteProfile, limit: Int): List<RecommendationItem> {
+/**
+ * Picks a row's works in the library's comic format proportions, so a manhwa-heavy library is not
+ * handed a row of higher-rated manga. Each format keeps its own ranking order; the next pick goes to
+ * the format furthest behind its share. The row's display order is set afterwards by the reader's
+ * priority ([orderByProfilePriority]), not by these turns.
+ *
+ * When a format runs out, the formats the library reads less of stop at their share of it: a row
+ * for a manhwa-heavy library ends when the manhwa does instead of going on with manga. A format the
+ * library reads less of than the ones left may run out without holding them back. [trim] drops what
+ * the proportions leave over; without it the rest follows in ranking order (a reorder, not a cut).
+ */
+private fun applyProfileComicMix(
+    items: List<RecommendationItem>,
+    profile: TasteProfile,
+    limit: Int,
+    trim: Boolean = false,
+): List<RecommendationItem> {
     if (limit <= 0) return items
     val distribution = comicDistribution(profile)
-    val (dominant, dominantShare) = dominantComicContentType(profile) ?: return items
-    if (distribution.total <= 0 || dominantShare < 0.48) return items
+    if (distribution.total <= 0) return items
 
     val buckets = COMIC_TYPES.associateWith { type -> ArrayDeque(items.filter { it.candidate.contentType == type }) }
-    if (buckets.getValue(dominant).isEmpty()) return items
-
-    val targets = COMIC_TYPES.associateWith { type ->
-        if (type == dominant) {
-            ceil(limit * min(0.9, max(0.62, dominantShare))).toInt()
-        } else {
-            (limit * (distribution.shares[type] ?: 0.0)).roundToInt()
-        }
-    }
+    val order = IdentityHashMap<RecommendationItem, Int>()
+    items.forEachIndexed { index, item -> order[item] = index }
 
     val result = ArrayList<RecommendationItem>()
     val used = HashSet<String>()
-    fun take(type: RecommendationContentType, count: Int) {
-        var remaining = count
+    val taken = COMIC_TYPES.associateWith { 0 }.toMutableMap()
+    fun shareOf(type: RecommendationContentType) = distribution.shares[type] ?: 0.0
+    fun exhausted(type: RecommendationContentType): Boolean {
         val bucket = buckets.getValue(type)
-        while (remaining > 0 && bucket.isNotEmpty() && result.size < limit) {
-            val next = bucket.removeFirst()
-            if (!used.add(next.candidate.id)) continue
-            result += next
-            remaining--
+        while (bucket.isNotEmpty() && bucket.first().candidate.id in used) bucket.removeFirst()
+        return bucket.isEmpty()
+    }
+    // A format may not outgrow its share of a larger format that has run out.
+    fun withinShare(type: RecommendationContentType) = COMIC_TYPES.all { larger ->
+        shareOf(larger) <= shareOf(type) || !exhausted(larger) ||
+            taken.getValue(type) + 1 <= ceil(taken.getValue(larger) * shareOf(type) / shareOf(larger))
+    }
+    while (result.size < limit) {
+        var next: RecommendationContentType? = null
+        var nextDeficit = Double.NEGATIVE_INFINITY
+        for (type in COMIC_TYPES) {
+            val share = shareOf(type)
+            if (exhausted(type) || share <= 0 || !withinShare(type)) continue
+            val bucket = buckets.getValue(type)
+            val deficit = (share * (result.size + 1)) - taken.getValue(type)
+            val ahead = next != null && deficit == nextDeficit &&
+                order.getValue(bucket.first()) < order.getValue(buckets.getValue(next).first())
+            if (deficit > nextDeficit || ahead) {
+                next = type
+                nextDeficit = deficit
+            }
         }
+        if (next == null) break
+        val item = buckets.getValue(next).removeFirst()
+        used += item.candidate.id
+        taken[next] = taken.getValue(next) + 1
+        result += item
     }
 
-    take(dominant, targets.getValue(dominant))
-    COMIC_TYPES.filter { it != dominant }.forEach { take(it, targets.getValue(it)) }
-    items.forEach { if (used.add(it.candidate.id)) result += it }
+    for (item in items) {
+        if (item.candidate.id in used) continue
+        if (trim && item.candidate.contentType.isComic) continue
+        used += item.candidate.id
+        result += item
+    }
     return result
 }
 
@@ -560,11 +710,22 @@ private fun hasTopicalTags(item: RecommendationItem) = item.candidate.tags
     .flatMap(::recommendationTagTokens)
     .any { !isRecommendationMetadataTag(it) }
 
+private fun profileCoreTags(profile: TasteProfile): Set<String> {
+    val strongest = profile.tagWeights.values.fold(0.0, ::max)
+    val core = profile.topTags.take(PRINCIPAL_TASTE_TAG_COUNT).toMutableSet()
+    if (strongest <= 0) return core
+    profile.tagWeights.forEach { (tag, weight) -> if (weight >= strongest * OUTSIDE_CORE_TAG_SHARE) core += tag }
+    return core
+}
+
+private fun hasCoreTag(item: RecommendationItem, coreTags: Set<String>) =
+    coreTags.isNotEmpty() && item.candidate.tags.flatMap(::recommendationTagTokens).any { it in coreTags }
+
 private fun outsideUsualEligibility(item: RecommendationItem, profile: TasteProfile): Boolean {
     if (hasTopicalTags(item)) return true
     if (!item.candidate.contentType.isComic) return false
     val (dominant, share) = dominantComicContentType(profile) ?: return false
-    if (share < 0.48) return false
+    if (share < COMIC_FORMAT_EXCLUSIVE_SHARE) return false
     return item.candidate.contentType != dominant &&
         item.breakdown.contentTypeFit <= 0.35 &&
         item.breakdown.sourceAvailability >= 0.45
