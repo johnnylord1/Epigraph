@@ -40,6 +40,7 @@
   import {
     store,
     addToast,
+    dismissToast,
     openBookReader,
     replaceBooksState,
     replaceBooksStateFromDisk,
@@ -67,6 +68,7 @@
   import type { BackupLaunchIntent } from "./lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "./lib/backup/novelsBackup";
   import type { RestoreReadinessSummary } from "./lib/reconciliation/types";
+  import type { AniListLibraryLookupProgress } from "./lib/recommendations/anilistLibraryLookup";
   import { cache, CACHE_GROUPS, CACHE_KEYS, DEFAULT_TTL_MS } from "./lib/cache";
   import { normalizeCategories } from "./lib/library/categories";
   import type { PersistedLibrarySnapshot } from "./lib/library/snapshot";
@@ -145,18 +147,30 @@
   });
 
   // Library works are matched to AniList in the background from start, so recommendations already
-  // know their genres and other names when the search page opens.
-  let aniListLookupLibraryKey = "";
+  // know their genres and other names when the search page opens. Each work is looked up once; a
+  // library change only queues the works that were added.
+  const ANILIST_LOOKUP_TOAST_ID = "anilist-library-lookup";
+  function showAniListLookupProgress(progress: AniListLibraryLookupProgress) {
+    if (progress.phase === "paused") {
+      dismissToast(ANILIST_LOOKUP_TOAST_ID);
+      return;
+    }
+    const done = progress.phase === "done";
+    addToast({
+      id: ANILIST_LOOKUP_TOAST_ID,
+      kind: done ? "success" : "info",
+      title: $_(done ? "feedback.aniListLookupDone" : "feedback.aniListLookupRunning"),
+      body: done
+        ? $_("feedback.aniListLookupDoneBody", { matched: progress.matched, missed: progress.missed })
+        : $_("feedback.aniListLookupRunningBody", { remaining: progress.remaining, total: progress.total }),
+      duration: done ? 6000 : 0,
+    });
+  }
   $effect(() => {
-    const key = store.libraryMangaSnapshot.map((manga) => `${manga.id}:${manga.title}`).join("|");
-    if (!key || key === aniListLookupLibraryKey) return;
-    const firstRun = aniListLookupLibraryKey === "";
-    aniListLookupLibraryKey = key;
+    const works = store.libraryMangaSnapshot;
+    if (works.length === 0) return;
     void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
-      lookup.scheduleLibraryAniListLookup(
-        () => store.libraryMangaSnapshot,
-        firstRun ? lookup.ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : lookup.ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS,
-      );
+      lookup.syncLibraryAniListLookup(works, showAniListLookupProgress);
     });
   });
 

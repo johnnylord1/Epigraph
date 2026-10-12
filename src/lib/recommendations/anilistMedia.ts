@@ -15,6 +15,8 @@ export interface AniListMediaProfile {
   genres: string[];
   /** Romaji, English and native titles followed by the synonyms. */
   titles: string[];
+  /** Romaji, English and native titles alone, when the profile comes from a search. */
+  mainTitles?: string[];
 }
 
 interface AniListMediaPayload {
@@ -53,9 +55,13 @@ const RESULTS_PER_TITLE = 5;
 const MAX_STORED_SYNONYMS = 12;
 const MEDIA_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistMedia.v1";
 const TITLE_MATCH_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistTitleMatch.v1";
-const TITLE_MATCH_VERSION = 2;
-// A title that matched nothing is searched again after this long; AniList adds works over time.
-const TITLE_MISS_RETRY_MS = 14 * 24 * 60 * 60 * 1000;
+// Each title is looked up once. Misses are searched again only when the matching rules change.
+const TITLE_MATCH_VERSION = 5;
+// AniList's public search leaves out adult works unless they are asked for separately.
+const ADULT_RESULTS_PER_TITLE = 3;
+// AniList finds nothing for some long titles ("Mamahaha no Tsurego ga Moto Kanodatta" is spelled
+// "Motokano datta" there); their first words are searched again, accepting only the same title.
+const SHORT_QUERY_WORDS = 3;
 // Fuzzy matches only cover small spelling differences ("Solo Leveling" / "Solo-Leveling!").
 const FUZZY_TITLE_MATCH_MIN = 0.92;
 const FUZZY_TITLE_RUNNER_UP_MAX = 0.85;
@@ -118,6 +124,7 @@ function sanitizeStoredProfile(id: number, value: Partial<AniListMediaProfile>):
     format: typeof value.format === "string" ? value.format : "",
     genres: strings(value.genres),
     titles: strings(value.titles),
+    ...(Array.isArray(value.mainTitles) ? { mainTitles: strings(value.mainTitles) } : {}),
   };
 }
 
@@ -148,9 +155,9 @@ export function resetAniListMediaCacheForTests() {
 
 export function aniListMediaProfileFromPayload(item: AniListMediaPayload): AniListMediaProfile | null {
   if (typeof item.id !== "number") return null;
-  const titles = [item.title?.romaji, item.title?.english, item.title?.native, ...(item.synonyms ?? []).slice(0, MAX_STORED_SYNONYMS)]
-    .map((title) => String(title ?? "").trim())
-    .filter(Boolean);
+  const clean = (list: Array<string | null | undefined>) => list.map((title) => String(title ?? "").trim()).filter(Boolean);
+  const mainTitles = clean([item.title?.romaji, item.title?.english, item.title?.native]);
+  const titles = [...mainTitles, ...clean((item.synonyms ?? []).slice(0, MAX_STORED_SYNONYMS))];
   return {
     id: item.id,
     idMal: typeof item.idMal === "number" && item.idMal > 0 ? item.idMal : null,
@@ -158,6 +165,7 @@ export function aniListMediaProfileFromPayload(item: AniListMediaPayload): AniLi
     format: String(item.format ?? "").trim().toUpperCase(),
     genres: (item.genres ?? []).map((genre) => String(genre ?? "").trim()).filter(Boolean),
     titles: [...new Set(titles)],
+    mainTitles: [...new Set(mainTitles)],
   };
 }
 
@@ -292,29 +300,56 @@ export function pickAniListTitleMatch(
   title: string,
   results: readonly AniListMediaProfile[],
   hints: AniListTitleHints = {},
+  options: { exactOnly?: boolean } = {},
 ): AniListMediaProfile | null {
   const key = aniListTitleMatchKey(title);
   if (!key) return null;
+  const compactKey = compactTitle(key);
   const comics = results.filter((item) => !PROSE_FORMATS.has(item.format));
-  const scored = comics.map((item) => ({
-    item,
-    similarity: Math.max(0, ...item.titles.map((candidate) => titleSimilarity(key, aniListTitleMatchKey(candidate)))),
-  }));
+  const scored = comics.map((item) => {
+    const keys = item.titles.map(aniListTitleMatchKey).filter(Boolean);
+    return {
+      item,
+      exact: keys.some((candidate) => compactTitle(candidate) === compactKey) || isCombinedTitle(compactKey, keys),
+      similarity: Math.max(0, ...keys.map((candidate) => titleSimilarity(key, candidate))),
+    };
+  });
 
-  const exact = scored.filter((entry) => entry.similarity === 1);
+  const exact = scored.filter((entry) => entry.exact);
   if (exact.length === 1) return exact[0].item;
   if (exact.length > 1) {
     // A one-shot pilot often shares the series' name; the series is the work being read.
     const series = exact.filter((entry) => entry.item.format !== "ONE_SHOT").map((entry) => entry.item);
-    return series.length === 1 ? series[0] : pickAmongSameNamedWorks(series, hints);
+    if (series.length === 1) return series[0];
+    // A work named so outright beats works that only list the name among their other names.
+    const named = series.filter((item) => item.mainTitles?.some((candidate) => compactTitle(aniListTitleMatchKey(candidate)) === compactKey));
+    if (named.length === 1) return named[0];
+    return pickAmongSameNamedWorks(named.length > 1 ? named : series, hints);
   }
 
-  if (key.replace(/ /g, "").length < 6) return null;
+  if (options.exactOnly || compactKey.length < 6) return null;
   const ranked = scored.sort((a, b) => b.similarity - a.similarity);
   const [best, runnerUp] = ranked;
   if (!best || best.similarity < FUZZY_TITLE_MATCH_MIN) return null;
   if (runnerUp && runnerUp.similarity > FUZZY_TITLE_RUNNER_UP_MAX) return null;
   return best.item;
+}
+
+// Spacing differs between sources and AniList ("Moto Kanodatta" / "Motokano datta").
+function compactTitle(key: string): string {
+  return key.replace(/ /g, "");
+}
+
+// Sources often join a work's romaji and English names into one title
+// ("Ihou no Otome Monster Girls in Another World").
+function isCombinedTitle(compactKey: string, keys: readonly string[]): boolean {
+  return keys.some((first) => keys.some((second) => first !== second && compactTitle(first + second) === compactKey));
+}
+
+/** The first words of a long title, searched when the whole title finds nothing; null for short titles. */
+function shortSearchQuery(matchKey: string): string | null {
+  const words = matchKey.split(" ");
+  return words.length > SHORT_QUERY_WORDS ? words.slice(0, SHORT_QUERY_WORDS).join(" ") : null;
 }
 
 // "Leviathan" or "Player" name several works; the library's format and genres tell which one is read.
@@ -335,14 +370,14 @@ function pickAmongSameNamedWorks(works: AniListMediaProfile[], hints: AniListTit
   return best.shared >= GENRE_TIE_BREAK_MIN && best.shared - (runnerUp?.shared ?? 0) >= GENRE_TIE_BREAK_MIN ? best.work : null;
 }
 
-function isTitleMissFresh(entry: TitleMatchEntry, nowMs: number): boolean {
-  return entry.id === 0 && (entry.v ?? 1) >= TITLE_MATCH_VERSION && nowMs - entry.at < TITLE_MISS_RETRY_MS;
+function isSettledMiss(entry: TitleMatchEntry): boolean {
+  return entry.id === 0 && (entry.v ?? 1) >= TITLE_MATCH_VERSION;
 }
 
 /**
  * Finds the AniList work for titles that have no AniList tracker entry, keyed by the caller's key.
  * Ten titles share one request and at most `maxRequests` are sent per call; titles already looked
- * up resolve from the cache, misses are retried after two weeks. Pass the most useful titles first.
+ * up resolve from the cache, misses included. Pass the most useful titles first.
  */
 export async function matchAniListTitles(
   entries: ReadonlyArray<AniListTitleMatchEntry>,
@@ -362,7 +397,7 @@ export async function matchAniListTitles(
       result.set(entry.key, media.get(cached.id)!);
       continue;
     }
-    if (cached && isTitleMissFresh(cached, nowMs)) continue;
+    if (cached && isSettledMiss(cached)) continue;
     const keys = pending.get(matchKey) ?? [];
     keys.push(entry.key);
     if (keys.length === 1) pending.set(matchKey, keys);
@@ -377,14 +412,25 @@ export async function matchAniListTitles(
     if (!entryByMatchKey.has(matchKey)) entryByMatchKey.set(matchKey, entry);
   }
   let changed = false;
+  // A title the whole search finds nothing for is searched again by its first words, ahead of the
+  // titles not searched yet; it stays unresolved (and is retried later) if the budget runs out first.
+  const jobs: Array<{ matchKey: string; shortQuery: string | null }> = queue.map((matchKey) => ({ matchKey, shortQuery: null }));
+  const record = (matchKey: string, match: AniListMediaProfile | null) => {
+    matches.set(matchKey, { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION });
+    if (!match) return;
+    media.set(match.id, match);
+    for (const key of pending.get(matchKey) ?? []) result.set(key, match);
+  };
 
-  for (let request = 0; fetchImpl && request < maxRequests && request * TITLES_PER_SEARCH_REQUEST < queue.length; request += 1) {
+  for (let request = 0; fetchImpl && request < maxRequests && jobs.length > 0; request += 1) {
     if (options.signal?.aborted) break;
-    const batch = queue.slice(request * TITLES_PER_SEARCH_REQUEST, (request + 1) * TITLES_PER_SEARCH_REQUEST);
+    const batch = jobs.splice(0, TITLES_PER_SEARCH_REQUEST);
+    const retries: typeof jobs = [];
     const variables: Record<string, string> = {};
-    const selections = batch.map((matchKey, index) => {
-      variables[`q${index}`] = aniListSearchQuery(entryByMatchKey.get(matchKey)?.title ?? matchKey);
-      return `r${index}: Page(perPage: ${RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA) { ...MediaProfile } }`;
+    const selections = batch.map(({ matchKey, shortQuery }, index) => {
+      variables[`q${index}`] = shortQuery ?? aniListSearchQuery(entryByMatchKey.get(matchKey)?.title ?? matchKey);
+      return `r${index}: Page(perPage: ${RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA) { ...MediaProfile } }
+      a${index}: Page(perPage: ${ADULT_RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA, isAdult: true) { ...MediaProfile } }`;
     });
     const query = `query TitleMatches(${batch.map((_, index) => `$q${index}: String`).join(", ")}) {
       ${selections.join("\n      ")}
@@ -393,18 +439,24 @@ export async function matchAniListTitles(
     try {
       const data = await postAniList(fetchImpl, query, variables, options.signal);
       if (!data) break;
-      batch.forEach((matchKey, index) => {
+      batch.forEach(({ matchKey, shortQuery }, index) => {
         const page = data[`r${index}`];
         if (!page?.media) return;
-        const profiles = page.media.map(aniListMediaProfileFromPayload).filter((item): item is AniListMediaProfile => item !== null);
-        const entry = entryByMatchKey.get(matchKey);
-        const match = pickAniListTitleMatch(entry?.title ?? matchKey, profiles, entry ?? {});
-        matches.set(matchKey, { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION });
-        if (match) {
-          media.set(match.id, match);
-          for (const key of pending.get(matchKey) ?? []) result.set(key, match);
+        const found = [...page.media, ...(data[`a${index}`]?.media ?? [])];
+        const retryQuery = shortQuery ? null : shortSearchQuery(matchKey);
+        if (found.length === 0 && retryQuery) {
+          retries.push({ matchKey, shortQuery: retryQuery });
+          return;
         }
+        // The adult search also returns works the plain search found; one work is never a tie with itself.
+        const profiles = [...new Map(found
+          .map(aniListMediaProfileFromPayload)
+          .filter((item): item is AniListMediaProfile => item !== null)
+          .map((item) => [item.id, item] as const)).values()];
+        const entry = entryByMatchKey.get(matchKey);
+        record(matchKey, pickAniListTitleMatch(entry?.title ?? matchKey, profiles, entry ?? {}, { exactOnly: Boolean(shortQuery) }));
       });
+      jobs.unshift(...retries);
       changed = true;
     } catch {
       break;
@@ -423,19 +475,18 @@ export function cachedAniListTitleMatch(title: string): AniListMediaProfile | nu
   return cached && cached.id > 0 ? loadMediaCache().get(cached.id) ?? null : null;
 }
 
+/** Whether a title still waits for its lookup (never looked up, or missed under older rules). */
+export function isAniListTitlePending(title: string): boolean {
+  const key = aniListTitleMatchKey(title);
+  if (!key) return false;
+  const cached = loadTitleMatchCache().get(key);
+  if (cached && cached.id > 0 && loadMediaCache().get(cached.id)) return false;
+  return !(cached && isSettledMiss(cached));
+}
+
 /** Number of titles still waiting for a lookup, for scheduling follow-up batches. */
-export function pendingAniListTitleCount(titles: readonly string[], nowMs = Date.now()): number {
-  const matches = loadTitleMatchCache();
-  const media = loadMediaCache();
-  const keys = new Set(titles.map(aniListTitleMatchKey).filter(Boolean));
-  let pending = 0;
-  for (const key of keys) {
-    const cached = matches.get(key);
-    if (cached && cached.id > 0 && media.get(cached.id)) continue;
-    if (cached && isTitleMissFresh(cached, nowMs)) continue;
-    pending += 1;
-  }
-  return pending;
+export function pendingAniListTitleCount(titles: readonly string[]): number {
+  return new Set(titles.filter(isAniListTitlePending).map(aniListTitleMatchKey)).size;
 }
 
 /** Tags with AniList's genres added once; the source's own wording wins on duplicates. */

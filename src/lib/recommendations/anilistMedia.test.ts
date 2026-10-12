@@ -74,10 +74,63 @@ describe("AniList media profiles", () => {
     expect(pickAniListTitleMatch("Leviathan", [korean, otherKorean], { genres: ["Action", "Romance"] })).toBeNull();
   });
 
+  it("prefers the work named so outright over works listing the name among their other names", () => {
+    const named = profile(21, ["Hurejasik", "Bastard", "후레자식"], { mainTitles: ["Hurejasik", "Bastard", "후레자식"] });
+    const synonym = profile(22, ["Mosdwaemeogeun Nom", "The Mean Guy", "Bastard"], { mainTitles: ["Mosdwaemeogeun Nom", "The Mean Guy"] });
+
+    expect(pickAniListTitleMatch("Bastard", [synonym, named])?.id).toBe(21);
+    expect(pickAniListTitleMatch("Bastard", [synonym, { ...named, mainTitles: ["Hurejasik"] }])).toBeNull();
+  });
+
+  it("also searches adult works, which AniList's search leaves out by default", async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const { query } = JSON.parse(String(init?.body)) as { query: string };
+      expect(query).toContain("isAdult: true");
+      return new Response(JSON.stringify({ data: {
+        r0: { media: [] }, a0: { media: [media(31, "Adult Work")] },
+        r1: { media: [media(32, "Both Searches")] }, a1: { media: [media(32, "Both Searches")] },
+      } }), { status: 200 });
+    });
+
+    const matches = await matchAniListTitles([{ key: "1", title: "Adult Work" }, { key: "2", title: "Both Searches" }], { fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    expect(matches.get("1")?.id).toBe(31);
+    expect(matches.get("2")?.id).toBe(32);
+  });
+
+  it("recognizes titles spaced differently or joining two of the work's names", () => {
+    const stepdaughter = profile(41, ["Mamahaha no Tsurego ga Motokano datta"]);
+    const monsterGirls = profile(42, ["Ihou no Otome", "Monster Girls in Another World"]);
+
+    expect(pickAniListTitleMatch("Mamahaha no Tsurego ga Moto Kanodatta", [stepdaughter])?.id).toBe(41);
+    expect(pickAniListTitleMatch("Ihou no Otome: Monster Girls in Another World", [monsterGirls])?.id).toBe(42);
+  });
+
+  it("searches the first words of a long title the whole search finds nothing for, accepting only the same title", async () => {
+    const queries: string[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const { variables } = JSON.parse(String(init?.body)) as { variables: SearchVariables };
+      queries.push(...Object.values(variables));
+      const short = variables.q0 === "mamahaha no tsurego";
+      const found = short ? [media(51, "Mamahaha no Tsurego ga Motokano datta"), media(52, "Mamahaha no Tsurego Spin-off")] : [];
+      return new Response(JSON.stringify({ data: { r0: { media: found }, a0: { media: [] }, r1: { media: [] }, a1: { media: [] } } }), { status: 200 });
+    });
+
+    const matches = await matchAniListTitles([
+      { key: "1", title: "Mamahaha no Tsurego ga Moto Kanodatta" },
+      { key: "2", title: "Unknown Long Work Title" },
+    ], { fetchImpl: fetchImpl as unknown as typeof fetch, maxRequests: 2 });
+
+    expect(queries).toEqual(["Mamahaha no Tsurego ga Moto Kanodatta", "Unknown Long Work Title", "mamahaha no tsurego", "unknown long work"]);
+    expect(matches.get("1")?.id).toBe(51);
+    expect(matches.has("2")).toBe(false);
+    expect(pendingAniListTitleCount(["Mamahaha no Tsurego ga Moto Kanodatta", "Unknown Long Work Title"])).toBe(0);
+  });
+
   it("looks up again titles that older matching rules missed", () => {
     const stored = new Map<string, string>([["epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify({
-      "aristocrat s revenge": { id: 0, at: 1_000 },
-      "lookism": { id: 0, at: 1_000, v: 2 },
+      "aristocrat s revenge": { id: 0, at: 1_000, v: 4 },
+      "lookism": { id: 0, at: 1_000, v: 5 },
     })]]);
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => stored.get(key) ?? null,
@@ -86,7 +139,7 @@ describe("AniList media profiles", () => {
     });
     try {
       resetAniListMediaCacheForTests();
-      expect(pendingAniListTitleCount(["Aristocrat’s Revenge", "Lookism"], 2_000)).toBe(1);
+      expect(pendingAniListTitleCount(["Aristocrat’s Revenge", "Lookism"])).toBe(1);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -159,6 +212,7 @@ describe("AniList media profiles", () => {
       format: "MANGA",
       genres: ["Action", "Fantasy"],
       titles: ["Work 1", "Alias 1"],
+      mainTitles: ["Work 1"],
     });
     expect(first.get(3)).toBeNull();
     expect(second).toEqual(first);
@@ -187,14 +241,14 @@ describe("AniList media profiles", () => {
     expect(matches.get("3")?.id).toBe(10);
     expect(matches.has("2")).toBe(false);
     expect(cachedAniListTitleMatch("Lookism")?.genres).toEqual(["Action", "Fantasy"]);
-    expect(pendingAniListTitleCount(entries.map((entry) => entry.title), 2_000)).toBe(0);
+    expect(pendingAniListTitleCount(entries.map((entry) => entry.title))).toBe(0);
 
     const cachedOnly = await matchAniListTitles(entries, { fetchImpl: fetchImpl as unknown as typeof fetch, cachedOnly: true });
     expect(cachedOnly.get("1")?.id).toBe(10);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
-    // A miss is looked up again once AniList has had time to add the work.
-    expect(pendingAniListTitleCount(["Unknown Work"], 1_000 + 15 * 24 * 60 * 60 * 1000)).toBe(1);
+    // Each title is looked up once, misses included.
+    expect(pendingAniListTitleCount(["Unknown Work"])).toBe(0);
   });
 
   it("caps title lookups per call and stops on a rate limit", async () => {

@@ -3,7 +3,7 @@
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
-  import { ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS, scheduleLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
+  import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
@@ -1419,9 +1419,7 @@
   async function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
     const known = await matchAniListTitles(entries, { cachedOnly: true });
     searchAniListTitleMatches = new Map([...known].map(([key, profile]) => [Number(key), profile]));
-    if (pendingAniListTitleCount(entries.map((entry) => entry.title)) > 0) {
-      scheduleLibraryAniListLookup(() => store.libraryMangaSnapshot, ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
-    }
+    if (pendingAniListTitleCount(entries.map((entry) => entry.title)) > 0) resumeLibraryAniListLookup();
   }
 
   async function refreshSearchHardcoverRecords() {

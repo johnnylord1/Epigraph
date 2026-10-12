@@ -1,16 +1,29 @@
 import type { Manga } from "../types";
 import { inferMangaRecommendationContentType } from "./adapters";
-import { matchAniListTitles, pendingAniListTitleCount, type AniListTitleMatchEntry } from "./anilistMedia";
+import { isAniListTitlePending, matchAniListTitles, type AniListTitleMatchEntry } from "./anilistMedia";
 
 /**
- * Matches library works to AniList in the background from app start, so the recommendations already
- * know every work's genres and other names when the search page opens. Titles go ten per request, two
- * requests per batch, a batch every 20s: under a quarter of AniList's per-minute allowance. A batch
- * that makes no progress (rate limit, AniList down) waits longer before the next one.
+ * Matches library works to AniList in the background, so the recommendations already know every
+ * work's genres and other names when the search page opens. Each work is looked up once: the first
+ * library seen after app start queues every work not looked up yet, and later library changes queue
+ * only the works that were added (removed works simply leave the queue). Titles go ten per request,
+ * two requests per batch, a batch every 20s: under a quarter of AniList's per-minute allowance. A
+ * batch that makes no progress (rate limit, AniList down) waits longer before the next one.
  */
 
 type LibraryWork = Pick<Manga, "id" | "title" | "genre"> & Partial<Pick<Manga, "source">>;
-type EntriesLoader = () => Promise<AniListTitleMatchEntry[]>;
+
+export interface AniListLibraryLookupProgress {
+  /** "running" while works are looked up, "done" once all are, "paused" when AniList stopped answering. */
+  phase: "running" | "done" | "paused";
+  /** Works this run looks up. */
+  total: number;
+  remaining: number;
+  matched: number;
+  missed: number;
+}
+
+export type AniListLibraryLookupListener = (progress: AniListLibraryLookupProgress) => void;
 
 export const ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS = 45_000;
 export const ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS = 10_000;
@@ -25,12 +38,17 @@ const ANILIST_TRACKED_WORKS = `
   }
 `;
 
-let loadEntries: EntriesLoader | null = null;
+// Works waiting for a lookup, by library id, and the library ids seen so far (null before the first).
+const queue = new Map<number, LibraryWork>();
+let seenWorkIds: Set<number> | null = null;
+let listener: AniListLibraryLookupListener | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let running = false;
-let changedWhileRunning = false;
 let backoffMs = BATCH_DELAY_MS;
 let idleBatches = 0;
+// The current run: its AniList-tracked works (fetched once per run) and what it has done so far.
+let trackedIds: Set<number> | null = null;
+let run: { total: number; matched: number; missed: number; announced: boolean } | null = null;
 
 /**
  * Library works worth looking up, the ones with fewest genres first since they gain the most. Works
@@ -67,64 +85,121 @@ export async function aniListTrackedMangaIds(): Promise<Set<number>> {
   return ids;
 }
 
-/** Looks up the works `getWorks` returns at each batch, so library changes are picked up. */
-export function scheduleLibraryAniListLookup(getWorks: () => readonly LibraryWork[], delayMs?: number) {
-  scheduleAniListLibraryLookup(async () => {
-    const works = getWorks();
-    return works.length > 0 ? aniListLibraryLookupEntries(works, await aniListTrackedMangaIds()) : [];
-  }, delayMs);
+/**
+ * Follows the library: queues the works not seen before and drops the removed ones. Works already
+ * looked up in an earlier session leave the queue at the first batch without a request.
+ */
+export function syncLibraryAniListLookup(works: readonly LibraryWork[], onProgress?: AniListLibraryLookupListener) {
+  if (onProgress) listener = onProgress;
+  if (works.length === 0) return;
+  const firstSync = seenWorkIds === null;
+  const ids = new Set(works.map((work) => work.id));
+  for (const id of queue.keys()) {
+    if (!ids.has(id)) queue.delete(id);
+  }
+  let added = 0;
+  for (const work of works) {
+    if (seenWorkIds?.has(work.id)) continue;
+    queue.set(work.id, work);
+    added += 1;
+  }
+  seenWorkIds = ids;
+  if (added > 0) schedule(firstSync ? ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
 }
 
-/**
- * Starts (or re-targets) the background lookup. While a run is active the next batch simply uses the
- * new loader; otherwise the first batch waits `delayMs`.
- */
-export function scheduleAniListLibraryLookup(loader: EntriesLoader, delayMs = ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS) {
-  loadEntries = loader;
-  idleBatches = 0;
-  if (running) changedWhileRunning = true;
-  if (running || timer !== undefined) return;
-  backoffMs = BATCH_DELAY_MS;
-  timer = setTimeout(runBatch, delayMs);
+/** Restarts a lookup that paused after AniList stopped answering. */
+export function resumeLibraryAniListLookup() {
+  if (queue.size > 0) schedule(ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
 }
 
 export function stopAniListLibraryLookup() {
   clearTimeout(timer);
   timer = undefined;
-  loadEntries = null;
+  queue.clear();
+  seenWorkIds = null;
+  listener = null;
+  trackedIds = null;
+  run = null;
+}
+
+function schedule(delayMs: number) {
+  idleBatches = 0;
+  if (running || timer !== undefined) return;
+  backoffMs = BATCH_DELAY_MS;
+  timer = setTimeout(runBatch, delayMs);
+}
+
+function report(phase: AniListLibraryLookupProgress["phase"], remaining: number) {
+  if (!run) return;
+  listener?.({ phase, total: run.total, remaining, matched: run.matched, missed: run.missed });
+}
+
+function finishRun(phase: "done" | "paused", remaining: number) {
+  if (run?.announced) report(phase, remaining);
+  run = null;
+  trackedIds = null;
 }
 
 async function runBatch() {
   timer = undefined;
-  const loader = loadEntries;
-  if (!loader) return;
   running = true;
-  changedWhileRunning = false;
   let next: number | null = null;
   try {
-    const entries = await loader();
-    const titles = entries.map((entry) => entry.title);
-    const before = pendingAniListTitleCount(titles);
-    if (before > 0) {
-      await matchAniListTitles(entries, { maxRequests: REQUESTS_PER_BATCH });
-      const after = pendingAniListTitleCount(titles);
-      if (after < before) {
+    // Works known from earlier lookups leave the queue without a request; the tracker list is only
+    // read when something is left to look up.
+    let pending = aniListLibraryLookupEntries([...queue.values()]).filter((entry) => isAniListTitlePending(entry.title));
+    if (pending.length > 0) {
+      trackedIds ??= await aniListTrackedMangaIds();
+      const tracked = trackedIds;
+      pending = pending.filter((entry) => !tracked.has(Number(entry.key)));
+    }
+    const pendingKeys = new Set(pending.map((entry) => entry.key));
+    for (const id of [...queue.keys()]) {
+      if (!pendingKeys.has(String(id))) queue.delete(id);
+    }
+    if (pending.length === 0) {
+      finishRun("done", 0);
+    } else {
+      run ??= { total: pending.length, matched: 0, missed: 0, announced: false };
+      run.total = Math.max(run.total, run.matched + run.missed + pending.length);
+      if (!run.announced) {
+        run.announced = true;
+        report("running", pending.length);
+      }
+      const matches = await matchAniListTitles(pending, { maxRequests: REQUESTS_PER_BATCH });
+      let resolved = 0;
+      for (const entry of pending) {
+        if (isAniListTitlePending(entry.title)) continue;
+        queue.delete(Number(entry.key));
+        resolved += 1;
+        if (matches.has(entry.key)) run.matched += 1;
+        else run.missed += 1;
+      }
+      const remaining = pending.length - resolved;
+      if (resolved > 0) {
         backoffMs = BATCH_DELAY_MS;
         idleBatches = 0;
       } else {
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
         idleBatches += 1;
       }
-      if (after > 0 && idleBatches < MAX_IDLE_BATCHES) next = backoffMs;
+      if (remaining === 0) finishRun("done", 0);
+      else if (idleBatches >= MAX_IDLE_BATCHES) finishRun("paused", remaining);
+      else {
+        report("running", remaining);
+        next = backoffMs;
+      }
     }
   } catch {
     // Library or tracker list unavailable (server starting): try again later.
     backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     idleBatches += 1;
     if (idleBatches < MAX_IDLE_BATCHES) next = backoffMs;
+    else finishRun("paused", queue.size);
   } finally {
     running = false;
   }
-  if (next === null && changedWhileRunning) next = ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS;
-  if (next !== null && loadEntries) timer = setTimeout(runBatch, next);
+  // Works added while this batch ran wait for the next one.
+  if (next === null && queue.size > 0 && idleBatches < MAX_IDLE_BATCHES) next = ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS;
+  if (next !== null) timer = setTimeout(runBatch, next);
 }
