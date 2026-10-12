@@ -1113,7 +1113,7 @@ describe("recommendation sections", () => {
       .toBeGreaterThanOrEqual(18);
   });
 
-  it("keeps sparse source-only novel candidates in the source freshness section only", () => {
+  it("ranks source-only novels like comics: without dates, ratings or genres they reach no row", () => {
     const sourceOnlyNovels = Array.from({ length: 48 }, (_, index) =>
       candidate(`novel-${index}`, {
         contentType: "novel",
@@ -1140,7 +1140,7 @@ describe("recommendation sections", () => {
 
     expect(sections).toHaveLength(5);
     expect(highConfidenceIds).toHaveLength(0);
-    expect(freshIds).toHaveLength(18);
+    expect(freshIds).toHaveLength(0);
     expect(trendingIds).toHaveLength(0);
   });
 

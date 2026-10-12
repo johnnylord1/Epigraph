@@ -244,7 +244,7 @@ export function buildRecommendationSections(
       + (profileAffinityScore(item) * 0.12)
       + (item.breakdown.sourceAvailability * 0.08),
       (item) => hasExternalProvider(item)
-        && (qualityScore(item) >= 0.52 || proseWarmStartCandidate(item, profile))
+        && qualityScore(item) >= 0.52
         && (profile.seedCount === 0 || (
           fitsProfileComicFormat(item, profile)
           && (
@@ -269,8 +269,8 @@ export function buildRecommendationSections(
       + (qualityScore(item) * 0.06)
       + (item.breakdown.sourceAffinity * 0.04),
       (item) => hasExternalProvider(item)
-        && (momentumScore(item) >= 0.08 || proseWarmStartCandidate(item, profile))
-        && (qualityScore(item) >= 0.42 || proseWarmStartCandidate(item, profile))
+        && momentumScore(item) >= 0.08
+        && qualityScore(item) >= 0.42
         && (profile.seedCount === 0 || (
           fitsProfileComicFormat(item, profile)
           && item.breakdown.personalRatingAffinity >= TRENDING_PROFILE_MIN
@@ -286,7 +286,7 @@ export function buildRecommendationSections(
       + (item.breakdown.contentTypeFit * 0.04)
       + (qualityScore(item) * 0.04),
       (item) => hasExternalProvider(item)
-        && (freshnessScore(item) >= 0.12 || proseSourceAvailabilityCandidate(item, profile))
+        && freshnessScore(item) >= 0.12
         && (profile.seedCount === 0 || fitsProfileComicFormat(item, profile))
         && item.breakdown.negativeTagPenalty < SECTION_NEGATIVE_MAX,
       profile,
@@ -572,21 +572,6 @@ function hasExternalProvider(item: RecommendationItem): boolean {
   return item.candidate.providers.some((provider) => provider.kind === "source" || provider.kind === "tracker");
 }
 
-function proseWarmStartCandidate(item: RecommendationItem, profile: TasteProfile): boolean {
-  return profile.seedCount === 0
-    && isProseContentType(item.candidate.contentType)
-    && item.breakdown.sourceAvailability >= 0.45
-    && (qualityScore(item) >= 0.35 || momentumScore(item) >= 0.08)
-    && item.candidate.title.trim().length > 0;
-}
-
-function proseSourceAvailabilityCandidate(item: RecommendationItem, profile: TasteProfile): boolean {
-  return isProseContentType(item.candidate.contentType)
-    && item.breakdown.sourceAvailability >= 0.45
-    && item.candidate.title.trim().length > 0
-    && (profile.seedCount === 0 || contentTypeFitScore(item, profile) >= 0.18);
-}
-
 function profileAffinityScore(item: RecommendationItem): number {
   return clamp01(
     (item.breakdown.personalRatingAffinity * 0.58)
@@ -739,10 +724,6 @@ function applyProfileComicMix(
 
 function isComicContentType(contentType: RecommendationCandidate["contentType"]): contentType is "manga" | "manhwa" | "manhua" {
   return contentType === "manga" || contentType === "manhwa" || contentType === "manhua";
-}
-
-function isProseContentType(contentType: RecommendationCandidate["contentType"]): contentType is "novel" | "book" {
-  return contentType === "novel" || contentType === "book";
 }
 
 function profileTagOverlapRatioForTags(tags: string[], profile: TasteProfile): number {
