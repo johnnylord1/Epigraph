@@ -2,7 +2,8 @@ import type { Manga, TrackRecord, TrackSearch } from "../types";
 import type { BookEntry, BookProgress } from "../books/types";
 import type { InstalledNovelSourceDescriptor, NovelSourceSearchResult, PersistedNovelLibraryEntry } from "../novels/domain";
 import { normalizeLogCount, normalizeRank, normalizeRecency, normalizeScore } from "./normalization";
-import { comicOriginForRecords, type ComicOriginsByTrackerEntry } from "./comicOrigin";
+import { comicOriginForRecords, comicTypeFromCountry, type ComicOriginsByTrackerEntry } from "./comicOrigin";
+import { aniListAlternativeTitles, withAniListGenres, type AniListMediaProfile } from "./anilistMedia";
 import { recommendationCandidateIdentityKeys } from "./identity";
 import type {
   RecommendationCandidate,
@@ -17,6 +18,8 @@ export interface MangaLibrarySeedOptions {
   /** trackerId -> status value -> tracker status name ("Dropped", "Plan to Read", ...). */
   trackerStatusNamesById?: Map<number, Map<number, string>>;
   comicOrigins?: ComicOriginsByTrackerEntry;
+  /** AniList profile per manga id, from its AniList entry or a careful title match. */
+  aniListByMangaId?: ReadonlyMap<number, AniListMediaProfile>;
 }
 
 export interface MangaCandidateOptions {
@@ -27,6 +30,7 @@ export interface MangaCandidateOptions {
   trackerNameById?: Map<number, string>;
   trackerIconById?: Map<number, string>;
   comicOrigins?: ComicOriginsByTrackerEntry;
+  aniListByMangaId?: ReadonlyMap<number, AniListMediaProfile>;
 }
 
 export interface TrackerCandidateOptions {
@@ -48,12 +52,16 @@ export function mangaToTasteProfileSeed(
     .filter((record) => Number.isFinite(record.score) && record.score > 0)
     .sort((a, b) => b.score - a.score)[0];
   const statusRecord = bestRecord ?? records[0];
+  const aniList = options.aniListByMangaId?.get(manga.id);
 
   return {
     id: `manga:${manga.id}`,
     title: manga.title,
-    tags: manga.genre ?? [],
-    contentType: comicOriginForRecords(records, options.comicOrigins) ?? inferMangaContentType(manga),
+    // Many sources list no genres; AniList's fill the gap so the work still shapes the profile.
+    tags: withAniListGenres(manga.genre, aniList),
+    contentType: comicOriginForRecords(records, options.comicOrigins)
+      ?? comicTypeFromCountry(aniList?.country)
+      ?? inferMangaContentType(manga),
     sourceId: manga.source?.id ?? null,
     userRating: bestRecord?.score ?? null,
     userRatingMax: inferTrackRecordScoreMax(bestRecord),
@@ -104,16 +112,22 @@ export function mangaToRecommendationCandidate(
   const sourceId = String(options.sourceId ?? manga.source?.id ?? "source");
   const sourceName = options.sourceName ?? manga.source?.displayName ?? manga.source?.name ?? "Source";
   const records = options.trackRecordsByMangaId?.get(manga.id) ?? [];
+  const aniList = options.aniListByMangaId?.get(manga.id);
+  const tags = withAniListGenres(manga.genre, aniList);
+  const alternativeTitles = aniListAlternativeTitles(manga.title, aniList);
 
   return {
     id: `manga:${manga.id}`,
     title: manga.title,
+    ...(alternativeTitles.length > 0 ? { alternativeTitles } : {}),
     coverUrl: manga.thumbnailUrl,
-    tags: manga.genre ?? [],
-    contentType: comicOriginForRecords(records, options.comicOrigins) ?? inferMangaContentType(manga),
+    tags,
+    contentType: comicOriginForRecords(records, options.comicOrigins)
+      ?? comicTypeFromCountry(aniList?.country)
+      ?? inferMangaContentType(manga),
     status: manga.status ?? null,
     inLibrary: manga.inLibrary,
-    safety: inferSafetyLevel(manga.genre ?? []),
+    safety: inferSafetyLevel(tags),
     updatedAtMs: null,
     providers: [
       {

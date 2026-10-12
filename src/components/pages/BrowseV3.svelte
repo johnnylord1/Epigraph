@@ -49,15 +49,21 @@
     comicOriginKey,
     comicTypeFromCountry,
     dedupeRecommendationItems,
+    aniListAlternativeTitles,
+    aniListTitleMatchKey,
     explorationGenres,
-    fetchAniListCountries,
+    fetchAniListMediaProfiles,
     inferMangaRecommendationContentType,
+    matchAniListTitles,
+    pendingAniListTitleCount,
+    withAniListGenres,
     mangaToRecommendationCandidate,
     novelSourceResultToRecommendationCandidate,
     recommendationTitleKey,
     recommendationTrackerRemoteKey,
     trackRecordSeedStatus,
     trackerSeedsOutsideLibrary,
+    type AniListMediaProfile,
     type ComicContentType,
     type ExplorationGenres,
     type RecommendationCandidate,
@@ -292,6 +298,14 @@
   const SEARCH_EXPLORE_PER_GENRE = 16;
   const SEARCH_EXPLORE_MIN_POPULARITY = 4000;
   const SEARCH_EXPLORE_DEBOUNCE_MS = 1500;
+  // Library titles are matched to AniList ten per request, two requests per batch, a batch every
+  // 20s once the catalog feeds are done: under a quarter of AniList's per-minute allowance.
+  const SEARCH_TITLE_MATCH_FIRST_DELAY_MS = 8_000;
+  const SEARCH_TITLE_MATCH_BATCH_DELAY_MS = 20_000;
+  const SEARCH_TITLE_MATCH_REQUESTS_PER_BATCH = 2;
+  const SEARCH_TITLE_MATCH_MAX_BATCHES = 8;
+  // Short aliases ("Hero", "Ruler") name too many works to hide a recommendation by.
+  const SEARCH_KNOWN_ALIAS_MIN_LENGTH = 6;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
   const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
@@ -695,6 +709,14 @@
   let searchTrackRecordsLoading = $state(false);
   // Country-of-origin format per tracker entry ("trackerId:remoteId"), from AniList.
   let searchComicOrigins: Map<string, ComicContentType> = $state(new Map());
+  let searchTrackRecordsLoaded = $state(false);
+  // AniList genres, titles and country per AniList tracker entry ("trackerId:remoteId").
+  let searchAniListProfiles: Map<string, AniListMediaProfile> = $state(new Map());
+  // Library works with no AniList entry, matched to AniList by title (manga id -> profile).
+  let searchAniListTitleMatches: Map<number, AniListMediaProfile> = $state(new Map());
+  let searchTitleMatchLoadedKey = "";
+  let searchTitleMatchAbortCtrl: AbortController | null = null;
+  let searchTitleMatchTimer: number | undefined;
   let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
   let searchSourceSeedResults: Manga[] = $state([]);
   let searchFreshSourceSeedResults: Manga[] = $state([]);
@@ -840,6 +862,7 @@
 
   function releaseSearchRecommendationTransientState() {
     clearHardcoverBackgroundTimer();
+    stopSearchAniListTitleMatching();
     searchTrackerExploreAbortCtrl?.abort();
     searchTrackerScoreAbortCtrl?.abort();
     searchSourceSeedAbortCtrl?.abort();
@@ -886,6 +909,7 @@
 
   function releaseBrowseTransientState() {
     clearHardcoverBackgroundTimer();
+    stopSearchAniListTitleMatching();
     kw_abortCtrl?.abort();
     tag_abortLocal?.abort();
     tag_abortSource?.abort();
@@ -1277,7 +1301,12 @@
           }>;
         };
       }>(GET_ALL_TRACKER_RECORDS);
-      const comicOrigins = await resolveSearchComicOrigins(data.trackers.nodes ?? []);
+      const aniListProfiles = await resolveSearchAniListProfiles(data.trackers.nodes ?? []);
+      const comicOrigins = new Map<string, ComicContentType>();
+      for (const [key, profile] of aniListProfiles) {
+        const type = comicTypeFromCountry(profile.country);
+        if (type) comicOrigins.set(key, type);
+      }
 
       const byMangaId = new Map<number, TrackRecord[]>();
       const candidateByMangaId = new Map<number, RecommendationCandidate>();
@@ -1296,7 +1325,7 @@
           };
           allRecords.push(normalizedRecord);
           trackerSeeds.push({
-            ...trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker, comicOrigins),
+            ...trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker, comicOrigins, aniListProfiles),
             libraryMangaId: record.manga?.inLibrary ? record.manga.id : undefined,
           });
 
@@ -1308,11 +1337,13 @@
 
           const manga = record.manga;
           if (manga && !manga.inLibrary) {
-            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, manga, tracker, comicOrigins));
+            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, manga, tracker, comicOrigins, aniListProfiles));
           }
         }
       }
       searchComicOrigins = comicOrigins;
+      searchAniListProfiles = aniListProfiles;
+      searchTrackRecordsLoaded = true;
       searchTrackRecordsByMangaId = byMangaId;
       searchTrackRecords = allRecords;
       searchTrackerSeedItems = trackerSeeds;
@@ -1320,6 +1351,7 @@
     } catch (error) {
       console.error(error);
       searchComicOrigins = new Map();
+      searchAniListProfiles = new Map();
       searchTrackRecordsByMangaId = new Map();
       searchTrackRecords = [];
       searchTrackerSeedItems = [];
@@ -1330,13 +1362,14 @@
   }
 
   /**
-   * Formats from AniList's country of origin for the tracked works. Sources and tags alone call most
-   * aggregator manhwa "manga", which skewed the taste profile toward Japanese titles. Cached ids
-   * resolve instantly; new ones get a short budget so the rows are never held back for long.
+   * AniList profiles of the tracked works: the country of origin (sources and tags alone call most
+   * aggregator manhwa "manga"), the standard genres (many sources list none) and every title the
+   * work goes by. Cached ids resolve instantly; new ones get a short budget so the rows are never
+   * held back for long.
    */
-  async function resolveSearchComicOrigins(
+  async function resolveSearchAniListProfiles(
     trackers: Array<BrowseTrackerEntry & { trackRecords?: { nodes: TrackRecord[] } }>,
-  ): Promise<Map<string, ComicContentType>> {
+  ): Promise<Map<string, AniListMediaProfile>> {
     const entries: Array<{ key: string; anilistId: number }> = [];
     for (const tracker of trackers) {
       if (trackerProviderKind(tracker) !== "anilist") continue;
@@ -1346,20 +1379,71 @@
         entries.push({ key: comicOriginKey(record.trackerId ?? tracker.id, record.remoteId), anilistId });
       }
     }
-    const origins = new Map<string, ComicContentType>();
-    if (entries.length === 0) return origins;
+    const profiles = new Map<string, AniListMediaProfile>();
+    if (entries.length === 0) return profiles;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
     try {
-      const countries = await fetchAniListCountries(entries.map((entry) => entry.anilistId), { signal: controller.signal });
+      const byId = await fetchAniListMediaProfiles(entries.map((entry) => entry.anilistId), { signal: controller.signal });
       for (const entry of entries) {
-        const type = comicTypeFromCountry(countries.get(entry.anilistId));
-        if (type) origins.set(entry.key, type);
+        const profile = byId.get(entry.anilistId);
+        if (profile) profiles.set(entry.key, profile);
       }
     } finally {
       clearTimeout(timeout);
     }
-    return origins;
+    return profiles;
+  }
+
+  function searchTrackerIdsOfKind(kind: "anilist" | "mal") {
+    return new Set(allTrackers.filter((tracker) => trackerProviderKind(tracker) === kind).map((tracker) => tracker.id));
+  }
+
+  // Library works with no AniList entry, the ones with fewest genres first: they gain the most.
+  function searchAniListTitleMatchEntries() {
+    const aniListTrackerIds = searchTrackerIdsOfKind("anilist");
+    return searchLibraryManga
+      .filter((manga) => manga.title?.trim()
+        && !(searchTrackRecordsByMangaId.get(manga.id) ?? []).some((record) => aniListTrackerIds.has(record.trackerId)))
+      .map((manga) => ({
+        key: String(manga.id),
+        title: manga.title,
+        genres: (manga.genre ?? []).filter((genre) => genre.trim()).length,
+      }))
+      .sort((a, b) => a.genres - b.genres)
+      .map(({ key, title }) => ({ key, title }));
+  }
+
+  function stopSearchAniListTitleMatching() {
+    searchTitleMatchAbortCtrl?.abort();
+    searchTitleMatchAbortCtrl = null;
+    window.clearTimeout(searchTitleMatchTimer);
+    searchTitleMatchTimer = undefined;
+    searchTitleMatchLoadedKey = "";
+  }
+
+  /**
+   * Known matches apply at once. Unknown titles are looked up a few at a time in the background and
+   * only stored: they shape the rows on the next visit instead of reshuffling the ones on screen,
+   * and the trickle leaves AniList's rate limit to the catalog feeds.
+   */
+  async function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
+    stopSearchAniListTitleMatching();
+    const known = await matchAniListTitles(entries, { cachedOnly: true });
+    searchAniListTitleMatches = new Map([...known].map(([key, profile]) => [Number(key), profile]));
+
+    const controller = new AbortController();
+    searchTitleMatchAbortCtrl = controller;
+    const titles = entries.map((entry) => entry.title);
+    const lookUpBatch = (batch: number) => {
+      if (controller.signal.aborted || batch >= SEARCH_TITLE_MATCH_MAX_BATCHES) return;
+      if (pendingAniListTitleCount(titles) === 0) return;
+      searchTitleMatchTimer = window.setTimeout(() => {
+        void matchAniListTitles(entries, { signal: controller.signal, maxRequests: SEARCH_TITLE_MATCH_REQUESTS_PER_BATCH })
+          .then(() => lookUpBatch(batch + 1));
+      }, batch === 0 ? SEARCH_TITLE_MATCH_FIRST_DELAY_MS : SEARCH_TITLE_MATCH_BATCH_DELAY_MS);
+    };
+    lookUpBatch(0);
   }
 
   async function refreshSearchHardcoverRecords() {
@@ -1929,6 +2013,47 @@
     return searchTrackerScoreKey === searchTrackerScoreExpectedKey && !searchTrackerScoreLoading;
   });
 
+  // AniList profile per manga id: its AniList tracker entry first, a title match otherwise.
+  const searchAniListByMangaId = $derived.by(() => {
+    const byMangaId = new Map<number, AniListMediaProfile>(searchAniListTitleMatches);
+    for (const [mangaId, records] of searchTrackRecordsByMangaId) {
+      for (const record of records) {
+        const profile = searchAniListProfiles.get(comicOriginKey(record.trackerId, record.remoteId));
+        if (profile) {
+          byMangaId.set(mangaId, profile);
+          break;
+        }
+      }
+    }
+    return byMangaId;
+  });
+
+  const searchKnownAniListProfiles = $derived([
+    ...searchAniListProfiles.values(),
+    ...searchAniListTitleMatches.values(),
+  ]);
+
+  const searchTitleMatchRequest = $derived.by(() => {
+    if (!searchTrackRecordsLoaded || activeContentType !== "manga" || searchLibraryManga.length === 0) return null;
+    if (searchTrackerIdsOfKind("anilist").size === 0) return null;
+    const entries = searchAniListTitleMatchEntries();
+    return entries.length > 0 ? { key: entries.map((entry) => entry.key).join(","), entries } : null;
+  });
+  // The request is rebuilt on every library or record update; only a change of works matters.
+  const searchTitleMatchKey = $derived(searchTitleMatchRequest?.key ?? "");
+
+  $effect(() => {
+    if (!searchRecommendationsReady) return;
+    const key = searchTitleMatchKey;
+    if (!key || key === searchTitleMatchLoadedKey) return;
+    untrack(() => {
+      const request = searchTitleMatchRequest;
+      if (request?.key !== key) return;
+      void refreshSearchAniListTitleMatches(request.entries);
+      searchTitleMatchLoadedKey = key;
+    });
+  });
+
   const searchKnownTitleKeys = $derived.by(() => {
     const keys = new Set<string>();
     for (const manga of searchLibraryManga) {
@@ -1940,6 +2065,14 @@
     }
     for (const record of searchTrackRecords) {
       addKnownComicRecommendationTitle(keys, record.title);
+    }
+    // The same work under its other names (romaji, English, synonyms) is not a new recommendation.
+    for (const profile of searchKnownAniListProfiles) {
+      for (const title of profile.titles) {
+        if (aniListTitleMatchKey(title).replace(/ /g, "").length >= SEARCH_KNOWN_ALIAS_MIN_LENGTH) {
+          addKnownComicRecommendationTitle(keys, title);
+        }
+      }
     }
     for (const novel of novelLibraryState?.entries ?? []) {
       addKnownRecommendationTitle(keys, novel.title, "novel");
@@ -1955,6 +2088,20 @@
     for (const record of searchTrackRecords) {
       const key = recommendationTrackerRemoteKey(record.trackerId, record.remoteId);
       if (key) keys.add(key);
+    }
+    // A library work matched to AniList is known to every AniList and MyAnimeList feed.
+    const aniListTrackerIds = searchTrackerIdsOfKind("anilist");
+    const malTrackerIds = searchTrackerIdsOfKind("mal");
+    for (const profile of searchKnownAniListProfiles) {
+      for (const trackerId of aniListTrackerIds) {
+        const key = recommendationTrackerRemoteKey(trackerId, profile.id);
+        if (key) keys.add(key);
+      }
+      if (!profile.idMal) continue;
+      for (const trackerId of malTrackerIds) {
+        const key = recommendationTrackerRemoteKey(trackerId, profile.idMal);
+        if (key) keys.add(key);
+      }
     }
     for (const record of searchHardcoverRecords) {
       const key = recommendationTrackerRemoteKey("hardcover", record.bookId);
@@ -2044,6 +2191,7 @@
       trackers: allTrackers,
       trackRecordsByMangaId: searchTrackRecordsByMangaId,
       comicOrigins: searchComicOrigins,
+      aniListByMangaId: searchAniListByMangaId,
       extraCandidates: searchHasLiveMangaRecommendationData
         ? [...searchTrackerRecordCandidates, ...searchFreshSourceMangaCandidates]
         : [],
@@ -2384,7 +2532,10 @@
     manga: Manga,
     tracker: BrowseTrackerEntry,
     comicOrigins?: ReadonlyMap<string, ComicContentType>,
+    aniListProfiles?: ReadonlyMap<string, AniListMediaProfile>,
   ): RecommendationCandidate {
+    const aniList = aniListProfiles?.get(comicOriginKey(record.trackerId, record.remoteId));
+    const tags = withAniListGenres(manga.genre, aniList);
     const scoreMax = record.score > 10 ? 100 : 10;
     const normalizedScore = scoreMax > 0 ? Math.max(0, Math.min(1, record.score / scoreMax)) : 0;
     const timestamp = trackRecordTimestamp(record.finishDate) ?? trackRecordTimestamp(record.startDate);
@@ -2393,13 +2544,16 @@
       id: `manga:${manga.id}`,
       title: manga.title || record.title,
       coverUrl: manga.thumbnailUrl,
-      alternativeTitles: record.title && record.title !== manga.title ? [record.title] : [],
-      tags: manga.genre ?? [],
+      alternativeTitles: [...new Set([
+        ...(record.title && record.title !== manga.title ? [record.title] : []),
+        ...aniListAlternativeTitles(manga.title || record.title, aniList),
+      ])],
+      tags,
       contentType: comicOrigins?.get(comicOriginKey(record.trackerId, record.remoteId))
         ?? inferMangaRecommendationContentType(manga, record.title),
       status: manga.status ?? null,
       inLibrary: false,
-      safety: inferRecommendationSafety(manga.genre ?? []),
+      safety: inferRecommendationSafety(tags),
       updatedAtMs: timestamp,
       providers: [
         {
@@ -2425,11 +2579,12 @@
     manga: Manga | null | undefined,
     tracker: BrowseTrackerEntry,
     comicOrigins?: ReadonlyMap<string, ComicContentType>,
+    aniListProfiles?: ReadonlyMap<string, AniListMediaProfile>,
   ): TasteProfileSeedItem {
     return {
       id: `tracker:${record.trackerId}:${record.remoteId || record.id}`,
       title: manga?.title || record.title,
-      tags: manga?.genre ?? [],
+      tags: withAniListGenres(manga?.genre, aniListProfiles?.get(comicOriginKey(record.trackerId, record.remoteId))),
       contentType: comicOrigins?.get(comicOriginKey(record.trackerId, record.remoteId))
         ?? inferMangaRecommendationContentType(manga, record.title),
       sourceId: `tracker:${tracker.id}`,

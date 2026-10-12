@@ -1913,6 +1913,7 @@
   "ui_searchHardcover": "Search Hardcover...",
   "ui_searching": "Searching",
   "ui_typeATitleToSearch": "Type a title to search",
+  "ui_likelyMatch": "Likely match",
   "ui_seriesDetails": "Series details",
   "ui_searchSource": "Search source…",
   "ui_noResults": "No results",

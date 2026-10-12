@@ -1913,6 +1913,7 @@
   "ui_searchHardcover": "Hardcover を検索...",
   "ui_searching": "検索中",
   "ui_typeATitleToSearch": "タイトルを入力して検索します",
+  "ui_likelyMatch": "一致の可能性大",
   "ui_seriesDetails": "シリーズ詳細",
   "ui_searchSource": "ソースを検索…",
   "ui_noResults": "結果はありません",

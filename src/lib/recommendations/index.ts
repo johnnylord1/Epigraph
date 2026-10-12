@@ -1,4 +1,5 @@
 export * from "./adapters";
+export * from "./anilistMedia";
 export * from "./comicOrigin";
 export * from "./engine";
 export * from "./exploration";

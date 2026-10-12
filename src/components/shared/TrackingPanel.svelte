@@ -16,6 +16,7 @@
   } from "../../lib/queries";
   import { addToast } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
+  import { cachedAniListTitleMatch } from "../../lib/recommendations/anilistMedia";
   import type { Tracker, TrackRecord, TrackSearch } from "../../lib/types";
 
   let { mangaId, mangaTitle, onClose }: {
@@ -38,6 +39,9 @@
   let searching:     boolean       = $state(false);
   let searchInited:  Set<number>   = $state(new Set());
   let searchRequestId = 0;
+  // The work recommendations already matched this title to on AniList, if any.
+  const likelyMatch = $derived(cachedAniListTitleMatch(mangaTitle));
+  let likelyRemoteId: string | null = $state(null);
 
   let binding:        boolean       = $state(false);
   let updatingRecord: number | null = $state(null);
@@ -111,18 +115,56 @@
     const requestId = ++searchRequestId;
     searching = true;
     searchResults = [];
+    likelyRemoteId = null;
     try {
       const res = await gql<{ searchTracker: { trackSearches: TrackSearch[] } }>(
         SEARCH_TRACKER, { trackerId, query: query.trim() }
       );
       if (requestId !== searchRequestId || activeTab !== trackerId) return;
-      searchResults = res.searchTracker.trackSearches;
+      let results = res.searchTracker.trackSearches;
+      const likelyId = likelyRemoteIdFor(trackerId);
+      if (likelyId && query.trim() === mangaTitle.trim()) {
+        results = await withLikelyMatchFirst(trackerId, likelyId, query.trim(), results);
+        if (requestId !== searchRequestId || activeTab !== trackerId) return;
+      }
+      likelyRemoteId = likelyId && results[0]?.remoteId === likelyId ? likelyId : null;
+      searchResults = results;
     } catch (e: any) {
       if (requestId !== searchRequestId) return;
       addToast({ kind: "error", title: translate("ui_searchFailed"), body: e?.message });
     } finally {
       if (requestId === searchRequestId) searching = false;
     }
+  }
+
+  function likelyRemoteIdFor(trackerId: number): string | null {
+    if (!likelyMatch) return null;
+    const name = (trackerFor(trackerId)?.name ?? "").toLowerCase();
+    if (name.includes("anilist")) return String(likelyMatch.id);
+    if ((name.includes("myanimelist") || name === "mal") && likelyMatch.idMal) return String(likelyMatch.idMal);
+    return null;
+  }
+
+  // Sources and trackers often name a work differently, so the title search can miss it; the
+  // tracker's own names for the likely match find it, and it is listed first either way.
+  async function withLikelyMatchFirst(trackerId: number, remoteId: string, query: string, results: TrackSearch[]) {
+    const found = results.find((result) => result.remoteId === remoteId);
+    if (found) return [found, ...results.filter((result) => result !== found)];
+    const otherTitles = (likelyMatch?.titles ?? [])
+      .filter((title) => title.trim() && title.trim().toLowerCase() !== query.toLowerCase())
+      .slice(0, 2);
+    for (const title of otherTitles) {
+      try {
+        const res = await gql<{ searchTracker: { trackSearches: TrackSearch[] } }>(
+          SEARCH_TRACKER, { trackerId, query: title }
+        );
+        const match = res.searchTracker.trackSearches.find((result) => result.remoteId === remoteId);
+        if (match) return [match, ...results];
+      } catch {
+        break;
+      }
+    }
+    return results;
   }
 
   // ── Bind / Unbind ──────────────────────────────────────────────────────────
@@ -502,6 +544,7 @@
                 <div class="result-info">
                   <span class="result-title">{result.title}</span>
                   <div class="result-meta">
+                    {#if likelyRemoteId === result.remoteId}<span class="result-tag result-tag-likely">{$_("ui_likelyMatch")}</span>{/if}
                     {#if result.publishingType}<span class="result-tag">{result.publishingType}</span>{/if}
                     {#if result.publishingStatus}<span class="result-tag">{result.publishingStatus}</span>{/if}
                     {#if result.totalChapters > 0}<span class="result-tag">{result.totalChapters} {$_("ui_ch_482bd64c")}</span>{/if}
@@ -650,6 +693,7 @@
   .result-title { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-snug); text-align: left; }
   .result-meta { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
   .result-tag { font-family: var(--font-ui); font-size: var(--text-2xs); letter-spacing: var(--tracking-wide); padding: 1px 6px; border-radius: var(--component-tracking-result-tag-border-radius); border: var(--component-tracking-result-tag-border); background: var(--component-tracking-result-tag-background); color: var(--component-tracking-result-tag-color); }
+  .result-tag-likely { color: var(--accent); border-color: var(--accent); }
   .result-summary { font-size: var(--text-xs); color: var(--text-faint); line-height: var(--leading-snug); display: -webkit-box; line-clamp: 2; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: left; }
   .result-action { font-family: var(--font-ui); font-size: var(--text-xs); letter-spacing: var(--tracking-wide); padding: 6px 12px; border-radius: var(--component-tracking-result-action-border-radius); border: var(--component-tracking-result-action-border); background: var(--component-tracking-result-action-background); color: var(--component-tracking-result-action-color); flex-shrink: 0; align-self: center; transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 140ms ease; }
   .result-row:hover:not(:disabled) .result-action { color: var(--component-tracking-result-row-result-action-color); border-color: var(--component-tracking-result-row-result-action-border-color); background: var(--component-tracking-result-row-result-action-background); }

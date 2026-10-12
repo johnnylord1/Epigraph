@@ -1913,6 +1913,7 @@
   "ui_searchHardcover": "搜索 Hardcover...",
   "ui_searching": "搜寻中",
   "ui_typeATitleToSearch": "输入标题进行搜索",
+  "ui_likelyMatch": "最可能的匹配",
   "ui_seriesDetails": "系列详情",
   "ui_searchSource": "搜索来源...",
   "ui_noResults": "没有结果",
