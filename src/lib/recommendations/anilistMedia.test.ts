@@ -5,6 +5,7 @@ import {
   aniListTitleMatchKey,
   cachedAniListTitleMatch,
   fetchAniListMediaProfiles,
+  judgeTitleMatch,
   matchAniListTitles,
   pendingAniListTitleCount,
   pickAniListTitleMatch,
@@ -78,8 +79,38 @@ describe("AniList media profiles", () => {
     const named = profile(21, ["Hurejasik", "Bastard", "후레자식"], { mainTitles: ["Hurejasik", "Bastard", "후레자식"] });
     const synonym = profile(22, ["Mosdwaemeogeun Nom", "The Mean Guy", "Bastard"], { mainTitles: ["Mosdwaemeogeun Nom", "The Mean Guy"] });
 
-    expect(pickAniListTitleMatch("Bastard", [synonym, named])?.id).toBe(21);
-    expect(pickAniListTitleMatch("Bastard", [synonym, { ...named, mainTitles: ["Hurejasik"] }])).toBeNull();
+    expect(pickAniListTitleMatch("Bastard", [synonym, named], { country: "KR" })?.id).toBe(21);
+    expect(pickAniListTitleMatch("Bastard", [synonym, { ...named, mainTitles: ["Hurejasik"] }], { country: "KR" })).toBeNull();
+    // A one-word title with nothing else to go on is only a likely work.
+    expect(judgeTitleMatch("Bastard", [synonym, named])).toEqual({ match: null, candidate: named });
+  });
+
+  it("never takes another work's abbreviation for a short title, unless the same author confirms it", () => {
+    // Kitsu lists "Chrysalis" as an abbreviation of another work; the library's is RinoZ's web novel adaptation.
+    const other = profile(31, ["Mayonaka no Chrysalis", "Chrysalis"], { mainTitles: ["Mayonaka no Chrysalis"], country: "JP", credits: ["Someone Else"] });
+    const adaptation = profile(32, ["Chrysalis"], { mainTitles: ["Chrysalis"], credits: ["RinoZ"] });
+
+    expect(judgeTitleMatch("Chrysalis", [other])).toEqual({ match: null, candidate: other });
+    expect(judgeTitleMatch("Chrysalis", [other], { credits: ["RinoZ"] })).toEqual({ match: null, candidate: other });
+    expect(judgeTitleMatch("Chrysalis", [other, adaptation], { credits: ["Rinoz"] }).match?.id).toBe(32);
+  });
+
+  it("rules out a work of the same title by a different author", () => {
+    const work = profile(33, ["The Second Coming of Gluttony"], { credits: ["Ro Yu-jin"] });
+
+    expect(pickAniListTitleMatch("The Second Coming of Gluttony", [work])?.id).toBe(33);
+    expect(pickAniListTitleMatch("The Second Coming of Gluttony", [work], { credits: ["Yu-jin Ro"] })?.id).toBe(33);
+    expect(judgeTitleMatch("The Second Coming of Gluttony", [work], { credits: ["Somebody"] })).toEqual({ match: null, candidate: work });
+  });
+
+  it("keeps comics and novels apart", () => {
+    const comic = profile(34, ["Omniscient Reader's Viewpoint"]);
+    const novel = profile(35, ["Omniscient Reader's Viewpoint"], { format: "NOVEL" });
+
+    expect(pickAniListTitleMatch("Omniscient Reader's Viewpoint", [novel])).toBeNull();
+    expect(pickAniListTitleMatch("Omniscient Reader's Viewpoint", [comic, novel])?.id).toBe(34);
+    expect(pickAniListTitleMatch("Omniscient Reader's Viewpoint", [comic, novel], {}, { medium: "novel" })?.id).toBe(35);
+    expect(pickAniListTitleMatch("Omniscient Reader's Viewpoint", [comic], {}, { medium: "novel" })).toBeNull();
   });
 
   it("also searches adult works, which AniList's search leaves out by default", async () => {
@@ -147,7 +178,7 @@ describe("AniList media profiles", () => {
   it("looks up again titles that older matching rules missed", () => {
     const stored = new Map<string, string>([["epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify({
       "aristocrat s revenge": { id: 0, at: 1_000, v: 4 },
-      "lookism": { id: 0, at: 1_000, v: 5 },
+      "lookism": { id: 0, at: 1_000, v: 6 },
     })]]);
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => stored.get(key) ?? null,
@@ -246,9 +277,9 @@ describe("AniList media profiles", () => {
       return new Response(JSON.stringify({ data }), { status: 200 });
     });
     const entries = [
-      { key: "1", title: "Lookism" },
+      { key: "1", title: "Lookism", country: "KR" },
       { key: "2", title: "Unknown Work" },
-      { key: "3", title: "Lookism" },
+      { key: "3", title: "Lookism", country: "KR" },
     ];
 
     const matches = await matchAniListTitles(entries, { fetchImpl: fetchImpl as unknown as typeof fetch, nowMs: 1_000 });

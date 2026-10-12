@@ -4,7 +4,7 @@
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
-  import { cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
+  import { cachedLibraryTitleMatch, cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
@@ -1811,9 +1811,25 @@
     new Map((store.bookProgress ?? []).map((progress) => [progress.bookId, progress])),
   );
 
+  // Library novels and books the background analysis recognised for certain on Hardcover: their
+  // genres shape the recommendations and their other names are known titles.
+  const searchRecognisedNovels = $derived.by(() => {
+    const novels = (novelLibraryState?.entries ?? []).map((entry) => ({ entry, profile: cachedLibraryTitleMatch(entry.title, "novel") }));
+    const books = (Array.isArray(store.books) ? store.books : []).map((book) => ({ book, profile: cachedLibraryTitleMatch(book.title, "novel") }));
+    return { novels, books };
+  });
+  const searchLibraryNovelsWithGenres = $derived(searchRecognisedNovels.novels.map(({ entry, profile }) =>
+    profile ? { ...entry, tags: withAniListGenres(entry.tags, profile) } : entry));
+  const searchLibraryBooksWithGenres = $derived(searchRecognisedNovels.books.map(({ book, profile }) =>
+    profile ? { ...book, genres: withAniListGenres(book.genres, profile) } : book));
+  const searchRecognisedNovelProfiles = $derived([
+    ...searchRecognisedNovels.novels.map(({ profile }) => profile),
+    ...searchRecognisedNovels.books.map(({ profile }) => profile),
+  ].filter((profile): profile is NonNullable<typeof profile> => Boolean(profile)));
+
   const searchNovelProfileOnly = $derived.by(() => buildSearchRecommendations({
-    libraryNovels: novelLibraryState?.entries ?? [],
-    libraryBooks: store.books ?? [],
+    libraryNovels: searchLibraryNovelsWithGenres,
+    libraryBooks: searchLibraryBooksWithGenres,
     progressByBookId: searchBookProgressById,
     extraSeeds: searchHardcoverSeedItems,
   }, {
@@ -2053,6 +2069,13 @@
     for (const record of searchHardcoverRecords) {
       addKnownRecommendationTitle(keys, record.title, "novel");
     }
+    for (const profile of searchRecognisedNovelProfiles) {
+      for (const title of profile.titles) {
+        if (aniListTitleMatchKey(title).replace(/ /g, "").length >= SEARCH_KNOWN_ALIAS_MIN_LENGTH) {
+          addKnownRecommendationTitle(keys, title, "novel");
+        }
+      }
+    }
     return keys;
   });
 
@@ -2083,6 +2106,10 @@
     }
     for (const record of searchHardcoverRecords) {
       const key = recommendationTrackerRemoteKey("hardcover", record.bookId);
+      if (key) keys.add(key);
+    }
+    for (const profile of searchRecognisedNovelProfiles) {
+      const key = profile.hardcoverId ? recommendationTrackerRemoteKey("hardcover", profile.hardcoverId) : null;
       if (key) keys.add(key);
     }
     return keys;
@@ -2140,8 +2167,8 @@
   const searchRecommendationResult = $derived.by(() => {
     if (activeContentType === "novels") {
       return buildSearchRecommendations({
-        libraryNovels: novelLibraryState?.entries ?? [],
-        libraryBooks: store.books ?? [],
+        libraryNovels: searchLibraryNovelsWithGenres,
+        libraryBooks: searchLibraryBooksWithGenres,
         progressByBookId: searchBookProgressById,
         extraCandidates: searchHasLiveNovelRecommendationData
           ? [...searchNovelSourceCandidates, ...searchHardcoverDiscoveryResults, ...searchHardcoverCandidateResults]
@@ -4610,8 +4637,17 @@
     return d.searchTracker.trackSearches ?? [];
   }
 
+  // Novels and comics share AniList's MANGA type; comic scores leave novels out (novels are scored
+  // on Hardcover only).
+  const ANILIST_COMIC_FILTER = ", format_not: NOVEL";
+
+  /** MyAnimeList lists light novels and web novels ("Novel") apart from comics. */
+  function isMalNovelType(type: string | null | undefined) {
+    return /novel/i.test(type ?? "");
+  }
+
   async function fetchAniListTrackerScoreByTitle(tracker: BrowseTrackerEntry, title: string, signal: AbortSignal) {
-    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const adultFilter = `${includeNsfwSources ? "" : ", isAdult: false"}${ANILIST_COMIC_FILTER}`;
     const query = `
       query SearchTrackerScore($search: String!) {
         Page(page: 1, perPage: 5) {
@@ -4647,10 +4683,8 @@
       item,
       title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
     }));
-    const match = bestTrackerTitleMatch(title, candidates)
-      ?? candidates.find((candidate) => candidate.item.averageScore != null || candidate.item.meanScore != null)
-      ?? candidates[0]
-      ?? null;
+    // Only the work the title names: another work's score would be wrong.
+    const match = bestTrackerTitleMatch(title, candidates);
     if (!match) return [];
     return [mapAniListMediaToTrackSearch(match.item, tracker, title, activeContentType === "novels")];
   }
@@ -4663,7 +4697,7 @@
       return titles.flatMap((title) => trackerScoreSearchCache.get(trackerScoreSearchKey(tracker, title, contentType)) ?? []);
     }
 
-    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const adultFilter = `${includeNsfwSources ? "" : ", isAdult: false"}${ANILIST_COMIC_FILTER}`;
     for (let start = 0; start < missingTitles.length; start += TRACKER_SCORE_BATCH_SIZE) {
       if (signal.aborted) break;
       const chunk = missingTitles.slice(start, start + TRACKER_SCORE_BATCH_SIZE);
@@ -4708,10 +4742,7 @@
             item,
             title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
           }));
-          const match = bestTrackerTitleMatch(title, candidates)
-            ?? candidates.find((candidate) => candidate.item.averageScore != null || candidate.item.meanScore != null)
-            ?? candidates[0]
-            ?? null;
+          const match = bestTrackerTitleMatch(title, candidates);
           const results = match ? [mapAniListMediaToTrackSearch(match.item, tracker, title, forceNovel)] : [];
           trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), results);
         });
@@ -4733,15 +4764,13 @@
     const response = await fetchJikan(url, signal);
     if (!response?.ok) return [];
     const data: MalTrackerResponse = await response.json();
-    const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime");
+    const items = (data.data ?? []).filter((item) => item.mal_id && item.type !== "Anime"
+      && !isMalNovelType(item.type));
     const candidates = items.map((item) => ({
       item,
       title: item.title_english ?? item.title ?? item.title_japanese ?? "",
     }));
-    const match = bestTrackerTitleMatch(title, candidates)
-      ?? candidates.find((candidate) => candidate.item.score != null)
-      ?? candidates[0]
-      ?? null;
+    const match = bestTrackerTitleMatch(title, candidates);
     if (!match) return [];
     return [mapMalMediaToTrackSearch(match.item, tracker, title, activeContentType === "novels")];
   }
@@ -4979,6 +5008,8 @@
   }
 
   async function loadSearchTrackerScoresForTitles(titles: string[]) {
+    // AniList and MyAnimeList score comics; novels are scored on Hardcover, their own tracker.
+    if (activeContentType === "novels") return false;
     const cleanedTitles = dedupeScoreTitles(titles).slice(0, TRACKER_SCORE_BATCH_SIZE);
     const usableTrackers = usableSearchTrackers(searchScoreTrackers);
     if (cleanedTitles.length === 0 || usableTrackers.length === 0) return false;

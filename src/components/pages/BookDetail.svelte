@@ -938,6 +938,8 @@
   {#if trackingOpen}
     <NovelTrackingPanel
       title={activePresentation?.title ?? activeBook.title}
+      author={activeBook.author}
+      libraryTitle={activeBook.title}
       sourceNovelId={activeBook.id}
       contentLabel={t("bookDetail.contentLabel")}
       onHardcoverLinkChanged={updateBookHardcoverLink}

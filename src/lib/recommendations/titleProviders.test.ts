@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetAniListMediaCacheForTests } from "./anilistMedia";
 import {
+  cachedLibraryTitleCandidate,
   cachedLibraryTitleMatch,
+  hardcoverProfiles,
   jikanProfiles,
   kitsuProfiles,
   providerTitleStatus,
+  recordProviderTitleJudgement,
   recordProviderTitleMatch,
   resetTitleProviderCacheForTests,
   titleProviderChain,
@@ -20,6 +23,7 @@ const kitsuAnswer = {
       relationships: {
         categories: { data: [{ type: "categories", id: "150" }] },
         mappings: { data: [{ type: "mappings", id: "m1" }, { type: "mappings", id: "m2" }] },
+        staff: { data: [{ type: "mediaStaff", id: "s1" }] },
       },
     },
     {
@@ -33,6 +37,8 @@ const kitsuAnswer = {
     { id: "150", type: "categories", attributes: { title: "Action" } },
     { id: "m1", type: "mappings", attributes: { externalSite: "myanimelist/manga", externalId: "155555" } },
     { id: "m2", type: "mappings", attributes: { externalSite: "anilist/manga", externalId: "166666" } },
+    { id: "s1", type: "mediaStaff", attributes: {}, relationships: { person: { data: [{ type: "people", id: "p1" }] } } },
+    { id: "p1", type: "people", attributes: { name: "Guiltythree" } },
   ],
 };
 
@@ -53,13 +59,15 @@ describe("title providers after AniList", () => {
     const [manhwa, novel] = kitsuProfiles(kitsuAnswer);
     expect(manhwa).toMatchObject({ id: 166666, idMal: 155555, country: "KR", format: "MANGA", genres: ["Action"] });
     expect(manhwa.titles).toEqual(["Shadow Slave", "그림자 노예", "SS"]);
+    expect(manhwa.credits).toEqual(["Guiltythree"]);
     expect(novel.format).toBe("NOVEL");
   });
 
   it("reads MyAnimeList works from Jikan and names from tracker searches", () => {
     const [work] = jikanProfiles({
-      data: [{ mal_id: 7, type: "Manhua", title: "Wu Dong Qian Kun", title_english: "Martial Universe", title_synonyms: ["WDQK"], genres: [{ name: "Action" }], themes: [{ name: "Martial Arts" }] }],
+      data: [{ mal_id: 7, type: "Manhua", title: "Wu Dong Qian Kun", title_english: "Martial Universe", title_synonyms: ["WDQK"], genres: [{ name: "Action" }], themes: [{ name: "Martial Arts" }], authors: [{ name: "Tian Can, Tu Dou" }] }],
     });
+    expect(work.credits).toEqual(["Tian Can  Tu Dou"]);
     expect(work).toMatchObject({ id: 0, idMal: 7, country: "CN", format: "MANGA", genres: ["Action", "Martial Arts"] });
     expect(work.titles).toEqual(["Wu Dong Qian Kun", "Martial Universe", "WDQK"]);
 
@@ -126,5 +134,41 @@ describe("title providers after AniList", () => {
 
     await expect(kitsu.lookUp([{ key: "1", title: "Shadow Slave" }])).resolves.toMatchObject({ ok: false });
     expect(providerTitleStatus("kitsu", "Shadow Slave")).toBe("pending");
+  });
+
+  it("keeps a likely work apart from a recognised one, as a suggestion only", () => {
+    const work = kitsuProfiles(kitsuAnswer)[0];
+    recordProviderTitleJudgement("kitsu", "Chrysalis", { match: null, candidate: work });
+
+    expect(providerTitleStatus("kitsu", "Chrysalis")).toBe("uncertain");
+    expect(cachedLibraryTitleMatch("Chrysalis")).toBeNull();
+    expect(cachedLibraryTitleCandidate("Chrysalis")).toMatchObject({ idMal: 155555, provider: "kitsu" });
+    // Comics and novels are kept apart.
+    expect(providerTitleStatus("kitsu", "Chrysalis", "novel")).toBe("pending");
+  });
+
+  it("looks novels up on a connected Hardcover only, recognising books by title and author", async () => {
+    const search = vi.fn(async () => [
+      { id: 5, title: "Chrysalis", authors: ["Someone Else"], genres: [] },
+      { id: 6, title: "Chrysalis", authors: ["RinoZ"], genres: ["Fantasy"] },
+    ]);
+    const hardcover = { search, retryAfterMs: () => null };
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+
+    expect(titleProviderChain([], { fetchImpl }, "novel")).toEqual([]);
+    const chain = titleProviderChain([{ id: 7, name: "MangaUpdates", isLoggedIn: true }, { id: 2, name: "AniList", isLoggedIn: true }], { fetchImpl, hardcover }, "novel");
+    expect(chain.map((provider) => provider.id)).toEqual(["hardcover"]);
+
+    expect(hardcoverProfiles([{ id: 6, title: "Chrysalis", authors: ["RinoZ"] }])[0]).toMatchObject({ format: "NOVEL", hardcoverId: 6, credits: ["RinoZ"] });
+    await expect(chain[0].lookUp([{ key: "novel:a", title: "Chrysalis", credits: ["RinoZ"] }])).resolves.toEqual({ ok: true });
+    expect(cachedLibraryTitleMatch("Chrysalis", "novel")).toMatchObject({ hardcoverId: 6, provider: "hardcover" });
+    expect(cachedLibraryTitleMatch("Chrysalis")).toBeNull();
+
+    await expect(chain[0].lookUp([{ key: "book:b", title: "Chrysalis Book", credits: [] }])).resolves.toEqual({ ok: true });
+    expect(providerTitleStatus("hardcover", "Chrysalis Book", "novel")).toBe("missed");
+
+    // A novel another site knows is not used: novels are recognised on Hardcover only.
+    recordProviderTitleJudgement("mal", "Lord of the Mysteries", { match: kitsuProfiles(kitsuAnswer)[1], candidate: null }, "novel");
+    expect(cachedLibraryTitleMatch("Lord of the Mysteries", "novel")).toBeNull();
   });
 });

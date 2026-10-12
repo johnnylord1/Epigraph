@@ -16,7 +16,7 @@
   } from "../../lib/queries";
   import { addToast } from "../../store/state.svelte";
   import NocturneState from "./NocturneState.svelte";
-  import { cachedLibraryTitleMatch } from "../../lib/recommendations/titleProviders";
+  import { cachedLibraryTitleCandidate, cachedLibraryTitleMatch } from "../../lib/recommendations/titleProviders";
   import type { Tracker, TrackRecord, TrackSearch } from "../../lib/types";
 
   let { mangaId, mangaTitle, onClose }: {
@@ -39,8 +39,8 @@
   let searching:     boolean       = $state(false);
   let searchInited:  Set<number>   = $state(new Set());
   let searchRequestId = 0;
-  // The work recommendations already recognised this title as (on AniList or another provider), if any.
-  const likelyMatch = $derived(cachedLibraryTitleMatch(mangaTitle));
+  // The recognised work, or the one the title most likely names: only a suggestion, the user picks.
+  const likelyMatch = $derived(cachedLibraryTitleMatch(mangaTitle) ?? cachedLibraryTitleCandidate(mangaTitle));
   let likelyRemoteId: string | null = $state(null);
 
   let binding:        boolean       = $state(false);

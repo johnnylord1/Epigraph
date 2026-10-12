@@ -19,6 +19,9 @@
     type HardcoverNovelTrackRecord,
     type HardcoverTrackingState,
   } from "../../lib/novels/hardcover";
+  import { judgeTitleMatch } from "../../lib/recommendations/anilistMedia";
+  import { splitCredits } from "../../lib/recommendations/credits";
+  import { cachedLibraryTitleCandidate, cachedLibraryTitleMatch, hardcoverProfiles } from "../../lib/recommendations/titleProviders";
   import hardcoverLogo from "../../assets/service-icons/hardcover.png";
   import NocturneState from "./NocturneState.svelte";
 
@@ -26,12 +29,18 @@
 
   let {
     title,
+    author = null,
+    libraryTitle = title,
     sourceNovelId,
     contentLabel = translate("ui_novel"),
     onHardcoverLinkChanged,
     onClose,
   }: {
     title: string;
+    /** Who wrote the work, to point at the book of the same author among the results. */
+    author?: string | null;
+    /** The title the library analysis knows the work by, when the page shows another. */
+    libraryTitle?: string;
     sourceNovelId: string;
     contentLabel?: string;
     onHardcoverLinkChanged?: (link: { hardcoverBookId: number | null; hardcoverCoverUrl: string | null }) => void | Promise<void>;
@@ -62,6 +71,34 @@
     title,
   }));
   const loggedIn = $derived(trackingState.auth.connected && Boolean(trackingState.auth.token));
+  // The work the library analysis recognised this title as, or the one it most likely names: only a
+  // suggestion, the user picks what to track.
+  const likelyWork = $derived(
+    cachedLibraryTitleMatch(libraryTitle, "novel")
+      ?? cachedLibraryTitleCandidate(libraryTitle, "novel")
+      ?? (libraryTitle !== title ? cachedLibraryTitleMatch(title, "novel") ?? cachedLibraryTitleCandidate(title, "novel") : null),
+  );
+  const likelyBookId = $derived(likelyHardcoverBook(searchResults));
+  // The likely book first, so it is easy to find.
+  const orderedResults = $derived(likelyBookId
+    ? [...searchResults.filter((result) => result.id === likelyBookId), ...searchResults.filter((result) => result.id !== likelyBookId)]
+    : searchResults);
+
+  /** The result that is most likely this work: the one the analysis found, else by title and author. */
+  function likelyHardcoverBook(results: HardcoverBookSearchResult[]): number | null {
+    if (results.length === 0) return null;
+    const known = likelyWork?.hardcoverId;
+    if (known && results.some((result) => result.id === known)) return known;
+    const hints = { credits: splitCredits(author) };
+    const titles = [title, ...(likelyWork?.mainTitles ?? [])];
+    for (const name of titles) {
+      const judged = judgeTitleMatch(name, hardcoverProfiles(results), hints, { medium: "novel" });
+      const book = (judged.match ?? judged.candidate)?.hardcoverId;
+      if (book) return book;
+    }
+    return null;
+  }
+
   const scoreOptions = ["", "0.5", "1.0", "1.5", "2.0", "2.5", "3.0", "3.5", "4.0", "4.5", "5.0"];
   const statusOptions = ["Want to Read", "Currently Reading", "Read", "Did Not Finish"];
   const STATUS_LABEL_KEYS: Record<string, string> = {
@@ -372,7 +409,7 @@
           {:else if !searchQuery.trim()}
             <NocturneState layout="compact" tone="info" icon="search" eyebrow="Hardcover" title={$_("ui_typeATitleToSearch")} />
           {:else}
-            {#each searchResults as result (result.id)}
+            {#each orderedResults as result (result.id)}
               {@const isBound = record?.bookId === result.id}
               <button
                 class="result-row"
@@ -396,6 +433,7 @@
                   <span class="result-title">{result.title}</span>
                   <span class="result-subtitle">{authorLine(result.authors)}</span>
                   <div class="result-meta">
+                    {#if likelyBookId === result.id}<span class="result-tag result-tag-likely">{$_("ui_likelyMatch")}</span>{/if}
                     <span class="result-tag">{ratingLabel(result.rating)}</span>
                   </div>
                 </div>

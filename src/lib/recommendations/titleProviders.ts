@@ -1,23 +1,31 @@
 import {
   aniListSearchQuery,
-  aniListTitleMatchKey,
   aniListTitleStatus,
+  cachedAniListTitleCandidate,
   cachedAniListTitleMatch,
+  judgeTitleMatch,
   matchAniListTitles,
-  pickAniListTitleMatch,
+  titleLookupKey,
   type AniListMediaProfile,
   type AniListResponseInfo,
   type AniListTitleMatchEntry,
+  type TitleJudgement,
+  type TitleMatchStatus,
+  type TitleMedium,
 } from "./anilistMedia";
+import { splitCredits } from "./credits";
 
 /**
- * Where library works are looked up, in order: AniList, then Kitsu, then MyAnimeList, then the other
- * trackers the user is logged in to on Suwayomi. A work AniList does not know is searched on the next
- * provider, and so on until one recognises it. Every provider's answer (misses included) is kept, so
- * each work is asked about once per provider.
+ * Where library works are looked up, in order. Comics: AniList, then Kitsu, then MyAnimeList, then
+ * the other trackers the user is logged in to on Suwayomi. Novels and books: only Hardcover, the
+ * novel section's own tracker, and only once it is connected.
+ * A work one provider does not know for certain is searched on the next, and so on until one
+ * recognises it. Every provider's answer (misses and likely works included) is kept, so each work is
+ * asked about once per provider. Nothing is ever tracked: a recognised work only feeds the
+ * recommendations and the tracking panel's suggestion.
  */
 
-export type TitleLookupStatus = "matched" | "missed" | "pending";
+export type TitleLookupStatus = TitleMatchStatus;
 
 /** Whether the provider answered; a provider that does not is skipped after a few tries. */
 export type TitleProviderOutcome = { ok: true; nextDelayMs?: number } | { ok: false; retryAfterMs?: number | null };
@@ -52,10 +60,28 @@ interface ProviderMatchEntry {
   v: number;
   /** The work found, absent when the provider has none by that title. */
   p?: AniListMediaProfile;
+  /** 1 when that work only might be the one the title names: a hint, and the title stays pending. */
+  u?: 1;
+}
+
+/** The library's novels and books, as Hardcover search answers them. */
+export interface HardcoverBookResult {
+  id: number;
+  title: string;
+  authors?: readonly string[] | null;
+  genres?: readonly string[] | null;
+}
+
+/** Hardcover search through the user's connection; it throws `{ retryAfterMs }`-free errors when rate limited. */
+export interface HardcoverTitleSearch {
+  search(query: string): Promise<HardcoverBookResult[]>;
+  /** Time to wait before the next search after an error, null when the error is not a rate limit. */
+  retryAfterMs(error: unknown): number | null;
 }
 
 const PROVIDER_MATCH_STORAGE_KEY = "epigraph.recommendations.titleProviderMatch.v1";
-const PROVIDER_MATCH_VERSION = 1;
+// Each title is asked about again when the matching rules change, matches included.
+const PROVIDER_MATCH_VERSION = 2;
 const REQUEST_TIMEOUT_MS = 8_000;
 const RESULTS_PER_TITLE = 5;
 const MAX_STORED_TITLES = 16;
@@ -65,6 +91,8 @@ const KITSU_INTERVAL_MS = 300;
 // Jikan allows three requests a second and sixty a minute.
 const JIKAN_INTERVAL_MS = 1_100;
 const SUWAYOMI_TRACKER_INTERVAL_MS = 700;
+// Hardcover allows 60 requests a minute.
+const HARDCOVER_INTERVAL_MS = 1_100;
 const JIKAN_FAILURES_BEFORE_TRACKER = 2;
 // Trackers whose Suwayomi search finds works by name. AniList, Kitsu and MyAnimeList are asked
 // directly; library trackers (Komga, Kavita, Suwayomi) have no catalogue to search.
@@ -98,6 +126,8 @@ function storedProfile(value: unknown): AniListMediaProfile | undefined {
     genres: strings(item.genres),
     titles: strings(item.titles),
     mainTitles: strings(item.mainTitles),
+    ...(Array.isArray(item.credits) ? { credits: strings(item.credits) } : {}),
+    ...(typeof item.hardcoverId === "number" ? { hardcoverId: item.hardcoverId } : {}),
     ...(typeof item.provider === "string" ? { provider: item.provider } : {}),
     ...(remote && typeof remote.trackerId === "number" && typeof remote.remoteId === "string"
       ? { trackerRemote: { trackerId: remote.trackerId, remoteId: remote.remoteId } }
@@ -123,7 +153,7 @@ function loadProviderMatches(): Map<string, Record<string, ProviderMatchEntry>> 
       const entry = value as Partial<ProviderMatchEntry> | null;
       if (!entry || typeof entry.at !== "number" || typeof entry.v !== "number") continue;
       const profile = storedProfile(entry.p);
-      entries[provider] = { at: entry.at, v: entry.v, ...(profile ? { p: profile } : {}) };
+      entries[provider] = { at: entry.at, v: entry.v, ...(profile ? { p: profile } : {}), ...(profile && entry.u === 1 ? { u: 1 as const } : {}) };
     }
     providerMatches.set(key, entries);
   }
@@ -143,41 +173,78 @@ export function resetTitleProviderCacheForTests() {
   providerMatches = null;
 }
 
-/** Whether a provider other than AniList recognised a title, has none by it, or is still to be asked. */
-export function providerTitleStatus(provider: string, title: string): TitleLookupStatus {
-  const key = aniListTitleMatchKey(title);
+/**
+ * Whether a provider other than AniList recognised a title for certain, knows only a work it might
+ * be, has none by it, or is still to be asked (never asked, or asked under older matching rules).
+ */
+export function providerTitleStatus(provider: string, title: string, medium: TitleMedium = "comic"): TitleLookupStatus {
+  const key = titleLookupKey(title, medium);
   if (!key) return "missed";
   const entry = loadProviderMatches().get(key)?.[provider];
-  if (!entry) return "pending";
-  if (entry.p) return "matched";
-  return entry.v >= PROVIDER_MATCH_VERSION ? "missed" : "pending";
+  if (!entry || entry.v < PROVIDER_MATCH_VERSION) return "pending";
+  if (entry.p) return entry.u ? "uncertain" : "matched";
+  return "missed";
 }
 
-export function recordProviderTitleMatch(provider: string, title: string, profile: AniListMediaProfile | null, nowMs = Date.now()) {
-  const key = aniListTitleMatchKey(title);
+/** Stores what a provider settled about a title: the work it names for certain, a likely work, or none. */
+export function recordProviderTitleJudgement(
+  provider: string,
+  title: string,
+  judgement: TitleJudgement,
+  medium: TitleMedium = "comic",
+  nowMs = Date.now(),
+) {
+  const key = titleLookupKey(title, medium);
   if (!key) return;
   const cache = loadProviderMatches();
   const entries = { ...(cache.get(key) ?? {}) };
-  entries[provider] = { at: nowMs, v: PROVIDER_MATCH_VERSION, ...(profile ? { p: { ...profile, provider } } : {}) };
+  const work = judgement.match ?? judgement.candidate;
+  entries[provider] = {
+    at: nowMs,
+    v: PROVIDER_MATCH_VERSION,
+    ...(work ? { p: { ...work, provider } } : {}),
+    ...(work && !judgement.match ? { u: 1 as const } : {}),
+  };
   cache.set(key, entries);
   saveProviderMatches();
 }
 
-/** The work a library title was recognised as by any provider, without a request; null when unknown. */
-export function cachedLibraryTitleMatch(title: string): AniListMediaProfile | null {
-  const aniList = cachedAniListTitleMatch(title);
-  if (aniList) return aniList;
-  const entries = loadProviderMatches().get(aniListTitleMatchKey(title));
-  if (!entries) return null;
-  const found = Object.entries(entries).filter(([, entry]) => entry.p).sort(([a], [b]) => providerRank(a) - providerRank(b));
-  return found[0]?.[1].p ?? null;
+export function recordProviderTitleMatch(provider: string, title: string, profile: AniListMediaProfile | null, nowMs = Date.now()) {
+  recordProviderTitleJudgement(provider, title, { match: profile, candidate: null }, "comic", nowMs);
+}
+
+function providerWorks(title: string, medium: TitleMedium, certain: boolean): AniListMediaProfile[] {
+  const entries = loadProviderMatches().get(titleLookupKey(title, medium));
+  if (!entries) return [];
+  return Object.entries(entries)
+    // Novels are recognised on Hardcover only.
+    .filter(([id, entry]) => entry.p && entry.v >= PROVIDER_MATCH_VERSION && Boolean(entry.u) !== certain && (medium === "comic" || id === "hardcover"))
+    .sort(([a], [b]) => providerRank(a) - providerRank(b))
+    .map(([, entry]) => entry.p!);
+}
+
+/** The work a library title was recognised as for certain by any provider, without a request; null when unknown. */
+export function cachedLibraryTitleMatch(title: string, medium: TitleMedium = "comic"): AniListMediaProfile | null {
+  return (medium === "comic" ? cachedAniListTitleMatch(title) : null) ?? providerWorks(title, medium, true)[0] ?? null;
+}
+
+/**
+ * The work a library title most likely names when no provider recognised it for certain, for the
+ * tracking panel to suggest. Never a match: the title stays pending and nothing is tracked.
+ */
+export function cachedLibraryTitleCandidate(title: string, medium: TitleMedium = "comic"): AniListMediaProfile | null {
+  if (cachedLibraryTitleMatch(title, medium)) return null;
+  return (medium === "comic" ? cachedAniListTitleCandidate(title) : null) ?? providerWorks(title, medium, false)[0] ?? null;
 }
 
 /** Cached matches of several titles, keyed by the caller's key. */
-export function cachedLibraryTitleMatches(entries: ReadonlyArray<{ key: string; title: string }>): Map<string, AniListMediaProfile> {
+export function cachedLibraryTitleMatches(
+  entries: ReadonlyArray<{ key: string; title: string }>,
+  medium: TitleMedium = "comic",
+): Map<string, AniListMediaProfile> {
   const result = new Map<string, AniListMediaProfile>();
   for (const entry of entries) {
-    const profile = cachedLibraryTitleMatch(entry.title);
+    const profile = cachedLibraryTitleMatch(entry.title, medium);
     if (profile) result.set(entry.key, profile);
   }
   return result;
@@ -186,7 +253,8 @@ export function cachedLibraryTitleMatches(entries: ReadonlyArray<{ key: string; 
 function providerRank(provider: string): number {
   if (provider === "kitsu") return 0;
   if (provider === "mal") return 1;
-  return 2 + Number(provider.replace(/^tracker:/, "") || 0) / 1e6;
+  if (provider === "hardcover") return 2;
+  return 3 + Number(provider.replace(/^tracker:/, "") || 0) / 1e6;
 }
 
 async function fetchJson(
@@ -221,17 +289,24 @@ interface KitsuResource {
   relationships?: Record<string, { data?: Array<{ id?: string; type?: string }> | null } | null> | null;
 }
 
-/** Kitsu works from a search answer, with their genres and the AniList and MAL ids Kitsu maps them to. */
+/**
+ * Kitsu works from a search answer, with their genres, their staff and the AniList and MAL ids Kitsu
+ * maps them to.
+ */
 export function kitsuProfiles(payload: unknown): AniListMediaProfile[] {
   const body = (payload ?? {}) as { data?: KitsuResource[] | null; included?: KitsuResource[] | null };
-  const included = new Map((body.included ?? []).map((item) => [`${item.type}:${item.id}`, item.attributes ?? {}]));
+  const included = new Map((body.included ?? []).map((item) => [`${item.type}:${item.id}`, item]));
+  const resources = (owner: KitsuResource, name: string) => (owner.relationships?.[name]?.data ?? [])
+    .map((ref) => included.get(`${ref.type}:${ref.id}`))
+    .filter((value): value is KitsuResource => Boolean(value));
   const profiles: AniListMediaProfile[] = [];
   for (const item of body.data ?? []) {
     const attributes = item.attributes ?? {};
     const subtype = KITSU_SUBTYPES[String(attributes.subtype ?? "").toLowerCase()] ?? { format: "MANGA", country: "" };
-    const related = (name: string) => (item.relationships?.[name]?.data ?? [])
-      .map((ref) => included.get(`${ref.type}:${ref.id}`))
-      .filter((value): value is Record<string, unknown> => Boolean(value));
+    const related = (name: string) => resources(item, name).map((resource) => resource.attributes ?? {});
+    const credits = splitCredits(resources(item, "staff")
+      .flatMap((staff) => resources(staff, "person"))
+      .map((person) => String(person.attributes?.name ?? "")));
     let id = 0;
     let idMal: number | null = null;
     for (const mapping of related("mappings")) {
@@ -251,6 +326,7 @@ export function kitsuProfiles(payload: unknown): AniListMediaProfile[] {
       genres: cleanTitles(related("categories").map((category) => category.title)),
       titles: cleanTitles([...mainTitles, ...strings(attributes.abbreviatedTitles)]).slice(0, MAX_STORED_TITLES),
       mainTitles,
+      ...(credits.length > 0 ? { credits } : {}),
     });
   }
   return profiles;
@@ -281,6 +357,7 @@ export function jikanProfiles(payload: unknown): AniListMediaProfile[] {
       genres?: Named[] | null;
       explicit_genres?: Named[] | null;
       themes?: Named[] | null;
+      authors?: Named[] | null;
     }> | null;
   };
   return (body.data ?? []).flatMap((item) => {
@@ -288,6 +365,8 @@ export function jikanProfiles(payload: unknown): AniListMediaProfile[] {
     const { format, country } = jikanFormat(String(item.type ?? ""));
     const mainTitles = cleanTitles([item.title, item.title_english, item.title_japanese]);
     const names = (list: Named[] | null | undefined) => (list ?? []).map((entry) => entry.name);
+    // MyAnimeList writes people "Last, First"; the comma is not a list.
+    const credits = cleanTitles(names(item.authors).map((name) => String(name ?? "").replace(/,/g, " ")));
     return [{
       id: 0,
       idMal: item.mal_id,
@@ -296,6 +375,7 @@ export function jikanProfiles(payload: unknown): AniListMediaProfile[] {
       genres: cleanTitles([...names(item.genres), ...names(item.explicit_genres), ...names(item.themes)]),
       titles: cleanTitles([...mainTitles, ...(item.title_synonyms ?? []), ...(item.titles ?? []).map((entry) => entry.title)]).slice(0, MAX_STORED_TITLES),
       mainTitles,
+      ...(credits.length > 0 ? { credits } : {}),
     }];
   });
 }
@@ -329,6 +409,26 @@ export function trackerSearchProfiles(trackerId: number, kind: "mal" | "generic"
   });
 }
 
+/** Books from a Hardcover search, which names each one once, with its authors. */
+export function hardcoverProfiles(results: readonly HardcoverBookResult[]): AniListMediaProfile[] {
+  return results.flatMap((book) => {
+    const title = String(book.title ?? "").trim();
+    if (!Number.isInteger(book.id) || book.id <= 0 || !title) return [];
+    const credits = splitCredits([...(book.authors ?? [])]);
+    return [{
+      id: 0,
+      idMal: null,
+      country: "",
+      format: "NOVEL",
+      genres: cleanTitles([...(book.genres ?? [])]),
+      titles: [title],
+      mainTitles: [title],
+      hardcoverId: book.id,
+      ...(credits.length > 0 ? { credits } : {}),
+    }];
+  });
+}
+
 const SEARCH_TRACKER_TITLES = `
   query SearchTrackerTitles($trackerId: Int!, $query: String!) {
     searchTracker(input: { trackerId: $trackerId, query: $query }) {
@@ -341,10 +441,12 @@ async function searchKitsu(fetchImpl: typeof fetch, query: string): Promise<Prov
   const params = [
     `filter%5Btext%5D=${encodeURIComponent(query)}`,
     `page%5Blimit%5D=${RESULTS_PER_TITLE}`,
-    "include=categories,mappings",
-    "fields%5Bmanga%5D=canonicalTitle,titles,abbreviatedTitles,subtype,categories,mappings",
+    "include=categories,mappings,staff.person",
+    "fields%5Bmanga%5D=canonicalTitle,titles,abbreviatedTitles,subtype,categories,mappings,staff",
     "fields%5Bcategories%5D=title",
     "fields%5Bmappings%5D=externalSite,externalId",
+    "fields%5BmediaStaff%5D=person",
+    "fields%5Bpeople%5D=name",
   ];
   const answer = await fetchJson(fetchImpl, `https://kitsu.io/api/edge/manga?${params.join("&")}`, { Accept: "application/vnd.api+json" });
   return answer.ok ? { ok: true, profiles: kitsuProfiles(answer.json) } : answer;
@@ -375,7 +477,7 @@ function trackerKind(tracker: TitleProviderTracker): "anilist" | "mal" | "kitsu"
 function aniListProvider(fetchImpl: typeof fetch | undefined): TitleProvider {
   return {
     id: "anilist",
-    batchSize: 20,
+    batchSize: 16,
     intervalMs: Math.ceil(60_000 / DEFAULT_ANILIST_PER_MINUTE),
     status: (entry) => aniListTitleStatus(entry.title),
     async lookUp(entries) {
@@ -395,23 +497,32 @@ function aniListProvider(fetchImpl: typeof fetch | undefined): TitleProvider {
 function singleTitleProvider(
   id: string,
   intervalMs: number,
+  medium: TitleMedium,
   search: (query: string) => Promise<ProviderSearch & { exactOnly?: boolean }>,
 ): TitleProvider {
   return {
     id,
     batchSize: 1,
     intervalMs,
-    status: (entry) => providerTitleStatus(id, entry.title),
+    status: (entry) => providerTitleStatus(id, entry.title, medium),
     async lookUp(entries) {
       for (const entry of entries) {
         const answer = await search(aniListSearchQuery(entry.title));
         if (!answer.ok) return { ok: false, retryAfterMs: answer.retryAfterMs };
-        const match = pickAniListTitleMatch(entry.title, answer.profiles, entry, { exactOnly: answer.exactOnly });
-        recordProviderTitleMatch(id, entry.title, match);
+        const judgement = judgeTitleMatch(entry.title, answer.profiles, entry, { exactOnly: answer.exactOnly, medium });
+        recordProviderTitleJudgement(id, entry.title, judgement, medium);
       }
       return { ok: true };
     },
   };
+}
+
+async function searchHardcover(hardcover: HardcoverTitleSearch, query: string): Promise<ProviderSearch> {
+  try {
+    return { ok: true, profiles: hardcoverProfiles(await hardcover.search(query)) };
+  } catch (error) {
+    return { ok: false, retryAfterMs: hardcover.retryAfterMs(error) };
+  }
 }
 
 /**
@@ -419,17 +530,25 @@ function singleTitleProvider(
  * or through the user's MyAnimeList tracker while Jikan is down; MangaUpdates, Shikimori and Bangumi
  * only through a tracker the user is logged in to.
  */
-export function titleProviderChain(trackers: readonly TitleProviderTracker[], deps: TitleProviderDeps = {}): TitleProvider[] {
+export function titleProviderChain(
+  trackers: readonly TitleProviderTracker[],
+  deps: TitleProviderDeps & { hardcover?: HardcoverTitleSearch | null } = {},
+  medium: TitleMedium = "comic",
+): TitleProvider[] {
+  if (medium === "novel") {
+    const hardcover = deps.hardcover;
+    return hardcover ? [singleTitleProvider("hardcover", HARDCOVER_INTERVAL_MS, medium, (query) => searchHardcover(hardcover, query))] : [];
+  }
   const fetchImpl = deps.fetchImpl ?? (typeof fetch === "function" ? fetch.bind(globalThis) : undefined);
   const gql: GqlRequest = deps.gql ?? (async (query, variables) => (await import("../startupClient")).gql(query, variables));
   const loggedIn = trackers.filter((tracker) => tracker.isLoggedIn);
   const malTracker = loggedIn.find((tracker) => trackerKind(tracker) === "mal");
   const chain: TitleProvider[] = [aniListProvider(fetchImpl)];
-  if (fetchImpl) chain.push(singleTitleProvider("kitsu", KITSU_INTERVAL_MS, (query) => searchKitsu(fetchImpl, query)));
+  if (fetchImpl) chain.push(singleTitleProvider("kitsu", KITSU_INTERVAL_MS, medium, (query) => searchKitsu(fetchImpl, query)));
 
   if (fetchImpl || malTracker) {
     let jikanFailures = fetchImpl ? 0 : JIKAN_FAILURES_BEFORE_TRACKER;
-    chain.push(singleTitleProvider("mal", JIKAN_INTERVAL_MS, async (query) => {
+    chain.push(singleTitleProvider("mal", JIKAN_INTERVAL_MS, medium, async (query) => {
       if (fetchImpl && jikanFailures < JIKAN_FAILURES_BEFORE_TRACKER) {
         const answer = await searchJikan(fetchImpl, query);
         if (answer.ok || !malTracker) {
@@ -446,7 +565,7 @@ export function titleProviderChain(trackers: readonly TitleProviderTracker[], de
 
   for (const tracker of loggedIn) {
     if (trackerKind(tracker) !== "generic" || !SEARCHABLE_TRACKER_PATTERN.test(tracker.name)) continue;
-    chain.push(singleTitleProvider(`tracker:${tracker.id}`, SUWAYOMI_TRACKER_INTERVAL_MS, async (query) => ({
+    chain.push(singleTitleProvider(`tracker:${tracker.id}`, SUWAYOMI_TRACKER_INTERVAL_MS, medium, async (query) => ({
       ...(await searchTracker(gql, tracker.id, "generic", query)),
       exactOnly: true,
     })));

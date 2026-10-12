@@ -945,6 +945,7 @@
 {#if trackingOpen && activeDetail && !metadataOnly}
   <NovelTrackingPanel
     title={activeDetail.novel.title}
+    author={activeDetail.novel.author}
     sourceNovelId={activeDetail.novel.id}
     contentLabel={$_("ui_novel")}
     onClose={() => trackingOpen = false}

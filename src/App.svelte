@@ -149,28 +149,55 @@
   // Library works are matched to AniList in the background from start, so recommendations already
   // know their genres and other names when the search page opens. Each work is looked up once; a
   // library change only queues the works that were added.
+  // Novels and books are looked up apart, on the novel trackers. Nothing is tracked: a recognised
+  // work only feeds the recommendations and the tracking panel's suggestion.
   const ANILIST_LOOKUP_TOAST_ID = "anilist-library-lookup";
-  function showAniListLookupProgress(progress: AniListLibraryLookupProgress) {
-    if (progress.phase === "paused") {
-      dismissToast(ANILIST_LOOKUP_TOAST_ID);
-      return;
-    }
-    const done = progress.phase === "done";
-    addToast({
-      id: ANILIST_LOOKUP_TOAST_ID,
-      kind: done ? "success" : "info",
-      title: $_(done ? "feedback.aniListLookupDone" : "feedback.aniListLookupRunning"),
-      body: done
-        ? $_("feedback.aniListLookupDoneBody", { matched: progress.matched, missed: progress.missed })
-        : $_("feedback.aniListLookupRunningBody", { remaining: progress.remaining, total: progress.total }),
-      duration: done ? 6000 : 0,
-    });
+  const NOVEL_LOOKUP_TOAST_ID = "novel-library-lookup";
+  function lookupProgressToast(toastId: string, titles: { running: string; done: string }) {
+    return (progress: AniListLibraryLookupProgress) => {
+      if (progress.phase === "paused") {
+        dismissToast(toastId);
+        return;
+      }
+      const done = progress.phase === "done";
+      addToast({
+        id: toastId,
+        kind: done ? "success" : "info",
+        title: $_(done ? titles.done : titles.running),
+        body: done
+          ? $_("feedback.aniListLookupDoneBody", { matched: progress.matched, uncertain: progress.uncertain, missed: progress.missed })
+          : $_("feedback.aniListLookupRunningBody", { remaining: progress.remaining, total: progress.total }),
+        duration: done ? 6000 : 0,
+      });
+    };
   }
+  const showAniListLookupProgress = lookupProgressToast(ANILIST_LOOKUP_TOAST_ID, {
+    running: "feedback.aniListLookupRunning",
+    done: "feedback.aniListLookupDone",
+  });
+  const showNovelLookupProgress = lookupProgressToast(NOVEL_LOOKUP_TOAST_ID, {
+    running: "feedback.novelLookupRunning",
+    done: "feedback.novelLookupDone",
+  });
   $effect(() => {
     const works = store.libraryMangaSnapshot;
     if (works.length === 0) return;
     void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
       lookup.syncLibraryAniListLookup(works, showAniListLookupProgress);
+    });
+  });
+  $effect(() => {
+    // Novels are read from their saved library state, again on each page change so added novels
+    // are queued; books follow the store.
+    void store.navPage;
+    const books = store.books.map((book) => ({ key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
+    const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
+    void Promise.all([
+      import("./lib/novels/libraryState").then((novels) => novels.loadNovelLibraryState(scope)).catch(() => null),
+      import("./lib/recommendations/anilistLibraryLookup"),
+    ]).then(([state, lookup]) => {
+      const novels = (state?.entries ?? []).map((entry) => ({ key: `novel:${entry.id}`, title: entry.title, author: entry.author, genres: entry.tags }));
+      lookup.syncLibraryNovelLookup([...novels, ...books], scope, showNovelLookupProgress);
     });
   });
 

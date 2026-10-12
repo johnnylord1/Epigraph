@@ -1,3 +1,4 @@
+import { creditRelation, splitCredits, type CreditRelation } from "./credits";
 import { normalizeToken } from "./normalization";
 
 /**
@@ -17,11 +18,33 @@ export interface AniListMediaProfile {
   titles: string[];
   /** Romaji, English and native titles alone, when the profile comes from a search. */
   mainTitles?: string[];
+  /** Who made it (authors, artists, studios), when the provider names them. */
+  credits?: string[];
   /** Where a work AniList does not know was found ("kitsu", "mal", "tracker:7"); absent for AniList. */
   provider?: string;
   /** The work's entry on the Suwayomi tracker it was found on, when that tracker is not AniList or MAL. */
   trackerRemote?: { trackerId: number; remoteId: string };
+  /** The book's Hardcover id, when it was found there. */
+  hardcoverId?: number;
 }
+
+/**
+ * Comics and prose are looked up and cached apart, so a novel never takes its comic adaptation's
+ * place. "novel" covers web novels, light novels and books alike: they differ in where they are
+ * published and tracked, not in how a title is recognised. Novels are looked up on Hardcover only.
+ */
+export type TitleMedium = "comic" | "novel";
+
+/**
+ * What a title search settled: the work the title certainly names, or failing that the work it most
+ * likely names. A likely work is only a hint (for the tracking panel's search), never a match.
+ */
+export interface TitleJudgement {
+  match: AniListMediaProfile | null;
+  candidate: AniListMediaProfile | null;
+}
+
+type StaffName = { full?: string | null; native?: string | null; alternative?: Array<string | null> | null } | null;
 
 interface AniListMediaPayload {
   id?: number;
@@ -31,16 +54,21 @@ interface AniListMediaPayload {
   genres?: Array<string | null> | null;
   synonyms?: Array<string | null> | null;
   title?: { romaji?: string | null; english?: string | null; native?: string | null } | null;
+  staff?: { nodes?: Array<{ name?: StaffName } | null> | null } | null;
 }
 
 interface TitleMatchEntry {
-  /** Matched AniList id, 0 when no work matched closely enough. */
+  /** Matched AniList id, 0 when no work matched for certain. */
   id: number;
   at: number;
-  /** Matching rules the entry was made with; misses from older rules are looked up again. */
+  /** Matching rules the entry was made with; entries from older rules are looked up again. */
   v?: number;
-  /** 1 when the whole title found nothing and its first words are still to be searched. */
-  s?: 1;
+  /** Search still to make: 1 the title's first words, 2 the works of the title's author. */
+  s?: 1 | 2;
+  /** 1 when a work fits the title but not for certain: the title stays pending. */
+  u?: 1;
+  /** That likely work's AniList id. */
+  c?: number;
 }
 
 /** How an AniList request went, for pacing the next one. */
@@ -58,9 +86,11 @@ export interface AniListTitleHints {
   /** Country the source's format points to ("KR" for manhwa, "CN" for manhua). */
   country?: string | null;
   genres?: readonly string[] | null;
+  /** Authors, artists and studios the library names. */
+  credits?: readonly string[] | null;
 }
 
-export type AniListTitleMatchEntry = { key: string; title: string } & AniListTitleHints;
+export type AniListTitleMatchEntry = { key: string; title: string; medium?: TitleMedium } & AniListTitleHints;
 
 type FetchOptions = {
   signal?: AbortSignal;
@@ -71,22 +101,32 @@ type FetchOptions = {
 
 const ANILIST_ENDPOINT = "https://graphql.anilist.co";
 const ID_PAGE_SIZE = 50;
-// AniList refuses queries above 500 complexity points; each title's two searches cost 24.
-const TITLES_PER_SEARCH_REQUEST = 20;
+// AniList refuses queries above 500 complexity points; each title's two searches cost 30 with the staff.
+const TITLES_PER_SEARCH_REQUEST = 16;
+const AUTHORS_PER_SEARCH_REQUEST = 8;
+const STAFF_PER_WORK = 6;
+const WORKS_PER_STAFF = 15;
 const RESULTS_PER_TITLE = 5;
 const MAX_STORED_SYNONYMS = 12;
 const MEDIA_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistMedia.v1";
 const TITLE_MATCH_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistTitleMatch.v1";
-// Each title is looked up once. Misses are searched again only when the matching rules change.
-const TITLE_MATCH_VERSION = 5;
+// Each title is looked up once, and again only when the matching rules change.
+const TITLE_MATCH_VERSION = 6;
 // AniList's public search leaves out adult works unless they are asked for separately.
 const ADULT_RESULTS_PER_TITLE = 3;
 // AniList finds nothing for some long titles ("Mamahaha no Tsurego ga Moto Kanodatta" is spelled
 // "Motokano datta" there); their first words are searched again, accepting only the same title.
 const SHORT_QUERY_WORDS = 3;
-// Fuzzy matches only cover small spelling differences ("Solo Leveling" / "Solo-Leveling!").
+// Fuzzy matches only cover small spelling differences in long titles ("Beginning After the Ends").
 const FUZZY_TITLE_MATCH_MIN = 0.92;
 const FUZZY_TITLE_RUNNER_UP_MAX = 0.85;
+const FUZZY_TITLE_MIN_WORDS = 3;
+const FUZZY_TITLE_MIN_LENGTH = 12;
+// The same author vouches for a title spelled a little differently ("Lord of Mysteries").
+const CREDITED_TITLE_MATCH_MIN = 0.8;
+// A title shorter than this ("Chrysalis", "Player") names too many works to trust on its own.
+const DISTINCTIVE_TITLE_MIN_WORDS = 2;
+const DISTINCTIVE_TITLE_MIN_LENGTH = 8;
 const PROSE_FORMATS = new Set(["NOVEL"]);
 // Works sharing a name are told apart by genres only when one clearly fits the library's better.
 const GENRE_TIE_BREAK_MIN = 2;
@@ -100,6 +140,9 @@ const MEDIA_PROFILE_FIELDS = `
   synonyms
   title { romaji english native }
 `;
+const STAFF_FIELDS = `staff(perPage: ${STAFF_PER_WORK}) { nodes { name { full native alternative } } }`;
+// Names searched per library work when its title finds nothing for certain (author, artist).
+const CREDITS_SEARCHED_PER_WORK = 2;
 
 // AniList id -> profile (null when AniList does not know the id). Genres and titles barely change,
 // so entries are kept across sessions and only unseen ids reach the network.
@@ -147,6 +190,7 @@ function sanitizeStoredProfile(id: number, value: Partial<AniListMediaProfile>):
     genres: strings(value.genres),
     titles: strings(value.titles),
     ...(Array.isArray(value.mainTitles) ? { mainTitles: strings(value.mainTitles) } : {}),
+    ...(Array.isArray(value.credits) ? { credits: strings(value.credits) } : {}),
   };
 }
 
@@ -164,7 +208,9 @@ function loadTitleMatchCache(): Map<string, TitleMatchEntry> {
         id: entry.id,
         at: entry.at,
         ...(typeof entry.v === "number" ? { v: entry.v } : {}),
-        ...(entry.s === 1 ? { s: 1 as const } : {}),
+        ...(entry.s === 1 || entry.s === 2 ? { s: entry.s } : {}),
+        ...(entry.u === 1 ? { u: 1 as const } : {}),
+        ...(typeof entry.c === "number" && entry.c > 0 ? { c: entry.c } : {}),
       });
     }
   }
@@ -185,6 +231,7 @@ export function aniListMediaProfileFromPayload(item: AniListMediaPayload): AniLi
   const clean = (list: Array<string | null | undefined>) => list.map((title) => String(title ?? "").trim()).filter(Boolean);
   const mainTitles = clean([item.title?.romaji, item.title?.english, item.title?.native]);
   const titles = [...mainTitles, ...clean((item.synonyms ?? []).slice(0, MAX_STORED_SYNONYMS))];
+  const credits = staffCredits((item.staff?.nodes ?? []).map((node) => node?.name ?? null));
   return {
     id: item.id,
     idMal: typeof item.idMal === "number" && item.idMal > 0 ? item.idMal : null,
@@ -193,7 +240,14 @@ export function aniListMediaProfileFromPayload(item: AniListMediaPayload): AniLi
     genres: (item.genres ?? []).map((genre) => String(genre ?? "").trim()).filter(Boolean),
     titles: [...new Set(titles)],
     mainTitles: [...new Set(mainTitles)],
+    ...(credits.length > 0 ? { credits } : {}),
   };
+}
+
+/** Every name of the people credited, so a pen name or the native spelling is recognised too. */
+function staffCredits(names: StaffName[]): string[] {
+  const credits = names.flatMap((name) => [name?.full, name?.native, ...(name?.alternative ?? []).slice(0, 3)]);
+  return splitCredits(credits.map((credit) => String(credit ?? "").trim()).filter(Boolean));
 }
 
 function resolveFetch(options: FetchOptions) {
@@ -206,7 +260,7 @@ function headerNumber(response: Response, name: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-async function postAniList(
+export async function postAniList(
   fetchImpl: typeof fetch,
   query: string,
   variables: Record<string, unknown>,
@@ -347,49 +401,123 @@ export function titleSimilarity(a: string, b: string): number {
   return leftSize + rightSize > 0 ? (2 * shared) / (leftSize + rightSize) : 0;
 }
 
+interface ScoredWork {
+  item: AniListMediaProfile;
+  /** The title is one of the work's own names (romaji, English, native), not only a synonym. */
+  exactMain: boolean;
+  exact: boolean;
+  similarity: number;
+  credit: CreditRelation;
+}
+
+function fitsMedium(item: AniListMediaProfile, medium: TitleMedium): boolean {
+  return medium === "comic" ? !PROSE_FORMATS.has(item.format) : PROSE_FORMATS.has(item.format);
+}
+
+function isDistinctiveTitle(key: string): boolean {
+  return key.split(" ").length >= DISTINCTIVE_TITLE_MIN_WORDS && compactTitle(key).length >= DISTINCTIVE_TITLE_MIN_LENGTH;
+}
+
 /**
- * The AniList work a comic title refers to, or null when no result is clearly it. Sources and
- * trackers often name a work differently, so a wrong match is worse than none: only an exact title
- * (any language or synonym) or a near-identical spelling is accepted, never an ambiguous pick, and
- * novels are never matched to comics.
+ * Which work a title names. A wrong match is worse than none: a work counts only when it is certain
+ * (the same author or studio with the same or a nearly identical title; or, when the library names
+ * no author, the work's own name, distinctive enough and unique). A work that only might be it (a
+ * synonym or abbreviation of a short title, a different author, several works of that name) is
+ * returned as the candidate and the title stays pending. Comics never match novels and the reverse.
  */
+export function judgeTitleMatch(
+  title: string,
+  results: readonly AniListMediaProfile[],
+  hints: AniListTitleHints = {},
+  options: { exactOnly?: boolean; medium?: TitleMedium } = {},
+): TitleJudgement {
+  const none: TitleJudgement = { match: null, candidate: null };
+  const key = aniListTitleMatchKey(title);
+  if (!key) return none;
+  const compactKey = compactTitle(key);
+  const medium = options.medium ?? "comic";
+  const scored: ScoredWork[] = results.filter((item) => fitsMedium(item, medium)).map((item) => {
+    const keys = item.titles.map(aniListTitleMatchKey).filter(Boolean);
+    const mainKeys = (item.mainTitles ?? item.titles).map(aniListTitleMatchKey).filter(Boolean);
+    const exactMain = mainKeys.some((candidate) => compactTitle(candidate) === compactKey) || isCombinedTitle(compactKey, mainKeys);
+    return {
+      item,
+      exactMain,
+      exact: exactMain || keys.some((candidate) => compactTitle(candidate) === compactKey) || isCombinedTitle(compactKey, keys),
+      similarity: Math.max(0, ...keys.map((candidate) => titleSimilarity(key, candidate))),
+      credit: creditRelation(hints.credits, item.credits),
+    };
+  });
+  const likely = (list: ScoredWork[]): TitleJudgement => ({ match: null, candidate: list[0]?.item ?? null });
+
+  // The same author or studio confirms a title that reads the same or nearly the same.
+  const credited = scored
+    .filter((entry) => entry.credit === "match" && (entry.exact || entry.similarity >= CREDITED_TITLE_MATCH_MIN))
+    .sort((a, b) => Number(b.exact) - Number(a.exact) || b.similarity - a.similarity);
+  if (credited.length > 0) {
+    // Several listings of the same title by the same author are one work (Hardcover keeps duplicates).
+    const pick = pickOneWork(credited, hints) ?? (credited[0].exact ? credited[0] : null);
+    return pick ? { match: pick.item, candidate: null } : likely(credited);
+  }
+
+  // A different author means a different work of the same name, or names spelled too differently
+  // to tell: either way it is not certain.
+  const open = scored.filter((entry) => entry.credit !== "conflict");
+  const conflicting = scored.filter((entry) => entry.credit === "conflict" && (entry.exact || entry.similarity >= FUZZY_TITLE_MATCH_MIN));
+  const exact = open.filter((entry) => entry.exact);
+  if (exact.length > 0) {
+    const pick = pickOneWork(exact, hints);
+    if (!pick) return likely(exact);
+    // A short title is trusted only as the work's own name and when the library's format or genres
+    // picked it; synonyms and abbreviations ("Chrysalis") need a distinctive title.
+    const certain = isDistinctiveTitle(key) || (pick.exactMain && (pick.byHints || sameCountry(pick.item, hints)));
+    return certain ? { match: pick.item, candidate: null } : likely([pick]);
+  }
+
+  if (!options.exactOnly && compactKey.length >= 6) {
+    const ranked = [...open].sort((a, b) => b.similarity - a.similarity);
+    const [best, runnerUp] = ranked;
+    if (best && best.similarity >= FUZZY_TITLE_MATCH_MIN) {
+      const clear = !runnerUp || runnerUp.similarity <= FUZZY_TITLE_RUNNER_UP_MAX;
+      const long = key.split(" ").length >= FUZZY_TITLE_MIN_WORDS && compactKey.length >= FUZZY_TITLE_MIN_LENGTH;
+      return clear && long ? { match: best.item, candidate: null } : likely([best]);
+    }
+  }
+  return conflicting.length > 0 ? likely(conflicting) : none;
+}
+
+/** The work a title certainly names, or null; see judgeTitleMatch. */
 export function pickAniListTitleMatch(
   title: string,
   results: readonly AniListMediaProfile[],
   hints: AniListTitleHints = {},
-  options: { exactOnly?: boolean } = {},
+  options: { exactOnly?: boolean; medium?: TitleMedium } = {},
 ): AniListMediaProfile | null {
-  const key = aniListTitleMatchKey(title);
-  if (!key) return null;
-  const compactKey = compactTitle(key);
-  const comics = results.filter((item) => !PROSE_FORMATS.has(item.format));
-  const scored = comics.map((item) => {
-    const keys = item.titles.map(aniListTitleMatchKey).filter(Boolean);
-    return {
-      item,
-      exact: keys.some((candidate) => compactTitle(candidate) === compactKey) || isCombinedTitle(compactKey, keys),
-      similarity: Math.max(0, ...keys.map((candidate) => titleSimilarity(key, candidate))),
-    };
-  });
+  return judgeTitleMatch(title, results, hints, options).match;
+}
 
-  const exact = scored.filter((entry) => entry.exact);
-  if (exact.length === 1) return exact[0].item;
-  if (exact.length > 1) {
-    // A one-shot pilot often shares the series' name; the series is the work being read.
-    const series = exact.filter((entry) => entry.item.format !== "ONE_SHOT").map((entry) => entry.item);
-    if (series.length === 1) return series[0];
-    // A work named so outright beats works that only list the name among their other names.
-    const named = series.filter((item) => item.mainTitles?.some((candidate) => compactTitle(aniListTitleMatchKey(candidate)) === compactKey));
-    if (named.length === 1) return named[0];
-    return pickAmongSameNamedWorks(named.length > 1 ? named : series, hints);
-  }
+function sameCountry(item: AniListMediaProfile, hints: AniListTitleHints): boolean {
+  const country = String(hints.country ?? "").trim().toUpperCase();
+  return Boolean(country) && item.country === country;
+}
 
-  if (options.exactOnly || compactKey.length < 6) return null;
-  const ranked = scored.sort((a, b) => b.similarity - a.similarity);
-  const [best, runnerUp] = ranked;
-  if (!best || best.similarity < FUZZY_TITLE_MATCH_MIN) return null;
-  if (runnerUp && runnerUp.similarity > FUZZY_TITLE_RUNNER_UP_MAX) return null;
-  return best.item;
+/** One work out of several that fit, or null when nothing tells them apart. */
+function pickOneWork(entries: ScoredWork[], hints: AniListTitleHints): (ScoredWork & { byHints: boolean }) | null {
+  if (entries.length === 1) return { ...entries[0], byHints: false };
+  let pool = entries.filter((entry) => entry.exact);
+  if (pool.length === 1) return { ...pool[0], byHints: false };
+  if (pool.length === 0) pool = entries;
+  // A one-shot pilot often shares the series' name; the series is the work being read.
+  const series = pool.filter((entry) => entry.item.format !== "ONE_SHOT");
+  if (series.length === 1) return { ...series[0], byHints: false };
+  if (series.length > 1) pool = series;
+  // A work named so outright beats works that only list the name among their other names.
+  const named = pool.filter((entry) => entry.exactMain);
+  if (named.length === 1) return { ...named[0], byHints: false };
+  const remaining = named.length > 1 ? named : pool;
+  const chosen = pickAmongSameNamedWorks(remaining.map((entry) => entry.item), hints);
+  const entry = chosen ? remaining.find((candidate) => candidate.item === chosen) : undefined;
+  return entry ? { ...entry, byHints: true } : null;
 }
 
 // Spacing differs between sources and AniList ("Moto Kanodatta" / "Motokano datta").
@@ -427,18 +555,52 @@ function pickAmongSameNamedWorks(works: AniListMediaProfile[], hints: AniListTit
   return best.shared >= GENRE_TIE_BREAK_MIN && best.shared - (runnerUp?.shared ?? 0) >= GENRE_TIE_BREAK_MIN ? best.work : null;
 }
 
-function isSettledMiss(entry: TitleMatchEntry): boolean {
-  return entry.id === 0 && !entry.s && (entry.v ?? 1) >= TITLE_MATCH_VERSION;
+/** Where a title's lookup is kept: comics under the title, prose under "n|" and the title. */
+export function titleLookupKey(title: string, medium: TitleMedium = "comic"): string {
+  const key = aniListTitleMatchKey(title);
+  return key && medium === "novel" ? `n|${key}` : key;
+}
+
+function isCurrent(entry: TitleMatchEntry | undefined): entry is TitleMatchEntry {
+  return Boolean(entry) && (entry!.v ?? 1) >= TITLE_MATCH_VERSION;
+}
+
+/** Looked up under the current rules with nothing left to search: matched, likely or missed. */
+function isSettled(entry: TitleMatchEntry | undefined): boolean {
+  return isCurrent(entry) && !entry.s;
 }
 
 function isShortQueryPending(entry: TitleMatchEntry | undefined): boolean {
-  return entry?.id === 0 && entry.s === 1 && entry.v === TITLE_MATCH_VERSION;
+  return isCurrent(entry) && entry.id === 0 && entry.s === 1;
+}
+
+type StaffPayload = { name?: StaffName; staffMedia?: { nodes?: AniListMediaPayload[] | null } | null };
+
+/**
+ * The works of the library's authors, artists or studios. Only people whose name is the one the
+ * library gives count: AniList's staff search also returns people with similar names.
+ */
+function creditedWorks(credits: readonly string[], found: ReadonlyArray<StaffPayload | null | undefined>): AniListMediaProfile[] {
+  const works = new Map<number, AniListMediaProfile>();
+  for (const person of found) {
+    const names = staffCredits([person?.name ?? null]);
+    if (creditRelation(credits, names) !== "match") continue;
+    for (const node of person?.staffMedia?.nodes ?? []) {
+      const work = aniListMediaProfileFromPayload(node);
+      if (!work) continue;
+      const known = works.get(work.id);
+      works.set(work.id, { ...work, credits: [...new Set([...(known?.credits ?? []), ...names])] });
+    }
+  }
+  return [...works.values()];
 }
 
 /**
  * Finds the AniList work for titles that have no AniList tracker entry, keyed by the caller's key.
- * Ten titles share one request and at most `maxRequests` are sent per call; titles already looked
- * up resolve from the cache, misses included. Pass the most useful titles first.
+ * Titles share requests and at most `maxRequests` are sent per call; titles already looked up
+ * resolve from the cache, misses included. A title found for certain is returned; a title AniList
+ * only might know is kept as pending with that likely work, never returned. A title its search does
+ * not settle is searched again through its authors' works. Pass the most useful titles first.
  */
 export async function matchAniListTitles(
   entries: ReadonlyArray<AniListTitleMatchEntry>,
@@ -449,80 +611,139 @@ export async function matchAniListTitles(
   const nowMs = options.nowMs ?? Date.now();
   const result = new Map<string, AniListMediaProfile>();
   const pending = new Map<string, string[]>();
+  const entryByLookupKey = new Map<string, AniListTitleMatchEntry>();
 
   for (const entry of entries) {
-    const matchKey = aniListTitleMatchKey(entry.title);
-    if (!matchKey) continue;
-    const cached = matches.get(matchKey);
-    if (cached && cached.id > 0 && media.get(cached.id)) {
-      result.set(entry.key, media.get(cached.id)!);
+    const lookupKey = titleLookupKey(entry.title, entry.medium);
+    if (!lookupKey) continue;
+    const cached = matches.get(lookupKey);
+    if (isSettled(cached)) {
+      const found = cached!.id > 0 ? media.get(cached!.id) : null;
+      if (found) result.set(entry.key, found);
       continue;
     }
-    if (cached && isSettledMiss(cached)) continue;
-    const keys = pending.get(matchKey) ?? [];
+    if (!entryByLookupKey.has(lookupKey)) entryByLookupKey.set(lookupKey, entry);
+    const keys = pending.get(lookupKey) ?? [];
     keys.push(entry.key);
-    if (keys.length === 1) pending.set(matchKey, keys);
+    if (keys.length === 1) pending.set(lookupKey, keys);
   }
 
   const fetchImpl = resolveFetch(options);
-  const queue = [...pending.keys()];
   const maxRequests = options.cachedOnly ? 0 : options.maxRequests ?? 3;
-  const entryByMatchKey = new Map<string, AniListTitleMatchEntry>();
-  for (const entry of entries) {
-    const matchKey = aniListTitleMatchKey(entry.title);
-    if (!entryByMatchKey.has(matchKey)) entryByMatchKey.set(matchKey, entry);
-  }
   let changed = false;
   // A title the whole search finds nothing for is searched again by its first words, ahead of the
-  // titles not searched yet. The pending short search is stored, so a call that runs out of budget
-  // first leaves it for the next call instead of repeating the whole search.
-  const jobs: Array<{ matchKey: string; shortQuery: string | null }> = queue.map((matchKey) => ({
-    matchKey,
-    shortQuery: isShortQueryPending(matches.get(matchKey)) ? shortSearchQuery(matchKey) : null,
-  }));
-  const record = (matchKey: string, match: AniListMediaProfile | null) => {
-    matches.set(matchKey, { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION });
+  // titles not searched yet; a title still unsettled after that, through its authors' works. The
+  // search still to make is stored, so a call that runs out of budget leaves it for the next call
+  // instead of repeating the searches already made.
+  const jobs: Array<{ lookupKey: string; shortQuery: string | null }> = [];
+  const creditJobs: string[] = [];
+  for (const lookupKey of pending.keys()) {
+    const cached = matches.get(lookupKey);
+    if (isCurrent(cached) && cached.s === 2) creditJobs.push(lookupKey);
+    else jobs.push({ lookupKey, shortQuery: isShortQueryPending(cached) ? shortSearchQuery(aniListTitleMatchKey(entryByLookupKey.get(lookupKey)!.title)) : null });
+  }
+  const creditsOf = (lookupKey: string) => splitCredits(entryByLookupKey.get(lookupKey)?.credits ?? []);
+  const record = (lookupKey: string, judgement: TitleJudgement, searchCredits: boolean) => {
+    const { match, candidate } = judgement;
+    const likely = match ? null : candidate ?? media.get(matches.get(lookupKey)?.c ?? 0) ?? null;
+    const next: TitleMatchEntry = { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION };
+    if (!match && searchCredits && creditsOf(lookupKey).length > 0) {
+      next.s = 2;
+      creditJobs.push(lookupKey);
+    }
+    if (likely) {
+      next.u = 1;
+      next.c = likely.id;
+      media.set(likely.id, likely);
+    }
+    matches.set(lookupKey, next);
     if (!match) return;
     media.set(match.id, match);
-    for (const key of pending.get(matchKey) ?? []) result.set(key, match);
+    for (const key of pending.get(lookupKey) ?? []) result.set(key, match);
   };
 
-  for (let request = 0; fetchImpl && request < maxRequests && jobs.length > 0; request += 1) {
+  for (let request = 0; fetchImpl && request < maxRequests && (jobs.length > 0 || creditJobs.length > 0); request += 1) {
     if (options.signal?.aborted) break;
-    const batch = jobs.splice(0, TITLES_PER_SEARCH_REQUEST);
-    const retries: typeof jobs = [];
-    const variables: Record<string, string> = {};
-    const selections = batch.map(({ matchKey, shortQuery }, index) => {
-      variables[`q${index}`] = shortQuery ?? aniListSearchQuery(entryByMatchKey.get(matchKey)?.title ?? matchKey);
-      return `r${index}: Page(perPage: ${RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA) { ...MediaProfile } }
-      a${index}: Page(perPage: ${ADULT_RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA, isAdult: true) { ...MediaProfile } }`;
-    });
-    const query = `query TitleMatches(${batch.map((_, index) => `$q${index}: String`).join(", ")}) {
+    try {
+      if (jobs.length > 0) {
+        const batch = jobs.splice(0, TITLES_PER_SEARCH_REQUEST);
+        const retries: typeof jobs = [];
+        const variables: Record<string, string> = {};
+        const selections = batch.map(({ lookupKey, shortQuery }, index) => {
+          const entry = entryByLookupKey.get(lookupKey)!;
+          // Comics leave novels out of the search, so a novel never crowds out its adaptation.
+          const format = entry.medium === "novel" ? ", format: NOVEL" : ", format_not: NOVEL";
+          variables[`q${index}`] = shortQuery ?? aniListSearchQuery(entry.title);
+          return `r${index}: Page(perPage: ${RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA${format}) { ...MediaProfile ${STAFF_FIELDS} } }
+      a${index}: Page(perPage: ${ADULT_RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA, isAdult: true${format}) { ...MediaProfile } }`;
+        });
+        const query = `query TitleMatches(${batch.map((_, index) => `$q${index}: String`).join(", ")}) {
       ${selections.join("\n      ")}
     }
     fragment MediaProfile on Media { ${MEDIA_PROFILE_FIELDS} }`;
-    try {
-      const data = await postAniList(fetchImpl, query, variables, options.signal, options.onResponse);
-      if (!data) break;
-      batch.forEach(({ matchKey, shortQuery }, index) => {
-        const page = data[`r${index}`];
-        if (!page?.media) return;
-        const found = [...page.media, ...(data[`a${index}`]?.media ?? [])];
-        const retryQuery = shortQuery ? null : shortSearchQuery(matchKey);
-        if (found.length === 0 && retryQuery) {
-          matches.set(matchKey, { id: 0, at: nowMs, v: TITLE_MATCH_VERSION, s: 1 });
-          retries.push({ matchKey, shortQuery: retryQuery });
-          return;
+        const data = await postAniList(fetchImpl, query, variables, options.signal, options.onResponse);
+        if (!data) break;
+        batch.forEach(({ lookupKey, shortQuery }, index) => {
+          const page = data[`r${index}`];
+          if (!page?.media) return;
+          const entry = entryByLookupKey.get(lookupKey)!;
+          const found = [...page.media, ...(data[`a${index}`]?.media ?? [])];
+          const retryQuery = shortQuery ? null : shortSearchQuery(aniListTitleMatchKey(entry.title));
+          if (found.length === 0 && retryQuery) {
+            matches.set(lookupKey, { id: 0, at: nowMs, v: TITLE_MATCH_VERSION, s: 1 });
+            retries.push({ lookupKey, shortQuery: retryQuery });
+            return;
+          }
+          // The adult search also returns works the plain search found; one work is never a tie with itself.
+          const profiles = new Map<number, AniListMediaProfile>();
+          for (const item of found) {
+            const profile = aniListMediaProfileFromPayload(item);
+            if (profile && !profiles.get(profile.id)?.credits) profiles.set(profile.id, profile);
+          }
+          const judgement = judgeTitleMatch(entry.title, [...profiles.values()], entry, { exactOnly: Boolean(shortQuery), medium: entry.medium });
+          record(lookupKey, judgement, true);
+        });
+        jobs.unshift(...retries);
+      } else {
+        const batch: Array<{ lookupKey: string; names: string[] }> = [];
+        let nameCount = 0;
+        while (creditJobs.length > 0) {
+          const names = creditsOf(creditJobs[0]).slice(0, CREDITS_SEARCHED_PER_WORK);
+          if (batch.length > 0 && nameCount + names.length > AUTHORS_PER_SEARCH_REQUEST) break;
+          batch.push({ lookupKey: creditJobs.shift()!, names });
+          nameCount += names.length;
         }
-        // The adult search also returns works the plain search found; one work is never a tie with itself.
-        const profiles = [...new Map(found
-          .map(aniListMediaProfileFromPayload)
-          .filter((item): item is AniListMediaProfile => item !== null)
-          .map((item) => [item.id, item] as const)).values()];
-        const entry = entryByMatchKey.get(matchKey);
-        record(matchKey, pickAniListTitleMatch(entry?.title ?? matchKey, profiles, entry ?? {}, { exactOnly: Boolean(shortQuery) }));
-      });
-      jobs.unshift(...retries);
+        const variables: Record<string, string> = {};
+        const selections: string[] = [];
+        for (const { names } of batch) {
+          for (const name of names) {
+            const index = selections.length;
+            variables[`s${index}`] = name;
+            selections.push(`s${index}: Page(perPage: 2) { staff(search: $s${index}) { name { full native alternative } staffMedia(type: MANGA, perPage: ${WORKS_PER_STAFF}) { nodes { ...MediaProfile } } } }`);
+          }
+        }
+        const query = `query CreditedWorks(${selections.map((_, index) => `$s${index}: String`).join(", ")}) {
+      ${selections.join("\n      ")}
+    }
+    fragment MediaProfile on Media { ${MEDIA_PROFILE_FIELDS} }`;
+        const data = await postAniList(fetchImpl, query, variables, options.signal, options.onResponse) as unknown as Record<string, { staff?: StaffPayload[] | null } | null> | null;
+        if (!data) {
+          creditJobs.unshift(...batch.map((job) => job.lookupKey));
+          break;
+        }
+        let index = 0;
+        for (const { lookupKey, names } of batch) {
+          const found = names.flatMap(() => data[`s${index++}`]?.staff ?? []);
+          const entry = entryByLookupKey.get(lookupKey)!;
+          const medium = entry.medium ?? "comic";
+          const works = creditedWorks(creditsOf(lookupKey), found).filter((work) => fitsMedium(work, medium));
+          const judgement = judgeTitleMatch(entry.title, works, entry, { medium });
+          // The library's author has a single work of this kind: very likely the one read, under a
+          // name AniList does not list (a translated title). A hint, never a match.
+          const only = works.filter((work) => work.format !== "ONE_SHOT");
+          record(lookupKey, { match: judgement.match, candidate: judgement.candidate ?? (only.length === 1 ? only[0] : null) }, false);
+        }
+      }
       changed = true;
     } catch {
       break;
@@ -535,29 +756,42 @@ export async function matchAniListTitles(
   return result;
 }
 
-/** The AniList work a title was already matched to, without a request; null when unknown. */
-export function cachedAniListTitleMatch(title: string): AniListMediaProfile | null {
-  const cached = loadTitleMatchCache().get(aniListTitleMatchKey(title));
-  return cached && cached.id > 0 ? loadMediaCache().get(cached.id) ?? null : null;
-}
+export type TitleMatchStatus = "matched" | "uncertain" | "missed" | "pending";
 
-/** Whether AniList matched a title, settled that it has no such work, or is still to be asked. */
-export function aniListTitleStatus(title: string): "matched" | "missed" | "pending" {
-  const key = aniListTitleMatchKey(title);
+/**
+ * Whether AniList matched a title for certain, knows only a work it might be ("uncertain", which
+ * leaves the title pending for the library), settled that it has no such work, or is still to be
+ * asked (never asked, a search left, or asked under older matching rules).
+ */
+export function aniListTitleStatus(title: string, medium: TitleMedium = "comic"): TitleMatchStatus {
+  const key = titleLookupKey(title, medium);
   if (!key) return "missed";
   const cached = loadTitleMatchCache().get(key);
-  if (cached && cached.id > 0 && loadMediaCache().get(cached.id)) return "matched";
-  return cached && isSettledMiss(cached) ? "missed" : "pending";
+  if (!isSettled(cached)) return "pending";
+  if (cached!.id > 0 && loadMediaCache().get(cached!.id)) return "matched";
+  return cached!.u ? "uncertain" : "missed";
 }
 
-/** Whether a title still waits for its lookup (never looked up, or missed under older rules). */
-export function isAniListTitlePending(title: string): boolean {
-  return aniListTitleStatus(title) === "pending";
+/** The AniList work a title was matched to for certain, without a request; null when unknown. */
+export function cachedAniListTitleMatch(title: string, medium: TitleMedium = "comic"): AniListMediaProfile | null {
+  const cached = loadTitleMatchCache().get(titleLookupKey(title, medium));
+  return isSettled(cached) && cached!.id > 0 ? loadMediaCache().get(cached!.id) ?? null : null;
+}
+
+/** The AniList work a title most likely names when it names none for certain, as a hint only. */
+export function cachedAniListTitleCandidate(title: string, medium: TitleMedium = "comic"): AniListMediaProfile | null {
+  const cached = loadTitleMatchCache().get(titleLookupKey(title, medium));
+  return isCurrent(cached) && cached.id === 0 && cached.c ? loadMediaCache().get(cached.c) ?? null : null;
+}
+
+/** Whether a title still waits for its lookup (never looked up, or looked up under older rules). */
+export function isAniListTitlePending(title: string, medium: TitleMedium = "comic"): boolean {
+  return aniListTitleStatus(title, medium) === "pending";
 }
 
 /** Number of titles still waiting for a lookup, for scheduling follow-up batches. */
-export function pendingAniListTitleCount(titles: readonly string[]): number {
-  return new Set(titles.filter(isAniListTitlePending).map(aniListTitleMatchKey)).size;
+export function pendingAniListTitleCount(titles: readonly string[], medium: TitleMedium = "comic"): number {
+  return new Set(titles.filter((title) => isAniListTitlePending(title, medium)).map((title) => titleLookupKey(title, medium))).size;
 }
 
 /** Tags with AniList's genres added once; the source's own wording wins on duplicates. */
