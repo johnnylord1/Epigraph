@@ -132,6 +132,13 @@ describe("background lookup of the library", () => {
     // Kitsu recognised one work; the other waits for AniList.
     expect(progress).toHaveBeenLastCalledWith({ phase: "paused", total: 2, remaining: 1, matched: 1, uncertain: 0, missed: 0 });
 
+    // Asked again while AniList still fails, nothing moves and nothing is shown.
+    progress.mockClear();
+    resumeLibraryAniListLookup();
+    await vi.advanceTimersByTimeAsync(ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS + 60_000);
+    expect(aniList.lookUp).toHaveBeenCalledTimes(6);
+    expect(progress).not.toHaveBeenCalled();
+
     aniList.failing = false;
     aniList.lookUp.mockClear();
     resumeLibraryAniListLookup();

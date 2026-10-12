@@ -320,7 +320,12 @@ interface KitsuResource {
   id?: string;
   type?: string;
   attributes?: Record<string, unknown> | null;
-  relationships?: Record<string, { data?: Array<{ id?: string; type?: string }> | null } | null> | null;
+  relationships?: Record<string, { data?: KitsuReference[] | KitsuReference | null } | null> | null;
+}
+
+interface KitsuReference {
+  id?: string;
+  type?: string;
 }
 
 /**
@@ -330,9 +335,13 @@ interface KitsuResource {
 export function kitsuProfiles(payload: unknown): AniListMediaProfile[] {
   const body = (payload ?? {}) as { data?: KitsuResource[] | null; included?: KitsuResource[] | null };
   const included = new Map((body.included ?? []).map((item) => [`${item.type}:${item.id}`, item]));
-  const resources = (owner: KitsuResource, name: string) => (owner.relationships?.[name]?.data ?? [])
-    .map((ref) => included.get(`${ref.type}:${ref.id}`))
-    .filter((value): value is KitsuResource => Boolean(value));
+  const resources = (owner: KitsuResource, name: string) => {
+    // A to-one relationship (a staff entry's person) holds a single reference instead of a list.
+    const data = owner.relationships?.[name]?.data;
+    return (Array.isArray(data) ? data : data ? [data] : [])
+      .map((ref) => included.get(`${ref.type}:${ref.id}`))
+      .filter((value): value is KitsuResource => Boolean(value));
+  };
   const profiles: AniListMediaProfile[] = [];
   for (const item of body.data ?? []) {
     const attributes = item.attributes ?? {};

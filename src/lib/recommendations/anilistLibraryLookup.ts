@@ -99,7 +99,9 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
   // Works being looked up, each at the provider it waits for, and works waiting for a provider that is down.
   const active = new Map<string, ActiveWork<W>>();
   const blocked = new Map<string, W>();
-  let run: { total: number; matched: number; uncertain: number; missed: number; announced: boolean; reportedAt: number } | null = null;
+  let run: { total: number; matched: number; uncertain: number; missed: number; announced: boolean; quiet: boolean; reportedAt: number } | null = null;
+  // Set while the queue holds only works handed back by resume.
+  let resuming = false;
 
   function sync(works: readonly W[], onProgress?: AniListLibraryLookupListener) {
     if (onProgress) listener = onProgress;
@@ -119,12 +121,14 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
       added += 1;
     }
     seenKeys = keys;
+    if (added > 0) resuming = false;
     if (added > 0) scheduleStart(firstSync ? ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
     else if (run) pump();
   }
 
   function resume() {
     if (blocked.size === 0 && queue.size === 0) return;
+    if (queue.size === 0) resuming = true;
     for (const [key, work] of blocked) queue.set(key, work);
     blocked.clear();
     for (const [id, state] of health) {
@@ -146,6 +150,7 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
     active.clear();
     blocked.clear();
     health.clear();
+    resuming = false;
     chain = [];
     seenKeys = null;
     listener = null;
@@ -185,6 +190,8 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
 
     const works = new Map(queue);
     queue.clear();
+    const quiet = resuming;
+    resuming = false;
     let added = 0;
     for (const entry of plan.entries([...works.values()])) {
       const work = works.get(entry.key);
@@ -200,9 +207,10 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
       }
     }
     if (added > 0) {
-      run ??= { total: 0, matched: 0, uncertain: 0, missed: 0, announced: false, reportedAt: 0 };
+      run ??= { total: 0, matched: 0, uncertain: 0, missed: 0, announced: false, quiet, reportedAt: 0 };
       run.total += added;
-      if (!run.announced) {
+      if (!quiet) run.quiet = false;
+      if (!run.announced && !run.quiet) {
         run.announced = true;
         report("running", true);
       }
@@ -315,7 +323,14 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
   }
 
   function report(phase: AniListLibraryLookupProgress["phase"], force = false) {
-    if (!run?.announced) return;
+    if (!run) return;
+    if (!run.announced) {
+      // Works asked again after their providers stopped answering show up only once one answers, so a
+      // provider still down does not bring back the same progress on every visit.
+      if (!run.quiet || run.matched + run.uncertain + run.missed === 0) return;
+      run.announced = true;
+      force = true;
+    }
     const now = Date.now();
     if (!force && phase === "running" && now - run.reportedAt < PROGRESS_REPORT_MS) return;
     run.reportedAt = now;

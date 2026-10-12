@@ -40,7 +40,7 @@ const kitsuAnswer = {
     { id: "150", type: "categories", attributes: { title: "Action" } },
     { id: "m1", type: "mappings", attributes: { externalSite: "myanimelist/manga", externalId: "155555" } },
     { id: "m2", type: "mappings", attributes: { externalSite: "anilist/manga", externalId: "166666" } },
-    { id: "s1", type: "mediaStaff", attributes: {}, relationships: { person: { data: [{ type: "people", id: "p1" }] } } },
+    { id: "s1", type: "mediaStaff", attributes: {}, relationships: { person: { data: { type: "people", id: "p1" } } } },
     { id: "p1", type: "people", attributes: { name: "Guiltythree" } },
   ],
 };
