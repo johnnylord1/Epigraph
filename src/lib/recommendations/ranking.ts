@@ -29,6 +29,9 @@ const PROFILE_NEGATIVE_MAX = 0.35;
 const SECTION_NEGATIVE_MAX = 0.5;
 const NEGATIVE_WEIGHT_SCALE = 1.2;
 const MATCHED_TAG_MIN = 0.25;
+// Only a library this dominated by one comic format keeps the other formats out of the taste rows;
+// below it the rows follow the library's format mix.
+const COMIC_FORMAT_EXCLUSIVE_SHARE = 0.75;
 // Maximal Marginal Relevance (Carbonell & Goldstein): trade a little relevance
 // for fewer near-identical titles next to each other inside a row.
 const MMR_LAMBDA = 0.8;
@@ -580,7 +583,7 @@ function matchesDominantComicFormat(item: RecommendationItem, profile: TasteProf
   if (!isComicContentType(item.candidate.contentType)) return true;
   const dominant = dominantComicContentType(profile);
   if (!dominant || dominant.contentType === "manga") return true;
-  if (dominant.share < 0.48) return true;
+  if (dominant.share < COMIC_FORMAT_EXCLUSIVE_SHARE) return true;
   return item.candidate.contentType === dominant.contentType;
 }
 
@@ -589,7 +592,7 @@ function fitsProfileComicFormat(item: RecommendationItem, profile: TasteProfile)
   const distribution = comicContentTypeDistribution(profile);
   if (distribution.total <= 0) return true;
   const dominant = dominantComicContentType(profile);
-  if (!dominant || dominant.share < 0.48) return true;
+  if (!dominant || dominant.share < COMIC_FORMAT_EXCLUSIVE_SHARE) return true;
   if (dominant.contentType === "manga") return true;
   if (item.candidate.contentType === dominant.contentType) return true;
   const share = distribution.shares.get(item.candidate.contentType) ?? 0;
@@ -623,6 +626,11 @@ function comicContentTypeDistribution(profile: TasteProfile): {
   };
 }
 
+/**
+ * Lays a row out in the library's comic format proportions, interleaved so every visible window
+ * shows the mix: a manhwa-heavy library sees manhwa in the first cards, not after a block of manga.
+ * Each format keeps its own ranking order; the next slot goes to the format furthest behind its share.
+ */
 function applyProfileComicMix(
   items: RecommendationItem[],
   profile: TasteProfile | undefined,
@@ -630,8 +638,7 @@ function applyProfileComicMix(
 ): RecommendationItem[] {
   if (!profile || limit <= 0) return items;
   const distribution = comicContentTypeDistribution(profile);
-  const dominant = dominantComicContentType(profile);
-  if (!dominant || distribution.total <= 0 || dominant.share < 0.48) return items;
+  if (distribution.total <= 0) return items;
 
   const comicTypes = ["manga", "manhwa", "manhua"] as const;
   const buckets = new Map<"manga" | "manhwa" | "manhua", RecommendationItem[]>();
@@ -641,31 +648,32 @@ function applyProfileComicMix(
       buckets.get(item.candidate.contentType)?.push(item);
     }
   }
-  if ((buckets.get(dominant.contentType)?.length ?? 0) === 0) return items;
-
-  const targets = new Map<"manga" | "manhwa" | "manhua", number>();
-  for (const type of comicTypes) {
-    const share = distribution.shares.get(type) ?? 0;
-    const dominantTarget = Math.ceil(limit * Math.min(0.9, Math.max(0.62, dominant.share)));
-    targets.set(type, type === dominant.contentType ? dominantTarget : Math.round(limit * share));
-  }
+  const order = new Map(items.map((item, index) => [item, index]));
 
   const result: RecommendationItem[] = [];
   const used = new Set<string>();
-  const take = (type: "manga" | "manhwa" | "manhua", count: number) => {
-    const bucket = buckets.get(type) ?? [];
-    while (count > 0 && bucket.length > 0 && result.length < limit) {
-      const next = bucket.shift()!;
-      if (used.has(next.candidate.id)) continue;
-      used.add(next.candidate.id);
-      result.push(next);
-      count -= 1;
+  const taken = new Map<"manga" | "manhwa" | "manhua", number>(comicTypes.map((type) => [type, 0]));
+  while (result.length < limit) {
+    let next: "manga" | "manhwa" | "manhua" | null = null;
+    let nextDeficit = -Infinity;
+    for (const type of comicTypes) {
+      const bucket = buckets.get(type)!;
+      while (bucket.length > 0 && used.has(bucket[0].candidate.id)) bucket.shift();
+      const share = distribution.shares.get(type) ?? 0;
+      if (bucket.length === 0 || share <= 0) continue;
+      const deficit = (share * (result.length + 1)) - taken.get(type)!;
+      const ahead = next !== null && deficit === nextDeficit
+        && order.get(bucket[0])! < order.get(buckets.get(next)![0])!;
+      if (deficit > nextDeficit || ahead) {
+        next = type;
+        nextDeficit = deficit;
+      }
     }
-  };
-
-  take(dominant.contentType, targets.get(dominant.contentType) ?? 0);
-  for (const type of comicTypes) {
-    if (type !== dominant.contentType) take(type, targets.get(type) ?? 0);
+    if (!next) break;
+    const item = buckets.get(next)!.shift()!;
+    used.add(item.candidate.id);
+    taken.set(next, taken.get(next)! + 1);
+    result.push(item);
   }
 
   for (const item of items) {
@@ -704,7 +712,7 @@ function outsideUsualEligibility(item: RecommendationItem, profile: TasteProfile
   if (hasTopicalTags(item)) return true;
   if (!isComicContentType(item.candidate.contentType)) return false;
   const dominant = dominantComicContentType(profile);
-  if (!dominant || dominant.share < 0.48) return false;
+  if (!dominant || dominant.share < COMIC_FORMAT_EXCLUSIVE_SHARE) return false;
   return item.candidate.contentType !== dominant.contentType
     && contentTypeFitScore(item, profile) <= 0.35
     && item.breakdown.sourceAvailability >= 0.45;

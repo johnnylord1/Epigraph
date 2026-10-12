@@ -937,6 +937,56 @@ describe("recommendation sections", () => {
     expect(freshTop.filter((item) => item.candidate.contentType === "manhwa").length).toBeGreaterThanOrEqual(16);
   });
 
+  it("interleaves comic formats by the library mix instead of stacking one format first", () => {
+    const mixedProfile = buildTasteProfile([
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: `manhwa-seed-${index}`,
+        title: `Manhwa Seed ${index}`,
+        tags: ["Action", "Fantasy"],
+        contentType: "manhwa" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      })),
+      ...Array.from({ length: 4 }, (_, index) => ({
+        id: `manga-seed-${index}`,
+        title: `Manga Seed ${index}`,
+        tags: ["Action", "Fantasy"],
+        contentType: "manga" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      })),
+    ]);
+    const tracked = (id: string, contentType: RecommendationCandidate["contentType"], score: number) =>
+      candidate(id, {
+        title: id,
+        tags: ["Action", "Fantasy"],
+        contentType,
+        providers: [{
+          providerId: "anilist",
+          providerName: "AniList",
+          kind: "tracker",
+          score: normalizeScore(score, 100, 0.9),
+          trending: normalizeScore(score, 100, 0.8),
+        }],
+      });
+    // Global trackers rank Japanese titles higher, which used to fill the first cards with manga.
+    const candidates = [
+      ...Array.from({ length: 30 }, (_, index) => tracked(`manga-${index}`, "manga", 95 - (index % 5))),
+      ...Array.from({ length: 30 }, (_, index) => tracked(`manhwa-${index}`, "manhwa", 75 - (index % 5))),
+    ];
+
+    const sections = buildRecommendationSections(candidates, mixedProfile, { nowMs: NOW, limitPerSection: 20 });
+    for (const key of ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const) {
+      const items = sections.find((section) => section.key === key)?.items ?? [];
+      const formats = items.slice(0, 10).map((item) => item.candidate.contentType);
+      expect(items.length, key).toBeGreaterThan(0);
+      expect(formats[0], key).toBe("manhwa");
+      expect(formats.slice(0, 5).filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(2);
+      expect(formats.slice(0, 5).filter((format) => format === "manga").length, key).toBeGreaterThanOrEqual(1);
+      expect(formats.filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(5);
+    }
+  });
+
   it("allows sparse source comics into outside reads when their format differs from the dominant profile", () => {
     const sparseManga = Array.from({ length: 24 }, (_, index) =>
       candidate(`sparse-manga-${index}`, {

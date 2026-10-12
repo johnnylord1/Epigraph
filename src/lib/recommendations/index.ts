@@ -1,4 +1,5 @@
 export * from "./adapters";
+export * from "./comicOrigin";
 export * from "./engine";
 export * from "./identity";
 export * from "./normalization";

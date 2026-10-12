@@ -46,7 +46,10 @@
   } from "../../lib/novels/hardcover";
   import {
     buildSearchRecommendations,
+    comicOriginKey,
+    comicTypeFromCountry,
     dedupeRecommendationItems,
+    fetchAniListCountries,
     inferMangaRecommendationContentType,
     mangaToRecommendationCandidate,
     novelSourceResultToRecommendationCandidate,
@@ -54,6 +57,7 @@
     recommendationTrackerRemoteKey,
     trackRecordSeedStatus,
     trackerSeedsOutsideLibrary,
+    type ComicContentType,
     type RecommendationCandidate,
     type RecommendationItem,
     type RecommendationProviderSignal,
@@ -272,7 +276,8 @@
   const SEARCH_RECOMMENDATION_PER_SOURCE_CAP = 60;
   const SEARCH_RECOMMENDATION_MANGA_SEED_CAP = 240;
   const SEARCH_RECOMMENDATION_NOVEL_SEED_CAP = 180;
-  const SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP = 120;
+  // Two trending pages per tracker plus AniList's Korean and Chinese pages.
+  const SEARCH_RECOMMENDATION_PROVIDER_RESULT_CAP = 168;
   const SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS = 160;
   const SEARCH_RECOMMENDATION_DUPLICATE_PAGE_RETRY_LIMIT = 18;
   const SEARCH_RECOMMENDATION_MANGA_AUTOFILL_DUPLICATE_RETRY_LIMIT = 3;
@@ -677,6 +682,8 @@
   // libraryMangaId: set when the tracked work is in the library, which already seeds the profile.
   let searchTrackerSeedItems: Array<TasteProfileSeedItem & { libraryMangaId?: number }> = $state([]);
   let searchTrackRecordsLoading = $state(false);
+  // Country-of-origin format per tracker entry ("trackerId:remoteId"), from AniList.
+  let searchComicOrigins: Map<string, ComicContentType> = $state(new Map());
   let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
   let searchSourceSeedResults: Manga[] = $state([]);
   let searchFreshSourceSeedResults: Manga[] = $state([]);
@@ -1250,6 +1257,7 @@
           }>;
         };
       }>(GET_ALL_TRACKER_RECORDS);
+      const comicOrigins = await resolveSearchComicOrigins(data.trackers.nodes ?? []);
 
       const byMangaId = new Map<number, TrackRecord[]>();
       const candidateByMangaId = new Map<number, RecommendationCandidate>();
@@ -1268,7 +1276,7 @@
           };
           allRecords.push(normalizedRecord);
           trackerSeeds.push({
-            ...trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker),
+            ...trackRecordToTasteProfileSeed(normalizedRecord, record.manga ?? null, tracker, comicOrigins),
             libraryMangaId: record.manga?.inLibrary ? record.manga.id : undefined,
           });
 
@@ -1280,16 +1288,18 @@
 
           const manga = record.manga;
           if (manga && !manga.inLibrary) {
-            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, manga, tracker));
+            candidateByMangaId.set(mangaId, trackerRecordToRecommendationCandidate(normalizedRecord, manga, tracker, comicOrigins));
           }
         }
       }
+      searchComicOrigins = comicOrigins;
       searchTrackRecordsByMangaId = byMangaId;
       searchTrackRecords = allRecords;
       searchTrackerSeedItems = trackerSeeds;
       searchTrackerRecordCandidates = [...candidateByMangaId.values()];
     } catch (error) {
       console.error(error);
+      searchComicOrigins = new Map();
       searchTrackRecordsByMangaId = new Map();
       searchTrackRecords = [];
       searchTrackerSeedItems = [];
@@ -1297,6 +1307,39 @@
     } finally {
       searchTrackRecordsLoading = false;
     }
+  }
+
+  /**
+   * Formats from AniList's country of origin for the tracked works. Sources and tags alone call most
+   * aggregator manhwa "manga", which skewed the taste profile toward Japanese titles. Cached ids
+   * resolve instantly; new ones get a short budget so the rows are never held back for long.
+   */
+  async function resolveSearchComicOrigins(
+    trackers: Array<BrowseTrackerEntry & { trackRecords?: { nodes: TrackRecord[] } }>,
+  ): Promise<Map<string, ComicContentType>> {
+    const entries: Array<{ key: string; anilistId: number }> = [];
+    for (const tracker of trackers) {
+      if (trackerProviderKind(tracker) !== "anilist") continue;
+      for (const record of tracker.trackRecords?.nodes ?? []) {
+        const anilistId = Number(record.remoteId);
+        if (!Number.isInteger(anilistId) || anilistId <= 0) continue;
+        entries.push({ key: comicOriginKey(record.trackerId ?? tracker.id, record.remoteId), anilistId });
+      }
+    }
+    const origins = new Map<string, ComicContentType>();
+    if (entries.length === 0) return origins;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+      const countries = await fetchAniListCountries(entries.map((entry) => entry.anilistId), { signal: controller.signal });
+      for (const entry of entries) {
+        const type = comicTypeFromCountry(countries.get(entry.anilistId));
+        if (type) origins.set(entry.key, type);
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+    return origins;
   }
 
   async function refreshSearchHardcoverRecords() {
@@ -1975,6 +2018,7 @@
       trackerResults: dedupeTrackSearches([...searchTrackerTrendingResults, ...trackerCatalogResults, ...searchTrackerScoreResults]),
       trackers: allTrackers,
       trackRecordsByMangaId: searchTrackRecordsByMangaId,
+      comicOrigins: searchComicOrigins,
       extraCandidates: searchHasLiveMangaRecommendationData
         ? [...searchTrackerRecordCandidates, ...searchFreshSourceMangaCandidates]
         : [],
@@ -2279,6 +2323,7 @@
     record: TrackRecord,
     manga: Manga,
     tracker: BrowseTrackerEntry,
+    comicOrigins?: ReadonlyMap<string, ComicContentType>,
   ): RecommendationCandidate {
     const scoreMax = record.score > 10 ? 100 : 10;
     const normalizedScore = scoreMax > 0 ? Math.max(0, Math.min(1, record.score / scoreMax)) : 0;
@@ -2290,7 +2335,8 @@
       coverUrl: manga.thumbnailUrl,
       alternativeTitles: record.title && record.title !== manga.title ? [record.title] : [],
       tags: manga.genre ?? [],
-      contentType: inferMangaRecommendationContentType(manga, record.title),
+      contentType: comicOrigins?.get(comicOriginKey(record.trackerId, record.remoteId))
+        ?? inferMangaRecommendationContentType(manga, record.title),
       status: manga.status ?? null,
       inLibrary: false,
       safety: inferRecommendationSafety(manga.genre ?? []),
@@ -2318,12 +2364,14 @@
     record: TrackRecord,
     manga: Manga | null | undefined,
     tracker: BrowseTrackerEntry,
+    comicOrigins?: ReadonlyMap<string, ComicContentType>,
   ): TasteProfileSeedItem {
     return {
       id: `tracker:${record.trackerId}:${record.remoteId || record.id}`,
       title: manga?.title || record.title,
       tags: manga?.genre ?? [],
-      contentType: inferMangaRecommendationContentType(manga, record.title),
+      contentType: comicOrigins?.get(comicOriginKey(record.trackerId, record.remoteId))
+        ?? inferMangaRecommendationContentType(manga, record.title),
       sourceId: `tracker:${tracker.id}`,
       userRating: record.score > 0 ? record.score : null,
       userRatingMax: record.score > 10 ? 100 : 10,
@@ -4234,12 +4282,13 @@
     return items.map((item) => mapMalMediaToTrackSearch(item, tracker));
   }
 
-  async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number) {
+  async function fetchSearchTrendingAniListCatalog(tracker: BrowseTrackerEntry, page: number, country?: "KR" | "CN") {
     const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const countryFilter = country ? `, countryOfOrigin: ${country}` : "";
     const query = `
       query SearchTrendingTrackerCatalog($page: Int!, $perPage: Int!) {
         Page(page: $page, perPage: $perPage) {
-          media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC]${adultFilter}) {
+          media(type: MANGA, sort: [TRENDING_DESC, POPULARITY_DESC]${adultFilter}${countryFilter}) {
             id
             title { romaji english native }
             coverImage { large extraLarge }
@@ -4720,6 +4769,12 @@
       const requests = usableTrackers.flatMap((tracker) => [
         fetchSearchTrendingTrackerCatalog(tracker, 1).catch(() => [] as TrackSearch[]),
         fetchSearchTrendingTrackerCatalog(tracker, 2).catch(() => [] as TrackSearch[]),
+        // Global trending is almost all Japanese; Korean and Chinese pages give manhwa and manhua
+        // readers candidates in their own formats.
+        ...(trackerProviderKind(tracker) === "anilist"
+          ? (["KR", "CN"] as const).map((country) =>
+            fetchSearchTrendingAniListCatalog(tracker, 1, country).catch(() => [] as TrackSearch[]))
+          : []),
       ]);
       const results = (await Promise.all(requests)).flat();
       if (searchTrackerTrendingKey !== key) return;

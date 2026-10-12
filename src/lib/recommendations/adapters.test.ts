@@ -36,6 +36,20 @@ describe("recommendation adapters", () => {
     expect(seed.implicitWeight).toBeGreaterThan(0.4);
   });
 
+  it("takes the comic format from the tracked work's country over aggregator guesses", () => {
+    const manga = createManga({
+      id: 45,
+      title: "Black Card",
+      source: { id: "kakalot", name: "Mangakakalot", displayName: "Mangakakalot (EN)", lang: "en" },
+    });
+    const records = new Map([[45, [createTrackRecord({ trackerId: 2, remoteId: "1234" })]]]);
+    const comicOrigins = new Map([["2:1234", "manhwa" as const]]);
+
+    expect(mangaToTasteProfileSeed(manga, { trackRecordsByMangaId: records }).contentType).toBe("manga");
+    expect(mangaToTasteProfileSeed(manga, { trackRecordsByMangaId: records, comicOrigins }).contentType).toBe("manhwa");
+    expect(mangaToRecommendationCandidate(manga, { trackRecordsByMangaId: records, comicOrigins }).contentType).toBe("manhwa");
+  });
+
   it("uses genre heuristics when inferring comic format", () => {
     const seed = mangaToTasteProfileSeed(createManga({
       id: 43,

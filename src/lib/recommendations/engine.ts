@@ -11,6 +11,7 @@ import {
   novelToTasteProfileSeed,
   trackerSearchToRecommendationCandidate,
 } from "./adapters";
+import type { ComicOriginsByTrackerEntry } from "./comicOrigin";
 import { buildRecommendationSections } from "./ranking";
 import { buildTasteProfile } from "./tasteProfile";
 import type {
@@ -29,6 +30,8 @@ export interface SearchRecommendationInput {
   trackerResults?: TrackSearch[];
   trackers?: Tracker[];
   trackRecordsByMangaId?: Map<number, TrackRecord[]>;
+  /** Country-of-origin formats for tracker entries; outranks source and tag guesses. */
+  comicOrigins?: ComicOriginsByTrackerEntry;
   progressByBookId?: Map<string, BookProgress>;
   tagsByBookId?: Map<string, string[]>;
   extraCandidates?: RecommendationCandidate[];
@@ -56,6 +59,7 @@ export function buildSearchRecommendations(
     trackerNameById,
     trackerIconById,
     nowMs: options.nowMs,
+    comicOrigins: input.comicOrigins,
   };
 
   const seeds = [
@@ -63,6 +67,7 @@ export function buildSearchRecommendations(
       mangaToTasteProfileSeed(manga, {
         trackRecordsByMangaId: input.trackRecordsByMangaId,
         trackerStatusNamesById,
+        comicOrigins: input.comicOrigins,
       }),
     ),
     ...(input.libraryNovels ?? []).map(novelToTasteProfileSeed),

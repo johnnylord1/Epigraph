@@ -2,6 +2,7 @@ import type { Manga, TrackRecord, TrackSearch } from "../types";
 import type { BookEntry, BookProgress } from "../books/types";
 import type { InstalledNovelSourceDescriptor, NovelSourceSearchResult, PersistedNovelLibraryEntry } from "../novels/domain";
 import { normalizeLogCount, normalizeRank, normalizeRecency, normalizeScore } from "./normalization";
+import { comicOriginForRecords, type ComicOriginsByTrackerEntry } from "./comicOrigin";
 import { recommendationCandidateIdentityKeys } from "./identity";
 import type {
   RecommendationCandidate,
@@ -15,6 +16,7 @@ export interface MangaLibrarySeedOptions {
   trackRecordsByMangaId?: Map<number, TrackRecord[]>;
   /** trackerId -> status value -> tracker status name ("Dropped", "Plan to Read", ...). */
   trackerStatusNamesById?: Map<number, Map<number, string>>;
+  comicOrigins?: ComicOriginsByTrackerEntry;
 }
 
 export interface MangaCandidateOptions {
@@ -24,6 +26,7 @@ export interface MangaCandidateOptions {
   trackRecordsByMangaId?: Map<number, TrackRecord[]>;
   trackerNameById?: Map<number, string>;
   trackerIconById?: Map<number, string>;
+  comicOrigins?: ComicOriginsByTrackerEntry;
 }
 
 export interface TrackerCandidateOptions {
@@ -50,7 +53,7 @@ export function mangaToTasteProfileSeed(
     id: `manga:${manga.id}`,
     title: manga.title,
     tags: manga.genre ?? [],
-    contentType: inferMangaContentType(manga),
+    contentType: comicOriginForRecords(records, options.comicOrigins) ?? inferMangaContentType(manga),
     sourceId: manga.source?.id ?? null,
     userRating: bestRecord?.score ?? null,
     userRatingMax: inferTrackRecordScoreMax(bestRecord),
@@ -107,7 +110,7 @@ export function mangaToRecommendationCandidate(
     title: manga.title,
     coverUrl: manga.thumbnailUrl,
     tags: manga.genre ?? [],
-    contentType: inferMangaContentType(manga),
+    contentType: comicOriginForRecords(records, options.comicOrigins) ?? inferMangaContentType(manga),
     status: manga.status ?? null,
     inLibrary: manga.inLibrary,
     safety: inferSafetyLevel(manga.genre ?? []),
