@@ -6,6 +6,7 @@ import {
   cachedAniListTitleCandidate,
   cachedAniListTitleMatch,
   fetchAniListMediaProfiles,
+  fetchAniListMediaProfilesByMalId,
   judgeTitleMatch,
   matchAniListTitles,
   pendingAniListTitleCount,
@@ -303,6 +304,24 @@ describe("AniList media profiles", () => {
       mainTitles: ["Work 1"],
     });
     expect(first.get(3)).toBeNull();
+    expect(second).toEqual(first);
+  });
+
+  it("reads a MyAnimeList entry as its AniList work, asking once for ids it does not know", async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const { variables } = JSON.parse(String(init?.body)) as { variables: { ids: number[] } };
+      return new Response(JSON.stringify({
+        data: { Page: { media: variables.ids.filter((id) => id !== 1003).map((id) => media(id - 1000, `Work ${id - 1000}`)) } },
+      }), { status: 200 });
+    });
+    const options = { fetchImpl: fetchImpl as unknown as typeof fetch };
+
+    const first = await fetchAniListMediaProfilesByMalId([1001, 1003], options);
+    const second = await fetchAniListMediaProfilesByMalId([1001, 1003], options);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(first.get(1001)).toMatchObject({ id: 1, idMal: 1001, titles: ["Work 1"] });
+    expect(first.get(1003)).toBeNull();
     expect(second).toEqual(first);
   });
 

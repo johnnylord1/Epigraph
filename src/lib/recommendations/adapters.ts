@@ -602,8 +602,9 @@ function inferBookImplicitWeight(book: BookEntry, progress: BookProgress | undef
   return 0.45;
 }
 
+// A book's genres come from its file and from the catalogue it was recognised on, like a manga's.
 function bookToRecommendationTags(book: BookEntry, explicitTags: string[] = []): string[] {
-  const tags = explicitTags.length > 0 ? explicitTags : [];
+  const tags = explicitTags.length > 0 ? explicitTags : book.genres ?? [];
   return [...new Set([...tags, "book", book.subtype])];
 }
 

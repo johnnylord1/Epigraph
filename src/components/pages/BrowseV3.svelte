@@ -53,6 +53,9 @@
     type HardcoverBookSearchResult,
     type HardcoverNovelTrackRecord,
   } from "../../lib/novels/hardcover";
+  import { loadNativeTrackedNovels, TRACKING_PROVIDER_STATE_EVENTS } from "../../lib/tracking/providerInventory";
+  import { findTrackedNovel } from "../../lib/tracking/trackedNovels";
+  import type { TrackedOpinion } from "../../lib/recommendations/engine";
   import {
     buildSearchRecommendations,
     comicOriginKey,
@@ -62,6 +65,7 @@
     aniListTitleMatchKey,
     explorationGenres,
     fetchAniListMediaProfiles,
+    fetchAniListMediaProfilesByMalId,
     inferMangaRecommendationContentType,
     withAniListGenres,
     mangaToRecommendationCandidate,
@@ -742,6 +746,9 @@
   let searchHardcoverScoreKey = $state("");
   let searchHardcoverScoreRun = 0;
   let searchKitsuNovelScoreResults: Map<string, RecommendationProviderSignal> = $state(new Map());
+  // Genres of the source novels Kitsu recognised, by title key: the catalogue's genres stand in for the
+  // ones a source does not list, the way AniList's do for comics.
+  let searchKitsuNovelTagsByTitleKey: Map<string, string[]> = $state(new Map());
   let searchKitsuNovelDiscoveryResults: RecommendationCandidate[] = $state([]);
   let searchKitsuNovelLoading = $state(false);
   let searchKitsuNovelKey = $state("");
@@ -898,6 +905,7 @@
     searchHardcoverDiscoveryResults = [];
     searchHardcoverScoreResults = new Map();
     searchKitsuNovelScoreResults = new Map();
+    searchKitsuNovelTagsByTitleKey = new Map();
     searchKitsuNovelDiscoveryResults = [];
     searchKitsuNovelKey = "";
     searchNovelDetailTagsByKey = new Map();
@@ -969,6 +977,7 @@
     searchHardcoverDiscoveryResults = [];
     searchHardcoverScoreResults = new Map();
     searchKitsuNovelScoreResults = new Map();
+    searchKitsuNovelTagsByTitleKey = new Map();
     searchKitsuNovelDiscoveryResults = [];
     searchKitsuNovelKey = "";
     searchNovelDetailTagsByKey = new Map();
@@ -1388,29 +1397,35 @@
   /**
    * AniList profiles of the tracked works: the country of origin (sources and tags alone call most
    * aggregator manhwa "manga"), the standard genres (many sources list none) and every title the
-   * work goes by. Cached ids resolve instantly; new ones get a short budget so the rows are never
-   * held back for long.
+   * work goes by. A tracked work is the one the user picked, so its profile is certain: AniList
+   * entries by their id, MyAnimeList entries by the AniList entry linked to them. Cached ids resolve
+   * instantly; new ones get a short budget so the rows are never held back for long.
    */
   async function resolveSearchAniListProfiles(
     trackers: Array<BrowseTrackerEntry & { trackRecords?: { nodes: TrackRecord[] } }>,
   ): Promise<Map<string, AniListMediaProfile>> {
-    const entries: Array<{ key: string; anilistId: number }> = [];
+    const entries: Array<{ key: string; id: number; kind: "anilist" | "mal" }> = [];
     for (const tracker of trackers) {
-      if (trackerProviderKind(tracker) !== "anilist") continue;
+      const kind = trackerProviderKind(tracker);
+      if (kind === "generic") continue;
       for (const record of tracker.trackRecords?.nodes ?? []) {
-        const anilistId = Number(record.remoteId);
-        if (!Number.isInteger(anilistId) || anilistId <= 0) continue;
-        entries.push({ key: comicOriginKey(record.trackerId ?? tracker.id, record.remoteId), anilistId });
+        const id = Number(record.remoteId);
+        if (!Number.isInteger(id) || id <= 0) continue;
+        entries.push({ key: comicOriginKey(record.trackerId ?? tracker.id, record.remoteId), id, kind });
       }
     }
     const profiles = new Map<string, AniListMediaProfile>();
     if (entries.length === 0) return profiles;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
+    const idsOf = (kind: "anilist" | "mal") => entries.filter((entry) => entry.kind === kind).map((entry) => entry.id);
     try {
-      const byId = await fetchAniListMediaProfiles(entries.map((entry) => entry.anilistId), { signal: controller.signal });
+      const [byAniListId, byMalId] = await Promise.all([
+        fetchAniListMediaProfiles(idsOf("anilist"), { signal: controller.signal }),
+        fetchAniListMediaProfilesByMalId(idsOf("mal"), { signal: controller.signal }),
+      ]);
       for (const entry of entries) {
-        const profile = byId.get(entry.anilistId);
+        const profile = (entry.kind === "anilist" ? byAniListId : byMalId).get(entry.id);
         if (profile) profiles.set(entry.key, profile);
       }
     } finally {
@@ -1821,7 +1836,10 @@
       const titleKey = recommendationTitleKey(result.title, "novel");
       const trackerProviders = [searchHardcoverProviderByTitleKey.get(titleKey), searchKitsuNovelScoreResults.get(titleKey)]
         .filter((provider): provider is RecommendationProviderSignal => Boolean(provider));
-      const detailTags = searchNovelDetailTagsByKey.get(novelSourceResultKey(result)) ?? [];
+      const detailTags = [
+        ...(searchNovelDetailTagsByKey.get(novelSourceResultKey(result)) ?? []),
+        ...(searchKitsuNovelTagsByTitleKey.get(titleKey) ?? []),
+      ];
       const detailUpdatedAtMs = searchNovelDetailUpdatedAtByKey.get(novelSourceResultKey(result));
       return {
         ...candidate,
@@ -1837,20 +1855,63 @@
     searchHardcoverRecords.map(hardcoverRecordToRecommendationCandidate),
   );
 
-  const searchHardcoverSeedItems = $derived.by(() =>
-    searchHardcoverRecords.map(hardcoverRecordToTasteProfileSeed),
-  );
-
   const searchBookProgressById = $derived.by(() =>
     new Map((store.bookProgress ?? []).map((progress) => [progress.bookId, progress])),
   );
 
-  // Library novels and books the background analysis recognised for certain (on Kitsu, Open Library or
-  // Hardcover): their genres shape the recommendations and their other names and ids are known.
+  // Every novel the user tracks, from each native novel tracker; re-read whenever a tracker's state
+  // changes, so a work tracked from its page counts at once.
+  let trackingProviderVersion = $state(0);
+  $effect(() => {
+    const handleTrackingProviderStateChanged = () => {
+      trackingProviderVersion += 1;
+    };
+    for (const eventName of TRACKING_PROVIDER_STATE_EVENTS) {
+      window.addEventListener(eventName, handleTrackingProviderStateChanged);
+    }
+    return () => {
+      for (const eventName of TRACKING_PROVIDER_STATE_EVENTS) {
+        window.removeEventListener(eventName, handleTrackingProviderStateChanged);
+      }
+    };
+  });
+  const searchTrackedNovels = $derived.by(() => {
+    void searchHardcoverRecords;
+    void trackingProviderVersion;
+    return loadNativeTrackedNovels(hardcoverScopeInput());
+  });
+
+  // Library novels and books recognised for certain: tracked ones by the entry the user picked on the
+  // tracker, the rest by the background analysis (on Kitsu, Open Library or Hardcover). Their genres
+  // shape the recommendations and their other names and ids are known.
   const searchRecognisedNovels = $derived.by(() => {
-    const novels = (novelLibraryState?.entries ?? []).map((entry) => ({ entry, profile: cachedLibraryTitleMatch(entry.title, "novel") }));
-    const books = (Array.isArray(store.books) ? store.books : []).map((book) => ({ book, profile: cachedLibraryTitleMatch(book.title, "novel") }));
+    const novels = (novelLibraryState?.entries ?? []).map((entry) => {
+      const tracked = findTrackedNovel(searchTrackedNovels, { novelId: entry.id, title: entry.title });
+      return { entry, tracked, profile: tracked?.profile ?? cachedLibraryTitleMatch(entry.title, "novel") };
+    });
+    const books = (Array.isArray(store.books) ? store.books : []).map((book) => {
+      const tracked = findTrackedNovel(searchTrackedNovels, { novelId: book.id, title: book.title });
+      return { book, tracked, profile: tracked?.profile ?? cachedLibraryTitleMatch(book.title, "novel") };
+    });
     return { novels, books };
+  });
+  // The user's rating and status on the tracker are their opinion of the library work they tracked.
+  const searchTrackedOpinions = $derived.by(() => {
+    const opinions = new Map<string, TrackedOpinion>();
+    for (const { entry, tracked } of searchRecognisedNovels.novels) {
+      if (tracked) opinions.set(`novel:${entry.id}`, tracked);
+    }
+    for (const { book, tracked } of searchRecognisedNovels.books) {
+      if (tracked) opinions.set(`book:${book.id}`, tracked);
+    }
+    return opinions;
+  });
+  // Tracker seeds of works outside the library; a tracked library work is already seeded as itself.
+  const searchHardcoverSeedItems = $derived.by(() => {
+    const linked = new Set([...searchRecognisedNovels.novels, ...searchRecognisedNovels.books]
+      .map(({ tracked }) => tracked?.key)
+      .filter(Boolean));
+    return searchHardcoverRecords.map(hardcoverRecordToTasteProfileSeed).filter((seed) => !linked.has(seed.id));
   });
   const searchLibraryNovelsWithGenres = $derived(searchRecognisedNovels.novels.map(({ entry, profile }) =>
     profile ? { ...entry, tags: withAniListGenres(entry.tags, profile) } : entry));
@@ -1865,6 +1926,7 @@
     libraryNovels: searchLibraryNovelsWithGenres,
     libraryBooks: searchLibraryBooksWithGenres,
     progressByBookId: searchBookProgressById,
+    trackedOpinions: searchTrackedOpinions,
     extraSeeds: searchHardcoverSeedItems,
   }, {
     includeInLibrary: true,
@@ -2078,7 +2140,7 @@
     return searchTrackerScoreKey === searchTrackerScoreExpectedKey && !searchTrackerScoreLoading;
   });
 
-  // AniList profile per manga id: its AniList tracker entry first, a title match otherwise.
+  // AniList profile per manga id: its tracked entry (AniList or MyAnimeList) first, a title match otherwise.
   const searchAniListByMangaId = $derived.by(() => {
     const byMangaId = new Map<number, AniListMediaProfile>(searchAniListTitleMatches);
     for (const [mangaId, records] of searchTrackRecordsByMangaId) {
@@ -2248,6 +2310,7 @@
         libraryNovels: searchLibraryNovelsWithGenres,
         libraryBooks: searchLibraryBooksWithGenres,
         progressByBookId: searchBookProgressById,
+        trackedOpinions: searchTrackedOpinions,
         extraCandidates: searchHasLiveNovelRecommendationData
           ? [...searchNovelSourceCandidates, ...searchKitsuNovelDiscoveryResults, ...searchHardcoverDiscoveryResults, ...searchHardcoverCandidateResults]
           : [],
@@ -5062,6 +5125,7 @@
     searchKitsuNovelAbortCtrl = ctrl;
     const options = { signal: ctrl.signal };
     const providers = new Map<string, RecommendationProviderSignal>();
+    const categories = new Map<string, string[]>();
     const discovered = new Map<number, RecommendationCandidate>();
     try {
       // Ratings first: they weigh the source novels already on screen.
@@ -5075,13 +5139,16 @@
           );
           const match = matchKitsuNovel(searchTitle, novels);
           if (match) {
-            providers.set(recommendationTitleKey(title, "novel"), kitsuNovelToProvider(match));
+            const titleKey = recommendationTitleKey(title, "novel");
+            providers.set(titleKey, kitsuNovelToProvider(match));
+            if (match.categories.length > 0) categories.set(titleKey, match.categories);
             return;
           }
         }
       }, ctrl.signal);
       if (!current()) return;
       searchKitsuNovelScoreResults = capProviderSignalMap(providers);
+      searchKitsuNovelTagsByTitleKey = new Map([...categories].filter(([titleKey]) => searchKitsuNovelScoreResults.has(titleKey)));
 
       const feeds = [
         ...tasteCategories.map((category) => ({ category, limit: KITSU_NOVEL_TASTE_PER_CATEGORY })),

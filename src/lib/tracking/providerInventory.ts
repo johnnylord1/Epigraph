@@ -1,6 +1,7 @@
 import type { Tracker } from "../types";
-import { loadHardcoverState } from "../novels/hardcover";
+import { hardcoverRecordToTrackedNovel, loadHardcoverState } from "../novels/hardcover";
 import type { NovelRepositoryScopeInput } from "../novels/repositoryState";
+import type { TrackedNovel } from "./trackedNovels";
 
 export type TrackingProviderOrigin = "suwayomi" | "native" | "combined";
 
@@ -17,15 +18,19 @@ interface NativeTrackingProviderDefinition {
   name: string;
   stateEvents: readonly string[];
   resolveConnected(scope: NovelRepositoryScopeInput): boolean;
+  /** The novels and books tracked on it, which recognition and recommendations take as certain. */
+  trackedNovels(scope: NovelRepositoryScopeInput): TrackedNovel[];
 }
 
-// Native integrations register here once. Suwayomi trackers remain fully dynamic.
+// Native integrations register here once, and their tracked works then reach recognition,
+// recommendations and the home page. Suwayomi trackers remain fully dynamic.
 const NATIVE_TRACKING_PROVIDER_REGISTRY: readonly NativeTrackingProviderDefinition[] = [
   {
     id: "hardcover",
     name: "Hardcover",
     stateEvents: ["epigraph-hardcover-state-changed"],
     resolveConnected: (scope) => loadHardcoverState(scope).auth.connected,
+    trackedNovels: (scope) => loadHardcoverState(scope).records.map(hardcoverRecordToTrackedNovel),
   },
 ];
 
@@ -93,14 +98,21 @@ export function loadTrackingProviderInventory(
   return buildTrackingProviderInventory(serverTrackers, nativeProviders);
 }
 
+/** Every novel and book tracked on the native trackers. */
+export function loadNativeTrackedNovels(scope: NovelRepositoryScopeInput = {}): TrackedNovel[] {
+  return NATIVE_TRACKING_PROVIDER_REGISTRY.flatMap((provider) => {
+    try {
+      return provider.trackedNovels(scope);
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function loadNativeTrackedTitleKeys(
   scope: NovelRepositoryScopeInput = {},
 ): string[] {
-  try {
-    return [...new Set(loadHardcoverState(scope).records.map((record) =>
-      record.sourceNovelId ? `novel:${record.sourceNovelId}` : `hardcover:${record.bookId}`
-    ))];
-  } catch {
-    return [];
-  }
+  return [...new Set(loadNativeTrackedNovels(scope).map((tracked) =>
+    tracked.sourceNovelId ? `novel:${tracked.sourceNovelId}` : tracked.key
+  ))];
 }

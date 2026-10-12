@@ -276,6 +276,14 @@ describe("recommendation adapters", () => {
     expect(candidate.tags).not.toContain("author:Ada Reader");
   });
 
+  it("seeds a local book with its genres, from its file or the catalogue that recognised it", () => {
+    const book = createBook({ id: "epub-2", title: "Lord of the Mysteries", subtype: "epub", genres: ["Fantasy", "Mystery"] });
+
+    expect(bookToTasteProfileSeed(book).tags).toEqual(expect.arrayContaining(["Fantasy", "Mystery"]));
+    expect(bookToRecommendationCandidate(book).tags).toEqual(expect.arrayContaining(["Fantasy", "Mystery"]));
+    expect(bookToTasteProfileSeed(book, { tagsByBookId: new Map([["epub-2", ["Horror"]]]) }).tags).toContain("Horror");
+  });
+
   it("converts LNReader source results into source-backed novel candidates", () => {
     const candidate = novelSourceResultToRecommendationCandidate({
       sourceId: "ln-central",

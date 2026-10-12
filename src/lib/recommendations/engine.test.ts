@@ -202,6 +202,45 @@ describe("search recommendation engine", () => {
     expect(result.candidates.map((candidate) => candidate.contentType).sort()).toEqual(["book", "novel"]);
     expect(result.sections.some((section) => section.items.length > 0)).toBe(true);
   });
+
+  it("weighs a tracked library novel by the user's rating and status on the tracker", () => {
+    const novel = (id: string, tags: string[]) => ({
+      id,
+      title: id,
+      author: null,
+      description: null,
+      coverUrl: null,
+      path: `/${id}`,
+      status: "ongoing",
+      tags,
+      source: {
+        repositoryUrl: "https://centralnovel.com",
+        pluginId: "central",
+        pluginName: "Central Novel",
+        sourceId: "central",
+        sourceName: "Central Novel",
+        lang: "pt",
+      },
+      chapterCount: 10,
+      addedAt: 0,
+      updatedAt: 0,
+    });
+    const libraryNovels = [novel("liked", ["Fantasy"]), novel("dropped", ["Harem"])];
+    const options = { includeInLibrary: true, nowMs: Date.parse("2026-04-27T12:00:00.000Z") };
+
+    const untracked = buildSearchRecommendations({ libraryNovels }, options);
+    const tracked = buildSearchRecommendations({
+      libraryNovels,
+      trackedOpinions: new Map([
+        ["novel:dropped", { userRating: 1, userRatingMax: 5, status: "dropped" as const }],
+        ["novel:liked", { userRating: null, userRatingMax: null, status: "unknown" as const }],
+      ]),
+    }, options);
+
+    expect(untracked.profile.positiveTags).toEqual(expect.arrayContaining(["fantasy", "harem"]));
+    expect(tracked.profile.positiveTags).toContain("fantasy");
+    expect(tracked.profile.negativeTags).toContain("harem");
+  });
 });
 
 function createManga(patch: Partial<Manga>): Manga {

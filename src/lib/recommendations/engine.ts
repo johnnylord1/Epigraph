@@ -39,7 +39,14 @@ export interface SearchRecommendationInput {
   tagsByBookId?: Map<string, string[]>;
   extraCandidates?: RecommendationCandidate[];
   extraSeeds?: TasteProfileSeedItem[];
+  /**
+   * The user's rating and status on the tracker a library novel or book is tracked on, by its seed id
+   * ("novel:<id>", "book:<id>"): their opinion of the library work itself.
+   */
+  trackedOpinions?: ReadonlyMap<string, TrackedOpinion>;
 }
+
+export type TrackedOpinion = Pick<TasteProfileSeedItem, "userRating" | "userRatingMax" | "status">;
 
 export interface SearchRecommendationResult {
   profile: TasteProfile;
@@ -66,6 +73,15 @@ export function buildSearchRecommendations(
     aniListByMangaId: input.aniListByMangaId,
   };
 
+  const withOpinion = (seed: TasteProfileSeedItem): TasteProfileSeedItem => {
+    const opinion = input.trackedOpinions?.get(seed.id);
+    if (!opinion) return seed;
+    return {
+      ...seed,
+      ...(opinion.userRating != null ? { userRating: opinion.userRating, userRatingMax: opinion.userRatingMax } : {}),
+      ...(opinion.status && opinion.status !== "unknown" ? { status: opinion.status } : {}),
+    };
+  };
   const seeds = [
     ...(input.libraryManga ?? []).map((manga) =>
       mangaToTasteProfileSeed(manga, {
@@ -75,12 +91,12 @@ export function buildSearchRecommendations(
         aniListByMangaId: input.aniListByMangaId,
       }),
     ),
-    ...(input.libraryNovels ?? []).map(novelToTasteProfileSeed),
+    ...(input.libraryNovels ?? []).map((novel) => withOpinion(novelToTasteProfileSeed(novel))),
     ...(input.libraryBooks ?? []).map((book) =>
-      bookToTasteProfileSeed(book, {
+      withOpinion(bookToTasteProfileSeed(book, {
         progressByBookId: input.progressByBookId,
         tagsByBookId: input.tagsByBookId,
-      }),
+      })),
     ),
     ...(input.extraSeeds ?? []),
   ];

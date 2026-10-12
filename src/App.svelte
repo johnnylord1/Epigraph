@@ -188,16 +188,23 @@
   });
   $effect(() => {
     // Novels are read from their saved library state, again on each page change so added novels
-    // are queued; books follow the store.
+    // are queued; books follow the store. A tracked work is already known for certain by the entry the
+    // user picked on the tracker, so it is not looked up.
     void store.navPage;
-    const books = store.books.map((book) => ({ key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
+    const books = store.books.map((book) => ({ id: book.id, key: `book:${book.id}`, title: book.title, author: book.author, genres: book.genres }));
     const scope = { profileId: store.runtimeResolvedLocalProfileId, serverUrl: store.runtimeServerUrl };
     void Promise.all([
       import("./lib/novels/libraryState").then((novels) => novels.loadNovelLibraryState(scope)).catch(() => null),
       import("./lib/recommendations/anilistLibraryLookup"),
-    ]).then(([state, lookup]) => {
-      const novels = (state?.entries ?? []).map((entry) => ({ key: `novel:${entry.id}`, title: entry.title, author: entry.author, genres: entry.tags }));
-      lookup.syncLibraryNovelLookup([...novels, ...books], scope, showNovelLookupProgress);
+      import("./lib/tracking/providerInventory"),
+      import("./lib/tracking/trackedNovels"),
+    ]).then(([state, lookup, providers, trackedNovels]) => {
+      const tracked = providers.loadNativeTrackedNovels(scope);
+      const novels = (state?.entries ?? []).map((entry) => ({ id: entry.id, key: `novel:${entry.id}`, title: entry.title, author: entry.author, genres: entry.tags }));
+      const untracked = [...novels, ...books]
+        .filter((work) => !trackedNovels.findTrackedNovel(tracked, { novelId: work.id, title: work.title }))
+        .map(({ id: _id, ...work }) => work);
+      lookup.syncLibraryNovelLookup(untracked, scope, showNovelLookupProgress);
     });
   });
 

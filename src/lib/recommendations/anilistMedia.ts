@@ -153,6 +153,8 @@ const CREDITS_SEARCHED_PER_WORK = 2;
 // AniList id -> profile (null when AniList does not know the id). Genres and titles barely change,
 // so entries are kept across sessions and only unseen ids reach the network.
 let mediaCache: Map<number, AniListMediaProfile | null> | null = null;
+// MyAnimeList ids AniList has no entry for, asked once a session.
+const unknownMalIds = new Set<number>();
 let titleMatchCache: Map<string, TitleMatchEntry> | null = null;
 
 function readStoredRecord(key: string): Record<string, unknown> {
@@ -229,6 +231,7 @@ function saveTitleMatchCache() {
 
 export function resetAniListMediaCacheForTests() {
   mediaCache = null;
+  unknownMalIds.clear();
   titleMatchCache = null;
 }
 
@@ -341,6 +344,56 @@ export async function fetchAniListMediaProfiles(
   if (changed) saveMediaCache();
 
   return new Map(uniqueIds.filter((id) => cache.has(id)).map((id) => [id, cache.get(id) ?? null]));
+}
+
+/**
+ * Profiles for MyAnimeList manga ids, through the AniList entry that links to each: a work tracked on
+ * MyAnimeList is known for certain, like one tracked on AniList. Same cache and budget as
+ * `fetchAniListMediaProfiles`; ids AniList does not link to map to null.
+ */
+export async function fetchAniListMediaProfilesByMalId(
+  malIds: readonly number[],
+  options: FetchOptions = {},
+): Promise<Map<number, AniListMediaProfile | null>> {
+  const cache = loadMediaCache();
+  const byMalId = new Map<number, AniListMediaProfile>();
+  for (const profile of cache.values()) {
+    if (profile?.idMal) byMalId.set(profile.idMal, profile);
+  }
+  const uniqueIds = [...new Set(malIds.filter((id) => Number.isInteger(id) && id > 0))];
+  const missing = uniqueIds.filter((id) => !byMalId.has(id) && !unknownMalIds.has(id));
+  const fetchImpl = resolveFetch(options);
+  const maxRequests = options.maxRequests ?? 8;
+
+  let changed = false;
+  for (let page = 0; fetchImpl && page < maxRequests && page * ID_PAGE_SIZE < missing.length; page += 1) {
+    if (options.signal?.aborted) break;
+    const batch = missing.slice(page * ID_PAGE_SIZE, (page + 1) * ID_PAGE_SIZE);
+    try {
+      const data = await postAniList(fetchImpl, `query MediaProfilesByMal($ids: [Int]) {
+        Page(perPage: ${ID_PAGE_SIZE}) { media(idMal_in: $ids, type: MANGA) { ${MEDIA_PROFILE_FIELDS} } }
+      }`, { ids: batch }, options.signal, options.onResponse);
+      const media = data?.Page?.media;
+      if (!media) break;
+      for (const item of media) {
+        const profile = aniListMediaProfileFromPayload(item);
+        if (!profile?.idMal) continue;
+        cache.set(profile.id, profile);
+        byMalId.set(profile.idMal, profile);
+        changed = true;
+      }
+      for (const id of batch) {
+        if (!byMalId.has(id)) unknownMalIds.add(id);
+      }
+    } catch {
+      break;
+    }
+  }
+  if (changed) saveMediaCache();
+
+  return new Map(uniqueIds
+    .filter((id) => byMalId.has(id) || unknownMalIds.has(id))
+    .map((id) => [id, byMalId.get(id) ?? null]));
 }
 
 // "[Official]", "(Webtoon)" and "- Manhwa" are labels sources add, not part of the name.

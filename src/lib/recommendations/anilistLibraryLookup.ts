@@ -333,7 +333,7 @@ function createLibraryLookup<W>(keyOf: (work: W) => string, prepare: () => Promi
 
 /**
  * Library works worth looking up, the ones with fewest genres first since they gain the most. Works
- * with an AniList tracker entry already have their AniList id and are left out.
+ * with an AniList or MyAnimeList tracker entry are known by that entry and are left out.
  */
 export function aniListLibraryLookupEntries(
   works: readonly LibraryWork[],
@@ -378,7 +378,8 @@ export function novelLibraryLookupEntries(works: readonly LibraryNovelWork[]): A
 }
 
 /**
- * The Suwayomi trackers (for the provider chain), the library works with an AniList entry and who
+ * The Suwayomi trackers (for the provider chain), the library works with an AniList or MyAnimeList
+ * entry (AniList knows MyAnimeList ids, so either names the work for certain) and who
  * made each library work (the library list leaves that out).
  */
 async function lookupTrackers(): Promise<LookupTrackers> {
@@ -393,7 +394,8 @@ async function lookupTrackers(): Promise<LookupTrackers> {
   const aniListTrackedIds = new Set<number>();
   for (const tracker of data.trackers?.nodes ?? []) {
     trackers.push({ id: tracker.id, name: String(tracker.name ?? ""), isLoggedIn: tracker.isLoggedIn });
-    if (!String(tracker.name ?? "").toLowerCase().includes("anilist")) continue;
+    const name = String(tracker.name ?? "").toLowerCase();
+    if (!name.includes("anilist") && !name.includes("myanimelist") && name !== "mal") continue;
     for (const record of tracker.trackRecords?.nodes ?? []) {
       if (typeof record.manga?.id === "number") aniListTrackedIds.add(record.manga.id);
     }

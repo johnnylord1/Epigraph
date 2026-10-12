@@ -1144,15 +1144,15 @@ describe("recommendation sections", () => {
     expect(trendingIds).toHaveLength(0);
   });
 
-  it("fills the taste rows with untagged source novels for a reader of novels", () => {
+  it("recommends novels by genre, like comics: only genre matches reach the taste rows", () => {
     const novelReader = buildTasteProfile([0, 1, 2, 3].map((index) => ({
       id: `library-novel-${index}`, title: `Library Novel ${index}`, tags: ["Fantasy", "Cultivation"],
       contentType: "novel" as const, userRating: 8, status: "reading" as const,
     })));
-    const untaggedNovels = Array.from({ length: 24 }, (_, index) =>
+    const sourceNovels = Array.from({ length: 24 }, (_, index) =>
       candidate(`source-novel-${index}`, {
         contentType: "novel",
-        tags: ["novel", "webnovel", "en"],
+        tags: index % 2 === 0 ? ["novel", "webnovel", "en"] : ["Fantasy", "Cultivation"],
         providers: [
           {
             providerId: "ln-central",
@@ -1167,11 +1167,15 @@ describe("recommendation sections", () => {
       }),
     );
 
-    const sections = buildRecommendationSections(untaggedNovels, novelReader, { nowMs: NOW, limitPerSection: 60 });
-    const sectionSize = (key: RecommendationSection["key"]) => sections.find((section) => section.key === key)?.items.length ?? 0;
+    const sections = buildRecommendationSections(sourceNovels, novelReader, { nowMs: NOW, limitPerSection: 60 });
+    const sectionIds = (key: RecommendationSection["key"]) =>
+      sections.find((section) => section.key === key)?.items.map((item) => item.candidate.id) ?? [];
+    const untagged = (id: string) => Number(id.split("-").pop()) % 2 === 0;
 
-    expect(sectionSize("trendingNearYourTaste")).toBeGreaterThan(0);
-    expect(sectionSize("highConfidence")).toBeGreaterThan(0);
+    for (const key of ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const) {
+      expect(sectionIds(key).length).toBeGreaterThan(0);
+      expect(sectionIds(key).filter(untagged)).toEqual([]);
+    }
   });
 
   it("keeps untagged novels out of the taste rows of a comic reader", () => {

@@ -4,6 +4,8 @@ import { DEFAULT_LOCAL_PROFILE_ID, normalizeLocalProfileId, normalizeServerUrl }
 import { recommendationTitleKey } from "../recommendations";
 import type { RecommendationCandidate, RecommendationProviderSignal, TasteProfileSeedItem } from "../recommendations";
 import { normalizeScore } from "../recommendations/normalization";
+import { splitCredits } from "../recommendations/credits";
+import type { TrackedNovel } from "../tracking/trackedNovels";
 import type { NovelRepositoryScopeInput } from "./repositoryState";
 
 const HARDCOVER_GRAPHQL_URL = "https://api.hardcover.app/v1/graphql";
@@ -601,6 +603,31 @@ export function hardcoverRecordToTasteProfileSeed(record: HardcoverNovelTrackRec
     userRatingMax: HARDCOVER_RATING_MAX,
     implicitWeight: record.rating ? null : 0.45,
     status: mapHardcoverStatusToSeedStatus(record.status),
+  };
+}
+
+/** A tracked Hardcover book as the library work it stands for: its genres, names, id and the user's rating. */
+export function hardcoverRecordToTrackedNovel(record: HardcoverNovelTrackRecord): TrackedNovel {
+  const seed = hardcoverRecordToTasteProfileSeed(record);
+  const credits = splitCredits(record.authors);
+  return {
+    key: seed.id,
+    sourceNovelId: record.sourceNovelId ?? null,
+    sourceTitleKey: record.sourceTitleKey ?? null,
+    profile: {
+      id: 0,
+      idMal: null,
+      country: "",
+      format: "NOVEL",
+      genres: mergeStringLists(record.genres, record.tags, record.moods),
+      titles: [record.title],
+      mainTitles: [record.title],
+      hardcoverId: record.bookId,
+      ...(credits.length > 0 ? { credits } : {}),
+    },
+    userRating: seed.userRating ?? null,
+    userRatingMax: seed.userRatingMax ?? null,
+    status: seed.status,
   };
 }
 
