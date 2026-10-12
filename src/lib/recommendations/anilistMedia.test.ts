@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   aniListAlternativeTitles,
+  aniListSearchQuery,
   aniListTitleMatchKey,
   cachedAniListTitleMatch,
   fetchAniListMediaProfiles,
@@ -12,6 +13,7 @@ import {
   type AniListMediaProfile,
 } from "./anilistMedia";
 import { mangaToRecommendationCandidate, mangaToTasteProfileSeed } from "./adapters";
+import { aniListLibraryLookupEntries } from "./anilistLibraryLookup";
 import type { Manga } from "../types";
 
 function profile(id: number, titles: string[], overrides: Partial<AniListMediaProfile> = {}): AniListMediaProfile {
@@ -48,6 +50,61 @@ describe("AniList media profiles", () => {
     expect(aniListTitleMatchKey("Tower of God (Webtoon)")).toBe("tower of god");
     expect(aniListTitleMatchKey("The Breaker - Manhwa")).toBe("breaker");
     expect(aniListTitleMatchKey("[Official]")).toBe("official");
+    expect(aniListTitleMatchKey("Goshujin-sama to Yuku Isekai Survival! THE COMIC")).toBe("goshujin sama to yuku isekai survival");
+    expect(aniListTitleMatchKey("Ore no Imouto R-18")).toBe("ore no imouto");
+  });
+
+  it("searches AniList with plain punctuation and without source labels", () => {
+    expect(aniListSearchQuery("Aristocrat’s Revenge")).toBe("Aristocrat's Revenge");
+    expect(aniListSearchQuery("Undead Unluck (Official Colored)")).toBe("Undead Unluck");
+    expect(aniListSearchQuery("Ore no Koto ga Daikirai na Imouto ga Kowai [R18]")).toBe("Ore no Koto ga Daikirai na Imouto ga Kowai");
+    expect(aniListSearchQuery("Sword\u200b Master — Return")).toBe("Sword Master Return");
+    expect(aniListSearchQuery("[Official]")).toBe("[Official]");
+  });
+
+  it("tells works sharing a name apart by the library's format and genres", () => {
+    const japanese = profile(11, ["Leviathan"], { country: "JP", genres: ["Sci-Fi", "Horror"] });
+    const korean = profile(12, ["Leviathan"], { country: "KR", genres: ["Action", "Fantasy"] });
+    const otherKorean = profile(13, ["Leviathan"], { country: "KR", genres: ["Romance", "Drama"] });
+
+    expect(pickAniListTitleMatch("Leviathan", [japanese, korean])).toBeNull();
+    expect(pickAniListTitleMatch("Leviathan", [japanese, korean], { country: "KR" })?.id).toBe(12);
+    expect(pickAniListTitleMatch("Leviathan", [japanese, korean, otherKorean], { country: "KR", genres: ["action", "Fantasy"] })?.id).toBe(12);
+    // One shared genre is not enough to choose.
+    expect(pickAniListTitleMatch("Leviathan", [korean, otherKorean], { genres: ["Action", "Romance"] })).toBeNull();
+  });
+
+  it("looks up again titles that older matching rules missed", () => {
+    const stored = new Map<string, string>([["epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify({
+      "aristocrat s revenge": { id: 0, at: 1_000 },
+      "lookism": { id: 0, at: 1_000, v: 2 },
+    })]]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      clear: () => stored.clear(),
+    });
+    try {
+      resetAniListMediaCacheForTests();
+      expect(pendingAniListTitleCount(["Aristocrat’s Revenge", "Lookism"], 2_000)).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists library works without an AniList entry, sparsest first, with their format", () => {
+    const works = [
+      { id: 1, title: "Tracked Work", genre: ["Action"] },
+      { id: 2, title: "Rich Work", genre: ["Action", "Fantasy", "Drama"] },
+      { id: 3, title: "Bare Work", genre: [""], source: { id: "9", name: "Asura Scans", displayName: "Asura Scans" } },
+      { id: 4, title: "  ", genre: [] },
+    ] as unknown as Manga[];
+
+    const entries = aniListLibraryLookupEntries(works, new Set([1]));
+
+    expect(entries.map((entry) => entry.key)).toEqual(["3", "2"]);
+    expect(entries[0].genres).toEqual([]);
+    expect(entries[1].genres).toEqual(["Action", "Fantasy", "Drama"]);
   });
 
   it("matches a title through any of the work's names", () => {

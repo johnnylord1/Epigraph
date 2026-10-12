@@ -3,6 +3,7 @@
   import { onDestroy, onMount, tick, untrack } from "svelte";
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
+  import { ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS, scheduleLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
@@ -298,12 +299,6 @@
   const SEARCH_EXPLORE_PER_GENRE = 16;
   const SEARCH_EXPLORE_MIN_POPULARITY = 4000;
   const SEARCH_EXPLORE_DEBOUNCE_MS = 1500;
-  // Library titles are matched to AniList ten per request, two requests per batch, a batch every
-  // 20s once the catalog feeds are done: under a quarter of AniList's per-minute allowance.
-  const SEARCH_TITLE_MATCH_FIRST_DELAY_MS = 8_000;
-  const SEARCH_TITLE_MATCH_BATCH_DELAY_MS = 20_000;
-  const SEARCH_TITLE_MATCH_REQUESTS_PER_BATCH = 2;
-  const SEARCH_TITLE_MATCH_MAX_BATCHES = 8;
   // Short aliases ("Hero", "Ruler") name too many works to hide a recommendation by.
   const SEARCH_KNOWN_ALIAS_MIN_LENGTH = 6;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
@@ -715,8 +710,6 @@
   // Library works with no AniList entry, matched to AniList by title (manga id -> profile).
   let searchAniListTitleMatches: Map<number, AniListMediaProfile> = $state(new Map());
   let searchTitleMatchLoadedKey = "";
-  let searchTitleMatchAbortCtrl: AbortController | null = null;
-  let searchTitleMatchTimer: number | undefined;
   let searchTrackerRecordCandidates: RecommendationCandidate[] = $state([]);
   let searchSourceSeedResults: Manga[] = $state([]);
   let searchFreshSourceSeedResults: Manga[] = $state([]);
@@ -1415,35 +1408,20 @@
   }
 
   function stopSearchAniListTitleMatching() {
-    searchTitleMatchAbortCtrl?.abort();
-    searchTitleMatchAbortCtrl = null;
-    window.clearTimeout(searchTitleMatchTimer);
-    searchTitleMatchTimer = undefined;
     searchTitleMatchLoadedKey = "";
   }
 
   /**
-   * Known matches apply at once. Unknown titles are looked up a few at a time in the background and
-   * only stored: they shape the rows on the next visit instead of reshuffling the ones on screen,
-   * and the trickle leaves AniList's rate limit to the catalog feeds.
+   * Matches found so far apply at once. Unknown titles are looked up by the app-wide background
+   * lookup and shape the rows on the next visit instead of reshuffling the ones on screen; a visit
+   * restarts that lookup if it gave up after AniList stopped answering.
    */
   async function refreshSearchAniListTitleMatches(entries: Array<{ key: string; title: string }>) {
-    stopSearchAniListTitleMatching();
     const known = await matchAniListTitles(entries, { cachedOnly: true });
     searchAniListTitleMatches = new Map([...known].map(([key, profile]) => [Number(key), profile]));
-
-    const controller = new AbortController();
-    searchTitleMatchAbortCtrl = controller;
-    const titles = entries.map((entry) => entry.title);
-    const lookUpBatch = (batch: number) => {
-      if (controller.signal.aborted || batch >= SEARCH_TITLE_MATCH_MAX_BATCHES) return;
-      if (pendingAniListTitleCount(titles) === 0) return;
-      searchTitleMatchTimer = window.setTimeout(() => {
-        void matchAniListTitles(entries, { signal: controller.signal, maxRequests: SEARCH_TITLE_MATCH_REQUESTS_PER_BATCH })
-          .then(() => lookUpBatch(batch + 1));
-      }, batch === 0 ? SEARCH_TITLE_MATCH_FIRST_DELAY_MS : SEARCH_TITLE_MATCH_BATCH_DELAY_MS);
-    };
-    lookUpBatch(0);
+    if (pendingAniListTitleCount(entries.map((entry) => entry.title)) > 0) {
+      scheduleLibraryAniListLookup(() => store.libraryMangaSnapshot, ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS);
+    }
   }
 
   async function refreshSearchHardcoverRecords() {
@@ -2043,7 +2021,6 @@
   const searchTitleMatchKey = $derived(searchTitleMatchRequest?.key ?? "");
 
   $effect(() => {
-    if (!searchRecommendationsReady) return;
     const key = searchTitleMatchKey;
     if (!key || key === searchTitleMatchLoadedKey) return;
     untrack(() => {
@@ -4420,6 +4397,7 @@
       summary: null,
       publishingStatus: item.status ?? null,
       publishingType: forceNovel ? "NOVEL" : inferAniListPublishingType(item),
+      format: item.format ?? null,
       score: item.averageScore ?? item.meanScore ?? null,
       scoreMax: 100,
       popularity: item.popularity ?? null,

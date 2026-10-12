@@ -38,6 +38,8 @@ export interface RecommendationCandidate {
   safety?: RecommendationSafetyLevel;
   updatedAtMs?: number | null;
   publishedAtMs?: number | null;
+  /** Publication format when a tracker gives it ("MANGA", "ONE_SHOT", ...). */
+  format?: string | null;
 }
 
 export interface TasteProfileSeedItem {
@@ -92,10 +94,14 @@ export interface TrackerScoreBadge {
   confidence: number;
 }
 
+/** A new series, or a sequel/spin-off/one-shot that comes after the series it belongs to. */
+export type RecommendationReleaseKind = "series" | "continuation" | "oneShot";
+
 export interface RecommendationItem {
   candidate: RecommendationCandidate;
   breakdown: RecommendationScoreBreakdown;
   badge: TrackerScoreBadge | null;
+  releaseKind?: RecommendationReleaseKind;
 }
 
 export type RecommendationSectionKey =

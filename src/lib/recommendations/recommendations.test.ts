@@ -5,6 +5,7 @@ import {
   normalizeRecency,
   normalizeScore,
   recommendationCandidateIdentityKeys,
+  recommendationReleaseKind,
   rerankForDiversity,
   scoreRecommendationCandidate,
   type RecommendationCandidate,
@@ -962,7 +963,7 @@ describe("recommendation sections", () => {
     expect(freshTop.filter((item) => item.candidate.contentType === "manhwa").length).toBeGreaterThanOrEqual(16);
   });
 
-  it("interleaves comic formats by the library mix instead of stacking one format first", () => {
+  it("keeps the library's comic format mix in each row and lists the row by rating", () => {
     const mixedProfile = buildTasteProfile([
       ...Array.from({ length: 6 }, (_, index) => ({
         id: `manhwa-seed-${index}`,
@@ -1003,13 +1004,88 @@ describe("recommendation sections", () => {
     const sections = buildRecommendationSections(candidates, mixedProfile, { nowMs: NOW, limitPerSection: 20 });
     for (const key of ["becauseYouRatedHighly", "highConfidence", "trendingNearYourTaste"] as const) {
       const items = sections.find((section) => section.key === key)?.items ?? [];
-      const formats = items.slice(0, 10).map((item) => item.candidate.contentType);
+      const formats = items.map((item) => item.candidate.contentType);
+      const ratings = items.map((item) => item.badge?.score ?? 0);
       expect(items.length, key).toBeGreaterThan(0);
-      expect(formats[0], key).toBe("manhwa");
-      expect(formats.slice(0, 5).filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(2);
-      expect(formats.slice(0, 5).filter((format) => format === "manga").length, key).toBeGreaterThanOrEqual(1);
-      expect(formats.filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(5);
+      // Global trackers rate Japanese titles higher; the row still holds plenty of manhwa like the library.
+      expect(formats.filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(items.length * 0.4);
+      expect(formats.filter((format) => format === "manga").length, key).toBeGreaterThanOrEqual(1);
+      expect(ratings, key).toEqual([...ratings].sort((a, b) => b - a));
     }
+  });
+
+  it("puts new series before sequels and one-shots, best rated first, and keeps fresh rows by date", () => {
+    const profile = buildTasteProfile(Array.from({ length: 4 }, (_, index) => ({
+      id: `seed-${index}`,
+      title: `Seed ${index}`,
+      tags: ["Action", "Fantasy"],
+      contentType: "manhwa" as const,
+      implicitWeight: 0.8,
+      status: "reading" as const,
+    })));
+    const tracked = (id: string, title: string, score: number, overrides: Partial<RecommendationCandidate> = {}) =>
+      candidate(id, {
+        title,
+        tags: ["Action", "Fantasy"],
+        contentType: "manhwa",
+        providers: [{
+          providerId: "anilist",
+          providerName: "AniList",
+          kind: "tracker",
+          score: normalizeScore(score, 100, 0.9),
+          trending: normalizeScore(score, 100, 0.8),
+        }],
+        ...overrides,
+      });
+    const candidates = [
+      tracked("mid", "Mid Series", 70),
+      tracked("sequel", "Known Series: Second Arc", 95),
+      tracked("season", "Other Tale Season 2", 93),
+      tracked("pilot", "Pilot Story", 92, { format: "ONE_SHOT" }),
+      tracked("top", "Top Series", 88),
+      tracked("low", "Low Series", 60),
+      tracked("unrated", "Unrated Series", 0, { providers: [{ providerId: "anilist", providerName: "AniList", kind: "tracker" }] }),
+    ];
+
+    const sections = buildRecommendationSections(candidates, profile, {
+      nowMs: NOW,
+      limitPerSection: 20,
+      knownTitleKeys: ["comic:known series"],
+    });
+    const listed = sections.flatMap((section) => section.key === "freshInYourSources" ? [] : section.items);
+    const kindById = new Map(listed.map((item) => [item.candidate.id, item.releaseKind]));
+    expect(kindById.get("sequel")).toBe("continuation");
+    expect(kindById.get("season")).toBe("continuation");
+    expect(kindById.get("pilot")).toBe("oneShot");
+    expect(kindById.get("top")).toBe("series");
+
+    for (const section of sections) {
+      if (section.key === "freshInYourSources" || section.items.length < 2) continue;
+      const order = section.items.map((item) => ({
+        secondary: item.releaseKind === "series" ? 0 : 1,
+        rating: item.badge?.score ?? -1,
+      }));
+      const sorted = [...order].sort((a, b) => (a.secondary - b.secondary) || (b.rating - a.rating));
+      expect(order, section.key).toEqual(sorted);
+    }
+  });
+
+  it("tells sequels, side stories and one-shots from new series", () => {
+    const known = new Set(["comic:solo leveling", "comic:gate"]);
+    const comic = (title: string, overrides: Partial<RecommendationCandidate> = {}) =>
+      candidate(title, { title, contentType: "manhwa", tags: ["Action"], ...overrides });
+
+    expect(recommendationReleaseKind(comic("Solo Leveling: Ragnarok"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Solo Leveling - Ragnarok"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("The Tower 2nd Season"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Hero Side Story"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Chainsaw Man", { format: "ONE_SHOT" }), known)).toBe("oneShot");
+    expect(recommendationReleaseKind(comic("Look Back", { tags: ["Drama", "One-shot"] }), known)).toBe("oneShot");
+    // A short known name starts too many unrelated titles, and a number alone is not a sequel.
+    expect(recommendationReleaseKind(comic("Gate: Another World"), known)).toBe("series");
+    expect(recommendationReleaseKind(comic("Kaiju No. 8"), known)).toBe("series");
+    expect(recommendationReleaseKind(comic("Part-Time Hero"), known)).toBe("series");
+    expect(recommendationReleaseKind(comic("Unknown Saga: Rise"), known)).toBe("series");
   });
 
   it("allows sparse source comics into outside reads when their format differs from the dominant profile", () => {

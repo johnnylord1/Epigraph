@@ -31,7 +31,18 @@ interface TitleMatchEntry {
   /** Matched AniList id, 0 when no work matched closely enough. */
   id: number;
   at: number;
+  /** Matching rules the entry was made with; misses from older rules are looked up again. */
+  v?: number;
 }
+
+/** What the library already says about a work, used to tell apart AniList works sharing its name. */
+export interface AniListTitleHints {
+  /** Country the source's format points to ("KR" for manhwa, "CN" for manhua). */
+  country?: string | null;
+  genres?: readonly string[] | null;
+}
+
+export type AniListTitleMatchEntry = { key: string; title: string } & AniListTitleHints;
 
 type FetchOptions = { signal?: AbortSignal; maxRequests?: number; fetchImpl?: typeof fetch };
 
@@ -42,12 +53,15 @@ const RESULTS_PER_TITLE = 5;
 const MAX_STORED_SYNONYMS = 12;
 const MEDIA_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistMedia.v1";
 const TITLE_MATCH_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistTitleMatch.v1";
+const TITLE_MATCH_VERSION = 2;
 // A title that matched nothing is searched again after this long; AniList adds works over time.
 const TITLE_MISS_RETRY_MS = 14 * 24 * 60 * 60 * 1000;
 // Fuzzy matches only cover small spelling differences ("Solo Leveling" / "Solo-Leveling!").
 const FUZZY_TITLE_MATCH_MIN = 0.92;
 const FUZZY_TITLE_RUNNER_UP_MAX = 0.85;
 const PROSE_FORMATS = new Set(["NOVEL"]);
+// Works sharing a name are told apart by genres only when one clearly fits the library's better.
+const GENRE_TIE_BREAK_MIN = 2;
 
 const MEDIA_PROFILE_FIELDS = `
   id
@@ -116,7 +130,9 @@ function loadTitleMatchCache(): Map<string, TitleMatchEntry> {
   titleMatchCache = new Map();
   for (const [key, value] of Object.entries(readStoredRecord(TITLE_MATCH_CACHE_STORAGE_KEY))) {
     const entry = value as Partial<TitleMatchEntry> | null;
-    if (entry && typeof entry.id === "number" && typeof entry.at === "number") titleMatchCache.set(key, { id: entry.id, at: entry.at });
+    if (entry && typeof entry.id === "number" && typeof entry.at === "number") {
+      titleMatchCache.set(key, { id: entry.id, at: entry.at, ...(typeof entry.v === "number" ? { v: entry.v } : {}) });
+    }
   }
   return titleMatchCache;
 }
@@ -205,13 +221,38 @@ export async function fetchAniListMediaProfiles(
 // "[Official]", "(Webtoon)" and "- Manhwa" are labels sources add, not part of the name.
 const TITLE_LABEL_PATTERN = /\s*[[(（【][^\])）】]*[\])）】]\s*/g;
 const TITLE_SUFFIX_PATTERN = /\s*[-–—:|]\s*(official|webtoon|manhwa|manhua|manga|comic|colou?red|raw|scans?)\s*$/i;
+// Adaptations are often listed as "<novel name> THE COMIC"; sources add "R-18" to adult works.
+const TITLE_TRAILING_LABEL_PATTERN = /\s+(the comic|r-?18)\s*$/i;
+
+function withoutTitleLabels(title: string): string {
+  return title
+    .replace(TITLE_LABEL_PATTERN, " ")
+    .replace(TITLE_SUFFIX_PATTERN, "")
+    .replace(TITLE_TRAILING_LABEL_PATTERN, "")
+    .trim();
+}
 
 /** Normalized form of a title for matching, without the labels sources append. */
 export function aniListTitleMatchKey(title: string): string {
   const original = String(title ?? "");
-  const withoutLabels = original.replace(TITLE_LABEL_PATTERN, " ").replace(TITLE_SUFFIX_PATTERN, "").trim();
-  const normalized = normalizeToken(withoutLabels || original);
+  const normalized = normalizeToken(withoutTitleLabels(original) || original);
   return normalized.replace(/^the /, "");
+}
+
+/**
+ * The title as AniList's search understands it: without source labels and with plain punctuation.
+ * AniList finds nothing for "Aristocrat’s Revenge" (curly apostrophe) but finds "Aristocrat's Revenge".
+ */
+export function aniListSearchQuery(title: string): string {
+  const original = String(title ?? "").trim();
+  const cleaned = withoutTitleLabels(original
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[‘’‚‛ʼ`´]/g, "'")
+    .replace(/[“”„‟]/g, '"')
+    .replace(/\s*[–—]\s*/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || original;
 }
 
 function bigrams(value: string): Map<string, number> {
@@ -247,7 +288,11 @@ export function titleSimilarity(a: string, b: string): number {
  * (any language or synonym) or a near-identical spelling is accepted, never an ambiguous pick, and
  * novels are never matched to comics.
  */
-export function pickAniListTitleMatch(title: string, results: readonly AniListMediaProfile[]): AniListMediaProfile | null {
+export function pickAniListTitleMatch(
+  title: string,
+  results: readonly AniListMediaProfile[],
+  hints: AniListTitleHints = {},
+): AniListMediaProfile | null {
   const key = aniListTitleMatchKey(title);
   if (!key) return null;
   const comics = results.filter((item) => !PROSE_FORMATS.has(item.format));
@@ -260,8 +305,8 @@ export function pickAniListTitleMatch(title: string, results: readonly AniListMe
   if (exact.length === 1) return exact[0].item;
   if (exact.length > 1) {
     // A one-shot pilot often shares the series' name; the series is the work being read.
-    const series = exact.filter((entry) => entry.item.format !== "ONE_SHOT");
-    return series.length === 1 ? series[0].item : null;
+    const series = exact.filter((entry) => entry.item.format !== "ONE_SHOT").map((entry) => entry.item);
+    return series.length === 1 ? series[0] : pickAmongSameNamedWorks(series, hints);
   }
 
   if (key.replace(/ /g, "").length < 6) return null;
@@ -272,13 +317,35 @@ export function pickAniListTitleMatch(title: string, results: readonly AniListMe
   return best.item;
 }
 
+// "Leviathan" or "Player" name several works; the library's format and genres tell which one is read.
+function pickAmongSameNamedWorks(works: AniListMediaProfile[], hints: AniListTitleHints): AniListMediaProfile | null {
+  let remaining = works;
+  const country = String(hints.country ?? "").trim().toUpperCase();
+  if (country) {
+    const sameCountry = remaining.filter((work) => work.country === country);
+    if (sameCountry.length === 1) return sameCountry[0];
+    if (sameCountry.length > 1) remaining = sameCountry;
+  }
+  const genres = new Set((hints.genres ?? []).map(normalizeToken).filter(Boolean));
+  if (genres.size === 0 || remaining.length < 2) return null;
+  const ranked = remaining
+    .map((work) => ({ work, shared: work.genres.filter((genre) => genres.has(normalizeToken(genre))).length }))
+    .sort((a, b) => b.shared - a.shared);
+  const [best, runnerUp] = ranked;
+  return best.shared >= GENRE_TIE_BREAK_MIN && best.shared - (runnerUp?.shared ?? 0) >= GENRE_TIE_BREAK_MIN ? best.work : null;
+}
+
+function isTitleMissFresh(entry: TitleMatchEntry, nowMs: number): boolean {
+  return entry.id === 0 && (entry.v ?? 1) >= TITLE_MATCH_VERSION && nowMs - entry.at < TITLE_MISS_RETRY_MS;
+}
+
 /**
  * Finds the AniList work for titles that have no AniList tracker entry, keyed by the caller's key.
  * Ten titles share one request and at most `maxRequests` are sent per call; titles already looked
  * up resolve from the cache, misses are retried after two weeks. Pass the most useful titles first.
  */
 export async function matchAniListTitles(
-  entries: ReadonlyArray<{ key: string; title: string }>,
+  entries: ReadonlyArray<AniListTitleMatchEntry>,
   options: FetchOptions & { nowMs?: number; cachedOnly?: boolean } = {},
 ): Promise<Map<string, AniListMediaProfile>> {
   const media = loadMediaCache();
@@ -295,7 +362,7 @@ export async function matchAniListTitles(
       result.set(entry.key, media.get(cached.id)!);
       continue;
     }
-    if (cached && cached.id === 0 && nowMs - cached.at < TITLE_MISS_RETRY_MS) continue;
+    if (cached && isTitleMissFresh(cached, nowMs)) continue;
     const keys = pending.get(matchKey) ?? [];
     keys.push(entry.key);
     if (keys.length === 1) pending.set(matchKey, keys);
@@ -304,7 +371,11 @@ export async function matchAniListTitles(
   const fetchImpl = resolveFetch(options);
   const queue = [...pending.keys()];
   const maxRequests = options.cachedOnly ? 0 : options.maxRequests ?? 3;
-  const titleByMatchKey = new Map(entries.map((entry) => [aniListTitleMatchKey(entry.title), entry.title]));
+  const entryByMatchKey = new Map<string, AniListTitleMatchEntry>();
+  for (const entry of entries) {
+    const matchKey = aniListTitleMatchKey(entry.title);
+    if (!entryByMatchKey.has(matchKey)) entryByMatchKey.set(matchKey, entry);
+  }
   let changed = false;
 
   for (let request = 0; fetchImpl && request < maxRequests && request * TITLES_PER_SEARCH_REQUEST < queue.length; request += 1) {
@@ -312,7 +383,7 @@ export async function matchAniListTitles(
     const batch = queue.slice(request * TITLES_PER_SEARCH_REQUEST, (request + 1) * TITLES_PER_SEARCH_REQUEST);
     const variables: Record<string, string> = {};
     const selections = batch.map((matchKey, index) => {
-      variables[`q${index}`] = titleByMatchKey.get(matchKey) ?? matchKey;
+      variables[`q${index}`] = aniListSearchQuery(entryByMatchKey.get(matchKey)?.title ?? matchKey);
       return `r${index}: Page(perPage: ${RESULTS_PER_TITLE}) { media(search: $q${index}, type: MANGA) { ...MediaProfile } }`;
     });
     const query = `query TitleMatches(${batch.map((_, index) => `$q${index}: String`).join(", ")}) {
@@ -326,8 +397,9 @@ export async function matchAniListTitles(
         const page = data[`r${index}`];
         if (!page?.media) return;
         const profiles = page.media.map(aniListMediaProfileFromPayload).filter((item): item is AniListMediaProfile => item !== null);
-        const match = pickAniListTitleMatch(titleByMatchKey.get(matchKey) ?? matchKey, profiles);
-        matches.set(matchKey, { id: match?.id ?? 0, at: nowMs });
+        const entry = entryByMatchKey.get(matchKey);
+        const match = pickAniListTitleMatch(entry?.title ?? matchKey, profiles, entry ?? {});
+        matches.set(matchKey, { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION });
         if (match) {
           media.set(match.id, match);
           for (const key of pending.get(matchKey) ?? []) result.set(key, match);
@@ -360,7 +432,7 @@ export function pendingAniListTitleCount(titles: readonly string[], nowMs = Date
   for (const key of keys) {
     const cached = matches.get(key);
     if (cached && cached.id > 0 && media.get(cached.id)) continue;
-    if (cached && cached.id === 0 && nowMs - cached.at < TITLE_MISS_RETRY_MS) continue;
+    if (cached && isTitleMissFresh(cached, nowMs)) continue;
     pending += 1;
   }
   return pending;

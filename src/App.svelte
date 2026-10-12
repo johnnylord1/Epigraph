@@ -144,6 +144,22 @@
     }
   });
 
+  // Library works are matched to AniList in the background from start, so recommendations already
+  // know their genres and other names when the search page opens.
+  let aniListLookupLibraryKey = "";
+  $effect(() => {
+    const key = store.libraryMangaSnapshot.map((manga) => `${manga.id}:${manga.title}`).join("|");
+    if (!key || key === aniListLookupLibraryKey) return;
+    const firstRun = aniListLookupLibraryKey === "";
+    aniListLookupLibraryKey = key;
+    void import("./lib/recommendations/anilistLibraryLookup").then((lookup) => {
+      lookup.scheduleLibraryAniListLookup(
+        () => store.libraryMangaSnapshot,
+        firstRun ? lookup.ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS : lookup.ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS,
+      );
+    });
+  });
+
   let themeEditorOpen   = $state(false);
   let themeEditorEditId = $state<string | null>(null);
   const activeReaderChapter = $derived(store.activeChapter);

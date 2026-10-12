@@ -164,4 +164,6 @@ export interface TrackSearch {
   popularity?: number | null;
   trending?: number | null;
   genres?: string[] | null;
+  /** Publication format when the catalog gives it ("MANGA", "ONE_SHOT", ...). */
+  format?: string | null;
 }

@@ -239,6 +239,7 @@ export function trackerSearchToRecommendationCandidate(
     tags: inferTagsFromTrackerSearch(result),
     contentType: inferTrackerContentType(result),
     status: result.publishingStatus,
+    format: result.format ?? null,
     providers: [
       {
         providerId: trackerId,
@@ -349,6 +350,7 @@ function mergeCandidateValues(
     alternativeTitles: mergeAlternativeTitles(existing, candidate),
     contentType: chooseContentType(existing, candidate),
     status: existing.status || candidate.status,
+    format: existing.format || candidate.format,
     updatedAtMs: Math.max(existing.updatedAtMs ?? 0, candidate.updatedAtMs ?? 0) || existing.updatedAtMs,
     publishedAtMs: existing.publishedAtMs ?? candidate.publishedAtMs,
   };

@@ -3,6 +3,7 @@ import {
   recommendationCandidateIdentityKeys,
   recommendationCandidateTitleKeys,
   recommendationProviderRemoteKey,
+  recommendationTitleKey,
 } from "./identity";
 import { isRecommendationMetadataTag, recommendationTagTokens } from "./metadata";
 import type {
@@ -10,6 +11,7 @@ import type {
   RecommendationCandidate,
   RecommendationDiversityBucket,
   RecommendationItem,
+  RecommendationReleaseKind,
   RecommendationScoreBreakdown,
   RecommendationSection,
   RecommendationSectionKey,
@@ -53,6 +55,15 @@ const SECTION_DRAFT_ORDER: RecommendationSectionKey[] = [
   "freshInYourSources",
   "outsideYourUsualReads",
 ];
+// Sequels, side stories and one-shots may be recommended, but new series come first: they rank a
+// little lower when a row picks its works, and sit after the new series in the row.
+const SECONDARY_RELEASE_FACTOR = 0.9;
+const CONTINUATION_TITLE_PATTERN = /\b(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*(\d+|[ivx]+)\b|side\s*stor(y|ies)|gaiden|spin[\s-]?offs?|after\s*stor(y|ies)|extra\s*stor(y|ies))/i;
+// "Series: Subtitle", "Series - Subtitle" or "Series (Subtitle)" continue a known series. Short names
+// ("Re", "Gate") start too many unrelated titles to count.
+const SERIES_PREFIX_PATTERN = /^(.+?)\s*(?::|\s[-–—]\s|[(（[])/;
+const SERIES_PREFIX_MIN_LENGTH = 6;
+const ONE_SHOT_TAGS = new Set(["one shot", "oneshot"]);
 const SECTION_DISPLAY_ORDER: RecommendationSectionKey[] = [
   "becauseYouRatedHighly",
   "highConfidence",
@@ -199,12 +210,15 @@ export function buildRecommendationSections(
   options: BuildRecommendationSectionsOptions = {},
 ): RecommendationSection[] {
   const requestedLimit = options.limitPerSection ?? DEFAULT_LIMIT;
+  const knownTitleKeys = new Set(options.knownTitleKeys ?? []);
+  const filterOptions = { ...options, knownTitleKeys };
   const items = candidates
-    .filter((candidate) => passesFilters(candidate, options))
+    .filter((candidate) => passesFilters(candidate, filterOptions))
     .map((candidate): RecommendationItem => ({
       candidate,
       breakdown: scoreRecommendationCandidate(candidate, profile, options.nowMs),
       badge: buildTrackerScoreBadge(candidate),
+      releaseKind: recommendationReleaseKind(candidate, knownTitleKeys),
     }))
     .filter((item) => !isAffinityGroupMismatch(item, profile));
   const coreTags = profileCoreTags(profile);
@@ -308,8 +322,61 @@ export function buildRecommendationSections(
     const sectionItems = shouldApplyProfileComicMix(key)
       ? applyProfileComicMix(drafted[key], profile, requestedLimit).slice(0, requestedLimit)
       : drafted[key];
-    return { key, title: meta.title, reason: meta.reason, items: sectionItems };
+    // "Fresh" is about what came out lately and stays newest first.
+    const ordered = key === "freshInYourSources" ? sectionItems : orderByRating(sectionItems);
+    return { key, title: meta.title, reason: meta.reason, items: ordered };
   });
+}
+
+/**
+ * Whether a work is a new series or comes after one: a one-shot, or a sequel/spin-off by its title
+ * ("Season 2", "Side Story") or by being named "<a series the reader knows>: <subtitle>".
+ */
+export function recommendationReleaseKind(
+  candidate: RecommendationCandidate,
+  knownTitleKeys: ReadonlySet<string> = new Set(),
+): RecommendationReleaseKind {
+  if (String(candidate.format ?? "").toUpperCase() === "ONE_SHOT") return "oneShot";
+  if (candidate.tags.some((tag) => ONE_SHOT_TAGS.has(normalizeToken(tag)))) return "oneShot";
+  const titles = [candidate.title, ...(candidate.alternativeTitles ?? [])];
+  if (titles.some((title) => CONTINUATION_TITLE_PATTERN.test(title))) return "continuation";
+  if (knownTitleKeys.size > 0 && titles.some((title) => continuesKnownSeries(title, candidate, knownTitleKeys))) {
+    return "continuation";
+  }
+  return "series";
+}
+
+function continuesKnownSeries(title: string, candidate: RecommendationCandidate, knownTitleKeys: ReadonlySet<string>): boolean {
+  const prefix = SERIES_PREFIX_PATTERN.exec(title)?.[1];
+  if (!prefix || normalizeToken(prefix).replace(/ /g, "").length < SERIES_PREFIX_MIN_LENGTH) return false;
+  return knownTitleKeys.has(recommendationTitleKey(prefix, candidate.contentType));
+}
+
+function isSecondaryRelease(item: RecommendationItem): boolean {
+  return item.releaseKind === "continuation" || item.releaseKind === "oneShot";
+}
+
+/** The rating shown on the card: the trackers' consensus, else the best-backed source score. */
+function displayedRating(item: RecommendationItem): number | null {
+  if (item.badge) return item.badge.score;
+  const source = item.candidate.providers
+    .filter((provider) => provider.kind === "source" && provider.score && provider.score.confidence > 0)
+    .sort((a, b) => b.score!.confidence - a.score!.confidence)[0];
+  return source?.score?.value ?? null;
+}
+
+/**
+ * A row reads best to worst: new series before sequels and one-shots, then by the rating on the card,
+ * highest first, with unrated works last. Equal ratings keep the row's relevance order.
+ */
+function orderByRating(items: RecommendationItem[]): RecommendationItem[] {
+  return items
+    .map((item, index) => ({ item, index, rating: displayedRating(item), secondary: isSecondaryRelease(item) ? 1 : 0 }))
+    .sort((a, b) =>
+      (a.secondary - b.secondary)
+      || ((b.rating ?? -1) - (a.rating ?? -1))
+      || (a.index - b.index))
+    .map((entry) => entry.item);
 }
 
 export function buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge | null {
@@ -379,7 +446,7 @@ function rankSectionItems(
 ): RecommendationItem[] {
   if (limit <= 0) return [];
   const scored = items
-    .map((item) => ({ item, score: scoreFn(item) }))
+    .map((item) => ({ item, score: scoreFn(item) * (isSecondaryRelease(item) ? SECONDARY_RELEASE_FACTOR : 1) }))
     .filter((entry) => entry.score > 0 && isEligible(entry.item))
     .sort((a, b) => (b.score - a.score) || (stableSectionJitter(b.item, sectionKey) - stableSectionJitter(a.item, sectionKey)));
   const uniqueItems = new Set(dedupeRecommendationItems(scored.map((entry) => entry.item)));
@@ -870,7 +937,7 @@ function passesFilters(candidate: RecommendationCandidate, options: BuildRecomme
 }
 
 function isKnownCandidate(candidate: RecommendationCandidate, options: BuildRecommendationSectionsOptions): boolean {
-  const knownTitleKeys = new Set(options.knownTitleKeys ?? []);
+  const knownTitleKeys = options.knownTitleKeys instanceof Set ? options.knownTitleKeys : new Set(options.knownTitleKeys ?? []);
   if (knownTitleKeys.size > 0 && recommendationCandidateTitleKeys(candidate).some((key) => knownTitleKeys.has(key))) {
     return true;
   }
