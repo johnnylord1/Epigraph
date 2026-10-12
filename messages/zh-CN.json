@@ -2047,6 +2047,7 @@
   "browse_search_strongestProfileSignal": "最强档案信号：{tags}。",
   "browse_search_profileWarming": "档案仍在从你的库和追踪器中预热。",
   "browse_search_hardcoverSignals": "{count} 条推荐包含 Hardcover 评分。",
+  "browse_search_novelTrackerSignals": "{count} 条推荐包含 Kitsu 或 Hardcover 评分。",
   "browse_search_trackerSignals": "{count} 条推荐包含已同步追踪器评分。",
   "reader_novel_sourceStillBlocked": "此 LNReader 来源仍被站点保护阻止。请检查 FlareSolverr 并重试章节。",
   "reader_novel_sourceNeedsFlaresolverr": "此 LNReader 来源需要 FlareSolverr 来处理 Cloudflare 或 anti-bot 保护。",

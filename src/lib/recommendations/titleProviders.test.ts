@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetAniListMediaCacheForTests } from "./anilistMedia";
+import { resetKitsuNovelCacheForTests } from "./kitsuNovels";
 import {
   cachedLibraryTitleCandidate,
   cachedLibraryTitleMatch,
   hardcoverProfiles,
   jikanProfiles,
   kitsuProfiles,
+  openLibraryProfiles,
   providerTitleStatus,
   recordProviderTitleJudgement,
   recordProviderTitleMatch,
@@ -48,6 +50,7 @@ describe("title providers after AniList", () => {
   afterEach(() => {
     resetTitleProviderCacheForTests();
     resetAniListMediaCacheForTests();
+    resetKitsuNovelCacheForTests();
     try {
       globalThis.localStorage?.clear();
     } catch {
@@ -147,7 +150,44 @@ describe("title providers after AniList", () => {
     expect(providerTitleStatus("kitsu", "Chrysalis", "novel")).toBe("pending");
   });
 
-  it("looks novels up on a connected Hardcover only, recognising books by title and author", async () => {
+  it("looks novels up with no account on Kitsu's novel catalogue and Open Library, never on AniList", async () => {
+    const fetchImpl = vi.fn(async (url: unknown) => String(url).startsWith("https://kitsu.io")
+      ? json({
+        data: [{
+          id: "57339",
+          type: "manga",
+          attributes: { canonicalTitle: "Kumo Desu ga", titles: { en: "Chrysalis", ja_jp: "蟻" }, subtype: "novel", averageRating: "80.1", userCount: 120 },
+          relationships: { categories: { data: [{ type: "categories", id: "c1" }] }, staff: { data: [{ type: "mediaStaff", id: "s1" }] } },
+        }],
+        included: [
+          { id: "c1", type: "categories", attributes: { title: "Fantasy" } },
+          { id: "s1", type: "mediaStaff", attributes: {}, relationships: { person: { data: [{ type: "people", id: "p1" }] } } },
+          { id: "p1", type: "people", attributes: { name: "RinoZ" } },
+        ],
+      })
+      : json({ docs: [] }));
+    const chain = titleProviderChain([{ id: 2, name: "AniList", isLoggedIn: true }], { fetchImpl: fetchImpl as unknown as typeof fetch }, "novel");
+    expect(chain.map((provider) => provider.id)).toEqual(["kitsu", "openlibrary"]);
+
+    await expect(chain[0].lookUp([{ key: "novel:a", title: "Chrysalis", credits: ["RinoZ"] }])).resolves.toEqual({ ok: true });
+    expect(String(fetchImpl.mock.calls[0][0])).toContain("filter%5Bsubtype%5D=novel");
+    // Kitsu's AniList mapping is not kept: novels never lead to AniList.
+    expect(cachedLibraryTitleMatch("Chrysalis", "novel")).toMatchObject({ id: 0, kitsuId: 57339, format: "NOVEL", genres: ["Fantasy"], provider: "kitsu" });
+    expect(cachedLibraryTitleMatch("Chrysalis")).toBeNull();
+
+    await expect(chain[1].lookUp([{ key: "book:b", title: "Project Hail Mary", credits: [] }])).resolves.toEqual({ ok: true });
+    expect(String(fetchImpl.mock.calls[1][0])).toContain("openlibrary.org/search.json?title=Project%20Hail%20Mary");
+    expect(providerTitleStatus("openlibrary", "Project Hail Mary", "novel")).toBe("missed");
+  });
+
+  it("reads Open Library books with their authors and only the genres among their subjects", () => {
+    const [book] = openLibraryProfiles({
+      docs: [{ key: "/works/OL1W", title: "Project Hail Mary", author_name: ["Andy Weir"], subject: ["science fiction", "Astronauts", "nyt:hardcover-fiction=2021-05-23", "Survival", "Thrillers"] }],
+    });
+    expect(book).toMatchObject({ format: "NOVEL", credits: ["Andy Weir"], genres: ["Sci-Fi", "Thriller"], titles: ["Project Hail Mary"] });
+  });
+
+  it("asks a connected Hardcover first, recognising books by title and author", async () => {
     const search = vi.fn(async () => [
       { id: 5, title: "Chrysalis", authors: ["Someone Else"], genres: [] },
       { id: 6, title: "Chrysalis", authors: ["RinoZ"], genres: ["Fantasy"] },
@@ -155,9 +195,8 @@ describe("title providers after AniList", () => {
     const hardcover = { search, retryAfterMs: () => null };
     const fetchImpl = vi.fn() as unknown as typeof fetch;
 
-    expect(titleProviderChain([], { fetchImpl }, "novel")).toEqual([]);
     const chain = titleProviderChain([{ id: 7, name: "MangaUpdates", isLoggedIn: true }, { id: 2, name: "AniList", isLoggedIn: true }], { fetchImpl, hardcover }, "novel");
-    expect(chain.map((provider) => provider.id)).toEqual(["hardcover"]);
+    expect(chain.map((provider) => provider.id)).toEqual(["hardcover", "kitsu", "openlibrary"]);
 
     expect(hardcoverProfiles([{ id: 6, title: "Chrysalis", authors: ["RinoZ"] }])[0]).toMatchObject({ format: "NOVEL", hardcoverId: 6, credits: ["RinoZ"] });
     await expect(chain[0].lookUp([{ key: "novel:a", title: "Chrysalis", credits: ["RinoZ"] }])).resolves.toEqual({ ok: true });
@@ -167,7 +206,7 @@ describe("title providers after AniList", () => {
     await expect(chain[0].lookUp([{ key: "book:b", title: "Chrysalis Book", credits: [] }])).resolves.toEqual({ ok: true });
     expect(providerTitleStatus("hardcover", "Chrysalis Book", "novel")).toBe("missed");
 
-    // A novel another site knows is not used: novels are recognised on Hardcover only.
+    // A novel another site knows is not used: novels are recognised on the novel trackers only.
     recordProviderTitleJudgement("mal", "Lord of the Mysteries", { match: kitsuProfiles(kitsuAnswer)[1], candidate: null }, "novel");
     expect(cachedLibraryTitleMatch("Lord of the Mysteries", "novel")).toBeNull();
   });

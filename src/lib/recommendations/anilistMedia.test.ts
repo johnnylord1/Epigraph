@@ -3,6 +3,7 @@ import {
   aniListAlternativeTitles,
   aniListSearchQuery,
   aniListTitleMatchKey,
+  cachedAniListTitleCandidate,
   cachedAniListTitleMatch,
   fetchAniListMediaProfiles,
   judgeTitleMatch,
@@ -95,6 +96,18 @@ describe("AniList media profiles", () => {
     expect(judgeTitleMatch("Chrysalis", [other, adaptation], { credits: ["Rinoz"] }).match?.id).toBe(32);
   });
 
+  it("offers no likely work whose genres share none of the library's", () => {
+    // The library's Chrysalis is a comedy isekai; Kitsu's "Chrysalis" synonym belongs to a historical yaoi drama.
+    const zion = profile(35108, ["Zion no Koeda", "Chrysalis"], { mainTitles: ["Zion no Koeda"], country: "JP", genres: ["Historical", "Drama", "Yaoi"] });
+    expect(judgeTitleMatch("Chrysalis", [zion], { genres: ["Comedy", "Isekai"] })).toEqual({ match: null, candidate: null });
+    // AniList gives the same work a single genre; that is enough to rule it out.
+    const zionOnAniList = profile(35108, ["Zion no Koeda", "Chrysalis"], { mainTitles: ["Zion no Koeda"], country: "JP", genres: ["Drama"] });
+    expect(judgeTitleMatch("Chrysalis", [zionOnAniList], { genres: ["Comedy", "Isekai"] }).candidate).toBeNull();
+    // One genre in common, or too few genres to tell, still leaves the hint.
+    expect(judgeTitleMatch("Chrysalis", [zion], { genres: ["Drama", "Isekai"] }).candidate).toBe(zion);
+    expect(judgeTitleMatch("Chrysalis", [zion], { genres: ["Isekai"] }).candidate).toBe(zion);
+  });
+
   it("rules out a work of the same title by a different author", () => {
     const work = profile(33, ["The Second Coming of Gluttony"], { credits: ["Ro Yu-jin"] });
 
@@ -175,10 +188,37 @@ describe("AniList media profiles", () => {
     expect(queries).toEqual(["Mamahaha no Tsurego ga Moto Kanodatta", "mamahaha no tsurego"]);
   });
 
+  it("drops a likely work older matching rules offered once the current rules rule it out", async () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => stored.set(key, value),
+      clear: () => stored.clear(),
+    });
+    try {
+      const zion = media(35108, "Zion no Koeda", { countryOfOrigin: "JP", genres: ["Historical", "Drama", "Yaoi"], synonyms: ["Chrysalis"] });
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: { r0: { media: [zion] }, a0: { media: [] } } }), { status: 200 }));
+      const options = { fetchImpl: fetchImpl as unknown as typeof fetch, maxRequests: 1 };
+      // Without genres to compare, the work listing the name among its others is a hint.
+      await matchAniListTitles([{ key: "1", title: "Chrysalis" }], options);
+      expect(cachedAniListTitleCandidate("Chrysalis")?.id).toBe(35108);
+
+      // Stored under older rules, the hint is judged again with the library's genres, and dropped.
+      const matches = JSON.parse(stored.get("epigraph.recommendations.anilistTitleMatch.v1")!);
+      matches.chrysalis.v = 8;
+      stored.set("epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify(matches));
+      resetAniListMediaCacheForTests();
+      await matchAniListTitles([{ key: "1", title: "Chrysalis", genres: ["Comedy", "Isekai"] }], options);
+      expect(cachedAniListTitleCandidate("Chrysalis")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("looks up again titles that older matching rules missed", () => {
     const stored = new Map<string, string>([["epigraph.recommendations.anilistTitleMatch.v1", JSON.stringify({
       "aristocrat s revenge": { id: 0, at: 1_000, v: 4 },
-      "lookism": { id: 0, at: 1_000, v: 6 },
+      "lookism": { id: 0, at: 1_000, v: 9 },
     })]]);
     vi.stubGlobal("localStorage", {
       getItem: (key: string) => stored.get(key) ?? null,

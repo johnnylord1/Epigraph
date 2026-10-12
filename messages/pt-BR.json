@@ -2047,6 +2047,7 @@
   "browse_search_strongestProfileSignal": "Sinal mais forte do perfil: {tags}.",
   "browse_search_profileWarming": "O perfil ainda está aquecendo com sua biblioteca e trackers.",
   "browse_search_hardcoverSignals": "{count} recomendações incluem notas do Hardcover.",
+  "browse_search_novelTrackerSignals": "{count} recomendações incluem notas do Kitsu ou do Hardcover.",
   "browse_search_trackerSignals": "{count} recomendações incluem scores de trackers sincronizados.",
   "reader_novel_sourceStillBlocked": "Esta fonte do LNReader ainda está bloqueada pela proteção do site. Verifique o FlareSolverr e tente o capítulo novamente.",
   "reader_novel_sourceNeedsFlaresolverr": "Esta fonte do LNReader precisa do FlareSolverr para Cloudflare ou proteção anti-bot.",

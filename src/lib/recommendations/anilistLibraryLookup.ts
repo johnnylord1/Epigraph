@@ -451,8 +451,9 @@ export function syncLibraryAniListLookup(works: readonly LibraryWork[], onProgre
 }
 
 /**
- * Follows the novels and books of the library, the same way, on Hardcover (the novel section's
- * tracker) once the user connected it.
+ * Follows the novels and books of the library, the same way, on the novel trackers: Kitsu's public
+ * novel catalogue, which needs no account, and Hardcover (the novel section's tracker) while the user
+ * has it connected.
  */
 export function syncLibraryNovelLookup(
   works: readonly LibraryNovelWork[],
@@ -460,13 +461,7 @@ export function syncLibraryNovelLookup(
   onProgress?: AniListLibraryLookupListener,
 ) {
   novelScope = scope;
-  // Novels are looked up only on Hardcover, the novel section's tracker, once it is connected; until
-  // then nothing is queued, so connecting it later looks the whole library up.
-  void import("../novels/hardcover").then((hardcover) => {
-    if (novelScope !== scope) return;
-    if (hardcover.loadHardcoverState(scope).auth.connected) novelLookup.sync(works, onProgress);
-    else novelLookup.stop();
-  });
+  novelLookup.sync(works, onProgress);
 }
 
 /** Asks the providers that stopped answering again, for the works that wait for them. */

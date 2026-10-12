@@ -2047,6 +2047,7 @@
   "browse_search_strongestProfileSignal": "最も強いプロファイルシグナル: {tags}。",
   "browse_search_profileWarming": "プロファイルはライブラリとトラッカーから調整中です。",
   "browse_search_hardcoverSignals": "{count} 件の推奨に Hardcover 評価が含まれます。",
+  "browse_search_novelTrackerSignals": "{count} 件の推奨に Kitsu または Hardcover の評価が含まれます。",
   "browse_search_trackerSignals": "{count} 件の推奨に同期済みトラッカースコアが含まれます。",
   "reader_novel_sourceStillBlocked": "この LNReader ソースはサイト保護でまだブロックされています。FlareSolverr を確認して章を再試行してください。",
   "reader_novel_sourceNeedsFlaresolverr": "この LNReader ソースには Cloudflare または anti-bot 保護のため FlareSolverr が必要です。",

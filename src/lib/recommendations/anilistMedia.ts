@@ -26,12 +26,15 @@ export interface AniListMediaProfile {
   trackerRemote?: { trackerId: number; remoteId: string };
   /** The book's Hardcover id, when it was found there. */
   hardcoverId?: number;
+  /** The novel's Kitsu id, when it was found in Kitsu's novel catalogue. */
+  kitsuId?: number;
 }
 
 /**
  * Comics and prose are looked up and cached apart, so a novel never takes its comic adaptation's
  * place. "novel" covers web novels, light novels and books alike: they differ in where they are
- * published and tracked, not in how a title is recognised. Novels are looked up on Hardcover only.
+ * published and tracked, not in how a title is recognised. Novels are looked up on Kitsu's novel
+ * catalogue and Hardcover, never on AniList.
  */
 export type TitleMedium = "comic" | "novel";
 
@@ -111,7 +114,7 @@ const MAX_STORED_SYNONYMS = 12;
 const MEDIA_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistMedia.v1";
 const TITLE_MATCH_CACHE_STORAGE_KEY = "epigraph.recommendations.anilistTitleMatch.v1";
 // Each title is looked up once, and again only when the matching rules change.
-const TITLE_MATCH_VERSION = 6;
+const TITLE_MATCH_VERSION = 9;
 // AniList's public search leaves out adult works unless they are asked for separately.
 const ADULT_RESULTS_PER_TITLE = 3;
 // AniList finds nothing for some long titles ("Mamahaha no Tsurego ga Moto Kanodatta" is spelled
@@ -130,6 +133,9 @@ const DISTINCTIVE_TITLE_MIN_LENGTH = 8;
 const PROSE_FORMATS = new Set(["NOVEL"]);
 // Works sharing a name are told apart by genres only when one clearly fits the library's better.
 const GENRE_TIE_BREAK_MIN = 2;
+// Genres the library must name before a likely work sharing none of them is ruled out. AniList often
+// gives a work a single genre, so one genre on the work's side is enough.
+const GENRE_DISAGREEMENT_MIN = 2;
 
 const MEDIA_PROFILE_FIELDS = `
   id
@@ -448,7 +454,12 @@ export function judgeTitleMatch(
       credit: creditRelation(hints.credits, item.credits),
     };
   });
-  const likely = (list: ScoredWork[]): TitleJudgement => ({ match: null, candidate: list[0]?.item ?? null });
+  // A likely work is only offered when nothing the library knows contradicts it: a work none of
+  // whose genres the library's genres share is another work that merely shares the name.
+  const likely = (list: ScoredWork[]): TitleJudgement => ({
+    match: null,
+    candidate: list.find((entry) => !genresDisagree(entry.item, hints))?.item ?? null,
+  });
 
   // The same author or studio confirms a title that reads the same or nearly the same.
   const credited = scored
@@ -494,6 +505,15 @@ export function pickAniListTitleMatch(
   options: { exactOnly?: boolean; medium?: TitleMedium } = {},
 ): AniListMediaProfile | null {
   return judgeTitleMatch(title, results, hints, options).match;
+}
+
+/** Whether the library names a few genres and the work, naming some, shares none of them. */
+function genresDisagree(item: AniListMediaProfile, hints: AniListTitleHints): boolean {
+  const library = new Set((hints.genres ?? []).map(normalizeToken).filter(Boolean));
+  const work = new Set(item.genres.map(normalizeToken).filter(Boolean));
+  if (library.size < GENRE_DISAGREEMENT_MIN || work.size === 0) return false;
+  for (const genre of work) if (library.has(genre)) return false;
+  return true;
 }
 
 function sameCountry(item: AniListMediaProfile, hints: AniListTitleHints): boolean {
@@ -645,7 +665,10 @@ export async function matchAniListTitles(
   const creditsOf = (lookupKey: string) => splitCredits(entryByLookupKey.get(lookupKey)?.credits ?? []);
   const record = (lookupKey: string, judgement: TitleJudgement, searchCredits: boolean) => {
     const { match, candidate } = judgement;
-    const likely = match ? null : candidate ?? media.get(matches.get(lookupKey)?.c ?? 0) ?? null;
+    // A hint found earlier in this lookup carries over; one found under older rules is judged again.
+    const previous = matches.get(lookupKey);
+    const carried = isCurrent(previous) && previous.c ? media.get(previous.c) ?? null : null;
+    const likely = match ? null : candidate ?? carried;
     const next: TitleMatchEntry = { id: match?.id ?? 0, at: nowMs, v: TITLE_MATCH_VERSION };
     if (!match && searchCredits && creditsOf(lookupKey).length > 0) {
       next.s = 2;

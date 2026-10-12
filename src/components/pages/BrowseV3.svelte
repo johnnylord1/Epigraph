@@ -32,6 +32,13 @@
   import { createNovelLibraryId, type ActiveNovelDetailState, type InstalledNovelSourceDescriptor, type NovelDetailRecord, type NovelSourceSearchResult } from "../../lib/novels/domain";
   import { isNovelInLibrary, loadNovelLibraryState, peekNovelLibraryState } from "../../lib/novels/libraryState";
   import { NOVEL_TITLE_ALIAS_VERSION, canonicalNovelTitleCandidates } from "../../lib/novels/titleAliases";
+  import {
+    discoverKitsuNovels,
+    kitsuNovelToProvider,
+    kitsuNovelToRecommendationCandidate,
+    matchKitsuNovel,
+    searchKitsuNovels,
+  } from "../../lib/recommendations/kitsuNovels";
   import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
     getHardcoverUserBooks,
@@ -300,6 +307,17 @@
   const SEARCH_EXPLORE_DEBOUNCE_MS = 1500;
   // Short aliases ("Hero", "Ruler") name too many works to hide a recommendation by.
   const SEARCH_KNOWN_ALIAS_MIN_LENGTH = 6;
+  // Kitsu's novel catalogue is public: novels are rated and discovered there with no account, the way
+  // AniList serves comics. Hardcover adds its own ratings on top once it is connected.
+  const KITSU_NOVEL_SCORE_LIMIT = 16;
+  const KITSU_NOVEL_SCORE_CONCURRENCY = 2;
+  const KITSU_NOVEL_SEARCH_RESULTS = 5;
+  const KITSU_NOVEL_TASTE_CATEGORY_LIMIT = 3;
+  const KITSU_NOVEL_TASTE_PER_CATEGORY = 12;
+  const KITSU_NOVEL_EXPLORE_GENRE_LIMIT = 2;
+  const KITSU_NOVEL_EXPLORE_PER_GENRE = 10;
+  const KITSU_NOVEL_TIMEOUT_MS = 9000;
+  const KITSU_NOVEL_DEBOUNCE_MS = 1500;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
   const HARDCOVER_SCORE_ENRICHMENT_CONCURRENCY = 1;
   const HARDCOVER_SCORE_ENRICHMENT_TIMEOUT_MS = 750;
@@ -723,6 +741,12 @@
   let searchHardcoverScoreLoading = $state(false);
   let searchHardcoverScoreKey = $state("");
   let searchHardcoverScoreRun = 0;
+  let searchKitsuNovelScoreResults: Map<string, RecommendationProviderSignal> = $state(new Map());
+  let searchKitsuNovelDiscoveryResults: RecommendationCandidate[] = $state([]);
+  let searchKitsuNovelLoading = $state(false);
+  let searchKitsuNovelKey = $state("");
+  let searchKitsuNovelRun = 0;
+  let searchKitsuNovelAbortCtrl: AbortController | null = null;
   let searchNovelDetailTagsByKey: Map<string, string[]> = $state(new Map());
   let searchNovelDetailUpdatedAtByKey: Map<string, number> = $state(new Map());
   let searchNovelDetailTagsKey = $state("");
@@ -873,6 +897,9 @@
     searchHardcoverRecords = [];
     searchHardcoverDiscoveryResults = [];
     searchHardcoverScoreResults = new Map();
+    searchKitsuNovelScoreResults = new Map();
+    searchKitsuNovelDiscoveryResults = [];
+    searchKitsuNovelKey = "";
     searchNovelDetailTagsByKey = new Map();
     searchNovelDetailUpdatedAtByKey = new Map();
     failedSearchCoverKeys = new Set();
@@ -888,6 +915,7 @@
     searchTrackerTrendingLoading = false;
     searchHardcoverDiscoveryLoading = false;
     searchHardcoverScoreLoading = false;
+    searchKitsuNovelLoading = false;
     searchSourceSeedLoading = false;
     searchMangaSeedAutofillLoading = false;
     searchNovelSeedAutofillLoading = false;
@@ -940,6 +968,9 @@
     searchHardcoverRecords = [];
     searchHardcoverDiscoveryResults = [];
     searchHardcoverScoreResults = new Map();
+    searchKitsuNovelScoreResults = new Map();
+    searchKitsuNovelDiscoveryResults = [];
+    searchKitsuNovelKey = "";
     searchNovelDetailTagsByKey = new Map();
     searchNovelDetailUpdatedAtByKey = new Map();
     failedSearchCoverKeys = new Set();
@@ -959,6 +990,7 @@
     searchTrackerTrendingLoading = false;
     searchHardcoverDiscoveryLoading = false;
     searchHardcoverScoreLoading = false;
+    searchKitsuNovelLoading = false;
     searchSourceSeedLoading = false;
     searchMangaSeedAutofillLoading = false;
     searchNovelSeedAutofillLoading = false;
@@ -1786,14 +1818,16 @@
   const searchNovelSourceCandidates = $derived.by(() =>
     searchNovelSourcePool.map((result) => {
       const candidate = novelSourceResultToRecommendationCandidate(result, searchNovelSourceById.get(result.sourceId));
-      const hardcoverProvider = searchHardcoverProviderByTitleKey.get(recommendationTitleKey(result.title, "novel"));
+      const titleKey = recommendationTitleKey(result.title, "novel");
+      const trackerProviders = [searchHardcoverProviderByTitleKey.get(titleKey), searchKitsuNovelScoreResults.get(titleKey)]
+        .filter((provider): provider is RecommendationProviderSignal => Boolean(provider));
       const detailTags = searchNovelDetailTagsByKey.get(novelSourceResultKey(result)) ?? [];
       const detailUpdatedAtMs = searchNovelDetailUpdatedAtByKey.get(novelSourceResultKey(result));
       return {
         ...candidate,
         tags: mergeRecommendationTags(candidate.tags, detailTags),
         updatedAtMs: detailUpdatedAtMs ?? candidate.updatedAtMs,
-        providers: hardcoverProvider ? [...candidate.providers, hardcoverProvider] : candidate.providers,
+        providers: [...candidate.providers, ...trackerProviders],
         inLibrary: novelLibraryState ? isNovelInLibrary(novelLibraryState, createNovelLibraryId(result.sourceId, result.path)) : false,
       };
     }),
@@ -1923,6 +1957,46 @@
     }, HARDCOVER_BACKGROUND_ENRICHMENT_DELAY_MS);
 
     return clearHardcoverBackgroundTimer;
+  });
+
+  // Novels get the same feeds comics get from AniList, from Kitsu's public novel catalogue: ratings for
+  // the source novels, well read novels in the reader's genres, and novels in genres they rarely read
+  // for "outside your usual reads". No account is needed.
+  const searchKitsuNovelRequest = $derived.by(() => {
+    if (activeContentType !== "novels") return null;
+    const titles = dedupeScoreTitles(searchNovelSourcePool.map((result) => result.title?.trim()))
+      .slice(0, KITSU_NOVEL_SCORE_LIMIT);
+    const tasteCategories = searchNovelProfileOnly.topTags
+      .map((tag) => formatTasteTag(tag).trim())
+      .filter(isUsefulHardcoverDiscoveryTag)
+      .slice(0, KITSU_NOVEL_TASTE_CATEGORY_LIMIT);
+    const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    const explore = explorationGenres(searchNovelProfileOnly, { rotation: day, limit: KITSU_NOVEL_EXPLORE_GENRE_LIMIT });
+    if (titles.length === 0 && tasteCategories.length === 0 && !explore) return null;
+    return {
+      key: JSON.stringify({ titles: [...titles].sort(), tasteCategories, explore, aliasVersion: NOVEL_TITLE_ALIAS_VERSION, nsfw: includeNsfwSources }),
+      titles,
+      tasteCategories,
+      explore,
+    };
+  });
+
+  // The request object is rebuilt on every profile update; only a change of its contents matters.
+  const searchKitsuNovelRequestKey = $derived(searchKitsuNovelRequest?.key ?? "");
+
+  $effect(() => {
+    if (!searchRecommendationsReady) return;
+    if (activeContentType !== "novels" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    const key = searchKitsuNovelRequestKey;
+    if (!key || key === searchKitsuNovelKey) return;
+    // The sources and the library profile can still shift while they load; wait for them to settle.
+    const timer = window.setTimeout(() => {
+      untrack(() => {
+        const request = searchKitsuNovelRequest;
+        if (request?.key === key) void refreshSearchKitsuNovels(key, request.titles, request.tasteCategories, request.explore);
+      });
+    }, KITSU_NOVEL_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
   });
 
   const searchTrackerScoreTitles = $derived.by(() => {
@@ -2157,7 +2231,8 @@
   const searchHasLiveNovelRecommendationData = $derived.by(() =>
     searchNovelSourceCandidates.length > 0
       || searchHardcoverCandidateResults.length > 0
-      || searchHardcoverDiscoveryResults.length > 0,
+      || searchHardcoverDiscoveryResults.length > 0
+      || searchKitsuNovelDiscoveryResults.length > 0,
   );
 
   function searchTrackerSeedsOutsideLibrary(): TasteProfileSeedItem[] {
@@ -2171,7 +2246,7 @@
         libraryBooks: searchLibraryBooksWithGenres,
         progressByBookId: searchBookProgressById,
         extraCandidates: searchHasLiveNovelRecommendationData
-          ? [...searchNovelSourceCandidates, ...searchHardcoverDiscoveryResults, ...searchHardcoverCandidateResults]
+          ? [...searchNovelSourceCandidates, ...searchKitsuNovelDiscoveryResults, ...searchHardcoverDiscoveryResults, ...searchHardcoverCandidateResults]
           : [],
         extraSeeds: searchHasLiveNovelRecommendationData ? searchHardcoverSeedItems : [],
       }, {
@@ -2464,8 +2539,8 @@
   const searchInsightLines = $derived.by(() => {
     const tags = formatAppList(searchTasteTags.slice(0, 2)).toLocaleLowerCase(currentAppLocale());
     const trackerBacked = searchRecommendationItems.filter((item) => item.badge).length;
-    const hardcoverBacked = searchRecommendationItems.filter((item) =>
-      item.candidate.providers.some((provider) => provider.providerId === "hardcover" && provider.score),
+    const novelTrackerBacked = searchRecommendationItems.filter((item) =>
+      item.candidate.providers.some((provider) => provider.kind === "tracker" && provider.score),
     ).length;
     const sourceBacked = searchRecommendationItems.filter((item) => item.candidate.providers.some((provider) => provider.kind === "source")).length;
     const providerLine = activeContentType === "novels"
@@ -2474,7 +2549,7 @@
     return [
       tags ? $_("browse.search.strongestProfileSignal", { tags }) : $_("browse.search.profileWarming"),
       activeContentType === "novels"
-        ? $_("browse.search.hardcoverSignals", { count: hardcoverBacked })
+        ? $_("browse.search.novelTrackerSignals", { count: novelTrackerBacked })
         : $_("browse.search.trackerSignals", { count: trackerBacked }),
       providerLine,
     ];
@@ -2660,6 +2735,14 @@
         return {
           tracker: "hardcover",
           score: formatHardcoverBadgeScore(hardcoverScore.value)
+        };
+      }
+      const kitsuScore = item.candidate.providers
+        .find((provider) => provider.providerId === "kitsu" && provider.score && provider.score.confidence > 0)?.score;
+      if (kitsuScore && kitsuScore.value > 0) {
+        return {
+          tracker: "kitsu",
+          score: formatSourceBadgeScore(kitsuScore.value)
         };
       }
       const sourceScore = item.candidate.providers
@@ -4957,6 +5040,67 @@
       if (searchHardcoverDiscoveryRun === runId && searchHardcoverDiscoveryKey === key) {
         searchHardcoverDiscoveryLoading = false;
       }
+    }
+  }
+
+  async function refreshSearchKitsuNovels(
+    key: string,
+    titles: string[],
+    tasteCategories: string[],
+    explore: ExplorationGenres | null,
+  ) {
+    const runId = ++searchKitsuNovelRun;
+    const current = () => searchKitsuNovelRun === runId && searchKitsuNovelKey === key;
+    searchKitsuNovelKey = key;
+    searchKitsuNovelLoading = true;
+    // A newer request replaces this one; its lookups stop rather than finish for nothing.
+    searchKitsuNovelAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    searchKitsuNovelAbortCtrl = ctrl;
+    const options = { signal: ctrl.signal };
+    const providers = new Map<string, RecommendationProviderSignal>();
+    const discovered = new Map<number, RecommendationCandidate>();
+    try {
+      // Ratings first: they weigh the source novels already on screen.
+      await runConcurrentLimited(titles, KITSU_NOVEL_SCORE_CONCURRENCY, async (title) => {
+        for (const searchTitle of canonicalNovelTitleCandidates(title)) {
+          if (!current()) return;
+          const novels = await withSoftTimeout(
+            searchKitsuNovels(searchTitle, KITSU_NOVEL_SEARCH_RESULTS, options).catch(() => []),
+            KITSU_NOVEL_TIMEOUT_MS,
+            [],
+          );
+          const match = matchKitsuNovel(searchTitle, novels);
+          if (match) {
+            providers.set(recommendationTitleKey(title, "novel"), kitsuNovelToProvider(match));
+            return;
+          }
+        }
+      }, ctrl.signal);
+      if (!current()) return;
+      searchKitsuNovelScoreResults = capProviderSignalMap(providers);
+
+      const feeds = [
+        ...tasteCategories.map((category) => ({ category, limit: KITSU_NOVEL_TASTE_PER_CATEGORY })),
+        ...(explore?.include ?? []).map((category) => ({ category, limit: KITSU_NOVEL_EXPLORE_PER_GENRE })),
+      ];
+      await runConcurrentLimited(feeds, 1, async ({ category, limit }) => {
+        if (!current()) return;
+        const novels = await withSoftTimeout(
+          discoverKitsuNovels(category, limit, options).catch(() => []),
+          KITSU_NOVEL_TIMEOUT_MS,
+          [],
+        );
+        for (const novel of novels) {
+          if (discovered.has(novel.id)) continue;
+          if (novel.adult && !includeNsfwSources) continue;
+          discovered.set(novel.id, kitsuNovelToRecommendationCandidate(novel, [category]));
+        }
+        // Publish each feed as it lands so one slow category does not hold back the others.
+        if (current()) searchKitsuNovelDiscoveryResults = capProviderResults([...discovered.values()]);
+      }, ctrl.signal);
+    } finally {
+      if (current()) searchKitsuNovelLoading = false;
     }
   }
 

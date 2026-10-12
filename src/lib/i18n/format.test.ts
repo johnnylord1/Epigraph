@@ -42,5 +42,6 @@ describe("formatWorkStatus", () => {
     expect(formatWorkStatus("Releasing")).toBe("Em andamento");
     expect(formatWorkStatus("FINISHED")).toBe("Concluído");
     expect(formatWorkStatus("ONGOING")).toBe("Em andamento");
+    expect(formatWorkStatus("current")).toBe("Em andamento");
   });
 });

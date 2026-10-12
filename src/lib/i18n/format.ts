@@ -51,6 +51,8 @@ export function formatWorkStatus(status: string | null | undefined): string {
     // Trackers such as AniList say RELEASING and FINISHED.
     releasing: "library.status.ongoing",
     publishing: "library.status.ongoing",
+    // Kitsu says current for a work still coming out.
+    current: "library.status.ongoing",
     completed: "library.status.completed",
     finished: "library.status.completed",
     publishing_finished: "library.status.completed",

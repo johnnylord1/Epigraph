@@ -30,11 +30,16 @@ function fakeProvider(id: string, batchSize: number, knows: (title: string) => b
 
 const aniList = fakeProvider("anilist", 20, (title) => title.startsWith("Maybe") ? "uncertain" : title.startsWith("Work"));
 const kitsu = fakeProvider("kitsu", 1, (title) => title.startsWith("Kitsu"));
-const hardcover = fakeProvider("hardcover", 1, (title) => title.startsWith("Work"));
+const kitsuNovels = fakeProvider("kitsu", 1, (title) => title.startsWith("Work"));
 const hardcoverAccount = { connected: false };
+const novelChains: Array<{ hardcover: unknown }> = [];
 
 vi.mock("./titleProviders", () => ({
-  titleProviderChain: (_trackers: unknown, _deps: unknown, medium?: string) => medium === "novel" ? [hardcover] : [aniList, kitsu],
+  titleProviderChain: (_trackers: unknown, deps: { hardcover?: unknown }, medium?: string) => {
+    if (medium !== "novel") return [aniList, kitsu];
+    novelChains.push({ hardcover: deps?.hardcover ?? null });
+    return [kitsuNovels];
+  },
 }));
 vi.mock("../startupClient", () => ({
   gql: async () => ({
@@ -42,7 +47,12 @@ vi.mock("../startupClient", () => ({
     mangas: { nodes: [{ id: 1, author: "Chugong, DUBU (Redice Studio)", artist: "Unknown" }] },
   }),
 }));
-vi.mock("../novels/hardcover", () => ({ loadHardcoverState: () => ({ auth: { ...hardcoverAccount } }) }));
+vi.mock("../novels/hardcover", () => ({
+  loadHardcoverState: () => ({ auth: { ...hardcoverAccount } }),
+  searchHardcoverBooks: async () => [],
+  isHardcoverRateLimitError: () => false,
+  getHardcoverRateLimitRemainingMs: () => 0,
+}));
 
 const {
   ANILIST_LIBRARY_LOOKUP_CHANGE_DELAY_MS,
@@ -60,7 +70,8 @@ describe("background lookup of the library", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     hardcoverAccount.connected = false;
-    for (const provider of [aniList, kitsu, hardcover]) {
+    novelChains.length = 0;
+    for (const provider of [aniList, kitsu, kitsuNovels]) {
       provider.answered.clear();
       provider.entriesSeen.length = 0;
       provider.lookUp.mockClear();
@@ -140,7 +151,7 @@ describe("background lookup of the library", () => {
     expect(aniList.entriesSeen.find((entry) => entry.title === "Work 1")?.credits).toEqual(["Chugong", "DUBU", "Redice Studio"]);
   });
 
-  it("looks novels and books up on Hardcover only, once it is connected", async () => {
+  it("looks novels and books up on the novel trackers, with no account connected", async () => {
     const novels = [
       { key: "novel:a", title: "Work A", author: "RinoZ", genres: ["Fantasy"] },
       { key: "book:b", title: "Kitsu Book", author: null },
@@ -148,16 +159,12 @@ describe("background lookup of the library", () => {
     const progress = vi.fn();
     syncLibraryNovelLookup(novels, { profileId: "p" }, progress);
     await vi.advanceTimersByTimeAsync(ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS + 10_000);
-    expect(hardcover.lookUp).not.toHaveBeenCalled();
-    expect(progress).not.toHaveBeenCalled();
-
-    hardcoverAccount.connected = true;
-    syncLibraryNovelLookup(novels, { profileId: "p" }, progress);
-    await vi.advanceTimersByTimeAsync(ANILIST_LIBRARY_LOOKUP_FIRST_DELAY_MS + 10_000);
+    // Hardcover is not connected: the public novel catalogues answer alone, and AniList is never asked.
+    expect(novelChains.at(-1)).toEqual({ hardcover: null });
     expect(aniList.lookUp).not.toHaveBeenCalled();
     expect(kitsu.lookUp).not.toHaveBeenCalled();
-    expect(hardcover.entriesSeen.map((entry) => [entry.key, entry.medium])).toEqual([["book:b", "novel"], ["novel:a", "novel"]]);
-    expect(hardcover.entriesSeen.find((entry) => entry.key === "novel:a")?.credits).toEqual(["RinoZ"]);
+    expect(kitsuNovels.entriesSeen.map((entry) => [entry.key, entry.medium])).toEqual([["book:b", "novel"], ["novel:a", "novel"]]);
+    expect(kitsuNovels.entriesSeen.find((entry) => entry.key === "novel:a")?.credits).toEqual(["RinoZ"]);
     expect(progress).toHaveBeenLastCalledWith({ phase: "done", total: 2, remaining: 0, matched: 1, uncertain: 0, missed: 1 });
   });
 });

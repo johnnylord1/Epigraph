@@ -14,11 +14,14 @@ import {
   type TitleMedium,
 } from "./anilistMedia";
 import { splitCredits } from "./credits";
+import { KitsuRequestError, kitsuNovelProfile, searchKitsuNovels } from "./kitsuNovels";
 
 /**
  * Where library works are looked up, in order. Comics: AniList, then Kitsu, then MyAnimeList, then
- * the other trackers the user is logged in to on Suwayomi. Novels and books: only Hardcover, the
- * novel section's own tracker, and only once it is connected.
+ * the other trackers the user is logged in to on Suwayomi. Novels and books: Hardcover, the novel
+ * section's own tracker, while it is connected, then Kitsu's novel catalogue (light and web novels)
+ * and Open Library (books), which need no account. NovelUpdates has no API and turns programs away.
+ * AniList is never asked about novels.
  * A work one provider does not know for certain is searched on the next, and so on until one
  * recognises it. Every provider's answer (misses and likely works included) is kept, so each work is
  * asked about once per provider. Nothing is ever tracked: a recognised work only feeds the
@@ -81,7 +84,7 @@ export interface HardcoverTitleSearch {
 
 const PROVIDER_MATCH_STORAGE_KEY = "epigraph.recommendations.titleProviderMatch.v1";
 // Each title is asked about again when the matching rules change, matches included.
-const PROVIDER_MATCH_VERSION = 2;
+const PROVIDER_MATCH_VERSION = 4;
 const REQUEST_TIMEOUT_MS = 8_000;
 const RESULTS_PER_TITLE = 5;
 const MAX_STORED_TITLES = 16;
@@ -97,6 +100,26 @@ const JIKAN_FAILURES_BEFORE_TRACKER = 2;
 // Trackers whose Suwayomi search finds works by name. AniList, Kitsu and MyAnimeList are asked
 // directly; library trackers (Komga, Kavita, Suwayomi) have no catalogue to search.
 const SEARCHABLE_TRACKER_PATTERN = /mangaupdates|manga updates|shikimori|bangumi/i;
+const NOVEL_PROVIDERS = new Set(["hardcover", "kitsu", "openlibrary"]);
+// Open Library asks for no more than one request a second.
+const OPEN_LIBRARY_INTERVAL_MS = 1_100;
+// Open Library's subjects mix genres with places, people and list names; only the genres are kept.
+const OPEN_LIBRARY_GENRES: ReadonlyArray<[RegExp, string]> = [
+  [/^(epic |high |urban |dark )?fantasy( fiction)?$/i, "Fantasy"],
+  [/^(hard )?(science fiction|sci-fi)$/i, "Sci-Fi"],
+  [/^(romance|love stories)( fiction)?$/i, "Romance"],
+  [/^(mystery|detective)( fiction| and detective stories)?$/i, "Mystery"],
+  [/^(thrillers?|suspense)( fiction)?$/i, "Thriller"],
+  [/^horror( fiction| tales)?$/i, "Horror"],
+  [/^historical fiction$/i, "Historical"],
+  [/^adventure( fiction| stories)?$/i, "Adventure"],
+  [/^(humou?r|humorous fiction|comedy)$/i, "Comedy"],
+  [/^(drama|domestic fiction)$/i, "Drama"],
+  [/^psychological fiction$/i, "Psychological"],
+  [/^(young adult|young adult fiction)$/i, "Young Adult"],
+  [/^(dystopias|dystopian fiction)$/i, "Dystopian"],
+  [/^(magic|wizards)$/i, "Magic"],
+];
 
 const KITSU_SUBTYPES: Record<string, { format: string; country: string }> = {
   manga: { format: "MANGA", country: "JP" },
@@ -128,6 +151,7 @@ function storedProfile(value: unknown): AniListMediaProfile | undefined {
     mainTitles: strings(item.mainTitles),
     ...(Array.isArray(item.credits) ? { credits: strings(item.credits) } : {}),
     ...(typeof item.hardcoverId === "number" ? { hardcoverId: item.hardcoverId } : {}),
+    ...(typeof item.kitsuId === "number" ? { kitsuId: item.kitsuId } : {}),
     ...(typeof item.provider === "string" ? { provider: item.provider } : {}),
     ...(remote && typeof remote.trackerId === "number" && typeof remote.remoteId === "string"
       ? { trackerRemote: { trackerId: remote.trackerId, remoteId: remote.remoteId } }
@@ -217,8 +241,8 @@ function providerWorks(title: string, medium: TitleMedium, certain: boolean): An
   const entries = loadProviderMatches().get(titleLookupKey(title, medium));
   if (!entries) return [];
   return Object.entries(entries)
-    // Novels are recognised on Hardcover only.
-    .filter(([id, entry]) => entry.p && entry.v >= PROVIDER_MATCH_VERSION && Boolean(entry.u) !== certain && (medium === "comic" || id === "hardcover"))
+    // Novels are recognised on their own providers only.
+    .filter(([id, entry]) => entry.p && entry.v >= PROVIDER_MATCH_VERSION && Boolean(entry.u) !== certain && (medium === "comic" || NOVEL_PROVIDERS.has(id)))
     .sort(([a], [b]) => providerRank(a) - providerRank(b))
     .map(([, entry]) => entry.p!);
 }
@@ -254,7 +278,8 @@ function providerRank(provider: string): number {
   if (provider === "kitsu") return 0;
   if (provider === "mal") return 1;
   if (provider === "hardcover") return 2;
-  return 3 + Number(provider.replace(/^tracker:/, "") || 0) / 1e6;
+  if (provider === "openlibrary") return 3;
+  return 4 + Number(provider.replace(/^tracker:/, "") || 0) / 1e6;
 }
 
 async function fetchJson(
@@ -429,6 +454,38 @@ export function hardcoverProfiles(results: readonly HardcoverBookResult[]): AniL
   });
 }
 
+interface OpenLibraryWork {
+  key?: string | null;
+  title?: string | null;
+  subtitle?: string | null;
+  alternative_title?: string[] | null;
+  author_name?: string[] | null;
+  subject?: string[] | null;
+}
+
+/** Books from an Open Library search, with their authors and the genres among their subjects. */
+export function openLibraryProfiles(payload: unknown): AniListMediaProfile[] {
+  const body = (payload ?? {}) as { docs?: OpenLibraryWork[] | null };
+  return (body.docs ?? []).flatMap((work) => {
+    const title = String(work.title ?? "").trim();
+    if (!title || !String(work.key ?? "").startsWith("/works/")) return [];
+    const credits = splitCredits([...(work.author_name ?? [])]);
+    const genres = cleanTitles((work.subject ?? []).flatMap((subject) =>
+      OPEN_LIBRARY_GENRES.filter(([pattern]) => pattern.test(String(subject).trim())).map(([, genre]) => genre)));
+    const mainTitles = cleanTitles([title, work.subtitle ? `${title}: ${work.subtitle}` : null]);
+    return [{
+      id: 0,
+      idMal: null,
+      country: "",
+      format: "NOVEL",
+      genres,
+      titles: cleanTitles([...mainTitles, ...(work.alternative_title ?? [])]).slice(0, MAX_STORED_TITLES),
+      mainTitles,
+      ...(credits.length > 0 ? { credits } : {}),
+    }];
+  });
+}
+
 const SEARCH_TRACKER_TITLES = `
   query SearchTrackerTitles($trackerId: Int!, $query: String!) {
     searchTracker(input: { trackerId: $trackerId, query: $query }) {
@@ -450,6 +507,24 @@ async function searchKitsu(fetchImpl: typeof fetch, query: string): Promise<Prov
   ];
   const answer = await fetchJson(fetchImpl, `https://kitsu.io/api/edge/manga?${params.join("&")}`, { Accept: "application/vnd.api+json" });
   return answer.ok ? { ok: true, profiles: kitsuProfiles(answer.json) } : answer;
+}
+
+async function searchKitsuNovelCatalogue(fetchImpl: typeof fetch, query: string): Promise<ProviderSearch> {
+  try {
+    return { ok: true, profiles: (await searchKitsuNovels(query, RESULTS_PER_TITLE, { fetchImpl })).map(kitsuNovelProfile) };
+  } catch (error) {
+    return { ok: false, retryAfterMs: error instanceof KitsuRequestError ? error.retryAfterMs : null };
+  }
+}
+
+async function searchOpenLibrary(fetchImpl: typeof fetch, query: string): Promise<ProviderSearch> {
+  const fields = "key,title,subtitle,alternative_title,author_name,subject";
+  const answer = await fetchJson(
+    fetchImpl,
+    `https://openlibrary.org/search.json?title=${encodeURIComponent(query)}&limit=${RESULTS_PER_TITLE}&fields=${fields}`,
+    { Accept: "application/json" },
+  );
+  return answer.ok ? { ok: true, profiles: openLibraryProfiles(answer.json) } : answer;
 }
 
 async function searchJikan(fetchImpl: typeof fetch, query: string): Promise<ProviderSearch> {
@@ -528,18 +603,25 @@ async function searchHardcover(hardcover: HardcoverTitleSearch, query: string): 
 /**
  * The providers to ask, in order. AniList and Kitsu are public; MyAnimeList is asked through Jikan,
  * or through the user's MyAnimeList tracker while Jikan is down; MangaUpdates, Shikimori and Bangumi
- * only through a tracker the user is logged in to.
+ * only through a tracker the user is logged in to. Novels: Hardcover while it is connected, then
+ * Kitsu's novel catalogue and Open Library, both public.
  */
 export function titleProviderChain(
   trackers: readonly TitleProviderTracker[],
   deps: TitleProviderDeps & { hardcover?: HardcoverTitleSearch | null } = {},
   medium: TitleMedium = "comic",
 ): TitleProvider[] {
+  const fetchImpl = deps.fetchImpl ?? (typeof fetch === "function" ? fetch.bind(globalThis) : undefined);
   if (medium === "novel") {
     const hardcover = deps.hardcover;
-    return hardcover ? [singleTitleProvider("hardcover", HARDCOVER_INTERVAL_MS, medium, (query) => searchHardcover(hardcover, query))] : [];
+    const novelChain: TitleProvider[] = [];
+    if (hardcover) novelChain.push(singleTitleProvider("hardcover", HARDCOVER_INTERVAL_MS, medium, (query) => searchHardcover(hardcover, query)));
+    if (fetchImpl) {
+      novelChain.push(singleTitleProvider("kitsu", KITSU_INTERVAL_MS, medium, (query) => searchKitsuNovelCatalogue(fetchImpl, query)));
+      novelChain.push(singleTitleProvider("openlibrary", OPEN_LIBRARY_INTERVAL_MS, medium, (query) => searchOpenLibrary(fetchImpl, query)));
+    }
+    return novelChain;
   }
-  const fetchImpl = deps.fetchImpl ?? (typeof fetch === "function" ? fetch.bind(globalThis) : undefined);
   const gql: GqlRequest = deps.gql ?? (async (query, variables) => (await import("../startupClient")).gql(query, variables));
   const loggedIn = trackers.filter((tracker) => tracker.isLoggedIn);
   const malTracker = loggedIn.find((tracker) => trackerKind(tracker) === "mal");
