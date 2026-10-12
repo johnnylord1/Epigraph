@@ -735,7 +735,8 @@ export function titleProviderChain(
   const gql: GqlRequest = deps.gql ?? (async (query, variables) => (await import("../startupClient")).gql(query, variables));
   const loggedIn = trackers.filter((tracker) => tracker.isLoggedIn);
   const malTracker = loggedIn.find((tracker) => trackerKind(tracker) === "mal");
-  const chain: TitleProvider[] = [aniListProvider(fetchImpl)];
+  // AniList lookups share the app-wide AniList queue unless a test supplies its own fetch.
+  const chain: TitleProvider[] = [aniListProvider(deps.fetchImpl)];
   if (fetchImpl) chain.push(singleTitleProvider("kitsu", KITSU_INTERVAL_MS, medium, (query) => searchKitsu(fetchImpl, query)));
 
   if (fetchImpl || malTracker) {

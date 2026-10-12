@@ -222,7 +222,12 @@ export function searchKitsuNovels(query: string, limit: number, options: KitsuRe
  * The most read novels of a Kitsu category. Kitsu ignores a category it does not have and answers
  * with every novel, so only novels that carry the category are kept.
  */
-export async function discoverKitsuNovels(category: string, limit: number, options: KitsuRequestOptions = {}): Promise<KitsuNovel[]> {
+export async function discoverKitsuNovels(
+  category: string,
+  limit: number,
+  options: KitsuRequestOptions = {},
+  offset = 0,
+): Promise<KitsuNovel[]> {
   const slug = kitsuCategorySlug(category);
   if (!slug) return [];
   const novels = await requestNovels([
@@ -230,6 +235,7 @@ export async function discoverKitsuNovels(category: string, limit: number, optio
     "filter%5Bsubtype%5D=novel",
     "sort=popularityRank",
     `page%5Blimit%5D=${limit}`,
+    ...(offset > 0 ? [`page%5Boffset%5D=${offset}`] : []),
   ], options);
   return novels.filter((novel) => novel.categories.some((title) => kitsuCategorySlug(title) === slug));
 }

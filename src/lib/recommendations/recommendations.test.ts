@@ -421,6 +421,44 @@ describe("recommendation sections", () => {
   });
 
 
+  it("keeps the genres shown as the reader's principal ones out of outside usual reads", () => {
+    const actionReader = buildTasteProfile([
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `action-${index}`,
+        title: `Action ${index}`,
+        tags: ["Action", "Fantasy"],
+        contentType: "manhwa" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      })),
+      {
+        id: "one-drama",
+        title: "One Drama",
+        tags: ["Drama"],
+        contentType: "manhwa" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      },
+    ]);
+    const tracked = (id: string, tags: string[]) => candidate(id, {
+      tags,
+      providers: [
+        { providerId: "source", providerName: "Source", kind: "source", availability: normalizeScore(1, 1, 0.8) },
+        { providerId: "tracker", providerName: "AniList", kind: "tracker", score: normalizeScore(84, 100, 0.8) },
+      ],
+    });
+    const sections = buildRecommendationSections([
+      tracked("drama-pick", ["Drama", "Sports", "Music", "Cooking", "Space"]),
+      tracked("sports-pick", ["Sports", "Music", "Cooking", "Space"]),
+    ], actionReader, { nowMs: NOW });
+
+    const outsideIds = sections.find((section) => section.key === "outsideYourUsualReads")?.items.map((item) => item.candidate.id) ?? [];
+
+    expect(actionReader.topTags.slice(0, 6)).toContain("drama");
+    expect(outsideIds).toContain("sports-pick");
+    expect(outsideIds).not.toContain("drama-pick");
+  });
+
   it("respects blocked tags, NSFW visibility, and library inclusion filters", () => {
     const sections = buildRecommendationSections([
       candidate("blocked", { tags: ["Action", "Hentai"], safety: "explicit" }),
@@ -963,7 +1001,69 @@ describe("recommendation sections", () => {
     expect(freshTop.filter((item) => item.candidate.contentType === "manhwa").length).toBeGreaterThanOrEqual(16);
   });
 
-  it("keeps the library's comic format mix in each row and lists the row by rating", () => {
+  it("ends a row when the library's main format runs out instead of filling it with another", () => {
+    const manhwaProfile = buildTasteProfile([
+      ...Array.from({ length: 6 }, (_, index) => ({
+        id: `manhwa-seed-${index}`,
+        title: `Manhwa Seed ${index}`,
+        tags: ["Action", "Fantasy"],
+        contentType: "manhwa" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        id: `manga-seed-${index}`,
+        title: `Manga Seed ${index}`,
+        tags: ["Action", "Fantasy"],
+        contentType: "manga" as const,
+        implicitWeight: 0.8,
+        status: "reading" as const,
+      })),
+    ]);
+    const tracked = (id: string, contentType: RecommendationCandidate["contentType"], score: number) =>
+      candidate(id, {
+        title: id,
+        tags: ["Action", "Fantasy"],
+        contentType,
+        providers: [{ providerId: "anilist", providerName: "AniList", kind: "tracker", score: normalizeScore(score, 100, 0.9) }],
+      });
+    // Plenty of well rated manga, few manhwa: the supply a manhwa reader often gets from AniList.
+    const sections = buildRecommendationSections([
+      ...Array.from({ length: 6 }, (_, index) => tracked(`manhwa-${index}`, "manhwa", 80 - index)),
+      ...Array.from({ length: 40 }, (_, index) => tracked(`manga-${index}`, "manga", 90 - (index % 10))),
+    ], manhwaProfile, { nowMs: NOW, limitPerSection: 40 });
+
+    for (const section of sections.filter((row) => row.key !== "freshInYourSources" && row.key !== "outsideYourUsualReads")) {
+      const manhwa = section.items.filter((item) => item.candidate.contentType === "manhwa").length;
+      const manga = section.items.filter((item) => item.candidate.contentType === "manga").length;
+      expect(manga, section.key).toBeLessThanOrEqual(Math.ceil(manhwa / 2));
+    }
+  });
+
+  it("lists one work of a series instead of its episodes and side novels", () => {
+    const tracked = (title: string, score: number) =>
+      candidate(title, {
+        title,
+        tags: ["Action", "Fantasy"],
+        providers: [{ providerId: "anilist", providerName: "AniList", kind: "tracker", score: normalizeScore(score, 100, 0.9) }],
+      });
+    const sections = buildRecommendationSections([
+      tracked("Higurashi no Naku Koro ni - Dai 1-wa: Onikakushi-hen", 88),
+      tracked("Higurashi no Naku Koro ni - Dai 2-wa: Watanagashi-hen", 87),
+      tracked("Higurashi no Naku Koro ni - Dai 3-wa: Tatarigoroshi-hen", 86),
+      tracked("Yakusoku no Neverland: Mama-tachi no Tsuisou Uta", 85),
+      tracked("Yakusoku no Neverland: Norman kara no Tegami", 84),
+      tracked("Spice & Wolf", 83),
+    ], profile, { nowMs: NOW, limitPerSection: 20 });
+    const listed = sections
+      .filter((section) => section.key !== "freshInYourSources")
+      .flatMap((section) => section.items.map((item) => item.candidate.title));
+    expect(listed.filter((title) => title.startsWith("Higurashi"))).toHaveLength(1);
+    expect(listed.filter((title) => title.startsWith("Yakusoku"))).toHaveLength(1);
+    expect(listed).toContain("Spice & Wolf");
+  });
+
+  it("keeps the library's comic format mix in each row, each format listed by rating", () => {
     const mixedProfile = buildTasteProfile([
       ...Array.from({ length: 6 }, (_, index) => ({
         id: `manhwa-seed-${index}`,
@@ -1010,7 +1110,12 @@ describe("recommendation sections", () => {
       // Global trackers rate Japanese titles higher; the row still holds plenty of manhwa like the library.
       expect(formats.filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(items.length * 0.4);
       expect(formats.filter((format) => format === "manga").length, key).toBeGreaterThanOrEqual(1);
-      expect(ratings, key).toEqual([...ratings].sort((a, b) => b - a));
+      // The first cards already show the mix instead of a block of higher-rated manga.
+      expect(formats.slice(0, 5).filter((format) => format === "manhwa").length, key).toBeGreaterThanOrEqual(2);
+      for (const format of ["manga", "manhwa"] as const) {
+        const formatRatings = ratings.filter((_, index) => formats[index] === format);
+        expect(formatRatings, `${key} ${format}`).toEqual([...formatRatings].sort((a, b) => b - a));
+      }
     }
   });
 
@@ -1079,6 +1184,12 @@ describe("recommendation sections", () => {
     expect(recommendationReleaseKind(comic("Solo Leveling - Ragnarok"), known)).toBe("continuation");
     expect(recommendationReleaseKind(comic("The Tower 2nd Season"), known)).toBe("continuation");
     expect(recommendationReleaseKind(comic("Hero Side Story"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Umineko no Naku Koro ni Chiru Episode 8"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Umineko no Naku Koro ni Episode 1"), known)).toBe("series");
+    expect(recommendationReleaseKind(comic("Higurashi no Naku Koro ni - Dai 4-wa: Himatsubushi-hen"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Higurashi no Naku Koro ni - Dai 1-wa: Onikakushi-hen"), known)).toBe("series");
+    expect(recommendationReleaseKind(comic("Ace of the Diamond act II"), known)).toBe("continuation");
+    expect(recommendationReleaseKind(comic("Active Raid"), known)).toBe("series");
     expect(recommendationReleaseKind(comic("Chainsaw Man", { format: "ONE_SHOT" }), known)).toBe("oneShot");
     expect(recommendationReleaseKind(comic("Look Back", { tags: ["Drama", "One-shot"] }), known)).toBe("oneShot");
     // A short known name starts too many unrelated titles, and a number alone is not a sequel.

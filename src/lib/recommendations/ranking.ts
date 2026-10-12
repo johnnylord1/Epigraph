@@ -30,6 +30,8 @@ const OUTSIDE_PERSONAL_AFFINITY_MAX = 0.35;
 // A weak overall match can still hide one of the reader's main genres (a title tagged only
 // "Fantasy" for a fantasy reader). Tags weighing this share of the strongest one are core.
 const OUTSIDE_CORE_TAG_SHARE = 0.72;
+// The genres the page shows as the reader's main ones are core too, however their weights compare.
+const PRINCIPAL_TASTE_TAG_COUNT = 6;
 // A tag the reader actively dislikes (dropped/low-rated works) keeps a title out
 // of the "like what you read" rows even when other tags match.
 const PROFILE_NEGATIVE_MAX = 0.35;
@@ -58,7 +60,9 @@ const SECTION_DRAFT_ORDER: RecommendationSectionKey[] = [
 // Sequels, side stories and one-shots may be recommended, but new series come first: they rank a
 // little lower when a row picks its works, and sit after the new series in the row.
 const SECONDARY_RELEASE_FACTOR = 0.9;
-const CONTINUATION_TITLE_PATTERN = /\b(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*(\d+|[ivx]+)\b|side\s*stor(y|ies)|gaiden|spin[\s-]?offs?|after\s*stor(y|ies)|extra\s*stor(y|ies))/i;
+// "Episode 1" starts a series told in episodes (Umineko); a later episode or act continues it, as
+// does a later "Dai N-wa" (Higurashi's Japanese episode numbering).
+const CONTINUATION_TITLE_PATTERN = /\b(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*(\d+|[ivx]+)\b|(episode|act)\s*(0*[2-9]|[1-9]\d+|ii|iii|iv|v|vi|vii|viii|ix|x)\b|dai\s*0*([2-9]|[1-9]\d+)\s*-?\s*(wa|shou|bu|kan)\b|side\s*stor(y|ies)|gaiden|spin[\s-]?offs?|after\s*stor(y|ies)|extra\s*stor(y|ies))/i;
 // "Series: Subtitle", "Series - Subtitle" or "Series (Subtitle)" continue a known series. Short names
 // ("Re", "Gate") start too many unrelated titles to count.
 const SERIES_PREFIX_PATTERN = /^(.+?)\s*(?::|\s[-–—]\s|[(（[])/;
@@ -313,11 +317,15 @@ export function buildRecommendationSections(
   const drafted = draftUniqueSectionItems(ranked, requestedLimit);
   return SECTION_DISPLAY_ORDER.map((key) => {
     const meta = SECTION_META[key];
-    const sectionItems = shouldApplyProfileComicMix(key)
-      ? applyProfileComicMix(drafted[key], profile, requestedLimit).slice(0, requestedLimit)
+    const mixed = shouldApplyProfileComicMix(key, profile);
+    // A row ends where the library's main format runs out rather than filling up with another.
+    const sectionItems = mixed
+      ? applyProfileComicMix(drafted[key], profile, requestedLimit, true).slice(0, requestedLimit)
       : drafted[key];
     // "Fresh" is about what came out lately and stays newest first.
-    const ordered = key === "freshInYourSources" ? sectionItems : orderByRating(sectionItems);
+    const ordered = key === "freshInYourSources"
+      ? sectionItems
+      : mixed ? orderByRatingInMix(sectionItems, profile) : orderByRating(sectionItems);
     return { key, title: meta.title, reason: meta.reason, items: ordered };
   });
 }
@@ -346,6 +354,19 @@ function continuesKnownSeries(title: string, candidate: RecommendationCandidate,
   return knownTitleKeys.has(recommendationTitleKey(prefix, candidate.contentType));
 }
 
+/**
+ * The series a work belongs to, by its title before a subtitle ("Higurashi no Naku Koro ni - Dai 3-wa",
+ * "Yakusoku no Neverland: Norman kara no Tegami"). Rows other than "fresh" list one work of a series,
+ * so one series' episodes or side novels do not fill a row.
+ */
+function seriesClaimKey(item: RecommendationItem): string | null {
+  const title = item.candidate.title;
+  const prefix = SERIES_PREFIX_PATTERN.exec(title)?.[1];
+  const series = prefix && normalizeToken(prefix).replace(/ /g, "").length >= SERIES_PREFIX_MIN_LENGTH ? prefix : title;
+  const key = recommendationTitleKey(series, item.candidate.contentType);
+  return key ? `series:${key}` : null;
+}
+
 function isSecondaryRelease(item: RecommendationItem): boolean {
   return item.releaseKind === "continuation" || item.releaseKind === "oneShot";
 }
@@ -371,6 +392,21 @@ function orderByRating(items: RecommendationItem[]): RecommendationItem[] {
       || ((b.rating ?? -1) - (a.rating ?? -1))
       || (a.index - b.index))
     .map((entry) => entry.item);
+}
+
+/**
+ * Rating order that keeps the library's comic mix: each format is listed best to worst, and the
+ * formats take turns by their share, so a sort by rating does not push all the manhwa behind the manga.
+ * New series still come before sequels and one-shots.
+ */
+function orderByRatingInMix(items: RecommendationItem[], profile: TasteProfile | undefined): RecommendationItem[] {
+  const rated = orderByRating(items);
+  const series = rated.filter((item) => !isSecondaryRelease(item));
+  const secondary = rated.filter(isSecondaryRelease);
+  return [
+    ...applyProfileComicMix(series, profile, series.length),
+    ...applyProfileComicMix(secondary, profile, secondary.length),
+  ];
 }
 
 export function buildTrackerScoreBadge(candidate: RecommendationCandidate): TrackerScoreBadge | null {
@@ -449,7 +485,7 @@ function rankSectionItems(
   const ordered = sectionKey === "freshInYourSources"
     ? unique.map((entry) => entry.item)
     : rerankForDiversity(unique);
-  return shouldApplyProfileComicMix(sectionKey) ? applyProfileComicMix(ordered, profile, limit) : ordered;
+  return shouldApplyProfileComicMix(sectionKey, profile) ? applyProfileComicMix(ordered, profile, limit) : ordered;
 }
 
 /**
@@ -517,8 +553,11 @@ function draftUniqueSectionItems(
           cursor += 1;
           const identityKeys = identityKeysOf(item);
           if (identityKeys.some((identityKey) => claimed.has(identityKey))) continue;
+          const series = key === "freshInYourSources" ? null : seriesClaimKey(item);
+          if (series && claimed.has(series)) continue;
           if (respectPreference && rankedFarHigherElsewhere(item, key, rank)) continue;
           for (const identityKey of identityKeys) claimed.add(identityKey);
+          if (series) claimed.add(series);
           picked[key].push(item);
           progressed = true;
           break;
@@ -537,8 +576,14 @@ function draftUniqueSectionItems(
   return picked;
 }
 
-function shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey): boolean {
-  return sectionKey !== "freshInYourSources" && sectionKey !== "outsideYourUsualReads";
+// "Fresh" lists what the reader's sources published lately, whatever its format; every other row
+// follows the library's comic mix. "Outside" does too (other genres, not other formats), unless the
+// library is almost all one format: then the other formats are what lies outside it.
+function shouldApplyProfileComicMix(sectionKey: RecommendationSectionKey, profile: TasteProfile | undefined): boolean {
+  if (sectionKey === "freshInYourSources") return false;
+  if (sectionKey !== "outsideYourUsualReads" || !profile) return true;
+  const dominant = dominantComicContentType(profile);
+  return !dominant || dominant.share < COMIC_FORMAT_EXCLUSIVE_SHARE;
 }
 
 function topicalTagSet(item: RecommendationItem): Set<string> {
@@ -668,11 +713,17 @@ function comicContentTypeDistribution(profile: TasteProfile): {
  * Lays a row out in the library's comic format proportions, interleaved so every visible window
  * shows the mix: a manhwa-heavy library sees manhwa in the first cards, not after a block of manga.
  * Each format keeps its own ranking order; the next slot goes to the format furthest behind its share.
+ *
+ * When a format runs out, the formats the library reads less of stop at their share of it: a row
+ * for a manhwa-heavy library ends when the manhwa does instead of going on with manga. A format the
+ * library reads less of than the ones left may run out without holding them back. `trim` drops what
+ * the proportions leave over; without it the rest follows in ranking order (a reorder, not a cut).
  */
 function applyProfileComicMix(
   items: RecommendationItem[],
   profile: TasteProfile | undefined,
   limit: number,
+  trim = false,
 ): RecommendationItem[] {
   if (!profile || limit <= 0) return items;
   const distribution = comicContentTypeDistribution(profile);
@@ -691,14 +742,24 @@ function applyProfileComicMix(
   const result: RecommendationItem[] = [];
   const used = new Set<string>();
   const taken = new Map<"manga" | "manhwa" | "manhua", number>(comicTypes.map((type) => [type, 0]));
+  const shareOf = (type: "manga" | "manhwa" | "manhua") => distribution.shares.get(type) ?? 0;
+  const exhausted = (type: "manga" | "manhwa" | "manhua") => {
+    const bucket = buckets.get(type)!;
+    while (bucket.length > 0 && used.has(bucket[0].candidate.id)) bucket.shift();
+    return bucket.length === 0;
+  };
+  // A format may not outgrow its share of a larger format that has run out.
+  const withinShare = (type: "manga" | "manhwa" | "manhua") => comicTypes.every((larger) => {
+    if (shareOf(larger) <= shareOf(type) || !exhausted(larger)) return true;
+    return taken.get(type)! + 1 <= Math.ceil((taken.get(larger)! * shareOf(type)) / shareOf(larger));
+  });
   while (result.length < limit) {
     let next: "manga" | "manhwa" | "manhua" | null = null;
     let nextDeficit = -Infinity;
     for (const type of comicTypes) {
       const bucket = buckets.get(type)!;
-      while (bucket.length > 0 && used.has(bucket[0].candidate.id)) bucket.shift();
-      const share = distribution.shares.get(type) ?? 0;
-      if (bucket.length === 0 || share <= 0) continue;
+      const share = shareOf(type);
+      if (exhausted(type) || share <= 0 || !withinShare(type)) continue;
       const deficit = (share * (result.length + 1)) - taken.get(type)!;
       const ahead = next !== null && deficit === nextDeficit
         && order.get(bucket[0])! < order.get(buckets.get(next)![0])!;
@@ -716,6 +777,7 @@ function applyProfileComicMix(
 
   for (const item of items) {
     if (used.has(item.candidate.id)) continue;
+    if (trim && isComicContentType(item.candidate.contentType)) continue;
     used.add(item.candidate.id);
     result.push(item);
   }
@@ -745,7 +807,7 @@ function hasTopicalTags(item: RecommendationItem): boolean {
 function profileCoreTags(profile: TasteProfile): Set<string> {
   let strongest = 0;
   for (const weight of profile.tagWeights.values()) strongest = Math.max(strongest, weight);
-  const core = new Set<string>();
+  const core = new Set<string>(profile.topTags.slice(0, PRINCIPAL_TASTE_TAG_COUNT));
   if (strongest <= 0) return core;
   for (const [tag, weight] of profile.tagWeights) {
     if (weight >= strongest * OUTSIDE_CORE_TAG_SHARE) core.add(tag);

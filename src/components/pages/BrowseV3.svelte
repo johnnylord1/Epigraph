@@ -5,9 +5,11 @@
   import { gql } from "../../lib/client";
   import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
   import { cachedLibraryTitleMatch, cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
+  import { ANILIST_PRIORITY, requestAniList } from "../../lib/recommendations/anilistGate";
   import { _ } from "../../lib/i18n/runtime";
   import { currentAppLocale, formatAppList, formatWorkStatus } from "../../lib/i18n/format";
   import { tasteTagLabel } from "../../lib/recommendations/genreLabels";
+  import { recommendationTagTokens } from "../../lib/recommendations/metadata";
   import { applyServiceIconFallback, resolveServiceIconUrl } from "../../lib/assets/serviceIconResolver";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { GET_SOURCES, GET_TRACKERS, SEARCH_TRACKER, GET_LIBRARY_SEARCH_SNAPSHOT, GET_ALL_TRACKER_RECORDS } from "../../lib/queries";
@@ -38,6 +40,7 @@
     kitsuNovelToRecommendationCandidate,
     matchKitsuNovel,
     searchKitsuNovels,
+    type KitsuNovel,
   } from "../../lib/recommendations/kitsuNovels";
   import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, isSourceChallengeMessage, sourceAccessErrorMessage } from "../../lib/sourceAccess";
   import {
@@ -63,7 +66,9 @@
     dedupeRecommendationItems,
     aniListAlternativeTitles,
     aniListTitleMatchKey,
+    comicFormatCountries,
     explorationGenres,
+    tasteCatalogRequests,
     fetchAniListMediaProfiles,
     fetchAniListMediaProfilesByMalId,
     inferMangaRecommendationContentType,
@@ -76,7 +81,9 @@
     trackerSeedsOutsideLibrary,
     type AniListMediaProfile,
     type ComicContentType,
+    type ComicCountry,
     type ExplorationGenres,
+    type TasteCatalogRequest,
     type RecommendationCandidate,
     type RecommendationItem,
     type RecommendationProviderSignal,
@@ -308,7 +315,21 @@
   const JIKAN_REQUEST_TIMEOUT_MS = 6000;
   const SEARCH_EXPLORE_PER_GENRE = 16;
   const SEARCH_EXPLORE_MIN_POPULARITY = 4000;
+  // Manhwa and manhua have far fewer AniList readers; outside the popular genres few pass 4000.
+  const SEARCH_EXPLORE_MIN_POPULARITY_BY_COUNTRY: Record<ComicCountry, number> = { JP: SEARCH_EXPLORE_MIN_POPULARITY, KR: 1000, CN: 1000 };
   const SEARCH_EXPLORE_DEBOUNCE_MS = 1500;
+  // Korean and Chinese comics have smaller AniList audiences than Japanese ones.
+  const SEARCH_TASTE_MIN_POPULARITY = 1500;
+  // The best rated pages are mostly what a heavy reader already has; look a few pages further.
+  const SEARCH_TASTE_EXTRA_PAGES = 3;
+  const SEARCH_TASTE_NEW_PER_PAGE = 12;
+  const SEARCH_TASTE_MAX_REQUESTS = 18;
+  const SEARCH_TASTE_RETRY_MS = 60_000;
+  const SEARCH_TASTE_MAX_RETRIES = 2;
+  // Recommendation catalogs kept across sessions: what is trending moves within hours, the best
+  // rated works of a genre within days.
+  const SEARCH_TRENDING_PERSIST_MS = 3 * 60 * 60_000;
+  const SEARCH_CATALOG_PERSIST_MS = 12 * 60 * 60_000;
   // Short aliases ("Hero", "Ruler") name too many works to hide a recommendation by.
   const SEARCH_KNOWN_ALIAS_MIN_LENGTH = 6;
   // Kitsu's novel catalogue is public: novels are rated and discovered there with no account, the way
@@ -317,9 +338,14 @@
   const KITSU_NOVEL_SCORE_CONCURRENCY = 2;
   const KITSU_NOVEL_SEARCH_RESULTS = 5;
   const KITSU_NOVEL_TASTE_CATEGORY_LIMIT = 3;
-  const KITSU_NOVEL_TASTE_PER_CATEGORY = 12;
+  // Kitsu answers at most 20 a page; a large library already holds many of the best known.
+  const KITSU_NOVEL_TASTE_PER_CATEGORY = 20;
+  const KITSU_NOVEL_TASTE_PAGES = 2;
   const KITSU_NOVEL_EXPLORE_GENRE_LIMIT = 2;
-  const KITSU_NOVEL_EXPLORE_PER_GENRE = 10;
+  // Kitsu cannot leave genres out, so most of a genre's novels also carry the reader's usual ones
+  // and are dropped here; read further to keep enough.
+  const KITSU_NOVEL_EXPLORE_PER_GENRE = 20;
+  const KITSU_NOVEL_EXPLORE_PAGES = 3;
   const KITSU_NOVEL_TIMEOUT_MS = 9000;
   const KITSU_NOVEL_DEBOUNCE_MS = 1500;
   const HARDCOVER_SCORE_ENRICHMENT_LIMIT = 6;
@@ -711,6 +737,12 @@
   let searchTrackerExploreKey = $state("");
   const searchTrackerExploreCache = new Map<string, TrackSearch[]>();
   let searchTrackerExploreAbortCtrl: AbortController | null = null;
+  const searchTrackerExploreRetries = new Map<string, number>();
+  let searchTrackerTasteResults = $state<TrackSearch[]>([]);
+  let searchTrackerTasteKey = $state("");
+  const searchTrackerTasteCache = new Map<string, TrackSearch[]>();
+  let searchTrackerTasteAbortCtrl: AbortController | null = null;
+  const searchTrackerTasteRetries = new Map<string, number>();
   let searchTrackerTrendingPage = $state(2);
   let searchTrackerScoreLoading = $state(false);
   let searchTrackerScoreKey = $state("");
@@ -863,6 +895,8 @@
     searchTrackerTrendingResults = [];
     searchTrackerExploreResults = [];
     searchTrackerExploreKey = "";
+    searchTrackerTasteResults = [];
+    searchTrackerTasteKey = "";
     searchTrackerTrendingLoading = false;
     searchTrackerTrendingKey = "";
     searchTrackerTrendingPage = 2;
@@ -887,6 +921,7 @@
     clearHardcoverBackgroundTimer();
     stopSearchAniListTitleMatching();
     searchTrackerExploreAbortCtrl?.abort();
+    searchTrackerTasteAbortCtrl?.abort();
     searchTrackerScoreAbortCtrl?.abort();
     searchSourceSeedAbortCtrl?.abort();
     searchTrackerScoreAbortCtrl = null;
@@ -896,6 +931,8 @@
     searchTrackerTrendingResults = [];
     searchTrackerExploreResults = [];
     searchTrackerExploreKey = "";
+    searchTrackerTasteResults = [];
+    searchTrackerTasteKey = "";
     searchTrackerRecordCandidates = [];
     searchTrackerSeedItems = [];
     searchSourceSeedResults = [];
@@ -968,6 +1005,8 @@
     searchTrackerTrendingResults = [];
     searchTrackerExploreResults = [];
     searchTrackerExploreKey = "";
+    searchTrackerTasteResults = [];
+    searchTrackerTasteKey = "";
     searchTrackerRecordCandidates = [];
     searchTrackerSeedItems = [];
     searchSourceSeedResults = [];
@@ -1083,6 +1122,8 @@
     searchTrackerTrendingResults = [];
     searchTrackerExploreResults = [];
     searchTrackerExploreKey = "";
+    searchTrackerTasteResults = [];
+    searchTrackerTasteKey = "";
     searchTrackerTrendingLoading = false;
     searchTrackerTrendingKey = "";
     searchTrackerTrendingPage = 2;
@@ -2333,6 +2374,7 @@
         ...trackerCatalogResults,
         ...searchTrackerScoreResults,
         ...searchTrackerExploreResults,
+        ...searchTrackerTasteResults,
       ]),
       trackers: allTrackers,
       trackRecordsByMangaId: searchTrackRecordsByMangaId,
@@ -2362,10 +2404,13 @@
     const day = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
     const genres = explorationGenres(searchRecommendationResult.profile, { rotation: day });
     if (!genres) return null;
+    const countries = comicFormatCountries(searchRecommendationResult.profile);
+    if (countries.length === 0) return null;
     return {
-      key: JSON.stringify({ tracker: tracker.id, nsfw: includeNsfwSources, ...genres }),
+      key: JSON.stringify({ tracker: tracker.id, nsfw: includeNsfwSources, ...genres, countries }),
       tracker,
       genres,
+      countries,
     };
   });
 
@@ -2381,7 +2426,39 @@
     const timer = window.setTimeout(() => {
       untrack(() => {
         const request = searchExploreRequest;
-        if (request?.key === key) void refreshSearchTrackerExploreFeed(key, request.tracker, request.genres);
+        if (request?.key === key) void refreshSearchTrackerExploreFeed(key, request.tracker, request.genres, request.countries);
+      });
+    }, SEARCH_EXPLORE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  });
+
+  // Trending catalogs are mostly Japanese and mostly what a heavy reader already has. This search
+  // looks for well rated works in the reader's strongest genres, per comic format in the library's
+  // proportions, so a manhwa reader is offered manhwa too.
+  const searchTasteRequest = $derived.by(() => {
+    if (activeContentType !== "manga") return null;
+    const tracker = usableSearchTrackers(searchScoreTrackers).find((entry) => trackerProviderKind(entry) === "anilist");
+    if (!tracker) return null;
+    const requests = tasteCatalogRequests(searchRecommendationResult.profile);
+    if (requests.length === 0) return null;
+    return {
+      key: JSON.stringify({ tracker: tracker.id, nsfw: includeNsfwSources, requests }),
+      tracker,
+      requests,
+    };
+  });
+
+  const searchTasteKey = $derived(searchTasteRequest?.key ?? "");
+
+  $effect(() => {
+    if (!searchRecommendationsReady) return;
+    if (activeContentType !== "manga" || activeBrowseTab !== "keyword" || kw_submitted) return;
+    const key = searchTasteKey;
+    if (!key || key === searchTrackerTasteKey) return;
+    const timer = window.setTimeout(() => {
+      untrack(() => {
+        const request = searchTasteRequest;
+        if (request?.key === key) void refreshSearchTrackerTasteFeed(key, request.tracker, request.requests);
       });
     }, SEARCH_EXPLORE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
@@ -4644,21 +4721,15 @@
         }
       }
     `;
-    const response = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        query,
-        variables: {
-          page,
-          perPage: TRACKER_CATALOG_PAGE_SIZE,
-          sort: anilistSortForFeed(),
-        },
-      }),
-    });
-    if (!response.ok) throw new Error(`AniList catalog failed (${response.status})`);
-    const data: AniListTrackerResponse = await response.json();
-    const media = data?.data?.Page?.media ?? [];
+    const data = await requestAniList<AniListTrackerResponse["data"]>({
+      query,
+      variables: {
+        page,
+        perPage: TRACKER_CATALOG_PAGE_SIZE,
+        sort: anilistSortForFeed(),
+      },
+    }, { priority: ANILIST_PRIORITY.feed });
+    const media = data?.Page?.media ?? [];
     return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
   }
 
@@ -4698,35 +4769,61 @@
     tracker: BrowseTrackerEntry,
     genre: string,
     excludedGenres: string[],
+    country: ComicCountry,
     signal: AbortSignal,
   ) {
     const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
     const query = `
-      query SearchExploreTrackerCatalog($genre: String!, $excluded: [String], $perPage: Int!, $minPopularity: Int!) {
+      query SearchExploreTrackerCatalog($genre: String!, $excluded: [String], $country: CountryCode!, $perPage: Int!, $minPopularity: Int!) {
         Page(page: 1, perPage: $perPage) {
-          media(type: MANGA, genre: $genre, genre_not_in: $excluded, popularity_greater: $minPopularity, sort: [SCORE_DESC, POPULARITY_DESC]${adultFilter}) {
+          media(type: MANGA, format_not_in: [NOVEL], genre: $genre, genre_not_in: $excluded, countryOfOrigin: $country, popularity_greater: $minPopularity, sort: [SCORE_DESC, POPULARITY_DESC]${adultFilter}) {
             ${ANILIST_SEARCH_MEDIA_FIELDS}
           }
         }
       }
     `;
-    const response = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        query,
-        variables: {
-          genre,
-          excluded: excludedGenres.length > 0 ? excludedGenres : null,
-          perPage: SEARCH_EXPLORE_PER_GENRE,
-          minPopularity: SEARCH_EXPLORE_MIN_POPULARITY,
-        },
-      }),
-      signal,
-    });
-    if (!response.ok) throw new Error(`AniList explore catalog failed (${response.status})`);
-    const data: AniListTrackerResponse = await response.json();
-    const media = data?.data?.Page?.media ?? [];
+    const data = await requestAniList<AniListTrackerResponse["data"]>({
+      query,
+      variables: {
+        genre,
+        excluded: excludedGenres.length > 0 ? excludedGenres : null,
+        country,
+        perPage: SEARCH_EXPLORE_PER_GENRE,
+        minPopularity: SEARCH_EXPLORE_MIN_POPULARITY_BY_COUNTRY[country],
+      },
+    }, { priority: ANILIST_PRIORITY.extra, signal, persistMs: SEARCH_CATALOG_PERSIST_MS });
+    const media = data?.Page?.media ?? [];
+    return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
+  }
+
+  // Highest rated works of one comic format in one of the reader's strongest genres.
+  async function fetchSearchTasteAniListCatalog(
+    tracker: BrowseTrackerEntry,
+    request: TasteCatalogRequest,
+    page: number,
+    signal: AbortSignal,
+  ) {
+    const adultFilter = includeNsfwSources ? "" : ", isAdult: false";
+    const query = `
+      query SearchTasteTrackerCatalog($genre: String!, $country: CountryCode!, $page: Int!, $perPage: Int!, $minPopularity: Int!) {
+        Page(page: $page, perPage: $perPage) {
+          media(type: MANGA, format_not_in: [NOVEL], genre: $genre, countryOfOrigin: $country, popularity_greater: $minPopularity, sort: [SCORE_DESC, POPULARITY_DESC]${adultFilter}) {
+            ${ANILIST_SEARCH_MEDIA_FIELDS}
+          }
+        }
+      }
+    `;
+    const data = await requestAniList<AniListTrackerResponse["data"]>({
+      query,
+      variables: {
+        genre: request.genre,
+        country: request.country,
+        page,
+        perPage: TRACKER_CATALOG_PAGE_SIZE,
+        minPopularity: SEARCH_TASTE_MIN_POPULARITY,
+      },
+    }, { priority: ANILIST_PRIORITY.feed, signal, persistMs: SEARCH_CATALOG_PERSIST_MS });
+    const media = data?.Page?.media ?? [];
     return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
   }
 
@@ -4742,20 +4839,14 @@
         }
       }
     `;
-    const response = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        query,
-        variables: {
-          page,
-          perPage: TRACKER_CATALOG_PAGE_SIZE,
-        },
-      }),
-    });
-    if (!response.ok) throw new Error(`AniList trending catalog failed (${response.status})`);
-    const data: AniListTrackerResponse = await response.json();
-    const media = data?.data?.Page?.media ?? [];
+    const data = await requestAniList<AniListTrackerResponse["data"]>({
+      query,
+      variables: {
+        page,
+        perPage: TRACKER_CATALOG_PAGE_SIZE,
+      },
+    }, { priority: ANILIST_PRIORITY.feed, persistMs: SEARCH_TRENDING_PERSIST_MS });
+    const media = data?.Page?.media ?? [];
     return media.map((item) => mapAniListMediaToTrackSearch(item, tracker));
   }
 
@@ -4819,15 +4910,17 @@
         }
       }
     `;
-    const response = await fetch("https://graphql.anilist.co", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ query, variables: { search: title } }),
-      signal,
-    });
-    if (!response.ok) return [];
-    const data: AniListTrackerResponse = await response.json();
-    const media = data?.data?.Page?.media ?? [];
+    let data: AniListTrackerResponse["data"];
+    try {
+      data = await requestAniList<AniListTrackerResponse["data"]>(
+        { query, variables: { search: title } },
+        { priority: ANILIST_PRIORITY.lookup, signal },
+      );
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return [];
+    }
+    const media = data?.Page?.media ?? [];
     const candidates = media.map((item) => ({
       item,
       title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
@@ -4874,19 +4967,12 @@
       const query = `query SearchTrackerScores(${variableDefs}) { ${pages} }`;
       const variables = Object.fromEntries(chunk.map((title, index) => [`search${index}`, title]));
       try {
-        const response = await fetch("https://graphql.anilist.co", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ query, variables }),
-          signal,
-        });
-        if (!response.ok) {
-          for (const title of chunk) trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), []);
-          continue;
-        }
-        const data: AniListTrackerBatchResponse = await response.json();
+        const data = await requestAniList<AniListTrackerBatchResponse["data"]>(
+          { query, variables },
+          { priority: ANILIST_PRIORITY.lookup, signal },
+        );
         chunk.forEach((title, index) => {
-          const media = data?.data?.[`q${index}`]?.media ?? [];
+          const media = data?.[`q${index}`]?.media ?? [];
           const candidates = media.map((item) => ({
             item,
             title: item.title?.english ?? item.title?.romaji ?? item.title?.native ?? "",
@@ -4896,6 +4982,8 @@
           trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), results);
         });
       } catch {
+        // A stopped search asks again later; a failed one is not asked again this session.
+        if (signal.aborted) break;
         for (const title of chunk) {
           if (!trackerScoreSearchCache.has(trackerScoreSearchKey(tracker, title, contentType))) {
             trackerScoreSearchCache.set(trackerScoreSearchKey(tracker, title, contentType), []);
@@ -5150,20 +5238,40 @@
       searchKitsuNovelScoreResults = capProviderSignalMap(providers);
       searchKitsuNovelTagsByTitleKey = new Map([...categories].filter(([titleKey]) => searchKitsuNovelScoreResults.has(titleKey)));
 
+      // First pages of every genre before the second ones, so each genre shows up early.
       const feeds = [
-        ...tasteCategories.map((category) => ({ category, limit: KITSU_NOVEL_TASTE_PER_CATEGORY })),
-        ...(explore?.include ?? []).map((category) => ({ category, limit: KITSU_NOVEL_EXPLORE_PER_GENRE })),
+        ...Array.from({ length: KITSU_NOVEL_TASTE_PAGES }, (_, page) => tasteCategories.map((category) => ({
+          category,
+          limit: KITSU_NOVEL_TASTE_PER_CATEGORY,
+          offset: page * KITSU_NOVEL_TASTE_PER_CATEGORY,
+          explore: false,
+        }))).flat(),
+        ...Array.from({ length: KITSU_NOVEL_EXPLORE_PAGES }, (_, page) => (explore?.include ?? []).map((category) => ({
+          category,
+          limit: KITSU_NOVEL_EXPLORE_PER_GENRE,
+          offset: page * KITSU_NOVEL_EXPLORE_PER_GENRE,
+          explore: true,
+        }))).flat(),
       ];
-      await runConcurrentLimited(feeds, 1, async ({ category, limit }) => {
+      const usualGenres = new Set((explore?.exclude ?? []).flatMap(recommendationTagTokens));
+      const inUsualGenre = (novel: KitsuNovel) => novel.categories.flatMap(recommendationTagTokens).some((token) => usualGenres.has(token));
+      await runConcurrentLimited(feeds, 1, async ({ category, limit, offset, explore: exploring }) => {
         if (!current()) return;
-        const novels = await withSoftTimeout(
-          discoverKitsuNovels(category, limit, options).catch(() => []),
+        const page = (from: number) => withSoftTimeout(
+          discoverKitsuNovels(category, limit, options, from).catch(() => []),
           KITSU_NOVEL_TIMEOUT_MS,
           [],
         );
+        let novels = await page(offset);
+        // Filtered by genre, Kitsu may read page[offset] as where the page ends, so the second page
+        // repeats the first. A page with nothing new steps one page further.
+        if (offset > 0 && novels.length > 0 && novels.every((novel) => discovered.has(novel.id)) && current()) {
+          novels = await page(offset + limit);
+        }
         for (const novel of novels) {
           if (discovered.has(novel.id)) continue;
           if (novel.adult && !includeNsfwSources) continue;
+          if (exploring && inUsualGenre(novel)) continue;
           discovered.set(novel.id, kitsuNovelToRecommendationCandidate(novel, [category]));
         }
         // Publish each feed as it lands so one slow category does not hold back the others.
@@ -5251,7 +5359,12 @@
     return true;
   }
 
-  async function refreshSearchTrackerExploreFeed(key: string, tracker: BrowseTrackerEntry, genres: ExplorationGenres) {
+  async function refreshSearchTrackerExploreFeed(
+    key: string,
+    tracker: BrowseTrackerEntry,
+    genres: ExplorationGenres,
+    countries: ComicCountry[],
+  ) {
     searchTrackerExploreAbortCtrl?.abort();
     const ctrl = new AbortController();
     searchTrackerExploreAbortCtrl = ctrl;
@@ -5263,13 +5376,95 @@
       return;
     }
 
-    const results = (await Promise.all(genres.include.map((genre) =>
-      fetchSearchExploreAniListCatalog(tracker, genre, genres.exclude, ctrl.signal).catch(() => [] as TrackSearch[]),
-    ))).flat();
+    // One genre at a time, like the taste search: the other feeds load at the same time and a burst
+    // is rate limited.
+    const results: TrackSearch[] = [];
+    let failed = false;
+    // Each genre in every format the library holds, so the row can keep the library's format mix.
+    const searches = genres.include.flatMap((genre) => countries.map((country) => ({ genre, country })));
+    for (const { genre, country } of searches) {
+      try {
+        results.push(...await fetchSearchExploreAniListCatalog(tracker, genre, genres.exclude, country, ctrl.signal));
+      } catch {
+        failed = true;
+        break;
+      }
+      if (ctrl.signal.aborted || searchTrackerExploreKey !== key) return;
+      searchTrackerExploreResults = capProviderResults(dedupeTrackSearches(results));
+    }
     if (ctrl.signal.aborted || searchTrackerExploreKey !== key) return;
-    const unique = capProviderResults(dedupeTrackSearches(results));
-    if (unique.length > 0) searchTrackerExploreCache.set(key, unique);
-    searchTrackerExploreResults = unique;
+    if (!failed) {
+      searchTrackerExploreCache.set(key, searchTrackerExploreResults);
+      return;
+    }
+    // Rate limited or offline: keep what arrived and try the whole search again a little later.
+    const retries = searchTrackerExploreRetries.get(key) ?? 0;
+    if (retries >= SEARCH_TASTE_MAX_RETRIES) return;
+    searchTrackerExploreRetries.set(key, retries + 1);
+    window.setTimeout(() => {
+      if (searchTrackerExploreKey === key && !ctrl.signal.aborted) searchTrackerExploreKey = "";
+    }, SEARCH_TASTE_RETRY_MS);
+  }
+
+  function isKnownSearchTrackerResult(item: TrackSearch) {
+    const providerKey = recommendationTrackerRemoteKey(item.trackerId, item.remoteId);
+    if (providerKey && searchKnownProviderKeys.has(providerKey)) return true;
+    return (["manga", "manhwa", "manhua"] as const)
+      .some((contentType) => searchKnownTitleKeys.has(recommendationTitleKey(item.title, contentType)));
+  }
+
+  // One request at a time: AniList rate limits bursts, and the other feeds load at the same time.
+  // Works the reader already has are left out, and a search reads on until it finds enough new ones.
+  async function refreshSearchTrackerTasteFeed(key: string, tracker: BrowseTrackerEntry, requests: TasteCatalogRequest[]) {
+    searchTrackerTasteAbortCtrl?.abort();
+    const ctrl = new AbortController();
+    searchTrackerTasteAbortCtrl = ctrl;
+    searchTrackerTasteKey = key;
+
+    const cached = searchTrackerTasteCache.get(key);
+    if (cached) {
+      searchTrackerTasteResults = cached;
+      return;
+    }
+
+    const collected: TrackSearch[] = [];
+    let requestCount = 0;
+    let failed = false;
+    for (const [index, request] of requests.entries()) {
+      // Every search gets its own pages before any reads further.
+      const reserved = requests.slice(index + 1).reduce((sum, next) => sum + next.pages, 0);
+      let found = 0;
+      for (let page = 1; page <= request.pages + SEARCH_TASTE_EXTRA_PAGES; page += 1) {
+        if (found >= request.pages * SEARCH_TASTE_NEW_PER_PAGE) break;
+        if (page > request.pages && requestCount + reserved >= SEARCH_TASTE_MAX_REQUESTS) break;
+        requestCount += 1;
+        let results: TrackSearch[];
+        try {
+          results = await fetchSearchTasteAniListCatalog(tracker, request, page, ctrl.signal);
+        } catch {
+          failed = true;
+          break;
+        }
+        if (ctrl.signal.aborted || searchTrackerTasteKey !== key) return;
+        const fresh = results.filter((item) => !isKnownSearchTrackerResult(item));
+        found += fresh.length;
+        collected.push(...fresh);
+        if (results.length < TRACKER_CATALOG_PAGE_SIZE) break;
+      }
+      if (ctrl.signal.aborted || searchTrackerTasteKey !== key) return;
+      searchTrackerTasteResults = capProviderResults(dedupeTrackSearches(collected));
+    }
+    if (!failed) {
+      searchTrackerTasteCache.set(key, searchTrackerTasteResults);
+      return;
+    }
+    // Rate limited or offline: keep what arrived and try the whole search again a little later.
+    const retries = searchTrackerTasteRetries.get(key) ?? 0;
+    if (retries >= SEARCH_TASTE_MAX_RETRIES) return;
+    searchTrackerTasteRetries.set(key, retries + 1);
+    window.setTimeout(() => {
+      if (searchTrackerTasteKey === key && !ctrl.signal.aborted) searchTrackerTasteKey = "";
+    }, SEARCH_TASTE_RETRY_MS);
   }
 
   async function refreshSearchTrackerTrendingFeed(key: string, trackers: BrowseTrackerEntry[]) {

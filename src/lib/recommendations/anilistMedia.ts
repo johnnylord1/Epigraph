@@ -1,3 +1,4 @@
+import { gatedAniListFetch } from "./anilistGate";
 import { creditRelation, splitCredits, type CreditRelation } from "./credits";
 import { normalizeToken } from "./normalization";
 
@@ -260,7 +261,8 @@ function staffCredits(names: StaffName[]): string[] {
 }
 
 function resolveFetch(options: FetchOptions) {
-  return options.fetchImpl ?? (typeof fetch === "function" ? fetch.bind(globalThis) : undefined);
+  // Without a fetch of its own, a lookup waits its turn with every other AniList request.
+  return options.fetchImpl ?? (typeof fetch === "function" ? gatedAniListFetch : undefined);
 }
 
 function headerNumber(response: Response, name: string): number | null {
