@@ -82,4 +82,34 @@ object TitleMatcher {
         val main = mainTitle(title)?.let { score(it, candidate) * 0.95 } ?: 0.0
         return max(full, main)
     }
+
+    /** Words of [title] long enough to tell two series apart ("a", "of" and the like are left out). */
+    fun significantWords(title: String): Set<String> =
+        normalize(title).split(' ').filter { it.length >= 3 }.toSet()
+
+    // "Alternative Names: a • b" on one line, or "**Alternative Names**:" followed by "- a" lines.
+    private val alternativeNamesHeader = Regex(
+        "^[*_ \\t]*(?:alternative|alternate|alt\\.?|other|associated)[ \\t]+(?:names?|titles?)[*_ \\t]*:[*_ \\t]*(.*)$",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE),
+    )
+    private val listItem = Regex("^\\s*[-\u2022*]\\s+(.+)$")
+    private val inlineSeparators = Regex("\\s*[\u2022;|]\\s*|\\s+/\\s+")
+
+    /** Other names of a series as sources list them in its description, or none when it has no such list. */
+    fun alternativeTitles(description: String?): List<String> {
+        if (description.isNullOrBlank()) return emptyList()
+        val header = alternativeNamesHeader.find(description) ?: return emptyList()
+        val inline = header.groupValues[1].trim()
+        val names = if (inline.isNotEmpty()) {
+            inline.split(inlineSeparators)
+        } else {
+            description.substring(header.range.last + 1)
+                .lineSequence()
+                .drop(1)
+                .takeWhile { listItem.matches(it) }
+                .map { listItem.find(it)!!.groupValues[1] }
+                .toList()
+        }
+        return names.map { it.trim() }.filter { normalize(it).isNotEmpty() }.distinct()
+    }
 }
