@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.backup
 
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
@@ -23,6 +24,8 @@ object CategoryPreferenceBackup {
 
     /** The category every manga without one is in; the same id in every fork. */
     private const val DEFAULT_ID = "0"
+
+    private const val DOWNLOAD_NEW_CATEGORIES = "download_new_categories"
 
     private val SET_KEYS = mapOf(
         "download_new_categories" to Setting.AUTOMATIC_DOWNLOADS,
@@ -51,6 +54,9 @@ object CategoryPreferenceBackup {
         deviceCategoryId: (CategoryLibrary, String) -> Int?,
     ): Remapped {
         val ids = deviceIds(backupCategories, deviceCategoryId)
+        // Download categories only matter when the backup downloaded new chapters automatically.
+        val downloadNew = preferences.firstOrNull { it.key == PreferenceKeys.downloadNew }?.value
+        val downloadsOn = (downloadNew as? BooleanPreferenceValue)?.value != false
         val unresolved = mutableSetOf<Setting>()
         val unresolvedKeys = mutableSetOf<String>()
 
@@ -62,7 +68,9 @@ object CategoryPreferenceBackup {
                     if (mapped.all { it != null }) {
                         preference.copy(value = StringSetPreferenceValue(mapped.filterNotNull().toSet()))
                     } else {
-                        SET_KEYS[key]?.let(unresolved::add)
+                        if (downloadsOn || !key.startsWith(DOWNLOAD_NEW_CATEGORIES)) {
+                            SET_KEYS[key]?.let(unresolved::add)
+                        }
                         unresolvedKeys += key
                         null
                     }
@@ -84,7 +92,7 @@ object CategoryPreferenceBackup {
 
         // An empty category list downloads every new chapter in the library: automatic downloads
         // stay as they are on this device until the user picks the categories again.
-        val downloadsUnresolved = unresolvedKeys.any { it.startsWith("download_new_categories") }
+        val downloadsUnresolved = unresolvedKeys.any { it.startsWith(DOWNLOAD_NEW_CATEGORIES) }
         val result = if (downloadsUnresolved) {
             remapped.filterNot { it.key == PreferenceKeys.downloadNew }
         } else {

@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.backup
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -50,6 +51,22 @@ class BackupPreferencePolicyTest {
         val restored = BackupPreferencePolicy.restorableAppPreferences(foreignBackup + forged, noDeviceSets).map { it.key }
 
         assertEquals(listOf("source_languages", "backup_interval"), restored)
+    }
+
+    @Test
+    fun `Mihon's Long chapter filters and sort become the Int this app reads`() {
+        val mihon = listOf(
+            BackupPreference("default_chapter_filter_by_read", LongPreferenceValue(2)),
+            BackupPreference("default_chapter_sort_by_source_or_number", LongPreferenceValue(0x100)),
+            BackupPreference("library_update_last_timestamp", LongPreferenceValue(1_000)),
+        )
+
+        val restored = BackupPreferencePolicy.restorableAppPreferences(mihon, noDeviceSets)
+
+        assertEquals(
+            listOf(IntPreferenceValue(2), IntPreferenceValue(0x100), LongPreferenceValue(1_000)),
+            restored.map { it.value },
+        )
     }
 
     @Test
