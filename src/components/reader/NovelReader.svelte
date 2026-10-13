@@ -427,8 +427,12 @@
     updateSettings({ proseReaderTheme: themes[(current + 1) % themes.length] });
   }
 
+  function setFontSize(value: number) {
+    updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, Math.round(value))) });
+  }
+
   function updateFontSize(delta: number) {
-    updateSettings({ proseReaderFontSize: Math.max(12, Math.min(32, proseFontSize + delta)) });
+    setFontSize(proseFontSize + delta);
   }
 
   function onKey(event: KeyboardEvent) {
@@ -796,6 +800,7 @@
   <ReaderHud
     bind:toolsOpen={toolsOpen}
     readerKind="novel"
+    zoom={{ value: proseFontSize, min: 12, max: 32, step: 1, label: `${proseFontSize}${$_("ui_px_07a65dd6")}`, set: setFontSize }}
     title={currentNovel?.title ?? $_("ui_novel")}
     chapterTitle={activeReader?.chapterTitle ?? ""}
     progressLabel={progressLabel}

@@ -1,7 +1,19 @@
+<script lang="ts" module>
+  /** A reader's own zoom, driven from the view popover and Ctrl + mouse wheel. */
+  export type ReaderHudZoom = {
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    label: string;
+    set: (value: number) => void;
+  };
+</script>
+
 <script lang="ts">
   import { _ } from "../../lib/i18n/runtime";
   import type { Snippet } from "svelte";
-  import { CaretLeft, CaretRight, BookmarkSimple, PictureInPicture, SlidersHorizontal, Sun } from "phosphor-svelte";
+  import { CaretLeft, CaretRight, BookmarkSimple, CircleHalfTilt, MagnifyingGlassPlus, PictureInPicture, SlidersHorizontal, Sun } from "phosphor-svelte";
   import { store, updateSettings } from "../../store/state.svelte";
   import { READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
 
@@ -20,6 +32,8 @@
     rtl?: boolean;
     /** Selects which reader's brightness this HUD reads and writes. */
     readerKind?: ReaderKind;
+    /** Shown beside brightness when set; the reader keeps its own range and applies the value. */
+    zoom?: ReaderHudZoom;
     onMouseMove?: (event: MouseEvent) => void;
     onHudMouseEnter?: () => void;
     onHudMouseLeave?: () => void;
@@ -49,6 +63,7 @@
     uiVisible = true,
     rtl = false,
     readerKind = "manga",
+    zoom,
     onMouseMove = () => {},
     onHudMouseEnter = () => {},
     onHudMouseLeave = () => {},
@@ -66,6 +81,40 @@
   let brightnessOpen = $state(false);
   const brightnessKey = $derived(READER_BRIGHTNESS_SETTING_KEY[readerKind]);
   const brightness = $derived(store.settings[brightnessKey] ?? 1.0);
+  const MIN_BRIGHTNESS = 0.2;
+  const MAX_BRIGHTNESS = 1;
+  const BRIGHTNESS_STEP = 0.05;
+
+  function setBrightness(next: number) {
+    updateSettings({ [brightnessKey]: Math.round(Math.max(MIN_BRIGHTNESS, Math.min(MAX_BRIGHTNESS, next)) * 100) / 100 });
+  }
+
+  function stepZoom(direction: 1 | -1) {
+    if (!zoom) return;
+    const next = Math.round(Math.min(zoom.max, Math.max(zoom.min, zoom.value + direction * zoom.step)) * 1000) / 1000;
+    if (next !== zoom.value) zoom.set(next);
+  }
+
+  // Ctrl + wheel zooms and Shift + wheel dims, wherever the pointer is in the reader. Windows turns
+  // Shift + wheel into a horizontal scroll, so its delta can arrive on either axis.
+  function onHotkeyWheel(event: WheelEvent) {
+    if (event.ctrlKey === event.shiftKey || event.altKey || event.metaKey) return;
+    const delta = event.deltaY || event.deltaX;
+    if (!delta) return;
+    if (event.ctrlKey) {
+      if (!zoom) return;
+      event.preventDefault();
+      stepZoom(delta < 0 ? 1 : -1);
+    } else {
+      event.preventDefault();
+      setBrightness(brightness + (delta < 0 ? BRIGHTNESS_STEP : -BRIGHTNESS_STEP));
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener("wheel", onHotkeyWheel, { passive: false, capture: true });
+    return () => window.removeEventListener("wheel", onHotkeyWheel, { capture: true });
+  });
   let manualHudVisible: boolean | null = $state(null);
   const effectiveHudVisible = $derived(manualHudVisible ?? uiVisible);
 
@@ -143,21 +192,39 @@
       </div>
     {/if}
 
-    <!-- Brightness Popover Card (Floating above capsule) -->
+    <!-- View Popover Card: zoom and brightness (Floating above capsule) -->
     {#if brightnessOpen}
       <div class="reader-brightness-popover" role="presentation" onmouseenter={onHudMouseEnter} onmouseleave={onHudMouseLeave}>
-        <Sun size={15} weight="regular" style="color: var(--reader-muted);" />
-        <input
-          type="range"
-          class="popover-brightness-input"
-          min={0.2}
-          max={1.0}
-          step={0.05}
-          value={brightness}
-          oninput={(event) => updateSettings({ [brightnessKey]: Number(event.currentTarget.value) })}
-          aria-label={$_("ui_adjustBrightness")}
-        />
-        <span class="brightness-val-text">{Math.round(brightness * 100)}%</span>
+        {#if zoom}
+          <div class="view-row" title={`${$_("ui_zoom")} (Ctrl + scroll)`}>
+            <MagnifyingGlassPlus size={15} weight="regular" />
+            <input
+              type="range"
+              class="popover-brightness-input"
+              min={zoom.min}
+              max={zoom.max}
+              step={zoom.step}
+              value={zoom.value}
+              oninput={(event) => zoom?.set(Number(event.currentTarget.value))}
+              aria-label={$_("ui_adjustZoom")}
+            />
+            <span class="brightness-val-text">{zoom.label}</span>
+          </div>
+        {/if}
+        <div class="view-row" title={`${$_("ui_brightness")} (Shift + scroll)`}>
+          <Sun size={15} weight="regular" />
+          <input
+            type="range"
+            class="popover-brightness-input"
+            min={MIN_BRIGHTNESS}
+            max={MAX_BRIGHTNESS}
+            step={BRIGHTNESS_STEP}
+            value={brightness}
+            oninput={(event) => setBrightness(Number(event.currentTarget.value))}
+            aria-label={$_("ui_adjustBrightness")}
+          />
+          <span class="brightness-val-text">{Math.round(brightness * 100)}%</span>
+        </div>
       </div>
     {/if}
 
@@ -202,14 +269,15 @@
         <CaretRight size={16} weight="regular" />
       </button>
 
-      <!-- 6. Brightness Toggle -->
+      <!-- 6. Zoom and Brightness Toggle -->
       <button
         class="capsule-btn"
         class:active={brightnessOpen}
         onclick={() => { brightnessOpen = !brightnessOpen; toolsOpen = false; }}
-        title={$_("ui_brightness")}
+        title={zoom ? $_("ui_brightnessAndZoom") : $_("ui_brightness")}
+        aria-label={zoom ? $_("ui_brightnessAndZoom") : $_("ui_brightness")}
       >
-        <Sun size={17} weight="regular" />
+        <CircleHalfTilt size={17} weight="regular" />
       </button>
 
       <!-- 7. Settings Cog -->
@@ -469,14 +537,14 @@
     bottom: 76px;
     right: 16px;
     z-index: var(--component-reader-popover-z-index);
-    width: 180px;
+    width: 236px;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    gap: 10px;
     background: var(--reader-panel);
     border: 1px solid var(--reader-line);
-    border-radius: var(--component-reader-pill-radius);
-    padding: 8px 12px;
+    border-radius: var(--component-reader-popover-radius);
+    padding: 10px 12px;
     box-shadow:
       var(--reader-shadow),
       var(--reader-inset-highlight);
@@ -491,8 +559,16 @@
     }
   }
 
+  .view-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--reader-muted);
+  }
+
   .popover-brightness-input {
     flex: 1;
+    min-width: 0;
     height: var(--component-reader-range-track-height);
     border-radius: var(--component-reader-pill-radius);
     background: var(--reader-track-bg);
@@ -526,8 +602,9 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--reader-text);
-    min-width: 32px;
+    min-width: 38px;
     text-align: right;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Sleek Progress Seekbar */

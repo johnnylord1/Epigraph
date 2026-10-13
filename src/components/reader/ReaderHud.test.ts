@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveCssColor } from "../../test/themeColor";
 import ReaderHudFixture from "./ReaderHud.test.fixture.svelte";
+import { store } from "../../store/state.svelte";
 
 const READER_HUD_COMPONENT_FILES = [
   "src/components/reader/ReaderHud.svelte",
@@ -99,6 +100,36 @@ describe("ReaderHud", () => {
       await fireEvent.click(settingsBtn);
       expect(screen.getByTestId("hud-settings-popover")).not.toBeNull();
     }
+  });
+
+  it("puts zoom beside brightness and drives them with Ctrl and Shift + mouse wheel", async () => {
+    const set = vi.fn();
+    const { container } = render(ReaderHudFixture, {
+      props: { domain: "comics", zoom: { value: 0.5, min: 0.1, max: 1, step: 0.05, label: "50%", set } },
+    });
+    store.settings.readerBrightness = 1;
+
+    await fireEvent.click(screen.getByRole("button", { name: "Brightness and zoom" }));
+    const zoomSlider = screen.getByRole("slider", { name: "Adjust zoom" });
+    expect(screen.getByRole("slider", { name: "Adjust brightness" })).not.toBeNull();
+    await fireEvent.input(zoomSlider, { target: { value: "0.8" } });
+    expect(set).toHaveBeenLastCalledWith(0.8);
+
+    const zoomIn = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, cancelable: true });
+    window.dispatchEvent(zoomIn);
+    expect(zoomIn.defaultPrevented).toBe(true);
+    expect(set).toHaveBeenLastCalledWith(0.55);
+
+    // Windows reports Shift + wheel on the horizontal axis.
+    const dim = new WheelEvent("wheel", { deltaX: 100, shiftKey: true, cancelable: true });
+    container.querySelector("[data-reader-surface]")!.dispatchEvent(dim);
+    expect(dim.defaultPrevented).toBe(true);
+    expect(store.settings.readerBrightness).toBe(0.95);
+
+    const plain = new WheelEvent("wheel", { deltaY: 100, cancelable: true });
+    window.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(set).toHaveBeenCalledTimes(2);
   });
 
   it("offers the detach button only when the reader can detach", async () => {

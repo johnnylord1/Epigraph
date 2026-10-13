@@ -2451,6 +2451,9 @@
   --component-sources-settings-mobile-border: var(--component-card-border);
   --component-sources-settings-mobile-radius: var(--radius-xl) var(--radius-xl) 0 0;
   --component-sources-settings-mobile-shadow: var(--shadow-lg);
+  --component-sources-settings-dialog-bg: var(--component-modal-bg);
+  --component-sources-settings-dialog-radius: var(--radius-xl);
+  --component-sources-settings-dialog-shadow: var(--shadow-lg);
   --component-migration-overlay-z-index: calc(var(--z-tooltip) + 20);
   --component-migration-overlay-bg: var(--component-overlay-bg);
   --component-migration-overlay-blur: var(--blur-backdrop) saturate(118%);

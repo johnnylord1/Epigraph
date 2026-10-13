@@ -27,6 +27,7 @@
     preferenceErrors = {},
     novelPreferenceKeys = [],
     selectedPreferenceSourceId = "",
+    dismissible = true,
     onClose,
     onCheckCompatibility,
     onInstall,
@@ -47,6 +48,8 @@
     preferenceErrors?: Readonly<Record<string, string>>;
     novelPreferenceKeys?: readonly string[];
     selectedPreferenceSourceId?: string;
+    /** False while another dialog (mass migration) sits on top and owns Escape. */
+    dismissible?: boolean;
     onClose: () => void;
     onCheckCompatibility?: (extension: ManagedExtension) => void;
     onInstall: (extension: ManagedExtension) => void;
@@ -85,6 +88,19 @@
         ? $_("sources_status_installed")
         : $_("sources_status_available"),
   );
+
+  let panel = $state<HTMLElement | null>(null);
+
+  $effect(() => {
+    // Move focus into the dialog so keyboard users land on it and Escape reaches it.
+    panel?.focus({ preventScroll: true });
+  });
+
+  function onWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !dismissible || event.defaultPrevented) return;
+    event.preventDefault();
+    onClose();
+  }
 
   function preferenceKey(sourceId: string, position: number): string {
     return `${sourceId}:${position}`;
@@ -166,9 +182,20 @@
   }
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
+<div class="settingsLayer">
 <div class="settingsBackdrop" onclick={onClose} aria-hidden="true"></div>
 
-<aside class="settingsPanel" aria-label={`Settings for ${extension.name}`}>
+<aside
+  class="settingsPanel"
+  class:settingsPanelSingle={!extension.isInstalled}
+  role="dialog"
+  aria-modal="true"
+  aria-label={`Settings for ${extension.name}`}
+  tabindex="-1"
+  bind:this={panel}
+>
   <header class="settingsHeader">
     <div class="extensionIdentity">
       <img
@@ -190,10 +217,12 @@
       </div>
     </div>
     <button class="closeBtn" type="button" onclick={onClose} aria-label={$_("ui_closeExtensionSettings")}>
-      <X size={15} weight="bold" />
+      <X size={16} weight="bold" />
     </button>
   </header>
 
+  <div class="settingsBody">
+  <div class="settingsAside">
   <p class="description">{description}</p>
 
   <section class="detailsSection">
@@ -202,7 +231,7 @@
       <small>{originLabel}</small>
     </div>
     <div class="detailsGrid">
-      <div class="detailItem">
+      <div class="detailItem detailItemWide">
         <span class="fieldLabel">{$_("ui_package")}</span>
         <strong>{extension.pkgName}</strong>
       </div>
@@ -222,10 +251,12 @@
         <span class="fieldLabel">{extension.kind === "novels" ? $_("sources_table_repository") : $_("ui_apkPackage")}</span>
         <strong>{repositoryLabel}</strong>
       </div>
-      <div class="detailItem detailItemWide">
-        <span class="fieldLabel">{extension.kind === "novels" ? $_("ui_pluginArtifact") : $_("ui_apkPackage")}</span>
-        <strong>{artifactLabel}</strong>
-      </div>
+      {#if artifactLabel !== repositoryLabel}
+        <div class="detailItem detailItemWide">
+          <span class="fieldLabel">{extension.kind === "novels" ? $_("ui_pluginArtifact") : $_("ui_apkPackage")}</span>
+          <strong>{artifactLabel}</strong>
+        </div>
+      {/if}
       {#if extension.kind === "novels" && extension.novelPluginId}
         <div class="detailItem detailItemWide">
           <span class="fieldLabel">{$_("ui_novelPluginId")}</span>
@@ -294,12 +325,23 @@
     {#if canMassMigrate && onMassMigration}
       <section class="availablePanel">
         <button class="primaryCta massMigrationCta" type="button" disabled={busy} onclick={() => onMassMigration?.(extension)}>
-          <StackSimple size={14} weight="bold" />
+          <StackSimple size={15} weight="bold" />
           {$_("massMigration_title")}
         </button>
       </section>
     {/if}
 
+    <section class="removePanel">
+      <button class="dangerCta" type="button" disabled={busy} onclick={() => onRemove(extension)}>
+        <Trash size={15} weight="bold" />
+        {$_("sources_actions_remove")}
+      </button>
+    </section>
+  {/if}
+  </div>
+
+  {#if extension.isInstalled}
+  <div class="settingsMain">
     <section class="settingsSection">
       <div class="sectionTitle">
         <span>{$_("extensionSettings_sourcePreferences")}</span>
@@ -485,30 +527,51 @@
           </div>
       {/if}
     </section>
-
-    <section class="removePanel">
-      <button class="dangerCta" type="button" disabled={busy} onclick={() => onRemove(extension)}>
-        <Trash size={14} weight="bold" />
-        {$_("sources_actions_remove")}
-      </button>
-    </section>
+  </div>
   {/if}
+  </div>
 </aside>
+</div>
 
 <style>
+  /* A centered dialog: identity on top, details and actions on the left, source preferences on the right. */
+  .settingsLayer {
+    position: fixed;
+    inset: 0;
+    z-index: var(--component-sources-settings-mobile-panel-z-index);
+    display: grid;
+    place-items: center;
+    padding: 64px 32px 28px;
+  }
+
   .settingsBackdrop {
-    display: none;
+    position: absolute;
+    inset: 0;
+    background: var(--component-sources-settings-mobile-backdrop-bg);
+    animation: fadeIn 140ms ease both;
   }
 
   .settingsPanel {
-    width: 100%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(980px, 100%);
+    height: min(720px, 100%);
     min-width: 0;
-    height: 100%;
-    overflow-y: auto;
-    border-left: 1px solid var(--component-sources-settings-panel-border);
-    background: var(--component-sources-settings-panel-bg);
-    padding: 14px 16px;
-    animation: panelIn 160ms ease both;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid var(--component-sources-settings-mobile-border);
+    border-radius: var(--component-sources-settings-dialog-radius);
+    background: var(--component-sources-settings-dialog-bg);
+    box-shadow: var(--component-sources-settings-dialog-shadow);
+    outline: none;
+    animation: dialogIn 180ms ease both;
+  }
+
+  .settingsPanelSingle {
+    width: min(560px, 100%);
+    height: auto;
+    max-height: 100%;
   }
 
   .settingsHeader,
@@ -521,17 +584,21 @@
 
   .settingsHeader {
     justify-content: space-between;
-    gap: 10px;
+    gap: 16px;
+    padding: 20px 24px 18px;
+    border-bottom: 1px solid var(--component-sources-panel-border);
+    background: var(--component-sources-settings-panel-bg);
   }
 
   .extensionIdentity {
-    gap: 9px;
+    gap: 14px;
     min-width: 0;
   }
 
   .extensionIcon {
-    width: 28px;
-    height: 28px;
+    width: 48px;
+    height: 48px;
+    flex: 0 0 auto;
     border-radius: var(--component-sources-settings-item-radius);
     object-fit: cover;
     background: var(--component-sources-settings-icon-bg);
@@ -539,6 +606,8 @@
   }
 
   .identityCopy {
+    display: grid;
+    gap: 3px;
     min-width: 0;
   }
 
@@ -546,18 +615,19 @@
   .fieldLabel,
   .detailTopline small,
   .sectionTitle small {
+    margin: 0;
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 800;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--component-sources-subtle-fg);
   }
 
   h2 {
-    margin: 2px 0;
-    font-size: 13px;
-    line-height: 1.15;
+    margin: 0;
+    font-size: 20px;
+    line-height: 1.2;
     color: var(--component-sources-title-fg);
     white-space: nowrap;
     overflow: hidden;
@@ -565,27 +635,26 @@
   }
 
   .extensionMeta {
-    gap: 5px;
+    gap: 6px;
     flex-wrap: wrap;
   }
 
   .extensionMeta span {
-    border: 0;
-    border-radius: 0;
-    padding: 0;
+    border: 1px solid var(--component-sources-settings-icon-border);
+    border-radius: var(--component-sources-settings-meta-radius);
+    padding: 2px 9px;
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 11px;
+    font-weight: 700;
     color: var(--component-sources-muted-fg);
-    background: transparent;
+    background: var(--component-sources-badge-bg);
   }
-
-  .extensionMeta span + span::before { content: "·"; margin-right: 5px; color: var(--component-sources-subtle-fg); }
 
   .closeBtn {
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 34px;
+    height: 34px;
     flex: 0 0 auto;
     border-radius: var(--component-sources-settings-close-radius);
     color: var(--component-sources-control-fg);
@@ -600,36 +669,66 @@
     background: var(--component-sources-control-hover-bg);
   }
 
+  .closeBtn:focus-visible {
+    outline: 2px solid var(--component-sources-card-focus-outline);
+    outline-offset: 2px;
+  }
+
+  .settingsBody {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .settingsPanelSingle .settingsBody {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settingsAside,
+  .settingsMain {
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--component-sources-scrollbar-thumb) transparent;
+  }
+
+  .settingsAside {
+    display: flex;
+    flex-direction: column;
+    padding: 18px 22px 20px;
+    border-right: 1px solid var(--component-sources-panel-border);
+  }
+
+  .settingsPanelSingle .settingsAside {
+    border-right: 0;
+  }
+
+  .settingsMain {
+    padding: 18px 24px 22px;
+  }
+
   .description {
-    margin: 12px 0;
+    margin: 0 0 16px;
     color: var(--component-sources-body-fg);
-    font-size: 12px;
-    line-height: 1.45;
+    font-size: 13px;
+    line-height: 1.5;
   }
 
   .availablePanel,
   .detailsSection,
-  .settingsSection {
+  .compatibilitySection {
     border: 0;
     border-top: 1px solid var(--component-sources-panel-border);
     border-radius: 0;
     background: transparent;
-    padding: 11px 0;
+    padding: 14px 0;
   }
 
   .detailsSection {
     display: grid;
-    gap: 8px;
-    margin-bottom: 0;
-  }
-
-  .compatibilitySection {
-    margin-bottom: 0;
-    border: 0;
-    border-top: 1px solid var(--component-sources-panel-border);
-    border-radius: 0;
-    background: transparent;
-    padding: 11px 0;
+    gap: 10px;
   }
 
   .compatibilitySection summary,
@@ -643,7 +742,7 @@
     justify-content: space-between;
     gap: 10px;
     color: var(--component-sources-strong-fg);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 850;
     cursor: pointer;
   }
@@ -651,7 +750,7 @@
   .compatibilitySection summary strong {
     color: var(--component-sources-installed-fg);
     font-family: var(--font-ui);
-    font-size: 11px;
+    font-size: 12px;
     text-transform: none;
   }
 
@@ -664,70 +763,76 @@
   }
 
   .compatibilityMeta {
-    gap: 5px;
+    gap: 6px;
     flex-wrap: wrap;
-    margin-top: 8px;
+    margin-top: 10px;
   }
 
   .compatibilityMeta span {
     border: 1px solid var(--component-sources-settings-icon-border);
     border-radius: var(--component-sources-settings-meta-radius);
-    padding: 1px 6px;
+    padding: 2px 8px;
     color: var(--component-sources-muted-fg);
     background: var(--component-sources-badge-bg);
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .compatibilityStages {
     display: grid;
-    gap: 5px;
-    margin-top: 8px;
+    gap: 6px;
+    margin-top: 10px;
   }
 
   .compatibilityStages div {
     justify-content: space-between;
     gap: 10px;
-    padding: 6px 7px;
+    padding: 8px 10px;
     border-radius: var(--component-sources-settings-item-radius);
     border: 1px solid var(--component-sources-available-border);
     background: var(--component-sources-variant-bg);
     color: var(--component-sources-cell-fg);
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .compatibilityStages strong {
     color: var(--component-sources-muted-fg);
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 11px;
   }
 
   .compatibilityEmpty {
     display: grid;
-    gap: 8px;
+    gap: 10px;
   }
 
   .compatibilityEmpty div {
     display: grid;
-    gap: 3px;
+    gap: 4px;
     color: var(--component-sources-strong-fg);
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .compatibilityEmpty span {
     color: var(--component-sources-body-fg);
-    font-size: 10px;
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   .compatibilityProbeButton {
-    min-height: 28px;
+    min-height: 34px;
+    margin-top: 10px;
+    padding: 0 14px;
     border-radius: var(--component-sources-settings-item-radius);
     border: 1px solid var(--component-sources-control-border);
     background: var(--component-sources-control-bg);
     color: var(--component-sources-control-fg);
-    font-size: 10px;
-    font-weight: 850;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  .compatibilityEmpty .compatibilityProbeButton {
+    margin-top: 0;
   }
 
   .compatibilityProbeButton:hover:not(:disabled) {
@@ -736,7 +841,9 @@
     color: var(--component-sources-strong-fg);
   }
 
-  .compatibilityProbeButton:focus-visible {
+  .compatibilityProbeButton:focus-visible,
+  .primaryCta:focus-visible,
+  .dangerCta:focus-visible {
     outline: 2px solid var(--component-sources-card-focus-outline);
     outline-offset: 2px;
   }
@@ -747,14 +854,15 @@
 
   .detailTopline {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-items: baseline;
     justify-content: space-between;
-    gap: 10px;
+    gap: 4px 10px;
   }
 
   .detailTopline span {
     color: var(--component-sources-strong-fg);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 900;
   }
 
@@ -766,17 +874,14 @@
   .detailsGrid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 7px;
+    gap: 4px 14px;
   }
 
   .detailItem {
     display: grid;
     gap: 3px;
     min-width: 0;
-    padding: 5px 0;
-    border-radius: 0;
-    background: transparent;
-    border: 0;
+    padding: 6px 0;
   }
 
   .detailItemWide,
@@ -785,24 +890,34 @@
   }
 
   .detailWarning {
-    padding: 8px;
+    padding: 10px 12px;
     border-radius: var(--component-sources-control-radius);
     color: var(--component-sources-warning-fg);
     background: var(--component-sources-warning-bg);
     border: 1px solid var(--component-sources-warning-border);
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   .detailItem strong {
     color: var(--component-sources-cell-fg);
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 700;
     overflow-wrap: anywhere;
   }
 
+  .primaryCta,
+  .dangerCta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 38px;
+    font-size: 13px;
+  }
+
   .primaryCta {
-    min-height: 30px;
     border-radius: var(--component-sources-search-radius);
     background: var(--component-sources-primary-bg);
     color: var(--component-sources-primary-ink);
@@ -811,51 +926,44 @@
     box-shadow: var(--component-sources-primary-shadow);
   }
 
-  .primaryCta:disabled {
+  .primaryCta:disabled,
+  .dangerCta:disabled {
     opacity: 0.55;
   }
 
-  .settingsSection {
-    display: grid;
-    gap: 8px;
-    margin-top: 0;
-  }
-
   .removePanel {
-    padding-top: 11px;
+    margin-top: auto;
+    padding-top: 14px;
     border-top: 1px solid var(--component-sources-panel-border);
   }
 
   .dangerCta {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    width: 100%;
-    min-height: 30px;
     border: 1px solid var(--component-sources-danger-border);
     border-radius: var(--component-sources-control-radius);
     color: var(--component-sources-danger-fg);
     background: var(--component-sources-danger-bg);
-    font-size: 10px;
     font-weight: 800;
   }
 
-  .dangerCta:disabled { opacity: 0.55; }
+  .settingsSection {
+    display: grid;
+    gap: 14px;
+  }
 
   .sectionTitle {
     justify-content: space-between;
+    gap: 12px;
   }
 
   .sectionTitle span {
-    font-size: 12px;
+    font-size: 16px;
     font-weight: 900;
     color: var(--component-sources-strong-fg);
   }
 
   input,
   select {
-    min-height: 30px;
+    min-height: 36px;
     border-radius: var(--component-sources-settings-item-radius);
     border: 1px solid var(--component-sources-settings-icon-border);
     background: var(--component-sources-field-bg);
@@ -863,6 +971,7 @@
     padding: 0 12px;
     outline: none;
     font: inherit;
+    font-size: 13px;
   }
 
   input:focus,
@@ -878,23 +987,29 @@
 
   input[type="checkbox"] {
     appearance: none;
-    width: 34px;
-    height: 20px;
-    min-height: 20px;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 24px;
+    min-height: 24px;
     border-radius: var(--component-sources-settings-meta-radius);
     padding: 0;
     background: var(--component-sources-toggle-track-bg);
     position: relative;
+    cursor: pointer;
     transition: background 160ms ease;
+  }
+
+  input[type="checkbox"]:disabled {
+    cursor: default;
   }
 
   input[type="checkbox"]::after {
     content: "";
     position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 14px;
-    height: 14px;
+    top: 4px;
+    left: 4px;
+    width: 16px;
+    height: 16px;
     border-radius: var(--component-sources-settings-meta-radius);
     background: var(--component-sources-toggle-knob-bg);
     transition: transform 160ms ease;
@@ -905,7 +1020,7 @@
   }
 
   input[type="checkbox"]:checked::after {
-    transform: translateX(14px);
+    transform: translateX(16px);
   }
 
   .preferenceState,
@@ -916,15 +1031,15 @@
   }
 
   .preferenceState {
-    gap: 8px;
+    gap: 10px;
     min-width: 0;
-    padding: 8px;
+    padding: 12px 14px;
     border-radius: var(--component-sources-settings-item-radius);
     border: 1px solid var(--component-sources-available-border);
     background: var(--component-sources-variant-bg);
     color: var(--component-sources-cell-fg);
-    font-size: 10px;
-    line-height: 1.4;
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .preferenceState > span,
@@ -937,6 +1052,7 @@
   }
 
   .preferenceSpinner {
+    display: inline-flex;
     flex: 0 0 auto;
     animation: spin 800ms linear infinite;
   }
@@ -944,113 +1060,125 @@
   .novelPreferenceList {
     display: flex;
     flex-wrap: wrap;
-    gap: 5px;
+    gap: 6px;
   }
 
   .novelPreferenceList span,
   .unsupportedPreference {
     border: 1px solid var(--component-sources-settings-icon-border);
     border-radius: var(--component-sources-settings-meta-radius);
-    padding: 3px 7px;
+    padding: 3px 9px;
     color: var(--component-sources-muted-fg);
     background: var(--component-sources-badge-bg);
     font-family: var(--font-ui);
-    font-size: 9px;
+    font-size: 11px;
     overflow-wrap: anywhere;
   }
 
   .preferenceEmpty {
     margin: 0;
     color: var(--component-sources-body-fg);
-    font-size: 10px;
-    line-height: 1.4;
+    font-size: 12px;
+    line-height: 1.45;
   }
 
   .preferenceSourcePicker {
     display: grid;
-    gap: 5px;
+    gap: 6px;
     color: var(--component-sources-cell-fg);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
   }
 
   .preferenceSourcePicker select {
-    width: 100%;
+    width: min(100%, 420px);
   }
 
   .preferenceGroup {
     display: grid;
-    gap: 0;
-    padding-top: 8px;
-    border-top: 1px solid var(--component-sources-settings-panel-border);
-  }
-
-  .preferenceGroup:first-of-type {
-    padding-top: 0;
-    border-top: 0;
+    border: 1px solid var(--component-sources-available-border);
+    border-radius: var(--component-sources-settings-item-radius);
+    background: var(--component-sources-variant-bg);
+    overflow: hidden;
   }
 
   .preferenceGroupHeader {
     justify-content: space-between;
-    gap: 8px;
-    padding-bottom: 6px;
+    gap: 10px;
+    padding: 12px 16px;
     color: var(--component-sources-strong-fg);
-    font-size: 10px;
+    font-size: 13px;
   }
 
   .preferenceGroupHeader > span {
     display: flex;
     align-items: baseline;
     min-width: 0;
-    gap: 5px;
+    gap: 8px;
   }
 
   .preferenceGroupHeader small {
     color: var(--component-sources-subtle-fg);
     font-family: var(--font-ui);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 800;
     text-transform: none;
+  }
+
+  .preferenceGroup > .preferenceState,
+  .preferenceGroup > .preferenceEmpty {
+    margin: 0 16px 14px;
   }
 
   .preferenceRow {
     position: relative;
     justify-content: space-between;
-    gap: 8px;
+    gap: 16px;
     min-width: 0;
-    padding: 8px 0;
-    border-top: 1px solid var(--component-sources-settings-panel-border);
+    padding: 14px 16px 18px;
+    border-top: 1px solid var(--component-sources-panel-border);
   }
 
-  .preferenceRow select:not([multiple]),
+  .preferenceRow select,
   .preferenceRow input:not([type="checkbox"]) {
-    width: min(132px, 45%);
+    flex: 0 0 auto;
+    width: min(280px, 44%);
   }
 
   .preferenceRow select[multiple] {
-    width: min(150px, 50%);
-    min-height: 64px;
-    padding: 4px 7px;
+    min-height: 96px;
+    padding: 6px 8px;
+  }
+
+  .preferenceRow select[multiple] option {
+    padding: 2px 6px;
+    border-radius: var(--component-sources-settings-meta-radius);
+  }
+
+  .preferenceRow select[multiple] option:checked {
+    background: var(--component-sources-toggle-on-bg);
+    color: var(--component-sources-primary-ink);
   }
 
   .preferenceCopy {
     display: grid;
-    gap: 2px;
+    gap: 3px;
     min-width: 0;
   }
 
   .preferenceCopy strong {
     color: var(--component-sources-cell-fg);
-    font-size: 10px;
+    font-size: 13px;
+    font-weight: 750;
     overflow-wrap: anywhere;
   }
 
   .preferenceCopy small,
   .preferenceFeedback {
     color: var(--component-sources-table-head-fg);
-    font-size: 9px;
-    font-weight: 600;
-    line-height: 1.35;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
   }
 
   .preferenceDisabled {
@@ -1059,7 +1187,8 @@
 
   .preferenceFeedback {
     position: absolute;
-    inset: auto 0 1px;
+    inset: auto 16px 3px;
+    font-size: 11px;
     text-align: right;
   }
 
@@ -1074,35 +1203,47 @@
     to { transform: rotate(360deg); }
   }
 
-  @media (max-width: 760px) {
-    .settingsBackdrop {
+  @media (max-width: 860px) {
+    .settingsBody {
       display: block;
-      position: fixed;
-      inset: 0;
+      overflow-y: auto;
+    }
+
+    .settingsAside,
+    .settingsMain {
+      overflow: visible;
+    }
+
+    .settingsAside {
+      border-right: 0;
+    }
+
+    .removePanel {
+      margin-top: 0;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .settingsLayer {
       z-index: var(--component-sources-settings-mobile-backdrop-z-index);
-      background: var(--component-sources-settings-mobile-backdrop-bg);
-      animation: fadeIn 140ms ease both;
+      place-items: end stretch;
+      padding: 0;
     }
 
     .settingsPanel {
-      position: fixed;
-      inset: auto 0 0;
-      z-index: var(--component-sources-settings-mobile-panel-z-index);
       width: 100%;
-      min-width: 0;
-      max-height: min(86vh, 760px);
       height: auto;
-      border-left: 0;
-      border-top: 1px solid var(--component-sources-settings-mobile-border);
+      max-height: min(86vh, 760px);
+      border-width: 1px 0 0;
       border-radius: var(--component-sources-settings-mobile-radius);
       box-shadow: var(--component-sources-settings-mobile-shadow);
       animation: sheetIn 180ms ease both;
     }
   }
 
-  @keyframes panelIn {
-    from { opacity: 0; transform: translateX(10px); }
-    to { opacity: 1; transform: translateX(0); }
+  @keyframes dialogIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   @keyframes sheetIn {

@@ -1797,6 +1797,8 @@
   "ui_increaseBrightness": "增加亮度",
   "ui_backToLibrary": "返回图书馆",
   "ui_adjustBrightness": "调节亮度",
+  "ui_brightnessAndZoom": "亮度和缩放",
+  "ui_adjustZoom": "调整缩放",
   "ui_previous": "以前的",
   "ui_seekPageChapter": "查找页/章",
   "ui_textToSpeechControls": "文本转语音控制",

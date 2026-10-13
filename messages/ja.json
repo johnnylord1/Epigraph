@@ -1797,6 +1797,8 @@
   "ui_increaseBrightness": "明るさを上げる",
   "ui_backToLibrary": "ライブラリに戻る",
   "ui_adjustBrightness": "明るさを調整する",
+  "ui_brightnessAndZoom": "輝度とズーム",
+  "ui_adjustZoom": "ズームを調整する",
   "ui_previous": "前の",
   "ui_seekPageChapter": "ページ/章をシークする",
   "ui_textToSpeechControls": "テキスト読み上げコントロール",

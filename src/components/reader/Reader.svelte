@@ -1222,10 +1222,14 @@
     return Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)) * 1000) / 1000;
   }
 
-  function adjustZoom(delta: number) {
+  function setZoom(value: number) {
     captureZoomAnchor();
-    updateSettings({ readerZoom: clampZoom(zoom + delta) });
+    updateSettings({ readerZoom: clampZoom(value) });
     restoreZoomAnchor();
+  }
+
+  function adjustZoom(delta: number) {
+    setZoom(zoom + delta);
   }
 
   function resetZoom() {
@@ -1292,11 +1296,9 @@
     }
   });
 
+  // Ctrl + wheel zoom belongs to the HUD, which drives setZoom.
   function onWheel(e: WheelEvent) {
-    if (!loading && !e.ctrlKey && containerEl?.contains(e.target as Node)) hasNavigated = true;
-    if (!e.ctrlKey) return;
-    e.preventDefault();
-    adjustZoom(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+    if (!loading && !e.ctrlKey && !e.shiftKey && containerEl?.contains(e.target as Node)) hasNavigated = true;
   }
 
   function noteScrollIntent() {
@@ -1428,6 +1430,7 @@
 <ReaderHud
   bind:toolsOpen={toolsOpen}
   readerKind="manga"
+  zoom={{ value: zoom, min: ZOOM_MIN, max: ZOOM_MAX, step: ZOOM_STEP, label: `${zoomPct}%`, set: setZoom }}
   title={store.activeManga?.title}
   chapterTitle={displayChapter?.name}
   progressLabel={loading ? "..." : `${sliderPage} / ${sliderMax}`}

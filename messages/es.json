@@ -1797,6 +1797,8 @@
   "ui_increaseBrightness": "Aumentar el brillo",
   "ui_backToLibrary": "volver a la biblioteca",
   "ui_adjustBrightness": "Ajustar el brillo",
+  "ui_brightnessAndZoom": "Brillo y zoom",
+  "ui_adjustZoom": "Ajustar el zoom",
   "ui_previous": "Anterior",
   "ui_seekPageChapter": "Buscar página/capítulo",
   "ui_textToSpeechControls": "Controles de texto a voz",

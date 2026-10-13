@@ -1380,8 +1380,12 @@
     }
   }
 
+  function setZoom(value: number) {
+    updateSettings({ bookReaderZoom: clampZoom(value) });
+  }
+
   function adjustZoom(delta: number) {
-    updateSettings({ bookReaderZoom: clampZoom(zoom + delta) });
+    setZoom(zoom + delta);
   }
 
   function resetZoom() {
@@ -1936,6 +1940,7 @@
 <ReaderHud
   bind:toolsOpen={toolsOpen}
   readerKind="book"
+  zoom={{ value: zoom, min: ZOOM_MIN, max: ZOOM_MAX, step: ZOOM_STEP, label: `${zoomPct}%`, set: setZoom }}
   title={activeBook?.title ?? $_("ui_book")}
   chapterTitle={currentSectionLabel ?? activeBook?.subtype.toUpperCase() ?? $_("ui_book").toLocaleUpperCase()}
   progressLabel={progressLabel}

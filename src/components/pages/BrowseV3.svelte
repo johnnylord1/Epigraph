@@ -4,6 +4,7 @@
   import { afterPaint, arrive, enterView, playEnter } from "../../lib/motion/motion";
   import { gql } from "../../lib/client";
   import { resumeLibraryAniListLookup } from "../../lib/recommendations/anilistLibraryLookup";
+  import { railScroll } from "../../lib/railScroll";
   import { cachedLibraryTitleMatch, cachedLibraryTitleMatches } from "../../lib/recommendations/titleProviders";
   import { ANILIST_PRIORITY, requestAniList } from "../../lib/recommendations/anilistGate";
   import { _ } from "../../lib/i18n/runtime";
@@ -7253,6 +7254,7 @@
                   <div
                     class="searchRecommendationRow"
                     data-search-row={section.key}
+                    use:railScroll
                     aria-busy={isSearchSectionLoadingMore(section.key)}
                     onscroll={(event) => handleSearchRailScroll(section.key, event)}
                     in:arrive={{ y: 10 }}
@@ -7511,7 +7513,7 @@
                   {/each}
                 </div>
               {:else if novels.length > 0}
-                <div class="sourceRow" data-keyword-source-row={source.pluginId}>
+                <div class="sourceRow" data-keyword-source-row={source.pluginId} use:railScroll>
                   {#each novels.slice(0, (store.settings.renderLimit ?? 48)) as result (`${result.sourceId}:${result.path}`)}
                     <button
                       class="n-library-card"
@@ -7598,7 +7600,7 @@
                 {/each}
               </div>
             {:else if visibleMangas.length > 0}
-              <div class="sourceRow" data-keyword-source-row={source.id}>
+              <div class="sourceRow" data-keyword-source-row={source.id} use:railScroll>
                 {#each visibleMangas.slice(0, (store.settings.renderLimit ?? 48)) as m (m.id)}
                   <button
                     class="n-library-card"
@@ -8574,6 +8576,20 @@
     padding: var(--component-browse-searchrecommendationrow-padding);
     scrollbar-width: thin;
     scrollbar-color: var(--component-browse-searchrecommendationrow-scrollbar-color);
+  }
+  .searchRecommendationRow[data-search-row],
+  .sourceRow[data-keyword-source-row] {
+    cursor: grab;
+  }
+  .searchRecommendationRow[data-rail-dragging],
+  .sourceRow[data-rail-dragging] {
+    cursor: grabbing;
+    scroll-snap-type: none;
+    user-select: none;
+  }
+  .searchRecommendationRow[data-rail-dragging] :global(*),
+  .sourceRow[data-rail-dragging] :global(*) {
+    cursor: grabbing;
   }
   .searchRecommendationRow::-webkit-scrollbar {
     height: var(--component-browse-searchrecommendationrow-height);

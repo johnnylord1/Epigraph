@@ -1521,7 +1521,6 @@
 
 <div
   class="sourcesRoot"
-  class:hasSettingsPanel={!!selectedExtension}
   data-sources-workspace
 >
   <section class="sourcesMain">
@@ -1941,8 +1940,8 @@
     </div>
   </section>
 
-  {#if !selectedExtension && !loading}
-    <aside class="sourcesOverview" data-sources-overview>
+  {#if !loading}
+    <aside class="sourcesOverview" data-sources-overview aria-hidden={selectedExtension ? "true" : undefined} inert={!!selectedExtension}>
       <div class="overviewHeader">
         <strong>{sourceTitle}</strong>
       </div>
@@ -1985,6 +1984,7 @@
       {preferenceErrors}
       {novelPreferenceKeys}
       {selectedPreferenceSourceId}
+      dismissible={!massMigrationExtension}
       onSelectPreferenceSource={loadPreferenceSource}
       onUpdatePreference={updateSourcePreference}
       compatibilityReport={latestCompatibilityReport(selectedExtension.pkgName)}
@@ -2020,11 +2020,6 @@
     border-radius: var(--component-sources-flat-radius);
     background: transparent;
     padding: 14px 18px 12px;
-  }
-
-  .sourcesRoot.hasSettingsPanel {
-    grid-template-columns: minmax(0, 1fr) clamp(292px, 23vw, 350px);
-    gap: 0;
   }
 
   .sourcesMain {
@@ -2693,8 +2688,6 @@
     scrollbar-width: thin;
     scrollbar-color: var(--component-sources-scrollbar-thumb) transparent;
   }
-
-  .hasSettingsPanel .sourcesSurface { border-radius: var(--component-sources-root-radius) 0 0 var(--component-sources-root-radius); }
 
   .extensionCard {
     display: grid;

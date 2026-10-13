@@ -1799,6 +1799,9 @@
   --component-sources-settings-mobile-border: color-mix(in srgb, var(--color-highlight-source) 8%, transparent);
   --component-sources-settings-mobile-radius: 24px 24px 0 0;
   --component-sources-settings-mobile-shadow: 0 -24px 80px color-mix(in srgb, var(--color-shadow-source) 44%, transparent);
+  --component-sources-settings-dialog-bg: color-mix(in srgb, var(--color-sources-settings-panel-source) 98%, transparent);
+  --component-sources-settings-dialog-radius: clamp(18px, 1.6vw, 24px);
+  --component-sources-settings-dialog-shadow: 0 28px 90px color-mix(in srgb, var(--color-shadow-source) 52%, transparent);
   --component-migration-overlay-z-index: 220;
   --component-migration-overlay-bg: color-mix(in srgb, var(--color-shadow-source) 68%, transparent);
   --component-migration-overlay-blur: blur(14px) saturate(118%);
