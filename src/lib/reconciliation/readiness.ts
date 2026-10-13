@@ -162,7 +162,10 @@ export function buildRestoreReadiness(
     requiresInstallCount: requiresInstall.length,
     unavailableCount: unavailable.length,
     unresolvedCount: unresolved.length,
-    blocksRestore: requiresInstall.length > 0 || [...unavailable, ...unresolved].some((item) => choices[item.orphanSourceId]?.mode === "map"),
+    // Like Mihon and J2K, a source whose extension is not installed yet does not hold the restore back: its
+    // titles keep their source id and open once the extension is installed. Only a replacement the user
+    // picked that exists nowhere stops it.
+    blocksRestore: [...unavailable, ...unresolved].some((item) => choices[item.orphanSourceId]?.mode === "map"),
   };
 }
 

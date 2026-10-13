@@ -18,6 +18,7 @@ import {
   type EpigraphNovelsSnapshot,
 } from "./novelsBackup";
 import { analyzeBackupReconciliation } from "../reconciliation/analyze";
+import { extensionStoreKey } from "../manga/runtime/storeUrl";
 import { buildRestoreReadiness } from "../reconciliation/readiness";
 import { normalizeLocalProfileId, type LocalProfileId } from "../localProfiles";
 import type {
@@ -420,12 +421,11 @@ export async function planEpigraphMangaRestore(
     warningsCount: analysis.warnings.length,
   };
 
-  const currentRepositories = new Set(
-    (mangaRuntime.repositoryUrls ?? []).map((value) => value.trim().replace(/\/+$/, "")),
-  );
+  // Compared as repositories: an index URL and its base URL, or two cases of a GitHub owner, are one repository.
+  const currentRepositories = new Set((mangaRuntime.repositoryUrls ?? []).map(extensionStoreKey));
   const missingRepositories = (payloadManifest.requiresRepositories ?? [])
     .map((value) => value.trim().replace(/\/+$/, ""))
-    .filter((value) => value && !currentRepositories.has(value));
+    .filter((value) => value && !currentRepositories.has(extensionStoreKey(value)));
   if (missingRepositories.length > 0) {
     return finalizePayloadPlan({
       kind: "manga",

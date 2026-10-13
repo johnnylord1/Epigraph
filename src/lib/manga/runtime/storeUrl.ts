@@ -74,6 +74,27 @@ export function extensionStoreBaseUrl(value: string): string {
   return url.replace(/\/+$/, "").replace(INDEX_FILE, "");
 }
 
+const GITHUB_HOSTS = new Set(["github.com", "www.github.com", "raw.githubusercontent.com"]);
+
+/**
+ * Repository identity for comparing two addresses, as [extensionStoreBaseUrl] but with a GitHub owner and
+ * repository name compared ignoring case, as GitHub does: Mihon, J2K and LNReader backups write
+ * `Keiyoushi/extensions` and `keiyoushi/extensions` for the same repository. Branches and paths keep their case.
+ */
+export function extensionStoreKey(value: string): string {
+  const base = extensionStoreBaseUrl(value);
+  try {
+    const url = new URL(base);
+    if (!GITHUB_HOSTS.has(url.hostname)) return url.toString().replace(/\/+$/, "");
+    const parts = url.pathname.split("/");
+    for (const index of [1, 2]) if (parts[index]) parts[index] = parts[index].toLowerCase();
+    url.pathname = parts.join("/");
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return base;
+  }
+}
+
 /**
  * Index URLs to try, in order, for a repository URL as stored in a backup (usually the bare base URL).
  * Works for any host; a URL that already names an index file is used as is.

@@ -919,7 +919,7 @@ describe("restore readiness", () => {
     expect(buildRestoreReadiness(analysis, { old: { mode: "preserve" } }, [], []).blocksRestore).toBe(false);
   });
 
-  it("gates restore when a reconciled target still requires extension install", () => {
+  it("restores a source whose extension is not installed yet, as Mihon does", () => {
     const analysis: ReconciliationAnalysis = {
       backupFingerprint: "backup",
       sourceInventoryFingerprint: "inventory",
@@ -954,7 +954,7 @@ describe("restore readiness", () => {
     const readiness = buildRestoreReadiness(analysis, {}, [], availableExtensions);
     expect(readiness.requiresInstallCount).toBe(1);
     expect(readiness.installableExtensions).toHaveLength(1);
-    expect(readiness.blocksRestore).toBe(true);
+    expect(readiness.blocksRestore).toBe(false);
   });
 
   it("does not block when an installed package from another repository lacks the source", () => {
@@ -1008,7 +1008,7 @@ describe("restore readiness", () => {
     expect(readiness.blocksRestore).toBe(false);
   });
 
-  it("keeps waiting while a just-installed package has no sources yet", () => {
+  it("does not wait for a just-installed package to list its sources", () => {
     const analysis: ReconciliationAnalysis = {
       backupFingerprint: "backup",
       sourceInventoryFingerprint: "inventory",
@@ -1044,7 +1044,7 @@ describe("restore readiness", () => {
     const readiness = buildRestoreReadiness(analysis, {}, [], installedExtensions);
 
     expect(readiness.requiresInstallCount).toBe(1);
-    expect(readiness.blocksRestore).toBe(true);
+    expect(readiness.blocksRestore).toBe(false);
   });
 
   it("keeps ambiguous leftovers unresolved until the user explicitly chooses", () => {

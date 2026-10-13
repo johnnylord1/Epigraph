@@ -3,7 +3,7 @@
   import { _ } from "../../lib/i18n/runtime";
   import { operationError, restoreNote } from "../../lib/i18n/operationPresentation";
   import { createProductionMangaDependencySession, type MangaDependencyPlan, type MangaRestoreChoices } from "../../lib/backup/mangaRestoreDependencies";
-  import { extensionStoreBaseUrl } from "../../lib/manga/runtime";
+  import { extensionStoreKey } from "../../lib/manga/runtime";
   let { file, format, disabled = false, choices = {}, onChoices = () => {}, onBusy = () => {}, onChanged = () => {} }: {
     file: File; format: "native" | "epigraph"; disabled?: boolean; choices?: MangaRestoreChoices;
     onChoices?: (choices: MangaRestoreChoices) => void; onBusy?: (busy: boolean) => void;
@@ -42,7 +42,10 @@
       : { mode: value === "skip" ? "skip" : "preserve" } };
     try { onChoices(next); } catch (cause) { error = cause; }
   }
-  const missingRepos = $derived(plan ? plan.requiredRepositories.filter(url => !plan!.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) : []);
+  // A repository that could not be added (offline, or no longer published) is reported once below
+  // instead of being offered again; the restore goes on without it, as in Mihon.
+  const missingRepos = $derived(plan ? plan.requiredRepositories.filter(url => !failedRepos.includes(url)
+    && !plan!.repositories.some(repo => extensionStoreKey(repo.indexUrl) === extensionStoreKey(url))) : []);
   const installable = $derived(plan ? plan.extensions.filter(e => !e.isInstalled && e.storeId) : []);
   const choosable = $derived(plan ? plan.sources.filter(s => s.candidates.some(c => c.sourceId !== s.orphanSourceId)) : []);
   const unmatched = $derived(plan ? plan.sources.filter(s => s.candidates.length === 0) : []);

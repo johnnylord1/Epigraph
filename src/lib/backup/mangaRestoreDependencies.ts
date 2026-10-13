@@ -1,5 +1,5 @@
 import type { NativeSourceRestoreChoice, ReconciliationClusterResult } from "../reconciliation/types";
-import { extensionStoreBaseUrl, extensionStoreIndexCandidates } from "../manga/runtime/storeUrl";
+import { extensionStoreIndexCandidates, extensionStoreKey } from "../manga/runtime/storeUrl";
 import { loadSettingsStorageRuntime } from "./storageRuntime";
 
 export interface MangaDependencyPlan {
@@ -44,7 +44,7 @@ export function createMangaRestoreDependencySession(deps: {
     addRepository(url: string) {
       return prepare(async plan => {
         if (!plan.requiredRepositories.includes(url)) throw Error("RESTORE_REPOSITORY_NOT_REQUESTED");
-        if (!plan.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) await deps.add(url);
+        if (!plan.repositories.some(repo => extensionStoreKey(repo.indexUrl) === extensionStoreKey(url))) await deps.add(url);
       });
     },
     installMany(approvals: Array<{ packageName: string; storeId: string }>) {
@@ -61,7 +61,7 @@ export function createMangaRestoreDependencySession(deps: {
       const plan = await prepare(async current => {
         for (const url of urls) {
           if (!current.requiredRepositories.includes(url)) throw Error("RESTORE_REPOSITORY_NOT_REQUESTED");
-          if (current.repositories.some(repo => extensionStoreBaseUrl(repo.indexUrl) === extensionStoreBaseUrl(url))) continue;
+          if (current.repositories.some(repo => extensionStoreKey(repo.indexUrl) === extensionStoreKey(url))) continue;
           try { await deps.add(url); } catch { failed.push(url); }
         }
       });

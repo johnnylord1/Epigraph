@@ -43,6 +43,7 @@ export {
   canonicalizeExtensionStoreUrl,
   extensionStoreBaseUrl,
   extensionStoreIndexCandidates,
+  extensionStoreKey,
   resolveExtensionStoreInputUrl,
 } from "./storeUrl";
 export {

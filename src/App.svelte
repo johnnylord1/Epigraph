@@ -154,12 +154,19 @@
   const ANILIST_LOOKUP_TOAST_ID = "anilist-library-lookup";
   const NOVEL_LOOKUP_TOAST_ID = "novel-library-lookup";
   function lookupProgressToast(toastId: string, titles: { running: string; done: string }) {
+    // Closing the progress toast keeps it closed until the run ends; the lookup goes on in the
+    // background. Every progress report used to bring the toast back.
+    let shown = false;
+    let closed = false;
     return (progress: AniListLibraryLookupProgress) => {
-      if (progress.phase === "paused") {
-        dismissToast(toastId);
+      if (shown && !store.toasts.some((toast) => toast.id === toastId)) closed = true;
+      const done = progress.phase === "done";
+      if (progress.phase === "paused" || closed) {
+        if (!closed) dismissToast(toastId);
+        if (progress.phase !== "running") shown = closed = false;
         return;
       }
-      const done = progress.phase === "done";
+      shown = !done;
       addToast({
         id: toastId,
         kind: done ? "success" : "info",

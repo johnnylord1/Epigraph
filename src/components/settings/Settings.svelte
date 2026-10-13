@@ -72,7 +72,7 @@
   } from "../../lib/backup/backupRollout";
   import type { EpigraphNovelRuntimeState } from "../../lib/backup/novelsBackup";
   import { buildBackupDependencyPreview, type BackupDependencyPreview } from "../../lib/backup/dependencyPreview";
-  import { extensionStoreBaseUrl, getManagedSourceRuntime } from "../../lib/manga/runtime";
+  import { extensionStoreKey, getManagedSourceRuntime } from "../../lib/manga/runtime";
   import { createProductionMangaDependencySession } from "../../lib/backup/mangaRestoreDependencies";
   import { findMissingSourceExtensionSuggestions, type MissingSourceExtensionSuggestion } from "../../lib/extensionSourceMap";
   import { normalizeCategories } from "../../lib/library/categories";
@@ -2159,10 +2159,10 @@
   async function addApprovedMangaRepositories(file: File): Promise<string[]> {
     const session = await createProductionMangaDependencySession(file, backupImportKind === "epigraph" ? "epigraph" : "native");
     const plan = await session.inspect();
-    const present = new Set(plan.repositories.map((repository) => extensionStoreBaseUrl(repository.indexUrl)));
+    const present = new Set(plan.repositories.map((repository) => extensionStoreKey(repository.indexUrl)));
     const unavailable: string[] = [];
     for (const url of plan.requiredRepositories) {
-      if (present.has(extensionStoreBaseUrl(url))) continue;
+      if (present.has(extensionStoreKey(url))) continue;
       try {
         await session.addRepository(url);
       } catch (error) {

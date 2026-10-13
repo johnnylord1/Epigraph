@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   canonicalizeExtensionStoreUrl,
   extensionStoreBaseUrl,
+  extensionStoreKey,
   extensionStoreIndexCandidates,
   resolveExtensionStoreInputUrl,
 } from "./storeUrl";
@@ -68,5 +69,13 @@ describe("backup repository URLs", () => {
   test("baseUrl matches across index file names", () => {
     expect(extensionStoreBaseUrl("https://raw.githubusercontent.com/a/b/repo/index.pb"))
       .toBe(extensionStoreBaseUrl("https://raw.githubusercontent.com/a/b/repo/"));
+  });
+
+  test("a GitHub owner and repository match ignoring case, the branch does not", () => {
+    const key = extensionStoreKey("https://raw.githubusercontent.com/keiyoushi/extensions/repo");
+    expect(extensionStoreKey("https://github.com/Keiyoushi/Extensions/raw/repo/index.pb")).toBe(key);
+    expect(extensionStoreKey("HTTPS://Raw.GitHubUserContent.com/KEIYOUSHI/extensions/repo/")).toBe(key);
+    expect(extensionStoreKey("https://raw.githubusercontent.com/keiyoushi/extensions/Repo")).not.toBe(key);
+    expect(extensionStoreKey("https://repo.example.org/Mihon/")).toBe("https://repo.example.org/Mihon");
   });
 });
