@@ -18,6 +18,7 @@ import androidx.core.view.drawToBitmap
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.changehandler.AnimatorChangeHandler
 import com.google.android.material.card.MaterialCardView
+import epigraph.ui.motion.CoverDecorations
 import eu.kanade.tachiyomi.R
 import java.lang.ref.WeakReference
 import kotlin.math.roundToInt
@@ -123,6 +124,7 @@ class CoverExpandChangeHandler : AnimatorChangeHandler {
             }
             clipToOutline = true
         }
+        val decorations = CoverDecorations.of(cover)
         var last = startRect
         fun place(f: Float) {
             val end = endRect() ?: last
@@ -130,12 +132,15 @@ class CoverExpandChangeHandler : AnimatorChangeHandler {
             fun lerp(a: Int, b: Int) = (a + (b - a) * f).roundToInt()
             radius = startRadius + (endRadius - startRadius) * f
             ghost.invalidateOutline()
-            ghost.layout(
+            val rect = Rect(
                 lerp(startRect.left, end.left),
                 lerp(startRect.top, end.top),
                 lerp(startRect.right, end.right),
                 lerp(startRect.bottom, end.bottom),
             )
+            ghost.layout(rect.left, rect.top, rect.right, rect.bottom)
+            // The badge and read button stay on the cover and are gone before it leaves the cell.
+            decorations.place(rect, 1f - f / DECORATION_FADE)
         }
 
         val flight = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -152,6 +157,7 @@ class CoverExpandChangeHandler : AnimatorChangeHandler {
             if (done) return
             done = true
             container.overlay.remove(ghost)
+            decorations.detach(container.overlay)
             cover.alpha = 1f
             hideTarget?.invoke(false)
         }
@@ -162,6 +168,7 @@ class CoverExpandChangeHandler : AnimatorChangeHandler {
 
         place(0f)
         container.overlay.add(ghost)
+        decorations.attach(container.overlay)
         // The grid card stays put underneath; hide it so only one cover is travelling.
         cover.alpha = 0f
         hideTarget?.invoke(true)
@@ -178,4 +185,9 @@ class CoverExpandChangeHandler : AnimatorChangeHandler {
             it.target = target
             it.hideTarget = hideTarget
         }
+
+    private companion object {
+        /** Share of the flight over which the cell's badge and read button fade out. */
+        const val DECORATION_FADE = 0.35f
+    }
 }

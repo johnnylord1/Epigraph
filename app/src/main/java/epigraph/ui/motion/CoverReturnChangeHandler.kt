@@ -76,6 +76,7 @@ class CoverReturnChangeHandler : SharedAxisChangeHandler {
             }
             clipToOutline = true
         }
+        val decorations = CoverDecorations.of(card)
         val cardLoc = IntArray(2)
         fun place(f: Float) {
             // The grid slides in with the shared axis, so its cell is re-read every frame.
@@ -85,12 +86,15 @@ class CoverReturnChangeHandler : SharedAxisChangeHandler {
             fun lerp(a: Int, b: Int) = (a + (b - a) * f).roundToInt()
             radius = startRadius + (endRadius - startRadius) * f
             ghost.invalidateOutline()
-            ghost.layout(
+            val rect = Rect(
                 lerp(startRect.left, left),
                 lerp(startRect.top, top),
                 lerp(startRect.right, left + card.width),
                 lerp(startRect.bottom, top + card.height),
             )
+            ghost.layout(rect.left, rect.top, rect.right, rect.bottom)
+            // The cell's badge and read button come back on top of the cover as it lands.
+            decorations.place(rect, (f - (1f - DECORATION_FADE)) / DECORATION_FADE)
         }
 
         val flight = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -103,6 +107,7 @@ class CoverReturnChangeHandler : SharedAxisChangeHandler {
             if (done) return
             done = true
             container.overlay.remove(ghost)
+            decorations.detach(container.overlay)
             card.alpha = 1f
         }
         flight.doOnEnd { land() }
@@ -112,6 +117,7 @@ class CoverReturnChangeHandler : SharedAxisChangeHandler {
 
         place(0f)
         container.overlay.add(ghost)
+        decorations.attach(container.overlay)
         // Only one cover travels: the header one leaves with its screen, the cell waits for the ghost.
         header.alpha = 0f
         card.alpha = 0f
@@ -130,4 +136,9 @@ class CoverReturnChangeHandler : SharedAxisChangeHandler {
             it.headerCover = headerCover
             it.gridCard = gridCard
         }
+
+    private companion object {
+        /** Share of the flight, at its end, over which the cell's badge and read button fade in. */
+        const val DECORATION_FADE = 0.3f
+    }
 }
