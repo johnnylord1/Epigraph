@@ -1035,6 +1035,7 @@
     <string name="source">Fonte</string>
     <string name="read_duration_info">Tempo gasto no leitor, com base no histórico do capítulo</string>
     <string name="skipped_reason_not_always_update">Pulado porque a série não requer atualizações</string>
+    <string name="update_skipped_source_failing">Não verificado porque a fonte falhou %1$d vezes seguidas nesta atualização</string>
     <string name="error_user_agent_string_invalid">Valor de user agent inválido</string>
     <string name="popular">Popular</string>
     <string name="skip_dupe_chapters">Pular capítulos duplicados</string>
