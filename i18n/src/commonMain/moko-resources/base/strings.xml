@@ -237,6 +237,7 @@
     <string name="skipped_reason_not_caught_up">Skipped because there are unread chapters</string>
     <string name="skipped_reason_not_started">Skipped because no chapters are read</string>
     <string name="skipped_reason_not_always_update">Skipped because series does not require updates</string>
+    <string name="update_skipped_source_failing">Not checked because the source failed %1$d times in a row in this update</string>
     <string name="channel_errors">Errors</string>
     <string name="channel_skipped">Skipped</string>
 

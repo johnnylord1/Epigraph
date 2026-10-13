@@ -448,24 +448,40 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         var count = 0
         var hasDownloads = false
         val sourceObj = sourceManager.get(source) as? CatalogueSource ?: return false
+        val breaker = SourceFailureBreaker(
+            if (tags.contains(WORK_NAME_AUTO)) AUTO_UPDATE_SOURCE_FAILURE_LIMIT else MANUAL_UPDATE_SOURCE_FAILURE_LIMIT,
+        )
         while (count < mangaToUpdateMap[source]!!.size) {
             val manga = mangaToUpdateMap[source]!![count]
             val shouldDownload = manga.manga.shouldDownloadNewChapters(preferences)
-            if (updateMangaChapters(manga, this.count.andIncrement, sourceObj, shouldDownload)) {
+            val result = updateMangaChapters(manga, this.count.andIncrement, sourceObj, shouldDownload)
+            if (result == true) {
                 hasDownloads = true
             }
             count++
+            breaker.record(failed = result == null)
+            if (breaker.isOpen) {
+                // The source keeps failing (e.g. a Cloudflare challenge or HTTP 502), so this run
+                // stops waiting on it. Its remaining titles are reported and retried next update.
+                val remaining = mangaToUpdateMap[source]!!.drop(count)
+                val reason = context.getString(MR.strings.update_skipped_source_failing, breaker.limit)
+                remaining.forEach { failedUpdates[it.manga] = reason }
+                this.count.addAndGet(remaining.size)
+                Logger.w { "Skipped ${remaining.size} titles of ${sourceObj.name} after ${breaker.limit} failures in a row" }
+                break
+            }
         }
         mangaToUpdateMap[source] = emptyList()
         return hasDownloads
     }
 
+    /** Returns whether new chapters were queued for download, or null when the update failed. */
     private suspend fun updateMangaChapters(
         manga: LibraryManga,
         progress: Int,
         source: CatalogueSource,
         shouldDownload: Boolean,
-    ): Boolean = coroutineScope {
+    ): Boolean? = coroutineScope {
         try {
             var hasDownloads = false
             ensureActive()
@@ -502,11 +518,10 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             }
             return@coroutineScope hasDownloads
         } catch (e: Exception) {
-            if (e !is CancellationException) {
-                failedUpdates[manga.manga] = e.message
-                Logger.e { "Failed updating: ${manga.manga.title}: $e" }
-            }
-            return@coroutineScope false
+            if (e is CancellationException) return@coroutineScope false
+            failedUpdates[manga.manga] = e.message
+            Logger.e { "Failed updating: ${manga.manga.title}: $e" }
+            return@coroutineScope null
         }
     }
 
@@ -752,6 +767,10 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         private const val ERROR_LOG_HELP_URL = "https://mihon.app/docs/guides/troubleshooting/"
 
         private const val MANGA_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 60
+
+        // Failures in a row after which one update run stops trying a source; same as desktop.
+        private const val AUTO_UPDATE_SOURCE_FAILURE_LIMIT = 3
+        private const val MANUAL_UPDATE_SOURCE_FAILURE_LIMIT = 5
 
         /**
          * Key for category to update.
