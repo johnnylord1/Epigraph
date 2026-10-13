@@ -119,6 +119,7 @@
   import ComicsLibraryBody from "../library/ComicsLibraryBody.svelte";
   import LibraryToolbar from "../library/LibraryToolbar.svelte";
   import LibraryShell from "../library/LibraryShell.svelte";
+  import { fadeOutView } from "../../lib/motion/motion";
   import LibraryRefreshModal from "../library/LibraryRefreshModal.svelte";
   import NocturneState from "../shared/NocturneState.svelte";
   import { warmAllLibraryCovers } from "../../lib/library/backgroundCoverWarm";
@@ -234,6 +235,15 @@
     }, 30_000);
   });
   const visualLibrarySection = $derived(settledLibrarySection);
+  // The section being left fades out over the next one, which is already in place underneath.
+  const sectionPanels: Partial<Record<LibrarySectionKind, HTMLElement>> = {};
+  let shownPanelSection = untrack(() => visualLibrarySection);
+  $effect.pre(() => {
+    const section = visualLibrarySection;
+    if (section === shownPanelSection) return;
+    fadeOutView(sectionPanels[shownPanelSection], sectionPanels[section]);
+    shownPanelSection = section;
+  });
   const booksUi = $derived(store.settings.booksLibraryUi);
   const bookActiveCategoryId = $derived(booksUi.activeCategoryId);
   const bookTypeFilter = $derived(booksUi.typeFilter);
@@ -2283,6 +2293,7 @@
     <div
       class="library-section-panel"
       class:is-active={visualLibrarySection === "books"}
+      bind:this={sectionPanels.books}
       aria-hidden={visualLibrarySection !== "books"}
     >
       <BooksLibraryBody
@@ -2307,6 +2318,7 @@
     <div
       class="library-section-panel"
       class:is-active={visualLibrarySection === "comics"}
+      bind:this={sectionPanels.comics}
       aria-hidden={visualLibrarySection !== "comics"}
     >
       <ComicsLibraryBody
@@ -2365,6 +2377,13 @@
     overflow: hidden;
     /* Keeps the hidden section's rendering state but skips its style, layout and paint work. */
     content-visibility: hidden;
+  }
+
+  /* A section being left stays drawn above the next one while it fades out (fadeOutView). */
+  .library-section-panel:global([data-leaving]):not(.is-active) {
+    z-index: calc(var(--component-library-panel-z-index) + 1);
+    visibility: visible;
+    content-visibility: visible;
   }
 
   .library-section-panel.is-active {

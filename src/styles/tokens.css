@@ -897,6 +897,7 @@
   --component-app-fullscreen-exit-hover-bg: var(--color-accent-muted);
   --component-app-fullscreen-exit-hover-fg: var(--text-primary);
   --component-app-keepalive-hidden-z-index: -1;
+  --component-app-leaving-page-z-index: 1;
   --component-detail-layer-bg: var(--color-surface);
   --component-search-dim-bg: var(--component-overlay-bg);
   --component-sidebar-border: var(--color-border);

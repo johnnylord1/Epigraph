@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { afterPaint, crossfadeSwap } from "../../lib/motion/motion";
+  import { afterPaint } from "../../lib/motion/motion";
   import { _ } from "../../lib/i18n/runtime";
   import type { LibrarySectionKind, LibrarySectionTabVM } from "../../lib/library/contracts";
   import AppTopbar from "../layout/AppTopbar.svelte";
@@ -27,20 +27,22 @@
     onSectionChange = () => {},
   }: Props = $props();
 
-  // The thumb slides in the click's frame; the section swap renders under a cross-fade (the tabs
-  // stay live, so the thumb keeps gliding).
+  // The thumb slides in the press's frame; the section swap (a heavy render) waits for that frame to
+  // paint. A mouse press switches at once, like a browser tab, instead of waiting for the release.
   let pendingSection = $state<LibrarySectionKind | null>(null);
   const shownSection = $derived(pendingSection ?? sectionTabs.find((tab) => tab.active)?.id ?? "comics");
-  let tabsEl = $state<HTMLElement>();
 
   function selectSection(id: LibrarySectionKind) {
     if (shownSection === id) return;
     pendingSection = id;
-    const commit = () => {
+    afterPaint(() => {
       onSectionChange(id);
       if (pendingSection === id) pendingSection = null;
-    };
-    if (!crossfadeSwap(commit, [tabsEl])) afterPaint(commit);
+    });
+  }
+
+  function pressSection(event: PointerEvent, id: LibrarySectionKind) {
+    if (event.pointerType === "mouse" && event.button === 0) selectSection(id);
   }
 </script>
 
@@ -48,13 +50,14 @@
   <AppTopbar className="library-header-topbar">
     {#snippet left()}
       <div class="header-left">
-      <nav class="n-segmented section-tabs" aria-label={$_("library_sectionsAria")} data-active={shownSection} bind:this={tabsEl}>
+      <nav class="n-segmented section-tabs" aria-label={$_("library_sectionsAria")} data-active={shownSection}>
         <span class="n-segmented__thumb" aria-hidden="true"></span>
         {#each sectionTabs as tab}
           <button
             type="button"
             class="n-segmented__btn section-tab"
             class:is-active={shownSection === tab.id}
+            onpointerdown={(event) => pressSection(event, tab.id)}
             onclick={() => selectSection(tab.id)}
             aria-pressed={shownSection === tab.id}
           >

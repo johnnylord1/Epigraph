@@ -4,7 +4,7 @@
   import RestoreMangaDependencies from "./RestoreMangaDependencies.svelte";
   import { novelRestoreRuntimeState } from "../../lib/backup/novelsRestoreProvisioning";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { enterOnChange, systemPrefersReducedMotion } from "../../lib/motion/motion";
+  import { enterOnChange, leaveView, systemPrefersReducedMotion } from "../../lib/motion/motion";
   import "../pages/migrationModal.css";
   import { slide } from "svelte/transition";
   import { _, translate } from "../../lib/i18n/runtime";
@@ -3706,7 +3706,7 @@
     return Array.from(map.values());
   });
 </script>
-<main class="settings-page n-shell epigraph-port--settings" class:settings-page--first-run={firstRunPane !== null}>
+<main class="settings-page n-shell epigraph-port--settings" class:settings-page--first-run={firstRunPane !== null} out:leaveView|global>
   {#if firstRunPane === null}<AppTopbar className="n-topbar--settings">
     {#snippet center()}
       <form

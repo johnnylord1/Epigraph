@@ -5,6 +5,7 @@ import { describe, expect, test } from "vitest";
 const ROOT = process.cwd();
 const TOKEN_CONSUMERS: Record<string, string> = {
   "--component-app-keepalive-hidden-z-index": "src/components/layout/Layout.svelte",
+  "--component-app-leaving-page-z-index": "src/components/layout/Layout.svelte",
   "--component-window-control-radius": "src/components/layout/TitleBar.svelte",
   "--component-toast-accent-radius": "src/components/layout/Toaster.svelte",
   "--component-toast-progress-radius": "src/components/layout/Toaster.svelte",

@@ -33,8 +33,8 @@
   const hasDownloadActivity = $derived(activeDownloadCount > 0);
   const hasDownloadError = $derived(!hasDownloadActivity && failedDownloadCount > 0);
 
-  // The pressed destination lights up in the click's frame; the page swap (a heavy render) waits
-  // under a cross-fade from the old page, so the highlight glides instead of jumping after the render.
+  // The pressed destination lights up in the click's frame; the page swap (a heavy render) waits for
+  // that frame to paint, so the highlight glides instead of jumping after the render.
   let pendingNav = $state<NavPage | null>(null);
   const shownNav = $derived(pendingNav ?? store.navPage);
 

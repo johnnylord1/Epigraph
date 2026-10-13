@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { hadPersistedStoreAtStartup, store } from "../../store/state.svelte";
   import type { EpigraphRestorePlan } from "../../lib/backup/epigraphRestorePlanner";
@@ -10,7 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
-  import { enterView } from "../../lib/motion/motion";
+  import { enterView, fadeOutView } from "../../lib/motion/motion";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -99,6 +99,18 @@
   // Page arrivals follow the menu: moving down the sidebar rises from below, moving up drops in.
   const NAV_ORDER: string[] = ["home", "library", "search", "downloads", "settings"];
   let enteredDetail = "";
+
+  // A kept-alive page being left fades out over the next page, which is already in place underneath.
+  // Pages that unmount (Downloads, Settings) fade the same way through their own `out:leaveView`.
+  let frontPage = untrack(() => navPage);
+  $effect.pre(() => {
+    const page = navPage;
+    if (page === frontPage) return;
+    const previous = frontPage;
+    frontPage = page;
+    const kept = (key: string) => mainElement?.querySelector(`:scope > [data-keepalive-page="${key}"]`);
+    fadeOutView(isKeepAlivePage(previous) ? kept(previous) : null, kept(page));
+  });
 
   // Every arrival of a page plays once; a kept-alive page replays when the user returns to it.
   $effect(() => {
@@ -549,6 +561,12 @@
     pointer-events: none;
     overflow: hidden;
     contain: layout paint style;
+  }
+
+  /* A page being left stays drawn above the next one while it fades out (fadeOutView). */
+  .page-keepalive:not(.is-front):global([data-leaving]) {
+    z-index: var(--component-app-leaving-page-z-index);
+    content-visibility: visible;
   }
 
   .detail-layer {

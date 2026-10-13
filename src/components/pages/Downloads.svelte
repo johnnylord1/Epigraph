@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { leaveView } from "../../lib/motion/motion";
   import { invoke } from "@tauri-apps/api/core";
   import { open as openPath } from "@tauri-apps/plugin-shell";
   import { CircleNotch } from "phosphor-svelte";
@@ -677,7 +678,7 @@
   }
 </script>
 
-<div class="root n-page-shell epigraph-port--downloads">
+<div class="root n-page-shell epigraph-port--downloads" out:leaveView|global>
   <div class="downloads-topbar-shell">
     <AppTopbar className="downloads-topbar">
       {#snippet center()}

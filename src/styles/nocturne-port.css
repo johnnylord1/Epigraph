@@ -3741,39 +3741,3 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 .epigraph-port--settings .settings-text-input::placeholder {
   color: var(--component-settings-input-placeholder);
 }
-
-/* Page and library-section swaps (crossfadeSwap): the old view fades into the new one.
-   Both share one duration and easing, so with plus-lighter their opacities always add up to one and the
-   background never shows through. */
-:root.crossfade-swap::view-transition-old(root),
-:root.crossfade-swap::view-transition-new(root) {
-  animation-duration: 280ms;
-  animation-timing-function: cubic-bezier(.33, 1, .68, 1);
-  animation-fill-mode: both;
-  mix-blend-mode: plus-lighter;
-}
-
-:root.crossfade-swap::view-transition-old(root) {
-  animation-name: crossfade-out;
-}
-
-:root.crossfade-swap::view-transition-new(root) {
-  animation-name: crossfade-in;
-}
-
-/* Kept elements (a sliding tab thumb) skip the fade and stay live. */
-:root.crossfade-swap::view-transition-old(*.crossfade-keep) {
-  display: none;
-}
-
-:root.crossfade-swap::view-transition-new(*.crossfade-keep) {
-  animation: none;
-}
-
-@keyframes crossfade-out {
-  to { opacity: 0; }
-}
-
-@keyframes crossfade-in {
-  from { opacity: 0; }
-}

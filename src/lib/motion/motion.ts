@@ -1,4 +1,3 @@
-import { flushSync } from "svelte";
 import { flip, type AnimationConfig } from "svelte/animate";
 import { cubicOut } from "svelte/easing";
 import { fade, fly, type FadeParams, type FlyParams, type TransitionConfig } from "svelte/transition";
@@ -183,62 +182,55 @@ export function afterPaint(commit: () => void) {
   requestAnimationFrame(() => setTimeout(commit, 0));
 }
 
-type CrossfadeDocument = Document & {
-  startViewTransition?: (update: () => void) => { finished: Promise<void> };
-};
-
-/** Cross-fades in progress; entrances are skipped meanwhile, since the cross-fade already is one. */
-let crossfades = 0;
-let crossfadeId = 0;
+const LEAVE_MS = 220;
+const LEAVE_EASING = "cubic-bezier(.33,1,.68,1)";
+/** Views fading out over their successor; entrances are skipped meanwhile, since the fade already reveals the new view. */
+let leaving = 0;
+const leaveFades = new WeakMap<Element, Animation>();
 
 /**
- * Swaps a view under a cross-fade of two snapshots of the window (a view transition). The old view
- * stays on screen until the new one has rendered, so the app background never shows between them,
- * which a fade-out followed by an entrance from transparent did. A transition scoped to the swapped
- * element is not used: WebView2 paints that element empty while the new view renders. `keep`
- * elements (the sidebar, a sliding thumb) stay live instead of fading. Returns false, without
- * swapping, when the platform cannot cross-fade.
+ * Fades a view that stays mounted (a kept-alive page, a library section) out over the view replacing
+ * it, which is already live underneath: nothing waits for the fade, and the app background never
+ * shows between the two (a fade-out followed by an entrance from transparent flashed it). Call it
+ * before the swap renders; the element carries `data-leaving` until the fade ends, and its hidden
+ * state must keep it rendered and stacked above its successor while it does. `incoming` stops a fade
+ * still running on the view coming back.
  */
-export function crossfadeSwap(swap: () => void, keep: (Element | null | undefined)[] = []): boolean {
-  const doc = document as CrossfadeDocument;
-  if (prefersReducedMotion() || typeof doc.startViewTransition !== "function") return false;
-  const id = ++crossfadeId;
-  const kept = keep.filter((element): element is HTMLElement => element instanceof HTMLElement);
-  const names = kept.map((element, index) => {
-    const name = `crossfade-keep-${id}-${index}`;
-    element.style.setProperty("view-transition-name", name);
-    element.style.setProperty("view-transition-class", "crossfade-keep");
-    return name;
-  });
-  crossfades += 1;
-  document.documentElement.classList.add("crossfade-swap");
-  const release = () => {
-    crossfades -= 1;
-    if (crossfades === 0) document.documentElement.classList.remove("crossfade-swap");
-    // A newer cross-fade may have named the same element; its names stay.
-    kept.forEach((element, index) => {
-      if (element.style.getPropertyValue("view-transition-name") !== names[index]) return;
-      element.style.removeProperty("view-transition-name");
-      element.style.removeProperty("view-transition-class");
-    });
+export function fadeOutView(outgoing: Element | null | undefined, incoming?: Element | null) {
+  if (incoming) leaveFades.get(incoming)?.cancel();
+  if (!outgoing || prefersReducedMotion()) return;
+  leaveFades.get(outgoing)?.cancel();
+  const animation = animate(outgoing, [{ opacity: 1 }, { opacity: 0 }], { duration: LEAVE_MS, easing: LEAVE_EASING });
+  if (!animation) return;
+  leaveFades.set(outgoing, animation);
+  outgoing.setAttribute("data-leaving", "");
+  leaving += 1;
+  const done = () => {
+    leaving -= 1;
+    if (leaveFades.get(outgoing) !== animation) return;
+    leaveFades.delete(outgoing);
+    outgoing.removeAttribute("data-leaving");
   };
-  try {
-    doc.startViewTransition(() => {
-      swap();
-      flushSync();
-    }).finished.then(release, release);
-  } catch {
-    release();
-    return false;
-  }
-  return true;
+  animation.finished.then(done, done);
+}
+
+/**
+ * Svelte `out:` transition for a page root that unmounts: like {@link fadeOutView}, it lifts out of
+ * the flow and fades over the page replacing it.
+ */
+export function leaveView(node: HTMLElement): TransitionConfig {
+  if (prefersReducedMotion()) return { duration: 0 };
+  Object.assign(node.style, { position: "absolute", inset: "0", zIndex: "var(--component-app-leaving-page-z-index)", pointerEvents: "none" });
+  leaving += 1;
+  setTimeout(() => (leaving -= 1), LEAVE_MS);
+  return { duration: LEAVE_MS, easing: cubicOut, css: (t) => `opacity:${t}` };
 }
 
 let pageSwap: { swap: () => void } | null = null;
 
 /**
- * Swaps the page under a cross-fade (see {@link crossfadeSwap}); the sidebar stays live, so its
- * highlight keeps gliding. Clicks before the swap runs retarget it.
+ * Runs the page swap once the frame that starts the sidebar highlight's glide has painted; clicks
+ * before it runs retarget it.
  */
 export function swapPage(swap: () => void) {
   if (pageSwap) {
@@ -247,11 +239,10 @@ export function swapPage(swap: () => void) {
   }
   const pending = { swap };
   pageSwap = pending;
-  const run = () => {
+  afterPaint(() => {
     pageSwap = null;
     pending.swap();
-  };
-  if (!crossfadeSwap(run, [document.querySelector(".n-sidebar")])) afterPaint(run);
+  });
 }
 
 /** Controls that answer a press with a ripple. */
@@ -373,7 +364,7 @@ type EnterOptions = { y?: number; blur?: number; duration?: number; delay?: numb
 
 /** Arrival of a whole view (a page, a settings section, a tab panel): rises and sharpens in. */
 export function playEnter(node: Element | null | undefined, { y = 10, blur = 6, duration = 640, delay = 0, scale = 1 }: EnterOptions = {}) {
-  if (!node || prefersReducedMotion() || crossfades > 0) return;
+  if (!node || prefersReducedMotion() || leaving > 0) return;
   animate(node, [
     { opacity: 0, transform: `translateY(${y}px) scale(${scale})`, filter: `blur(${blur}px)` },
     { opacity: 1, transform: "none", filter: "blur(0)" },
