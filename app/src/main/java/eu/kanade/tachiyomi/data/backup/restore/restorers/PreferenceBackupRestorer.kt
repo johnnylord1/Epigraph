@@ -49,9 +49,7 @@ class PreferenceBackupRestorer(
         val deviceCategories = CategoryLibrary.entries.associateWith { library ->
             getCategories.await(library).mapNotNull { category -> category.id?.let { category.name to it } }.toMap()
         }
-        // Only other apps number categories in backup order on restore; see CategoryPreferenceBackup.
-        val idsInBackupOrder = !BackupPreferencePolicy.isFromEpigraph(preferences)
-        val remapped = CategoryPreferenceBackup.remap(preferences, backupCategories, idsInBackupOrder) { library, name ->
+        val remapped = CategoryPreferenceBackup.remap(preferences, backupCategories) { library, name ->
             deviceCategories[library]?.get(name)
         }
         val restorable = BackupPreferencePolicy.restorableAppPreferences(remapped.preferences) { key ->
