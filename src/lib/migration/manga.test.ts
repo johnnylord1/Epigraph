@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { invokeMock, gqlMock, searchSourceMangaMock, fetchSourceMangaChaptersMock } = vi.hoisted(() => ({
+const { invokeMock, gqlMock, searchSourceMangaMock, fetchSourceMangaChaptersMock, fetchSourceMangaDetailsMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   gqlMock: vi.fn(),
   searchSourceMangaMock: vi.fn(),
   fetchSourceMangaChaptersMock: vi.fn(),
+  fetchSourceMangaDetailsMock: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -18,6 +19,7 @@ vi.mock("../client", () => ({
 vi.mock("../manga/runtime", () => ({
   searchSourceManga: searchSourceMangaMock,
   fetchSourceMangaChapters: fetchSourceMangaChaptersMock,
+  fetchSourceMangaDetails: fetchSourceMangaDetailsMock,
 }));
 
 import { resetMigrationJournalStateCacheForTests } from "./journalState";
@@ -109,6 +111,10 @@ describe("manga migration services", () => {
     gqlMock.mockReset();
     searchSourceMangaMock.mockReset();
     fetchSourceMangaChaptersMock.mockReset();
+    fetchSourceMangaDetailsMock.mockReset();
+    fetchSourceMangaDetailsMock.mockImplementation(async (variables: Record<string, unknown>) => ({
+      fetchManga: { manga: mangaById.get(Number(variables.id)) ?? createManga(Number(variables.id), "", "source-new") },
+    }));
     invokeMock.mockReset();
     failUpdateMangaIds = new Set();
     journalStatusAtFirstMutation = null;
@@ -714,6 +720,52 @@ describe("manga migration services", () => {
 
     expect(preview.items[0].status).toBe("no_match");
     expect(fetchSourceMangaChaptersMock).not.toHaveBeenCalled();
+  });
+
+  it("finds a title the new source names differently through the other names it lists", async () => {
+    const knife = {
+      ...createManga(31, "Almighty Pig Slaughtering Knife", "source-new", false),
+      description: "**Alternative Names**:\n- A Pig-Slaughtering Knife Cutting Through All Realms - Makes Sense, Right?\n- Pig Slayer\n\n**Year**: 2025",
+    };
+    mangaById.set(31, knife);
+    searchSourceMangaMock.mockImplementation(async () => ({
+      fetchSourceManga: { mangas: [knife, createManga(32, "Butcher Diaries", "source-new", false)], hasNextPage: false },
+    }));
+
+    const preview = await previewMassMangaMigration({
+      sourceFrom: "source-old",
+      sourceTo: "source-new",
+      items: [{
+        manga: createManga(15, "A Pig-Slaughtering Knife Cutting Through All Realms — Makes Sense, Right", "source-old"),
+        chapters: [],
+      }],
+    });
+
+    expect(preview.items[0].status).toBe("matched");
+    expect(preview.items[0].match?.manga.id).toBe(31);
+    expect(fetchSourceMangaDetailsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not take a result whose listed names are another series", async () => {
+    const knife = {
+      ...createManga(31, "Almighty Pig Slaughtering Knife", "source-new", false),
+      description: "**Alternative Names**:\n- Pig Slayer\n- The Butcher Blade",
+    };
+    mangaById.set(31, knife);
+    searchSourceMangaMock.mockImplementation(async () => ({
+      fetchSourceManga: { mangas: [knife], hasNextPage: false },
+    }));
+
+    const preview = await previewMassMangaMigration({
+      sourceFrom: "source-old",
+      sourceTo: "source-new",
+      items: [{
+        manga: createManga(15, "A Pig-Slaughtering Knife Cutting Through All Realms — Makes Sense, Right", "source-old"),
+        chapters: [],
+      }],
+    });
+
+    expect(preview.items[0].status).toBe("no_match");
   });
 
   it("keeps failed source manga and journals successful mass items", async () => {

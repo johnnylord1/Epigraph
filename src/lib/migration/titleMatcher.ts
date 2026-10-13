@@ -94,3 +94,35 @@ export function bestTitleScore(title: string, candidate: string): number {
   const main = mainTitle(title);
   return Math.max(full, main ? titleScore(main, candidate) * 0.95 : 0);
 }
+
+/** Words of [title] long enough to tell two series apart ("a", "of" and the like are left out). */
+export function significantWords(title: string): Set<string> {
+  return new Set(normalizeTitle(title).split(" ").filter((word) => word.length >= 3));
+}
+
+// "Alternative Names: a • b" on one line, or "**Alternative Names**:" followed by "- a" lines.
+const ALTERNATIVE_NAMES_HEADER =
+  /^[*_ \t]*(?:alternative|alternate|alt\.?|other|associated)[ \t]+(?:names?|titles?)[*_ \t]*:[*_ \t]*(.*)$/im;
+const LIST_ITEM = /^\s*[-•*]\s+(.+)$/;
+const INLINE_SEPARATORS = /\s*[•;|]\s*|\s+\/\s+/;
+
+/** Other names of a series as sources list them in its description, or none when it has no such list. */
+export function alternativeTitles(description: string | null | undefined): string[] {
+  if (!description?.trim()) return [];
+  const header = ALTERNATIVE_NAMES_HEADER.exec(description);
+  if (!header) return [];
+  const inline = (header[1] ?? "").trim();
+  let names: string[];
+  if (inline) {
+    names = inline.split(INLINE_SEPARATORS);
+  } else {
+    names = [];
+    const following = description.slice(header.index + header[0].length).split(/\r?\n/).slice(1);
+    for (const line of following) {
+      const item = LIST_ITEM.exec(line);
+      if (!item) break;
+      names.push(item[1]!);
+    }
+  }
+  return [...new Set(names.map((name) => name.trim()).filter((name) => normalizeTitle(name)))];
+}

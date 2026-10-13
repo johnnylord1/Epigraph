@@ -12,7 +12,7 @@ import {
   fetchSourceMangaSearchWithFallback,
   isSourceMangaSearchUnavailableError,
 } from "../manga/sourceSearch";
-import { fetchSourceMangaChapters } from "../manga/runtime";
+import { fetchSourceMangaChapters, fetchSourceMangaDetails } from "../manga/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 import { requestProgressMirror } from "../syncdProgressMirror";
 import { getMigrationJournalEntry, getMigrationOperation } from "./journalState";
@@ -32,7 +32,11 @@ import { matchMangaChapters } from "./chapterMapping";
 import {
   MIN_TITLE_MATCH_SCORE,
   STRONG_TITLE_MATCH_SCORE,
+  alternativeTitles,
   bestTitleScore,
+  normalizeTitle,
+  significantWords,
+  titleScore,
   titleSearchQueries,
 } from "./titleMatcher";
 import {
@@ -302,11 +306,68 @@ async function verifyMangaSnapshot(snapshot: MangaMigrationStateSlice): Promise<
   }
 }
 
+/** Other names of the series searched after its title, when the title finds nothing close. */
+const MAX_ALTERNATIVE_QUERIES = 2;
+/** Results whose details are loaded to read the other names they list. */
+const MAX_DETAIL_LOOKUPS = 3;
+const DETAILS_TIMEOUT_MS = 20_000;
+
+/**
+ * How well a result named [candidate] matches: the title counts from MIN_TITLE_MATCH_SCORE, the
+ * other names of the series only from STRONG_TITLE_MATCH_SCORE. Null when neither is enough.
+ */
+function candidateScore(title: string, otherNames: string[], candidate: string): number | null {
+  const byTitle = titleSimilarity(title, candidate);
+  const byOtherName = Math.max(0, ...otherNames.map((name) => titleScore(name, candidate)));
+  const score = Math.max(
+    byTitle >= MIN_TITLE_MATCH_SCORE ? byTitle : 0,
+    byOtherName >= STRONG_TITLE_MATCH_SCORE ? byOtherName : 0,
+  );
+  return score > 0 ? score : null;
+}
+
+/**
+ * Loads the details of the few results that share words with [names] and returns the one whose
+ * listed other names include one of [names], as "Almighty Pig Slaughtering Knife" lists "A
+ * Pig-Slaughtering Knife Cutting Through All Realms". Results that fail or are slow are skipped.
+ */
+async function matchByListedNames(
+  names: string[],
+  results: Iterable<Manga>,
+): Promise<{ manga: Manga; similarity: number } | null> {
+  const words = new Set(names.flatMap((name) => [...significantWords(name)]));
+  const nameScore = (title: string) => Math.max(...names.map((name) => titleScore(name, title)));
+  const candidates = [...results]
+    .filter((manga) => [...significantWords(manga.title)].some((word) => words.has(word)))
+    .sort((a, b) => nameScore(b.title) - nameScore(a.title))
+    .slice(0, MAX_DETAIL_LOOKUPS);
+  const scored = await Promise.all(candidates.map(async (manga) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DETAILS_TIMEOUT_MS);
+    try {
+      const details = await fetchSourceMangaDetails({ id: manga.id, sourceId: manga.source?.id }, controller.signal);
+      const listed = alternativeTitles(details.fetchManga.manga.description);
+      return { manga, similarity: Math.max(0, ...listed.map(nameScore)) };
+    } catch {
+      return { manga, similarity: 0 };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }));
+  return scored
+    .filter((entry) => entry.similarity >= STRONG_TITLE_MATCH_SCORE)
+    .reduce<{ manga: Manga; similarity: number } | null>(
+      (best, entry) => (!best || entry.similarity > best.similarity ? entry : best),
+      null,
+    );
+}
+
 /**
  * Searches the target source for [currentManga] and returns the best result that reads as the same
- * title. Each query is tried in turn (the title, then plain and shorter forms) until one gives a
- * strong match. Only the search decides: the chapter list loads separately, because some sources
- * read it through a WebView or behind a captcha and can be slow or fail.
+ * title. Each query is tried in turn (the title, then plain and shorter forms, then other names the
+ * series goes by) until one gives a strong match. When none does, the other names listed by the
+ * likeliest results are checked. Only the search decides: the chapter list loads separately,
+ * because some sources read it through a WebView or behind a captcha and can be slow or fail.
  */
 async function fetchBestMangaCandidate(
   currentManga: Manga,
@@ -317,8 +378,14 @@ async function fetchBestMangaCandidate(
   let best: { manga: Manga; similarity: number } | null = null;
   let lastError: unknown = null;
   let answered = false;
+  const title = currentManga.title;
+  const otherNames = alternativeTitles(currentManga.description)
+    .filter((name) => normalizeTitle(name) !== normalizeTitle(title));
+  const queries = [...titleSearchQueries(title), ...otherNames.slice(0, MAX_ALTERNATIVE_QUERIES)]
+    .filter((query, index, all) => all.findIndex((other) => other.toLowerCase() === query.toLowerCase()) === index);
+  const seen = new Map<number, Manga>();
 
-  for (const query of titleSearchQueries(currentManga.title)) {
+  for (const query of queries) {
     let mangas: Manga[];
     try {
       mangas = await fetchSourceMangaSearchWithFallback({
@@ -340,8 +407,9 @@ async function fetchBestMangaCandidate(
     }
 
     for (const manga of mangas) {
-      const similarity = titleSimilarity(currentManga.title, manga.title);
-      if (similarity >= MIN_TITLE_MATCH_SCORE && (!best || similarity > best.similarity)) {
+      if (!seen.has(manga.id)) seen.set(manga.id, manga);
+      const similarity = candidateScore(title, otherNames, manga.title);
+      if (similarity !== null && (!best || similarity > best.similarity)) {
         best = { manga, similarity };
       }
     }
@@ -349,6 +417,10 @@ async function fetchBestMangaCandidate(
   }
 
   if (!answered && lastError) throw lastError;
+  if (!best || best.similarity < STRONG_TITLE_MATCH_SCORE) {
+    const listed = await matchByListedNames([title, ...otherNames], seen.values());
+    if (listed && (!best || listed.similarity > best.similarity)) best = listed;
+  }
   return best;
 }
 
