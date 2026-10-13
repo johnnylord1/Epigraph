@@ -4,6 +4,25 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.7] - 2026-10-13
+
+### Changed
+
+- Settings › Backup is one simple flow: pick what goes into the backup (comics, books, novels, history and statistics), optionally leave out the book files or save the comics in Mihon format, and restore from the same place.
+- Setup opens again on first use and whenever the app holds nothing at all, no library and no sources, as after its data was cleared.
+- Browse recommendation rows scroll by dragging any card and with the mouse wheel; a drag does not open the card, and the page scrolls again at either end of a row.
+- The reader's brightness button becomes "Brightness and zoom", one popover with both sliders. Ctrl + wheel zooms and Shift + wheel changes brightness.
+- Extension settings open in a centered dialog sized for their content.
+- Migration finds titles by search alone, ignoring accents, punctuation, dashes and a missing subtitle, tries plain and shorter forms of the title, and compares the other names sources list ("Alternative Names"). Unrelated results are no longer offered, and unsure matches are left for review.
+- Mass migration loads the new source's chapters in their own queue, so a slow source no longer turns a found title into a failure; a title with read progress stays in its current source if its chapters still cannot load.
+
+### Fixed
+
+- Restoring a backup no longer waits for extensions that are not installed; their titles keep their source.
+- Books synced from another device are included in backups and restore again.
+- Repositories that differ only in the case of the GitHub owner or name are treated as the same, and one that fails to add is reported once.
+- Closing the library lookup notice keeps it closed while the lookup goes on in the background.
+
 ## [0.0.6] - 2026-10-12
 
 ### Changed
