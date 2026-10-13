@@ -4,6 +4,24 @@ All notable user-facing changes to Epigraph are documented here.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-12
+
+### Changed
+
+- Discover recommendations follow the library: rows are ordered by the reader's profile and ratings, keep the share of manga, manhwa and manhua the library has, and fill "outside your usual reads" with the genres read least.
+- Recommendation rows are fed from the installed sources' genre lists and keep loading more titles while scrolling.
+- Library works are recognised on AniList, Kitsu and Hardcover in the background, with a progress notice, also when a novel is listed under a translated title or only its author matches. Only certain matches are used, and the author and studio count as evidence.
+- Novels are recommended from Kitsu without a tracker account and ranked exactly like comics; tracked novels and book genres shape them, and novel sources are searched for the reader's genres.
+- Switching pages, and between Comics and Books in the Library, fades the old view out over the new one instead of fading through the background. The Comics/Books switch and the sidebar answer on press.
+- App buttons no longer lean toward the cursor.
+
+### Fixed
+
+- Opening a novel recommended only by Kitsu finds it through a title search.
+- The library analysis no longer comes back stuck at the same count.
+- Slow Jikan answers no longer delay Search.
+- Page switches no longer stall on Home, Library and Explore, the Library hero is no longer blank, and the sidebar no longer highlights two destinations.
+
 ## [0.0.5] - 2026-10-10
 
 ### Changed
