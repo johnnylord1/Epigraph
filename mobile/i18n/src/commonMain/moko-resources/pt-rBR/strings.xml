@@ -344,6 +344,10 @@
     <string name="copy_value">Copiar</string>
     <string name="no_chapters_found_for_migration">Nenhum capítulo encontrado, este mangá não
         pode ser usado para migração</string>
+    <string name="migration_chapters_failed">%1$s: não foi possível carregar os capítulos (%2$s). Abra a obra para carregá-los; a migração tenta de novo antes de copiar seu progresso.</string>
+    <string name="migration_chapters_timed_out">a fonte demorou demais para responder</string>
+    <string name="migration_chapters_missing_title">Algumas obras não foram migradas</string>
+    <string name="migration_chapters_missing_message">Não foi possível carregar os capítulos na nova fonte, então o progresso de leitura seria perdido. Abra cada obra nova (resolva o captcha no WebView se pedir), atualize os capítulos e migre de novo.</string>
     <string name="no_alternatives_found">Nenhuma alternativa encontrada</string>
     <string name="stop_migrating">Parar de migrar?</string>
     <string name="skipping_">(pulando %1$d)</string>

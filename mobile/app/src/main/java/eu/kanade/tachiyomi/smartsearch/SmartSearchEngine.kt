@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.lang.toNormalized
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,30 +56,41 @@ class SmartSearchEngine(
         return eligibleManga.maxByOrNull { it.dist }?.manga
     }
 
+    /**
+     * Finds [title] in [source]. The title is searched as written first; when that finds nothing
+     * close enough, plain-text and shorter forms are tried (some sources match keywords strictly, or
+     * name the series without its subtitle). A result has to look like the same series: one that is
+     * not similar enough is left for the user to pick by hand.
+     */
     suspend fun normalSearch(source: CatalogueSource, title: String): SManga? {
-        val titleNormalized = title.toNormalized()
-        val eligibleManga = supervisorScope {
+        val wanted = title.toNormalized()
+        var best: SearchEntry? = null
+        var failure: Exception? = null
+        var answered = false
+        for (query in TitleMatcher.searchQueries(wanted)) {
             val searchQuery = if (extraSearchParams != null) {
-                "$titleNormalized ${extraSearchParams.trim()}"
+                "$query ${extraSearchParams.trim()}"
             } else {
-                titleNormalized
+                query
             }
-            val searchResults =
-                source.getSearchManga(1, searchQuery, source.getFilterList())
-
-            if (searchResults.mangas.size == 1) {
-                return@supervisorScope listOf(SearchEntry(searchResults.mangas.first(), 0.0))
+            val results = try {
+                source.getSearchManga(1, searchQuery, source.getFilterList()).mangas
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = e
+                continue
             }
-
-            searchResults.mangas.map {
-                val normalizedDistance = normalizedLevenshteinSimilarity(titleNormalized, it.title.toNormalized())
-                SearchEntry(it, normalizedDistance)
-            }.filter { (_, normalizedDistance) ->
-                normalizedDistance >= MIN_NORMAL_ELIGIBLE_THRESHOLD
-            }
+            answered = true
+            val match = results
+                .map { SearchEntry(it, TitleMatcher.bestScore(wanted, it.title.toNormalized())) }
+                .filter { it.dist >= TitleMatcher.MIN_MATCH_SCORE }
+                .maxByOrNull { it.dist }
+            if (match != null && match.dist > (best?.dist ?: 0.0)) best = match
+            if ((best?.dist ?: 0.0) >= STRONG_MATCH_SCORE) break
         }
-
-        return eligibleManga.maxByOrNull { it.dist }?.manga
+        if (!answered) failure?.let { throw it }
+        return best?.manga
     }
 
     private fun cleanSmartSearchTitle(title: String): String {
@@ -191,6 +203,9 @@ class SmartSearchEngine(
     companion object {
         const val MIN_SMART_ELIGIBLE_THRESHOLD = 0.4
         const val MIN_NORMAL_ELIGIBLE_THRESHOLD = 0.4
+
+        /** A result this close ends the search; weaker ones let the next query try to do better. */
+        private const val STRONG_MATCH_SCORE = 0.9
 
         private val titleRegex = Regex("[^a-zA-Z0-9- ]")
         private val consecutiveSpacesRegex = Regex(" +")

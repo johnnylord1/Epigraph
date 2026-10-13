@@ -729,6 +729,10 @@
     <string name="copy_value">Copy</string>
     <string name="no_chapters_found_for_migration">No chapters found, this series cannot be used for
         migration</string>
+    <string name="migration_chapters_failed">%1$s: chapters could not be loaded (%2$s). Open the series to load them; the migration tries again before copying your progress.</string>
+    <string name="migration_chapters_timed_out">the source took too long to answer</string>
+    <string name="migration_chapters_missing_title">Some series were not migrated</string>
+    <string name="migration_chapters_missing_message">Their chapters could not be loaded from the new source, so the read progress would be lost. Open each new series (solve the captcha in WebView if asked), refresh its chapters, then migrate again.</string>
     <string name="no_alternatives_found">No Alternatives Found</string>
     <string name="stop_migrating">Stop migrating?</string>
     <string name="skipping_">(skipping %1$d)</string>
