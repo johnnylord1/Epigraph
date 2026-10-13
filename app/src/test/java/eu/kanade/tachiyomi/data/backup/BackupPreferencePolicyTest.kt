@@ -101,6 +101,10 @@ class BackupPreferencePolicyTest {
             BackupPreference("last_app_check", LongPreferenceValue(1)),
             BackupPreference("ext_updates_count", IntPreferenceValue(3)),
             BackupPreference("library_update_last_timestamp", LongPreferenceValue(1)),
+            BackupPreference(
+                "download_directory",
+                StringPreferenceValue("content://com.android.externalstorage.documents/tree/primary%3AJ2k"),
+            ),
             BackupPreference(BackupPreferencePolicy.ORIGIN_KEY, StringPreferenceValue(BackupPreferencePolicy.ORIGIN_VALUE)),
             BackupPreference("backup_interval", IntPreferenceValue(12)),
         )

@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.view.DeferredField
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import yokai.util.koin.injectLazy
@@ -25,6 +26,10 @@ class MigratingManga(
     val migrationJob = parentContext + SupervisorJob() + Dispatchers.Default
 
     var migrationStatus: Int = MigrationStatus.RUNNUNG
+
+    /** Background load of the matched series' chapters, so the migration can wait for it. */
+    @Volatile
+    var chapterJob: Job? = null
 
     @Volatile
     private var manga: Manga? = null

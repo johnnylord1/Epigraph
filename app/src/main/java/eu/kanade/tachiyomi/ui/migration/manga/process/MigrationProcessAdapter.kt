@@ -84,16 +84,25 @@ class MigrationProcessAdapter(
     fun mangasSkipped() =
         (items.count { it.manga.migrationStatus == MigrationStatus.MANGA_NOT_FOUND })
 
-    suspend fun performMigrations(copy: Boolean) {
+    /**
+     * Migrates every matched series. Returns the rows kept back, with the reason, because the new
+     * series' chapters could not be loaded and the read progress would have been lost.
+     */
+    suspend fun performMigrations(copy: Boolean): List<Pair<MigrationProcessItem, String>> {
+        val kept = mutableListOf<Pair<MigrationProcessItem, String>>()
         withContext(Dispatchers.IO) {
-            currentItems.forEach { migratingManga ->
-                val manga = migratingManga.manga
+            currentItems.forEach { item ->
+                val manga = item.manga
                 if (manga.searchResult.initialized) {
                     val toMangaObj =
                         getManga.awaitById(manga.searchResult.get() ?: return@forEach) ?: return@forEach
                     val prevManga = manga.manga() ?: return@forEach
                     val source = sourceManager.get(toMangaObj.source) ?: return@forEach
                     val prevSource = sourceManager.get(prevManga.source)
+                    controller.missingChaptersReason(manga, prevManga, toMangaObj, source)?.let {
+                        kept += item to it
+                        return@forEach
+                    }
                     migrateMangaInternal(
                         prevSource,
                         source,
@@ -104,6 +113,7 @@ class MigrationProcessAdapter(
                 }
             }
         }
+        return kept
     }
 
     fun migrateManga(position: Int, copy: Boolean) {
@@ -113,6 +123,13 @@ class MigrationProcessAdapter(
             val prevManga = manga.manga() ?: return@launchUI
             val source = sourceManager.get(toMangaObj.source) ?: return@launchUI
             val prevSource = sourceManager.get(prevManga.source)
+            val missing = withContext(Dispatchers.IO) {
+                controller.missingChaptersReason(manga, prevManga, toMangaObj, source)
+            }
+            if (missing != null) {
+                controller.showChaptersMissing(listOf(toMangaObj.title to missing))
+                return@launchUI
+            }
             migrateMangaInternal(
                 prevSource,
                 source,
@@ -120,7 +137,7 @@ class MigrationProcessAdapter(
                 toMangaObj,
                 !copy,
             )
-            removeManga(position)
+            removeManga(currentItems.indexOfFirst { it.manga === manga }.takeIf { it >= 0 } ?: return@launchUI)
         }
     }
 
