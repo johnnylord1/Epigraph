@@ -54,7 +54,7 @@ class MangaCoverFetcher(
     private val mangaId: Long?,
     private val url: String?,
     private val isInLibrary: Boolean,
-    private val sourceLazy: Lazy<HttpSource?>,
+    private val sourceResolver: suspend () -> HttpSource?,
     private val novelSourceLazy: Lazy<NovelSource?>,
     private val options: Options,
     private val callFactoryLazy: Lazy<Call.Factory>,
@@ -69,6 +69,18 @@ class MangaCoverFetcher(
         get() = diskCacheKeyLazy.value
 
     private val fileScope = CoroutineScope(Job() + Dispatchers.IO)
+
+    private var sourceResolved = false
+    private var resolvedSource: HttpSource? = null
+
+    /** The title's installed source, waiting for extensions to load on a cold start. */
+    private suspend fun source(): HttpSource? {
+        if (!sourceResolved) {
+            resolvedSource = sourceResolver()
+            sourceResolved = true
+        }
+        return resolvedSource
+    }
 
     override suspend fun fetch(): FetchResult {
         if (options.useCustomCover) {
@@ -227,13 +239,26 @@ class MangaCoverFetcher(
                 .body(bytes.toResponseBody(IMAGE_MEDIA_TYPE))
                 .build()
         }
-        val client = sourceLazy.value?.client ?: callFactoryLazy.value
-        val response = client.newCall(newRequest()).await()
-        if (!response.isSuccessful && response.code != HttpURLConnection.HTTP_NOT_MODIFIED) {
-            response.close()
-            throw IOException(response.message)
-        }
-        return response
+        val source = source()
+        val client = source?.client ?: callFactoryLazy.value
+        val response = client.newCall(newRequest(source)).await()
+        val failure = when {
+            !response.isSuccessful && response.code != HttpURLConnection.HTTP_NOT_MODIFIED ->
+                "HTTP ${response.code} ${response.message}"
+            !response.isImageLike() -> "Not an image: ${response.header("Content-Type")}"
+            else -> null
+        } ?: return response
+        response.close()
+        // The stored cover link may be dead (a retired CDN that now redirects to an unrelated
+        // page) or expired. Ask the installed source for the current one before giving up.
+        if (isInLibrary && options.networkCachePolicy.readEnabled) installedSourceCover()?.let { return it }
+        throw IOException(failure)
+    }
+
+    /** False for the HTML or JSON pages that dead cover hosts answer with, which must not be cached as covers. */
+    private fun Response.isImageLike(): Boolean {
+        val type = header("Content-Type")?.substringBefore(';')?.trim()?.lowercase() ?: return true
+        return !type.startsWith("text/") && !type.contains("html") && !type.contains("json")
     }
 
     /**
@@ -242,7 +267,7 @@ class MangaCoverFetcher(
      * itself (through the extension's own client, Cloudflare handling included).
      */
     private suspend fun installedSourceCover(): Response? {
-        val source = sourceLazy.value?.takeUnless { it.id == EpigraphCoreSource.ID } ?: return null
+        val source = source()?.takeUnless { it.id == EpigraphCoreSource.ID } ?: return null
         val manga = mangaId?.let { runCatching { get<GetManga>().awaitById(it) }.getOrNull() } ?: return null
         if (manga.source != source.id) return null
         return runCatching {
@@ -251,16 +276,17 @@ class MangaCoverFetcher(
                 ?.takeIf { it.startsWith("http", ignoreCase = true) }
                 ?: return null
             val request = Request.Builder().url(coverUrl).headers(source.headers).build()
-            source.client.newCall(request).await().takeIf { it.isSuccessful }
+            val response = source.client.newCall(request).await()
+            if (response.isSuccessful && response.isImageLike()) response else null.also { response.close() }
         }.onFailure { Logger.w(it) { "Installed source cover fallback failed for manga $mangaId" } }
             .getOrNull()
     }
 
-    private fun newRequest(): Request {
+    private fun newRequest(source: HttpSource?): Request {
         val request = Request.Builder().apply {
             url(url!!)
 
-            val sourceHeaders = sourceLazy.value?.headers
+            val sourceHeaders = source?.headers
             if (sourceHeaders != null)
                 headers(sourceHeaders)
         }
@@ -416,7 +442,7 @@ class MangaCoverFetcher(
                 mangaId = data.id,
                 url = data.thumbnail_url,
                 isInLibrary = data.favorite,
-                sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
+                sourceResolver = { sourceManager.awaitExtensionSource(data.source) as? HttpSource },
                 novelSourceLazy = lazy { sourceManager.get(data.source) as? NovelSource },
                 options = options,
                 callFactoryLazy = callFactoryLazy,
@@ -441,7 +467,7 @@ class MangaCoverFetcher(
                 mangaId = data.mangaId,
                 url = data.url,
                 isInLibrary = data.inLibrary,
-                sourceLazy = lazy { sourceManager.get(data.sourceId) as? HttpSource },
+                sourceResolver = { sourceManager.awaitExtensionSource(data.sourceId) as? HttpSource },
                 novelSourceLazy = lazy { sourceManager.get(data.sourceId) as? NovelSource },
                 options = options,
                 callFactoryLazy = callFactoryLazy,
