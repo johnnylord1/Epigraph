@@ -8,7 +8,9 @@ import eu.kanade.tachiyomi.data.backup.BackupContainer
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import java.io.BufferedInputStream
 import java.io.Closeable
+import java.io.EOFException
 import java.io.FilterInputStream
+import java.io.IOException
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -99,8 +101,16 @@ object BackupUtil {
     /** A manga payload is a gzipped `.tachibk` (desktop and Android) or a raw protobuf. */
     private fun decodePayload(rawBackup: ByteArray): Backup {
         val backupBytes = if (rawBackup.isGzip()) {
-            GZIPInputStream(ByteArrayInputStream(rawBackup)).use {
-                readAtMost(it, MAX_MANGA_PAYLOAD_BYTES, "The decompressed backup is too large")
+            try {
+                GZIPInputStream(ByteArrayInputStream(rawBackup)).use {
+                    readAtMost(it, MAX_MANGA_PAYLOAD_BYTES, "The decompressed backup is too large")
+                }
+            } catch (error: EOFException) {
+                // A backup picked while another app is still writing it ends early.
+                throw IOException(
+                    "The backup file is incomplete. If another app is still saving it, wait until it finishes and try again.",
+                    error,
+                )
             }
         } else {
             rawBackup

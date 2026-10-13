@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.util.BackupUtil
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.time.Instant
 import java.util.zip.GZIPOutputStream
@@ -104,5 +105,13 @@ class BackupContainerTest {
         // Arrays saved before the option existed (the retired private flag at index 9) keep it off.
         val legacy = BackupOptions().asBooleanArray().copyOf(10).also { it[9] = true }
         assertFalse(BackupOptions.fromBooleanArray(legacy).bookFiles)
+    }
+
+    @Test
+    fun `a backup cut short while another app writes it is reported as incomplete`() {
+        val whole = gzipped(backup)
+        assertEquals(listOf("Novels"), BackupUtil.decodeBackupBytes(whole).backupCategories.map { it.name })
+        val error = assertThrows<IOException> { BackupUtil.decodeBackupBytes(whole.copyOf(whole.size - 12)) }
+        assertTrue(error.message!!.startsWith("The backup file is incomplete"))
     }
 }

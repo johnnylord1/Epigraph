@@ -95,6 +95,9 @@
 
 ##---------------Begin: proguard configuration for okhttp  ----------
 -keepclasseswithmembers class okhttp3.MultipartBody$Builder { *; }
+# okhttp-zstd: libzstd-kmp.so looks ZstdCompressor and ZstdDecompressor up by name when it loads.
+# R8 dropped one and merged the other, so the first zstd response aborted the whole app natively.
+-keep class com.squareup.zstd.** { *; }
 ##---------------End: proguard configuration for okhttp  ----------
 
 ##---------------Begin: proguard configuration for kotlinx.serialization  ----------
