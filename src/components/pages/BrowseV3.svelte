@@ -1828,10 +1828,11 @@
     await runConcurrent(visible, async (source) => {
       if (ctrl.signal.aborted) return;
       try {
-        const novels = await searchInstalledNovelSource({
+        // Some plugins repeat a path (e.g. a login link), which would break the keyed card list.
+        const novels = dedupeNovelSourceResults(await searchInstalledNovelSource({
           profileId: store.runtimeResolvedLocalProfileId,
           serverUrl: store.runtimeServerUrl,
-        }, source.pluginId, trimmed, 1);
+        }, source.pluginId, trimmed, 1));
         if (ctrl.signal.aborted) return;
         kw_novelResults = kw_novelResults.map((result) =>
           result.source.pluginId === source.pluginId ? { ...result, novels, loading: false } : result,
@@ -3778,7 +3779,8 @@
       return;
     }
 
-    const sourceProvider = item.candidate.providers.find((provider) => provider.kind === "source");
+    // The Kitsu catalog is not a readable source, so its novels go to the title search below.
+    const sourceProvider = item.candidate.providers.find((provider) => provider.kind === "source" && provider.providerId !== "kitsu-catalog");
     if (sourceProvider) {
       activeBrowseTab = "source";
       src_browseQuery = item.candidate.title;
