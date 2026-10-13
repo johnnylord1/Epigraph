@@ -21,6 +21,7 @@ import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.databinding.MigrationListControllerBinding
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.smartsearch.SmartSearchEngine
+import eu.kanade.tachiyomi.smartsearch.TitleMatcher
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
@@ -184,6 +185,8 @@ class MigrationListController(bundle: Bundle? = null) :
                                 CoroutineScope(manga.migrationJob).async {
                                     // The saved list holds comic and novel picks alike.
                                     val kindSources = sources.filter { it.isNovelSource() == mangaSource.isNovelSource() }
+                                    // Other names the series goes by, from its description.
+                                    val alternativeTitles = TitleMatcher.alternativeTitles(mangaObj.originalDescription)
                                     val validSources = if (kindSources.size == 1) {
                                         kindSources
                                     } else {
@@ -197,7 +200,7 @@ class MigrationListController(bundle: Bundle? = null) :
                                             async source@{
                                                 sourceSemaphore.withPermit {
                                                     val searchResult = try {
-                                                        smartSearchEngine.normalSearch(source, mangaObj.title)
+                                                        smartSearchEngine.normalSearch(source, mangaObj.title, alternativeTitles)
                                                     } catch (e: CancellationException) {
                                                         throw e
                                                     } catch (e: Exception) {
@@ -227,7 +230,7 @@ class MigrationListController(bundle: Bundle? = null) :
                                     } else {
                                         validSources.forEachIndexed { index, source ->
                                             val searchResult = try {
-                                                smartSearchEngine.normalSearch(source, mangaObj.title)
+                                                smartSearchEngine.normalSearch(source, mangaObj.title, alternativeTitles)
                                                     ?.let { smartSearchEngine.networkToLocalManga(it, source.id) }
                                             } catch (e: CancellationException) {
                                                 // Ignore cancellations

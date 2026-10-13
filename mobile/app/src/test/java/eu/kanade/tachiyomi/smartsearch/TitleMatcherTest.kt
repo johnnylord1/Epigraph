@@ -53,4 +53,26 @@ class TitleMatcherTest {
         assertEquals("Berserk", TitleMatcher.mainTitle("Berserk (Official)"))
         assertNull(TitleMatcher.mainTitle("Pig-Slaughtering"))
     }
+
+    @Test
+    fun `other names are read from a listed or inline description block`() {
+        val listed = "Story text.\n\n**Alternative Names**:\n- A Pig-Slaughtering Knife Cutting Through All Realms - Makes Sense, Right?\n" +
+            "- Pig Slayer\n\n**Year**: 2025\n**Language**: ZH"
+        assertEquals(
+            listOf("A Pig-Slaughtering Knife Cutting Through All Realms - Makes Sense, Right?", "Pig Slayer"),
+            TitleMatcher.alternativeTitles(listed),
+        )
+        assertEquals(
+            listOf("Solo Leveling", "Only I Level Up"),
+            TitleMatcher.alternativeTitles("Alternative Names: Solo Leveling \u2022 Only I Level Up\nStatus: Ongoing"),
+        )
+        assertEquals(emptyList<String>(), TitleMatcher.alternativeTitles("A hunter wakes up. **Year**: 2018"))
+        assertEquals(emptyList<String>(), TitleMatcher.alternativeTitles(null))
+    }
+
+    @Test
+    fun `significant words leave out short ones`() {
+        assertEquals(setOf("almighty", "pig", "slaughtering", "knife"), TitleMatcher.significantWords("Almighty Pig-Slaughtering Knife"))
+        assertEquals(setOf("the", "god", "war"), TitleMatcher.significantWords("The God of War"))
+    }
 }

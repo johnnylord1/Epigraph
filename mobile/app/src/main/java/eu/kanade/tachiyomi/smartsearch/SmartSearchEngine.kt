@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.smartsearch
 
+import co.touchlab.kermit.Logger
 import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.source.CatalogueSource
@@ -11,7 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import yokai.util.koin.injectLazy
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
@@ -61,13 +65,28 @@ class SmartSearchEngine(
      * close enough, plain-text and shorter forms are tried (some sources match keywords strictly, or
      * name the series without its subtitle). A result has to look like the same series: one that is
      * not similar enough is left for the user to pick by hand.
+     *
+     * Sources often name a series differently (a translated or shortened title). The other names
+     * of the series ([alternativeTitles], from its description) are searched and compared too, and
+     * when no result is close enough, the other names listed by the likeliest results are checked.
+     * A match through another name has to be close, not just similar.
      */
-    suspend fun normalSearch(source: CatalogueSource, title: String): SManga? {
+    suspend fun normalSearch(
+        source: CatalogueSource,
+        title: String,
+        alternativeTitles: List<String> = emptyList(),
+    ): SManga? {
         val wanted = title.toNormalized()
+        val otherNames = alternativeTitles
+            .map { it.toNormalized() }
+            .filter { TitleMatcher.normalize(it).isNotEmpty() && TitleMatcher.normalize(it) != TitleMatcher.normalize(wanted) }
+        val queries = (TitleMatcher.searchQueries(wanted) + otherNames.take(MAX_ALTERNATIVE_QUERIES))
+            .distinctBy { it.lowercase(java.util.Locale.ROOT) }
+        val seen = LinkedHashMap<String, SManga>()
         var best: SearchEntry? = null
         var failure: Exception? = null
         var answered = false
-        for (query in TitleMatcher.searchQueries(wanted)) {
+        for (query in queries) {
             val searchQuery = if (extraSearchParams != null) {
                 "$query ${extraSearchParams.trim()}"
             } else {
@@ -82,15 +101,68 @@ class SmartSearchEngine(
                 continue
             }
             answered = true
+            results.forEach { seen.putIfAbsent(it.url, it) }
             val match = results
-                .map { SearchEntry(it, TitleMatcher.bestScore(wanted, it.title.toNormalized())) }
-                .filter { it.dist >= TitleMatcher.MIN_MATCH_SCORE }
+                .mapNotNull { manga -> titleScore(wanted, otherNames, manga.title.toNormalized())?.let { SearchEntry(manga, it) } }
                 .maxByOrNull { it.dist }
             if (match != null && match.dist > (best?.dist ?: 0.0)) best = match
             if ((best?.dist ?: 0.0) >= STRONG_MATCH_SCORE) break
         }
         if (!answered) failure?.let { throw it }
+        if ((best?.dist ?: 0.0) < STRONG_MATCH_SCORE) {
+            matchByListedNames(source, listOf(wanted) + otherNames, seen.values)
+                ?.takeIf { it.dist > (best?.dist ?: 0.0) }
+                ?.let { best = it }
+        }
         return best?.manga
+    }
+
+    /**
+     * How well a result named [candidate] matches: the title counts from [TitleMatcher.MIN_MATCH_SCORE],
+     * the other names of the series only from [STRONG_MATCH_SCORE]. Null when neither is enough.
+     */
+    private fun titleScore(wanted: String, otherNames: List<String>, candidate: String): Double? {
+        val byTitle = TitleMatcher.bestScore(wanted, candidate).takeIf { it >= TitleMatcher.MIN_MATCH_SCORE }
+        val byOtherName = otherNames.maxOfOrNull { TitleMatcher.score(it, candidate) }?.takeIf { it >= STRONG_MATCH_SCORE }
+        return listOfNotNull(byTitle, byOtherName).maxOrNull()
+    }
+
+    /**
+     * Loads the details of the few results that share words with [names] and returns the one whose
+     * listed other names include one of [names], as "Almighty Pig Slaughtering Knife" lists "A
+     * Pig-Slaughtering Knife Cutting Through All Realms". Results that fail or are slow are skipped.
+     */
+    private suspend fun matchByListedNames(
+        source: CatalogueSource,
+        names: List<String>,
+        results: Collection<SManga>,
+    ): SearchEntry? {
+        val words = names.flatMapTo(HashSet()) { TitleMatcher.significantWords(it) }
+        val candidates = results
+            .filter { manga -> TitleMatcher.significantWords(manga.title).any(words::contains) }
+            .sortedByDescending { manga -> names.maxOf { TitleMatcher.score(it, manga.title) } }
+            .take(MAX_DETAIL_LOOKUPS)
+        if (candidates.isEmpty()) return null
+        return coroutineScope {
+            candidates.map { manga ->
+                async {
+                    val details = try {
+                        withTimeoutOrNull(DETAILS_TIMEOUT_MS) { source.getMangaDetails(manga) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Logger.w(e) { "Could not load the details of a search result in ${source.name}" }
+                        null
+                    }
+                    val score = TitleMatcher.alternativeTitles(details?.description)
+                        .maxOfOrNull { listed -> names.maxOf { TitleMatcher.score(it, listed.toNormalized()) } }
+                        ?: 0.0
+                    SearchEntry(manga, score)
+                }
+            }.awaitAll()
+                .filter { it.dist >= STRONG_MATCH_SCORE }
+                .maxByOrNull { it.dist }
+        }
     }
 
     private fun cleanSmartSearchTitle(title: String): String {
@@ -206,6 +278,13 @@ class SmartSearchEngine(
 
         /** A result this close ends the search; weaker ones let the next query try to do better. */
         private const val STRONG_MATCH_SCORE = 0.9
+
+        /** Other names of the series searched after its title, when the title finds nothing close. */
+        private const val MAX_ALTERNATIVE_QUERIES = 2
+
+        /** Results whose details are loaded to read the other names they list. */
+        private const val MAX_DETAIL_LOOKUPS = 3
+        private const val DETAILS_TIMEOUT_MS = 20_000L
 
         private val titleRegex = Regex("[^a-zA-Z0-9- ]")
         private val consecutiveSpacesRegex = Regex(" +")
