@@ -222,6 +222,23 @@ class SourceManager(
             ?: novelPluginManager.installedSourcesFlow.value.firstOrNull { it.id == sourceKey }
     }
 
+    /**
+     * Like [get], but on a cold start waits until installed extensions have loaded and their
+     * sources are registered. Library covers bind before that and would otherwise be requested
+     * without the extension's client and headers, which CDNs that check the Referer reject.
+     * Returns null at once when no installed extension provides [sourceKey].
+     */
+    suspend fun awaitExtensionSource(sourceKey: Long, timeoutMs: Long = 5_000L): Source? {
+        get(sourceKey)?.let { return it }
+        return withTimeoutOrNull(timeoutMs) {
+            extensionManager.isInitialized.first { it }
+            val installed = extensionManager.installedExtensionsFlow.value
+                .any { extension -> extension.sources.any { it.id == sourceKey } }
+            if (!installed) return@withTimeoutOrNull null
+            sourcesMapFlow.first { it.containsKey(sourceKey) }[sourceKey]
+        }
+    }
+
     /** True once installed novel plugins have registered, so a missing novel source is really absent. */
     val novelPluginsLoaded: Boolean
         get() = novelPluginManager.loadedFlow.value
