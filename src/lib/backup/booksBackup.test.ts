@@ -442,6 +442,32 @@ describe("books backup payload", () => {
     expect(keys[0]).toBe(keys[2]);
   });
 
+  it("round-trips a book that arrived through sync with its shared identity", async () => {
+    const syncedId = `epub:sha256:${"a".repeat(64)}`;
+    const snapshot = {
+      ...sampleSnapshot,
+      books: [{ ...sampleSnapshot.books[0], id: syncedId }],
+      bookProgress: [{ ...sampleSnapshot.bookProgress[0], bookId: syncedId }],
+      bookBookmarks: [],
+      booksCategoryAssignments: { [syncedId]: ["favorites"] },
+    };
+    const built = await buildEpigraphBooksBackupContainer(snapshot, { exportMode: "full" }, {
+      readBinaryFile: async (filePath: string) => new TextEncoder().encode(filePath.endsWith(".epub") ? "EPUB-BYTES" : "JPEG-BYTES").buffer,
+    });
+    const zip = await JSZip.loadAsync(built.bytes);
+    expect(Object.keys(zip.files).filter((name) => name.startsWith("payloads/books/files/") || name.startsWith("payloads/books/covers/"))
+      .every((name) => !name.slice("payloads/books/".length).includes(":"))).toBe(true);
+
+    const restored = await restoreEpigraphBooksPayload(built.bytes, {
+      writeManagedBookAsset: async (key, _bytes, ext) => `managed/${key}.${ext}`,
+      writeManagedBookCover: async (key, _bytes, ext) => `managed/covers/${key}.${ext}`,
+    });
+    expect(restored.issues).toEqual([]);
+    expect(restored.books[0]).toMatchObject({ id: syncedId, assetPath: expect.stringMatching(/^managed\/restore-/) });
+    expect(restored.bookProgress[0]?.bookId).toBe(syncedId);
+    expect(restored.booksCategoryAssignments[syncedId]).toEqual(["favorites"]);
+  });
+
   it("restores metadata-only books payload with explicit issues instead of pretending files exist", async () => {
     const built = await buildEpigraphBooksBackupContainer(
       sampleSnapshot,

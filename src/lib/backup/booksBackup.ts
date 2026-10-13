@@ -138,6 +138,14 @@ const BOOKS_PROGRESS_FILE_PATH = "progress.json";
 const BOOKS_BOOKMARKS_FILE_PATH = "bookmarks.json";
 const BOOKS_CATEGORIES_FILE_PATH = "categories.json";
 
+// Books added on this desktop are named "pdf-<sha256>"; books that arrived through sync keep the
+// shared "epub:sha256:<hex>" identity, which has colons that cannot be part of a file name.
+const BOOK_ID_PATTERN = /^(?:[a-zA-Z0-9_-]{1,160}|(?:epub|pdf):sha256:[0-9a-f]{64})$/;
+
+function archiveFileStem(bookId: string): string {
+  return bookId.replace(/:/g, "-");
+}
+
 function normalizeArchiveRelativePath(raw: string): string {
   const normalized = raw.replace(/\\/g, "/").trim().replace(/^\/+/, "");
   if (!normalized) throw new Error("Books backup path cannot be empty.");
@@ -276,10 +284,10 @@ function toPortableBookRecord(book: BookEntry, exportMode: EpigraphBooksExportMo
       : (Array.isArray(book.sectionsSummary) ? book.sectionsSummary.length : 0),
   };
   const assetArchivePath = exportMode === "full" && normalized.assetPath
-    ? `files/${normalized.id}.${fileExtension(normalized.assetPath, normalized.subtype)}`
+    ? `files/${archiveFileStem(normalized.id)}.${fileExtension(normalized.assetPath, normalized.subtype)}`
     : null;
   const coverArchivePath = exportMode === "full" && normalized.coverPath
-    ? `covers/${normalized.id}.${fileExtension(normalized.coverPath, "bin")}`
+    ? `covers/${archiveFileStem(normalized.id)}.${fileExtension(normalized.coverPath, "bin")}`
     : null;
 
   return {
@@ -485,7 +493,7 @@ export async function parseEpigraphBooksPayload(
   }
   const ids = new Set<string>();
   for (const record of library.books) {
-    if (!record || typeof record.id !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/.test(record.id)
+    if (!record || typeof record.id !== "string" || !BOOK_ID_PATTERN.test(record.id)
       || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(record.id)
       || ids.has(record.id) || typeof record.title !== "string" || !["epub", "pdf"].includes(record.subtype)) {
       throw new Error("Books backup contains an invalid or duplicate book identity.");
