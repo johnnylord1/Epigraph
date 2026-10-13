@@ -21,13 +21,8 @@ class CategoryPreferenceBackupTest {
         CategoryLibrary.BOOKS to mapOf("Lendo" to 20),
     )
 
-    private fun remap(
-        preferences: List<BackupPreference>,
-        categories: List<BackupCategory>,
-        idsInBackupOrder: Boolean = true,
-    ) = CategoryPreferenceBackup.remap(preferences, categories, idsInBackupOrder) { library, name ->
-        device[library]?.get(name)
-    }
+    private fun remap(preferences: List<BackupPreference>, categories: List<BackupCategory>) =
+        CategoryPreferenceBackup.remap(preferences, categories) { library, name -> device[library]?.get(name) }
 
     private fun List<BackupPreference>.value(key: String) = firstOrNull { it.key == key }?.value
 
@@ -59,65 +54,52 @@ class CategoryPreferenceBackupTest {
         assertEquals(IntPreferenceValue(12), result.preferences.value("default_category"))
     }
 
-    // The categories and values of a real J2K backup: its categories carry no ids.
-    private val j2kCategories = listOf(
-        BackupCategory(name = "Lendo", order = 0),
-        BackupCategory(name = "Dahora", order = 1),
-        BackupCategory(name = "Dropado", order = 2),
-    )
-    private val j2kPreferences = listOf(
-        BackupPreference("download_new", BooleanPreferenceValue(true)),
-        BackupPreference("download_new_categories", StringSetPreferenceValue(setOf("2"))),
-        BackupPreference("download_new_categories_exclude", StringSetPreferenceValue(emptySet())),
-        BackupPreference("library_update_categories", StringSetPreferenceValue(setOf("0", "2", "3"))),
-        BackupPreference("collapsed_categories", StringSetPreferenceValue(setOf("2"))),
-        BackupPreference("default_category", IntPreferenceValue(3)),
-        BackupPreference("last_used_category", IntPreferenceValue(0)),
-        BackupPreference("backup_interval", IntPreferenceValue(12)),
-    )
-
     @Test
-    fun `a J2K backup's category ids follow the order J2K restores its categories in`() {
-        val result = remap(j2kPreferences, j2kCategories)
-
-        assertTrue(result.unresolved.isEmpty())
-        assertEquals(BooleanPreferenceValue(true), result.preferences.value("download_new"))
-        assertEquals(StringSetPreferenceValue(setOf("13")), result.preferences.value("download_new_categories"))
-        assertEquals(
-            StringSetPreferenceValue(setOf("0", "13", "14")),
-            result.preferences.value("library_update_categories"),
+    fun `a J2K backup without category ids keeps this device's category settings`() {
+        // The values of a real J2K backup: its categories carry no ids.
+        val categories = listOf(
+            BackupCategory(name = "Lendo", order = 0),
+            BackupCategory(name = "Dahora", order = 1),
+            BackupCategory(name = "Dropado", order = 2),
         )
-        assertEquals(StringSetPreferenceValue(setOf("13")), result.preferences.value("collapsed_categories"))
-        assertEquals(IntPreferenceValue(14), result.preferences.value("default_category"))
+        val preferences = listOf(
+            BackupPreference("download_new", BooleanPreferenceValue(true)),
+            BackupPreference("download_new_categories", StringSetPreferenceValue(setOf("2"))),
+            BackupPreference("download_new_categories_exclude", StringSetPreferenceValue(emptySet())),
+            BackupPreference("library_update_categories", StringSetPreferenceValue(setOf("0", "2", "3"))),
+            BackupPreference("collapsed_categories", StringSetPreferenceValue(setOf("2"))),
+            BackupPreference("default_category", IntPreferenceValue(3)),
+            BackupPreference("last_used_category", IntPreferenceValue(0)),
+            BackupPreference("backup_interval", IntPreferenceValue(12)),
+        )
+
+        val result = remap(preferences, categories)
+
+        assertEquals(
+            setOf(Setting.AUTOMATIC_DOWNLOADS, Setting.LIBRARY_UPDATES, Setting.DEFAULT_CATEGORY),
+            result.unresolved,
+        )
+        // Automatic downloads are not switched on with no category list, which would mean all.
+        assertEquals(
+            listOf("download_new_categories_exclude", "last_used_category", "backup_interval"),
+            result.preferences.map { it.key },
+        )
     }
 
     @Test
     fun `an id that names no category keeps this device's setting`() {
+        val categories = listOf(BackupCategory(name = "Dahora", order = 1, id = 2))
         val preferences = listOf(
             BackupPreference("download_new", BooleanPreferenceValue(true)),
             BackupPreference("download_new_categories", StringSetPreferenceValue(setOf("2", "7"))),
             BackupPreference("default_category", IntPreferenceValue(2)),
         )
 
-        val result = remap(preferences, j2kCategories)
+        val result = remap(preferences, categories)
 
         assertEquals(setOf(Setting.AUTOMATIC_DOWNLOADS), result.unresolved)
-        // Automatic downloads are not switched on with no category list, which would mean all.
         assertEquals(listOf("default_category"), result.preferences.map { it.key })
-    }
-
-    @Test
-    fun `an older Epigraph backup without category ids keeps this device's category settings`() {
-        val result = remap(j2kPreferences, j2kCategories, idsInBackupOrder = false)
-
-        assertEquals(
-            setOf(Setting.AUTOMATIC_DOWNLOADS, Setting.LIBRARY_UPDATES, Setting.DEFAULT_CATEGORY),
-            result.unresolved,
-        )
-        assertEquals(
-            listOf("download_new_categories_exclude", "last_used_category", "backup_interval"),
-            result.preferences.map { it.key },
-        )
+        assertEquals(IntPreferenceValue(13), result.preferences.value("default_category"))
     }
 
     @Test

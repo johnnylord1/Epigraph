@@ -42,7 +42,9 @@ object BackupPreferencePolicy {
         preferences: List<BackupPreference>,
         deviceSet: (String) -> Set<String>,
     ): List<BackupPreference> {
-        val fromEpigraph = isFromEpigraph(preferences)
+        val fromEpigraph = preferences.any {
+            it.key == ORIGIN_KEY && (it.value as? StringPreferenceValue)?.value == ORIGIN_VALUE
+        }
         return preferences
             .filter { (key) ->
                 !isDeviceOnly(key) && key !in ExtensionRepoBackup.LEGACY_KEYS && (fromEpigraph || !isAppearance(key))
@@ -55,11 +57,6 @@ object BackupPreferencePolicy {
                     preference
                 }
             }
-    }
-
-    /** Whether the backup with these app preferences was made by Epigraph. */
-    fun isFromEpigraph(preferences: List<BackupPreference>): Boolean = preferences.any {
-        it.key == ORIGIN_KEY && (it.value as? StringPreferenceValue)?.value == ORIGIN_VALUE
     }
 
     private val DEVICE_ONLY_KEYS = setOf(

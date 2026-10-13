@@ -10,14 +10,10 @@ import yokai.domain.category.CategoryLibrary
 /**
  * App preferences that name categories by database id. Ids differ on every device, so restore
  * turns each backup id into the category's name ([BackupCategory.id]) and the name into this
- * device's id, as Mihon does.
- *
- * J2K and Tachiyomi 0.x backups carry no category ids. Restoring one of them in that app on a new
- * device inserts the categories in backup order, so they get ids 1, 2, 3… and the preferences'
- * ids are read against that numbering; restore here reads them the same way. Older Epigraph
- * backups have no ids either and never had that numbering: their category settings, like any id
- * that names no category, are left as they are on this device instead of pointing at whichever
- * category happens to have that id here.
+ * device's id, as Mihon does. Backups without category ids (J2K, Tachiyomi 0.x, older Epigraph)
+ * cannot say which category an id meant: J2K writes the raw ids back, which only holds on a device
+ * whose categories kept the same ids, and Mihon drops them. Here those settings are left as they
+ * are on this device instead of pointing at whichever category happens to have that id.
  */
 object CategoryPreferenceBackup {
     /** The settings restore reports when it could not tell their categories. */
@@ -52,10 +48,9 @@ object CategoryPreferenceBackup {
     fun remap(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>,
-        idsInBackupOrder: Boolean,
         deviceCategoryId: (CategoryLibrary, String) -> Int?,
     ): Remapped {
-        val ids = deviceIds(backupCategories, idsInBackupOrder, deviceCategoryId)
+        val ids = deviceIds(backupCategories, deviceCategoryId)
         val unresolved = mutableSetOf<Setting>()
         val unresolvedKeys = mutableSetOf<String>()
 
@@ -99,28 +94,22 @@ object CategoryPreferenceBackup {
     }
 
     /**
-     * Backup category id to this device's id, as strings like the preferences store them. The
-     * backup's own ids count only when every category has a different one (Tachiyomi 1.x wrote an
-     * update interval in the same field); otherwise, with [idsInBackupOrder], the categories are
-     * numbered from 1 in backup order.
+     * Backup category id to this device's id, as strings like the preferences store them. Empty
+     * when the backup has no usable ids: every category needs its own, or the ids are something
+     * else (Tachiyomi 1.x wrote an update interval in the same field).
      */
     private fun deviceIds(
         backupCategories: List<BackupCategory>,
-        idsInBackupOrder: Boolean,
         deviceCategoryId: (CategoryLibrary, String) -> Int?,
     ): Map<String, String> {
         val ids = mutableMapOf(DEFAULT_ID to DEFAULT_ID)
-        val ownIds = backupCategories.all { it.id > 0 } &&
+        val usable = backupCategories.isNotEmpty() &&
+            backupCategories.all { it.id > 0 } &&
             backupCategories.distinctBy { it.id }.size == backupCategories.size
-        val backupIds = when {
-            backupCategories.isEmpty() -> return ids
-            ownIds -> backupCategories.map { it.id }
-            idsInBackupOrder -> backupCategories.indices.map { it + 1L }
-            else -> return ids
-        }
-        backupCategories.forEachIndexed { index, category ->
+        if (!usable) return ids
+        backupCategories.forEach { category ->
             val library = if (category.library == CategoryLibrary.BOOKS.name) CategoryLibrary.BOOKS else CategoryLibrary.COMICS
-            deviceCategoryId(library, category.name)?.let { ids[backupIds[index].toString()] = it.toString() }
+            deviceCategoryId(library, category.name)?.let { ids[category.id.toString()] = it.toString() }
         }
         return ids
     }
