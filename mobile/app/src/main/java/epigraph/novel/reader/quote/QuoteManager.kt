@@ -31,8 +31,17 @@ class QuoteManager(@Suppress("unused") private val context: Context) {
     private val quotesDir: UniFile?
         get() = storageManager.getQuotesDirectory()
 
+    /**
+     * The legacy quote files, listed once: each lookup through the storage framework lists the
+     * whole folder, which made a backup check every library entry for tens of milliseconds.
+     * No new legacy files are written, so the list does not go stale.
+     */
+    private val legacyFiles: Map<String, UniFile> by lazy {
+        quotesDir?.listFiles().orEmpty().mapNotNull { file -> file.name?.let { it to file } }.toMap()
+    }
+
     private fun getQuotesFile(novelId: Long): UniFile? {
-        return quotesDir?.findFile("novel_$novelId.json")
+        return legacyFiles["novel_$novelId.json"]
     }
 
     suspend fun saveQuotes(novelId: Long, quotes: List<Quote>) {

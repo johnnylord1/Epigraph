@@ -1,5 +1,6 @@
 package epigraph.sync.core.novels
 
+import epigraph.content.RepositoryUrl
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.Serializable
@@ -89,8 +90,8 @@ internal fun CoreNovelDependencyManifest.fingerprint(): String {
 }
 
 internal fun String.matchesDeclaredRepository(declaredUrl: String): Boolean {
-    val configured = trim().trimEnd('/')
-    val declared = declaredUrl.trim().trimEnd('/')
+    val configured = RepositoryUrl.comparable(this)
+    val declared = RepositoryUrl.comparable(declaredUrl)
     if (configured == declared) return true
     if (declared.endsWith(".json", ignoreCase = true)) return false
     return configured == "$declared/plugins.min.json" || configured == "$declared/index.min.json"

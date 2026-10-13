@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.lnreader
 
+import epigraph.content.RepositoryUrl
 import epigraph.novel.plugin.NovelPluginManager
 import epigraph.novel.source.NovelSource
 import eu.kanade.tachiyomi.data.backup.models.Backup
@@ -97,7 +98,7 @@ class LnReaderBackupConverter(
         val repositories = plugins.values
             .filter { it.installed || it.id in usedPluginIds }
             .mapNotNull { it.repositoryUrl }
-            .distinct()
+            .distinctBy(RepositoryUrl::comparable)
             .map { BackupNovelRepository(url = it, name = repositoryName(it)) }
         return Backup(
             backupManga = novels.values.map { it.manga },

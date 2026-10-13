@@ -251,7 +251,7 @@ class BackupRestorer(
                 addError("${repository.name} [${repository.url}]: ${context.getString(MR.strings.restore_repository_unavailable)}")
                 return@forEach
             }
-            if (existing.none { it.baseUrl == validation.indexUrl }) {
+            if (existing.none { it.baseUrl.matchesDeclaredRepository(validation.indexUrl) }) {
                 novelRepos.insert(NovelRepo(validation.indexUrl, repository.name))
             }
         }
@@ -275,7 +275,8 @@ class BackupRestorer(
                 addError(unavailable)
                 return@forEach
             }
-            if (extensionRepos.getAll().any { ExtensionRepoBackup.baseUrl(it.baseUrl) == baseUrl }) return@forEach
+            val key = ExtensionRepoBackup.key(baseUrl)
+            if (extensionRepos.getAll().any { ExtensionRepoBackup.key(it.baseUrl) == key }) return@forEach
             when (createExtensionRepo.await("$baseUrl/index.min.json")) {
                 CreateExtensionRepo.Result.Success -> added = true
                 // Already listed, possibly under another address signed by the same key.

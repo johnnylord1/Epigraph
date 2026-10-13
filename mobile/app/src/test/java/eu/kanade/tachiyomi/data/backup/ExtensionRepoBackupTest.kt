@@ -140,6 +140,8 @@ class ExtensionRepoBackupTest {
         val repos = listOf(
             BackupExtensionRepo(baseUrl = "https://raw.githubusercontent.com/keiyoushi/extensions/repo", name = "Keiyoushi"),
             BackupExtensionRepo(baseUrl = "https://github.com/keiyoushi/extensions/raw/repo/index.pb"),
+            // GitHub owner and repository names ignore case.
+            BackupExtensionRepo(baseUrl = "https://raw.githubusercontent.com/Keiyoushi/Extensions/repo/"),
         )
 
         assertEquals(listOf("Keiyoushi"), ExtensionRepoBackup.distinct(repos).map { it.name })
