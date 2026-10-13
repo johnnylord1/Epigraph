@@ -20,6 +20,7 @@
   } from "../../lib/migration/manga";
   import { createDialogFocusBoundary } from "../../lib/accessibility/dialogFocus";
   import { createStoreMigrationIdentityBridge } from "../../lib/migration/storeIdentity.svelte";
+  import { bestTitleScore } from "../../lib/migration/titleMatcher";
   import NocturneState from "../shared/NocturneState.svelte";
   import MigrationSourcePicker from "./MigrationSourcePicker.svelte";
   import MigrationResultList from "./MigrationResultList.svelte";
@@ -42,17 +43,8 @@
     chapters: Chapter[];
     readCount: number;
     similarity: number;
-  }
-
-  function titleSimilarity(a: string, b: string): number {
-    const norm = (s: string) =>
-      s.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(Boolean);
-    const wordsA = new Set(norm(a));
-    const wordsB = new Set(norm(b));
-    if (wordsA.size === 0 || wordsB.size === 0) return 0;
-    const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
-    const union = new Set([...wordsA, ...wordsB]).size;
-    return intersection / union;
+    /** Why the chapters could not be loaded; the migration loads them again before applying. */
+    chaptersError: string | null;
   }
 
   let step: Step            = $state("source");
@@ -133,13 +125,16 @@
   }));
   const confirmWarning = $derived.by(() => {
     if (!selectedMatch) return null;
+    if (selectedMatch.chaptersError) {
+      return $_("migrate.chaptersUnavailable", { source: selectedSourceName, reason: selectedMatch.chaptersError });
+    }
     if (chapterDiff < -5) return `${$_("ui_newSourceHas")} ${Math.abs(chapterDiff)} ${$_("ui_fewerChaptersSomeContentMayBeMissing")}`;
     if (selectedMatch.similarity < 0.5) return `${$_("ui_lowConfidenceMatch")}. ${$_("feedback.reviewMigration")}`;
     return null;
   });
 
   function chapterDifference(match: Match | null, currentTotal: number): number {
-    return match ? match.chapters.length - currentTotal : 0;
+    return match && !match.chaptersError ? match.chapters.length - currentTotal : 0;
   }
 
   function percent(similarity: number): number {
@@ -213,7 +208,7 @@
       });
       const scored = mangas.map((m) => ({
         manga: m,
-        similarity: titleSimilarity(manga.title, m.title),
+        similarity: bestTitleScore(manga.title, m.title),
       }));
       scored.sort((a, b) => b.similarity - a.similarity);
       results = scored;
@@ -247,13 +242,21 @@
   async function selectMatch(m: Manga, similarity: number) {
     loadingMatchId = m.id; error = null;
     try {
-      const d = await fetchSourceMangaChapters({ mangaId: m.id, sourceId: m.source?.id });
-      const chapters = d.fetchChapters.chapters;
+      // The search already found the title. A source that cannot list its chapters right now
+      // (WebView, captcha) does not block the choice; the migration tries again before applying.
+      let chapters: Chapter[] = [];
+      let chaptersError: string | null = null;
+      try {
+        const d = await fetchSourceMangaChapters({ mangaId: m.id, sourceId: m.source?.id });
+        chapters = d.fetchChapters.chapters ?? [];
+      } catch (chapterError) {
+        chaptersError = chapterError instanceof Error ? chapterError.message : String(chapterError);
+      }
       const matchReadCount = chapters.filter((c) => {
         const old = currentChapters.find((o) => Math.abs(o.chapterNumber - c.chapterNumber) < 0.01);
         return old?.isRead;
       }).length;
-      selectedMatch = { manga: m, chapters, readCount: matchReadCount, similarity };
+      selectedMatch = { manga: m, chapters, readCount: matchReadCount, similarity, chaptersError };
       step = "confirm";
     } catch (e: any) {
       error = e.message;

@@ -3484,6 +3484,7 @@
   "migrate_searchLede": "{source} で同じ作品を探します。",
   "migrate_resultCount": "{count} 件の結果",
   "migrate_matchPercent": "一致度 {percent}%",
+  "migrate_chaptersUnavailable": "{source} の章をまだ読み込めませんでした（{reason}）。移行時にもう一度読み込みます。それでも失敗した場合は、読書の進捗を失わないよう、この作品は移行しません。",
   "migrate_confirmLede": "移行前に一致を確認してください。直後なら元に戻せます。",
   "migrate_allLanguages": "すべての言語",
   "migrate_noSourceMatches": "この条件に一致するソースはありません。",

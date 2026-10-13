@@ -119,7 +119,7 @@ describe("manga migration services", () => {
       [10, createManga(10, "Alpha Hero", "source-old", true)],
       [20, createManga(20, "Alpha Hero", "source-new", false)],
       [11, createManga(11, "Blue Planet", "source-old", true)],
-      [21, createManga(21, "Scarlet Forest", "source-new", false)],
+      [21, createManga(21, "Blue Planet: Second Orbit", "source-new", false)],
       [12, createManga(12, "No Match Book", "source-old", true)],
       [13, createManga(13, "Slow Book", "source-old", true)],
     ]);
@@ -652,6 +652,68 @@ describe("manga migration services", () => {
     expect(preview.items.find((item) => item.currentManga.id === 13)?.status).toBe("search_failed");
     expect(preview.items.find((item) => item.currentManga.id === 13)?.reasonCode).toContain("Timed out while searching Slow Book");
     expect(onItemDone).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a found title when its chapter list fails, and loads it again before applying", async () => {
+    let failChapters = true;
+    fetchSourceMangaChaptersMock.mockImplementation(async (variables: Record<string, unknown>) => {
+      if (failChapters) throw new Error("Open in WebView to solve the captcha");
+      return { fetchChapters: { chapters: chaptersByMangaId.get(Number(variables.mangaId)) ?? [] } };
+    });
+
+    const preview = await previewMassMangaMigration({
+      sourceFrom: "source-old",
+      sourceTo: "source-new",
+      items: [{ manga: mangaById.get(10)!, chapters: chaptersByMangaId.get(10)! }],
+    });
+
+    expect(preview.items[0].status).toBe("matched");
+    expect(preview.items[0].match?.manga.id).toBe(20);
+    expect(preview.items[0].match?.chapters).toEqual([]);
+    expect(preview.items[0].match?.chaptersError).toContain("captcha");
+    expect(preview.items[0].chapterDiff).toBe(0);
+
+    failChapters = false;
+    const applied = await applyMassMangaMigrationWithJournal({ preview });
+
+    expect(applied.migratedCount).toBe(1);
+    expect(chaptersByMangaId.get(20)?.find((chapter) => chapter.id === 202)?.isRead).toBe(true);
+  });
+
+  it("leaves a title with read progress unmigrated when the new source has no chapters", async () => {
+    fetchSourceMangaChaptersMock.mockRejectedValue(new Error("Open in WebView to solve the captcha"));
+
+    const preview = await previewMassMangaMigration({
+      sourceFrom: "source-old",
+      sourceTo: "source-new",
+      items: [{ manga: mangaById.get(10)!, chapters: chaptersByMangaId.get(10)! }],
+    });
+    const applied = await applyMassMangaMigrationWithJournal({ preview });
+
+    expect(applied.migratedCount).toBe(0);
+    expect(applied.failedItems).toHaveLength(1);
+    expect(applied.failedItems[0]?.message).toContain("Alpha Hero was kept in its current source");
+    expect(applied.failedItems[0]?.message).toContain("captcha");
+    expect(mangaById.get(10)?.inLibrary).toBe(true);
+    expect(mangaById.get(20)?.inLibrary).toBe(false);
+  });
+
+  it("does not offer an unrelated search result as a match", async () => {
+    searchSourceMangaMock.mockImplementation(async () => ({
+      fetchSourceManga: { mangas: [createManga(30, "After Rebirth, I Married My Scumbag Ex's Arch-Enemy", "source-new", false)], hasNextPage: false },
+    }));
+
+    const preview = await previewMassMangaMigration({
+      sourceFrom: "source-old",
+      sourceTo: "source-new",
+      items: [{
+        manga: createManga(14, "After Rebirth, I Used Mirror Reversal For Vengeance", "source-old"),
+        chapters: [],
+      }],
+    });
+
+    expect(preview.items[0].status).toBe("no_match");
+    expect(fetchSourceMangaChaptersMock).not.toHaveBeenCalled();
   });
 
   it("keeps failed source manga and journals successful mass items", async () => {

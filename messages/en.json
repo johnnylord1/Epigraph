@@ -3484,6 +3484,7 @@
   "migrate_searchLede": "Find the same work on {source}.",
   "migrate_resultCount": "{count} results",
   "migrate_matchPercent": "{percent}% match",
+  "migrate_chaptersUnavailable": "The chapters on {source} could not be loaded yet ({reason}). They load again when you migrate; if they still fail, this title stays where it is so no read progress is lost.",
   "migrate_confirmLede": "Check the match before moving. You can undo right after.",
   "migrate_allLanguages": "All languages",
   "migrate_noSourceMatches": "No source matches this filter.",

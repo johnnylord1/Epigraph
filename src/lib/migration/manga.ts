@@ -8,7 +8,10 @@ import {
   UPDATE_MANGA_CATEGORIES,
 } from "../queries";
 import type { Category, Chapter, Manga } from "../types";
-import { fetchSourceMangaSearchWithFallback } from "../manga/sourceSearch";
+import {
+  fetchSourceMangaSearchWithFallback,
+  isSourceMangaSearchUnavailableError,
+} from "../manga/sourceSearch";
 import { fetchSourceMangaChapters } from "../manga/runtime";
 import { withSuwayomiOperationLease } from "../suwayomiUpdateLock.svelte";
 import { requestProgressMirror } from "../syncdProgressMirror";
@@ -26,6 +29,12 @@ import {
   withMigrationProfileLock,
 } from "./coordinator";
 import { matchMangaChapters } from "./chapterMapping";
+import {
+  MIN_TITLE_MATCH_SCORE,
+  STRONG_TITLE_MATCH_SCORE,
+  bestTitleScore,
+  titleSearchQueries,
+} from "./titleMatcher";
 import {
   buildMangaDownloadedAssetManifest,
   type ProvenOfflineAssetPair,
@@ -56,7 +65,14 @@ interface MangaMigrationMatch {
   manga: Manga;
   chapters: Chapter[];
   similarity: number;
+  /** Why the target's chapters could not be loaded yet; they are fetched again before applying. */
+  chaptersError?: string | null;
 }
+
+/** How long a preview waits for the target's chapter list before keeping the match without it. */
+const MATCH_CHAPTERS_TIMEOUT_MS = 45_000;
+/** How long applying a migration waits for a chapter list the preview could not load. */
+const APPLY_CHAPTERS_TIMEOUT_MS = 150_000;
 
 export interface ApplyMangaMigrationInput {
   currentManga: Manga;
@@ -128,19 +144,31 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-function titleSimilarity(a: string, b: string): number {
-  const norm = (value: string) => value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .split(/\s+/)
-    .filter(Boolean);
+/** Runs at most [limit] of the given tasks at a time, in the order they are queued. */
+function createConcurrencyLimiter(limit: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const next = () => {
+    if (active >= limit) return;
+    const start = queue.shift();
+    if (!start) return;
+    active += 1;
+    start();
+  };
+  return <T>(task: () => Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+    queue.push(() => {
+      task().then(resolve, reject).finally(() => {
+        active -= 1;
+        next();
+      });
+    });
+    next();
+  });
+}
 
-  const wordsA = new Set(norm(a));
-  const wordsB = new Set(norm(b));
-  if (wordsA.size === 0 || wordsB.size === 0) return 0;
-  const intersection = [...wordsA].filter((word) => wordsB.has(word)).length;
-  const union = new Set([...wordsA, ...wordsB]).size;
-  return union === 0 ? 0 : intersection / union;
+function titleSimilarity(a: string, b: string): number {
+
+  return bestTitleScore(a, b);
 }
 
 async function loadCategoryIdsForManga(mangaId: number): Promise<number[]> {
@@ -274,39 +302,111 @@ async function verifyMangaSnapshot(snapshot: MangaMigrationStateSlice): Promise<
   }
 }
 
-async function fetchBestMangaMatch(
+/**
+ * Searches the target source for [currentManga] and returns the best result that reads as the same
+ * title. Each query is tried in turn (the title, then plain and shorter forms) until one gives a
+ * strong match. Only the search decides: the chapter list loads separately, because some sources
+ * read it through a WebView or behind a captcha and can be slow or fail.
+ */
+async function fetchBestMangaCandidate(
   currentManga: Manga,
   targetSourceId: string,
   signal?: AbortSignal,
   timeoutMs = 18000,
-): Promise<MangaMigrationMatch | null> {
-  const mangas = await fetchSourceMangaSearchWithFallback({
-    sourceId: targetSourceId,
-    query: currentManga.title.trim(),
-    signal,
-    timeoutMs,
-  });
+): Promise<{ manga: Manga; similarity: number } | null> {
+  let best: { manga: Manga; similarity: number } | null = null;
+  let lastError: unknown = null;
+  let answered = false;
 
-  const scored = mangas
-    .map((manga) => ({
-      manga,
-      similarity: titleSimilarity(currentManga.title, manga.title),
-    }))
-    .sort((left, right) => right.similarity - left.similarity);
+  for (const query of titleSearchQueries(currentManga.title)) {
+    let mangas: Manga[];
+    try {
+      mangas = await fetchSourceMangaSearchWithFallback({
+        sourceId: targetSourceId,
+        query,
+        signal,
+        timeoutMs,
+      });
+      answered = true;
+    } catch (error) {
+      // A weak match found before the time ran out is still worth reviewing.
+      if (signal?.aborted) {
+        if (best) return best;
+        throw error;
+      }
+      if (isSourceMangaSearchUnavailableError(error)) throw error;
+      lastError = error;
+      continue;
+    }
 
-  const best = scored[0];
-  if (!best) return null;
+    for (const manga of mangas) {
+      const similarity = titleSimilarity(currentManga.title, manga.title);
+      if (similarity >= MIN_TITLE_MATCH_SCORE && (!best || similarity > best.similarity)) {
+        best = { manga, similarity };
+      }
+    }
+    if (best && best.similarity >= STRONG_TITLE_MATCH_SCORE) break;
+  }
 
-  const chaptersResult = await fetchSourceMangaChapters({
-    mangaId: best.manga.id,
-    sourceId: best.manga.source?.id,
-  }, signal);
+  if (!answered && lastError) throw lastError;
+  return best;
+}
 
-  return {
-    manga: best.manga,
-    chapters: chaptersResult.fetchChapters.chapters ?? [],
-    similarity: best.similarity,
-  };
+/** Loads the chapter list of a match; a failure is reported in `chaptersError` instead of thrown. */
+export async function loadMangaMatchChapters(
+  manga: Manga,
+  signal?: AbortSignal,
+  timeoutMs = MATCH_CHAPTERS_TIMEOUT_MS,
+): Promise<{ chapters: Chapter[]; chaptersError: string | null }> {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abortFromParent, { once: true });
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const result = await fetchSourceMangaChapters({
+      mangaId: manga.id,
+      sourceId: manga.source?.id,
+    }, controller.signal);
+    return { chapters: result.fetchChapters.chapters ?? [], chaptersError: null };
+  } catch (error) {
+    const timedOut = controller.signal.aborted && !signal?.aborted;
+    return {
+      chapters: [],
+      chaptersError: timedOut
+        ? `Timed out while loading the chapters of ${manga.title}`
+        : error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+function hasReadingState(chapters: Chapter[]): boolean {
+  return chapters.some((chapter) => (
+    chapter.isRead || chapter.isBookmarked || (chapter.lastPageRead ?? 0) > 0
+  ));
+}
+
+/**
+ * Makes sure a match has the chapters needed to carry the read progress over, loading them again
+ * when the preview could not. A title with reading state is not migrated without them.
+ */
+async function ensureMatchChapters(
+  currentManga: Manga,
+  currentChapters: Chapter[],
+  match: MangaMigrationMatch,
+): Promise<MangaMigrationMatch> {
+  if (match.chapters.length > 0) return match;
+  const loaded = await loadMangaMatchChapters(match.manga, undefined, APPLY_CHAPTERS_TIMEOUT_MS);
+  if (loaded.chapters.length === 0 && hasReadingState(currentChapters)) {
+    const reason = loaded.chaptersError ?? "the new source returned no chapters";
+    throw new Error(
+      `${currentManga.title} was kept in its current source: its chapters could not be loaded from the new source (${reason}), so the read progress could not be carried over.`,
+    );
+  }
+  return { ...match, ...loaded };
 }
 
 function summarizeMatchedReadCount(oldChapters: Chapter[], newChapters: Chapter[]): number {
@@ -315,22 +415,23 @@ function summarizeMatchedReadCount(oldChapters: Chapter[], newChapters: Chapter[
     .length;
 }
 
+function chapterDifference(oldChapters: Chapter[], match: MangaMigrationMatch): number {
+  return match.chapters.length > 0 ? match.chapters.length - oldChapters.length : 0;
+}
+
 export async function buildMangaMigrationMatch(
   currentManga: Manga,
   matchManga: Manga,
   similarity = titleSimilarity(currentManga.title, matchManga.title),
 ): Promise<MangaMigrationMatch> {
-  const chaptersResult = await fetchSourceMangaChapters({
-    mangaId: matchManga.id,
-    sourceId: matchManga.source?.id,
-  });
-
+  const loaded = await loadMangaMatchChapters(matchManga);
   return {
     manga: matchManga,
-    chapters: chaptersResult.fetchChapters.chapters ?? [],
     similarity,
+    ...loaded,
   };
 }
+
 
 export function updateMassMangaMigrationPreviewItem(
   preview: MassMangaMigrationPreview,
@@ -355,7 +456,7 @@ export function updateMassMangaMigrationPreviewItem(
       reasonCode: "manual_match",
       match,
       matchedReadCount: summarizeMatchedReadCount(item.currentChapters, match.chapters),
-      chapterDiff: match.chapters.length - item.currentChapters.length,
+      chapterDiff: chapterDifference(item.currentChapters, match),
     };
   });
   return {
@@ -657,6 +758,10 @@ export async function applyMangaMigrationWithJournal(
   input: ApplyMangaMigrationInput,
 ): Promise<{ journalEntryId: string; newManga: Manga }> {
   const profileId = input.profileId?.trim() || "main";
+  input = {
+    ...input,
+    match: await ensureMatchChapters(input.currentManga, input.currentChapters, input.match),
+  };
   return withMigrationProfileLock(profileId, () => withSuwayomiOperationLease("migration", async () => {
     const identityRevision = input.identityBridge
       ? await input.identityBridge.read()
@@ -757,54 +862,70 @@ export async function previewMassMangaMigration(
 ): Promise<MassMangaMigrationPreview> {
   const readyThreshold = input.readyThreshold ?? 0.7;
   const itemTimeoutMs = input.itemTimeoutMs ?? 22000;
+  const concurrency = input.concurrency ?? 2;
+  const chapterSlots = createConcurrencyLimiter(concurrency);
   let completedCount = 0;
-  const items = await mapWithConcurrency(input.items, input.concurrency ?? 2, async (item): Promise<MassMangaMigrationPreviewItem> => {
+  const finish = (result: MassMangaMigrationPreviewItem) => {
+    completedCount += 1;
+    input.onItemDone?.(completedCount, input.items.length, result);
+    return result;
+  };
+
+  // The item timeout covers the search only. Chapter lists load in their own queue, so a slow
+  // source does not hold up the searches of the next titles or turn a found title into a failure.
+  const searched = await mapWithConcurrency(input.items, concurrency, async (item) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), itemTimeoutMs);
-    let result: MassMangaMigrationPreviewItem;
+    const base = { currentManga: item.manga, currentChapters: item.chapters };
     try {
-      const match = await fetchBestMangaMatch(item.manga, input.sourceTo, controller.signal, itemTimeoutMs);
-      if (!match) {
-        result = {
-          currentManga: item.manga,
-          currentChapters: item.chapters,
-          status: "no_match",
-          reasonCode: "no_match_found",
+      const candidate = await fetchBestMangaCandidate(item.manga, input.sourceTo, controller.signal, itemTimeoutMs);
+      if (!candidate) {
+        return {
+          pending: Promise.resolve(finish({
+            ...base,
+            status: "no_match",
+            reasonCode: "no_match_found",
+            match: null,
+            matchedReadCount: 0,
+            chapterDiff: 0,
+          })),
+        };
+      }
+
+      const ready = candidate.similarity >= readyThreshold;
+      return {
+        pending: chapterSlots(async () => {
+          const match: MangaMigrationMatch = {
+            ...candidate,
+            ...(await loadMangaMatchChapters(candidate.manga)),
+          };
+          return finish({
+            ...base,
+            status: ready ? "matched" : "needs_review",
+            reasonCode: ready ? "auto_match" : "low_confidence_match",
+            match,
+            matchedReadCount: summarizeMatchedReadCount(item.chapters, match.chapters),
+            chapterDiff: chapterDifference(item.chapters, match),
+          });
+        }),
+      };
+    } catch (error) {
+      const isTimeout = controller.signal.aborted;
+      return {
+        pending: Promise.resolve(finish({
+          ...base,
+          status: "search_failed",
+          reasonCode: isTimeout ? `Timed out while searching ${item.manga.title}` : error instanceof Error ? error.message : "runtime_gap",
           match: null,
           matchedReadCount: 0,
           chapterDiff: 0,
-        };
-        return result;
-      }
-
-      result = {
-        currentManga: item.manga,
-        currentChapters: item.chapters,
-        status: match.similarity >= readyThreshold ? "matched" : "needs_review",
-        reasonCode: match.similarity >= readyThreshold ? "auto_match" : "low_confidence_match",
-        match,
-        matchedReadCount: summarizeMatchedReadCount(item.chapters, match.chapters),
-        chapterDiff: match.chapters.length - item.chapters.length,
+        })),
       };
-      return result;
-    } catch (error) {
-      const isTimeout = controller.signal.aborted;
-      result = {
-        currentManga: item.manga,
-        currentChapters: item.chapters,
-        status: "search_failed",
-        reasonCode: isTimeout ? `Timed out while searching ${item.manga.title}` : error instanceof Error ? error.message : "runtime_gap",
-        match: null,
-        matchedReadCount: 0,
-        chapterDiff: 0,
-      };
-      return result;
     } finally {
       clearTimeout(timeoutId);
-      completedCount += 1;
-      if (result!) input.onItemDone?.(completedCount, input.items.length, result);
     }
   });
+  const items = await Promise.all(searched.map(({ pending }) => pending));
 
   return {
     sourceFrom: input.sourceFrom,
@@ -815,6 +936,7 @@ export async function previewMassMangaMigration(
     blockedCount: items.filter((item) => item.status === "no_match" || item.status === "search_failed").length,
   };
 }
+
 
 export async function applyMassMangaMigrationWithJournal(
   input: ApplyMassMangaMigrationInput,
@@ -860,7 +982,7 @@ export async function applyMassMangaMigrationWithJournal(
           currentManga: item.currentManga,
           currentChapters: item.currentChapters,
           targetSourceId: input.preview.sourceTo,
-          match: item.match!,
+          match: await ensureMatchChapters(item.currentManga, item.currentChapters, item.match!),
           mode: input.mode ?? "migrate",
           profileId,
         });

@@ -3484,6 +3484,7 @@
   "migrate_searchLede": "在 {source} 上查找同一部作品。",
   "migrate_resultCount": "{count} 个结果",
   "migrate_matchPercent": "匹配度 {percent}%",
+  "migrate_chaptersUnavailable": "暂时无法加载 {source} 上的章节（{reason}）。迁移时会再次加载；如果仍然失败，此作品会保留在原处，以免丢失阅读进度。",
   "migrate_confirmLede": "迁移前请确认匹配结果。完成后可立即撤销。",
   "migrate_allLanguages": "所有语言",
   "migrate_noSourceMatches": "没有符合此筛选条件的来源。",

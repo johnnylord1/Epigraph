@@ -3484,6 +3484,7 @@
   "migrate_searchLede": "Encuentra la misma obra en {source}.",
   "migrate_resultCount": "{count} resultados",
   "migrate_matchPercent": "{percent}% de coincidencia",
+  "migrate_chaptersUnavailable": "Todavía no se pudieron cargar los capítulos en {source} ({reason}). Se cargarán de nuevo al migrar; si siguen fallando, esta obra se queda donde está para no perder el progreso de lectura.",
   "migrate_confirmLede": "Revisa la coincidencia antes de mover. Puedes deshacerlo justo después.",
   "migrate_allLanguages": "Todos los idiomas",
   "migrate_noSourceMatches": "Ninguna fuente coincide con este filtro.",
