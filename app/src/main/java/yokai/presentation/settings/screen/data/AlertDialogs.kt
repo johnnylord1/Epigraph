@@ -53,6 +53,11 @@ suspend fun DialogHostState.awaitRestoreBackup(
                 results.newRepositories.joinToString("\n") { "- $it" }
             }"
         }
+        if (results.newExtensionRepositories.isNotEmpty()) {
+            message += "\n\n${stringResource(MR.strings.restore_new_extension_repositories)}\n${
+                results.newExtensionRepositories.joinToString("\n") { "- $it" }
+            }"
+        }
 
         AlertDialog(
             onDismissRequest = { cont.cancel() },

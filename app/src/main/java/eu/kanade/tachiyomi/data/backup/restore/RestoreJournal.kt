@@ -102,6 +102,7 @@ class RestoreJournal(private val file: File) {
 
         const val CATEGORIES = "categories"
         const val REPOSITORIES = "repositories"
+        const val EXTENSION_REPOSITORIES = "extension-repositories"
         const val APP_PREFERENCES = "app-prefs"
         const val SOURCE_PREFERENCES = "source-prefs"
 

@@ -14,6 +14,8 @@ import epigraph.sync.core.novels.matchesDeclaredRepository
 import epigraph.ui.moment.MomentEvents
 import eu.kanade.tachiyomi.data.backup.BackupContainer
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.ExtensionRepoBackup
+import eu.kanade.tachiyomi.data.backup.models.BackupExtensionRepo
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBook
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelRepository
 import eu.kanade.tachiyomi.data.backup.restore.restorers.CategoriesBackupRestorer
@@ -21,6 +23,7 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.LocalBookBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.BackupUtil
 import eu.kanade.tachiyomi.util.OpenedBackup
@@ -28,6 +31,8 @@ import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import yokai.domain.extension.repo.ExtensionRepoRepository
+import yokai.domain.extension.repo.interactor.CreateExtensionRepo
 import yokai.i18n.MR
 import yokai.util.koin.get
 import yokai.util.lang.getString
@@ -49,6 +54,9 @@ class BackupRestorer(
     private val coverCache: CoverCache = get(),
     private val novelRepos: NovelRepoRepository = get(),
     private val novelRepoValidator: NovelRepoIndexValidator = get(),
+    private val extensionRepos: ExtensionRepoRepository = get(),
+    private val createExtensionRepo: CreateExtensionRepo = get(),
+    private val extensionManager: ExtensionManager = get(),
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
@@ -98,7 +106,9 @@ class BackupRestorer(
     private suspend fun restoreContents(opened: OpenedBackup) {
         val backup = opened.backup
         restoreAmount = backup.backupManga.size + backup.backupLocalBooks.size + 3 // +3 for categories, app prefs, source prefs
-        restoreProgress = journal.completed.count { it != RestoreJournal.REPOSITORIES }
+        restoreProgress = journal.completed.count {
+            it != RestoreJournal.REPOSITORIES && it != RestoreJournal.EXTENSION_REPOSITORIES
+        }
 
         sourceMapping = backup.backupSources.associate { it.sourceId to it.name }
         sourceManager.rememberSourceNames(sourceMapping)
@@ -120,6 +130,14 @@ class BackupRestorer(
                 ensureActive()
                 restoreNovelRepositories(backup.novelRepositories)
                 journal.markDone(RestoreJournal.REPOSITORIES)
+            }
+
+            // Extension repositories (Epigraph, Mihon, J2K) before the titles, so the extensions
+            // of the restored titles are listed and can be installed right away.
+            if (backup.backupExtensionRepos.isNotEmpty() && !journal.isDone(RestoreJournal.EXTENSION_REPOSITORIES)) {
+                ensureActive()
+                restoreExtensionRepositories(backup.backupExtensionRepos)
+                journal.markDone(RestoreJournal.EXTENSION_REPOSITORIES)
             }
 
             if (!journal.isDone(RestoreJournal.APP_PREFERENCES)) {
@@ -218,6 +236,40 @@ class BackupRestorer(
             if (existing.none { it.baseUrl == validation.indexUrl }) {
                 novelRepos.insert(NovelRepo(validation.indexUrl, repository.name))
             }
+        }
+    }
+
+    /**
+     * Adds each extension repository not configured yet. The signing key comes from the
+     * repository's own `repo.json`, never from the backup, so a backup cannot make an extension
+     * trusted by itself.
+     */
+    private suspend fun restoreExtensionRepositories(repositories: List<BackupExtensionRepo>) {
+        var added = false
+        repositories.forEach { repository ->
+            val baseUrl = ExtensionRepoBackup.baseUrl(repository.baseUrl)
+            val label = when {
+                repository.name.isBlank() -> baseUrl ?: repository.baseUrl
+                else -> "${repository.name} [${baseUrl ?: repository.baseUrl}]"
+            }
+            val unavailable = "$label: ${context.getString(MR.strings.restore_extension_repository_unavailable)}"
+            if (baseUrl == null) {
+                addError(unavailable)
+                return@forEach
+            }
+            if (extensionRepos.getAll().any { ExtensionRepoBackup.baseUrl(it.baseUrl) == baseUrl }) return@forEach
+            when (createExtensionRepo.await("$baseUrl/index.min.json")) {
+                CreateExtensionRepo.Result.Success -> added = true
+                // Already listed, possibly under another address signed by the same key.
+                CreateExtensionRepo.Result.RepoAlreadyExists, is CreateExtensionRepo.Result.DuplicateFingerprint -> Unit
+                CreateExtensionRepo.Result.InvalidUrl, CreateExtensionRepo.Result.Error -> addError(unavailable)
+            }
+        }
+        if (added) {
+            // Installed extensions signed by a restored repository become trusted, and the
+            // extensions of the restored titles show up as available.
+            extensionManager.refreshTrust()
+            extensionManager.findAvailableExtensions()
         }
     }
 

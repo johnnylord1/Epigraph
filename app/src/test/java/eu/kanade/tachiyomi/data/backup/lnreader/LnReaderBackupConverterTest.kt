@@ -76,6 +76,8 @@ class LnReaderBackupConverterTest {
             listOf(BackupNovelRepository("$REPO/master/.dist/plugins.min.json", "LNReader plugins")),
             backup.novelRepositories,
         )
+        // Plugin repositories are novel repositories only, never manga extension repositories.
+        assertTrue(backup.backupExtensionRepos.isEmpty())
     }
 
     @Test
