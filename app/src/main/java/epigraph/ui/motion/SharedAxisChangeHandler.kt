@@ -76,6 +76,14 @@ open class SharedAxisChangeHandler : AnimatorChangeHandler {
             to.alpha = toStartAlpha
             to.translationX = toStartX
         }
+        // Screens further down stay attached for predictive back and should be hidden, but an
+        // activity resume restores the root tabs' alpha; while both ends are half faded that
+        // screen (the Library under Settings) would show through. Hide them for the change only.
+        val covered = (0 until container.childCount)
+            .map(container::getChildAt)
+            .filter { it !== from && it !== to && it.alpha > 0f }
+            .map { Pair(it, it.alpha) }
+        covered.forEach { (view, _) -> view.alpha = 0f }
 
         val animator = ValueAnimator.ofFloat(0f, 1f)
         animator.interpolator = LinearInterpolator()
@@ -105,6 +113,7 @@ open class SharedAxisChangeHandler : AnimatorChangeHandler {
                 override fun onAnimationCancel(animation: Animator) = settle()
 
                 private fun settle() {
+                    covered.forEach { (view, alpha) -> view.alpha = alpha }
                     to?.let(::resetView)
                     // A pushed-over screen stays attached (predictive back needs it) but hidden.
                     if (from != null && !(isPush && !removesFromViewOnPush)) resetView(from)
