@@ -79,6 +79,8 @@ object BackupPreferencePolicy {
         "last_app_check",
         "ext_updates_count",
         "library_update_last_timestamp",
+        // A folder grant of the device that made the backup; J2K still writes it.
+        PreferenceKeys.downloadsDirectory,
     )
 
     private val MERGED_KEYS = setOf(
