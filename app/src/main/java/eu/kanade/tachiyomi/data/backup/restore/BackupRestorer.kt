@@ -14,6 +14,7 @@ import epigraph.sync.core.novels.matchesDeclaredRepository
 import epigraph.ui.moment.MomentEvents
 import eu.kanade.tachiyomi.data.backup.BackupContainer
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.CategoryPreferenceBackup
 import eu.kanade.tachiyomi.data.backup.ExtensionRepoBackup
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionRepo
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBook
@@ -142,9 +143,26 @@ class BackupRestorer(
 
             if (!journal.isDone(RestoreJournal.APP_PREFERENCES)) {
                 ensureActive()
-                preferenceBackupRestorer.restoreAppPreferences(backup.backupPreferences) {
+                val unresolved = preferenceBackupRestorer.restoreAppPreferences(
+                    backup.backupPreferences,
+                    backup.backupCategories,
+                ) {
                     restoreProgress += 1
                     showRestoreProgress(restoreProgress, restoreAmount, context.getString(MR.strings.app_settings))
+                }
+                unresolved.forEach { setting ->
+                    addError(
+                        context.getString(
+                            when (setting) {
+                                CategoryPreferenceBackup.Setting.AUTOMATIC_DOWNLOADS ->
+                                    MR.strings.restore_download_categories_unresolved
+                                CategoryPreferenceBackup.Setting.LIBRARY_UPDATES ->
+                                    MR.strings.restore_update_categories_unresolved
+                                CategoryPreferenceBackup.Setting.DEFAULT_CATEGORY ->
+                                    MR.strings.restore_default_category_unresolved
+                            },
+                        ),
+                    )
                 }
                 journal.markDone(RestoreJournal.APP_PREFERENCES)
             }
