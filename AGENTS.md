@@ -23,6 +23,7 @@
 - Every database change needs a numbered SQLDelight migration, an upgrade fixture, schema verification, and a rollback note.
 - Every domain mutation that syncs must write its outbox command in the same database transaction.
 - `assembleDevDebug`, `assembleStandardRelease`, unit tests, lint, migration verification, and emulator smoke are release gates.
+- Mobile is released separately from desktop as `mobile-v<version>`, and the `stable` release (always Latest) carries the APKs the in-app updater installs. Publish only through `scripts/publish-release.mjs` in the desktop checkout, following `docs/releasing.md` and the Releases rules in the root `AGENTS.md`: only the signed `Epigraph-mobile_<version>_{arm64-v8a,armeabi-v7a,universal}.apk` builds, notes with `###` headings at most, and never a Latest change from the GitHub UI.
 
 ## Product invariants
 
