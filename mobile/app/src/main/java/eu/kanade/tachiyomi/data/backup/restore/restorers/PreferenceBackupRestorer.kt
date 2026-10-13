@@ -6,9 +6,11 @@ import eu.kanade.tachiyomi.core.preference.AndroidPreferenceStore
 import eu.kanade.tachiyomi.core.preference.Preference
 import eu.kanade.tachiyomi.core.preference.PreferenceStore
 import eu.kanade.tachiyomi.data.backup.BackupPreferencePolicy
+import eu.kanade.tachiyomi.data.backup.CategoryPreferenceBackup
 import eu.kanade.tachiyomi.data.backup.BackupSecretPolicy
 import eu.kanade.tachiyomi.core.preference.getEnum
 import eu.kanade.tachiyomi.data.backup.create.BackupCreatorJob
+import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -24,15 +26,33 @@ import eu.kanade.tachiyomi.extension.ExtensionUpdateJob
 import eu.kanade.tachiyomi.source.sourcePreferences
 import eu.kanade.tachiyomi.ui.library.LibrarySort
 import yokai.domain.base.BasePreferences
+import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.GetCategories
 import yokai.domain.ui.settings.ReaderPreferences
 
 class PreferenceBackupRestorer(
     private val context: Context,
     private val preferenceStore: PreferenceStore = get(),
     private val preferencesHelper: PreferencesHelper = get(),
+    private val getCategories: GetCategories = get(),
 ) {
-    fun restoreAppPreferences(preferences: List<BackupPreference>, onComplete: () -> Unit) {
-        val restorable = BackupPreferencePolicy.restorableAppPreferences(preferences) { key ->
+    /**
+     * Restores the app preferences, with their category ids moved to the restored categories.
+     * Returns the settings whose categories the backup could not tell; they keep this device's
+     * values.
+     */
+    suspend fun restoreAppPreferences(
+        preferences: List<BackupPreference>,
+        backupCategories: List<BackupCategory>,
+        onComplete: () -> Unit,
+    ): Set<CategoryPreferenceBackup.Setting> {
+        val deviceCategories = CategoryLibrary.entries.associateWith { library ->
+            getCategories.await(library).mapNotNull { category -> category.id?.let { category.name to it } }.toMap()
+        }
+        val remapped = CategoryPreferenceBackup.remap(preferences, backupCategories) { library, name ->
+            deviceCategories[library]?.get(name)
+        }
+        val restorable = BackupPreferencePolicy.restorableAppPreferences(remapped.preferences) { key ->
             // The languages default to the device language until they are first changed.
             if (key == PreferenceKeys.enabledLanguages) {
                 preferencesHelper.enabledLanguages().get()
@@ -47,6 +67,7 @@ class PreferenceBackupRestorer(
         BackupCreatorJob.setupTask(context)
 
         onComplete()
+        return remapped.unresolved
     }
 
     fun restoreSourcePreferences(preferences: List<BackupSourcePreferences>, onComplete: () -> Unit) {

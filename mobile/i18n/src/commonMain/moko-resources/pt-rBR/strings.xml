@@ -650,6 +650,9 @@
     <string name="restore_repository_unavailable">Não foi possível acessar o repositório de plugins, adicione-o depois em Extensões</string>
     <string name="restore_new_extension_repositories">Repositórios de extensões que serão adicionados:</string>
     <string name="restore_extension_repository_unavailable">Não foi possível acessar o repositório de extensões, adicione-o depois em Extensões</string>
+    <string name="restore_download_categories_unresolved">As configurações de download por categoria não foram restauradas: o backup não informa quais categorias elas usavam. Escolha-as de novo nas configurações de Downloads</string>
+    <string name="restore_update_categories_unresolved">As categorias da atualização da biblioteca não foram restauradas: o backup não informa quais eram. Escolha-as de novo nas configurações da Biblioteca</string>
+    <string name="restore_default_category_unresolved">A categoria padrão não foi restaurada: o backup não informa qual era. Escolha-a de novo nas configurações da Biblioteca</string>
     <string name="restore_content_full">Os dados do arquivo de backup serão restaurados.
 \n
 \nVocê precisará instalar quaisquer extensões que estejam faltando e depois realizar o login nos serviços de monitoramento para utilizá-los.</string>

@@ -9,7 +9,10 @@ import kotlinx.serialization.protobuf.ProtoNumber
 class BackupCategory(
     @ProtoNumber(1) var name: String,
     @ProtoNumber(2) var order: Int = 0,
-    // @ProtoNumber(3) val updateInterval: Int = 0, 1.x value not used in 0.x
+    // The category's id where the backup was made, as Mihon writes it: category preferences name
+    // categories by id ([eu.kanade.tachiyomi.data.backup.CategoryPreferenceBackup]). Tachiyomi 1.x
+    // wrote an update interval here instead.
+    @ProtoNumber(3) var id: Long = 0,
     // Bump by 100 to specify this is a 0.x value
     @ProtoNumber(100) var flags: Int = 0,
 
@@ -31,6 +34,7 @@ class BackupCategory(
         fun copyFrom(category: Category): BackupCategory {
             return BackupCategory(
                 name = category.name,
+                id = category.id?.toLong() ?: 0,
                 order = category.order,
                 flags = category.flags,
                 mangaSort = category.mangaSort,

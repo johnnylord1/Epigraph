@@ -872,6 +872,9 @@
     <string name="restore_repository_unavailable">The plugin repository could not be reached, add it later in Extensions</string>
     <string name="restore_new_extension_repositories">Extension repositories to add:</string>
     <string name="restore_extension_repository_unavailable">The extension repository could not be reached, add it later in Extensions</string>
+    <string name="restore_download_categories_unresolved">The download settings for categories were not restored: the backup does not say which categories they used. Choose them again in the Downloads settings</string>
+    <string name="restore_update_categories_unresolved">The library update categories were not restored: the backup does not say which categories they were. Choose them again in the Library settings</string>
+    <string name="restore_default_category_unresolved">The default category was not restored: the backup does not say which category it was. Choose it again in the Library settings</string>
     <string name="restore_content_full">Data from the backup file will be restored.\n\nYou will need to install any missing extensions and log in to tracking services afterwards to use them.</string>
     <string name="restoring_backup_canceled">Canceled restore</string>
     <string name="backup_restore_invalid_uri">Error: empty URI</string>
