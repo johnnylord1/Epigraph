@@ -22,7 +22,10 @@ object BackupPreferencePolicy {
      * Keys that describe this device and never enter or leave a backup. The trusted extension
      * list names APK hashes of the extensions installed here: restoring another device's or
      * another fork's list would distrust the extensions installed here, and a backup file must
-     * never be able to mark an extension as trusted.
+     * never be able to mark an extension as trusted. Cover ratios and colors and the per-entry
+     * detail themes are keyed by the entry's database id, which names another entry (or none) on
+     * any other device. The check timestamps belong to this install, and the last unlock time
+     * must never come from a file: a time in the future would keep the app lock open.
      */
     fun isDeviceOnly(key: String): Boolean = key in DEVICE_ONLY_KEYS
 
@@ -68,6 +71,14 @@ object BackupPreferencePolicy {
     private val DEVICE_ONLY_KEYS = setOf(
         ORIGIN_KEY,
         "trusted_extensions",
+        PreferenceKeys.coverRatios,
+        PreferenceKeys.coverColors,
+        PreferenceKeys.themeMangaDetailsOverrides,
+        PreferenceKeys.lastUnlock,
+        "last_ext_check",
+        "last_app_check",
+        "ext_updates_count",
+        "library_update_last_timestamp",
     )
 
     private val MERGED_KEYS = setOf(
@@ -90,6 +101,5 @@ object BackupPreferencePolicy {
         PreferenceKeys.darkTheme,
         PreferenceKeys.themeDarkAmoled,
         PreferenceKeys.themeMangaDetails,
-        PreferenceKeys.themeMangaDetailsOverrides,
     )
 }
