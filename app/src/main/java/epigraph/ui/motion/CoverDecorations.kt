@@ -53,7 +53,7 @@ internal class CoverDecorations private constructor(private val parts: List<Part
     }
 
     companion object {
-        private val IDS = intArrayOf(R.id.unread_download_badge, R.id.play_button)
+        private val IDS = listOf(R.id.unread_download_badge, R.id.play_button)
 
         /** Snapshots the visible decorations of the cell holding [card]; none when it is not a library cell. */
         fun of(card: View): CoverDecorations {
