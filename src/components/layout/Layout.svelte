@@ -37,6 +37,24 @@
     }
   }
 
+  // Setup also opens again when the app holds nothing at all, as after its data was cleared.
+  let cleanInstallCheckedScope: string | null = null;
+  $effect(() => {
+    const profileId = store.runtimeResolvedLocalProfileId;
+    const serverUrl = store.runtimeServerUrl;
+    if (firstRunPending || backupAuditPlan || backupRestoreLaunchIntent || !profileId || !serverUrl) return;
+    const scopeKey = `${profileId}::${serverUrl}`;
+    if (cleanInstallCheckedScope === scopeKey) return;
+    cleanInstallCheckedScope = scopeKey;
+    let cancelled = false;
+    void import("../../lib/firstRunCleanInstall").then(async ({ createProductionCleanInstallProbe, isCleanInstall, reopenFirstRun }) => {
+      if (!(await isCleanInstall(createProductionCleanInstallProbe({ profileId, serverUrl }))) || cancelled) return;
+      try { reopenFirstRun(localStorage); } catch { return; }
+      firstRunPending = true;
+    }).catch((error) => console.warn("Could not check whether the app is empty.", error));
+    return () => { cancelled = true; };
+  });
+
   const hasActiveBook = $derived(
     !!store.activeBookId && (
       !store.booksLibraryHydrated

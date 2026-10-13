@@ -50,6 +50,20 @@ vi.mock("./lib/setup/firstRunDiscoveryWorkflow", async (importOriginal) => {
   };
 });
 
+const cleanInstall = vi.hoisted(() => ({ counts: [0, 0, 0, 0] }));
+vi.mock("./lib/firstRunCleanInstall", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/firstRunCleanInstall")>();
+  return {
+    ...actual,
+    createProductionCleanInstallProbe: () => ({
+      countComics: async () => cleanInstall.counts[0],
+      countBooks: async () => cleanInstall.counts[1],
+      countNovels: async () => cleanInstall.counts[2],
+      countSourceSetup: async () => cleanInstall.counts[3],
+    }),
+  };
+});
+
 describe("first-run startup gate", () => {
   beforeEach(() => {
     const values = new Map<string, string>();
@@ -68,6 +82,9 @@ describe("first-run startup gate", () => {
     store.libraryMangaSnapshot = [];
     store.books = [];
     store.searchNovelLibraryEntries = [];
+    store.runtimeResolvedLocalProfileId = null;
+    store.runtimeServerUrl = null;
+    cleanInstall.counts = [0, 0, 0, 0];
   });
   afterEach(() => cleanup());
 
@@ -102,5 +119,26 @@ describe("first-run startup gate", () => {
     render(Layout);
     store.activeManga = { id: 1, title: "Test manga" } as NonNullable<typeof store.activeManga>;
     expect(await screen.findByRole("heading", { name: "Test series detail" })).toBeTruthy();
+  });
+
+  it("opens setup again when the app holds nothing, though setup was completed before", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), status: "complete", step: "complete" }));
+    render(Layout);
+    expect(document.querySelector(".epigraph-app-shell")).not.toBeNull();
+    store.runtimeResolvedLocalProfileId = "default" as NonNullable<typeof store.runtimeResolvedLocalProfileId>;
+    store.runtimeServerUrl = "http://127.0.0.1:4567";
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("pending");
+  });
+
+  it("keeps the app open when it still holds a work or a source", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), status: "complete", step: "complete" }));
+    cleanInstall.counts = [0, 0, 0, 1];
+    render(Layout);
+    store.runtimeResolvedLocalProfileId = "default" as NonNullable<typeof store.runtimeResolvedLocalProfileId>;
+    store.runtimeServerUrl = "http://127.0.0.1:4567";
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    expect(document.querySelector(".epigraph-app-shell")).not.toBeNull();
   });
 });
