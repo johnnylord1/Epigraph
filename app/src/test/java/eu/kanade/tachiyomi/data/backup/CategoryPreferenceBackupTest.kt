@@ -103,6 +103,20 @@ class CategoryPreferenceBackupTest {
     }
 
     @Test
+    fun `download categories are not reported when the backup did not download automatically`() {
+        val preferences = listOf(
+            BackupPreference("download_new", BooleanPreferenceValue(false)),
+            BackupPreference("download_new_categories", StringSetPreferenceValue(setOf("2"))),
+            BackupPreference("library_update_categories", StringSetPreferenceValue(setOf("2"))),
+        )
+
+        val result = remap(preferences, emptyList())
+
+        assertEquals(setOf(Setting.LIBRARY_UPDATES), result.unresolved)
+        assertTrue(result.preferences.isEmpty())
+    }
+
+    @Test
     fun `the default category and the special values need no category ids`() {
         val preferences = listOf(
             BackupPreference("download_new", BooleanPreferenceValue(true)),

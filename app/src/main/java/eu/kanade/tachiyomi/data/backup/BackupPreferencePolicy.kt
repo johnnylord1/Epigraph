@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.backup
 
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
@@ -37,6 +39,8 @@ object BackupPreferencePolicy {
      * Source languages, hidden and pinned sources are added to this device's own sets
      * ([deviceSet] gives their current value) instead of replacing them: a backup that enabled
      * only English must not hide the Portuguese sources installed here.
+     * Mihon writes the default chapter filters and sort as Long; they become the Int this app
+     * reads, with the same flag values, instead of being discarded as an unreadable type.
      */
     fun restorableAppPreferences(
         preferences: List<BackupPreference>,
@@ -53,6 +57,8 @@ object BackupPreferencePolicy {
                 val value = preference.value
                 if (preference.key in MERGED_KEYS && value is StringSetPreferenceValue) {
                     preference.copy(value = StringSetPreferenceValue(deviceSet(preference.key) + value.value))
+                } else if (preference.key in LONG_IN_MIHON_KEYS && value is LongPreferenceValue) {
+                    preference.copy(value = IntPreferenceValue(value.value.toInt()))
                 } else {
                     preference
                 }
@@ -68,6 +74,14 @@ object BackupPreferencePolicy {
         PreferenceKeys.enabledLanguages,
         "hidden_catalogues",
         "pinned_catalogues",
+    )
+
+    private val LONG_IN_MIHON_KEYS = setOf(
+        PreferenceKeys.defaultChapterFilterByRead,
+        PreferenceKeys.defaultChapterFilterByDownloaded,
+        PreferenceKeys.defaultChapterFilterByBookmarked,
+        PreferenceKeys.defaultChapterSortBySourceOrNumber,
+        PreferenceKeys.defaultChapterSortByAscendingOrDescending,
     )
 
     private val APPEARANCE_KEYS = setOf(
