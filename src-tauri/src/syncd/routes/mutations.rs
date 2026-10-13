@@ -7686,7 +7686,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn comic_payloads_reject_unknown_fields_before_persistence() {
+    async fn comic_payloads_drop_unknown_fields_before_persistence() {
         let (_temp, state) = build_state().await;
         let app = build_test_router(state.clone());
         let mut request = comic_state_batch("comic-unknown-field");
@@ -7696,14 +7696,35 @@ mod tests {
             .oneshot(request_with_json("/v1/mutations", "main-token", request))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        assert_eq!(
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
             load_server_runtime(&state.pool)
                 .await
                 .unwrap()
-                .current_server_version,
-            0
+                .current_server_version
+                > 0
         );
+        let tables: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table'")
+                .fetch_all(&state.pool)
+                .await
+                .unwrap();
+        for table in tables {
+            let columns: Vec<String> =
+                sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                    .fetch_all(&state.pool)
+                    .await
+                    .unwrap();
+            for column in columns {
+                let leaked: i64 = sqlx::query_scalar(&format!(
+                    "SELECT COUNT(*) FROM \"{table}\" WHERE CAST(\"{column}\" AS TEXT) LIKE '%must-not-pass%'"
+                ))
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+                assert_eq!(leaked, 0, "{table}.{column} kept an unknown field");
+            }
+        }
     }
 
     #[tokio::test]

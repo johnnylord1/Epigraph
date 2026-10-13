@@ -1051,7 +1051,7 @@ pub struct MutationsRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct EventClock {
     pub physical_ms: i64,
     pub logical: i64,
@@ -1443,7 +1443,7 @@ impl BookBookmarkPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BookHighlightPatch {
     pub highlight_id: String,
     pub book_id: String,
@@ -1459,7 +1459,7 @@ pub struct BookHighlightPatch {
 /// A point-in-time book reading event. Unlike `book.progress`, history entries
 /// are independently addressable and may be deleted without resetting progress.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BookHistoryPatch {
     pub history_id: String,
     pub book_id: String,
@@ -1652,7 +1652,7 @@ pub fn canonical_portable_chapter_id(reference: &PortableChapterRefV3) -> String
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtensionStoreReferenceV3 {
     pub store_index_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1662,7 +1662,7 @@ pub struct ExtensionStoreReferenceV3 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicDependencyV3 {
     pub pkg_name: String,
     pub required_source_ids: BTreeSet<String>,
@@ -1686,7 +1686,7 @@ impl ComicDependencyV3 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct RepositoryReferenceV3 {
     pub index_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1696,7 +1696,7 @@ pub struct RepositoryReferenceV3 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelDependencyV3 {
     pub plugin_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1965,7 +1965,7 @@ pub struct NovelChapterPatch {
 /// The immutable bytes must already exist in the Core asset store for the same
 /// scope before this record can be published.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelChapterAssetPatch {
     pub schema_version: u32,
     pub novel_id: String,
@@ -2019,7 +2019,7 @@ pub struct NovelClassificationPatch {
 /// A clean, profile-scoped LNReader repository descriptor. Repository URLs do
 /// not carry credentials or signed query parameters; secrets remain local.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelRepositoryPatch {
     pub canonical_url: String,
     pub name: String,
@@ -2103,7 +2103,7 @@ pub fn canonical_novel_repository_id(canonical_url: &str) -> String {
 /// must be empty because the current catalog has no trustworthy pre-execution
 /// allowlist. Secrets and permission grants always remain local.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelPluginPatch {
     pub repository_id: String,
     pub plugin_id: String,
@@ -2132,7 +2132,7 @@ pub fn canonical_novel_plugin_id(repository_id: &str, plugin_id: &str, source_id
 /// A user-managed category for novels. This is intentionally separate from
 /// `novel.classification`, which describes plugin compatibility evidence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelCategoryPatch {
     pub category_id: String,
     pub name: String,
@@ -2142,7 +2142,7 @@ pub struct NovelCategoryPatch {
 /// A stable, independently addressable membership edge between one novel and
 /// one user category.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NovelCategoryAssignmentPatch {
     pub assignment_id: String,
     pub novel_id: String,
@@ -2162,7 +2162,7 @@ pub fn canonical_novel_category_assignment_id(novel_id: &str, category_id: &str)
 /// Latest persisted comic reader position. `comicId` uses the mobile MediaKey
 /// wire format: `suwayomi:<server-fingerprint>:manga:<manga-id>`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicHistoryPatch {
     pub history_id: String,
     pub comic_id: String,
@@ -2180,7 +2180,7 @@ pub struct ComicHistoryPatch {
 /// Explicit page bookmark. The entity id is client-generated and must equal
 /// `bookmarkId`; updating it may not move the bookmark to another comic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicPageBookmarkPatch {
     pub bookmark_id: String,
     pub comic_id: String,
@@ -2237,7 +2237,7 @@ pub enum MutationResultStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicEntryPatch {
     pub comic_id: String,
     pub in_library: bool,
@@ -2249,7 +2249,7 @@ pub struct ComicEntryPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicCategoryPatch {
     pub category_id: String,
     pub name: String,
@@ -2257,7 +2257,7 @@ pub struct ComicCategoryPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicCategoryAssignmentPatch {
     pub assignment_id: String,
     pub comic_id: String,
@@ -2267,7 +2267,7 @@ pub struct ComicCategoryAssignmentPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ComicChapterStatePatch {
     pub chapter_state_id: String,
     pub comic_id: String,
@@ -3450,6 +3450,29 @@ mod tests {
         assert!(!novel.reset);
         assert!(serde_json::to_value(&book).unwrap().get("reset").is_none());
         assert!(serde_json::to_value(&novel).unwrap().get("reset").is_none());
+    }
+
+    #[test]
+    fn client_payloads_with_unknown_fields_are_accepted_and_the_fields_dropped() {
+        // A client on a newer contract may send fields this Core does not know yet.
+        let clock: EventClock = serde_json::from_value(json!({
+            "physicalMs": 10,
+            "logical": 2,
+            "deviceGenerationId": "device-1",
+            "futureField": true
+        }))
+        .unwrap();
+        let patch: ComicEntryPatch = serde_json::from_value(json!({
+            "comicId": "comic-1",
+            "inLibrary": true,
+            "futureField": { "nested": 1 }
+        }))
+        .unwrap();
+
+        assert_eq!(clock.device_generation_id, "device-1");
+        assert!(patch.in_library);
+        assert!(serde_json::to_value(&clock).unwrap().get("futureField").is_none());
+        assert!(serde_json::to_value(&patch).unwrap().get("futureField").is_none());
     }
 
     #[test]

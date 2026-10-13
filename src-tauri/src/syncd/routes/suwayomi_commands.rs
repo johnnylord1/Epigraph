@@ -172,14 +172,14 @@ pub struct CommandResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct UpdateMangaVariables {
     id: i64,
     in_library: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct UpdateMangaCategoriesVariables {
     manga_id: i64,
     add_to: Vec<i64>,
@@ -187,7 +187,7 @@ struct UpdateMangaCategoriesVariables {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct UpdateChaptersProgressVariables {
     ids: Vec<i64>,
     is_read: Option<bool>,
@@ -196,38 +196,38 @@ struct UpdateChaptersProgressVariables {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct UpdateCategoryVariables {
     id: i64,
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct CreateCategoryVariables {
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct DeleteCategoryVariables {
     id: i64,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct AddExtensionReposVariables {
     repos: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct InstallExtensionVariables {
     pkg_name: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 struct UpdateCategoryOrderVariables {
     id: i64,
     position: i64,
@@ -491,7 +491,7 @@ fn normalized_command(
             let variables: UpdateMangaVariables =
                 serde_json::from_value(variables).map_err(|_| {
                     AppError::BadRequest(
-                        "UpdateManga requires only id and inLibrary variables.".to_string(),
+                        "UpdateManga requires id and inLibrary variables.".to_string(),
                     )
                 })?;
             ensure_int(variables.id, "id")?;
@@ -570,7 +570,7 @@ fn normalized_command(
             let variables: UpdateCategoryVariables =
                 serde_json::from_value(variables).map_err(|_| {
                     AppError::BadRequest(
-                        "UpdateCategory requires only id and name variables.".to_string(),
+                        "UpdateCategory requires id and name variables.".to_string(),
                     )
                 })?;
             ensure_int(variables.id, "id")?;
@@ -583,7 +583,7 @@ fn normalized_command(
         CommandOperation::CreateCategory => {
             let variables: CreateCategoryVariables =
                 serde_json::from_value(variables).map_err(|_| {
-                    AppError::BadRequest("CreateCategory requires only a name variable.".to_string())
+                    AppError::BadRequest("CreateCategory requires a name variable.".to_string())
                 })?;
             ensure_category_name(&variables.name)?;
             Ok((CREATE_CATEGORY_QUERY, json!({ "name": variables.name })))
@@ -591,7 +591,7 @@ fn normalized_command(
         CommandOperation::DeleteCategory => {
             let variables: DeleteCategoryVariables =
                 serde_json::from_value(variables).map_err(|_| {
-                    AppError::BadRequest("DeleteCategory requires only an id variable.".to_string())
+                    AppError::BadRequest("DeleteCategory requires an id variable.".to_string())
                 })?;
             ensure_int(variables.id, "id")?;
             Ok((DELETE_CATEGORY_QUERY, json!({ "id": variables.id })))
@@ -599,7 +599,7 @@ fn normalized_command(
         CommandOperation::AddExtensionRepos => {
             let variables: AddExtensionReposVariables = serde_json::from_value(variables)
                 .map_err(|_| {
-                    AppError::BadRequest("AddExtensionRepos requires only repos.".to_string())
+                    AppError::BadRequest("AddExtensionRepos requires repos.".to_string())
                 })?;
             if variables.repos.is_empty() || variables.repos.len() > MAX_EXTENSION_REPOS {
                 return Err(AppError::BadRequest(format!(
@@ -614,7 +614,7 @@ fn normalized_command(
         CommandOperation::InstallExtension => {
             let variables: InstallExtensionVariables = serde_json::from_value(variables)
                 .map_err(|_| {
-                    AppError::BadRequest("InstallExtension requires only pkgName.".to_string())
+                    AppError::BadRequest("InstallExtension requires pkgName.".to_string())
                 })?;
             ensure_package_name(&variables.pkg_name)?;
             Ok((INSTALL_EXTENSION_QUERY, json!({ "id": variables.pkg_name })))
@@ -623,7 +623,7 @@ fn normalized_command(
             let variables: UpdateCategoryOrderVariables = serde_json::from_value(variables)
                 .map_err(|_| {
                     AppError::BadRequest(
-                        "UpdateCategoryOrder requires only id and position variables.".to_string(),
+                        "UpdateCategoryOrder requires id and position variables.".to_string(),
                     )
                 })?;
             ensure_int(variables.id, "id")?;
@@ -715,12 +715,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_command_variables_and_empty_category_changes() {
-        assert!(normalized_command(
+    fn ignores_unknown_command_variables_and_rejects_empty_category_changes() {
+        // Unknown variables are accepted but never forwarded to Suwayomi.
+        let (_, variables) = normalized_command(
             &CommandOperation::UpdateManga,
             json!({ "id": 7, "inLibrary": true, "query": "drop" }),
         )
-        .is_err());
+        .unwrap();
+        assert_eq!(variables, json!({ "id": 7, "inLibrary": true }));
         assert!(normalized_command(
             &CommandOperation::UpdateMangaCategories,
             json!({ "mangaId": 7, "addTo": [], "removeFrom": [] }),
@@ -788,7 +790,6 @@ mod tests {
             json!({ "name": " Reading" }),
             json!({ "name": "Rea\u{0}ding" }),
             json!({ "name": "x".repeat(257) }),
-            json!({ "name": "Reading", "order": 1 }),
         ] {
             assert!(
                 normalized_command(&CommandOperation::CreateCategory, invalid.clone()).is_err(),
@@ -828,11 +829,15 @@ mod tests {
             )
             .is_err());
         }
-        assert!(normalized_command(
-            &CommandOperation::InstallExtension,
-            json!({ "pkgName": "a.b", "extra": 1 }),
-        )
-        .is_err());
+        assert_eq!(
+            normalized_command(
+                &CommandOperation::InstallExtension,
+                json!({ "pkgName": "a.b", "extra": 1 }),
+            )
+            .unwrap()
+            .1,
+            json!({ "id": "a.b" })
+        );
 
         assert_eq!(
             repo_root("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.pb"),

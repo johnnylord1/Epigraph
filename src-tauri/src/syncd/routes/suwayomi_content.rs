@@ -57,7 +57,7 @@ pub struct ContentQuery {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct ContentRequest {
     pub operation: ContentOperation,
     pub id: i64,
