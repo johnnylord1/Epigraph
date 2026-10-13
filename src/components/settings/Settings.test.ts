@@ -452,7 +452,9 @@ describe("Settings", () => {
     renderSettings();
     await fireEvent.click(screen.getByRole("button", { name: "System" }));
     await fireEvent.click(screen.getByRole("button", { name: "Create backup" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Books only" }));
+    await fireEvent.click(screen.getByRole("switch", { name: "Comics" }));
+    await fireEvent.click(screen.getByRole("switch", { name: "Novels" }));
+    await fireEvent.click(screen.getByRole("switch", { name: "History and statistics" }));
     await fireEvent.click(screen.getByRole("button", { name: "Export backup" }));
 
     await waitFor(() => {
@@ -695,7 +697,7 @@ describe("Settings", () => {
 
     await waitFor(() => expect(document.querySelector("[data-backup-review]")).toBeTruthy());
     expect(screen.getByText("24 titles")).toBeTruthy();
-    expect(screen.getByRole("switch", { name: translate("settings_inline_manga") }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("switch", { name: translate("settings_backup_includeComics") }).getAttribute("aria-checked")).toBe("true");
     expect(screen.queryByText("Info")).toBeNull();
   });
 
@@ -755,7 +757,7 @@ describe("Settings", () => {
     expect(container.querySelector(".backup-progress")).toBeNull();
     expect(screen.getByRole("button", { name: "LNReader novels restore" }).hasAttribute("disabled")).toBe(false);
     // About ten role queries over the whole Settings page take 3-4 s alone and more under full-suite load.
-  }, 15_000);
+  }, 30_000);
 
   test("offers the shared Manga dependency review after selecting a native backup", async () => {
     const runtime = await loadSettingsStorageRuntimeMock();

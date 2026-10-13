@@ -1212,12 +1212,16 @@
   let backupMissingTrackers = $state<{ name: string }[]>([]);
   let backupSelectedFilePath: string | null = $state(null);
   let backupImportKind = $state<BackupImportKind | null>(null);
-  let backupExportMode = $state<BackupExportMode>("unified");
   let backupUnifiedIncludeManga = $state(true);
   let backupUnifiedIncludeBooks = $state(true);
   let backupUnifiedIncludeNovels = $state(true);
   let backupUnifiedIncludeApp = $state(true);
   let backupBooksOnlyMetadataOnly = $state(false);
+  let backupMangaNativeFormat = $state(false);
+  // One list of what to include; the Mihon .tachibk format only fits when comics are all there is.
+  const backupOnlyMangaSelected = $derived(backupUnifiedIncludeManga && !backupUnifiedIncludeBooks && !backupUnifiedIncludeNovels && !backupUnifiedIncludeApp);
+  const backupNothingSelected = $derived(!backupUnifiedIncludeManga && !backupUnifiedIncludeBooks && !backupUnifiedIncludeNovels && !backupUnifiedIncludeApp);
+  const backupExportMode = $derived<BackupExportMode>(backupOnlyMangaSelected && backupMangaNativeFormat ? "manga" : "unified");
   let backupUnifiedPlan = $state<EpigraphRestorePlan | null>(null);
   let backupUnifiedSelection = $state<BackupExecutionSelection>({});
   let backupRestoreTargetMode = $state<RestoreTargetMode>("current-profile");
@@ -1345,13 +1349,13 @@
   function backupPayloadKindLabel(kind: string): string {
     switch (kind) {
       case "manga":
-        return translate("settings_inline_manga");
+        return translate("settings_backup_includeComics");
       case "books":
-        return translate("settings_inline_books");
+        return translate("settings_backup_includeBooks");
       case "novels":
-        return translate("settings_inline_novels");
+        return translate("settings_backup_includeNovels");
       case "app":
-        return translate("settings_inline_appMetadata");
+        return translate("settings_backup_includeHistory");
       case "repositories":
         return translate("settings_backup_repositoriesFound");
       default:
@@ -1497,18 +1501,14 @@
 
   function defaultExportFilename(): string {
     const stamp = new Date().toISOString().slice(0, 10);
-    switch (backupExportMode) {
-      case "manga":
-        return `epigraph-manga-${stamp}.tachibk`;
-      case "books":
-        return `epigraph-books-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
-      case "novels":
-        return `epigraph-novels-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
-      case "app":
-        return `epigraph-profile-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
-      default:
-        return `epigraph-unified-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
-    }
+    if (backupExportMode === "manga") return `epigraph-manga-${stamp}.tachibk`;
+    const parts = [
+      backupUnifiedIncludeManga && "manga",
+      backupUnifiedIncludeBooks && "books",
+      backupUnifiedIncludeNovels && "novels",
+      backupUnifiedIncludeApp && "profile",
+    ].filter(Boolean);
+    return `epigraph-${parts.length === 1 ? parts[0] : "unified"}-${stamp}${SETTINGS_EPIGRAPH_BACKUP_EXTENSION}`;
   }
 
   async function saveBytesToPath(path: string, bytes: Uint8Array | ArrayBuffer): Promise<string> {
@@ -1545,7 +1545,7 @@
     const appVersion = await getVersion().catch(() => null);
     const sourceProfileId = currentRuntimeProfileId ?? null;
 
-    if (backupExportMode === "books" || (backupExportMode === "unified" && backupUnifiedIncludeBooks)) {
+    if (backupExportMode === "unified" && backupUnifiedIncludeBooks) {
       await flushBookLibraryPersistence();
     }
 
@@ -1565,80 +1565,6 @@
       };
     }
 
-    if (backupExportMode === "books") {
-      const booksLibraryState = await storageRuntime.loadBookLibraryState({ profileId: currentRuntimeProfileId });
-      const built = await storageRuntime.buildEpigraphBackupContainer({
-        appVersion,
-        platform: browserPlatform(),
-        sourceSurface: "desktop",
-        sourceProfileId,
-        payloads: [
-          await storageRuntime.buildEpigraphBooksPayload(
-            storageRuntime.buildEpigraphBooksSnapshotFromLibraryState(booksLibraryState),
-            {
-            exportMode: backupBooksOnlyMetadataOnly ? "metadata-only" : "full",
-            },
-          ),
-        ],
-      });
-      return {
-        bytes: built.bytes,
-        defaultPath: defaultExportFilename(),
-      };
-    }
-
-    if (backupExportMode === "novels") {
-      const [novelLibraryState, novelRepositoryState] = await Promise.all([
-        storageRuntime.loadNovelLibraryState({
-          profileId: currentRuntimeProfileId,
-          serverUrl: currentRuntimeServerUrl,
-        }),
-        storageRuntime.loadNovelRepositoryState({
-          profileId: currentRuntimeProfileId,
-          serverUrl: currentRuntimeServerUrl,
-        }),
-      ]);
-      const built = await storageRuntime.buildEpigraphBackupContainer({
-        appVersion,
-        platform: browserPlatform(),
-        sourceSurface: "desktop",
-        sourceProfileId,
-        payloads: [
-          await storageRuntime.buildEpigraphNovelsPayload(
-            storageRuntime.buildEpigraphNovelsSnapshotFromAuthoritativeState({
-              libraryState: novelLibraryState,
-              repositoryState: novelRepositoryState,
-            }),
-          ),
-        ],
-      });
-      return {
-        bytes: built.bytes,
-        defaultPath: defaultExportFilename(),
-      };
-    }
-
-    if (backupExportMode === "app") {
-      const built = await storageRuntime.buildEpigraphBackupContainer({
-        appVersion,
-        platform: browserPlatform(),
-        sourceSurface: "desktop",
-        sourceProfileId,
-        payloads: [
-          storageRuntime.buildEpigraphAppPayload({
-            defaultLocalProfileId: persistedDefaultProfileId,
-            history: store.history,
-            readLog: store.readLog,
-            readingStats: store.readingStats,
-          }),
-        ],
-      });
-      return {
-        bytes: built.bytes,
-        defaultPath: defaultExportFilename(),
-      };
-    }
-
     const payloads: EpigraphBackupPayloadBuildInput[] = [];
     if (backupUnifiedIncludeManga) {
       const manga = await fetchCurrentMangaBackup();
@@ -1654,7 +1580,7 @@
       payloads.push(await storageRuntime.buildEpigraphBooksPayload(
         storageRuntime.buildEpigraphBooksSnapshotFromLibraryState(booksLibraryState),
         {
-          exportMode: "full",
+          exportMode: backupBooksOnlyMetadataOnly ? "metadata-only" : "full",
         },
       ));
     }
@@ -1774,6 +1700,13 @@
     if (kind === "manga") return Image;
     if (kind === "books" || kind === "novels") return Book;
     return Gear;
+  }
+
+  // The restore list follows the same order as the create list.
+  const BACKUP_PAYLOAD_ORDER = ["manga", "books", "novels", "app"];
+  function backupPayloadsInCreateOrder<T extends { kind: string }>(payloads: T[]): T[] {
+    const rank = (kind: string) => { const index = BACKUP_PAYLOAD_ORDER.indexOf(kind); return index < 0 ? BACKUP_PAYLOAD_ORDER.length : index; };
+    return [...payloads].sort((a, b) => rank(a.kind) - rank(b.kind));
   }
 
   function backupPayloadCount(payload: EpigraphPayloadRestorePlan): string | null {
@@ -6648,73 +6581,68 @@
         </header>
         <div class="mg-body">
           {#if backupViewMode === "create"}
-            <div class="mg-segmented backup-modes" role="group" aria-label={$_("settings_inline_export")}>
-              {#each [
-                ["unified", $_("ui_unifiedEpigraph")],
-                ["manga", $_("ui_mangaOnly")],
-                ["books", $_("ui_booksOnly")],
-                ["novels", $_("ui_novelsOnly")],
-                ["app", $_("settings_inline_appMetadata")],
-              ] as [mode, label]}
-                <button type="button" aria-pressed={backupExportMode === mode}
-                  onclick={() => { backupExportMode = mode as BackupExportMode; backupSavedPath = null; }}>{label}</button>
-              {/each}
-            </div>
-            {#if backupExportMode === "unified"}
-              <div class="mg-list">
-                <div class="mg-row backup-switch-row">
-                  <span class="mg-row-copy"><strong>{$_("settings_inline_includeManga")}</strong></span>
-                  <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label={$_("settings_inline_includeManga")}
-                    class="mg-check" class:is-checked={backupUnifiedIncludeManga} type="button"
-                    onclick={() => backupUnifiedIncludeManga = !backupUnifiedIncludeManga}>
-                    {#if backupUnifiedIncludeManga}<Check size={13} weight="bold" />{/if}
-                  </button>
-                </div>
-                <div class="mg-row backup-switch-row">
-                  <span class="mg-row-copy"><strong>{$_("settings_inline_includeBooks")}</strong></span>
-                  <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label={$_("settings_inline_includeBooks")}
-                    class="mg-check" class:is-checked={backupUnifiedIncludeBooks} type="button"
-                    onclick={() => backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks}>
-                    {#if backupUnifiedIncludeBooks}<Check size={13} weight="bold" />{/if}
-                  </button>
-                </div>
-                <div class="mg-row backup-switch-row">
-                  <span class="mg-row-copy"><strong>{$_("settings_inline_includeNovels")}</strong></span>
-                  <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label={$_("settings_inline_includeNovels")}
-                    class="mg-check" class:is-checked={backupUnifiedIncludeNovels} type="button"
-                    onclick={() => backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels}>
-                    {#if backupUnifiedIncludeNovels}<Check size={13} weight="bold" />{/if}
-                  </button>
-                </div>
-                <div class="mg-row backup-switch-row">
-                  <span class="mg-row-copy"><strong>{$_("settings_inline_includeAppMetadata")}</strong></span>
-                  <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label={$_("settings_inline_includeAppMetadata")}
-                    class="mg-check" class:is-checked={backupUnifiedIncludeApp} type="button"
-                    onclick={() => backupUnifiedIncludeApp = !backupUnifiedIncludeApp}>
-                    {#if backupUnifiedIncludeApp}<Check size={13} weight="bold" />{/if}
-                  </button>
-                </div>
+            <p class="mg-note">{$_("settings_backup_createIntro")}</p>
+            <div class="mg-list">
+              <div class="mg-row backup-switch-row">
+                <span class="mg-row-copy"><strong>{$_("settings_backup_includeComics")}</strong><small>{$_("settings_backup_includeComicsHint")}</small></span>
+                <button role="switch" aria-checked={backupUnifiedIncludeManga} aria-label={$_("settings_backup_includeComics")}
+                  class="mg-check" class:is-checked={backupUnifiedIncludeManga} type="button"
+                  onclick={() => { backupUnifiedIncludeManga = !backupUnifiedIncludeManga; backupSavedPath = null; }}>
+                  {#if backupUnifiedIncludeManga}<Check size={13} weight="bold" />{/if}
+                </button>
               </div>
-            {:else if backupExportMode === "books"}
-              <div class="mg-list">
-                <div class="mg-row backup-switch-row">
-                  <span class="mg-row-copy"><strong>{$_("settings_inline_metadataOnlyMode")}</strong><small>{$_("settings_inline_booksMetadataOnlyHint")}</small></span>
-                  <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label={$_("settings_inline_booksMetadataOnly")}
+              {#if backupOnlyMangaSelected}
+                <div class="mg-row backup-switch-row backup-sub-row">
+                  <span class="mg-row-copy"><strong>{$_("settings_backup_mihonFormat")}</strong><small>{$_("settings_backup_mihonFormatHint")}</small></span>
+                  <button role="switch" aria-checked={backupMangaNativeFormat} aria-label={$_("settings_backup_mihonFormat")}
+                    class="mg-check" class:is-checked={backupMangaNativeFormat} type="button"
+                    onclick={() => { backupMangaNativeFormat = !backupMangaNativeFormat; backupSavedPath = null; }}>
+                    {#if backupMangaNativeFormat}<Check size={13} weight="bold" />{/if}
+                  </button>
+                </div>
+              {/if}
+              <div class="mg-row backup-switch-row">
+                <span class="mg-row-copy"><strong>{$_("settings_backup_includeBooks")}</strong><small>{$_("settings_backup_includeBooksHint")}</small></span>
+                <button role="switch" aria-checked={backupUnifiedIncludeBooks} aria-label={$_("settings_backup_includeBooks")}
+                  class="mg-check" class:is-checked={backupUnifiedIncludeBooks} type="button"
+                  onclick={() => { backupUnifiedIncludeBooks = !backupUnifiedIncludeBooks; backupSavedPath = null; }}>
+                  {#if backupUnifiedIncludeBooks}<Check size={13} weight="bold" />{/if}
+                </button>
+              </div>
+              {#if backupUnifiedIncludeBooks}
+                <div class="mg-row backup-switch-row backup-sub-row">
+                  <span class="mg-row-copy"><strong>{$_("settings_backup_booksWithoutFiles")}</strong><small>{$_("settings_backup_booksWithoutFilesHint")}</small></span>
+                  <button role="switch" aria-checked={backupBooksOnlyMetadataOnly} aria-label={$_("settings_backup_booksWithoutFiles")}
                     class="mg-check" class:is-checked={backupBooksOnlyMetadataOnly} type="button"
-                    onclick={() => backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly}>
+                    onclick={() => { backupBooksOnlyMetadataOnly = !backupBooksOnlyMetadataOnly; backupSavedPath = null; }}>
                     {#if backupBooksOnlyMetadataOnly}<Check size={13} weight="bold" />{/if}
                   </button>
                 </div>
+              {/if}
+              <div class="mg-row backup-switch-row">
+                <span class="mg-row-copy"><strong>{$_("settings_backup_includeNovels")}</strong><small>{$_("settings_backup_includeNovelsHint")}</small></span>
+                <button role="switch" aria-checked={backupUnifiedIncludeNovels} aria-label={$_("settings_backup_includeNovels")}
+                  class="mg-check" class:is-checked={backupUnifiedIncludeNovels} type="button"
+                  onclick={() => { backupUnifiedIncludeNovels = !backupUnifiedIncludeNovels; backupSavedPath = null; }}>
+                  {#if backupUnifiedIncludeNovels}<Check size={13} weight="bold" />{/if}
+                </button>
               </div>
-            {:else if backupExportMode === "manga"}
-              <p class="mg-note">{$_("settings_inline_mangaNativeExportHint")}</p>
-            {:else if backupExportMode === "novels"}
-              <p class="mg-note">{$_("settings_inline_novelsExportHint")}</p>
-            {:else if backupExportMode === "app"}
-              <p class="mg-note">{$_("settings_inline_appMetadataExportHint")}</p>
-            {/if}
+              <div class="mg-row backup-switch-row">
+                <span class="mg-row-copy"><strong>{$_("settings_backup_includeHistory")}</strong><small>{$_("settings_backup_includeHistoryHint")}</small></span>
+                <button role="switch" aria-checked={backupUnifiedIncludeApp} aria-label={$_("settings_backup_includeHistory")}
+                  class="mg-check" class:is-checked={backupUnifiedIncludeApp} type="button"
+                  onclick={() => { backupUnifiedIncludeApp = !backupUnifiedIncludeApp; backupSavedPath = null; }}>
+                  {#if backupUnifiedIncludeApp}<Check size={13} weight="bold" />{/if}
+                </button>
+              </div>
+            </div>
             {#if backupSavedPath}
               <p class="mg-note backup-saved-path">{backupSavedPath}</p>
+            {:else if backupError}
+              <div class="mg-note is-warn backup-error" role="alert">
+                <strong>{$_("settings_inline_backupActionFailed")}</strong>
+                <span>{presentOperationFailure(backupError, $_)}</span>
+              </div>
             {/if}
           {:else if backupViewMode === "restore"}
             <div class="backup-restore">
@@ -6814,11 +6742,11 @@
                         <p class="mg-note is-warn" role="alert"><Warning size={14} weight="bold" /> {$_("settings_inline_restoreBlocked")}</p>
                       {/if}
                       <div class="mg-list">
-                        {#each backupUnifiedPlan.payloads as payload}
+                        {#each backupPayloadsInCreateOrder(backupUnifiedPlan.payloads) as payload}
                           <div class="mg-row backup-switch-row">
                             <span class="mg-row-copy">
                               <strong>{backupPayloadKindLabel(payload.kind)}</strong>
-                              <small>{backupPayloadCount(payload) ?? restorePayloadSummary(payload, $_)}</small>
+                              <small>{backupPayloadCount(payload) ?? (payload.kind === "app" ? $_("settings_backup_includeHistoryHint") : restorePayloadSummary(payload, $_))}</small>
                             </span>
                             {#if isPayloadExecutable(payload)}
                               <button role="switch" aria-checked={Boolean(backupUnifiedSelection[payload.kind])} aria-label={backupPayloadKindLabel(payload.kind)}
@@ -6849,6 +6777,7 @@
                     </div>
                   {/if}
                   {#if backupImportKind && backupCanUseOtherProfileTarget}
+                    <p class="mg-note backup-target-label">{$_("settings_inline_restoreTarget")}</p>
                     <div class="mg-segmented" role="group" aria-label={$_("settings_inline_restoreTarget")}>
                       <button type="button" aria-pressed={backupRestoreTargetMode === "other-local-profile"}
                         onclick={() => {
@@ -6901,7 +6830,7 @@
         {#if backupViewMode === "create"}
           <footer class="mg-footer">
             <span class="mg-spacer"></span>
-            <button class="mg-btn mg-btn--primary" type="button" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring}>
+            <button class="mg-btn mg-btn--primary" type="button" onclick={exportBackup} disabled={backupExporting || backupValidating || backupRestoring || backupNothingSelected}>
               {backupExporting ? $_("settings_inline_exporting") : $_("settings_inline_exportBackup")}
             </button>
           </footer>
@@ -7218,8 +7147,9 @@
     box-shadow: none;
     animation: none;
   }
-  .backup-modes { flex-wrap: wrap; }
   .backup-switch-row { cursor: default; }
+  .backup-sub-row { padding-left: 28px; }
+  .backup-target-label { margin: 4px 0 -4px; }
   .backup-saved-path { color: var(--accent-fg); overflow-wrap: anywhere; }
   .backup-progress { display: grid; gap: 7px; margin-top: 12px; }
   .backup-progress p { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
