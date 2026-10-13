@@ -481,7 +481,12 @@ async fn resolve_portable_projection_identity(
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|value| *value > 0 && *value <= i32::MAX as i64);
     let chapter_id = match cached_chapter_id {
-        Some(chapter_id) => chapter_id,
+        Some(chapter_id) if trusts_cached_chapter_id(row.attempt_count) => chapter_id,
+        // A failed lookup keeps the cached id, so the row still ends in the bounded
+        // confirmation path instead of retrying the lookup forever.
+        Some(chapter_id) => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key)
+            .await
+            .unwrap_or(chapter_id),
         None => resolve_chapter_id(state, &row.profile_id, manga_id, chapter_key).await?,
     };
     let local_chapter_reference = chapter_id.to_string();
@@ -601,6 +606,7 @@ async fn resolve_chapter_id(
     chapter_key: &str,
 ) -> Result<i64, ProjectionOutcome> {
     let session = projection_session(profile_id);
+    let mut path_matches = BTreeSet::new();
     for page in 0..MAX_PORTABLE_CHAPTER_PAGES {
         let offset = (page as i64).saturating_mul(PORTABLE_CHAPTER_PAGE_SIZE);
         let data = suwayomi_catalog::execute_graphql_document(
@@ -619,31 +625,78 @@ async fn resolve_chapter_id(
         let chapters = data
             .get("chapters")
             .ok_or(ProjectionOutcome::Retry("portable_chapter_lookup_invalid"))?;
-        if let Some(id) = chapters
-            .get("nodes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|node| {
-                node.get("mangaId").and_then(Value::as_i64) == Some(manga_id)
-                    && node.get("url").and_then(Value::as_str) == Some(chapter_key)
-            })
-            .and_then(|node| node.get("id"))
-            .and_then(Value::as_i64)
-            .filter(|id| *id > 0 && *id <= i32::MAX as i64)
-        {
+        let (exact, same_path) = chapter_key_matches(chapters.get("nodes"), manga_id, chapter_key);
+        if let Some(id) = exact {
             return Ok(id);
         }
+        path_matches.extend(same_path);
         let has_next = chapters
             .get("pageInfo")
             .and_then(|value| value.get("hasNextPage"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if !has_next {
-            return Err(ProjectionOutcome::Retry("portable_chapter_not_resolved"));
+            // A host-only difference binds only when it names a single chapter of the manga.
+            return path_matches
+                .first()
+                .copied()
+                .filter(|_| path_matches.len() == 1)
+                .ok_or(ProjectionOutcome::Retry("portable_chapter_not_resolved"));
         }
     }
     Err(ProjectionOutcome::Retry("portable_chapter_lookup_limit"))
+}
+
+/// A cached chapter id is trusted only on a row's first attempt. Suwayomi gives chapters new ids
+/// when it recreates them (for example after a backup restore), and a stale id updates no chapter,
+/// so each retry looks the chapter up by key again instead of mismatching until the row blocks.
+/// `attempt_count` is the claimed row's count from before this attempt was recorded.
+fn trusts_cached_chapter_id(attempt_count: i64) -> bool {
+    attempt_count <= 0
+}
+
+/// Chapter ids on one lookup page: the chapter whose URL is exactly `chapter_key`, and the
+/// chapters whose URL differs from it only in scheme and host. Extensions move sources to new
+/// domains, so a device on a newer extension can name a chapter by an absolute URL whose host this
+/// desktop does not have yet.
+fn chapter_key_matches(
+    nodes: Option<&Value>,
+    manga_id: i64,
+    chapter_key: &str,
+) -> (Option<i64>, Vec<i64>) {
+    let key_path = chapter_url_path(chapter_key);
+    let mut exact = None;
+    let mut same_path = Vec::new();
+    for node in nodes.and_then(Value::as_array).into_iter().flatten() {
+        let Some(id) = node
+            .get("id")
+            .and_then(Value::as_i64)
+            .filter(|id| *id > 0 && *id <= i32::MAX as i64)
+        else {
+            continue;
+        };
+        if node.get("mangaId").and_then(Value::as_i64) != Some(manga_id) {
+            continue;
+        }
+        let Some(url) = node.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        if url == chapter_key {
+            exact.get_or_insert(id);
+        } else if !key_path.is_empty() && chapter_url_path(url) == key_path {
+            same_path.push(id);
+        }
+    }
+    (exact, same_path)
+}
+
+/// The path of an absolute URL (`https://host/manga/a/1` → `/manga/a/1`); a relative key is
+/// returned as is.
+fn chapter_url_path(url: &str) -> &str {
+    match url.split_once("://") {
+        Some((_, rest)) => rest.find('/').map_or("", |index| &rest[index..]),
+        None => url,
+    }
 }
 
 /// Retries a failed command unless the runtime marked it non-retryable and it already failed
@@ -971,6 +1024,64 @@ mod tests {
             confirmation_outcome(false, MAX_CONFIRMATION_ATTEMPTS),
             ProjectionOutcome::Blocked("confirmation_mismatch")
         ));
+    }
+
+    #[test]
+    fn cached_chapter_ids_are_looked_up_again_on_retry() {
+        assert!(trusts_cached_chapter_id(0));
+        // A stale id (chapters recreated by a backup restore) mismatches once, then the retry
+        // resolves the chapter key again before the row can block.
+        assert!(!trusts_cached_chapter_id(1));
+        assert!(!trusts_cached_chapter_id(MAX_CONFIRMATION_ATTEMPTS));
+    }
+
+    #[test]
+    fn chapters_match_by_exact_key_or_by_path_when_only_the_host_changed() {
+        let old_host = "https://www.mangakakalot.gg/manga/slug/chapter-50";
+        let new_host = "https://www.mangakakalove.com/manga/slug/chapter-50";
+        let nodes = json!([
+            { "id": 407268, "mangaId": 7, "url": old_host },
+            { "id": 407269, "mangaId": 7, "url": "https://www.mangakakalot.gg/manga/slug/chapter-51" },
+            { "id": 900, "mangaId": 8, "url": "https://www.mangakakalot.gg/manga/slug/chapter-50" },
+            { "id": 0, "mangaId": 7, "url": "https://other.example/manga/slug/chapter-50" },
+        ]);
+        assert_eq!(
+            chapter_key_matches(Some(&nodes), 7, old_host),
+            (Some(407268), vec![])
+        );
+        assert_eq!(
+            chapter_key_matches(Some(&nodes), 7, new_host),
+            (None, vec![407268])
+        );
+        assert_eq!(
+            chapter_key_matches(Some(&nodes), 7, "https://www.mangakakalove.com/manga/slug/chapter-52"),
+            (None, vec![])
+        );
+        // Relative keys still match only exactly or against the path of an absolute URL.
+        assert_eq!(
+            chapter_key_matches(Some(&nodes), 7, "/manga/slug/chapter-51"),
+            (None, vec![407269])
+        );
+        // A host-only URL has no path to compare.
+        assert_eq!(
+            chapter_key_matches(
+                Some(&json!([{ "id": 1, "mangaId": 7, "url": "https://a.example" }])),
+                7,
+                "https://b.example"
+            ),
+            (None, vec![])
+        );
+        assert_eq!(chapter_key_matches(None, 7, old_host), (None, vec![]));
+    }
+
+    #[test]
+    fn chapter_url_path_strips_scheme_and_host_only() {
+        assert_eq!(
+            chapter_url_path("https://www.mangakakalove.com/manga/slug/chapter-50"),
+            "/manga/slug/chapter-50"
+        );
+        assert_eq!(chapter_url_path("/manga/slug/chapter-50"), "/manga/slug/chapter-50");
+        assert_eq!(chapter_url_path("https://host.example"), "");
     }
 
     #[tokio::test]
