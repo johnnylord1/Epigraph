@@ -1,3 +1,4 @@
+import { flushSync } from "svelte";
 import { flip, type AnimationConfig } from "svelte/animate";
 import { cubicOut } from "svelte/easing";
 import { fade, fly, type FadeParams, type FlyParams, type TransitionConfig } from "svelte/transition";
@@ -182,40 +183,75 @@ export function afterPaint(commit: () => void) {
   requestAnimationFrame(() => setTimeout(commit, 0));
 }
 
-const PAGE_LEAVE_MS = 100;
-let pageLeave: { swap: () => void } | null = null;
+type CrossfadeDocument = Document & {
+  startViewTransition?: (update: () => void) => { finished: Promise<void> };
+};
+
+/** Cross-fades in progress; entrances are skipped meanwhile, since the cross-fade already is one. */
+let crossfades = 0;
+let crossfadeId = 0;
 
 /**
- * Fades the page out under a veil of the app background, then swaps it (the next page runs its own
- * entrance). The veil is one flat layer: fading the page itself kept ~2,000 of its elements styled
- * through the switch and roughly doubled its cost. Clicks during the fade retarget the pending swap.
+ * Swaps a view under a cross-fade of two snapshots of the window (a view transition). The old view
+ * stays on screen until the new one has rendered, so the app background never shows between them,
+ * which a fade-out followed by an entrance from transparent did. A transition scoped to the swapped
+ * element is not used: WebView2 paints that element empty while the new view renders. `keep`
+ * elements (the sidebar, a sliding thumb) stay live instead of fading. Returns false, without
+ * swapping, when the platform cannot cross-fade.
  */
-export function swapAfterPageLeave(swap: () => void) {
-  if (pageLeave) {
-    pageLeave.swap = swap;
+export function crossfadeSwap(swap: () => void, keep: (Element | null | undefined)[] = []): boolean {
+  const doc = document as CrossfadeDocument;
+  if (prefersReducedMotion() || typeof doc.startViewTransition !== "function") return false;
+  const id = ++crossfadeId;
+  const kept = keep.filter((element): element is HTMLElement => element instanceof HTMLElement);
+  const names = kept.map((element, index) => {
+    const name = `crossfade-keep-${id}-${index}`;
+    element.style.setProperty("view-transition-name", name);
+    element.style.setProperty("view-transition-class", "crossfade-keep");
+    return name;
+  });
+  crossfades += 1;
+  document.documentElement.classList.add("crossfade-swap");
+  const release = () => {
+    crossfades -= 1;
+    if (crossfades === 0) document.documentElement.classList.remove("crossfade-swap");
+    // A newer cross-fade may have named the same element; its names stay.
+    kept.forEach((element, index) => {
+      if (element.style.getPropertyValue("view-transition-name") !== names[index]) return;
+      element.style.removeProperty("view-transition-name");
+      element.style.removeProperty("view-transition-class");
+    });
+  };
+  try {
+    doc.startViewTransition(() => {
+      swap();
+      flushSync();
+    }).finished.then(release, release);
+  } catch {
+    release();
+    return false;
+  }
+  return true;
+}
+
+let pageSwap: { swap: () => void } | null = null;
+
+/**
+ * Swaps the page under a cross-fade (see {@link crossfadeSwap}); the sidebar stays live, so its
+ * highlight keeps gliding. Clicks before the swap runs retarget it.
+ */
+export function swapPage(swap: () => void) {
+  if (pageSwap) {
+    pageSwap.swap = swap;
     return;
   }
-  const main = document.querySelector<HTMLElement>(".main");
-  if (!main || prefersReducedMotion()) {
-    afterPaint(swap);
-    return;
-  }
-  const veil = document.createElement("div");
-  veil.className = "page-leave-veil";
-  veil.setAttribute("aria-hidden", "true");
-  veil.style.top = `${main.scrollTop}px`;
-  veil.style.height = `${main.clientHeight}px`;
-  main.append(veil);
-  const animation = veil.animate({ opacity: [0, 1] }, { duration: PAGE_LEAVE_MS, easing: "cubic-bezier(0.4, 0, 1, 1)", fill: "forwards" });
   const pending = { swap };
-  pageLeave = pending;
-  const finish = () => {
-    if (pageLeave !== pending) return;
-    pageLeave = null;
-    veil.remove();
+  pageSwap = pending;
+  const run = () => {
+    pageSwap = null;
     pending.swap();
   };
-  animation.finished.then(finish, finish);
+  if (!crossfadeSwap(run, [document.querySelector(".n-sidebar")])) afterPaint(run);
 }
 
 /** Controls that answer a press with a ripple. */
@@ -337,7 +373,7 @@ type EnterOptions = { y?: number; blur?: number; duration?: number; delay?: numb
 
 /** Arrival of a whole view (a page, a settings section, a tab panel): rises and sharpens in. */
 export function playEnter(node: Element | null | undefined, { y = 10, blur = 6, duration = 640, delay = 0, scale = 1 }: EnterOptions = {}) {
-  if (!node || prefersReducedMotion()) return;
+  if (!node || prefersReducedMotion() || crossfades > 0) return;
   animate(node, [
     { opacity: 0, transform: `translateY(${y}px) scale(${scale})`, filter: `blur(${blur}px)` },
     { opacity: 1, transform: "none", filter: "blur(0)" },

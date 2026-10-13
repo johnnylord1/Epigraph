@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { afterPaint } from "../../lib/motion/motion";
+  import { afterPaint, crossfadeSwap } from "../../lib/motion/motion";
   import { _ } from "../../lib/i18n/runtime";
   import type { LibrarySectionKind, LibrarySectionTabVM } from "../../lib/library/contracts";
   import AppTopbar from "../layout/AppTopbar.svelte";
@@ -27,17 +27,20 @@
     onSectionChange = () => {},
   }: Props = $props();
 
-  // The thumb slides in the click's frame; the section swap renders after that frame paints.
+  // The thumb slides in the click's frame; the section swap renders under a cross-fade (the tabs
+  // stay live, so the thumb keeps gliding).
   let pendingSection = $state<LibrarySectionKind | null>(null);
   const shownSection = $derived(pendingSection ?? sectionTabs.find((tab) => tab.active)?.id ?? "comics");
+  let tabsEl = $state<HTMLElement>();
 
   function selectSection(id: LibrarySectionKind) {
     if (shownSection === id) return;
     pendingSection = id;
-    afterPaint(() => {
+    const commit = () => {
       onSectionChange(id);
       if (pendingSection === id) pendingSection = null;
-    });
+    };
+    if (!crossfadeSwap(commit, [tabsEl])) afterPaint(commit);
   }
 </script>
 
@@ -45,7 +48,7 @@
   <AppTopbar className="library-header-topbar">
     {#snippet left()}
       <div class="header-left">
-      <nav class="n-segmented section-tabs" aria-label={$_("library_sectionsAria")} data-active={shownSection}>
+      <nav class="n-segmented section-tabs" aria-label={$_("library_sectionsAria")} data-active={shownSection} bind:this={tabsEl}>
         <span class="n-segmented__thumb" aria-hidden="true"></span>
         {#each sectionTabs as tab}
           <button

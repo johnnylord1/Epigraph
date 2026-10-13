@@ -4,7 +4,7 @@
   import { store, setNavPage, setSettingsOpen, openHomeDashboard } from "../../store/state.svelte";
   import type { NavPage } from "../../store/state.svelte";
   import { flushSync } from "svelte";
-  import { swapAfterPageLeave } from "../../lib/motion/motion";
+  import { swapPage } from "../../lib/motion/motion";
 
   const MAIN_TABS: Array<{ id: Exclude<NavPage, "settings">; labelKey: string }> = [
     { id: "home", labelKey: "shell.navigation.home" },
@@ -34,7 +34,7 @@
   const hasDownloadError = $derived(!hasDownloadActivity && failedDownloadCount > 0);
 
   // The pressed destination lights up in the click's frame; the page swap (a heavy render) waits
-  // while the old page fades out, so the highlight glides instead of jumping after the render.
+  // under a cross-fade from the old page, so the highlight glides instead of jumping after the render.
   let pendingNav = $state<NavPage | null>(null);
   const shownNav = $derived(pendingNav ?? store.navPage);
 
@@ -44,7 +44,7 @@
       return;
     }
     pendingNav = id;
-    swapAfterPageLeave(() => {
+    swapPage(() => {
       commit();
       if (pendingNav === id) pendingNav = null;
       flushSync();
