@@ -219,8 +219,12 @@
         if (gapProbe.offsetHeight > 0) rowGapPx = gapProbe.offsetHeight;
       }
     };
-    read();
-    if (typeof ResizeObserver === "undefined") return;
+    // The observer's first callback lands after layout and before paint, so reading here
+    // would only force an extra synchronous layout when the section becomes active.
+    if (typeof ResizeObserver === "undefined") {
+      read();
+      return;
+    }
     const observer = new ResizeObserver(read);
     observer.observe(el);
     return () => observer.disconnect();

@@ -182,7 +182,8 @@
   let lastLoadedScopeKey: string | null = null;
   const libraryLoadRetryLimit = 30;
   const categoryLoadRetryLimit = 12;
-  let novelsLibraryState = $state(peekNovelLibraryState({
+  // Replaced as a whole, never mutated: a deep proxy made every read of the chapter list slow.
+  let novelsLibraryState = $state.raw(peekNovelLibraryState({
     profileId: store.runtimeResolvedLocalProfileId,
     serverUrl: store.runtimeServerUrl,
   }));
@@ -2362,6 +2363,8 @@
     visibility: hidden;
     pointer-events: none;
     overflow: hidden;
+    /* Keeps the hidden section's rendering state but skips its style, layout and paint work. */
+    content-visibility: hidden;
   }
 
   .library-section-panel.is-active {
@@ -2372,6 +2375,7 @@
     visibility: visible;
     pointer-events: auto;
     overflow: visible;
+    content-visibility: visible;
   }
 
   .library-hero {
