@@ -99,7 +99,9 @@ val RELEASE_TAG: String by lazy {
     if (BuildConfig.NIGHTLY) {
         "r${BuildConfig.COMMIT_COUNT}"
     } else {
-        "v${BuildConfig.VERSION_NAME}"
+        // Desktop and mobile are released separately: each Android build has its own
+        // `mobile-v<version>` release, while `stable` holds the current builds of both apps.
+        "mobile-v${BuildConfig.VERSION_NAME}"
     }
 }
 

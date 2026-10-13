@@ -22,8 +22,8 @@ data class GithubRelease(
 ) {
 
     /**
-     * Version of the Android app in this release. Releases are tagged with the desktop version,
-     * so the app version comes from the APK names (`Epigraph-mobile_<version>_<abi>.apk`).
+     * Version of the Android app in this release. The `stable` release carries the current builds
+     * of both apps, so the app version comes from the APK names (`Epigraph-mobile_<version>_<abi>.apk`).
      * Null when the release carries no Android build.
      */
     val mobileVersion: String?
