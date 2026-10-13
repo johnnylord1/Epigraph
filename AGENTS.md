@@ -84,6 +84,14 @@
 - TTS: keep browser `speechSynthesis` behavior and existing voice/rate/progress state. Do not add native TTS or new engines unless requested.
 - Downloads/cache/thumbnails: downloads and imported books are user data. Cache cleanup must not delete downloads, imports, reading history, or library records.
 
+## Releases
+
+- Desktop and mobile are released separately; the process is in `docs/releasing.md`. Each build gets its own `desktop-v<version>` or `mobile-v<version>` release, and the `stable` release, always marked Latest, holds the current `latest.json` and APKs that both updaters read.
+- Publish only with `node scripts/publish-release.mjs` (`--dry-run` first). Never publish a `desktop-v`/`mobile-v` release or change Latest from the GitHub UI: a Latest release without APKs or without `latest.json` stops the mobile or desktop updater from finding updates.
+- Release notes passed with `--notes` use `###` headings at most. The Android app shows the `## Android` section of `stable` up to the next `## ` heading, so a `##` in the notes cuts the changelog.
+- Publish only the signed `Epigraph-mobile_<version>_{arm64-v8a,armeabi-v7a,universal}.apk` builds. Never publish updater-test or x86/x86_64 APKs.
+- Either app may ship alone, so sync contracts must stay compatible within one protocol version: Syncd and mobile must ignore unknown fields, and fields are added, never renamed or removed. A breaking change needs a protocol version bump and a release of both apps.
+
 ## Final Response
 
 - Summarize what changed and list the files changed.
