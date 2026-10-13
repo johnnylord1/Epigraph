@@ -648,6 +648,8 @@
     <string name="restore_missing_trackers">Monitoradores sem login realizado:</string>
     <string name="restore_new_repositories">Repositórios de plugins de novels que serão adicionados:</string>
     <string name="restore_repository_unavailable">Não foi possível acessar o repositório de plugins, adicione-o depois em Extensões</string>
+    <string name="restore_new_extension_repositories">Repositórios de extensões que serão adicionados:</string>
+    <string name="restore_extension_repository_unavailable">Não foi possível acessar o repositório de extensões, adicione-o depois em Extensões</string>
     <string name="restore_content_full">Os dados do arquivo de backup serão restaurados.
 \n
 \nVocê precisará instalar quaisquer extensões que estejam faltando e depois realizar o login nos serviços de monitoramento para utilizá-los.</string>

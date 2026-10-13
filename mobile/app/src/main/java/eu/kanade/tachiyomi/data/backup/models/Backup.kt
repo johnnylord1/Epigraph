@@ -5,7 +5,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.Transient
 import kotlinx.serialization.protobuf.ProtoNumber
 
 @Serializable
@@ -16,9 +15,13 @@ data class Backup(
     @ProtoNumber(101) var backupSources: List<BackupSource> = emptyList(),
     @ProtoNumber(104) var backupPreferences: List<BackupPreference> = emptyList(),
     @ProtoNumber(105) var backupSourcePreferences: List<BackupSourcePreferences> = emptyList(),
+    // Mihon stores its extension repositories in 106 too; BackupUtil moves those entries out
+    // before decoding (see ForeignBackupFields).
     @ProtoNumber(106) var backupLocalBooks: List<BackupLocalBook> = emptyList(),
-    /** Novel plugin repositories an imported LNReader backup used; never written to a backup. */
-    @Transient val novelRepositories: List<BackupNovelRepository> = emptyList(),
+    /** Manga extension repositories; Mihon's entries and J2K's `extension_repos` preference land here too. */
+    @ProtoNumber(900) val backupExtensionRepos: List<BackupExtensionRepo> = emptyList(),
+    /** Novel plugin repositories, written by Epigraph or taken from an imported LNReader backup. */
+    @ProtoNumber(901) val novelRepositories: List<BackupNovelRepository> = emptyList(),
 ) {
 
     companion object {

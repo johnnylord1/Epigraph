@@ -32,6 +32,8 @@ object BackupPreferencePolicy {
 
     /**
      * The app preferences of a backup that restore may write, before secret and app state checks.
+     * The repository preferences of older forks are left out: restore adds those repositories to
+     * the repository list ([ExtensionRepoBackup]) instead.
      * Source languages, hidden and pinned sources are added to this device's own sets
      * ([deviceSet] gives their current value) instead of replacing them: a backup that enabled
      * only English must not hide the Portuguese sources installed here.
@@ -44,7 +46,9 @@ object BackupPreferencePolicy {
             it.key == ORIGIN_KEY && (it.value as? StringPreferenceValue)?.value == ORIGIN_VALUE
         }
         return preferences
-            .filter { (key) -> !isDeviceOnly(key) && (fromEpigraph || !isAppearance(key)) }
+            .filter { (key) ->
+                !isDeviceOnly(key) && key !in ExtensionRepoBackup.LEGACY_KEYS && (fromEpigraph || !isAppearance(key))
+            }
             .map { preference ->
                 val value = preference.value
                 if (preference.key in MERGED_KEYS && value is StringSetPreferenceValue) {

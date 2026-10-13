@@ -1,4 +1,11 @@
 package eu.kanade.tachiyomi.data.backup.models
 
-/** A novel plugin repository index to add during a restore, such as one an LNReader backup used. */
-data class BackupNovelRepository(val url: String, val name: String)
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoNumber
+
+/** A novel plugin repository index to add during a restore, from an Epigraph or LNReader backup. */
+@Serializable
+data class BackupNovelRepository(
+    @ProtoNumber(1) val url: String,
+    @ProtoNumber(2) val name: String = "",
+)

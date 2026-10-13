@@ -870,6 +870,8 @@
     <string name="restore_missing_trackers">Trackers not logged into:</string>
     <string name="restore_new_repositories">Novel plugin repositories to add:</string>
     <string name="restore_repository_unavailable">The plugin repository could not be reached, add it later in Extensions</string>
+    <string name="restore_new_extension_repositories">Extension repositories to add:</string>
+    <string name="restore_extension_repository_unavailable">The extension repository could not be reached, add it later in Extensions</string>
     <string name="restore_content_full">Data from the backup file will be restored.\n\nYou will need to install any missing extensions and log in to tracking services afterwards to use them.</string>
     <string name="restoring_backup_canceled">Canceled restore</string>
     <string name="backup_restore_invalid_uri">Error: empty URI</string>

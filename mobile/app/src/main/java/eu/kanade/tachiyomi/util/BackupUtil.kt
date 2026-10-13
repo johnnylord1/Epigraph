@@ -5,6 +5,8 @@ import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.backup.lnreader.LnReaderBackupConverter
 import eu.kanade.tachiyomi.data.backup.BackupContainer
+import eu.kanade.tachiyomi.data.backup.ExtensionRepoBackup
+import eu.kanade.tachiyomi.data.backup.ForeignBackupFields
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import java.io.BufferedInputStream
 import java.io.Closeable
@@ -116,7 +118,16 @@ object BackupUtil {
             rawBackup
         }
 
-        return ProtoBuf.decodeFromByteArray(Backup.serializer(), backupBytes)
+        // Mihon writes its extension repositories where Epigraph keeps local books, and J2K keeps
+        // them in a preference; both end up with the repositories Epigraph wrote itself.
+        val extracted = ForeignBackupFields.extract(backupBytes)
+        val backup = ProtoBuf.decodeFromByteArray(Backup.serializer(), extracted.payload)
+        val repos = ExtensionRepoBackup.distinct(
+            backup.backupExtensionRepos +
+                extracted.extensionRepos +
+                ExtensionRepoBackup.fromLegacyPreferences(backup.backupPreferences),
+        )
+        return if (repos == backup.backupExtensionRepos) backup else backup.copy(backupExtensionRepos = repos)
     }
 
     /**

@@ -366,6 +366,11 @@ class SettingsDataLegacyController : SettingsLegacyController() {
                 results.newRepositories.joinToString("\n") { "- $it" }
                 }"
             }
+            if (results.newExtensionRepositories.isNotEmpty()) {
+                message += "\n\n${activity.getString(MR.strings.restore_new_extension_repositories)}\n${
+                results.newExtensionRepositories.joinToString("\n") { "- $it" }
+                }"
+            }
 
             activity.materialAlertDialog()
                 .setTitle(MR.strings.restore_backup)

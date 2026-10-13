@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.BackupUtil
 import kotlinx.coroutines.runBlocking
+import yokai.domain.extension.repo.ExtensionRepoRepository
 import yokai.i18n.MR
 import yokai.util.lang.getString
 
@@ -20,6 +21,7 @@ class BackupFileValidator(
     private val extensionManager: ExtensionManager = get(),
     private val novelPluginManager: NovelPluginManager = get(),
     private val novelRepos: NovelRepoRepository = get(),
+    private val extensionRepos: ExtensionRepoRepository = get(),
 ) {
 
     /**
@@ -77,12 +79,28 @@ class BackupFileValidator(
                 .map { "${it.name} (${it.url})" }
         }
 
-        return Results(missingSources, missingTrackers, newRepositories)
+        // Extension repositories (Epigraph, Mihon, J2K) the restore will add.
+        val newExtensionRepositories = if (backup.backupExtensionRepos.isEmpty()) {
+            emptyList()
+        } else {
+            val configured = runBlocking { extensionRepos.getAll() }
+                .mapNotNull { ExtensionRepoBackup.baseUrl(it.baseUrl) }
+                .toSet()
+            backup.backupExtensionRepos
+                .mapNotNull { repository -> ExtensionRepoBackup.baseUrl(repository.baseUrl)?.let { repository to it } }
+                .filter { (_, baseUrl) -> baseUrl !in configured }
+                .map { (repository, baseUrl) ->
+                    if (repository.name.isBlank()) baseUrl else "${repository.name} ($baseUrl)"
+                }
+        }
+
+        return Results(missingSources, missingTrackers, newRepositories, newExtensionRepositories)
     }
 
     data class Results(
         val missingSources: List<String>,
         val missingTrackers: List<String>,
         val newRepositories: List<String> = emptyList(),
+        val newExtensionRepositories: List<String> = emptyList(),
     )
 }

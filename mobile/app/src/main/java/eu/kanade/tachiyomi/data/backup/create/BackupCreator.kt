@@ -6,12 +6,15 @@ import android.net.Uri
 import co.touchlab.kermit.Logger
 import com.hippo.unifile.UniFile
 import epigraph.books.local.LocalBookRepository
+import epigraph.novel.repo.NovelRepoRepository
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.backup.BackupContainer
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
+import eu.kanade.tachiyomi.data.backup.models.BackupExtensionRepo
 import eu.kanade.tachiyomi.data.backup.models.BackupLocalBook
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelRepository
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
@@ -32,6 +35,7 @@ import okio.buffer
 import okio.gzip
 import okio.sink
 import yokai.domain.backup.BackupPreferences
+import yokai.domain.extension.repo.ExtensionRepoRepository
 import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
 import yokai.util.lang.getString
@@ -47,6 +51,8 @@ class BackupCreator(
     private val localBookBackupCreator: LocalBookBackupCreator = LocalBookBackupCreator(),
     private val getManga: GetManga = get(),
     private val localBookRepository: LocalBookRepository = get(),
+    private val extensionRepos: ExtensionRepoRepository = get(),
+    private val novelRepos: NovelRepoRepository = get(),
 ) {
 
     val parser = ProtoBuf
@@ -96,6 +102,8 @@ class BackupCreator(
                 backupPreferences = backupAppPreferences(options),
                 backupSourcePreferences = backupSourcePreferences(options),
                 backupLocalBooks = backupLocalBooks(options),
+                backupExtensionRepos = backupExtensionRepos(),
+                novelRepositories = backupNovelRepositories(),
             )
 
             val byteArray = parser.encodeToByteArray(Backup.serializer(), backup)
@@ -189,6 +197,19 @@ class BackupCreator(
 
         return preferenceBackupCreator.createSource()
     }
+
+    /**
+     * Repositories go into every backup: the restored titles need them to install their
+     * extensions and plugins. The signing key is kept for reference only; restore reads it again
+     * from the repository.
+     */
+    private suspend fun backupExtensionRepos(): List<BackupExtensionRepo> =
+        extensionRepos.getAll().map {
+            BackupExtensionRepo(it.baseUrl, it.name, it.shortName, it.website, it.signingKeyFingerprint)
+        }
+
+    private suspend fun backupNovelRepositories(): List<BackupNovelRepository> =
+        novelRepos.getAll().map { BackupNovelRepository(url = it.baseUrl, name = it.name) }
 
     /** The private files of the backed-up local books that are present on this device. */
     private suspend fun storedBookFiles(books: List<BackupLocalBook>): List<BackupContainer.LocalBookFile> =
