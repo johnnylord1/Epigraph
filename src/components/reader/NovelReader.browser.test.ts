@@ -5,7 +5,7 @@ import { userEvent } from "@vitest/browser/context";
 import { DEFAULT_SETTINGS, store } from "../../store/state.svelte";
 import { resetNovelLibraryStateCacheForTests } from "../../lib/novels/libraryState";
 import type { PersistedNovelLibraryState } from "../../lib/novels/domain";
-import { createNovelReaderPreparation, prepareNovelReaderForRestore, registerNovelReaderPreparation } from "../../lib/reader/restorePreparation";
+import { createNovelReaderPreparation, prepareNovelReaderForRestore, registerNovelReaderPreparation, type NovelReaderPreparation } from "../../lib/reader/restorePreparation";
 import { PROSE_READER_PALETTES } from "../../lib/reader/prosePalette";
 import JSZip from "jszip";
 import { createProductionRestoreWorkflow } from "../../lib/backup/productionRestoreWorkflow";
@@ -365,7 +365,7 @@ describe("novel reader progress lifecycle", () => {
 
   test("the registered application capability waits for the actual reader persistence barrier", async () => {
     const { component, viewer } = await mountedReader();
-    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component, () => store.activeNovelReader !== null));
+    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component as unknown as NovelReaderPreparation, () => store.activeNovelReader !== null));
     let release!: () => void;
     disk.pending = new Promise<void>(resolve => { release = resolve; });
     try {
@@ -383,7 +383,7 @@ describe("novel reader progress lifecycle", () => {
 
   test("the production restore workflow drains the mounted reader before merging and awaiting native persistence", async () => {
     const { component, viewer } = await mountedReader();
-    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component, () => store.activeNovelReader !== null));
+    const unregister = registerNovelReaderPreparation(createNovelReaderPreparation(() => component as unknown as NovelReaderPreparation, () => store.activeNovelReader !== null));
     const zip = new JSZip();
     zip.file("Version.json", "{}");
     zip.file("NovelAndChapters/99.json", JSON.stringify({ id: 99, pluginId: "fixture", path: "/novel", name: "Old title", chapters: [{ id: 90, path: "/chapter-2", name: "Missing chapter", position: 2, unread: true }] }));

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyAppLanguage, resolveMessageLocale, translate } from "./runtime";
+// @ts-expect-error -- Paraglide emits plain JS without declarations; the test reads messages by key.
 import { m } from "../../paraglide/messages.js";
 import { APP_LANGUAGE_OPTIONS, normalizeAppLanguage } from "./languages";
 import en from "../../../messages/en.json";

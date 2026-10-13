@@ -182,7 +182,7 @@ export async function prepareManagedServerStartup(input: ServerLifecycleInput) {
 
 export async function maybeStandbyLocalServer(input: ServerLifecycleInput) {
   const serverUrl = input.serverUrl ?? null;
-  if (!isLoopbackServerUrl(serverUrl)) return false;
+  if (!serverUrl || !isLoopbackServerUrl(serverUrl)) return false;
   if (!(await probeServerHealth(serverUrl))) return false;
   serversKnownReady.delete(serverUrl);
   await invoke<void>("kill_server", { serverUrl });

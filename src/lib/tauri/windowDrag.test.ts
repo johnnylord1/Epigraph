@@ -14,7 +14,7 @@ const INTERACTIVE = "button, [data-no-window-drag]";
 function press(target: Element, init: MouseEventInit) {
   const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, ...init });
   let taken = false;
-  target.addEventListener("mousedown", (e) => { taken = handleWindowDragMouseDown(e, INTERACTIVE); }, { once: true });
+  target.addEventListener("mousedown", (e) => { taken = handleWindowDragMouseDown(e as MouseEvent, INTERACTIVE); }, { once: true });
   target.dispatchEvent(event);
   return { taken, event };
 }

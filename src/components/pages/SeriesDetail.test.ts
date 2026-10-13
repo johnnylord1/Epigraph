@@ -28,7 +28,11 @@ vi.mock("../../lib/manga/runtime", () => ({ fetchSourceMangaChapters: fetchSourc
 vi.mock("../../lib/manga/coverResolver", () => ({ resolveMangaCoverUrl: vi.fn(() => "") }));
 
 import { store } from "../../store/state.svelte";
-import SeriesDetail, { resetSeriesDetailCacheForTests } from "./SeriesDetail.svelte";
+import SeriesDetail from "./SeriesDetail.svelte";
+import * as seriesDetailModule from "./SeriesDetail.svelte";
+
+// The ambient *.svelte typings only declare the component, not module-script exports.
+const { resetSeriesDetailCacheForTests } = seriesDetailModule as unknown as { resetSeriesDetailCacheForTests: () => void };
 
 const MANGA = { id: 7, title: "Offline series", thumbnailUrl: "", inLibrary: true, chapterCount: 2, source: { id: "1", displayName: "Local" } } as unknown as Manga;
 
