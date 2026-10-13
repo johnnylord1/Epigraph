@@ -1317,11 +1317,15 @@
   }
 
   function handleTopbarSearchInput(query: string) {
+    // The field is the source of truth: a stale copy here would be synced back into kw_query
+    // and resurface a cleared search the next time the Search tab is shown.
+    searchQuery = query;
     setSearchQuery(query);
     if (activeBrowseTab === "keyword") {
       kw_query = query;
       if (!query.trim()) {
         kw_abortCtrl?.abort();
+        pendingPrefill = "";
         kw_submitted = "";
         kw_results = [];
         kw_novelResults = [];
@@ -1331,10 +1335,7 @@
 
     if (activeBrowseTab === "browse") {
       tag_tagFilter = query;
-      return;
     }
-
-    searchQuery = query;
   }
 
   function handleBrowseSearchFocus() {
@@ -3790,6 +3791,7 @@
       return;
     }
 
+    searchQuery = item.candidate.title;
     kw_query = item.candidate.title;
     activeBrowseTab = "keyword";
     void kwDoSearch(item.candidate.title);
@@ -8571,7 +8573,6 @@
     box-sizing: border-box;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
     scroll-padding-inline: var(--component-browse-searchrecommendationrow-scroll-padding-inline);
     padding: var(--component-browse-searchrecommendationrow-padding);
     scrollbar-width: thin;
@@ -8584,7 +8585,6 @@
   .searchRecommendationRow[data-rail-dragging],
   .sourceRow[data-rail-dragging] {
     cursor: grabbing;
-    scroll-snap-type: none;
     user-select: none;
   }
   .searchRecommendationRow[data-rail-dragging] :global(*),
@@ -8606,7 +8606,6 @@
     width: var(--component-browse-searchrecommendationrow-n-library-card-width);
     height: var(--component-browse-searchrecommendationrow-n-library-card-height);
     min-width: 0;
-    scroll-snap-align: start;
   }
   .searchRecommendationRow .n-library-card__cover {
     flex: 0 0 auto;
@@ -8972,7 +8971,6 @@
   .searchRecommendationRow .skCard {
     flex: var(--component-browse-searchrecommendationrow-n-library-card-flex);
     width: var(--component-browse-searchrecommendationrow-n-library-card-width);
-    scroll-snap-align: start;
   }
   .searchRecommendationRow .skCover {
     aspect-ratio: var(--component-browse-searchrecommendationrow-n-library-card-cover-aspect-ratio);

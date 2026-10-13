@@ -61,6 +61,7 @@
   import ReaderHud from "./ReaderHud.svelte";
   import { isDetachedReaderWindow } from "../../lib/reader/detachedChannel";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { captureScrollAnchor, restoreScrollAnchor, type ScrollAnchor } from "../../lib/reader/scrollAnchor";
   import { clampReaderPage, registerReaderCloseGuard, selectDominantReaderPage, type VisibleReaderPage } from "../../lib/reader/runtime";
   import { setGenericReading, setTtsPresence } from "../../lib/discord";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
@@ -356,6 +357,14 @@
   let lastProgressSignature: string | null = null;
   // Opening an EPUB moves through a few pages before it settles on the saved spot; only the settled one is saved.
   let epubRestoring = false;
+  // Zoom and type changes reflow the EPUB; the spot shown before the change is shown again after it.
+  let epubLayoutKey = "";
+  let epubReflowAnchor: string | null = null;
+  let epubReflowToken = 0;
+  // Zooming a PDF resizes its pages; the passage that was on screen is put back as they are redrawn.
+  let pdfZoomAnchor: ScrollAnchor | null = null;
+  let pdfZoomAnchorUntil = 0;
+  let pdfLayoutKey = "";
   let visiblePdfPages = new Map<number, VisibleReaderPage>();
   let visiblePdfProgressRafId: number | null = null;
   let reflowAnchorRafId: number | null = null;
@@ -556,6 +565,62 @@
     }
   }
 
+  /** Applies the reader stylesheet and, when it changed the text layout, shows the same spot again. */
+  async function applyEpubThemeKeepingPlace() {
+    const rendition = currentRendition;
+    if (!rendition || activeBook?.subtype !== "epub") return;
+    const layoutKey = `${zoomPct}|${proseFontSize}|${proseLineHeight}|${proseParagraphSpacing}|${proseFontFamily}|${proseTextAlign}`;
+    const layoutChanged = epubLayoutKey !== "" && epubLayoutKey !== layoutKey;
+    epubLayoutKey = layoutKey;
+    // While the book is opening it settles on the saved spot by itself.
+    const opening = epubRestoring && epubReflowAnchor === null;
+    const cfi = epubReflowAnchor ?? rendition.currentLocation?.()?.start?.cfi ?? currentLocation;
+    applyEpubTheme();
+    if (!layoutChanged || opening || !cfi) return;
+    const token = loadToken;
+    const reflowToken = ++epubReflowToken;
+    epubReflowAnchor = cfi;
+    epubRestoring = true;
+    await Promise.all((rendition.getContents?.() ?? []).map((contents: any) => contents.document?.fonts?.ready));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    if (reflowToken !== epubReflowToken || token !== loadToken || currentRendition !== rendition) return;
+    try {
+      await rendition.display(cfi);
+    } catch {}
+    if (reflowToken !== epubReflowToken || token !== loadToken || currentRendition !== rendition) return;
+    epubReflowAnchor = null;
+    epubRestoring = false;
+    persistEpubProgress();
+  }
+
+  function pdfZoomAnchorCandidates(viewer: HTMLElement): HTMLElement[] {
+    if (store.settings.bookReaderFlow === "scrolled") {
+      return Array.from(viewer.querySelectorAll<HTMLElement>(".pdf-page-wrapper"));
+    }
+    return canvasEl ? [canvasEl] : [];
+  }
+
+  function capturePdfZoomAnchor() {
+    if (activeBook?.subtype !== "pdf" || pdfReflowMode) return;
+    const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
+    if (!viewer) return;
+    // Repeated zoom steps keep the passage chosen by the first one instead of drifting.
+    if (!pdfZoomAnchor || Date.now() > pdfZoomAnchorUntil) {
+      pdfZoomAnchor = captureScrollAnchor(viewer, pdfZoomAnchorCandidates(viewer));
+    }
+    pdfZoomAnchorUntil = Date.now() + 1200;
+  }
+
+  function reapplyPdfZoomAnchor() {
+    if (!pdfZoomAnchor) return;
+    if (Date.now() > pdfZoomAnchorUntil) {
+      pdfZoomAnchor = null;
+      return;
+    }
+    const viewer = document.querySelector(".book-viewer") as HTMLElement | null;
+    if (viewer) restoreScrollAnchor(viewer, pdfZoomAnchor);
+  }
+
   function cycleProseTheme() {
     const themes = ["nocturne", "dark", "sepia", "light", "oled", "slate", "forest", "nord", "warm"] as const;
     const current = themes.findIndex((theme) => theme === proseTheme);
@@ -711,6 +776,11 @@
     pendingPdfPage = null;
     lastProgressSignature = null;
     epubRestoring = false;
+    epubLayoutKey = "";
+    epubReflowAnchor = null;
+    epubReflowToken += 1;
+    pdfZoomAnchor = null;
+    pdfLayoutKey = "";
     visiblePdfPages.clear();
     if (visiblePdfProgressRafId !== null) {
       cancelAnimationFrame(visiblePdfProgressRafId);
@@ -1125,6 +1195,7 @@
       return;
     }
     if (!rendered) return;
+    reapplyPdfZoomAnchor();
     syncPdfProgress(targetPage);
     setStage("pdf.page.rendered");
     auditReader("books.reader.pdf.page.rendered", {
@@ -1381,7 +1452,11 @@
   }
 
   function setZoom(value: number) {
-    updateSettings({ bookReaderZoom: clampZoom(value) });
+    const next = clampZoom(value);
+    if (next === zoom) return;
+    capturePdfZoomAnchor();
+    updateSettings({ bookReaderZoom: next });
+    void tick().then(reapplyPdfZoomAnchor);
   }
 
   function adjustZoom(delta: number) {
@@ -1389,7 +1464,7 @@
   }
 
   function resetZoom() {
-    updateSettings({ bookReaderZoom: 1 });
+    setZoom(1);
   }
 
   function toggleBookmark() {
@@ -1569,12 +1644,17 @@
     const nextZoom = zoom;
     pdfReflowMode;
     if (book?.subtype === "epub" && rendition) {
-      applyEpubTheme();
+      untrack(() => void applyEpubThemeKeepingPlace());
       return;
     }
     if (book?.subtype === "pdf" && pdf) {
       untrack(() => {
+        const layoutKey = `${pdfDocumentGeneration}|${pdfReflowMode}`;
+        const zoomOnly = pdfLayoutKey === layoutKey;
+        pdfLayoutKey = layoutKey;
         if (pdfReflowMode) {
+          // Reflowed text follows the type size, not the page zoom; stay where the reader is.
+          if (zoomOnly) return;
           loadReflowPagesAround(pageNumber);
           void tick().then(() => scrollToPdfPage(pageNumber, "auto"));
           syncPdfProgress(pageNumber);
@@ -1595,7 +1675,7 @@
     prosePalette.text;
     prosePalette.surface;
     if (activeBook?.subtype === "epub" && currentRendition) {
-      untrack(() => applyEpubTheme());
+      untrack(() => void applyEpubThemeKeepingPlace());
     }
   });
 
@@ -1769,6 +1849,8 @@
         canvas.style.height = `${viewport.height}px`;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+        // The canvas has its new size now; keep the zoomed passage in view while the pages around it resize.
+        reapplyPdfZoomAnchor();
         const renderTask = page.render({ canvasContext: ctx, viewport });
         localRenderTask = renderTask;
         await renderTask.promise;

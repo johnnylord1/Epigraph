@@ -697,7 +697,7 @@
   .settingsAside {
     display: flex;
     flex-direction: column;
-    padding: 18px 22px 20px;
+    padding: 16px 20px;
     border-right: 1px solid var(--component-sources-panel-border);
   }
 
@@ -710,10 +710,10 @@
   }
 
   .description {
-    margin: 0 0 16px;
+    margin: 0 0 12px;
     color: var(--component-sources-body-fg);
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 12.5px;
+    line-height: 1.45;
   }
 
   .availablePanel,
@@ -723,12 +723,12 @@
     border-top: 1px solid var(--component-sources-panel-border);
     border-radius: 0;
     background: transparent;
-    padding: 14px 0;
+    padding: 12px 0;
   }
 
   .detailsSection {
     display: grid;
-    gap: 10px;
+    gap: 6px;
   }
 
   .compatibilitySection summary,
@@ -803,7 +803,7 @@
 
   .compatibilityEmpty {
     display: grid;
-    gap: 10px;
+    gap: 8px;
   }
 
   .compatibilityEmpty div {
@@ -820,7 +820,7 @@
   }
 
   .compatibilityProbeButton {
-    min-height: 34px;
+    min-height: 32px;
     margin-top: 10px;
     padding: 0 14px;
     border-radius: var(--component-sources-settings-item-radius);
@@ -868,20 +868,37 @@
 
   .availablePanel {
     display: grid;
-    gap: 12px;
+    gap: 10px;
   }
 
   .detailsGrid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 14px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
 
+  /* Short facts sit on one line (label left, value right); long identifiers keep their own line. */
   .detailItem {
-    display: grid;
-    gap: 3px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
     min-width: 0;
-    padding: 6px 0;
+    padding: 3px 0;
+  }
+
+  .detailItem strong {
+    text-align: right;
+  }
+
+  .detailItemWide {
+    display: grid;
+    gap: 2px;
+    padding: 4px 0;
+  }
+
+  .detailItemWide strong {
+    text-align: left;
   }
 
   .detailItemWide,
@@ -913,7 +930,7 @@
     justify-content: center;
     gap: 8px;
     width: 100%;
-    min-height: 38px;
+    min-height: 36px;
     font-size: 13px;
   }
 
@@ -933,7 +950,7 @@
 
   .removePanel {
     margin-top: auto;
-    padding-top: 14px;
+    padding-top: 12px;
     border-top: 1px solid var(--component-sources-panel-border);
   }
 

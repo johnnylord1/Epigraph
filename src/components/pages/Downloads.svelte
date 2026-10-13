@@ -679,126 +679,124 @@
 </script>
 
 <div class="root n-page-shell epigraph-port--downloads" out:leaveView|global>
-  <div class="downloads-topbar-shell">
-    <AppTopbar className="downloads-topbar">
-      {#snippet center()}
-        <div class="n-search" data-component="search-bar">
-          <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
-          <input
-            class="n-search__input"
-            type="text"
-            role="combobox"
-            aria-expanded={store.searchOpen}
-            aria-controls="epigraph-search-results"
-            aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
-            aria-autocomplete="list"
-            placeholder={$_("downloads.searchPlaceholder")}
-            value={searchQuery}
-            onfocus={engageSearch}
-            onclick={engageSearch}
-            onblur={disengageSearch}
-            oninput={(event) => {
-              searchQuery = (event.currentTarget as HTMLInputElement).value;
-              setSearchQuery(searchQuery);
-              if (searchQuery.trim()) openSearchPalette("downloads", searchQuery);
-            }}
-          />
-        </div>
-      {/snippet}
-      {#snippet right()}
-        <div class="downloads-topbar-menu">
-          <button
-            class="n-icon-btn"
-            class:is-active={filterPanelOpen || downloadFilter !== "all"}
-            type="button"
-            title={$_("downloads.filter.title")}
-            aria-label={$_("downloads.filter.title")}
-            aria-expanded={filterPanelOpen}
-            onclick={toggleFilterPanel}
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
-          </button>
-          {#if filterPanelOpen}
-            <div class="downloads-menu-panel downloads-filter-panel n-popover-surface n-popover-menu" role="menu">
-              <p class="n-popover-label">{$_("downloads.filter.show")}</p>
-              {#each [
-                { id: "all", label: $_("downloads.filter.all"), count: queueSize + store.novelDownloads.length },
-                { id: "downloading", label: $_("downloads.filter.active"), count: activeCount + store.novelDownloads.length },
-                { id: "queued", label: $_("downloads.filter.queued"), count: queuedCount },
-                { id: "paused", label: $_("downloads.filter.paused"), count: pausedCount },
-                { id: "error", label: $_("downloads.filter.failed"), count: failedCount },
-                { id: "finished", label: $_("downloads.filter.finished"), count: finishedCount },
-              ] as option}
-                <button
-                  type="button"
-                  class="n-popover-item"
-                  class:is-selected={downloadFilter === option.id}
-                  role="menuitemradio"
-                  aria-checked={downloadFilter === option.id}
-                  onclick={() => selectDownloadFilter(option.id as DownloadFilter)}
-                >
-                  <span>{option.label}</span>
-                  <small>{option.count}</small>
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <div class="downloads-topbar-menu">
-          <button
-            class="n-icon-btn"
-            class:is-active={morePanelOpen}
-            type="button"
-            title={$_("downloads.more.title")}
-            aria-label={$_("downloads.more.title")}
-            aria-expanded={morePanelOpen}
-            onclick={toggleMorePanel}
-          >
-            <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
-          </button>
-          {#if morePanelOpen}
-            <div class="downloads-menu-panel downloads-more-panel n-popover-surface n-popover-menu" role="menu">
-              <p class="n-popover-label">{$_("downloads.more.queueActions")}</p>
+  <AppTopbar className="downloads-topbar">
+    {#snippet center()}
+      <div class="n-search" data-component="search-bar">
+        <span class="n-search__icon material-symbols-outlined" aria-hidden="true">search</span>
+        <input
+          class="n-search__input"
+          type="text"
+          role="combobox"
+          aria-expanded={store.searchOpen}
+          aria-controls="epigraph-search-results"
+          aria-activedescendant={store.searchOpen ? store.searchActiveResultId ?? undefined : undefined}
+          aria-autocomplete="list"
+          placeholder={$_("downloads.searchPlaceholder")}
+          value={searchQuery}
+          onfocus={engageSearch}
+          onclick={engageSearch}
+          onblur={disengageSearch}
+          oninput={(event) => {
+            searchQuery = (event.currentTarget as HTMLInputElement).value;
+            setSearchQuery(searchQuery);
+            if (searchQuery.trim()) openSearchPalette("downloads", searchQuery);
+          }}
+        />
+      </div>
+    {/snippet}
+    {#snippet right()}
+      <div class="downloads-topbar-menu">
+        <button
+          class="n-icon-btn"
+          class:is-active={filterPanelOpen || downloadFilter !== "all"}
+          type="button"
+          title={$_("downloads.filter.title")}
+          aria-label={$_("downloads.filter.title")}
+          aria-expanded={filterPanelOpen}
+          onclick={toggleFilterPanel}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">filter_list</span>
+        </button>
+        {#if filterPanelOpen}
+          <div class="downloads-menu-panel downloads-filter-panel n-popover-surface n-popover-menu" role="menu">
+            <p class="n-popover-label">{$_("downloads.filter.show")}</p>
+            {#each [
+              { id: "all", label: $_("downloads.filter.all"), count: queueSize + store.novelDownloads.length },
+              { id: "downloading", label: $_("downloads.filter.active"), count: activeCount + store.novelDownloads.length },
+              { id: "queued", label: $_("downloads.filter.queued"), count: queuedCount },
+              { id: "paused", label: $_("downloads.filter.paused"), count: pausedCount },
+              { id: "error", label: $_("downloads.filter.failed"), count: failedCount },
+              { id: "finished", label: $_("downloads.filter.finished"), count: finishedCount },
+            ] as option}
               <button
                 type="button"
                 class="n-popover-item"
-                role="menuitem"
-                disabled={finishedCount === 0 || clearingFinished}
-                onclick={clearFinished}
+                class:is-selected={downloadFilter === option.id}
+                role="menuitemradio"
+                aria-checked={downloadFilter === option.id}
+                onclick={() => selectDownloadFilter(option.id as DownloadFilter)}
               >
-                <span>{clearingFinished ? $_("downloads.actions.clearing") : $_("downloads.actions.clearFinished")}</span>
-                <small>{finishedCount}</small>
+                <span>{option.label}</span>
+                <small>{option.count}</small>
               </button>
-              <button
-                type="button"
-                class="n-popover-item"
-                role="menuitem"
-                disabled={failedCount === 0 || retryingFailed}
-                onclick={retryFailed}
-              >
-                <span>{retryingFailed ? $_("downloads.actions.retrying") : $_("downloads.actions.retryFailed")}</span>
-                <small>{failedCount}</small>
-              </button>
-              <button
-                type="button"
-                class="n-popover-item"
-                role="menuitem"
-                disabled={openingFolder}
-                onclick={openDownloadsFolder}
-              >
-                <span>{openingFolder ? $_("downloads.actions.opening") : $_("downloads.actions.openFolder")}</span>
-                <small class="material-symbols-outlined" aria-hidden="true">folder_open</small>
-              </button>
-            </div>
-          {/if}
-        </div>
-        <ActivityButton />
-        <WindowControlsInline />
-      {/snippet}
-    </AppTopbar>
-  </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="downloads-topbar-menu">
+        <button
+          class="n-icon-btn"
+          class:is-active={morePanelOpen}
+          type="button"
+          title={$_("downloads.more.title")}
+          aria-label={$_("downloads.more.title")}
+          aria-expanded={morePanelOpen}
+          onclick={toggleMorePanel}
+        >
+          <span class="material-symbols-outlined" aria-hidden="true">more_vert</span>
+        </button>
+        {#if morePanelOpen}
+          <div class="downloads-menu-panel downloads-more-panel n-popover-surface n-popover-menu" role="menu">
+            <p class="n-popover-label">{$_("downloads.more.queueActions")}</p>
+            <button
+              type="button"
+              class="n-popover-item"
+              role="menuitem"
+              disabled={finishedCount === 0 || clearingFinished}
+              onclick={clearFinished}
+            >
+              <span>{clearingFinished ? $_("downloads.actions.clearing") : $_("downloads.actions.clearFinished")}</span>
+              <small>{finishedCount}</small>
+            </button>
+            <button
+              type="button"
+              class="n-popover-item"
+              role="menuitem"
+              disabled={failedCount === 0 || retryingFailed}
+              onclick={retryFailed}
+            >
+              <span>{retryingFailed ? $_("downloads.actions.retrying") : $_("downloads.actions.retryFailed")}</span>
+              <small>{failedCount}</small>
+            </button>
+            <button
+              type="button"
+              class="n-popover-item"
+              role="menuitem"
+              disabled={openingFolder}
+              onclick={openDownloadsFolder}
+            >
+              <span>{openingFolder ? $_("downloads.actions.opening") : $_("downloads.actions.openFolder")}</span>
+              <small class="material-symbols-outlined" aria-hidden="true">folder_open</small>
+            </button>
+          </div>
+        {/if}
+      </div>
+      <ActivityButton />
+      <WindowControlsInline />
+    {/snippet}
+  </AppTopbar>
 
-  <div class="downloads-scroll">
+  <div class="downloads-scroll n-content">
     <div class="downloads-page">
       <div class="downloads-page__header">
         <div>
@@ -1028,52 +1026,15 @@
 
     position: relative;
     display: flex;
+    height: 100%;
     min-height: 0;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .downloads-scroll {
     position: relative;
     z-index: var(--component-downloads-content-z-index);
-  }
-
-  .downloads-topbar-shell {
-    position: sticky;
-    top: 0;
-    z-index: var(--component-downloads-topbar-z-index);
-    flex-shrink: 0;
-  }
-
-  .downloads-topbar-shell :global(.n-topbar) {
-    position: relative;
-    top: auto;
-    right: auto;
-    left: auto;
-    height: var(--component-downloads-topbar-height);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    align-items: center;
-    gap: var(--component-downloads-topbar-gap);
-    padding: 0 var(--shell-topbar-padding-x);
-  }
-
-  .downloads-topbar-shell :global(.n-topbar__left),
-  .downloads-topbar-shell :global(.n-topbar__center),
-  .downloads-topbar-shell :global(.n-topbar__right) {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .downloads-topbar-shell :global(.n-topbar__center) {
-    justify-content: center;
-  }
-
-  .downloads-topbar-shell :global(.n-topbar__right) {
-    justify-content: flex-end;
-  }
-
-  .downloads-topbar-shell :global(.n-topbar::before) {
-    pointer-events: none;
   }
 
   .downloads-topbar-menu {
@@ -1092,9 +1053,7 @@
 
   .downloads-scroll {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
-    margin-top: 0;
+    min-height: 0;
     padding: 0 var(--component-downloads-page-padding-x);
   }
 

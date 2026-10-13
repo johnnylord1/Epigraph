@@ -15,11 +15,12 @@ function read(file: string): string {
 }
 
 describe("Downloads theme token contract", () => {
-  it("uses symmetric local padding so the relative topbar matches Home coordinates", () => {
+  it("uses the shared fixed topbar so the search sits where it does on Home", () => {
     const source = read("src/components/pages/Downloads.svelte");
-    const topbarRule = source.match(/\.downloads-topbar-shell :global\(\.n-topbar\)\s*\{([\s\S]*?)\}/)?.[1] ?? "";
 
-    expect(topbarRule).toContain("padding: 0 var(--shell-topbar-padding-x)");
+    expect(source).not.toContain("downloads-topbar-shell");
+    expect(source).not.toMatch(/:global\(\.n-topbar[^)]*\)/);
+    expect(source).toContain('class="downloads-scroll n-content"');
   });
 
   it("keeps the active Downloads surface free of direct visual values and Nocturne internals", () => {

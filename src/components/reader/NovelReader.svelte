@@ -27,6 +27,7 @@
   import ReaderHud from "./ReaderHud.svelte";
   import TtsControls from "./TtsControls.svelte";
   import { createDomTtsTextProvider, createTtsController } from "../../lib/reader/tts";
+  import { captureScrollAnchor, restoreScrollAnchor, type ScrollAnchor } from "../../lib/reader/scrollAnchor";
   import { setGenericReading, setTtsPresence } from "../../lib/discord";
   import { getServerUrl } from "../../lib/client";
   import { canResolveDiscordCover, canRunDiscordCoverImprovement } from "../../lib/discord/coverImprovementGate";
@@ -393,6 +394,37 @@
       backgroundColor,
     );
   });
+  const proseLayoutKey = $derived(
+    `${proseFontSize}|${proseLineHeight}|${proseParagraphSpacing}|${proseContentWidth}|${proseFontFamily}|${proseTextAlign}|${store.settings.proseReaderFullWidth ? 1 : 0}`,
+  );
+  let proseLayoutAnchor: ScrollAnchor | null = null;
+  let anchoredProseLayoutKey = "";
+
+  // Zooming or reshaping the text reflows the whole chapter; keep the passage being read in place.
+  $effect.pre(() => {
+    const layoutKey = proseLayoutKey;
+    untrack(() => {
+      const chapterKey = activeReader ? `${activeReader.novelId}:${activeReader.chapterId}` : null;
+      const settled = !!chapterKey && restoredChapterKey === chapterKey && !!viewerEl && !!readerBodyEl;
+      proseLayoutAnchor = settled && anchoredProseLayoutKey && anchoredProseLayoutKey !== layoutKey
+        ? captureScrollAnchor(viewerEl!, proseAnchorCandidates(readerBodyEl!))
+        : null;
+      anchoredProseLayoutKey = layoutKey;
+    });
+  });
+
+  $effect(() => {
+    proseLayoutKey;
+    const anchor = proseLayoutAnchor;
+    proseLayoutAnchor = null;
+    if (anchor && viewerEl) restoreScrollAnchor(viewerEl, anchor);
+  });
+
+  function proseAnchorCandidates(body: HTMLElement): HTMLElement[] {
+    const blocks = Array.from(body.querySelectorAll<HTMLElement>("p, li, blockquote, pre, h1, h2, h3, h4, h5, h6, img, figure, table, hr"));
+    return [...blocks, body];
+  }
+
   const readerErrorIsSourceChallenge = $derived(error ? isSourceChallengeMessage(error) : false);
   const readerErrorBody = $derived.by(() => {
     if (!error) return "";

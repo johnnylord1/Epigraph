@@ -1677,14 +1677,66 @@
     try {
       const status = await invoke<EpigraphUpdateStatus>("check_epigraph_update");
       if (status.update_available && status.version) {
+        const version = status.version;
         addToast({
           kind: "info",
-          title: $_("feedback.updateAvailableVersion", { version: status.version }),
-          body: $_("feedback.openAboutToInstall"),
-          duration: 8000,
+          title: $_("feedback.updateAvailableVersion", { version }),
+          duration: 15000,
+          actions: [
+            { label: $_("feedback.updateNow"), run: () => void installUpdateFromToast(version) },
+            { label: $_("feedback.updateWhatsNew"), run: openAboutSettings },
+          ],
         });
       }
     } catch {}
+  }
+
+  function openAboutSettings() {
+    setRuntimeSettingsTab("about");
+    setSettingsOpen(true);
+  }
+
+  let toastUpdateInFlight = false;
+
+  /** Installs the offered version from the toast itself; About stays the place for notes and other platforms. */
+  async function installUpdateFromToast(version: string) {
+    if (!navigator.userAgent.includes("Windows")) {
+      openAboutSettings();
+      return;
+    }
+    if (toastUpdateInFlight) return;
+    toastUpdateInFlight = true;
+    const toastId = addToast({
+      kind: "download",
+      title: $_("feedback.updateDownloading", { version }),
+      body: $_("feedback.updateDownloadingBody"),
+      duration: 0,
+    });
+    try {
+      // On success the installer takes over and closes Epigraph; the restart action is a fallback.
+      await invoke("download_and_install_update", { expectedVersion: version });
+      dismissToast(toastId);
+      addToast({
+        kind: "success",
+        title: $_("feedback.updateReady"),
+        duration: 0,
+        action: { label: $_("settings_inline_restartNow"), run: () => void invoke("restart_app") },
+      });
+    } catch (error) {
+      dismissToast(toastId);
+      addToast({
+        kind: "error",
+        title: $_("settings_inline_updateFailed"),
+        body: error instanceof Error ? error.message : String(error),
+        duration: 10000,
+        actions: [
+          { label: $_("feedback.updateNow"), run: () => void installUpdateFromToast(version) },
+          { label: $_("feedback.updateWhatsNew"), run: openAboutSettings },
+        ],
+      });
+    } finally {
+      toastUpdateInFlight = false;
+    }
   }
 
   let cancelProbe = false;

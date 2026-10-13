@@ -372,7 +372,7 @@ export function playEnter(node: Element | null | undefined, { y = 10, blur = 6, 
 }
 
 /** Fixed chrome stays put while the content below it arrives. */
-const STATIC_CHROME = ".n-topbar, .downloads-topbar-shell, .browseSubtabs, [data-view-static]";
+const STATIC_CHROME = ".n-topbar, .browseSubtabs, [data-view-static]";
 
 /**
  * Plays the arrival of a page: each content block rises in with a short stagger. The fixed topbar

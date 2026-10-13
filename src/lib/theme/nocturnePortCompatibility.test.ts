@@ -96,8 +96,8 @@ describe("Nocturne port compatibility contract", () => {
     });
     const legacy = defined.filter((token) => !active.includes(token));
 
-    expect(defined).toHaveLength(43);
-    expect(active).toHaveLength(43);
+    expect(defined).toHaveLength(42);
+    expect(active).toHaveLength(42);
     expect(legacy).toEqual(PORT_LEGACY_TOKENS);
     expect(port).not.toMatch(/^\s*--color-info-bg\s*:/m);
     expect(port).not.toMatch(/^\s*--splash-(?:error|ink-muted)\s*:/m);

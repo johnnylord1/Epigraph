@@ -269,7 +269,6 @@ describe("SearchPalette contract", () => {
     expect(portSource).toContain("body.epigraph-search-engaged .main--settings");
     expect(portSource).toContain("body.epigraph-search-engaged .settings-page");
     expect(portSource).toContain("isolation: auto !important");
-    expect(portSource).toContain("body.epigraph-search-engaged .downloads-topbar-shell");
     expect(portSource).toContain("z-index: var(--component-topbar-search-z-index) !important");
   });
 
