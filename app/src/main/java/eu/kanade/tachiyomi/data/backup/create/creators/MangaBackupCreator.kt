@@ -31,8 +31,10 @@ class MangaBackupCreator(
     private val quoteManagerFactory: (Context) -> QuoteManager = ::QuoteManager,
 ) {
     suspend operator fun invoke(mangas: List<Manga>, options: BackupOptions): List<BackupManga> {
+        // One manager for the whole backup: it lists the legacy quote folder once.
+        val quoteManager = quoteManagerFactory(context)
         return mangas.map {
-            backupManga(it, options)
+            backupManga(it, options, quoteManager)
         }
     }
 
@@ -43,7 +45,7 @@ class MangaBackupCreator(
      * @param options options for the backup
      * @return [BackupManga] containing manga in a serializable form
      */
-    private suspend fun backupManga(manga: Manga, options: BackupOptions): BackupManga {
+    private suspend fun backupManga(manga: Manga, options: BackupOptions, quoteManager: QuoteManager): BackupManga {
         // Entry for this manga
         val mangaObject = BackupManga.copyFrom(manga, if (options.customInfo) customMangaManager else null)
 
@@ -116,7 +118,7 @@ class MangaBackupCreator(
             if (!knowledge.isEmpty()) {
                 mangaObject.seriesKnowledge = knowledge
             }
-            val quotes = quoteManagerFactory(context).getQuotes(mangaId)
+            val quotes = quoteManager.getQuotes(mangaId)
             if (quotes.isNotEmpty()) {
                 mangaObject.novelQuotes = quotes.map(BackupNovelQuote::copyFrom)
             }

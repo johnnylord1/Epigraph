@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup
 
+import epigraph.content.RepositoryUrl
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionRepo
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
@@ -46,6 +47,9 @@ object ExtensionRepoBackup {
         return value
     }
 
+    /** What two addresses of the same repository share ([baseUrl], ignoring case where GitHub does), or null. */
+    fun key(url: String): String? = baseUrl(url)?.let(RepositoryUrl::comparable)
+
     /** The repositories a Tachiyomi 0.15 or J2K backup kept in its app preferences. */
     fun fromLegacyPreferences(preferences: List<BackupPreference>): List<BackupExtensionRepo> {
         val urls = (preferences.firstOrNull { it.key == LEGACY_REPOS_KEY }?.value as? StringSetPreferenceValue)
@@ -66,7 +70,7 @@ object ExtensionRepoBackup {
 
     /** [repos] without the ones that point to the same base URL as an earlier entry. */
     fun distinct(repos: List<BackupExtensionRepo>): List<BackupExtensionRepo> =
-        repos.distinctBy { baseUrl(it.baseUrl) ?: it.baseUrl }
+        repos.distinctBy { key(it.baseUrl) ?: it.baseUrl }
 }
 
 /**

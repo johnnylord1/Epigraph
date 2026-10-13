@@ -84,11 +84,11 @@ class BackupFileValidator(
             emptyList()
         } else {
             val configured = runBlocking { extensionRepos.getAll() }
-                .mapNotNull { ExtensionRepoBackup.baseUrl(it.baseUrl) }
+                .mapNotNull { ExtensionRepoBackup.key(it.baseUrl) }
                 .toSet()
             backup.backupExtensionRepos
                 .mapNotNull { repository -> ExtensionRepoBackup.baseUrl(repository.baseUrl)?.let { repository to it } }
-                .filter { (_, baseUrl) -> baseUrl !in configured }
+                .filter { (_, baseUrl) -> ExtensionRepoBackup.key(baseUrl) !in configured }
                 .map { (repository, baseUrl) ->
                     if (repository.name.isBlank()) baseUrl else "${repository.name} ($baseUrl)"
                 }
