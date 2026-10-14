@@ -180,6 +180,9 @@ object PreferenceKeys {
 
     const val defaultCategory = "default_category"
 
+    /** [defaultCategory] for Books & novels, whose categories are separate from the comics ones. */
+    const val defaultBooksCategory = "default_books_category"
+
     const val skipRead = "skip_read"
 
     const val skipFiltered = "skip_filtered"

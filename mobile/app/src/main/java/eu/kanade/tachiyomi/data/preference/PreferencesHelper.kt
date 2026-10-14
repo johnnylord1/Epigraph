@@ -349,6 +349,9 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
     /** Real category ids collapsed in the Books & novels library, kept apart from Comics. */
     fun collapsedBooksCategories() = preferenceStore.getStringSet("epigraph_books_collapsed_categories", mutableSetOf())
 
+    /** Sort of the Books & novels library, a [eu.kanade.tachiyomi.ui.library.LibrarySort] category value. */
+    fun booksLibrarySort() = preferenceStore.getString("epigraph_books_library_sort", "")
+
     fun collapsedDynamicAtBottom() = preferenceStore.getBoolean("collapsed_dynamic_at_bottom", false)
 
     // TODO: SourcePref
@@ -392,6 +395,13 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
     fun autoDownloadWhileReading() = preferenceStore.getInt("auto_download_while_reading", 0)
 
     fun defaultCategory() = preferenceStore.getInt(Keys.defaultCategory, -2)
+
+    fun defaultBooksCategory() = preferenceStore.getInt(Keys.defaultBooksCategory, -2)
+
+    fun defaultCategory(library: yokai.domain.category.CategoryLibrary) = when (library) {
+        yokai.domain.category.CategoryLibrary.COMICS -> defaultCategory()
+        yokai.domain.category.CategoryLibrary.BOOKS -> defaultBooksCategory()
+    }
 
     fun skipRead() = preferenceStore.getBoolean(Keys.skipRead, false)
 

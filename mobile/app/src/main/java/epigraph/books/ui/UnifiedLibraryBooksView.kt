@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.ui.library.LibraryHeaderItem
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import eu.kanade.tachiyomi.ui.library.LibraryMangaItem
 import eu.kanade.tachiyomi.ui.library.LibrarySort
+import eu.kanade.tachiyomi.util.lang.removeArticles
 import exh.util.throttleLatest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,7 +75,9 @@ class UnifiedLibraryBooksView(
         // A lone section: the header shows only the sort row, never a "Default" title.
         isAlone = true
         isSystem = true
-        mangaSort = LibrarySort.Title.categoryValue
+        mangaSort = preferences.booksLibrarySort().get().firstOrNull()
+            ?.takeIf { LibrarySort.valueOf(it) != null }
+            ?: LibrarySort.Title.categoryValue
     }
     private val booksHeader = LibraryHeaderItem({ booksCategory }, BOOKS_CATEGORY_ID)
 
@@ -333,6 +336,7 @@ class UnifiedLibraryBooksView(
         val mode = LibrarySort.valueOf(sortBy) ?: LibrarySort.Title
         booksCategory.mangaSort = sortBy
         groupCategories.values.forEach { it.mangaSort = sortBy }
+        preferences.booksLibrarySort().set(sortBy.toString())
         submitItems(mode)
     }
 
@@ -402,11 +406,16 @@ class UnifiedLibraryBooksView(
             }
             LibrarySort.DragAndDrop,
             LibrarySort.Title,
-            -> entries.sortedBy { item ->
-                when (item) {
-                    is LibraryBookItem -> item.book.displayName.lowercase()
-                    is LibraryMangaItem -> item.manga.manga.title.lowercase()
-                    else -> ""
+            -> {
+                // Same "Sort by ignoring articles" setting as the Comics library.
+                val ignoreArticles = preferences.removeArticles().get()
+                entries.sortedBy { item ->
+                    val title = when (item) {
+                        is LibraryBookItem -> item.book.displayName
+                        is LibraryMangaItem -> item.manga.manga.title
+                        else -> ""
+                    }
+                    (if (ignoreArticles) title.removeArticles() else title).lowercase()
                 }
             }
         }.let { values ->

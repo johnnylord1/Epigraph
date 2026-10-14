@@ -37,6 +37,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.chapter.ChapterItem
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
 import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
+import epigraph.novel.reader.NovelDownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import eu.kanade.tachiyomi.ui.reader.loader.HttpPageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -172,6 +173,9 @@ class ReaderViewModel(
 
     /** Latest exact DOM anchor per chapter; percentage remains the legacy fallback. */
     private val novelTextPositionByChapterId: MutableMap<Long, NovelTextPosition> = ConcurrentHashMap()
+
+    /** Novel chapters already checked for "download while reading", once per chapter per session. */
+    private val novelAutoDownloadChecked: MutableSet<Long> = ConcurrentHashMap.newKeySet()
 
     /**
      * The chapter loader for the loaded manga. It'll be null until [manga] is set.
@@ -797,6 +801,10 @@ class ReaderViewModel(
         if (chapterId != null && textPosition != null) {
             novelTextPositionByChapterId[chapterId] = textPosition
         }
+        // Novels have no page turns to hook, so the first scroll of a chapter stands in for them.
+        if (chapterId != null && novelAutoDownloadChecked.add(chapterId)) {
+            downloadNextChapters()
+        }
         viewModelScope.launchNonCancellableIO {
             saveChapterProgress(
                 page.chapter,
@@ -974,7 +982,8 @@ class ReaderViewModel(
     private fun downloadNextChapters() {
         val manga = manga ?: return
         viewModelScope.launchNonCancellableIO {
-            if (getCurrentChapter()?.pageLoader !is DownloadPageLoader) return@launchNonCancellableIO
+            val loader = getCurrentChapter()?.pageLoader
+            if (loader !is DownloadPageLoader && loader !is NovelDownloadPageLoader) return@launchNonCancellableIO
             val nextChapter = state.value.viewerChapters?.nextChapter?.chapter ?: return@launchNonCancellableIO
             val chaptersNumberToDownload = preferences.autoDownloadWhileReading().get()
             if (chaptersNumberToDownload == 0 || !manga.favorite) return@launchNonCancellableIO

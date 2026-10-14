@@ -285,8 +285,11 @@ class SetCategoriesSheet(
         // immediately. The DB writes below run async and the sheet dismisses while they
         // finish — onMangaAdded() fires when the final write resolves.
         if (addCategories.isNotEmpty() || listManga.size == 1) {
-            Category.lastCategoriesAddedTo =
-                addCategories.mapNotNull { it.id }.toSet().ifEmpty { setOf(0) }
+            val added = addCategories.mapNotNull { it.id }.toSet().ifEmpty { setOf(0) }
+            when (CategoryLibrary.of(listManga)) {
+                CategoryLibrary.COMICS -> Category.lastCategoriesAddedTo = added
+                CategoryLibrary.BOOKS -> Category.lastBookCategoriesAddedTo = added
+            }
         }
 
         val singleManga = listManga.singleOrNull()

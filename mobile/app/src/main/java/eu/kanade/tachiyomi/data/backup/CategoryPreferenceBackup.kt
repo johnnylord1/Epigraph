@@ -41,6 +41,7 @@ object CategoryPreferenceBackup {
 
     private val INT_KEYS = mapOf(
         PreferenceKeys.defaultCategory to Setting.DEFAULT_CATEGORY,
+        PreferenceKeys.defaultBooksCategory to Setting.DEFAULT_CATEGORY,
         PreferenceKeys.lastUsedCategory to null,
     )
 
