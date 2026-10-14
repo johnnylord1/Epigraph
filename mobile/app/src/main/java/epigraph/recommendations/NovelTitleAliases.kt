@@ -4,7 +4,7 @@ import java.text.Normalizer
 
 private const val TITLE_ALIAS_LIMIT = 4
 
-internal const val NOVEL_TITLE_ALIAS_VERSION = 1
+internal const val NOVEL_TITLE_ALIAS_VERSION = 2
 
 private val KNOWN_NOVEL_TITLE_ALIASES: Map<String, List<String>> = mapOf(
     "a evolucao de um goblin ao apice" to listOf("The Evolution of a Goblin to the Peak"),
@@ -42,6 +42,9 @@ private val NOVEL_WORDS = Regex("\\b(?:novel|light novel|webnovel|web novel)\\b"
 private val VOLUME_PATTERN = Regex("\\b(?:vol|volume|book|livro)\\.?\\s*\\d+\\b", RegexOption.IGNORE_CASE)
 private val BRACKETED_PARTS = Regex("\\([^)]*\\)|\\[[^\\]]*\\]|\\{[^}]*\\}")
 private val NON_ALNUM = Regex("[^a-z0-9]+")
+
+// Skipped when a title's initials leave them out: "Tda Trono Do Deus Arcanista".
+private val INITIALS_SKIPPED_WORDS = setOf("a", "an", "as", "da", "das", "de", "do", "dos", "e", "o", "of", "os", "the")
 private val WHITESPACE = Regex("\\s+")
 
 internal fun normalizeNovelTitleAliasKey(title: String): String {
@@ -62,9 +65,9 @@ internal fun canonicalNovelTitleCandidates(title: String): List<String> {
     val original = title.trim()
     if (original.isEmpty()) return emptyList()
 
-    val normalized = normalizeNovelTitleAliasKey(original)
-    val aliases = KNOWN_NOVEL_TITLE_ALIASES[normalized].orEmpty()
-    val candidates = listOf(original) + aliases
+    val withoutAcronym = withoutTitleAcronym(original)
+    val candidates = listOf(original) + knownAliases(original) +
+        listOfNotNull(withoutAcronym) + withoutAcronym?.let(::knownAliases).orEmpty()
     val seen = mutableSetOf<String>()
     val deduped = mutableListOf<String>()
 
@@ -80,3 +83,26 @@ internal fun canonicalNovelTitleCandidates(title: String): List<String> {
 
     return deduped
 }
+
+private fun knownAliases(title: String): List<String> =
+    KNOWN_NOVEL_TITLE_ALIASES[normalizeNovelTitleAliasKey(title)].orEmpty()
+
+/**
+ * Some sources put the title's initials in front of it: "Ldm Lorde Dos Misterios", or the English
+ * title's, "Tlm O Lendario Mecanico". The title without them when the first word is exactly those
+ * initials; null otherwise.
+ */
+internal fun withoutTitleAcronym(title: String): String? {
+    val words = title.trim().split(WHITESPACE)
+    if (words.size < 3) return null
+    val acronym = normalizeNovelTitleAliasKey(words.first())
+    if (acronym.length !in 2..5 || !acronym.all { it in 'a'..'z' }) return null
+    val rest = words.drop(1).joinToString(" ")
+    val matches = (listOf(rest) + knownAliases(rest)).any { name ->
+        val restWords = normalizeNovelTitleAliasKey(name).split(' ').filter { it.isNotEmpty() }
+        acronym == restWords.initials() || acronym == restWords.filterNot { it in INITIALS_SKIPPED_WORDS }.initials()
+    }
+    return rest.takeIf { matches }
+}
+
+private fun List<String>.initials(): String = joinToString("") { it.take(1) }

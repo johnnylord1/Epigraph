@@ -188,6 +188,17 @@ class RecommendationAdaptersTest {
     }
 
     @Test
+    fun `a library novel is known under its English title`() {
+        val seeds = listOf(entryToTasteProfileSeed(entry("Ldm Lorde Dos Misterios", isNovel = true)))
+
+        val keys = knownTitleKeys(seeds)
+
+        assertTrue(recommendationTitleKey("Lord of the Mysteries", RecommendationContentType.NOVEL) in keys)
+        // A comic with the same name is another work.
+        assertFalse(recommendationTitleKey("Lord of the Mysteries", RecommendationContentType.MANHUA) in keys)
+    }
+
+    @Test
     fun `hardcover candidate uses base tags and user rating for score`() {
         val book = HardcoverLibraryBook(
             bookId = 42,

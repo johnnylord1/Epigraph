@@ -511,9 +511,15 @@ fun inferTrackerIconKey(name: String): String {
     }
 }
 
-/** Title keys of everything already in the library, so sections never re-suggest owned works. */
+/**
+ * Title keys of everything already in the library, so sections never re-suggest owned works. A novel
+ * also counts under its known English title: "Ldm Lorde Dos Misterios" is Lord of the Mysteries.
+ */
 fun knownTitleKeys(seeds: List<TasteProfileSeedItem>): Set<String> =
-    seeds.map { recommendationTitleKey(it.title, it.contentType) }.filterNot { it.endsWith(":") }.toSet()
+    seeds.flatMap { seed ->
+        val titles = if (seed.contentType.isProse) canonicalNovelTitleCandidates(seed.title) else listOf(seed.title)
+        titles.map { recommendationTitleKey(it, seed.contentType) }
+    }.filterNot { it.endsWith(":") }.toSet()
 
 fun knownProviderKeys(entries: List<RecommendationEntryInput>): Set<String> =
     entries.flatMap { entry -> entry.tracks.mapNotNull { recommendationTrackerRemoteKey(it.trackerId.toString(), it.remoteId) } }
