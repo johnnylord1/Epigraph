@@ -33,4 +33,10 @@
         android:title="@string/source_migration_guide"
         android:icon="@drawable/ic_help_24dp"
         app:showAsAction="ifRoom"/>
+
+    <!-- Manga / Novels pill, shared with Browse; its action view is set in code. -->
+    <item
+        android:id="@+id/action_extension_type"
+        android:title="@string/novels"
+        app:showAsAction="always" />
 </menu>
