@@ -8,6 +8,7 @@ mod suwayomi_lan;
 mod suwayomi_maintenance;
 mod restore_commands;
 mod suwayomi_runtime;
+mod suwayomi_runtime_store;
 mod suwayomi_update;
 pub mod syncd;
 mod syncd_desktop;
@@ -5387,11 +5388,12 @@ fn suwayomi_data_dir() -> PathBuf {
     }
 }
 
-fn managed_suwayomi_runtime_jar_path() -> PathBuf {
-    suwayomi_data_dir()
-        .join("suwayomi-runtime")
-        .join("current")
-        .join("Suwayomi-Server.jar")
+/// The managed runtime JAR a start of `profile_root` uses, `None` for the bundled one.
+fn managed_suwayomi_runtime_jar_path(profile_root: &Path) -> Option<PathBuf> {
+    suwayomi_runtime_store::resolve_managed_jar(
+        &suwayomi_data_dir().join("suwayomi-runtime"),
+        Some(profile_root),
+    )
 }
 
 fn ensure_suwayomi_data_dir(profile: LocalServerProfile) -> PathBuf {
@@ -5543,6 +5545,7 @@ fn spawn_main_startup_event_drain(
 
 fn resolve_server_binary(
     binary: &str,
+    profile_root: &Path,
     app: &tauri::AppHandle,
     log: &mut Option<std::fs::File>,
 ) -> Result<ServerInvocation, SpawnError> {
@@ -5602,16 +5605,12 @@ fn resolve_server_binary(
         match find_java_in_bundle(&bundle_dir, log) {
             Some(java) => {
                 do_log(log, &format!("[resolve] java found: {:?}", java));
-                let managed_runtime_jar = managed_suwayomi_runtime_jar_path();
+                let managed_runtime_jar = managed_suwayomi_runtime_jar_path(profile_root);
                 do_log(
                     log,
-                    &format!(
-                        "[resolve] managed runtime jar = {:?} exists={}",
-                        managed_runtime_jar,
-                        managed_runtime_jar.exists()
-                    ),
+                    &format!("[resolve] managed runtime jar = {:?}", managed_runtime_jar),
                 );
-                if managed_runtime_jar.exists() {
+                if let Some(managed_runtime_jar) = managed_runtime_jar {
                     do_log(
                         log,
                         "[resolve] java found and managed runtime jar found - using managed runtime JAR",
@@ -6172,7 +6171,7 @@ fn spawn_server_unlocked(
     );
     do_log(&mut log, "[spawn_server] server.conf seeded");
 
-    let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
+    let mut invocation = match resolve_server_binary(&binary, &data_dir, &app, &mut log) {
         Ok(i) => i,
         Err(e) => {
             do_log(&mut log, &format!("[spawn_server] resolve FAILED: {:?}", e));

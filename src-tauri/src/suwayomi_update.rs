@@ -18,6 +18,7 @@ use walkdir::WalkDir;
 use crate::suwayomi_maintenance::{
     self, ExclusiveMaintenanceGuard, MaintenancePhase, UpdateJournalState,
 };
+use crate::suwayomi_runtime_store;
 use crate::{
     find_java_pid_for_rootdir, is_loopback_http_url, stop_runtime_for_maintenance, patch_conf_key,
     process_is_alive, read_conf_value, read_server_owner, resolve_local_server_target,
@@ -573,17 +574,19 @@ pub fn get_suwayomi_runtime_status(
         }
     };
 
-    let runtime_jar = managed_runtime_jar_path();
+    let runtime_jars = suwayomi_runtime_store::known_managed_jars(&managed_runtime_root());
     let bundled_jar = bundled_jar_path(&app);
     if let Some((mode, jar_path)) =
-        select_effective_managed_jar(&runtime_jar, &bundled_jar, |jar_path| {
+        select_effective_managed_jar(&runtime_jars, &bundled_jar, |jar_path| {
             java_pid_uses_jar(java_pid, jar_path)
         })
     {
         return allowed_status(mode, target.server_url, profile_id, root_dir, jar_path);
     }
 
-    let fallback_jar = if runtime_jar.exists() {
+    let fallback_jar = if let Some(runtime_jar) =
+        suwayomi_runtime_store::resolve_managed_jar(&managed_runtime_root(), Some(&target.root_dir))
+    {
         Some(runtime_jar)
     } else if bundled_jar.exists() {
         Some(bundled_jar)
@@ -4260,13 +4263,6 @@ fn normalize_server_url(raw: Option<&str>) -> String {
         .to_string()
 }
 
-fn managed_runtime_jar_path() -> PathBuf {
-    suwayomi_data_dir()
-        .join(SUWAYOMI_RUNTIME_DIR)
-        .join(SUWAYOMI_CURRENT_DIR)
-        .join(SUWAYOMI_SERVER_JAR)
-}
-
 fn bundled_jar_path(app: &AppHandle) -> PathBuf {
     let candidates = bundled_jar_candidates(app);
     candidates
@@ -4333,18 +4329,18 @@ fn prove_epigraph_runtime_ownership(target: &LocalServerTarget) -> Result<u32, S
 }
 
 fn select_effective_managed_jar<F>(
-    runtime_jar: &Path,
+    runtime_jars: &[PathBuf],
     bundled_jar: &Path,
     mut process_uses_jar: F,
 ) -> Option<(SuwayomiRuntimeMode, PathBuf)>
 where
     F: FnMut(&Path) -> bool,
 {
-    if runtime_jar.exists() && process_uses_jar(runtime_jar) {
-        return Some((
-            SuwayomiRuntimeMode::ManagedRuntime,
-            runtime_jar.to_path_buf(),
-        ));
+    if let Some(runtime_jar) = runtime_jars
+        .iter()
+        .find(|jar| jar.exists() && process_uses_jar(jar))
+    {
+        return Some((SuwayomiRuntimeMode::ManagedRuntime, runtime_jar.clone()));
     }
     if bundled_jar.exists() && process_uses_jar(bundled_jar) {
         return Some((
@@ -4733,7 +4729,7 @@ mod tests {
             PathBuf::from("C:/epigraph/resources/binaries/suwayomi-bundle/bin/Suwayomi-Server.jar");
 
         assert_eq!(
-            select_effective_managed_jar(&runtime, &bundled, |_| true),
+            select_effective_managed_jar(&[runtime], &bundled, |_| true),
             None
         );
     }
@@ -4753,11 +4749,24 @@ mod tests {
         std::fs::write(&runtime, b"runtime").unwrap();
         std::fs::write(&bundled, b"bundled").unwrap();
 
-        let selected = select_effective_managed_jar(&runtime, &bundled, |path| path == bundled)
-            .expect("bundled jar should be selected");
+        let selected =
+            select_effective_managed_jar(&[runtime.clone()], &bundled, |path| path == bundled)
+                .expect("bundled jar should be selected");
 
         assert_eq!(selected.0, SuwayomiRuntimeMode::ManagedBundled);
         assert_eq!(selected.1, bundled);
+
+        // Any installed runtime the process runs from counts, e.g. a pending one under maintenance.
+        let pending = temp.path().join("pending").join(SUWAYOMI_SERVER_JAR);
+        std::fs::create_dir_all(pending.parent().unwrap()).unwrap();
+        std::fs::write(&pending, b"pending").unwrap();
+        let selected = select_effective_managed_jar(
+            &[runtime.clone(), pending.clone()],
+            &bundled,
+            |path| path == pending,
+        )
+        .expect("pending jar should be selected");
+        assert_eq!(selected, (SuwayomiRuntimeMode::ManagedRuntime, pending));
     }
 
     #[test]

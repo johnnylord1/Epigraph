@@ -4,6 +4,8 @@
 mod suwayomi_maintenance;
 #[allow(dead_code)]
 mod suwayomi_runtime;
+#[allow(dead_code)]
+mod suwayomi_runtime_store;
 mod syncd;
 
 #[tokio::main]

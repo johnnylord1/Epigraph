@@ -295,9 +295,12 @@ async fn ensure_main_instance_under_lease() -> Result<HeadlessSuwayomiOutcome, S
         Err(error) => tracing::warn!(error = %error, "preflight backup skipped"),
     }
     seed_headless_server_conf(&root)?;
-    let invocation = resolve_headless_runtime(&std::env::current_exe().map_err(|error| {
-        format!("failed to resolve Epigraph Core executable for Suwayomi startup: {error}")
-    })?)?;
+    let invocation = resolve_headless_runtime(
+        &std::env::current_exe().map_err(|error| {
+            format!("failed to resolve Epigraph Core executable for Suwayomi startup: {error}")
+        })?,
+        &root,
+    )?;
     let had_database = root.join("database.mv.db").exists();
     let mut child = spawn_hidden_runtime(&root, &invocation)?;
     let java_pid = child.id();
@@ -530,16 +533,20 @@ fn remove_stale_owner(root: &Path) -> Result<(), String> {
     Err("Unconfirmed stale or malformed ownership retained; refusing takeover".into())
 }
 
-fn resolve_headless_runtime(core_executable: &Path) -> Result<RuntimeInvocation, String> {
-    let managed_jar = crate::suwayomi_maintenance::default_runtime_root()
-        .join("current")
-        .join("Suwayomi-Server.jar");
-    resolve_headless_runtime_with_managed(core_executable, &managed_jar)
+fn resolve_headless_runtime(
+    core_executable: &Path,
+    profile_root: &Path,
+) -> Result<RuntimeInvocation, String> {
+    let managed_jar = crate::suwayomi_runtime_store::resolve_managed_jar(
+        &crate::suwayomi_maintenance::default_runtime_root(),
+        Some(profile_root),
+    );
+    resolve_headless_runtime_with_managed(core_executable, managed_jar.as_deref())
 }
 
 fn resolve_headless_runtime_with_managed(
     core_executable: &Path,
-    managed_jar: &Path,
+    managed_jar: Option<&Path>,
 ) -> Result<RuntimeInvocation, String> {
     for bundle in runtime_bundle_candidates(core_executable) {
         let java = bundled_java_path(&bundle);
@@ -547,7 +554,7 @@ fn resolve_headless_runtime_with_managed(
         if !java.exists() {
             continue;
         }
-        let jar = if managed_jar.exists() {
+        let jar = if let Some(managed_jar) = managed_jar.filter(|jar| jar.exists()) {
             managed_jar.to_path_buf()
         } else if bundled_jar.exists() {
             bundled_jar
@@ -1178,17 +1185,25 @@ mod tests {
         std::fs::write(&java, b"java").unwrap();
         std::fs::write(&jar, b"jar").unwrap();
 
-        let resolved = resolve_headless_runtime_with_managed(
-            &core,
-            &temp.path().join("missing-managed-runtime.jar"),
-        )
-        .unwrap();
+        let missing = temp.path().join("missing-managed-runtime.jar");
+        for managed in [None, Some(missing.as_path())] {
+            let resolved = resolve_headless_runtime_with_managed(&core, managed).unwrap();
+            assert!(paths_identical(&resolved.java, &java));
+            assert!(paths_identical(&resolved.jar, &jar));
+            assert!(paths_identical(
+                &resolved.working_dir,
+                jar.parent().unwrap()
+            ));
+        }
+
+        // An installed runtime runs on the bundled Java, from its own directory.
+        let installed = temp.path().join("versions").join("v2").join("Suwayomi-Server.jar");
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::write(&installed, b"installed").unwrap();
+        let resolved = resolve_headless_runtime_with_managed(&core, Some(&installed)).unwrap();
         assert!(paths_identical(&resolved.java, &java));
-        assert!(paths_identical(&resolved.jar, &jar));
-        assert!(paths_identical(
-            &resolved.working_dir,
-            jar.parent().unwrap()
-        ));
+        assert!(paths_identical(&resolved.jar, &installed));
+        assert!(paths_identical(&resolved.working_dir, installed.parent().unwrap()));
     }
 
     #[test]
