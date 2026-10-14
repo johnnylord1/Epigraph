@@ -96,6 +96,7 @@ import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.RecommendationCandidate
 import epigraph.recommendations.RecommendationContentType
 import epigraph.recommendations.RecommendationItem
+import epigraph.recommendations.RecommendationProviderKind
 import epigraph.recommendations.RecommendationSection
 import epigraph.recommendations.RecommendationSectionKey
 import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
@@ -565,7 +566,7 @@ private fun HeroPick(item: RecommendationItem, onClick: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        item.candidate.contentType.label(),
+                        item.candidate.subtitle(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -709,7 +710,7 @@ private fun CoverCard(
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = candidate.contentType.label(),
+            text = candidate.subtitle(),
             modifier = Modifier.padding(top = 2.dp),
             maxLines = 1,
             style = MaterialTheme.typography.labelMedium,
@@ -909,6 +910,17 @@ private fun epigraph.recommendations.RecommendationCandidate.coverData(): Any? {
         cover.url.startsWith("/") -> File(cover.url)
         else -> cover.url
     }
+}
+
+/**
+ * A comic's kind tells it apart; every prose candidate is a novel, so it shows where it came from
+ * (desktop `recommendationProviderLabel`): its source, then Kitsu or Hardcover.
+ */
+private fun RecommendationCandidate.subtitle(): String {
+    if (!contentType.isProse) return contentType.label()
+    val sources = providers.filter { it.kind == RecommendationProviderKind.SOURCE }
+    val provider = sources.firstOrNull { it.providerId != "kitsu-catalog" } ?: sources.firstOrNull() ?: providers.firstOrNull()
+    return provider?.providerName?.takeIf { it.isNotBlank() } ?: contentType.label()
 }
 
 private fun RecommendationContentType.label(): String = when (this) {
