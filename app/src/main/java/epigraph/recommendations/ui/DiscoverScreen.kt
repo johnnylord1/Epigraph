@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -80,6 +81,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -94,15 +96,20 @@ import dev.icerock.moko.resources.compose.stringResource
 import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.RecommendationCandidate
-import epigraph.recommendations.RecommendationContentType
 import epigraph.recommendations.RecommendationItem
-import epigraph.recommendations.RecommendationProviderKind
+import epigraph.recommendations.RecommendationCardBanner
+import epigraph.recommendations.RecommendationCardKnownStatus
+import epigraph.recommendations.RecommendationCardStatus
+import epigraph.recommendations.cardBanner
+import epigraph.recommendations.cardProviderLabel
+import epigraph.recommendations.cardStatus
 import epigraph.recommendations.RecommendationSection
 import epigraph.recommendations.RecommendationSectionKey
 import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import epigraph.recommendations.TrackerScoreBadge
 import epigraph.recommendations.discoverGridColumns
 import kotlin.math.roundToInt
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
@@ -564,29 +571,35 @@ private fun HeroPick(item: RecommendationItem, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        item.candidate.subtitle(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    item.badge?.let { badge ->
+                Text(
+                    "${item.candidate.cardProviderLabel()}  ·  ${item.candidate.cardStatus().text()}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                item.candidate.cardBanner(item.badge)?.let { banner ->
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        banner.trackerIcon()?.let { icon ->
+                            Image(
+                                painter = painterResource(icon),
+                                contentDescription = banner.tracker,
+                                modifier = Modifier.size(16.dp).clip(RoundedCornerShape(4.dp)),
+                            )
+                            Spacer(Modifier.width(5.dp))
+                        }
                         Text(
-                            "  ·  ",
+                            banner.score,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        Spacer(Modifier.width(3.dp))
                         Icon(
                             Icons.Rounded.Star,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
+                            tint = ScoreStar,
                             modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            badge.displayScore,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
@@ -681,23 +694,31 @@ private fun CoverCard(
                 shape = RoundedCornerShape(10.dp),
                 contentScale = ContentScale.Crop,
             )
-            badge?.let { score ->
+            candidate.cardBanner(badge)?.let { banner ->
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(5.dp)
                         .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                        .padding(start = 3.dp, end = 5.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    banner.trackerIcon()?.let { icon ->
+                        Image(
+                            painter = painterResource(icon),
+                            contentDescription = banner.tracker,
+                            modifier = Modifier.size(13.dp).clip(RoundedCornerShape(3.dp)),
+                        )
+                        Spacer(Modifier.width(3.dp))
+                    }
+                    Text(banner.score, style = MaterialTheme.typography.labelSmall, color = Color.White)
+                    Spacer(Modifier.width(2.dp))
                     Icon(
                         Icons.Rounded.Star,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.width(11.dp).height(11.dp),
+                        tint = ScoreStar,
+                        modifier = Modifier.size(11.dp),
                     )
-                    Spacer(Modifier.width(2.dp))
-                    Text(score.displayScore, style = MaterialTheme.typography.labelSmall, color = Color.White)
                 }
             }
         }
@@ -709,13 +730,26 @@ private fun CoverCard(
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        Text(
-            text = candidate.subtitle(),
-            modifier = Modifier.padding(top = 2.dp),
-            maxLines = 1,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-        )
+        Row(modifier = Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            val metaStyle = MaterialTheme.typography.labelMedium
+            val metaColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+            Text(
+                text = candidate.cardProviderLabel(),
+                modifier = Modifier.weight(1f, fill = false),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = metaStyle,
+                color = metaColor,
+            )
+            Text(text = "  ·  ", maxLines = 1, style = metaStyle, color = metaColor)
+            Text(
+                text = candidate.cardStatus().text(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = metaStyle,
+                color = metaColor,
+            )
+        }
     }
 }
 
@@ -912,23 +946,32 @@ private fun epigraph.recommendations.RecommendationCandidate.coverData(): Any? {
     }
 }
 
-/**
- * A comic's kind tells it apart; every prose candidate is a novel, so it shows where it came from
- * (desktop `recommendationProviderLabel`): its source, then Kitsu or Hardcover.
- */
-private fun RecommendationCandidate.subtitle(): String {
-    if (!contentType.isProse) return contentType.label()
-    val sources = providers.filter { it.kind == RecommendationProviderKind.SOURCE }
-    val provider = sources.firstOrNull { it.providerId != "kitsu-catalog" } ?: sources.firstOrNull() ?: providers.firstOrNull()
-    return provider?.providerName?.takeIf { it.isNotBlank() } ?: contentType.label()
+// The desktop's golden score star.
+private val ScoreStar = Color(0xFFFFB800)
+
+@Composable
+private fun RecommendationCardStatus.text(): String = when (this) {
+    is RecommendationCardStatus.Text -> text
+    is RecommendationCardStatus.Known -> stringResource(
+        when (status) {
+            RecommendationCardKnownStatus.ONGOING -> MR.strings.ongoing
+            RecommendationCardKnownStatus.COMPLETED -> MR.strings.completed
+            RecommendationCardKnownStatus.CANCELLED -> MR.strings.cancelled
+            RecommendationCardKnownStatus.HIATUS -> MR.strings.on_hiatus
+            RecommendationCardKnownStatus.UNKNOWN -> MR.strings.unknown
+            RecommendationCardKnownStatus.IN_LIBRARY -> MR.strings.in_library
+        },
+    )
 }
 
-private fun RecommendationContentType.label(): String = when (this) {
-    RecommendationContentType.MANGA -> "Manga"
-    RecommendationContentType.MANHWA -> "Manhwa"
-    RecommendationContentType.MANHUA -> "Manhua"
-    RecommendationContentType.NOVEL -> "Novel"
-    RecommendationContentType.BOOK -> "Book"
+private fun RecommendationCardBanner.trackerIcon(): Int? = when (tracker) {
+    "anilist" -> R.drawable.ic_tracker_anilist
+    "myanimelist" -> R.drawable.ic_tracker_mal
+    "kitsu" -> R.drawable.ic_tracker_kitsu
+    "bangumi" -> R.drawable.ic_tracker_bangumi
+    "mangaupdates" -> R.drawable.ic_tracker_manga_updates
+    "hardcover" -> R.drawable.ic_tracker_hardcover
+    else -> null
 }
 
 private fun RecommendationSectionKey.labels(): Pair<StringResource, StringResource> = when (this) {
