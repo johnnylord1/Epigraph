@@ -34,6 +34,25 @@ class NovelTitleAliasesTest {
     }
 
     @Test
+    fun `a leading acronym of the title is recognized`() {
+        assertEquals(
+            listOf("Ldm Lorde Dos Misterios", "Lorde Dos Misterios", "Lord of the Mysteries"),
+            canonicalNovelTitleCandidates("Ldm Lorde Dos Misterios"),
+        )
+        assertEquals("Escravo Das Sombras", withoutTitleAcronym("Eds Escravo Das Sombras"))
+        assertEquals("Trono Do Deus Arcanista", withoutTitleAcronym("Tda Trono Do Deus Arcanista"))
+        // The initials of the English title.
+        assertEquals("O Lendario Mecanico", withoutTitleAcronym("Tlm O Lendario Mecanico"))
+    }
+
+    @Test
+    fun `a first word that is not the initials stays`() {
+        assertEquals(null, withoutTitleAcronym("Advento Das Tres Calamidades"))
+        assertEquals(null, withoutTitleAcronym("My Vampire System"))
+        assertEquals(null, withoutTitleAcronym("Ldm Lorde"))
+    }
+
+    @Test
     fun `candidates returns empty for blank input`() {
         assertEquals(emptyList<String>(), canonicalNovelTitleCandidates("   "))
     }
