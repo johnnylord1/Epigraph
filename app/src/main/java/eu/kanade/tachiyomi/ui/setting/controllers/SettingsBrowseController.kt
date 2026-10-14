@@ -77,7 +77,12 @@ class SettingsBrowseController : SettingsLegacyController() {
             titleRes = MR.strings.extensions
             preference {
                 title = context.getString(MR.strings.source_repos).addBetaTag(context)
-                onClick { router.pushController(ExtensionRepoController().withFadeTransaction()) }
+                onClick {
+                    // Repos open on the tab matching Browse's Manga / Novel choice.
+                    router.pushController(
+                        ExtensionRepoController(initialPage = preferences.lastBrowseSourceType().get()).withFadeTransaction(),
+                    )
+                }
             }
             switchPreference {
                 key = PreferenceKeys.automaticExtUpdates

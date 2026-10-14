@@ -19,6 +19,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import co.touchlab.kermit.Logger
+import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.model.NovelPluginIndex
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -33,6 +36,7 @@ import eu.kanade.tachiyomi.util.system.jobIsRunning
 import eu.kanade.tachiyomi.util.system.localeContext
 import eu.kanade.tachiyomi.util.system.notification
 import eu.kanade.tachiyomi.util.system.toInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import rikka.shizuku.Shizuku
 import yokai.util.koin.injectLazy
@@ -52,21 +56,78 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
             return@coroutineScope Result.failure()
         }
 
-        if (pendingUpdates.isNotEmpty()) {
-            createUpdateNotification(pendingUpdates)
-        } else {
+        val novelUpdates = findNovelPluginUpdates()
+
+        if (pendingUpdates.isEmpty()) {
             val preferences: PreferencesHelper by injectLazy()
             preferences.extensionUpdatesCount().set(0)
+        }
+        if (pendingUpdates.isNotEmpty() || novelUpdates.isNotEmpty()) {
+            createUpdateNotification(pendingUpdates, novelUpdates)
         }
 
         Result.success()
     }
 
-    private fun createUpdateNotification(extensionsList: List<Extension.Available>) {
+    /** Installed novel plugins whose repository lists a newer version. */
+    private suspend fun findNovelPluginUpdates(): List<NovelPluginIndex> {
+        return try {
+            val manager = get<NovelPluginManager>()
+            manager.ensureInstalledPluginsLoaded()
+            if (manager.installedPluginsFlow.value.isEmpty()) return emptyList()
+            manager.refreshAvailablePlugins()
+            manager.availablePluginsFlow.value.filter { plugin ->
+                val installed = manager.getInstalledVersion(plugin.id) ?: return@filter false
+                NovelPluginManager.isVersionNewer(plugin.version, installed)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.e(e) { "ExtensionUpdateJob: novel plugin update check failed" }
+            emptyList()
+        }
+    }
+
+    /**
+     * Updates [plugins] in place under the same "Auto-update extensions" rule as the comics
+     * extensions, and leaves in the list the ones still waiting for the user.
+     */
+    private suspend fun autoUpdateNovelPlugins(plugins: MutableList<NovelPluginIndex>, preferences: PreferencesHelper) {
+        if (plugins.isEmpty() || !inputData.getBoolean(RUN_AUTO, true)) return
+        val mode = preferences.autoUpdateExtensions().get()
+        if (mode == AppDownloadInstallJob.NEVER) return
+        when {
+            LibraryUpdateJob.isRunning(context) -> LibraryUpdateJob.runExtensionUpdatesAfterJob()
+            mode != AppDownloadInstallJob.ALWAYS && context.connectivityManager.isActiveNetworkMetered ->
+                runJobAgain(context, NetworkType.UNMETERED)
+            else -> {
+                val manager = get<NovelPluginManager>()
+                val updated = plugins.filter { plugin ->
+                    try {
+                        manager.installPlugin(plugin)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Logger.e(e) { "ExtensionUpdateJob: novel plugin ${plugin.id} update failed" }
+                        false
+                    }
+                }
+                plugins.removeAll(updated)
+            }
+        }
+    }
+
+    private suspend fun createUpdateNotification(
+        extensionsList: List<Extension.Available>,
+        novelPluginList: List<NovelPluginIndex>,
+    ) {
         val extensions = extensionsList.toMutableList()
+        val novelPlugins = novelPluginList.toMutableList()
         val basePreferences: BasePreferences by injectLazy()
         val preferences: PreferencesHelper by injectLazy()
+        // The count drives the comics Extensions badge, which ExtensionManager also writes.
         preferences.extensionUpdatesCount().set(extensions.size)
+        autoUpdateNovelPlugins(novelPlugins, preferences)
         val extensionsInstalledByApp by lazy {
             if (basePreferences.extensionInstaller().get() == ExtensionInstaller.SHIZUKU) {
                 if (Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
@@ -83,7 +144,8 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
                 }
             }
         }
-        if (ExtensionManager.canAutoInstallUpdates(true) &&
+        if (extensions.isNotEmpty() &&
+            ExtensionManager.canAutoInstallUpdates(true) &&
             inputData.getBoolean(RUN_AUTO, true) &&
             preferences.autoUpdateExtensions().get() != AppDownloadInstallJob.NEVER &&
             !ExtensionInstallerJob.isRunning(context) &&
@@ -101,7 +163,7 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
                 val showUpdates = (extensionsInstalledByApp.size != extensions.size).toInt()
                 ExtensionInstallerJob.start(context, extensionsInstalledByApp, showUpdates)
                 if (extensionsInstalledByApp.size == extensions.size) {
-                    return
+                    extensions.clear()
                 } else {
                     extensions.removeAll(extensionsInstalledByApp)
                 }
@@ -111,6 +173,8 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
                 LibraryUpdateJob.runExtensionUpdatesAfterJob()
             }
         }
+        if (extensions.isEmpty() && novelPlugins.isEmpty()) return
+        val updateCount = extensions.size + novelPlugins.size
         NotificationManagerCompat.from(context).apply {
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
@@ -124,11 +188,11 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
                     setContentTitle(
                         context.getString(
                             MR.plurals.extension_updates_available,
-                            extensions.size,
-                            extensions.size,
+                            updateCount,
+                            updateCount,
                         ),
                     )
-                    val extNames = extensions.joinToString(", ") { it.name }
+                    val extNames = (extensions.map { it.name } + novelPlugins.map { it.name }).joinToString(", ")
                     setContentText(extNames)
                     setStyle(NotificationCompat.BigTextStyle().bigText(extNames))
                     setSmallIcon(R.drawable.ic_extension_update_24dp)
@@ -138,8 +202,11 @@ class ExtensionUpdateJob(private val context: Context, workerParams: WorkerParam
                             context,
                         ),
                     )
+                    // "Update all" installs comics extensions only, so it is offered when they are all there is.
                     if (ExtensionManager.canAutoInstallUpdates(true) &&
-                        extensions.size == extensionsList.size
+                        extensions.isNotEmpty() &&
+                        extensions.size == extensionsList.size &&
+                        novelPlugins.isEmpty()
                     ) {
                         val pendingIntent =
                             NotificationReceiver.startExtensionUpdatePendingJob(context, extensions)

@@ -135,29 +135,38 @@ class SettingsLibraryController : SettingsLegacyController() {
                     onClick { router.pushController(CategoryController(library).withFadeTransaction()) }
                 }
             }
-            intListPreference(activity) {
-                key = Keys.defaultCategory
-                titleRes = MR.strings.default_category
+            // Comics and Books & novels add to their own categories, so each has its own default.
+            listOf(
+                Triple(Keys.defaultCategory, CategoryLibrary.COMICS, comicCategories),
+                Triple(Keys.defaultBooksCategory, CategoryLibrary.BOOKS, cachedBookCategories),
+            ).forEach { (prefKey, library, libraryCategories) ->
+                val pref = preferences.defaultCategory(library)
+                intListPreference(activity) {
+                    key = prefKey
+                    title = context.getString(MR.strings.default_category) + " · " + context.getString(
+                        if (library == CategoryLibrary.BOOKS) MR.strings.library_books_and_novels else MR.strings.library_comics,
+                    )
 
-                val categories = listOf(Category.createDefault(context)) + dbCategories
-                entries =
-                    listOf(context.getString(MR.strings.last_used), context.getString(MR.strings.always_ask)) +
-                        categories.map { it.name }.toTypedArray()
-                entryValues = listOf(-2, -1) + categories.mapNotNull { it.id }.toList()
-                defaultValue = "-2"
+                    val categories = listOf(Category.createDefault(context)) + libraryCategories
+                    entries =
+                        listOf(context.getString(MR.strings.last_used), context.getString(MR.strings.always_ask)) +
+                            categories.map { it.name }.toTypedArray()
+                    entryValues = listOf(-2, -1) + categories.mapNotNull { it.id }.toList()
+                    defaultValue = "-2"
 
-                val categoryName: (Int) -> String = { catId ->
-                    when (catId) {
-                        -2 -> context.getString(MR.strings.last_used)
-                        -1 -> context.getString(MR.strings.always_ask)
-                        else -> categories.find { it.id == preferences.defaultCategory().get() }?.name
-                            ?: context.getString(MR.strings.last_used)
+                    val categoryName: (Int) -> String = { catId ->
+                        when (catId) {
+                            -2 -> context.getString(MR.strings.last_used)
+                            -1 -> context.getString(MR.strings.always_ask)
+                            else -> categories.find { it.id == catId }?.name
+                                ?: context.getString(MR.strings.last_used)
+                        }
                     }
-                }
-                summary = categoryName(preferences.defaultCategory().get())
-                onChange { newValue ->
-                    summary = categoryName(newValue as Int)
-                    true
+                    summary = categoryName(pref.get())
+                    onChange { newValue ->
+                        summary = categoryName(newValue as Int)
+                        true
+                    }
                 }
             }
         }

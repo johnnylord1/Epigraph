@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.download.DownloadPreferences
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys as Keys
@@ -200,7 +201,15 @@ class SettingsDownloadController : SettingsLegacyController() {
         loadingCategories = true
         viewScope.launch {
             cachedCategories = try {
-                withContext(Dispatchers.IO) { getCategories.await() }
+                withContext(Dispatchers.IO) {
+                    // Comics and Books & novels keep separate folders; name the library of a book
+                    // folder so two folders called the same stay distinguishable.
+                    val booksLabel = screen.context.getString(MR.strings.library_books_and_novels)
+                    getCategories.await(CategoryLibrary.COMICS) +
+                        getCategories.await(CategoryLibrary.BOOKS).map { category ->
+                            Category.create("${category.name} ($booksLabel)").apply { id = category.id }
+                        }
+                }
             } catch (_: Exception) {
                 emptyList()
             }

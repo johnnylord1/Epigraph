@@ -72,6 +72,15 @@ interface Category : Serializable {
 
         var lastCategoriesAddedTo = emptySet<Int>()
 
+        /** [lastCategoriesAddedTo] for Books & novels, whose categories are separate. */
+        var lastBookCategoriesAddedTo = emptySet<Int>()
+
+        fun lastCategoriesAddedTo(library: yokai.domain.category.CategoryLibrary): Set<Int> =
+            when (library) {
+                yokai.domain.category.CategoryLibrary.COMICS -> lastCategoriesAddedTo
+                yokai.domain.category.CategoryLibrary.BOOKS -> lastBookCategoriesAddedTo
+            }
+
         fun create(name: String): Category = CategoryImpl().apply {
             this.name = name
         }

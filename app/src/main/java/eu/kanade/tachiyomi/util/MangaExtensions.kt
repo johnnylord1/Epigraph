@@ -45,6 +45,7 @@ import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.category.interactor.SetMangaCategories
 import yokai.domain.chapter.interactor.GetChapter
@@ -197,9 +198,12 @@ suspend fun Manga.addOrRemoveToFavorites(
         }
 
         val categories = getCategories.awaitFor(this)
-        val defaultCategoryId = preferences.defaultCategory().get()
+        // Comics and Books & novels have their own categories, so each has its own default.
+        val library = CategoryLibrary.of(this, sourceManager)
+        val defaultCategoryId = preferences.defaultCategory(library).get()
         val defaultCategory = categories.find { it.id == defaultCategoryId }
-        val lastUsedCategories = Category.lastCategoriesAddedTo.mapNotNull { catId ->
+        val lastCategoriesAddedTo = Category.lastCategoriesAddedTo(library)
+        val lastUsedCategories = lastCategoriesAddedTo.mapNotNull { catId ->
             categories.find { it.id == catId }
         }
         when {
@@ -229,7 +233,7 @@ suspend fun Manga.addOrRemoveToFavorites(
             }
             defaultCategoryId == -2 && (
                 lastUsedCategories.isNotEmpty() ||
-                    Category.lastCategoriesAddedTo.firstOrNull() == 0
+                    lastCategoriesAddedTo.firstOrNull() == 0
                 ) -> { // last used category(s)
                 favorite = true
                 date_added = Date().time

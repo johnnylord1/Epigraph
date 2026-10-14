@@ -548,7 +548,10 @@ class BrowseController :
                     router.pushController(SettingsBrowseController().withFadeTransaction())
                 }
                 R.id.action_extension_repos_settings -> {
-                    router.pushController(ExtensionRepoController().withFadeTransaction())
+                    router.pushController(
+                        // Repos open on the tab matching Browse's Manga / Novel choice.
+                        ExtensionRepoController(initialPage = preferences.lastBrowseSourceType().get()).withFadeTransaction(),
+                    )
                 }
             }
             return@setOnMenuItemClickListener true
