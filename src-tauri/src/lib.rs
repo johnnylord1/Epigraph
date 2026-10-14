@@ -6506,8 +6506,17 @@ pub(crate) fn spawn_managed_server_for_update(
     app: tauri::AppHandle,
 ) -> Result<(), SpawnError> {
     if profile_id.as_deref() == Some("main") {
-        return tauri::async_runtime::block_on(syncd_sidecar::ensure_host_mode(&app))
-            .map(|_| ()).map_err(SpawnError::SpawnFailed);
+        syncd_sidecar::block_on_core(syncd_sidecar::ensure_host_mode(&app))
+            .map_err(SpawnError::SpawnFailed)?;
+        // While this process holds the runtime, the Core's supervisor cannot start Suwayomi; the
+        // Core starts it on request so the update can check it before letting go.
+        if suwayomi_maintenance::exclusive_maintenance_active() {
+            syncd_sidecar::request_main_suwayomi_maintenance(
+                syncd::lifecycle::SuwayomiMaintenanceAction::Start,
+            )
+            .map_err(SpawnError::SpawnFailed)?;
+        }
+        return Ok(());
     }
     spawn_server_unlocked(
         String::new(),
@@ -6678,10 +6687,15 @@ pub(crate) fn stop_runtime_for_maintenance(app: &tauri::AppHandle, target: &Loca
     if managed_startup_owner(&target.profile_key, target.port) != ManagedStartupOwner::PersistentCore {
         return kill_tachidesk_target(app, target);
     }
-    // Core cannot reacquire its shared startup lease while this caller holds the
-    // exclusive maintenance lease. Do not stop a disk-selected Core or promote
-    // files until an exact-owner maintenance handoff is implemented.
-    Err("Persistent Core maintenance requires an owner-scoped lease handoff; process and profile preserved".into())
+    // Only the Core holds the handle of the Java it spawned, so it stops it. The exclusive runtime
+    // lease held here keeps its supervisor from starting Suwayomi again until maintenance ends.
+    if !suwayomi_maintenance::exclusive_maintenance_active() {
+        return Err("Persistent Core maintenance requires the exclusive runtime lease; process and profile preserved".into());
+    }
+    syncd_sidecar::request_main_suwayomi_maintenance(
+        syncd::lifecycle::SuwayomiMaintenanceAction::Stop,
+    )
+    .map(|_| ())
 }
 
 #[tauri::command]

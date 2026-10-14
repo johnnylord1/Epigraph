@@ -155,6 +155,66 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(
         &crate::suwayomi_maintenance::default_runtime_root(),
     )?;
+    ensure_main_instance_under_lease().await
+}
+
+/// Maintenance handoff. Only this Core holds the handle of the JVM it spawned for the main profile, so
+/// an Epigraph process that updates, restores or resets that profile asks this Core to stop and start
+/// it. Both are honoured only while another process holds the runtime for maintenance: its exclusive
+/// lease is what keeps the supervisor, and every other starter, from bringing the old runtime back in
+/// between, and it ends with that process even if it crashes. Returns the stopped Java PID, if any.
+pub async fn stop_main_for_maintenance() -> Result<Option<u32>, String> {
+    require_maintenance_elsewhere()?;
+    let _spawn = CORE_SPAWN_GATE.lock().await;
+    if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("Core is shutting down".into());
+    }
+    let root = main_profile_root();
+    let Some(instance) = attach_owned_instance(&root) else {
+        return Ok(None);
+    };
+    let retained = instance
+        .run_id
+        .as_ref()
+        .is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
+    if retained {
+        stop_owned_instance(&instance, Duration::from_secs(5)).await?;
+    } else {
+        // Started by an earlier Core run, so no handle was retained; it is ended only once
+        // proven to be the Java started for this profile.
+        crate::suwayomi_runtime::stop_unresponsive_server(&root, instance.java_pid, Duration::ZERO)?;
+    }
+    tracing::info!(pid = instance.java_pid, "managed Suwayomi stopped for runtime maintenance");
+    Ok(Some(instance.java_pid))
+}
+
+/// Starts the main profile's Suwayomi for the process holding the runtime for maintenance, so it can
+/// check the result before it lets go. Returns the Java PID once the server answers.
+pub async fn start_main_for_maintenance() -> Result<u32, String> {
+    require_maintenance_elsewhere()?;
+    match ensure_main_instance_under_lease().await? {
+        HeadlessSuwayomiOutcome::Attached(instance) | HeadlessSuwayomiOutcome::Started(instance) => {
+            Ok(instance.java_pid)
+        }
+        HeadlessSuwayomiOutcome::NotConfigured => {
+            Err("managed Suwayomi profile is not configured".into())
+        }
+    }
+}
+
+fn require_maintenance_elsewhere() -> Result<(), String> {
+    if crate::suwayomi_maintenance::exclusive_file_lease_held(
+        &crate::suwayomi_maintenance::default_runtime_root(),
+    )? {
+        Ok(())
+    } else {
+        Err("No Epigraph process holds the Suwayomi runtime for maintenance; request refused".into())
+    }
+}
+
+/// `ensure_main_owned_instance` for a caller that already keeps runtime maintenance out, or that acts
+/// for the process holding it.
+async fn ensure_main_instance_under_lease() -> Result<HeadlessSuwayomiOutcome, String> {
     let _spawn = CORE_SPAWN_GATE.lock().await;
     if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) { return Err("Core is shutting down".into()); }
     let root = main_profile_root();

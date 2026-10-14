@@ -217,6 +217,33 @@ pub async fn ensure_host_mode(app: &AppHandle) -> Result<SyncdRuntimeInfo, Strin
     }
 }
 
+/// Asks the persistent Core to stop or start the main profile's Suwayomi while this process holds the
+/// Suwayomi runtime for maintenance: only the Core holds the handle of the Java it spawned.
+pub(crate) fn request_main_suwayomi_maintenance(
+    action: crate::syncd::lifecycle::SuwayomiMaintenanceAction,
+) -> Result<Option<u32>, String> {
+    let timeout = match action {
+        crate::syncd::lifecycle::SuwayomiMaintenanceAction::Stop => Duration::from_secs(30),
+        // The Core answers once the server does, which can take minutes on a large library.
+        crate::syncd::lifecycle::SuwayomiMaintenanceAction::Start => Duration::from_secs(420),
+    };
+    block_on_core(crate::syncd::lifecycle::request_suwayomi_maintenance(
+        &desktop_syncd_data_dir(),
+        action,
+        timeout,
+    ))
+    .map_err(|error| format!("{error:#}"))
+}
+
+/// Waits for a Core request from the synchronous update steps, which async commands also reach.
+pub(crate) fn block_on_core<F: std::future::Future>(future: F) -> F::Output {
+    if tokio::runtime::Handle::try_current().is_ok() {
+        tokio::task::block_in_place(|| tauri::async_runtime::block_on(future))
+    } else {
+        tauri::async_runtime::block_on(future)
+    }
+}
+
 /// Reattach the desktop UI to an already-initialized local Core without making
 /// first-run users start the service before they choose to pair a device.
 pub fn attach_existing_host_in_background(app: &AppHandle) {

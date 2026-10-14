@@ -174,6 +174,23 @@ pub fn try_acquire_shared_file_lease(runtime_root: &Path) -> Result<SharedFileLe
     Ok(SharedFileLease { file })
 }
 
+/// Whether some process holds the runtime for maintenance right now, i.e. a shared lease is refused.
+pub fn exclusive_file_lease_held(runtime_root: &Path) -> Result<bool, String> {
+    let file = open_lock_file(runtime_root)?;
+    if file.try_lock_shared().is_err() {
+        return Ok(true);
+    }
+    let _ = FileExt::unlock(&file);
+    Ok(false)
+}
+
+/// Whether this process is inside exclusive maintenance (it holds the runtime lease).
+pub fn exclusive_maintenance_active() -> bool {
+    coordinator().state.lock().is_ok_and(|state| {
+        matches!(state.phase, MaintenancePhase::Updating | MaintenancePhase::Recovering)
+    })
+}
+
 fn acquire_exclusive_file_lease(
     runtime_root: &Path,
     timeout: Duration,
@@ -517,6 +534,33 @@ mod tests {
         drop(maintenance);
         let next = begin_operation(temp.path(), "mutation").unwrap();
         assert!(end_operation(&next));
+    }
+
+    #[test]
+    fn maintenance_holder_is_visible_to_other_lease_handles() {
+        let _serial = COORDINATOR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = tempdir().unwrap();
+        assert!(!exclusive_file_lease_held(temp.path()).unwrap());
+        assert!(!exclusive_maintenance_active());
+
+        let maintenance =
+            begin_exclusive_maintenance(temp.path(), "update-test", MaintenancePhase::Updating)
+                .unwrap();
+        // The Core opens its own handle, as another process does.
+        assert!(exclusive_file_lease_held(temp.path()).unwrap());
+        assert!(exclusive_maintenance_active());
+
+        drop(maintenance);
+        assert!(!exclusive_file_lease_held(temp.path()).unwrap());
+        assert!(!exclusive_maintenance_active());
+        // Probing never leaves a lease behind.
+        drop(try_acquire_shared_file_lease(temp.path()).unwrap());
+        let again =
+            begin_exclusive_maintenance(temp.path(), "update-test", MaintenancePhase::Updating)
+                .unwrap();
+        drop(again);
     }
 
     #[test]

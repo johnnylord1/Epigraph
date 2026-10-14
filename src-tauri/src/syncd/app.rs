@@ -182,6 +182,10 @@ fn build_router(state: Arc<AppState>, shutdown: ShutdownCoordinator) -> Router {
             post(super::lifecycle::post_local_shutdown),
         )
         .route(
+            "/v1/local/suwayomi-maintenance",
+            post(super::lifecycle::post_local_suwayomi_maintenance),
+        )
+        .route(
             "/v1/assets/:sha256",
             get(assets::get_asset)
                 .head(assets::head_asset)

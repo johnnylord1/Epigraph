@@ -80,6 +80,35 @@ pub struct ShutdownResponse {
     pub pid: u32,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SuwayomiMaintenanceAction {
+    Stop,
+    Start,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiMaintenanceRequest {
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub nonce: String,
+    pub server_id: String,
+    pub expected_pid: u32,
+    pub action: SuwayomiMaintenanceAction,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuwayomiMaintenanceResponse {
+    pub run_id: String,
+    pub nonce: String,
+    pub pid: u32,
+    /// The Java stopped or started; none when there was nothing running to stop.
+    pub java_pid: Option<u32>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ShutdownCoordinator {
     sender: watch::Sender<Option<ShutdownRequest>>,
@@ -127,34 +156,17 @@ pub async fn post_local_shutdown(
     ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
     Json(request): Json<ShutdownRequest>,
 ) -> Result<(StatusCode, Json<ShutdownResponse>), AppError> {
-    if !remote_addr.ip().is_loopback() {
-        return Err(AppError::Forbidden(
-            "Core shutdown is only available from loopback.".to_string(),
-        ));
-    }
-    if !session.token_id.starts_with("local-authority-") {
-        return Err(AppError::Forbidden(
-            "Core shutdown requires a local-authority token.".to_string(),
-        ));
-    }
-    if request.expected_pid != std::process::id() {
-        return Err(AppError::Forbidden(
-            "Core shutdown PID does not match the running process.".to_string(),
-        ));
-    }
-    if request.run_id != crate::syncd::runtime_manifest::current_run_id()
-        || uuid::Uuid::parse_str(&request.nonce).ok().is_none_or(|id| id.is_nil() || id.to_string() != request.nonce) {
-        return Err(AppError::Forbidden("Core control run or nonce mismatch".into()));
-    }
-
-    let identity = super::db::load_server_identity(&state.pool)
-        .await
-        .map_err(|_| AppError::Internal("Failed to load Core identity.".to_string()))?;
-    if request.server_id != identity.server_id {
-        return Err(AppError::Forbidden(
-            "Core shutdown serverId does not match the running server.".to_string(),
-        ));
-    }
+    let identity = verify_local_control(
+        &state,
+        &session,
+        remote_addr,
+        "Core shutdown",
+        &request.run_id,
+        &request.nonce,
+        &request.server_id,
+        request.expected_pid,
+    )
+    .await?;
 
     static CONTROL_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _control = CONTROL_GATE.lock().await;
@@ -175,6 +187,154 @@ pub async fn post_local_shutdown(
             pid: std::process::id(),
         }),
     ))
+}
+
+/// Stops or starts the main profile's Suwayomi for the Epigraph process that holds its runtime for
+/// maintenance; see `suwayomi_process::stop_main_for_maintenance`.
+pub async fn post_local_suwayomi_maintenance(
+    State(state): State<SharedAppState>,
+    Extension(session): Extension<AuthenticatedSession>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<SuwayomiMaintenanceRequest>,
+) -> Result<Json<SuwayomiMaintenanceResponse>, AppError> {
+    verify_local_control(
+        &state,
+        &session,
+        remote_addr,
+        "Core Suwayomi maintenance",
+        &request.run_id,
+        &request.nonce,
+        &request.server_id,
+        request.expected_pid,
+    )
+    .await?;
+    if state.config.ownership_mode != super::config::SyncdOwnershipMode::PersistentAttached {
+        return Err(AppError::Forbidden(
+            "This Core does not run the main Suwayomi profile.".to_string(),
+        ));
+    }
+    let java_pid = match request.action {
+        SuwayomiMaintenanceAction::Stop => {
+            super::suwayomi_process::stop_main_for_maintenance().await
+        }
+        SuwayomiMaintenanceAction::Start => {
+            super::suwayomi_process::start_main_for_maintenance().await.map(Some)
+        }
+    }
+    .map_err(AppError::Internal)?;
+    Ok(Json(SuwayomiMaintenanceResponse {
+        run_id: request.run_id,
+        nonce: request.nonce,
+        pid: std::process::id(),
+        java_pid,
+    }))
+}
+
+/// Checks a local control request: loopback, a local-authority token, and this exact Core run and
+/// identity. Returns the Core identity.
+async fn verify_local_control(
+    state: &SharedAppState,
+    session: &AuthenticatedSession,
+    remote_addr: SocketAddr,
+    what: &str,
+    run_id: &str,
+    nonce: &str,
+    server_id: &str,
+    expected_pid: u32,
+) -> Result<super::db::ServerIdentityRow, AppError> {
+    if !remote_addr.ip().is_loopback() {
+        return Err(AppError::Forbidden(format!(
+            "{what} is only available from loopback."
+        )));
+    }
+    if !session.token_id.starts_with("local-authority-") {
+        return Err(AppError::Forbidden(format!(
+            "{what} requires a local-authority token."
+        )));
+    }
+    if expected_pid != std::process::id() {
+        return Err(AppError::Forbidden(format!(
+            "{what} PID does not match the running process."
+        )));
+    }
+    if run_id != crate::syncd::runtime_manifest::current_run_id()
+        || uuid::Uuid::parse_str(nonce).ok().is_none_or(|id| id.is_nil() || id.to_string() != nonce) {
+        return Err(AppError::Forbidden("Core control run or nonce mismatch".into()));
+    }
+
+    let identity = super::db::load_server_identity(&state.pool)
+        .await
+        .map_err(|_| AppError::Internal("Failed to load Core identity.".to_string()))?;
+    if server_id != identity.server_id {
+        return Err(AppError::Forbidden(format!(
+            "{what} serverId does not match the running server."
+        )));
+    }
+    Ok(identity)
+}
+
+/// Asks the running Core to stop or start the main profile's Suwayomi while this process holds the
+/// Suwayomi runtime for maintenance.
+pub async fn request_suwayomi_maintenance(
+    data_dir: &Path,
+    action: SuwayomiMaintenanceAction,
+    timeout: Duration,
+) -> anyhow::Result<Option<u32>> {
+    tokio::time::timeout(timeout, async {
+        let manifest_path = runtime_manifest_path(data_dir);
+        if reconcile_exited_runtime_manifest(&manifest_path) {
+            bail!("Epigraph Core is not running");
+        }
+        let original = std::fs::read(&manifest_path).context("Missing Core ownership")?;
+        let manifest: SyncdRuntimeManifest =
+            serde_json::from_slice(&original).context("Malformed Core evidence preserved")?;
+        manifest.validate().map_err(anyhow::Error::msg)?;
+        let client = build_pinned_client(&manifest.fingerprint)?;
+        let descriptor = fetch_descriptor(&client, &manifest).await?;
+        verify_runtime_identity(&manifest, &descriptor)?;
+        let token = issue_local_authority_token(&client, &manifest).await?;
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let response = client
+            .post(format!(
+                "https://127.0.0.1:{}/v1/local/suwayomi-maintenance",
+                manifest.port
+            ))
+            .timeout(timeout)
+            .header("authorization", format!("Bearer {}", token.access_token))
+            .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+            .header(LEGACY_CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+            .header(CLIENT_PROTOCOL_HEADER, "1")
+            .header(LEGACY_CLIENT_PROTOCOL_HEADER, "1")
+            .json(&SuwayomiMaintenanceRequest {
+                run_id: manifest.run_id.clone(),
+                nonce: nonce.clone(),
+                server_id: manifest.server_id.clone(),
+                expected_pid: manifest.pid,
+                action,
+            })
+            .send()
+            .await
+            .context("failed to reach Epigraph Core")?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let detail = response
+                .json::<ErrorBody>()
+                .await
+                .map(|body| body.error.message)
+                .unwrap_or_else(|_| "Core rejected the request".to_string());
+            bail!("Core Suwayomi {action:?} failed with {status}: {detail}");
+        }
+        let response = response
+            .json::<SuwayomiMaintenanceResponse>()
+            .await
+            .context("Core returned an invalid maintenance response")?;
+        if response.run_id != manifest.run_id || response.nonce != nonce || response.pid != manifest.pid {
+            bail!("Core maintenance acknowledgement identity mismatch");
+        }
+        Ok(response.java_pid)
+    })
+    .await
+    .context("Epigraph Core did not answer in time")?
 }
 
 pub async fn run_command_line() -> anyhow::Result<()> {
@@ -645,6 +805,47 @@ mod tests {
             let response = app.clone().oneshot(Request::from_parts(parts, Body::from(serde_json::to_vec(&value_json).unwrap()))).await.unwrap();
             assert_eq!(response.status(), StatusCode::FORBIDDEN, "{field}");
             assert!(receiver.borrow().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn suwayomi_maintenance_route_is_local_and_for_the_persistent_core_only() {
+        let (_temp, state) = test_state().await;
+        let identity = super::super::db::load_server_identity(&state.pool).await.unwrap();
+        let token = issue_test_local_token(&state.pool, &state.config, LOCAL_AUTHORITY_DEVICE_ID, LOCAL_AUTHORITY_PROFILE_ID).await.unwrap();
+        assert_ne!(state.config.ownership_mode, super::super::config::SyncdOwnershipMode::PersistentAttached);
+        let (coordinator, _receiver) = ShutdownCoordinator::channel();
+        let app = super::super::app::build_test_router_with_shutdown(state, coordinator);
+        let request = |remote: &str, run_id: String| {
+            Request::post("/v1/local/suwayomi-maintenance")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {}", token.access_token))
+                .header(CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+                .header(LEGACY_CLIENT_VERSION_HEADER, CURRENT_CLIENT_VERSION)
+                .header(CLIENT_PROTOCOL_HEADER, "1")
+                .header(LEGACY_CLIENT_PROTOCOL_HEADER, "1")
+                .extension(ConnectInfo(remote.parse::<SocketAddr>().unwrap()))
+                .body(Body::from(
+                    serde_json::to_vec(&SuwayomiMaintenanceRequest {
+                        run_id,
+                        nonce: uuid::Uuid::new_v4().to_string(),
+                        server_id: identity.server_id.clone(),
+                        expected_pid: std::process::id(),
+                        action: SuwayomiMaintenanceAction::Stop,
+                    })
+                    .unwrap(),
+                ))
+                .unwrap()
+        };
+        let current = || crate::syncd::runtime_manifest::current_run_id().to_string();
+        for (remote, run_id) in [
+            ("192.168.1.20:61234", current()),
+            ("127.0.0.1:61234", "3de1e5e7-51b8-4527-932f-62262013a814".to_string()),
+            // Exact identity, but this Core does not run the main profile.
+            ("127.0.0.1:61234", current()),
+        ] {
+            let response = app.clone().oneshot(request(remote, run_id.clone())).await.unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{remote} {run_id}");
         }
     }
 
