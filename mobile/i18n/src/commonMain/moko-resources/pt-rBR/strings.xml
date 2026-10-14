@@ -1963,6 +1963,7 @@
     <string name="action_copy">Copiar</string>
     <string name="action_close">Fechar</string>
     <string name="novel_error_loading_chapter">Erro ao carregar o capítulo</string>
+    <string name="reader_chapter_network_error">Não foi possível acessar a fonte. Verifique sua conexão e tente de novo.</string>
     <string name="novel_error_no_text">Nenhum texto disponível</string>
     <string name="novel_auto_scroll_start">Iniciar rolagem automática</string>
     <string name="novel_auto_scroll_stop">Parar rolagem automática</string>

@@ -2023,6 +2023,9 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      * and the binding.toolbar title.
      */
     private fun setManga(manga: Manga) {
+        // A manga emitted just before the first load failed would rebuild a viewer over the
+        // error screen. Retry removes the error before loading again, so it is not skipped then.
+        if (initialChapterErrorOverlay != null || sourceNotReadyOverlay != null) return
         val prevViewer = viewer
         val noDefault = manga.viewer_flags == -1
         val mangaViewer = viewModel.getMangaReadingMode()
@@ -2431,18 +2434,68 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      */
     private fun setInitialChapterError(error: Throwable) {
         Logger.e(error)
+        initialChapterErrorOverlay?.let { binding.viewerContainer.removeView(it) }
+        clearViewerForInitialError()
+        val message = if (error.isNetworkFailure()) {
+            getString(MR.strings.reader_chapter_network_error)
+        } else {
+            error.message
+                ?.replace(Regex("\\s+"), " ")
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.take(320)
+                ?: getString(MR.strings.unknown_error)
+        }
+        val overlay = buildInitialLoadErrorOverlay(
+            title = getString(MR.strings.novel_error_loading_chapter),
+            message = message,
+            onRetry = {
+                hideInitialChapterErrorOverlay()
+                retryInitialChapterLoad()
+            },
+        )
+        binding.viewerContainer.addView(overlay)
+        initialChapterErrorOverlay = overlay
+    }
+
+    private fun Throwable.isNetworkFailure(): Boolean =
+        generateSequence(this) { it.cause }.take(8).any {
+            it is java.net.UnknownHostException ||
+                it is java.net.ConnectException ||
+                it is java.net.SocketTimeoutException ||
+                it is java.net.NoRouteToHostException
+        }
+
+    /**
+     * A failed first load can leave a half-built viewer behind: a retry builds a new one whose
+     * tap-zone guide then covered the error, so the screen looked like an empty reader.
+     * The error replaces the viewer instead; the next successful load builds a fresh one.
+     */
+    private fun clearViewerForInitialError() {
         // The enter transition waits for a manga that will not load: release it or the
         // window never shows and holds input focus until the system reports an ANR.
         startPostponedEnterTransition()
         binding.pleaseWait.clearAnimation()
         binding.pleaseWait.isVisible = false
         binding.touchView.isVisible = false
-        initialChapterErrorOverlay?.let { binding.viewerContainer.removeView(it) }
+        binding.navigationOverlay.hideNow()
+        viewer?.let {
+            it.destroy()
+            viewer = null
+            binding.viewerContainer.removeAllViews()
+        }
+    }
 
+    /** Full-screen state shared by a chapter or source that could not be opened. */
+    private fun buildInitialLoadErrorOverlay(title: String, message: String, onRetry: () -> Unit): View {
+        val onBackground = getResourceColor(materialR.attr.colorOnBackground)
+        val contentWidth = minOf(resources.displayMetrics.widthPixels - 64.dpToPx, 340.dpToPx)
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(48.dpToPx, 48.dpToPx, 48.dpToPx, 48.dpToPx)
+            setPadding(32.dpToPx, 32.dpToPx, 32.dpToPx, 32.dpToPx)
+            setBackgroundColor(getResourceColor(android.R.attr.colorBackground))
+            // Block taps from falling through to the reader behind us.
             isClickable = true
             isFocusable = true
             layoutParams = ViewGroup.LayoutParams(
@@ -2450,46 +2503,68 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
         }
-        val title = TextView(this).apply {
-            text = getString(MR.strings.novel_error_loading_chapter)
-            textSize = 18f
+        val icon = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_warning_white_24dp)
+            imageTintList = ColorStateList.valueOf(onBackground)
+            alpha = 0.6f
+            layoutParams = android.widget.LinearLayout.LayoutParams(40.dpToPx, 40.dpToPx).apply {
+                bottomMargin = 16.dpToPx
+            }
+        }
+        val titleView = TextView(this).apply {
+            text = title
+            textSize = 20f
+            setTextColor(onBackground)
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
         }
-        val message = TextView(this).apply {
-            val safeMessage = error.message
-                ?.replace(Regex("\\s+"), " ")
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?: getString(MR.strings.unknown_error)
-            text = safeMessage.take(320)
+        val messageView = TextView(this).apply {
+            text = message
             textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(0, 16.dpToPx, 0, 24.dpToPx)
+            setTextColor(onBackground)
             alpha = 0.7f
+            gravity = Gravity.CENTER
+            setLineSpacing(0f, 1.15f)
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                contentWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                topMargin = 8.dpToPx
+                bottomMargin = 28.dpToPx
+            }
         }
         val actions = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                contentWidth,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+        }
+        val close = com.google.android.material.button.MaterialButton(
+            this,
+            null,
+            materialR.attr.materialButtonOutlinedStyle,
+        ).apply {
+            text = getString(MR.strings.close)
+            setOnClickListener { finish() }
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, 52.dpToPx, 1f).apply {
+                marginEnd = 6.dpToPx
+            }
         }
         val retry = com.google.android.material.button.MaterialButton(this).apply {
             text = getString(MR.strings.retry)
-            setOnClickListener {
-                hideInitialChapterErrorOverlay()
-                retryInitialChapterLoad()
+            setOnClickListener { onRetry() }
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, 52.dpToPx, 1f).apply {
+                marginStart = 6.dpToPx
             }
         }
-        val close = com.google.android.material.button.MaterialButton(this).apply {
-            text = getString(MR.strings.close)
-            setOnClickListener { finish() }
-        }
-        actions.addView(retry)
         actions.addView(close)
-        container.addView(title)
-        container.addView(message)
+        actions.addView(retry)
+        container.addView(icon)
+        container.addView(titleView)
+        container.addView(messageView)
         container.addView(actions)
-        binding.viewerContainer.addView(container)
-        initialChapterErrorOverlay = container
+        return container
     }
 
     /**
@@ -2515,57 +2590,25 @@ class ReaderActivity : BaseActivity<ReaderActivityBinding>(), ReaderSettingsHost
      */
     private fun showSourceNotReadyOverlay(sourceId: Long, missingExtensionName: String? = null) {
         Logger.w { "ReaderActivity: showing SourceNotReady overlay for source $sourceId" }
-        // Same as setInitialChapterError: no manga will release the postponed transition.
-        startPostponedEnterTransition()
-        binding.pleaseWait.clearAnimation()
-        binding.pleaseWait.isVisible = false
-        binding.touchView.isVisible = false
         // Idempotent: clobber any prior overlay so we don't stack views on rapid retries.
         sourceNotReadyOverlay?.let { binding.viewerContainer.removeView(it) }
-
-        val container = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(48.dpToPx, 48.dpToPx, 48.dpToPx, 48.dpToPx)
-            // Block taps from falling through to the (absent) viewer behind us.
-            isClickable = true
-            isFocusable = true
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-        }
-        val title = TextView(this).apply {
-            text = getString(MR.strings.source_not_installed)
-            textSize = 18f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            gravity = Gravity.CENTER
-        }
-        val subtitle = TextView(this).apply {
-            text = if (missingExtensionName != null) {
+        clearViewerForInitialError()
+        val overlay = buildInitialLoadErrorOverlay(
+            title = getString(MR.strings.source_not_installed),
+            message = if (missingExtensionName != null) {
                 getString(MR.strings.source_missing_install_extension, missingExtensionName)
             } else {
                 getString(MR.strings.novel_source_not_ready, sourceId)
-            }
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setPadding(0, 16.dpToPx, 0, 24.dpToPx)
-            alpha = 0.7f
-        }
-        val retry = com.google.android.material.button.MaterialButton(this).apply {
-            text = getString(MR.strings.retry)
-            setOnClickListener {
+            },
+            onRetry = {
                 // Tear down the overlay before kicking off another init pass; if the
                 // retry succeeds the viewer renders into the now-clean container.
                 hideSourceNotReadyOverlay()
                 retryInitAfterSourceNotReady()
-            }
-        }
-        container.addView(title)
-        container.addView(subtitle)
-        container.addView(retry)
-        binding.viewerContainer.addView(container)
-        sourceNotReadyOverlay = container
+            },
+        )
+        binding.viewerContainer.addView(overlay)
+        sourceNotReadyOverlay = overlay
     }
 
     private fun hideSourceNotReadyOverlay() {
