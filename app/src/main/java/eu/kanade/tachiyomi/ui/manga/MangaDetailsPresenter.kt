@@ -59,6 +59,7 @@ import eu.kanade.tachiyomi.ui.security.SecureActivityDelegate
 import eu.kanade.tachiyomi.util.chapter.ChapterFilter
 import eu.kanade.tachiyomi.util.chapter.ChapterSort
 import eu.kanade.tachiyomi.util.chapter.ChapterUtil
+import eu.kanade.tachiyomi.util.chapter.refreshChapterList
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithTrackServiceTwoWay
 import eu.kanade.tachiyomi.util.chapter.updateTrackChapterMarkedAsRead
@@ -683,7 +684,7 @@ class MangaDetailsPresenter(
     private suspend fun fetchChaptersFromSource(manualFetch: Boolean = true) {
         try {
             withIOContext {
-                val chapters = source.getChapterList(manga.copy())
+                val chapters = source.refreshChapterList(manga)
                 val (added, removed) = withIOContext { syncChaptersWithSource(chapters, manga, source) }
                 if (added.isNotEmpty()) {
                     if (manga.shouldDownloadNewChapters(preferences) && manualFetch) {

@@ -171,7 +171,8 @@ class UnifiedLibraryBooksView(
                 // Novel plugins load lazily; reclassify once their sources resolve.
                 sourceManager.libraryClassificationChanges,
                 getCategories.subscribe(CategoryLibrary.BOOKS),
-                // Book category links live in their own table; assignments bump this revision.
+                // Book category links and novel downloads live outside the library tables, so
+                // assignments and returns to the library bump this revision.
                 categoryRevision,
             ) { local, library, _, categories, _ ->
                 Triple(
@@ -233,6 +234,11 @@ class UnifiedLibraryBooksView(
 
     /** Re-read book category links after the user assigns categories. */
     fun reloadCategories() {
+        categoryRevision.value++
+    }
+
+    /** Re-reads novel download counts, which change without a library write, as Comics does on return. */
+    fun reload() {
         categoryRevision.value++
     }
 
@@ -298,8 +304,9 @@ class UnifiedLibraryBooksView(
         val category = groupCategories.getOrPut(headerId) { Category.create("") }.apply {
             id = headerId
             name = source?.name ?: context.getString(MR.strings.default_value)
-            // Default is listed first, as in the Comics library.
-            order = if (realId == 0) -1 else source?.order ?: Int.MAX_VALUE
+            // Default is listed first, as in the Comics library. The category editor numbers
+            // folders from -1, so Default sits below every real order instead of tying with one.
+            order = if (realId == 0) Int.MIN_VALUE else source?.order ?: Int.MAX_VALUE
             isAlone = false
             isSystem = true
             mangaSort = booksCategory.mangaSort

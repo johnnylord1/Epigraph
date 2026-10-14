@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.util.system.launchUI
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
 import yokai.domain.category.interactor.GetCategories
@@ -90,9 +91,13 @@ class MigrationProcessAdapter(
      */
     suspend fun performMigrations(copy: Boolean): List<Pair<MigrationProcessItem, String>> {
         val kept = mutableListOf<Pair<MigrationProcessItem, String>>()
+        // The screen keeps changing the list while this runs, so walk a copy of it.
+        val snapshot = currentItems.toList()
         withContext(Dispatchers.IO) {
-            currentItems.forEach { item ->
+            snapshot.forEach { item ->
                 val manga = item.manga
+                // Removed or already migrated on its own while the others were still running.
+                if (!manga.migrationJob.isActive) return@forEach
                 if (manga.searchResult.initialized) {
                     val toMangaObj =
                         getManga.awaitById(manga.searchResult.get() ?: return@forEach) ?: return@forEach

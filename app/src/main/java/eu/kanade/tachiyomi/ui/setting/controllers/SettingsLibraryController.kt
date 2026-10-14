@@ -2,6 +2,8 @@ package eu.kanade.tachiyomi.ui.setting.controllers
 
 import yokai.util.koin.get
 import androidx.preference.PreferenceScreen
+import com.bluelinelabs.conductor.ControllerChangeHandler
+import com.bluelinelabs.conductor.ControllerChangeType
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.preference.DEVICE_BATTERY_NOT_LOW
@@ -380,21 +382,35 @@ class SettingsLibraryController : SettingsLegacyController() {
         }
     }
 
-    private fun loadCategoriesThenRebuild(screen: PreferenceScreen) {
+    override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
+        super.onChangeStarted(handler, type)
+        // Categories added or removed in the category editor show up once this screen is back.
+        if (type == ControllerChangeType.POP_ENTER && cachedCategories != null) {
+            preferenceScreen?.let { loadCategoriesThenRebuild(it, onlyIfChanged = true) }
+        }
+    }
+
+    private fun loadCategoriesThenRebuild(screen: PreferenceScreen, onlyIfChanged: Boolean = false) {
         if (loadingCategories) return
         loadingCategories = true
         viewScope.launch {
-            cachedCategories = try {
+            val comics = try {
                 withContext(Dispatchers.IO) { getCategories.await(CategoryLibrary.COMICS) }
             } catch (_: Exception) {
                 emptyList()
             }
-            cachedBookCategories = try {
+            val books = try {
                 withContext(Dispatchers.IO) { getCategories.await(CategoryLibrary.BOOKS) }
             } catch (_: Exception) {
                 emptyList()
             }
             loadingCategories = false
+            val key: (List<Category>?) -> List<Pair<Int?, String>>? = { list -> list?.map { it.id to it.name } }
+            if (onlyIfChanged && key(comics) == key(cachedCategories) && key(books) == key(cachedBookCategories)) {
+                return@launch
+            }
+            cachedCategories = comics
+            cachedBookCategories = books
             screen.removeAll()
             setupPreferenceScreen(screen)
         }

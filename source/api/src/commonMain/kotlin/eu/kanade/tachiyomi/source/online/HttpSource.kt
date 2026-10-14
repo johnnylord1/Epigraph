@@ -18,6 +18,7 @@ import java.net.URI
 import java.net.URISyntaxException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.Continuation
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Headers
@@ -270,6 +271,37 @@ abstract class HttpSource : CatalogueSource, KoinComponent {
     override suspend fun getChapterList(manga: SManga): List<SChapter> {
         return withMangaUpdateLock(manga) {
             getMangaUpdate(manga, emptyList(), fetchDetails = false, fetchChapters = true).chapters
+        }
+    }
+
+    /**
+     * [getChapterList] for a manga whose chapters are already stored, newest first. Sources that
+     * implement [getMangaUpdate] themselves get [knownChapters], so they can stop reading the
+     * site's list at the first chapter they know and keep the state they stored on the chapters.
+     * Every other source is asked for the whole list as before.
+     */
+    suspend fun getChapterList(manga: SManga, knownChapters: List<SChapter>): List<SChapter> {
+        if (knownChapters.isEmpty() || !takesKnownChapters) return getChapterList(manga)
+        return withMangaUpdateLock(manga) {
+            getMangaUpdate(manga, knownChapters, fetchDetails = false, fetchChapters = true).chapters
+        }
+    }
+
+    /** Whether this source reads its chapters through its own [getMangaUpdate]. */
+    val takesKnownChapters: Boolean by lazy {
+        try {
+            val update = javaClass.getMethod(
+                "getMangaUpdate",
+                SManga::class.java,
+                List::class.java,
+                Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+                Continuation::class.java,
+            )
+            val chapterList = javaClass.getMethod("getChapterList", SManga::class.java, Continuation::class.java)
+            update.declaringClass != HttpSource::class.java && chapterList.declaringClass == HttpSource::class.java
+        } catch (e: Exception) {
+            false
         }
     }
 
