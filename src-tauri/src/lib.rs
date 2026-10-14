@@ -2975,13 +2975,14 @@ server.maxSourcesInParallel = 6
     }
 
     #[test]
-    fn b1_existing_spawn_lock_is_preserved_without_live_ownership_proof() {
+    fn spawn_lock_left_by_a_dead_start_never_blocks_but_a_live_one_does() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("server.spawn.lock");
-        let evidence = b"pid=invalid\ntimestamp=0\n";
-        std::fs::write(&path, evidence).unwrap();
-        assert!(!acquire_spawn_lock(&path, temp.path()).unwrap());
-        assert_eq!(std::fs::read(&path).unwrap(), evidence);
+        std::fs::write(&path, b"pid=invalid\ntimestamp=0\n").unwrap();
+        let lease = acquire_spawn_lock(&path, temp.path()).unwrap().unwrap();
+        assert!(acquire_spawn_lock(&path, temp.path()).unwrap().is_none());
+        drop(lease);
+        assert!(acquire_spawn_lock(&path, temp.path()).unwrap().is_some());
     }
 
     #[cfg(windows)]
@@ -4218,26 +4219,11 @@ fn validate_server_owner(target: &LocalServerTarget, owner: &ServerOwner) -> Own
     OwnerReuseDecision::Reusable
 }
 
-fn acquire_spawn_lock(lock_path: &Path, data_dir: &Path) -> std::io::Result<bool> {
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(lock_path)
-    {
-        Ok(mut file) => {
-            let _ = writeln!(file, "pid={}", std::process::id());
-            let _ = writeln!(file, "rootDir={}", data_dir.to_string_lossy());
-            let _ = writeln!(file, "timestamp={}", unix_now_secs());
-            file.sync_all()?;
-            Ok(true)
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            // Age and saved PID are not sufficient authority to take over a
-            // startup lease. Preserve it until explicitly reconciled.
-            Ok(false)
-        }
-        Err(err) => Err(err),
-    }
+fn acquire_spawn_lock(
+    lock_path: &Path,
+    data_dir: &Path,
+) -> std::io::Result<Option<suwayomi_runtime::SpawnLease>> {
+    suwayomi_runtime::SpawnLease::try_acquire(lock_path, data_dir)
 }
 
 /// The folders Suwayomi keeps under its downloads root; a migration moves these and nothing else, so a
@@ -6013,14 +5999,16 @@ fn spawn_server_unlocked(
         );
     }
 
-    match acquire_spawn_lock(&spawn_lock_path, &data_dir) {
-        Ok(true) => {
+    // Held until this start returns; a crash releases it with the process.
+    let _spawn_lease = match acquire_spawn_lock(&spawn_lock_path, &data_dir) {
+        Ok(Some(lease)) => {
             do_log(
                 &mut log,
                 &format!("[spawn_server] acquired spawn lock {:?}", spawn_lock_path),
             );
+            lease
         }
-        Ok(false) => {
+        Ok(None) => {
             do_log(
                 &mut log,
                 "[spawn_server] spawn lock held by another attempt; skipping duplicate spawn",
@@ -6034,10 +6022,9 @@ fn spawn_server_unlocked(
             );
             return Err(SpawnError::SpawnFailed(err.to_string()));
         }
-    }
+    };
 
     if owner_tmp_path.exists() {
-        let _ = std::fs::remove_file(&spawn_lock_path);
         return Err(SpawnError::SpawnFailed("Partial ownership metadata retained; refusing takeover".into()));
     }
 
@@ -6049,7 +6036,6 @@ fn spawn_server_unlocked(
                         &mut log,
                         "[spawn_server] owner valid, reusing existing server",
                     );
-                    let _ = std::fs::remove_file(&spawn_lock_path);
                     return Ok(());
                 }
                 OwnerReuseDecision::Stale if confirm_exited_server_owner(&owner_path) => {
@@ -6059,7 +6045,6 @@ fn spawn_server_unlocked(
                     );
                 }
                 OwnerReuseDecision::Stale => {
-                    let _ = std::fs::remove_file(&spawn_lock_path);
                     return Err(SpawnError::SpawnFailed("Unconfirmed stale ownership retained; refusing takeover".into()));
                 }
                 OwnerReuseDecision::ConflictingLiveProcess => {
@@ -6067,7 +6052,6 @@ fn spawn_server_unlocked(
                         &mut log,
                         "[spawn_server] owner points to a live but unhealthy Java process; refusing second spawn",
                     );
-                    let _ = std::fs::remove_file(&spawn_lock_path);
                     return Err(SpawnError::SpawnFailed(
                         "Local server process is alive but not healthy. Stop it and retry."
                             .to_string(),
@@ -6079,7 +6063,6 @@ fn spawn_server_unlocked(
                     &mut log,
                     "[spawn_server] malformed ownership preserved; refusing takeover",
                 );
-                let _ = std::fs::remove_file(&spawn_lock_path);
                 return Err(SpawnError::SpawnFailed("Malformed ownership retained".into()));
             }
         }
@@ -6100,7 +6083,6 @@ fn spawn_server_unlocked(
                 process_identity: runtime_process_identity(java_pid),
             };
             if let Err(err) = write_server_owner_atomic(&owner_path, &owner) {
-                let _ = std::fs::remove_file(&spawn_lock_path);
                 return Err(SpawnError::SpawnFailed(format!(
                     "Failed to publish local server owner: {}",
                     err
@@ -6113,7 +6095,6 @@ fn spawn_server_unlocked(
                     java_pid
                 ),
             );
-            let _ = std::fs::remove_file(&spawn_lock_path);
             return Ok(());
         }
 
@@ -6124,7 +6105,6 @@ fn spawn_server_unlocked(
                 java_pid, data_dir
             ),
         );
-        let _ = std::fs::remove_file(&spawn_lock_path);
         return Err(SpawnError::SpawnFailed(
             "Local server process is alive but not responding.".to_string(),
         ));
@@ -6156,7 +6136,6 @@ fn spawn_server_unlocked(
     let mut invocation = match resolve_server_binary(&binary, &app, &mut log) {
         Ok(i) => i,
         Err(e) => {
-            let _ = std::fs::remove_file(&spawn_lock_path);
             do_log(&mut log, &format!("[spawn_server] resolve FAILED: {:?}", e));
             return Err(e);
         }
@@ -6247,7 +6226,6 @@ fn spawn_server_unlocked(
                     );
                 }
                 if let Err(error) = suwayomi_runtime::stop_spawned_child(&child) { return Err(SpawnError::SpawnFailed(error)); }
-                let _ = std::fs::remove_file(&spawn_lock_path);
                 set_runtime_status(
                     &app,
                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
@@ -6413,7 +6391,6 @@ fn spawn_server_unlocked(
                     *app.state::<ServerState>().0.lock().unwrap() = Some(running);
                     return Err(SpawnError::SpawnFailed(error));
                 }
-                let _ = std::fs::remove_file(&spawn_lock_path);
                 set_runtime_status(
                     &app,
                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
@@ -6444,7 +6421,6 @@ fn spawn_server_unlocked(
                     *app.state::<ServerState>().0.lock().unwrap() = Some(running);
                     return Err(SpawnError::SpawnFailed(error));
                 }
-                let _ = std::fs::remove_file(&spawn_lock_path);
                 set_runtime_status(
                     &app,
                     suwayomi_runtime::RuntimeLifecycleState::Unavailable,
@@ -6458,7 +6434,6 @@ fn spawn_server_unlocked(
                 ));
             }
 
-            let _ = std::fs::remove_file(&spawn_lock_path);
             *app.state::<ServerState>().0.lock().unwrap() = Some(running);
             set_runtime_status(
                 &app,
@@ -6471,7 +6446,6 @@ fn spawn_server_unlocked(
             Ok(())
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&spawn_lock_path);
             do_log(&mut log, &format!("[spawn_server] SPAWN FAILED: {}", e));
             do_log(&mut log, &format!("[spawn_server] error kind: {:?}", e));
             set_runtime_status(

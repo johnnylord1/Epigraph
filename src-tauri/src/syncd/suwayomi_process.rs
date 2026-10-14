@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
@@ -44,7 +44,6 @@ const STARTUP_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const STARTUP_PROBE_TIMEOUT_EMPTY: Duration = Duration::from_secs(240);
 const STARTUP_PROBE_TIMEOUT_EXISTING: Duration = Duration::from_secs(360);
 const PROBE_TIMEOUT: Duration = Duration::from_millis(2_500);
-const STALE_LOCK_AGE: Duration = Duration::from_secs(120);
 const SUPERVISOR_HEALTH_INTERVAL: Duration = Duration::from_secs(15);
 const SUPERVISOR_CONFIGURATION_INTERVAL: Duration = Duration::from_secs(1);
 const SUPERVISOR_RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -105,28 +104,6 @@ struct RuntimeInvocation {
     java: PathBuf,
     jar: PathBuf,
     working_dir: PathBuf,
-}
-
-struct SpawnLock {
-    path: PathBuf,
-    _file: File,
-}
-
-impl Drop for SpawnLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-impl SpawnLock {
-    fn refresh(&mut self) -> Result<(), String> {
-        self._file
-            .set_len(0)
-            .and_then(|_| writeln!(self._file, "pid={}", std::process::id()))
-            .and_then(|_| writeln!(self._file, "timestamp={}", unix_now_secs()))
-            .and_then(|_| self._file.sync_all())
-            .map_err(|error| format!("failed to refresh Suwayomi spawn lock: {error}"))
-    }
 }
 
 pub fn start_headless_supervisor(
@@ -199,7 +176,7 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
 
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("failed to prepare managed Suwayomi profile: {error}"))?;
-    let mut spawn_lock = acquire_spawn_lock(&root)?;
+    let _spawn_lease = acquire_spawn_lock(&root)?;
 
     // Another Epigraph process may have completed startup while this process was
     // waiting for the cross-process lease.
@@ -265,7 +242,7 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
     } else {
         STARTUP_PROBE_TIMEOUT_EMPTY
     };
-    if let Err(error) = wait_for_spawned_runtime(&root, &mut child, &mut spawn_lock, timeout).await
+    if let Err(error) = wait_for_spawned_runtime(&root, &mut child, timeout).await
     {
         stop_owned_instance(&instance, Duration::from_secs(5)).await?;
         return Err(error);
@@ -437,51 +414,12 @@ fn managed_profile_is_configured(root: &Path) -> bool {
         || root.join("extensions").is_dir()
 }
 
-fn acquire_spawn_lock(root: &Path) -> Result<SpawnLock, String> {
-    let path = root.join("server.spawn.lock");
-    for attempt in 0..=1 {
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                writeln!(file, "pid={}", std::process::id())
-                    .and_then(|_| writeln!(file, "rootDir={}", root.display()))
-                    .and_then(|_| writeln!(file, "timestamp={}", unix_now_secs()))
-                    .and_then(|_| file.sync_all())
-                    .map_err(|error| format!("failed to publish Suwayomi spawn lock: {error}"))?;
-                return Ok(SpawnLock { path, _file: file });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt == 0 => {
-                if !spawn_lock_is_stale(&path) {
-                    return Err("another Epigraph process is starting managed Suwayomi".to_string());
-                }
-                return Err("Stale startup lease retained; age and PID cannot authorize takeover".into());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err("another Epigraph process is starting managed Suwayomi".to_string());
-            }
-            Err(error) => {
-                return Err(format!("failed to acquire Suwayomi spawn lock: {error}"));
-            }
-        }
+fn acquire_spawn_lock(root: &Path) -> Result<crate::suwayomi_runtime::SpawnLease, String> {
+    match crate::suwayomi_runtime::SpawnLease::try_acquire(&root.join("server.spawn.lock"), root) {
+        Ok(Some(lease)) => Ok(lease),
+        Ok(None) => Err("another Epigraph process is starting managed Suwayomi".to_string()),
+        Err(error) => Err(format!("failed to acquire Suwayomi spawn lock: {error}")),
     }
-    Err("failed to acquire Suwayomi spawn lock".to_string())
-}
-
-fn spawn_lock_is_stale(path: &Path) -> bool {
-    let owner_pid = std::fs::read_to_string(path).ok().and_then(|contents| {
-        contents.lines().find_map(|line| {
-            line.strip_prefix("pid=")
-                .and_then(|value| value.trim().parse::<u32>().ok())
-        })
-    });
-    if owner_pid.is_some_and(process_is_alive) {
-        return false;
-    }
-    std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
-        .map(|age| age >= STALE_LOCK_AGE)
-        .unwrap_or(owner_pid.is_some())
 }
 
 fn remove_stale_owner(root: &Path) -> Result<(), String> {
@@ -705,13 +643,11 @@ fn spawn_hidden_runtime(root: &Path, invocation: &RuntimeInvocation) -> Result<C
 async fn wait_for_spawned_runtime(
     root: &Path,
     child: &mut Child,
-    spawn_lock: &mut SpawnLock,
     timeout: Duration,
 ) -> Result<(), String> {
     let started = Instant::now();
     loop {
         if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) { return Err("Core shutdown interrupted startup readiness".into()); }
-        spawn_lock.refresh()?;
         if child
             .try_wait()
             .map_err(|error| format!("failed to inspect managed Suwayomi process: {error}"))?
@@ -834,13 +770,6 @@ fn process_identity_matches(owner: &ServerOwner, process: &sysinfo::Process) -> 
     let Some(expected) = owner.process_identity.as_ref() else { return false; };
     expected.pid == process.pid().as_u32()
         && runtime_process_identity(expected.pid).as_ref() == Some(expected)
-}
-
-fn process_is_alive(pid: u32) -> bool {
-    let mut system = System::new_all();
-    let pid = Pid::from_u32(pid);
-    system.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
-    system.process(pid).is_some()
 }
 
 fn process_age_secs(pid: u32) -> Option<u64> {
@@ -1245,9 +1174,17 @@ mod tests {
         let root = temp.path().join("managed");
         std::fs::create_dir_all(&root).unwrap();
         let first = acquire_spawn_lock(&root).unwrap();
-        assert!(!spawn_lock_is_stale(&root.join("server.spawn.lock")));
         assert!(acquire_spawn_lock(&root).is_err());
         drop(first);
+        assert!(acquire_spawn_lock(&root).is_ok());
+    }
+
+    #[test]
+    fn spawn_lock_file_left_by_a_crashed_start_does_not_block() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("managed");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("server.spawn.lock"), "pid=invalid\ntimestamp=0\n").unwrap();
         assert!(acquire_spawn_lock(&root).is_ok());
     }
 

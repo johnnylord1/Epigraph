@@ -4234,7 +4234,7 @@ fn bundled_jar_candidates(app: &AppHandle) -> Vec<PathBuf> {
 
 fn prove_epigraph_runtime_ownership(target: &LocalServerTarget) -> Result<u32, String> {
     let spawn_lock = server_spawn_lock_path(&target.root_dir);
-    if spawn_lock.exists() {
+    if crate::suwayomi_runtime::spawn_lease_is_held(&spawn_lock) {
         return Err(
             "Epigraph is still starting or reconciling this Suwayomi runtime; update is blocked."
                 .to_string(),

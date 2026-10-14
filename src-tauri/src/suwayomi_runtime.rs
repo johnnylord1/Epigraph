@@ -216,6 +216,68 @@ fn recorded_process_has_exited(pid: u32, identity: Option<&RuntimeProcessIdentit
     }
 }
 
+/// Exclusive right to start the Suwayomi of one root (`server.spawn.lock`). It is an OS file lock, so a start that
+/// crashes, is killed or loses power gives it up with its process instead of blocking every later start and
+/// update. The file stays when the lease ends: deleting it would let a waiting start lock the old file while
+/// another creates a new one, and an unlocked leftover file blocks nothing.
+pub struct SpawnLease {
+    file: std::fs::File,
+}
+
+impl SpawnLease {
+    /// `None` while another live start holds the lease.
+    pub fn try_acquire(path: &Path, root: &Path) -> std::io::Result<Option<Self>> {
+        use fs2::FileExt;
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        if let Err(error) = file.try_lock_exclusive() {
+            if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        // Who holds it, for whoever inspects the folder.
+        file.set_len(0)?;
+        writeln!(file, "pid={}", std::process::id())?;
+        writeln!(file, "rootDir={}", root.to_string_lossy())?;
+        writeln!(file, "timestamp={}", unix_now_secs())?;
+        file.sync_all()?;
+        Ok(Some(Self { file }))
+    }
+}
+
+impl Drop for SpawnLease {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+/// Whether a live start holds the lease at `path`. An unreadable lock counts as held.
+pub fn spawn_lease_is_held(path: &Path) -> bool {
+    use fs2::FileExt;
+    let file = match std::fs::OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
+    };
+    if file.try_lock_exclusive().is_err() {
+        return true;
+    }
+    let _ = file.unlock();
+    false
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default()
+}
+
 /// Slack for wall-clock adjustments between the record and the uptime-based boot time.
 const BOOT_PROOF_MARGIN_SECS: u64 = 300;
 
@@ -612,6 +674,64 @@ mod tests {
         assert!(!sanitized.contains("secret"));
         assert!(!sanitized.contains("abc123"));
         assert!(sanitized.contains("<redacted>"));
+    }
+
+    #[test]
+    fn spawn_lease_blocks_only_while_its_holder_lives() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("server.spawn.lock");
+        assert!(!super::spawn_lease_is_held(&path));
+
+        // What a crashed start of an older version leaves behind.
+        std::fs::write(&path, "pid=invalid\ntimestamp=0\n").unwrap();
+        assert!(!super::spawn_lease_is_held(&path));
+
+        let lease = super::SpawnLease::try_acquire(&path, temp.path()).unwrap().unwrap();
+        assert!(super::spawn_lease_is_held(&path));
+        assert!(super::SpawnLease::try_acquire(&path, temp.path()).unwrap().is_none());
+
+        // Ending the holder, as a crash does, frees the root.
+        drop(lease);
+        assert!(!super::spawn_lease_is_held(&path));
+        assert!(super::SpawnLease::try_acquire(&path, temp.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn spawn_lease_is_released_when_its_holder_is_killed() {
+        // The child run of this same test: hold the lease until killed, like a start that crashes midway.
+        if let Some(path) = std::env::var_os("EPIGRAPH_TEST_HOLD_SPAWN_LEASE") {
+            let path = std::path::PathBuf::from(path);
+            let _lease = super::SpawnLease::try_acquire(&path, path.parent().unwrap()).unwrap().unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("server.spawn.lock");
+        let mut holder = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "suwayomi_runtime::tests::spawn_lease_is_released_when_its_holder_is_killed"])
+            .env("EPIGRAPH_TEST_HOLD_SPAWN_LEASE", &path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !super::spawn_lease_is_held(&path) {
+            assert!(std::time::Instant::now() < deadline, "holder never took the lease");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(super::SpawnLease::try_acquire(&path, temp.path()).unwrap().is_none());
+
+        holder.kill().unwrap(); // Only this disposable child.
+        holder.wait().unwrap();
+
+        // The file is still there, but nothing holds it any more.
+        assert!(path.exists());
+        assert!(!super::spawn_lease_is_held(&path));
+        let lease = super::SpawnLease::try_acquire(&path, temp.path()).unwrap().unwrap();
+        drop(lease);
+        assert!(std::fs::read_to_string(&path).unwrap().contains(&format!("pid={}", std::process::id())));
     }
 
     #[test]
