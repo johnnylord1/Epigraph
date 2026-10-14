@@ -9,6 +9,7 @@ import kotlin.math.max
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -45,14 +46,19 @@ class TrackerRecommendationGatherer(
      * Scores are AniList lookups for [trackerScoreTitles] plus a MAL `search` fallback for
      * the first [TRACKER_SCORE_MAL_FALLBACK_LIMIT] titles AniList did not match. Each
      * tracker failure is recorded in [Result.failed] instead of throwing.
+     *
+     * The AniList part gets [ANILIST_BUDGET_MS] in all, waiting for the gate included, like the
+     * desktop's abort signal: a busy minute must not keep Discover loading.
      */
     suspend fun gather(comicPoolTitles: List<String>): Result = coroutineScope {
         val failed = mutableListOf<String>()
 
         val trending = async {
-            val pages = listOf(1, 2, 3, 4).map { page ->
-                async { runCatching { fetchAniListCatalog(page) }.getOrDefault(emptyList()) }
-            }.awaitAll()
+            val pages = withTimeoutOrNull(ANILIST_BUDGET_MS) {
+                listOf(1, 2, 3, 4).map { page ->
+                    async { runCatching { fetchAniListCatalog(page) }.getOrDefault(emptyList()) }
+                }.awaitAll()
+            }.orEmpty()
             if (pages.all { it.isEmpty() }) synchronized(failed) { failed += "AniList" }
             capProviderResults(dedupeTrackSearches(pages.flatten()))
         }
@@ -60,7 +66,10 @@ class TrackerRecommendationGatherer(
         val scoreTitles = trackerScoreTitles(comicPoolTitles)
         val scores = async {
             val scoreMap = linkedMapOf<String, TrackerCatalogInput>()
-            val anilistScores = runCatching { fetchAniListScoresByTitles(scoreTitles) }
+            val anilistScores = runCatching {
+                withTimeoutOrNull(ANILIST_BUDGET_MS) { fetchAniListScoresByTitles(scoreTitles) }
+                    ?: error("AniList scores ran out of time")
+            }
                 .onFailure { synchronized(failed) { failed += "AniList" } }
                 .getOrDefault(emptyList())
             for (input in anilistScores) {
@@ -91,11 +100,12 @@ class TrackerRecommendationGatherer(
 
     /** Desktop `loadSearchTrackerTrendingMore` fetch: one more AniList catalog page. */
     suspend fun fetchTrendingPage(page: Int): List<TrackerCatalogInput> =
-        runCatching { fetchAniListCatalog(page) }.getOrDefault(emptyList())
+        runCatching { withTimeoutOrNull(ANILIST_BUDGET_MS) { fetchAniListCatalog(page) } }.getOrNull().orEmpty()
 
     /** Desktop `loadSearchTrackerScoresForTitles` (AniList part) for titles loaded later. */
     suspend fun fetchScores(titles: List<String>, limit: Int = TRACKER_SCORE_BATCH_SIZE): List<TrackerCatalogInput> =
-        runCatching { fetchAniListScoresByTitles(trackerScoreTitles(titles).take(limit)) }.getOrDefault(emptyList())
+        runCatching { withTimeoutOrNull(ANILIST_BUDGET_MS) { fetchAniListScoresByTitles(trackerScoreTitles(titles).take(limit)) } }
+            .getOrNull().orEmpty()
 
     /**
      * Desktop `refreshSearchTrackerTasteFeed`: AniList searches in the reader's strongest genres, per
@@ -419,6 +429,9 @@ class TrackerRecommendationGatherer(
         private const val ANILIST_PAGE_SIZE = 40
         /** Desktop BrowseV3 uses 850-950 ms per tracker request; the phone gets 8 s. */
         private const val TRACKER_TIMEOUT_MS = 8_000L
+
+        /** All of one AniList step, waiting for the gate included; the loader's genre feed budget. */
+        private const val ANILIST_BUDGET_MS = 22_000L
     }
 }
 
