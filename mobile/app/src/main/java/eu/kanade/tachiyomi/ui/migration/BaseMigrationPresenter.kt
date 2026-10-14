@@ -8,9 +8,15 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.util.system.withUIContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
@@ -31,6 +37,27 @@ abstract class BaseMigrationPresenter<T : BaseMigrationInterface>(
     var mangaItems = hashMapOf<Long, List<MangaItem>>()
         protected set
     protected val extensionManager: ExtensionManager by injectLazy()
+
+    /** Browse's Manga / Novel choice; only sources of this type are listed for migration. */
+    val browseType: BrowseSourceType
+        get() = BrowseSourceType.fromOrdinal(preferences.lastBrowseSourceType().get())
+
+    fun setBrowseType(type: BrowseSourceType) {
+        preferences.lastBrowseSourceType().set(type.ordinal)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        preferences.lastBrowseSourceType().changes()
+            .drop(1)
+            .distinctUntilChanged()
+            .onEach {
+                selectedSource = null
+                withUIContext { view?.onBrowseTypeChanged(browseType) }
+                refreshMigrations()
+            }
+            .launchIn(presenterScope)
+    }
 
     fun refreshMigrations() {
         presenterScope.launch {
@@ -55,12 +82,14 @@ abstract class BaseMigrationPresenter<T : BaseMigrationInterface>(
         val header = SelectionHeader()
         val sourceGroup = library.groupBy { it.source }
         val sortOrder = PreferenceValues.MigrationSourceOrder.fromPreference(preferences)
+        val novels = browseType == BrowseSourceType.Novel
         val extensions = extensionManager.installedExtensionsFlow.value
         val obsoleteSources =
             extensions.filter { it.isObsolete }.map { it.sources }.flatten().map { it.id }
 
         return sourceGroup
             .mapNotNull { if (it.key != LocalSource.ID) sourceManager.getOrStub(it.key) to it.value.size else null }
+            .filter { it.first.isNovelSource() == novels }
             .sortedWith(
                 compareBy(
                     {
@@ -128,4 +157,7 @@ abstract class BaseMigrationPresenter<T : BaseMigrationInterface>(
 interface BaseMigrationInterface {
     fun setMigrationManga(title: String, manga: List<MangaItem>?)
     fun setMigrationSources(sources: List<SourceItem>)
+
+    /** Browse's Manga / Novel choice changed; the migration list follows it. */
+    fun onBrowseTypeChanged(type: BrowseSourceType) {}
 }

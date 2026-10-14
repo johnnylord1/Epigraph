@@ -65,7 +65,22 @@ class SourcePresenter(
         maybeMigrateLegacyPinned()
         maybeMigrateLegacyLastUsed()
         observeSources()
+        observeCurrentType()
         loadSources()
+    }
+
+    /** Follows a Manga / Novel choice made elsewhere, such as the Extensions or Migration pill. */
+    private fun observeCurrentType() {
+        preferences.lastBrowseSourceType().changes()
+            .drop(1)
+            .onEach { ordinal ->
+                val type = BrowseSourceType.fromOrdinal(ordinal)
+                if (type == currentType) return@onEach
+                currentType = type
+                loadSources()
+                withUIContext { controller.onContentTypeChanged() }
+            }
+            .launchIn(scope)
     }
 
     /** Switch the visible source family and reload. Persists the choice across app restarts. */

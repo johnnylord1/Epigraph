@@ -167,6 +167,11 @@ class BrowseController :
         updateContentTypeItem()
     }
 
+    /** The type was switched from the Extensions or Migration pill. */
+    fun onContentTypeChanged() {
+        updateContentTypeItem()
+    }
+
     private val basePreferences: BasePreferences by injectLazy()
 
     /**

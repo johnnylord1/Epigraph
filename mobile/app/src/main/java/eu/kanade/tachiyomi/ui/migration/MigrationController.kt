@@ -6,6 +6,7 @@ import android.view.Menu
 import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.doOnNextLayout
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.items.IFlexible
@@ -16,6 +17,7 @@ import eu.kanade.tachiyomi.databinding.MigrationControllerBinding
 import eu.kanade.tachiyomi.ui.base.controller.BaseCoroutineController
 import eu.kanade.tachiyomi.ui.migration.manga.design.PreMigrationController
 import eu.kanade.tachiyomi.ui.source.BrowseController
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.view.appBar
@@ -25,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
+import yokai.presentation.component.setSegmentedSwitchActionView
 import yokai.util.lang.getString
 
 class MigrationController :
@@ -42,6 +45,9 @@ class MigrationController :
         }
 
     override val presenter = MigrationPresenter()
+
+    /** Drives the Manga / Novels pill; the choice is Browse's and is shared with it. */
+    private val browseTypeState = mutableStateOf(presenter.browseType)
 
     override fun createBinding(inflater: LayoutInflater) = MigrationControllerBinding.inflate(inflater)
 
@@ -115,6 +121,27 @@ class MigrationController :
             PreferenceValues.MigrationSourceOrder.Obsolete -> R.id.action_sort_obsolete
         }
         menu.findItem(id).isChecked = true
+        val context = view?.context ?: activity ?: return
+        browseTypeState.value = presenter.browseType
+        menu.findItem(R.id.action_extension_type)?.setSegmentedSwitchActionView(
+            context = context,
+            options = listOf(
+                BrowseSourceType.Manga to context.getString(MR.strings.manga),
+                BrowseSourceType.Novel to context.getString(MR.strings.novels),
+            ),
+            selected = browseTypeState,
+            onSelect = { type ->
+                if (type == presenter.browseType) {
+                    binding.migrationRecycler.smoothScrollToPosition(0)
+                } else {
+                    presenter.setBrowseType(type)
+                }
+            },
+        )
+    }
+
+    override fun onBrowseTypeChanged(type: BrowseSourceType) {
+        browseTypeState.value = type
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

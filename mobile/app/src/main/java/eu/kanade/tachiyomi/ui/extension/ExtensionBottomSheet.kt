@@ -37,6 +37,7 @@ import eu.kanade.tachiyomi.ui.migration.SourceAdapter
 import eu.kanade.tachiyomi.ui.migration.SourceItem
 import eu.kanade.tachiyomi.ui.migration.manga.design.PreMigrationController
 import eu.kanade.tachiyomi.ui.source.BrowseController
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.util.system.isPackageInstalled
 import eu.kanade.tachiyomi.util.system.materialAlertDialog
 import eu.kanade.tachiyomi.util.system.rootWindowInsetsCompat
@@ -107,10 +108,12 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
 
     lateinit var controller: BrowseController
     var boundViews = arrayListOf<RecyclerWithScrollerView>()
-    private var selectedExtensionTypeTab = EXTENSION_TYPE_MANGA
+    // Follows Browse's Manga / Novel switch, so the sheet opens on the type being browsed.
+    private var selectedExtensionTypeTab =
+        if (presenter.browseType == BrowseSourceType.Novel) EXTENSION_TYPE_NOVELS else EXTENSION_TYPE_MANGA
 
     /** Drives the Manga / Novels pill in the sheet toolbar. */
-    val novelPluginsSelected = mutableStateOf(false)
+    val novelPluginsSelected = mutableStateOf(selectedExtensionTypeTab == EXTENSION_TYPE_NOVELS)
     private var migrationSourcesEmpty = false
     private var tabbedSheetAdapter: TabbedSheetAdapter? = null
 
@@ -622,15 +625,24 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         }
     }
 
-    /** The pill's choice. Choosing the current type again refreshes novel plugins and scrolls up. */
+    /**
+     * The pill's choice, shared with Browse and Migration. Choosing the current type again
+     * refreshes novel plugins and scrolls up.
+     */
     fun selectExtensionType(novels: Boolean) {
         val position = if (novels) EXTENSION_TYPE_NOVELS else EXTENSION_TYPE_MANGA
         val reselected = position == selectedExtensionTypeTab
         showExtensionTypeTab(position)
         if (reselected) {
-            if (novels) presenter.refreshNovelPlugins()
-            activeExtensionFrameLayout()?.binding?.recycler?.smoothScrollToTop()
+            if (novels && binding.pager.currentItem == OUTER_TAB_EXTENSIONS) presenter.refreshNovelPlugins()
+            activeFrameLayout()?.binding?.recycler?.smoothScrollToTop()
+        } else {
+            presenter.setBrowseType(if (novels) BrowseSourceType.Novel else BrowseSourceType.Manga)
         }
+    }
+
+    override fun onBrowseTypeChanged(type: BrowseSourceType) {
+        showExtensionTypeTab(if (type == BrowseSourceType.Novel) EXTENSION_TYPE_NOVELS else EXTENSION_TYPE_MANGA)
     }
 
     private fun showExtensionTypeTab(position: Int) {
