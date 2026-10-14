@@ -452,7 +452,12 @@ fn spawn_discovery_provider_task(
 
 fn install_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    // A persistent Core outlives the desktop that reads its stdout and stderr. Once that pipe is
+    // gone, reporting a failed log write would itself print to the broken stderr, and `eprintln!`
+    // panics there: the task that logged dies (the shutdown task, so the Core never exits), or the
+    // whole process aborts in release builds. Lost log lines are dropped instead.
     let _ = tracing_subscriber::fmt()
+        .log_internal_errors(false)
         .with_env_filter(filter)
         .json()
         .with_current_span(false)
