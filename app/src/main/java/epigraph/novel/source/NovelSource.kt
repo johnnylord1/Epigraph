@@ -89,6 +89,9 @@ class NovelSource(
 
     private suspend fun ensureRuntime(): NovelJsRuntime = runtimeMutex.withLock {
         runtime?.takeIf { it.isInitialized }?.let { return@withLock it }
+        // A runtime reset after a timeout or out of memory still owns a worker thread.
+        runtime?.close()
+        runtime = null
 
         val rt = NovelJsRuntime(context, bridge, pluginId, userAgent)
         // Re-read the JS source on each (re)initialization rather than holding it for the

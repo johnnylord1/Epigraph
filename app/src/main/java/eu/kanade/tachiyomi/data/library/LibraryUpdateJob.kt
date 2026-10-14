@@ -41,6 +41,7 @@ import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.data.work.ActiveWorkTracker
 import eu.kanade.tachiyomi.domain.manga.models.Manga
 import eu.kanade.tachiyomi.extension.ExtensionUpdateJob
+import eu.kanade.tachiyomi.network.interceptor.NetworkActivity
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.UnmeteredSource
@@ -66,6 +67,7 @@ import eu.kanade.tachiyomi.util.system.withIOContext
 import java.io.File
 import java.lang.ref.WeakReference
 import java.time.ZonedDateTime
+import java.util.Collections
 import java.util.Date
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
@@ -79,6 +81,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -131,16 +134,21 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
     private val mangaToUpdateMap = mutableMapOf<Long, List<LibraryManga>>()
 
-    private val categoryIds = mutableSetOf<Int>()
+    // Guards the queue above: a Books & novels or category refresh appends to it from extraScope
+    // while the per-source loops drain it.
+    private val queueLock = Any()
+
+    private val categoryIds: MutableSet<Int> = Collections.synchronizedSet(mutableSetOf())
 
     // List containing new updates
     private val newUpdates = mutableMapOf<LibraryManga, Array<Chapter>>()
 
     // List containing failed updates
-    private val failedUpdates = mutableMapOf<Manga, String?>()
+    // Filled from the per-source loops running in parallel.
+    private val failedUpdates: MutableMap<Manga, String?> = Collections.synchronizedMap(mutableMapOf())
 
     // List containing skipped updates
-    private val skippedUpdates = mutableMapOf<Manga, String?>()
+    private val skippedUpdates: MutableMap<Manga, String?> = Collections.synchronizedMap(mutableMapOf())
 
     val count = AtomicInteger(0)
 
@@ -252,11 +260,14 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
     private suspend fun updateChaptersJob(mangaToAdd: List<LibraryManga>) {
         // Initialize the variables holding the progress of the updates.
-        mangaToUpdate.addAll(mangaToAdd)
-        mangaToUpdateMap.putAll(mangaToAdd.groupBy { it.manga.source })
-        checkIfMassiveUpdate()
+        synchronized(queueLock) {
+            mangaToUpdate.addAll(mangaToAdd)
+            mangaToUpdateMap.putAll(mangaToAdd.groupBy { it.manga.source })
+            checkIfMassiveUpdate()
+        }
+        val sources = synchronized(queueLock) { mangaToUpdateMap.keys.toList() }
         coroutineScope {
-            val list = mangaToUpdateMap.keys.map { source ->
+            val list = sources.map { source ->
                 async {
                     try {
                         requestSemaphore.withPermit { updateMangaInSource(source) }
@@ -370,7 +381,12 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
     private suspend fun finishUpdates(wasStopped: Boolean = false) {
         if (!wasStopped && !isStopped) {
-            extraDeferredJobs.awaitAll()
+            // Titles queued while waiting add jobs of their own, so wait until none is left.
+            while (true) {
+                val pending = synchronized(queueLock) { extraDeferredJobs.filter { it.isActive } }
+                if (pending.isEmpty()) break
+                pending.awaitAll()
+            }
         }
         if (newUpdates.isNotEmpty()) {
             notifier.showResultNotification(newUpdates)
@@ -445,15 +461,36 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     }
 
     private suspend fun updateMangaInSource(source: Long): Boolean {
-        if (mangaToUpdateMap[source] == null) return false
+        if (synchronized(queueLock) { mangaToUpdateMap[source] } == null) return false
         var count = 0
         var hasDownloads = false
-        val sourceObj = sourceManager.get(source) as? CatalogueSource ?: return false
+        val sourceObj = awaitCatalogueSource(source)
+        if (sourceObj == null) {
+            // Its extension or plugin is not installed: report its titles instead of leaving the
+            // progress short of the total.
+            val titles = synchronized(queueLock) {
+                mangaToUpdateMap[source].orEmpty().also { mangaToUpdateMap[source] = emptyList() }
+            }
+            val reason = context.getString(MR.strings.source_not_installed)
+            titles.forEach { skippedUpdates[it.manga] = reason }
+            this.count.addAndGet(titles.size)
+            return false
+        }
         val breaker = SourceFailureBreaker(
             if (tags.contains(WORK_NAME_AUTO)) AUTO_UPDATE_SOURCE_FAILURE_LIMIT else MANUAL_UPDATE_SOURCE_FAILURE_LIMIT,
         )
-        while (count < mangaToUpdateMap[source]!!.size) {
-            val manga = mangaToUpdateMap[source]!![count]
+        while (true) {
+            // Reading the next title and closing the source happen under one lock, so a title
+            // queued at that moment either runs here or starts a new loop; it is never dropped.
+            val manga = synchronized(queueLock) {
+                val queue = mangaToUpdateMap[source].orEmpty()
+                if (count < queue.size) {
+                    queue[count]
+                } else {
+                    mangaToUpdateMap[source] = emptyList()
+                    null
+                }
+            } ?: break
             val shouldDownload = manga.manga.shouldDownloadNewChapters(preferences)
             val result = updateMangaChapters(manga, this.count.andIncrement, sourceObj, shouldDownload)
             if (result == true) {
@@ -464,7 +501,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             if (breaker.isOpen) {
                 // The source keeps failing (e.g. a Cloudflare challenge or HTTP 502), so this run
                 // stops waiting on it. Its remaining titles are reported and retried next update.
-                val remaining = mangaToUpdateMap[source]!!.drop(count)
+                val remaining = synchronized(queueLock) {
+                    mangaToUpdateMap[source].orEmpty().drop(count).also { mangaToUpdateMap[source] = emptyList() }
+                }
                 val reason = context.getString(MR.strings.update_skipped_source_failing, breaker.limit)
                 remaining.forEach { failedUpdates[it.manga] = reason }
                 this.count.addAndGet(remaining.size)
@@ -472,7 +511,6 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                 break
             }
         }
-        mangaToUpdateMap[source] = emptyList()
         return hasDownloads
     }
 
@@ -487,7 +525,7 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             var hasDownloads = false
             ensureActive()
             notifier.showProgressNotification(manga.manga, progress, mangaToUpdate.size)
-            val fetchedChapters = source.refreshChapterList(manga.manga)
+            val fetchedChapters = abortWhenStalled { source.refreshChapterList(manga.manga) }
 
             if (fetchedChapters.isNotEmpty()) {
                 val newChapters = syncChaptersWithSource(fetchedChapters, manga.manga, source, fetchWindow = fetchWindow)
@@ -519,12 +557,54 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             }
             return@coroutineScope hasDownloads
         } catch (e: Exception) {
+            if (e is TitleStalledException) {
+                failedUpdates[manga.manga] = context.getString(MR.strings.migration_chapters_timed_out)
+                Logger.e { "Timed out updating: ${manga.manga.title}" }
+                return@coroutineScope null
+            }
             if (e is CancellationException) return@coroutineScope false
             failedUpdates[manga.manga] = e.message
             Logger.e { "Failed updating: ${manga.manga.title}: $e" }
             return@coroutineScope null
         }
     }
+
+    /**
+     * Runs [block] until it finishes or the app goes [TITLE_STALL_TIMEOUT_MS] without any network
+     * request. A source can wait forever, e.g. on a captcha WebView, and hold up the whole update,
+     * while a slow one that keeps fetching pages is left alone.
+     */
+    /**
+     * The automatic update can start the app, before extensions and novel plugins finish
+     * loading; wait for them so a title is not reported as missing its source.
+     */
+    private suspend fun awaitCatalogueSource(source: Long): CatalogueSource? {
+        (sourceManager.get(source) as? CatalogueSource)?.let { return it }
+        (sourceManager.awaitExtensionSource(source, SOURCE_LOAD_TIMEOUT_MS) as? CatalogueSource)?.let { return it }
+        return sourceManager.awaitCatalogueSource(source)
+    }
+
+    private suspend fun <T> abortWhenStalled(block: suspend () -> T): T = coroutineScope {
+        val startedAt = System.currentTimeMillis()
+        val work = async { block() }
+        val watchdog = launch {
+            while (true) {
+                delay(STALL_CHECK_INTERVAL_MS)
+                val idle = minOf(NetworkActivity.idleMillis(), System.currentTimeMillis() - startedAt)
+                if (idle >= TITLE_STALL_TIMEOUT_MS) {
+                    work.cancel(TitleStalledException())
+                    break
+                }
+            }
+        }
+        try {
+            work.await()
+        } finally {
+            watchdog.cancel()
+        }
+    }
+
+    private class TitleStalledException : CancellationException("No network activity")
 
     private fun downloadChapters(manga: Manga, chapters: List<Chapter>) {
         // We don't want to start downloading while the library is updating, because websites
@@ -707,21 +787,31 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
 
     private fun addMangaToQueue(categoryId: Int, manga: List<LibraryManga>) {
         extraScope.launch {
-            val mangas = filterMangaToUpdate(manga).sortedBy { it.manga.title }
-            categoryIds.add(categoryId)
-            addManga(mangas)
+            // A failure here must not escape extraScope: it has no handler and would crash the app.
+            try {
+                val mangas = filterMangaToUpdate(manga).sortedBy { it.manga.title }
+                addManga(categoryId, mangas)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.e(e) { "Unable to queue manga for the running update" }
+            }
         }
     }
 
     private fun addCategory(categoryId: Int) {
         extraScope.launch {
-            val mangas = filterMangaToUpdate(getMangaToUpdate(categoryId)).sortedBy { it.manga.title }
-            categoryIds.add(categoryId)
-            addManga(mangas)
+            try {
+                val mangas = filterMangaToUpdate(getMangaToUpdate(categoryId)).sortedBy { it.manga.title }
+                addManga(categoryId, mangas)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.e(e) { "Unable to queue category for the running update" }
+            }
         }
     }
 
-    private fun addManga(mangaToAdd: List<LibraryManga>) {
+    private fun addManga(categoryId: Int, mangaToAdd: List<LibraryManga>) = synchronized(queueLock) {
+        categoryIds.add(categoryId)
         val distinctManga = mangaToAdd.filter { it !in mangaToUpdate }
         mangaToUpdate.addAll(distinctManga)
         checkIfMassiveUpdate()
@@ -730,20 +820,18 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
             // finished running
             if (mangaToUpdateMap[it.key].isNullOrEmpty()) {
                 mangaToUpdateMap[it.key] = it.value
-                extraScope.launch {
-                    extraDeferredJobs.add(
-                        async(Dispatchers.IO) {
-                            val hasDLs = try {
-                                requestSemaphore.withPermit { updateMangaInSource(it.key) }
-                            } catch (e: Exception) {
-                                false
-                            }
-                            if (!hasDownloads) {
-                                hasDownloads = hasDLs
-                            }
-                        },
-                    )
-                }
+                extraDeferredJobs.add(
+                    extraScope.async {
+                        val hasDLs = try {
+                            requestSemaphore.withPermit { updateMangaInSource(it.key) }
+                        } catch (e: Exception) {
+                            false
+                        }
+                        if (!hasDownloads) {
+                            hasDownloads = hasDLs
+                        }
+                    },
+                )
             } else {
                 val list = mangaToUpdateMap[it.key] ?: emptyList()
                 mangaToUpdateMap[it.key] = (list + it.value)
@@ -772,6 +860,11 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
         // Failures in a row after which one update run stops trying a source; same as desktop.
         private const val AUTO_UPDATE_SOURCE_FAILURE_LIMIT = 3
         private const val MANUAL_UPDATE_SOURCE_FAILURE_LIMIT = 5
+
+        // A title gives up after this long with no network request running or ending.
+        private const val TITLE_STALL_TIMEOUT_MS = 60_000L
+        private const val STALL_CHECK_INTERVAL_MS = 5_000L
+        private const val SOURCE_LOAD_TIMEOUT_MS = 30_000L
 
         /**
          * Key for category to update.

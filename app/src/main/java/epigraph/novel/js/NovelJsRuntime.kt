@@ -1,6 +1,8 @@
 package epigraph.novel.js
 
+import android.app.ActivityManager
 import android.content.Context
+import androidx.core.content.getSystemService
 import co.touchlab.kermit.Logger
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.asyncFunction
@@ -70,7 +72,7 @@ class NovelJsRuntime(
         quickJs = qjs
         // Bound the plugin's native heap: an allocation past this raises a JS out-of-memory
         // error for this call instead of letting one plugin exhaust the app's native memory.
-        qjs.memoryLimit = limits.maxHeapBytes
+        qjs.memoryLimit = heapLimit()
 
         try {
             // Step 1: Register the Kotlin bridge as "__bridge" in JS global scope.
@@ -253,13 +255,35 @@ class NovelJsRuntime(
                         } ?: "null"
                     } catch (e: Exception) {
                         Logger.e(e) { "NovelJsRuntime: Error calling $pluginId.$method" }
+                        // After running out of memory the context is left with half-run jobs, and
+                        // later calls only return a pending Promise. Start the next one afresh.
+                        if (e.message?.contains("out of memory") == true) closeQuickJsOnly()
                         throw e
+                    } finally {
+                        if (quickJs === qjs) collectGarbage(qjs, method)
                     }
                 }
             }
         } catch (timeoutException: TimeoutCancellationException) {
             closeQuickJsOnly()
             throw NovelRuntimeTimeoutException(pluginId, method, timeoutException)
+        }
+    }
+
+    /**
+     * A parsed page is a DOM full of reference cycles, which QuickJS frees only in a GC pass, and
+     * its automatic pass can come too late: the next long page then fails with out of memory
+     * while most of the heap is garbage. Must run on the JS thread.
+     */
+    private fun collectGarbage(qjs: QuickJs, method: String) {
+        try {
+            val before = qjs.memoryUsage.mallocSize
+            qjs.gc()
+            Logger.d {
+                "NovelJsRuntime: $pluginId.$method heap ${before / MIB} MiB, ${qjs.memoryUsage.mallocSize / MIB} MiB after GC"
+            }
+        } catch (e: Exception) {
+            Logger.w(e) { "NovelJsRuntime: GC failed for $pluginId" }
         }
     }
 
@@ -363,6 +387,24 @@ class NovelJsRuntime(
 
     companion object {
         private val METHOD_NAME = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
+        private const val MIB = 1024 * 1024
+        private const val MIN_HEAP_BYTES = 128L * MIB
+    }
+
+    /**
+     * An eighth of the device's memory, up to [NovelRuntimeLimits.maxHeapBytes]: on a phone with
+     * little RAM a huge page then fails with a clear error instead of the system killing the app.
+     */
+    private fun heapLimit(): Long {
+        val totalMem = try {
+            val info = ActivityManager.MemoryInfo()
+            context.getSystemService<ActivityManager>()?.getMemoryInfo(info)
+            info.totalMem
+        } catch (e: Exception) {
+            0L
+        }
+        if (totalMem <= 0L) return limits.maxHeapBytes
+        return (totalMem / 8).coerceAtLeast(MIN_HEAP_BYTES).coerceAtMost(limits.maxHeapBytes)
     }
 }
 
@@ -375,8 +417,9 @@ data class NovelRuntimeLimits(
     val maxPluginCodeBytes: Int = 2 * 1024 * 1024,
     val maxResultBytes: Int = 8 * 1024 * 1024,
     // Holds the bundled runtime libraries (cheerio, protobufjs, crypto-js...) plus a parsed
-    // chapter DOM with ample headroom.
-    val maxHeapBytes: Long = 128L * 1024 * 1024,
+    // page. A 4.7 MB novel page listing 3,000+ chapters already needs about 100 MB of DOM in V8,
+    // and QuickJS spends more per node; the page limit (8 MB) sets the worst case.
+    val maxHeapBytes: Long = 512L * 1024 * 1024,
 )
 
 class NovelRuntimeTimeoutException(
