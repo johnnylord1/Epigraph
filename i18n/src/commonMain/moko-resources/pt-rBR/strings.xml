@@ -652,6 +652,7 @@
     <string name="restore_missing_trackers">Monitoradores sem login realizado:</string>
     <string name="restore_new_repositories">Repositórios de plugins de novels que serão adicionados:</string>
     <string name="restore_repository_unavailable">Inacessível, adicione depois em Extensões</string>
+    <string name="restore_novel_plugins_failed">Plugins não instalados: %1$s</string>
     <string name="restore_new_extension_repositories">Repositórios de extensões que serão adicionados:</string>
     <string name="restore_extension_repository_unavailable">Inacessível, adicione depois em Extensões</string>
     <string name="restore_extension_repository_gone">Não existe mais, não adicionado</string>
@@ -862,6 +863,8 @@
     <string name="split_double_pages_portrait">Dividir página dupla em retrato</string>
     <string name="extensions_updated">Extensões atualizadas</string>
     <string name="update_all">Atualizar tudo</string>
+    <string name="install_all">Instalar todos</string>
+    <string name="novel_plugins_needed_by_library">Necessários na biblioteca</string>
     <string name="extensions_miui_warning">Otimização MIUI precisa ser desativada para instalar as extensões.</string>
     <string name="installed_">Instalado %1$s</string>
     <string name="extension_updates_pending">Atualizações de extensão pendentes</string>

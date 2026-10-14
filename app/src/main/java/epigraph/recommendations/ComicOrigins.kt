@@ -3,14 +3,10 @@ package epigraph.recommendations
 import android.content.Context
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.network.jsonMime
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -24,7 +20,6 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
-import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -152,20 +147,11 @@ class ComicOriginLookup(
         internal const val ID_BATCH_SIZE = 50
         internal const val TITLE_BATCH_SIZE = 10
         internal const val MISS_RETRY_MS = 14L * 24 * 60 * 60 * 1000
-        private const val ANILIST_URL = "https://graphql.anilist.co"
         private const val REQUEST_TIMEOUT_MS = 8_000L
 
         fun create(context: Context, network: NetworkHelper = Injekt.get()) = ComicOriginLookup(
             store = ComicOriginStore(File(File(context.noBackupFilesDir, "recommendations"), "comic-origins-v1.json")),
-            post = { payload ->
-                runCatching {
-                    withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
-                        network.client.newCall(POST(ANILIST_URL, body = payload.toRequestBody(jsonMime)))
-                            .awaitSuccess()
-                            .use { it.body.string() }
-                    }
-                }.getOrNull()
-            },
+            post = { payload -> AniListGate.shared.post(network.client, payload, AniListGate.Priority.LOOKUP, REQUEST_TIMEOUT_MS) },
         )
     }
 }

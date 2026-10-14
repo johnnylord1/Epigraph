@@ -20,10 +20,12 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import yokai.domain.manga.interactor.GetManga
 import yokai.i18n.MR
 import yokai.util.lang.getString
 // NOVEL -->
 import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.pluginsNeededByLibrary
 import epigraph.novel.plugin.model.NovelPluginIndex
 import epigraph.novel.ui.NovelPluginGroupItem
 import epigraph.novel.ui.NovelPluginItem
@@ -310,13 +312,17 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
 
     // NOVEL -->
     private val novelPluginManager: NovelPluginManager = get()
+    private val getManga: GetManga = get()
 
     fun refreshNovelPlugins() {
         presenterScope.launch {
             novelPluginManager.ensureInstalledPluginsLoaded()
             novelPluginManager.refreshAvailablePlugins()
             val available = novelPluginManager.availablePluginsFlow.value
-            val items = toNovelPluginItems(available)
+            val librarySources = runCatching { getManga.awaitFavorites().mapTo(HashSet()) { it.source } }.getOrDefault(emptySet())
+            val installedIds = novelPluginManager.installedPluginsFlow.value.mapTo(HashSet()) { it.id }
+            val needed = pluginsNeededByLibrary(librarySources, installedIds, available)
+            val items = toNovelPluginItems(available, needed)
             withUIContext { view?.setNovelPlugins(items) }
         }
     }
@@ -345,7 +351,7 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         }
     }
 
-    private fun toNovelPluginItems(available: List<NovelPluginIndex>): List<NovelPluginItem> {
+    private fun toNovelPluginItems(available: List<NovelPluginIndex>, needed: List<NovelPluginIndex>): List<NovelPluginItem> {
         val context = view?.context ?: return emptyList()
         val activeLangs = preferences.enabledLanguages().get()
         val installedSortOrder = InstalledExtensionsOrder.fromPreference(preferences)
@@ -398,10 +404,23 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
         }
 
         // Filter available by enabled languages
+        val neededIds = needed.mapTo(HashSet()) { it.id }
         val availablePlugins = available.filter { plugin ->
             plugin.id !in installedIds &&
+                plugin.id !in neededIds &&
                 NovelPluginManager.langFromLnReaderLang(plugin.lang) in activeLangs
         }.sortedBy { it.name }
+
+        // Plugins the library's novels wait for (e.g. after an LNReader restore), in any language
+        if (needed.isNotEmpty()) {
+            val header = NovelPluginGroupItem(
+                context.getString(MR.strings.novel_plugins_needed_by_library),
+                needed.size,
+                canUpdate = true,
+                installAll = true,
+            )
+            needed.forEach { plugin -> items.add(NovelPluginItem(plugin, header, false, null)) }
+        }
 
         // Updates section
         if (installedWithUpdates.isNotEmpty()) {

@@ -6,6 +6,7 @@ import android.os.SystemClock
 import co.touchlab.kermit.Logger
 import epigraph.books.importing.LocalBookStreamSource
 import epigraph.novel.plugin.NovelPluginManager
+import epigraph.novel.plugin.pluginsNeededByLibrary
 import epigraph.novel.repo.NovelRepoRepository
 import epigraph.novel.repo.interactor.NovelRepoIndexValidation
 import epigraph.novel.repo.interactor.NovelRepoIndexValidator
@@ -112,8 +113,9 @@ class BackupRestorer(
     private suspend fun restoreContents(opened: OpenedBackup) {
         val backup = opened.backup
         restoreAmount = backup.backupManga.size + backup.backupLocalBooks.size + 3 // +3 for categories, app prefs, source prefs
+        // Steps outside restoreAmount do not count as progress.
         restoreProgress = journal.completed.count {
-            it != RestoreJournal.REPOSITORIES && it != RestoreJournal.EXTENSION_REPOSITORIES
+            it !in setOf(RestoreJournal.REPOSITORIES, RestoreJournal.EXTENSION_REPOSITORIES, RestoreJournal.NOVEL_PLUGINS)
         }
 
         sourceMapping = backup.backupSources.associate { it.sourceId to it.name }
@@ -218,6 +220,43 @@ class BackupRestorer(
                 }
                 journal.markDone(step)
             }
+
+            // Novel plugins of the restored titles, like comic extensions, once the titles are in.
+            if (!journal.isDone(RestoreJournal.NOVEL_PLUGINS)) {
+                ensureActive()
+                val novelSources = backup.backupManga.mapTo(HashSet()) { it.source } +
+                    backup.backupSources.filter { it.isNovel }.map { it.sourceId }
+                installNovelPlugins(novelSources)
+                journal.markDone(RestoreJournal.NOVEL_PLUGINS)
+            }
+        }
+    }
+
+    /**
+     * Installs the plugins of the restored novels from the configured repositories. Restoring is the
+     * user's install action; a plugin that fails is reported and stays in Browse's "Install all".
+     */
+    private suspend fun installNovelPlugins(sourceIds: Set<Long>) {
+        val needed = try {
+            novelPluginManager.ensureInstalledPluginsLoaded()
+            novelPluginManager.refreshAvailablePlugins()
+            pluginsNeededByLibrary(
+                sourceIds,
+                novelPluginManager.installedPluginsFlow.value.mapTo(HashSet()) { it.id },
+                novelPluginManager.availablePluginsFlow.value,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Logger.e(e) { "Novel plugins of the restored titles could not be listed" }
+            return
+        }
+        val failed = needed.filterNot { plugin ->
+            showRestoreProgress(restoreProgress, restoreAmount, plugin.name)
+            novelPluginManager.installPlugin(plugin)
+        }
+        if (failed.isNotEmpty()) {
+            addError(context.getString(MR.strings.restore_novel_plugins_failed, failed.joinToString { it.name }))
         }
     }
 

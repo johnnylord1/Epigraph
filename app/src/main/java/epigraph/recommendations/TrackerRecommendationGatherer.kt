@@ -3,16 +3,12 @@ package epigraph.recommendations
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.NetworkHelper
-import eu.kanade.tachiyomi.network.POST
-import eu.kanade.tachiyomi.network.awaitSuccess
-import eu.kanade.tachiyomi.network.jsonMime
 import java.time.LocalDate
 import java.time.ZoneOffset
 import kotlin.math.max
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -27,13 +23,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.putJsonArray
-import okhttp3.RequestBody.Companion.toRequestBody
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 class TrackerRecommendationGatherer(
     private val trackManager: TrackManager = Injekt.get(),
     private val network: NetworkHelper = Injekt.get(),
+    private val aniListGate: AniListGate = AniListGate.shared,
 ) {
     data class Result(val trending: List<TrackerCatalogInput>, val scores: List<TrackerCatalogInput>, val failed: List<String>)
 
@@ -244,11 +240,8 @@ class TrackerRecommendationGatherer(
                 put("minPopularity", minPopularity)
             }
         }
-        val body = withTimeoutOrNull(TRACKER_TIMEOUT_MS) {
-            network.client.newCall(POST(ANILIST_URL, body = payload.toString().toRequestBody(jsonMime)))
-                .awaitSuccess()
-                .use { it.body.string() }
-        } ?: error("AniList genre catalog timed out")
+        val body = aniListGate.post(network.client, payload.toString(), AniListGate.Priority.FEED, TRACKER_TIMEOUT_MS)
+            ?: error("AniList genre catalog failed")
         val media = Json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
             ?.get("Page")?.jsonObject?.get("media") as? JsonArray ?: error("AniList genre catalog failed")
         return media.mapNotNull { (it as? JsonObject)?.toAniListInput("AniList") }
@@ -277,11 +270,8 @@ class TrackerRecommendationGatherer(
                 putJsonArray("sort") { anilistSortForFeed().forEach { add(it) } }
             }
         }
-        val body = withTimeoutOrNull(TRACKER_TIMEOUT_MS) {
-            network.client.newCall(POST(ANILIST_URL, body = payload.toString().toRequestBody(jsonMime)))
-                .awaitSuccess()
-                .use { it.body.string() }
-        } ?: error("AniList catalog timed out")
+        val body = aniListGate.post(network.client, payload.toString(), AniListGate.Priority.FEED, TRACKER_TIMEOUT_MS)
+            ?: error("AniList catalog failed")
         val media = Json.parseToJsonElement(body).jsonObject["data"]?.jsonObject
             ?.get("Page")?.jsonObject?.get("media") as? JsonArray ?: return emptyList()
         val trackerName = "AniList"
@@ -312,11 +302,8 @@ class TrackerRecommendationGatherer(
                 put("query", query)
                 putJsonObject("variables") { chunk.forEachIndexed { i, title -> put("search$i", title) } }
             }
-            val body = withTimeoutOrNull(TRACKER_TIMEOUT_MS) {
-                network.client.newCall(POST(ANILIST_URL, body = payload.toString().toRequestBody(jsonMime)))
-                    .awaitSuccess()
-                    .use { it.body.string() }
-            } ?: continue
+            val body = aniListGate.post(network.client, payload.toString(), AniListGate.Priority.LOOKUP, TRACKER_TIMEOUT_MS)
+                ?: continue
             val data = runCatching { Json.parseToJsonElement(body).jsonObject }.getOrNull() ?: continue
             chunk.forEachIndexed { i, title ->
                 val media = data["data"]?.jsonObject?.get("q$i")?.jsonObject?.get("media") as? JsonArray
@@ -429,7 +416,6 @@ class TrackerRecommendationGatherer(
     private fun JsonElement.primitiveDouble(): Double? = runCatching { jsonPrimitive.doubleOrNull }.getOrNull()
 
     companion object {
-        private const val ANILIST_URL = "https://graphql.anilist.co"
         private const val ANILIST_PAGE_SIZE = 40
         /** Desktop BrowseV3 uses 850-950 ms per tracker request; the phone gets 8 s. */
         private const val TRACKER_TIMEOUT_MS = 8_000L

@@ -105,6 +105,7 @@ class RestoreJournal(private val file: File) {
         const val EXTENSION_REPOSITORIES = "extension-repositories"
         const val APP_PREFERENCES = "app-prefs"
         const val SOURCE_PREFERENCES = "source-prefs"
+        const val NOVEL_PLUGINS = "novel-plugins"
 
         fun manga(index: Int) = "m:$index"
         fun localBook(index: Int) = "l:$index"
