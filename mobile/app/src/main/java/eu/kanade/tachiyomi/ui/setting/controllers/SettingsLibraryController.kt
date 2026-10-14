@@ -37,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.category.CategoryLibrary
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.library.LibraryPreferences
 import yokai.domain.manga.interactor.GetLibraryManga
@@ -56,6 +57,7 @@ class SettingsLibraryController : SettingsLegacyController() {
     private val libraryPreferences: LibraryPreferences by injectLazy()
 
     private var cachedCategories: List<Category>? = null
+    private var cachedBookCategories: List<Category> = emptyList()
     private var loadingCategories = false
 
     override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
@@ -103,21 +105,35 @@ class SettingsLibraryController : SettingsLegacyController() {
         // Build every section right away (the settings search indexes this first pass) and
         // rebuild once the categories arrive from the database.
         val categoriesLoaded = cachedCategories != null
-        val dbCategories = cachedCategories ?: emptyList<Category>().also { loadCategoriesThenRebuild(this) }
+        val comicCategories = cachedCategories ?: emptyList<Category>().also { loadCategoriesThenRebuild(this) }
+        // Comics and Books & novels keep separate folders. The shared lists below name the
+        // library of a book folder so two folders called the same stay distinguishable.
+        val booksLabel = context.getString(MR.strings.library_books_and_novels)
+        val dbCategories = comicCategories + cachedBookCategories.map { category ->
+            Category.create("${category.name} ($booksLabel)").apply { id = category.id }
+        }
 
         preferenceCategory {
             titleRes = MR.strings.categories
-            preference {
-                key = "edit_categories"
-                isPersistent = false
-                val catCount = dbCategories.size
-                titleRes = when {
-                    !categoriesLoaded -> MR.strings.add_edit_categories
-                    catCount > 0 -> MR.strings.edit_categories
-                    else -> MR.strings.add_categories
+            listOf(
+                Triple("edit_categories", CategoryLibrary.COMICS, comicCategories.size),
+                Triple("edit_book_categories", CategoryLibrary.BOOKS, cachedBookCategories.size),
+            ).forEach { (prefKey, library, catCount) ->
+                preference {
+                    key = prefKey
+                    isPersistent = false
+                    title = context.getString(
+                        when {
+                            !categoriesLoaded -> MR.strings.add_edit_categories
+                            catCount > 0 -> MR.strings.edit_categories
+                            else -> MR.strings.add_categories
+                        },
+                    ) + " · " + context.getString(
+                        if (library == CategoryLibrary.BOOKS) MR.strings.library_books_and_novels else MR.strings.library_comics,
+                    )
+                    if (catCount > 0) summary = context.getString(MR.plurals.category_plural, catCount, catCount)
+                    onClick { router.pushController(CategoryController(library).withFadeTransaction()) }
                 }
-                if (catCount > 0) summary = context.getString(MR.plurals.category_plural, catCount, catCount)
-                onClick { router.pushController(CategoryController().withFadeTransaction()) }
             }
             intListPreference(activity) {
                 key = Keys.defaultCategory
@@ -360,7 +376,12 @@ class SettingsLibraryController : SettingsLegacyController() {
         loadingCategories = true
         viewScope.launch {
             cachedCategories = try {
-                withContext(Dispatchers.IO) { getCategories.await() }
+                withContext(Dispatchers.IO) { getCategories.await(CategoryLibrary.COMICS) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            cachedBookCategories = try {
+                withContext(Dispatchers.IO) { getCategories.await(CategoryLibrary.BOOKS) }
             } catch (_: Exception) {
                 emptyList()
             }
