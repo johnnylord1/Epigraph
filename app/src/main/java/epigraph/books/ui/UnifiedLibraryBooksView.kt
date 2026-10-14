@@ -6,6 +6,7 @@ import epigraph.contract.ReaderLocator
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
 import eu.kanade.tachiyomi.data.database.models.isNovel
+import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.track.TrackManager
@@ -117,6 +118,7 @@ class UnifiedLibraryBooksView(
     private var trackerFilter = ""
 
     private val downloadManager: DownloadManager by injectLazy()
+    private val downloadCache: DownloadCache by injectLazy()
     private val trackManager: TrackManager by injectLazy()
     private val getTrack: GetTrack by injectLazy()
     private val getCategories: GetCategories by injectLazy()
@@ -172,8 +174,9 @@ class UnifiedLibraryBooksView(
                 sourceManager.libraryClassificationChanges,
                 getCategories.subscribe(CategoryLibrary.BOOKS),
                 // Book category links and novel downloads live outside the library tables, so
-                // assignments and returns to the library bump this revision.
-                categoryRevision,
+                // assignments and returns to the library bump this revision. The download cache is
+                // still indexing on a cold start, and Comics redraws when it finishes; so do novels.
+                categoryRevision.combine(downloadCache.changes) { revision, _ -> revision },
             ) { local, library, _, categories, _ ->
                 Triple(
                     local,
