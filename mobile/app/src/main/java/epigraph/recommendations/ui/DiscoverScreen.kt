@@ -478,12 +478,13 @@ private fun DiscoverSections(
     onNearEnd: (RecommendationSectionKey) -> Unit,
     onClick: (RecommendationItem) -> Unit,
 ) {
-    // Top pick: the best overall match. "Outside your usual reads" is off-taste on purpose, so it never leads.
+    // Top pick: the card the desktop shows first, the lead of the first taste row. The overall
+    // score also counts popularity, so a hit outside the library's format would lead instead.
+    // "Outside your usual reads" is off-taste on purpose, so it never leads.
     val hero = remember(sections) {
         sections
-            .filter { it.key != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS }
-            .flatMap { it.items }
-            .maxByOrNull { it.breakdown.finalScore }
+            .firstOrNull { it.key != RecommendationSectionKey.OUTSIDE_YOUR_USUAL_READS && it.items.isNotEmpty() }
+            ?.items?.firstOrNull()
             ?: sections.firstOrNull()?.items?.firstOrNull()
     }
     LazyColumn(

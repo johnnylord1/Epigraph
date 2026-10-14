@@ -411,6 +411,8 @@
     <string name="_must_be_enabled_first">%1$s must be enabled first</string>
     <string name="could_not_install_extension">Could not install extension</string>
     <string name="update_all">Update all</string>
+    <string name="install_all">Install all</string>
+    <string name="novel_plugins_needed_by_library">Needed by your library</string>
     <string name="some_extensions_may_prompt">Some extensions may still prompt to be installed first.</string>
     <string name="updating_extensions">Updating extensions</string>
     <string name="extensions_updated">Extensions updated</string>
@@ -875,6 +877,7 @@
     <string name="restore_missing_trackers">Trackers not logged into:</string>
     <string name="restore_new_repositories">Novel plugin repositories to add:</string>
     <string name="restore_repository_unavailable">Could not be reached, add it later in Extensions</string>
+    <string name="restore_novel_plugins_failed">Plugins not installed: %1$s</string>
     <string name="restore_new_extension_repositories">Extension repositories to add:</string>
     <string name="restore_extension_repository_unavailable">Could not be reached, add it later in Extensions</string>
     <string name="restore_extension_repository_gone">No longer exists, not added</string>

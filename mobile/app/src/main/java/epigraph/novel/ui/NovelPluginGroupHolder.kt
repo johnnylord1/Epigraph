@@ -9,6 +9,7 @@ import eu.kanade.tachiyomi.databinding.ExtensionCardHeaderBinding
 import eu.kanade.tachiyomi.extension.model.InstalledExtensionsOrder
 import eu.kanade.tachiyomi.ui.base.holder.BaseFlexibleViewHolder
 import eu.kanade.tachiyomi.util.view.setText
+import yokai.i18n.MR
 
 /**
  * Holder for novel plugin group headers.
@@ -34,6 +35,7 @@ class NovelPluginGroupHolder(
         binding.title.text = "${item.name} (${item.size})"
         binding.extButton.isVisible = item.canUpdate != null
         binding.extButton.isEnabled = item.canUpdate == true
+        binding.extButton.setText(if (item.installAll) MR.strings.install_all else MR.strings.update_all)
         binding.extSort.isVisible = item.installedSorting != null
         binding.extSort.setText(InstalledExtensionsOrder.fromValue(item.installedSorting ?: 0).nameRes)
     }

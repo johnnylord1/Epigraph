@@ -19,6 +19,8 @@ data class NovelPluginGroupItem(
     val size: Int,
     var canUpdate: Boolean? = null,
     var installedSorting: Int? = null,
+    /** The button installs the section's plugins instead of updating them. */
+    val installAll: Boolean = false,
 ) : AbstractHeaderItem<NovelPluginGroupHolder>() {
 
     override fun getLayoutRes(): Int = R.layout.novel_plugin_card_header

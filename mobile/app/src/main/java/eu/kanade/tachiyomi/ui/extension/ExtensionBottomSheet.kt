@@ -714,7 +714,11 @@ class ExtensionBottomSheet @JvmOverloads constructor(context: Context, attrs: At
         val items = novelPluginAdapter?.getSectionItemPositions(header).orEmpty()
         val pluginsToUpdate = items.mapNotNull { index ->
             val pluginItem = novelPluginAdapter?.getItem(index) as? NovelPluginItem ?: return@mapNotNull null
-            if (pluginItem.isInstalled && pluginItem.hasUpdate) pluginItem.plugin else null
+            when {
+                header.installAll -> pluginItem.plugin.takeIf { !pluginItem.isInstalled }
+                pluginItem.isInstalled && pluginItem.hasUpdate -> pluginItem.plugin
+                else -> null
+            }
         }
         presenter.updateNovelPlugins(pluginsToUpdate)
     }
