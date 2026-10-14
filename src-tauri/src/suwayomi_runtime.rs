@@ -169,9 +169,10 @@ pub fn has_confirmed_stop(path: &Path) -> bool {
 
 /// A process that ends without a graceful stop (reboot, logoff, crash) leaves its ownership
 /// record without a receipt, which would otherwise block every later start. When the recorded
-/// process is proven gone (no such PID, already exited, or the PID now has a different birth),
-/// the receipt is recorded for exactly `raw`, the bytes the caller validated. Live, unverifiable
-/// or changed records are preserved and `false` is returned.
+/// process is proven gone (no such PID, already exited, the PID now has a different birth, or no
+/// Suwayomi runs for the root while the PID belongs to something else), the receipt is recorded
+/// for exactly `raw`, the bytes the caller validated. Live or changed records are preserved and
+/// `false` is returned.
 pub fn confirm_exited_owner(
     path: &Path,
     raw: &[u8],
@@ -181,12 +182,66 @@ pub fn confirm_exited_owner(
     if has_confirmed_stop(path) {
         return std::fs::read(path).ok().as_deref() == Some(raw);
     }
-    if !recorded_process_has_exited(pid, identity)
-        || std::fs::read(path).ok().as_deref() != Some(raw)
-    {
+    let gone = recorded_process_has_exited(pid, identity)
+        || path.parent().is_some_and(|root| !suwayomi_may_run_for_root(root, Some((pid, identity))));
+    if !gone || std::fs::read(path).ok().as_deref() != Some(raw) {
         return false;
     }
     record_confirmed_stop(path, raw).is_ok()
+}
+
+/// An ownership record that cannot be parsed (torn write, disk error) names no process to check,
+/// so it is reconciled only when no Suwayomi runs for its root at all.
+pub fn confirm_abandoned_owner(path: &Path) -> bool {
+    if has_confirmed_stop(path) {
+        return true;
+    }
+    let (Ok(raw), Some(root)) = (std::fs::read(path), path.parent()) else {
+        return false;
+    };
+    !suwayomi_may_run_for_root(root, None)
+        && std::fs::read(path).ok().as_deref() == Some(raw.as_slice())
+        && record_confirmed_stop(path, &raw).is_ok()
+}
+
+const ROOT_DIR_FLAG: &str = "-Dsuwayomi.tachidesk.config.server.rootDir=";
+
+/// Every Epigraph start passes `ROOT_DIR_FLAG` with the root to its Java, so a Suwayomi for `root`
+/// shows up as a Java process carrying that flag. A Java whose command line cannot be read, and the
+/// recorded process while it still has its recorded birth, count as possibly that server.
+fn suwayomi_may_run_for_root(root: &Path, recorded: Option<(u32, Option<&RuntimeProcessIdentity>)>) -> bool {
+    let expected = comparable_root(&root.to_string_lossy());
+    let system = sysinfo::System::new_all();
+    let java_for_root = system.processes().values().any(|process| {
+        process.name().to_string_lossy().to_ascii_lowercase().contains("java")
+            && (process.cmd().is_empty()
+                || process.cmd().iter().any(|arg| arg_points_at_root(&arg.to_string_lossy(), &expected)))
+    });
+    java_for_root
+        || recorded.is_some_and(|(pid, identity)| {
+            let recorded_birth = identity.and_then(|identity| identity.process_creation_time);
+            system.process(sysinfo::Pid::from_u32(pid)).is_some()
+                && recorded_birth.is_some()
+                && capture_process_identity(pid).and_then(|now| now.process_creation_time) == recorded_birth
+        })
+}
+
+fn arg_points_at_root(arg: &str, expected_root: &str) -> bool {
+    let arg = arg.trim().trim_matches('"');
+    arg.get(..ROOT_DIR_FLAG.len()).is_some_and(|flag| flag.eq_ignore_ascii_case(ROOT_DIR_FLAG))
+        && comparable_root(&arg[ROOT_DIR_FLAG.len()..]) == expected_root
+}
+
+fn comparable_root(path: &str) -> String {
+    let path = path.trim().trim_matches('"');
+    #[cfg(windows)]
+    {
+        path.trim_start_matches(r"\\?\").replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        path.trim_end_matches('/').to_string()
+    }
 }
 
 fn recorded_process_has_exited(pid: u32, identity: Option<&RuntimeProcessIdentity>) -> bool {
@@ -654,6 +709,45 @@ mod tests {
             confirm_exited_owner(&path, exited_raw, exited.pid, Some(&exited)),
             "idempotent"
         );
+    }
+
+    #[test]
+    fn owner_whose_pid_now_belongs_to_another_program_is_reconciled() {
+        // A legacy record has no birth, and after a restart its PID is often reused. This test
+        // process stands in for the unrelated program: alive, not Java, not started for the root.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.owner.json");
+        let raw = b"legacy owner without identity";
+        std::fs::write(&path, raw).unwrap();
+        assert!(confirm_exited_owner(&path, raw, std::process::id(), None));
+        assert!(has_confirmed_stop(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), raw, "evidence is retained");
+    }
+
+    #[test]
+    fn unreadable_owner_is_reconciled_when_no_server_runs_for_its_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.owner.json");
+        let torn = b"{\"profile_key\":\"main\",\"java_p";
+        std::fs::write(&path, torn).unwrap();
+        assert!(confirm_abandoned_owner(&path));
+        assert!(has_confirmed_stop(&path));
+        assert_eq!(std::fs::read(&path).unwrap(), torn, "evidence is retained");
+        assert!(!confirm_abandoned_owner(&dir.path().join("missing.json")));
+    }
+
+    #[test]
+    fn root_flag_matches_the_same_root_however_it_is_spelled() {
+        let root = comparable_root(r"C:\Users\Ana\AppData\Roaming\epigraph-main");
+        assert!(arg_points_at_root(r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\Ana\AppData\Roaming\epigraph-main", &root));
+        #[cfg(windows)]
+        {
+            assert!(arg_points_at_root(r#""-Dsuwayomi.tachidesk.config.server.rootDir=c:/users/ana/appdata/roaming/epigraph-main/""#, &root));
+            assert!(arg_points_at_root(r"-Dsuwayomi.tachidesk.config.server.rootDir=\\?\C:\Users\Ana\AppData\Roaming\epigraph-main", &root));
+        }
+        assert!(!arg_points_at_root(r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\Ana\AppData\Roaming\epigraph", &root));
+        assert!(!arg_points_at_root(r"-Dsuwayomi.tachidesk.config.server.rootDir=C:\Users\Ana\AppData\Roaming\epigraph-main2", &root));
+        assert!(!arg_points_at_root("-jar", &root));
     }
 
     #[test]

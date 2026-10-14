@@ -6024,8 +6024,13 @@ fn spawn_server_unlocked(
         }
     };
 
+    // Debris of an owner write that was interrupted. Every writer holds the spawn lease, which this
+    // start now holds, so nothing is still writing it.
     if owner_tmp_path.exists() {
-        return Err(SpawnError::SpawnFailed("Partial ownership metadata retained; refusing takeover".into()));
+        if let Err(err) = std::fs::remove_file(&owner_tmp_path) {
+            return Err(SpawnError::SpawnFailed(format!("Could not clear partial ownership metadata: {err}")));
+        }
+        do_log(&mut log, "[spawn_server] cleared partial ownership metadata from an interrupted write");
     }
 
     if owner_path.exists() && !suwayomi_runtime::has_confirmed_stop(&owner_path) {
@@ -6058,6 +6063,12 @@ fn spawn_server_unlocked(
                     ));
                 }
             },
+            None if suwayomi_runtime::confirm_abandoned_owner(&owner_path) => {
+                do_log(
+                    &mut log,
+                    "[spawn_server] unreadable ownership with no server for the root; reconciled",
+                );
+            }
             None => {
                 do_log(
                     &mut log,

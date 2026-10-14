@@ -197,6 +197,13 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
             }
         }
     }
+    // Debris of an owner write that was interrupted; every writer holds the spawn lease held here.
+    match std::fs::remove_file(root.join("server.owner.json.tmp")) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!("failed to clear partial Suwayomi ownership: {error}"));
+        }
+        _ => {}
+    }
     remove_stale_owner(&root)?;
     if let Some(java_pid) = find_java_pid_for_root(&root) {
         if probe_server(main_server_port()).await {
@@ -428,15 +435,17 @@ fn remove_stale_owner(root: &Path) -> Result<(), String> {
     if !path.exists() || crate::suwayomi_runtime::has_confirmed_stop(&path) { return Ok(()); }
     // A JVM ended by a reboot or crash never gets a receipt; accept only a proven exit.
     if let Ok(raw) = std::fs::read(&path) {
-        if let Ok(owner) = serde_json::from_slice::<ServerOwner>(&raw) {
-            if crate::suwayomi_runtime::confirm_exited_owner(
+        let reconciled = match serde_json::from_slice::<ServerOwner>(&raw) {
+            Ok(owner) => crate::suwayomi_runtime::confirm_exited_owner(
                 &path,
                 &raw,
                 owner.java_pid,
                 owner.process_identity.as_ref(),
-            ) {
-                return Ok(());
-            }
+            ),
+            Err(_) => crate::suwayomi_runtime::confirm_abandoned_owner(&path),
+        };
+        if reconciled {
+            return Ok(());
         }
     }
     Err("Unconfirmed stale or malformed ownership retained; refusing takeover".into())
