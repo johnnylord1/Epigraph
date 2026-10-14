@@ -711,6 +711,8 @@ open class LibraryController(
                     showCategoryText(currentCategory.name)
                 }
             }
+            // Books groups are not Comics categories, so they never become its last used one.
+            if (booksMode) return
             val savedCurrentCategory = getHeader(true)?.category ?: return
             if (savedCurrentCategory.order != lastUsedCategory) {
                 lastUsedCategory = savedCurrentCategory.order
@@ -1859,6 +1861,7 @@ open class LibraryController(
                 rootUiActive = true
                 presenter.setUiActive(true)
                 presenter.updateLibrary()
+                unifiedBooksView?.reload()
                 isPoppingIn = true
                 onTabActivated()
             }
@@ -1994,6 +1997,7 @@ open class LibraryController(
         updateFilterSheetY()
         if (observeLater) {
             presenter.updateLibrary()
+            unifiedBooksView?.reload()
         }
         reconcileDisplaySurface()
         consumePendingLibrarySearch()
@@ -2974,12 +2978,12 @@ open class LibraryController(
         }
     }
 
-    /** Header counts for Books & novels, where collapsed groups hold a single placeholder row. */
     /** Rebuilds the Books & novels rows after a display setting they share with Comics changes. */
     fun refreshBooksLibrary() {
         unifiedBooksView?.refresh()
     }
 
+    /** Header counts for Books & novels, where collapsed groups hold a single placeholder row. */
     fun booksItemCount(catId: Int): Int? =
         if (booksMode) unifiedBooksView?.itemCount(catId) ?: 0 else null
 
@@ -3366,6 +3370,8 @@ open class LibraryController(
             refreshDisplayChrome()
             updateHopperY()
         } else {
+            // Scrolling Books moved the active header onto its groups; Comics resumes its own.
+            activeCategory = lastUsedCategory
             reconcileDisplaySurface()
             refreshDisplayChrome()
             presenter.updateLibrary()

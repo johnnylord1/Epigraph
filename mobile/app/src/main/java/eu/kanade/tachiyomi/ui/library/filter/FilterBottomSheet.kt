@@ -269,7 +269,8 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
         reorderFilters()
         if (enabled) restoreBooksFilterStates()
         reSortViews()
-        syncTrackersRow()
+        // Comics restores its tracker row once its own filter states are back.
+        if (enabled) syncTrackersRow()
         setExpandText(controller?.canCollapseOrExpandCategory(), false)
     }
 
@@ -586,6 +587,8 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     private suspend fun setFilterStates() {
         if (booksMode) return
         withContext(Dispatchers.Main) {
+            // An unset preference does not clear a chip, so drop the Books choices first.
+            booksFilterGroups().forEach { it.reset() }
             downloaded.setState(preferences.filterDownloaded())
             completed.setState(preferences.filterCompleted())
             bookmarked.setState(preferences.filterBookmarked())
@@ -600,6 +603,8 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             contentType.setState(preferences.filterContentType())
             reorderFilters()
             reSortViews()
+            syncTrackersRow()
+            updateClearButton()
         }
     }
 

@@ -34,6 +34,7 @@ import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.migration.MigrationFlags
 import eu.kanade.tachiyomi.ui.migration.SearchController
 import eu.kanade.tachiyomi.ui.migration.manga.design.PreMigrationController
+import eu.kanade.tachiyomi.util.chapter.refreshChapterList
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
 import eu.kanade.tachiyomi.util.lang.toNormalized
 import eu.kanade.tachiyomi.util.system.getParcelableCompat
@@ -109,6 +110,7 @@ class MigrationListController(bundle: Bundle? = null) :
     var migrationsJob: Job? = null
         private set
     private var migratingManga: MutableList<MigratingManga>? = null
+    private var finishing = false
     private var selectedPosition: Int? = null
     private var manaulMigrations = 0
 
@@ -313,7 +315,7 @@ class MigrationListController(bundle: Bundle? = null) :
     /** Fetches and stores the chapters of [target]; returns why that failed, or null when it worked. */
     private suspend fun loadChapters(target: Manga, source: Source): String? {
         return try {
-            val chapters = withTimeout(CHAPTERS_TIMEOUT_MS) { source.getChapterList(target) }
+            val chapters = withTimeout(CHAPTERS_TIMEOUT_MS) { source.refreshChapterList(target) }
             withIOContext { syncChaptersWithSource(chapters, target, source) }
             null
         } catch (e: TimeoutCancellationException) {
@@ -485,9 +487,16 @@ class MigrationListController(bundle: Bundle? = null) :
     fun copyMangas() = finishMigrations(true)
 
     private fun finishMigrations(copy: Boolean) {
+        val adapter = adapter ?: return
+        // A second Migrate or Copy while one is running would move the same series twice.
+        if (finishing) return
+        finishing = true
         launchUI {
-            val adapter = adapter ?: return@launchUI
-            val kept = adapter.performMigrations(copy)
+            val kept = try {
+                adapter.performMigrations(copy)
+            } finally {
+                finishing = false
+            }
             if (kept.isEmpty()) {
                 navigateOut()
                 return@launchUI

@@ -26,6 +26,19 @@ import yokai.domain.manga.interactor.UpdateManga
 import yokai.domain.manga.models.MangaUpdate
 
 /**
+ * Fetches the chapter list of [manga] for [syncChaptersWithSource]. Sources that can use them get
+ * the chapters already stored, newest first, so a refresh only reads the site's list down to the
+ * first chapter they know instead of all of it.
+ */
+suspend fun Source.refreshChapterList(manga: Manga, getChapter: GetChapter = get()): List<SChapter> {
+    if (this !is HttpSource || !takesKnownChapters || manga.id == null) return getChapterList(manga.copy())
+    val stored = getChapter.awaitAll(manga, false)
+        .sortedBy { it.source_order }
+        .map { chapter -> SChapter.create().apply { copyFrom(chapter) } }
+    return getChapterList(manga.copy(), stored)
+}
+
+/**
  * Helper method for syncing the list of chapters from the source with the ones from the database.
  *
  * @param db the database.

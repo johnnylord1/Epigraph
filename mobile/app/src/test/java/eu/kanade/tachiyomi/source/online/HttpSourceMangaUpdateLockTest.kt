@@ -14,6 +14,8 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.Request
 import okhttp3.Response
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class HttpSourceMangaUpdateLockTest {
@@ -47,6 +49,53 @@ class HttpSourceMangaUpdateLockTest {
         assertEquals(2, source.maxInFlight)
     }
 
+    @Test
+    fun `stored chapters reach a lib 1_6 source`() = runBlocking(Dispatchers.Default) {
+        val source = GuardedLib16Source()
+        val manga = SManga.create().apply { url = "/titles/1"; title = "A" }
+        val stored = listOf(SChapter.create().apply { url = "/chapters/9"; name = "Chapter 9" })
+
+        source.getChapterList(manga, stored)
+
+        assertTrue(source.takesKnownChapters)
+        assertEquals(listOf("/chapters/9"), source.received.map { it.url })
+    }
+
+    @Test
+    fun `a source with its own chapter list ignores stored chapters`() = runBlocking(Dispatchers.Default) {
+        val source = OwnChapterListSource()
+        val manga = SManga.create().apply { url = "/titles/1"; title = "A" }
+        val stored = listOf(SChapter.create().apply { url = "/chapters/9"; name = "Chapter 9" })
+
+        val chapters = source.getChapterList(manga, stored)
+
+        assertFalse(source.takesKnownChapters)
+        assertEquals(listOf("/own/1"), chapters.map { it.url })
+    }
+
+    /** A lib 1.5 style source that only overrides the chapter list. */
+    private class OwnChapterListSource : HttpSource() {
+        override val name = "Own"
+        override val lang = "en"
+        override val baseUrl = "https://example.invalid"
+        override val supportsLatest = false
+
+        override suspend fun getChapterList(manga: SManga): List<SChapter> =
+            listOf(SChapter.create().apply { url = "/own/1"; name = "Chapter 1" })
+
+        override fun popularMangaRequest(page: Int): Request = error("unused")
+        override fun popularMangaParse(response: Response): MangasPage = error("unused")
+        override fun searchMangaRequest(page: Int, query: String, filters: eu.kanade.tachiyomi.source.model.FilterList): Request = error("unused")
+        override fun searchMangaParse(response: Response): MangasPage = error("unused")
+        override fun latestUpdatesRequest(page: Int): Request = error("unused")
+        override fun latestUpdatesParse(response: Response): MangasPage = error("unused")
+        override fun mangaDetailsParse(response: Response): SManga = error("unused")
+        override fun chapterListParse(response: Response): List<SChapter> = error("unused")
+        override fun chapterPageParse(response: Response): SChapter = error("unused")
+        override fun pageListParse(response: Response): List<Page> = error("unused")
+        override fun imageUrlParse(response: Response): String = error("unused")
+    }
+
     /** Mirrors the keiyoushi lib 1.6 base: overlapping calls for one manga url throw. */
     private class GuardedLib16Source : HttpSource() {
         override val name = "Guarded"
@@ -58,6 +107,7 @@ class HttpSourceMangaUpdateLockTest {
         private val active = java.util.concurrent.atomic.AtomicInteger()
         @Volatile var calls = 0
         @Volatile var maxInFlight = 0
+        @Volatile var received: List<SChapter> = emptyList()
 
         override suspend fun getMangaUpdate(
             manga: SManga,
@@ -69,6 +119,7 @@ class HttpSourceMangaUpdateLockTest {
                 "getMangaUpdate must not be called concurrently for same manga"
             }
             try {
+                if (fetchChapters) received = chapters
                 val now = active.incrementAndGet()
                 synchronized(this) {
                     calls++
