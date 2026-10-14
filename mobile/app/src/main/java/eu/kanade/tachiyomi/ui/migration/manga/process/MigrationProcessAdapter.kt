@@ -104,8 +104,11 @@ class MigrationProcessAdapter(
                     val prevManga = manga.manga() ?: return@forEach
                     val source = sourceManager.get(toMangaObj.source) ?: return@forEach
                     val prevSource = sourceManager.get(prevManga.source)
-                    controller.missingChaptersReason(manga, prevManga, toMangaObj, source)?.let {
-                        kept += item to it
+                    val missing = controller.missingChaptersReason(manga, prevManga, toMangaObj, source)
+                    // Loading the chapter list can take minutes, and the title may be removed meanwhile.
+                    if (!manga.migrationJob.isActive) return@forEach
+                    if (missing != null) {
+                        kept += item to missing
                         return@forEach
                     }
                     migrateMangaInternal(
