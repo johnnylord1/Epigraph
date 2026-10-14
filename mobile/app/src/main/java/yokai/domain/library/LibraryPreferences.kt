@@ -5,6 +5,9 @@ import eu.kanade.tachiyomi.core.preference.PreferenceStore
 class LibraryPreferences(private val preferenceStore: PreferenceStore) {
     fun randomSortSeed() = preferenceStore.getInt("library_random_sort_seed", 0)
 
+    /** [randomSortSeed] of the Books & novels tab, so reshuffling one tab leaves the other alone. */
+    fun booksRandomSortSeed() = preferenceStore.getInt("epigraph_books_random_sort_seed", 0)
+
     fun markDuplicateReadChapterAsRead() = preferenceStore.getStringSet("mark_duplicate_read_chapter_read", emptySet())
 
     // NOVEL: When true, restore scroll position for novels even if the chapter is marked read.

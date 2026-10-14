@@ -26,11 +26,20 @@ class LibraryMangaItem(
     val manga: LibraryManga,
     header: LibraryHeaderItem,
     context: Context?,
-) : LibraryItem(header, context) {
+) : LibraryItem(header, context), LibrarySortKey {
 
     var downloadCount = -1
     var unreadType = 2
     var sourceLanguage: String? = null
+
+    override val sortTitle: String get() = manga.manga.title
+    override val sortLatestUpdate: Long get() = manga.latestUpdate
+    override val sortUnread: Int get() = manga.unread
+    override val sortLastRead: Long get() = manga.lastRead
+    override val sortTotalChapters: Int get() = manga.totalChapters
+    override val sortLastFetch: Long get() = manga.lastFetch
+    override val sortNextUpdate: Long get() = manga.manga.next_update
+    override val sortDateAdded: Long get() = manga.manga.date_added
 
     override fun getLayoutRes(): Int {
         return if (libraryLayout == LAYOUT_LIST) {
