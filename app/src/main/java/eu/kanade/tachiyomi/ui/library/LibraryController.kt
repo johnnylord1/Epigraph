@@ -170,6 +170,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.domain.category.CategoryLibrary
+import yokai.domain.library.LibraryPreferences
 import yokai.domain.ui.UiPreferences
 import yokai.domain.manga.MangaRepository
 import yokai.i18n.MR
@@ -1419,6 +1420,9 @@ open class LibraryController(
         }
         binding.filterBottomSheet.filterBottomSheet.onBooksFiltersCleared = {
             if (booksMode) unifiedBooksView?.clearFilters()
+        }
+        binding.filterBottomSheet.filterBottomSheet.onBooksTrackerFilterChanged = { name ->
+            if (booksMode) unifiedBooksView?.setTrackerFilter(name)
         }
 
         binding.filterBottomSheet.filterBottomSheet.onGroupClicked = {
@@ -2971,6 +2975,11 @@ open class LibraryController(
     }
 
     /** Header counts for Books & novels, where collapsed groups hold a single placeholder row. */
+    /** Rebuilds the Books & novels rows after a display setting they share with Comics changes. */
+    fun refreshBooksLibrary() {
+        unifiedBooksView?.refresh()
+    }
+
     fun booksItemCount(catId: Int): Int? =
         if (booksMode) unifiedBooksView?.itemCount(catId) ?: 0 else null
 
@@ -3001,6 +3010,9 @@ open class LibraryController(
         if (booksMode && unifiedBooksView?.isBooksHeader(catId) == true) {
             unifiedBooksView?.sortCategory(sortBy)
             return
+        }
+        if (LibrarySort.valueOf(sortBy) == LibrarySort.Random) {
+            get<LibraryPreferences>().randomSortSeed().set(Random.nextInt())
         }
         val category = presenter.categories.find { it.id == catId }
         if (category?.isDynamic == false && sortBy == LibrarySort.DragAndDrop.categoryValue) {

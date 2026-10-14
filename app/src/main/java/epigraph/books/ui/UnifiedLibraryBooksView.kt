@@ -18,7 +18,13 @@ import eu.kanade.tachiyomi.ui.library.LibraryHeaderItem
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import eu.kanade.tachiyomi.ui.library.LibraryMangaItem
 import eu.kanade.tachiyomi.ui.library.LibrarySort
-import eu.kanade.tachiyomi.util.lang.removeArticles
+import eu.kanade.tachiyomi.ui.library.LibrarySortComparator
+import eu.kanade.tachiyomi.ui.library.LibrarySortKey
+import eu.kanade.tachiyomi.util.isLocal
+import epigraph.content.activeBlockedTags
+import epigraph.content.isBlockedGenreString
+import kotlin.random.Random
+import yokai.domain.library.LibraryPreferences
 import exh.util.throttleLatest
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -102,13 +108,19 @@ class UnifiedLibraryBooksView(
     private var booksFilterStates: Map<Char, Int> = emptyMap()
     private var bookProgress: Map<String, Double> = emptyMap()
     private var bookmarkedBooks: Set<String> = emptySet()
-    private var downloadedNovels: Set<Long> = emptySet()
-    private var trackedNovels: Set<Long> = emptySet()
+    private var novelDownloadCounts: Map<Long, Int> = emptyMap()
+
+    /** Logged-in tracker ids per tracked novel. */
+    private var novelTrackers: Map<Long, Set<Long>> = emptyMap()
+
+    /** Tracker chosen under the Tracked filter; empty means any tracker, as in Comics. */
+    private var trackerFilter = ""
 
     private val downloadManager: DownloadManager by injectLazy()
     private val trackManager: TrackManager by injectLazy()
     private val getTrack: GetTrack by injectLazy()
     private val getCategories: GetCategories by injectLazy()
+    private val libraryPreferences: LibraryPreferences by injectLazy()
 
     /**
      * Real category ids (0 = Default) shown as sections. Like the Comics library, every Books &
@@ -188,24 +200,24 @@ class UnifiedLibraryBooksView(
                     .filter { it.bookmarks.isNotEmpty() }
                     .map { it.book.bookId }
                     .toSet()
-                downloadedNovels = withContext(Dispatchers.IO) {
+                novelDownloadCounts = withContext(Dispatchers.IO) {
                     libraryNovels.mapNotNull { libraryManga ->
-                        libraryManga.manga.id?.takeIf {
-                            downloadManager.getDownloadCount(libraryManga.manga) > 0
-                        }
-                    }.toSet()
+                        libraryManga.manga.id?.let { it to downloadManager.getDownloadCount(libraryManga.manga) }
+                    }.toMap()
                 }
-                trackedNovels = withContext(Dispatchers.IO) {
+                novelTrackers = withContext(Dispatchers.IO) {
                     val loggedServices = trackManager.services
                         .filter { it.isLogged }
                         .map { it.id }
                         .toSet()
                     if (loggedServices.isEmpty()) {
-                        emptySet()
+                        emptyMap()
                     } else {
                         getTrack.awaitAllGroupedByMangaId()
-                            .filterValues { tracks -> tracks.any { it.sync_id in loggedServices } }
-                            .keys
+                            .mapValues { (_, tracks) ->
+                                tracks.map { it.sync_id }.filter { it in loggedServices }.toSet()
+                            }
+                            .filterValues { it.isNotEmpty() }
                     }
                 }
                 hasLoadedCollection = true
@@ -325,8 +337,16 @@ class UnifiedLibraryBooksView(
         submitItems()
     }
 
+    /** Narrows the Tracked filter to one tracker by its name, like the Comics trackers row. */
+    fun setTrackerFilter(name: String) {
+        if (trackerFilter == name) return
+        trackerFilter = name
+        submitItems()
+    }
+
     fun clearFilters() {
         booksFilterStates = emptyMap()
+        trackerFilter = ""
         selectedType = TypeFilter.ALL
         submitItems()
     }
@@ -337,6 +357,7 @@ class UnifiedLibraryBooksView(
         booksCategory.mangaSort = sortBy
         groupCategories.values.forEach { it.mangaSort = sortBy }
         preferences.booksLibrarySort().set(sortBy.toString())
+        if (mode == LibrarySort.Random) libraryPreferences.booksRandomSortSeed().set(Random.nextInt())
         submitItems(mode)
     }
 
@@ -348,13 +369,22 @@ class UnifiedLibraryBooksView(
         val grouped = isGrouped
         val known = userCategories.mapNotNull { it.id }.toSet()
         fun headerFor(realId: Int) = if (grouped) groupHeader(if (realId in known) realId else 0) else booksHeader
+        val blockedTags = activeBlockedTags(preferences.filterBlockedTags().get(), preferences.blockedTags().get())
+        val trackerFilterId = trackerFilter.takeIf { it.isNotEmpty() }?.let { name ->
+            trackManager.services.find { it.isLogged && context.getString(it.nameRes()) == name }?.id
+        }
         val entries = buildList<LibraryItem> {
             if (selectedType == TypeFilter.ALL || selectedType == TypeFilter.NOVELS) {
                 // The library view has one row per (novel, category); one section shows it once.
                 val rows = if (grouped) novels else novels.distinctBy { it.manga.id }
-                rows.forEach {
-                    val item = LibraryMangaItem(it, headerFor(it.category), context)
-                    if (matchesFilters(item)) add(item)
+                val items = rows
+                    .filterNot { isBlockedGenreString(it.manga.genre, blockedTags) }
+                    .map { LibraryMangaItem(it, headerFor(it.category), context) }
+                libraryController.presenter.applyBadges(items) { manga ->
+                    manga.id?.let(novelDownloadCounts::get) ?: 0
+                }
+                items.forEach { item ->
+                    if (matchesFilters(item, trackerFilterId)) add(item)
                 }
             }
             if (selectedType == TypeFilter.ALL || selectedType == TypeFilter.EPUB || selectedType == TypeFilter.PDF) {
@@ -366,64 +396,25 @@ class UnifiedLibraryBooksView(
                     val categoryIds = if (grouped) bookCategoryIds[book.bookId].orEmpty().ifEmpty { listOf(0) } else listOf(0)
                     categoryIds.map(::headerFor).distinct().forEach { header ->
                         val item = LibraryBookItem(book, header, context)
-                        if (matchesFilters(item)) add(item)
+                        if (matchesFilters(item, trackerFilterId)) add(item)
                     }
                 }
             }
         }
 
-        val sorted = when (mode) {
-            LibrarySort.Random -> entries.shuffled()
-            LibrarySort.DateAdded -> entries.sortedBy { item ->
-                when (item) {
-                    is LibraryBookItem -> item.book.importedAt
-                    is LibraryMangaItem -> item.manga.manga.date_added
-                    else -> 0L
+        // Same order as the Comics library: shared comparator, title tie-break and random seed.
+        val sorted = if (mode == LibrarySort.Random) {
+            entries.shuffled(Random(libraryPreferences.booksRandomSortSeed().get()))
+        } else {
+            val ignoreArticles = preferences.removeArticles().get()
+            val ascending = booksCategory.isAscending()
+            entries
+                .map { it to sortKeyOf(it) }
+                .sortedWith { (_, k1), (_, k2) ->
+                    LibrarySortComparator.compare(mode, ascending, k1, k2, ignoreArticles).takeIf { it != 0 }
+                        ?: LibrarySortComparator.compareTitles(k1.sortTitle, k2.sortTitle, ignoreArticles)
                 }
-            }
-            LibrarySort.LastRead -> entries.sortedBy { item ->
-                (item as? LibraryMangaItem)?.manga?.lastRead ?: 0L
-            }
-            LibrarySort.DateFetched,
-            LibrarySort.LatestChapter,
-            LibrarySort.NextExpectedUpdate,
-            -> entries.sortedBy { item ->
-                when (item) {
-                    is LibraryBookItem -> item.book.updatedAt
-                    is LibraryMangaItem -> item.manga.lastFetch
-                    else -> 0L
-                }
-            }
-            LibrarySort.Unread -> entries.sortedBy { item ->
-                when (item) {
-                    is LibraryMangaItem -> item.manga.unread
-                    is LibraryBookItem -> if (bookProgress[item.book.bookId].orZero() < 1.0) 1 else 0
-                    else -> 0
-                }
-            }
-            LibrarySort.TotalChapters -> entries.sortedBy { item ->
-                (item as? LibraryMangaItem)?.manga?.totalChapters ?: 0
-            }
-            LibrarySort.DragAndDrop,
-            LibrarySort.Title,
-            -> {
-                // Same "Sort by ignoring articles" setting as the Comics library.
-                val ignoreArticles = preferences.removeArticles().get()
-                entries.sortedBy { item ->
-                    val title = when (item) {
-                        is LibraryBookItem -> item.book.displayName
-                        is LibraryMangaItem -> item.manga.manga.title
-                        else -> ""
-                    }
-                    (if (ignoreArticles) title.removeArticles() else title).lowercase()
-                }
-            }
-        }.let { values ->
-            if (booksCategory.isAscending() || mode == LibrarySort.Random || mode == LibrarySort.DragAndDrop) {
-                values
-            } else {
-                values.reversed()
-            }
+                .map { it.first }
         }
 
         val sections = if (grouped) {
@@ -465,11 +456,37 @@ class UnifiedLibraryBooksView(
         onContentChanged()
     }
 
-    private fun matchesFilters(item: LibraryItem): Boolean {
+    /** Sort values of a row; novels are [LibraryMangaItem]s, which already provide them. */
+    private fun sortKeyOf(item: LibraryItem): LibrarySortKey = when (item) {
+        is LibraryMangaItem -> item
+        is LibraryBookItem -> BookSortKey(
+            sortTitle = item.book.displayName,
+            sortLatestUpdate = item.book.updatedAt,
+            sortUnread = if (bookProgress[item.book.bookId].orZero() < 1.0) 1 else 0,
+            sortTotalChapters = item.book.chapterCount ?: item.book.pageCount ?: 0,
+            sortLastFetch = item.book.updatedAt,
+            sortDateAdded = item.book.importedAt,
+        )
+        else -> BookSortKey(sortTitle = "")
+    }
+
+    private data class BookSortKey(
+        override val sortTitle: String,
+        override val sortLatestUpdate: Long = 0L,
+        override val sortUnread: Int = 0,
+        override val sortLastRead: Long = 0L,
+        override val sortTotalChapters: Int = 0,
+        override val sortLastFetch: Long = 0L,
+        override val sortNextUpdate: Long = 0L,
+        override val sortDateAdded: Long = 0L,
+    ) : LibrarySortKey
+
+    private fun matchesFilters(item: LibraryItem, trackerFilterId: Long?): Boolean {
         val state = { key: Char -> booksFilterStates[key] ?: FILTER_IGNORE }
         val downloaded = when (item) {
             is LibraryBookItem -> item.book.isAvailable
-            is LibraryMangaItem -> item.manga.manga.id?.let(downloadedNovels::contains) == true
+            is LibraryMangaItem -> item.manga.manga.isLocal() ||
+                (item.manga.manga.id?.let(novelDownloadCounts::get) ?: 0) > 0
             else -> false
         }
         val unread = when (item) {
@@ -494,7 +511,9 @@ class UnifiedLibraryBooksView(
         }
         val customInterval = (item as? LibraryMangaItem)?.manga?.manga?.fetch_interval?.let { it < 0 } ?: true
         val contentIsSafe = (item as? LibraryMangaItem)?.manga?.manga?.isLewd() != true
-        val tracked = (item as? LibraryMangaItem)?.manga?.manga?.id?.let(trackedNovels::contains) == true
+        val trackers = (item as? LibraryMangaItem)?.manga?.manga?.id?.let(novelTrackers::get).orEmpty()
+        // With a tracker chosen, Tracked means tracked there, as in the Comics library.
+        val tracked = if (trackerFilterId != null) trackerFilterId in trackers else trackers.isNotEmpty()
 
         fun matchesTriState(value: Boolean, filterState: Int): Boolean = when (filterState) {
             FILTER_INCLUDE -> value

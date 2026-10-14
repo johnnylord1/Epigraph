@@ -99,6 +99,10 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
     /** Clears the independent Books filter state. */
     var onBooksFiltersCleared: () -> Unit = {}
 
+    /** Tracker name picked under Tracked in Books; Comics keeps its own [FILTER_TRACKER]. */
+    var onBooksTrackerFilterChanged: (String) -> Unit = { _ -> }
+    private var booksFilterTracker = ""
+
     private val booksFilterStates = mutableMapOf<Char, Int>()
 
     var sheetBehavior: BottomSheetBehavior<View>? = null
@@ -265,6 +269,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
         reorderFilters()
         if (enabled) restoreBooksFilterStates()
         reSortViews()
+        syncTrackersRow()
         setExpandText(controller?.canCollapseOrExpandCategory(), false)
     }
 
@@ -374,7 +379,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
         expandedFilterSheet = ExpandedFilterSheet(
             activity,
             filters,
-            trackers?.takeUnless { booksMode }?.let {
+            trackers?.let {
                 LibraryFilter(
                     activity.getString(MR.strings.trackers),
                     it.items,
@@ -671,8 +676,9 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             return
         }
         if (booksMode) {
-            setBooksFilterPreference(view, index)
+            if (view == trackers) setBooksTracker(view.nameOf(index) ?: "") else setBooksFilterPreference(view, index)
             if (updatePreference) onGroupClicked(ACTION_FILTER)
+            syncTrackersRow()
             updateClearButton()
             return
         }
@@ -775,6 +781,32 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
         onBooksFilterChanged(key, state)
     }
 
+    private fun setBooksTracker(name: String) {
+        booksFilterTracker = name
+        onBooksTrackerFilterChanged(name)
+    }
+
+    /**
+     * Shows the trackers row under an active Tracked filter, with the current tab's choice, and
+     * drops the Books choice once Tracked is cleared, as Comics does with [FILTER_TRACKER].
+     */
+    private fun syncTrackersRow() {
+        val row = trackers ?: return
+        val trackedGroup = tracked ?: return
+        if (trackedGroup.isActivated && row.parent == null) {
+            binding.filterLayout.addView(row, filterItems.indexOf(trackedGroup) + 2)
+            filterItems.add(filterItems.indexOf(trackedGroup) + 1, row)
+            row.reset()
+            val choice = if (booksMode) booksFilterTracker else FILTER_TRACKER
+            if (choice.isNotEmpty()) row.setState(choice)
+        } else if (!trackedGroup.isActivated && row.parent != null) {
+            binding.filterLayout.removeView(row)
+            row.reset()
+            filterItems.remove(row)
+            if (booksMode) setBooksTracker("") else FILTER_TRACKER = ""
+        }
+    }
+
     private fun updateClearButton() {
         val hasFilters = hasActiveFilters()
         if (hasFilters && clearButton.parent == null) {
@@ -788,12 +820,13 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
         if (controller?.isSubClass != true) {
             if (booksMode) {
                 views.forEach { view ->
-                    if (view == booksType) {
-                        onBooksTypeFilterChanged(view.nameOf(view.state)?.uppercase())
-                    } else {
-                        setBooksFilterPreference(view, view.state)
+                    when (view) {
+                        booksType -> onBooksTypeFilterChanged(view.nameOf(view.state)?.uppercase())
+                        trackers -> setBooksTracker(view.nameOf(view.state) ?: "")
+                        else -> setBooksFilterPreference(view, view.state)
                     }
                 }
+                syncTrackersRow()
                 updateClearButton()
                 reSortViews()
                 onGroupClicked(ACTION_FILTER)
@@ -837,6 +870,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
             FILTER_TRACKER = ""
         } else {
             booksFilterStates.clear()
+            booksFilterTracker = ""
             onBooksFiltersCleared()
         }
         booksFilterGroups().forEach { it.reset() }

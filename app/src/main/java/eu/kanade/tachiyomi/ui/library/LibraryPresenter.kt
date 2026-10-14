@@ -42,7 +42,6 @@ import eu.kanade.tachiyomi.util.chapter.ChapterSort
 import eu.kanade.tachiyomi.util.isLocal
 import eu.kanade.tachiyomi.util.lang.capitalizeWords
 import eu.kanade.tachiyomi.util.lang.chopByWords
-import eu.kanade.tachiyomi.util.lang.removeArticles
 import eu.kanade.tachiyomi.util.manga.MangaCoverMetadata
 import eu.kanade.tachiyomi.util.mapStatus
 import epigraph.content.activeBlockedTags
@@ -681,7 +680,10 @@ class LibraryPresenter(
      *
      * @param itemList the map of manga.
      */
-    private fun setDownloadCount(itemList: List<LibraryItem>) {
+    private fun setDownloadCount(
+        itemList: List<LibraryItem>,
+        downloadCountOf: (Manga) -> Int = downloadManager::getDownloadCount,
+    ) {
         if (!preferences.downloadBadge().get()) {
             // Unset download count if the preference is not enabled.
             for (item in itemList) {
@@ -693,8 +695,18 @@ class LibraryPresenter(
 
         for (item in itemList) {
             if (item !is LibraryMangaItem) continue
-            item.downloadCount = downloadManager.getDownloadCount(item.manga.manga)
+            item.downloadCount = downloadCountOf(item.manga.manga)
         }
+    }
+
+    /**
+     * Applies the unread, download and language badge settings to [itemList]. The Books & novels
+     * tab passes the download counts it already read off the main thread.
+     */
+    fun applyBadges(itemList: List<LibraryItem>, downloadCountOf: (Manga) -> Int) {
+        setDownloadCount(itemList, downloadCountOf)
+        setUnreadBadge(itemList)
+        setSourceLanguage(itemList)
     }
 
     private fun setUnreadBadge(itemList: List<LibraryItem>) {
@@ -741,45 +753,16 @@ class LibraryPresenter(
                 i2 is LibraryPlaceholderItem -> 1
                 i1 !is LibraryMangaItem || i2 !is LibraryMangaItem -> 0
                 category.mangaSort != null -> {
-                    var sort = when (category.sortingMode() ?: LibrarySort.Title) {
-                        LibrarySort.Title -> sortAlphabetical(i1, i2)
-                        LibrarySort.LatestChapter -> i2.manga.latestUpdate.compareTo(i1.manga.latestUpdate)
-                        LibrarySort.Unread -> when {
-                            i1.manga.unread == i2.manga.unread -> 0
-                            i1.manga.unread == 0 -> if (category.isAscending()) 1 else -1
-                            i2.manga.unread == 0 -> if (category.isAscending()) -1 else 1
-                            else -> i1.manga.unread.compareTo(i2.manga.unread)
-                        }
-                        LibrarySort.LastRead -> {
-                            i2.manga.lastRead.compareTo(i1.manga.lastRead)
-                        }
-                        LibrarySort.TotalChapters -> {
-                            i2.manga.totalChapters.compareTo(i1.manga.totalChapters)
-                        }
-                        LibrarySort.DateFetched -> {
-                            i2.manga.lastFetch.compareTo(i1.manga.lastFetch)
-                        }
-                        LibrarySort.NextExpectedUpdate -> {
-                            val next1 = i1.manga.manga.next_update.takeIf { it > 0L } ?: Long.MAX_VALUE
-                            val next2 = i2.manga.manga.next_update.takeIf { it > 0L } ?: Long.MAX_VALUE
-                            next1.compareTo(next2)
-                        }
-                        LibrarySort.DateAdded -> i2.manga.manga.date_added.compareTo(i1.manga.manga.date_added)
-                        LibrarySort.DragAndDrop -> {
-                            if (category.isDynamic) {
-                                val category1 = categoryOrderMap[i1.manga.category] ?: 0
-                                val category2 = categoryOrderMap[i2.manga.category] ?: 0
-                                category1.compareTo(category2)
-                            } else {
-                                sortAlphabetical(i1, i2)
-                            }
-                        }
-                        LibrarySort.Random -> {
-                            error("You're not supposed to be here...")
-                        }
+                    val mode = category.sortingMode() ?: LibrarySort.Title
+                    if (mode == LibrarySort.DragAndDrop && category.isDynamic) {
+                        val category1 = categoryOrderMap[i1.manga.category] ?: 0
+                        val category2 = categoryOrderMap[i2.manga.category] ?: 0
+                        val sort = category1.compareTo(category2)
+                        if (category.isAscending()) sort else -sort
+                    } else {
+                        // Shared with the Books & novels tab.
+                        LibrarySortComparator.compare(mode, category.isAscending(), i1, i2, removeArticles)
                     }
-                    if (!category.isAscending()) sort *= -1
-                    sort
                 }
                 category.mangaOrder.isNotEmpty() -> {
                     val order = category.mangaOrder
@@ -860,13 +843,8 @@ class LibraryPresenter(
      * @param i1 the first manga
      * @param i2 the second manga to compare
      */
-    private fun sortAlphabetical(i1: LibraryMangaItem, i2: LibraryMangaItem): Int {
-        return if (removeArticles) {
-            i1.manga.manga.title.removeArticles().compareTo(i2.manga.manga.title.removeArticles(), true)
-        } else {
-            i1.manga.manga.title.compareTo(i2.manga.manga.title, true)
-        }
-    }
+    private fun sortAlphabetical(i1: LibraryMangaItem, i2: LibraryMangaItem): Int =
+        LibrarySortComparator.compareTitles(i1.sortTitle, i2.sortTitle, removeArticles)
 
     private fun getPreferencesFlow() = combine<Any, ItemPreferences>(
         preferences.filterDownloaded().changes(),

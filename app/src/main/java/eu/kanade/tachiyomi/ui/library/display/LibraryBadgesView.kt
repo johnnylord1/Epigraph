@@ -13,13 +13,16 @@ class LibraryBadgesView @JvmOverloads constructor(context: Context, attrs: Attri
     override fun initGeneralPreferences() {
         binding.unreadBadgeGroup.bindToPreference(preferences.unreadBadgeType()) {
             controller?.presenter?.requestUnreadBadgesUpdate()
+            controller?.refreshBooksLibrary()
         }
         binding.hideReading.bindToPreference(preferences.hideStartReadingButton())
         binding.downloadBadge.bindToPreference(preferences.downloadBadge()) {
             controller?.presenter?.requestDownloadBadgesUpdate()
+            controller?.refreshBooksLibrary()
         }
         binding.languageBadge.bindToPreference(preferences.languageBadge()) {
             controller?.presenter?.requestLanguageBadgesUpdate()
+            controller?.refreshBooksLibrary()
         }
         binding.showNumberOfItems.bindToPreference(preferences.categoryNumberOfItems())
     }

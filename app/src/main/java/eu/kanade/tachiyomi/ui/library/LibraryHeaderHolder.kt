@@ -40,15 +40,12 @@ import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.view.compatToolTipText
 import eu.kanade.tachiyomi.util.view.setText
 import eu.kanade.tachiyomi.util.view.text
-import kotlin.random.Random
-import yokai.domain.library.LibraryPreferences
 import yokai.i18n.MR
 import yokai.util.lang.getString
 
 class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
     BaseFlexibleViewHolder(view, adapter, true) {
 
-    private val libraryPreferences: LibraryPreferences = get()
     private val binding = LibraryCategoryHeaderItemBinding.bind(view)
     val progressDrawableStart = CircularProgressDrawable(itemView.context)
     val progressDrawableEnd = CircularProgressDrawable(itemView.context)
@@ -411,9 +408,7 @@ class LibraryHeaderHolder(val view: View, val adapter: LibraryCategoryAdapter) :
             }
             sortingMode to sortingMode.categoryValue
         }
-        if (mode == LibrarySort.Random) {
-            libraryPreferences.randomSortSeed().set(Random.nextInt())
-        }
+        // The listener reseeds Random for the tab the header belongs to.
         adapter.libraryListener?.sortCategory(category.id!!, modType)
     }
 
