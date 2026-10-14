@@ -2179,6 +2179,7 @@
 
     <!-- Error / retry -->
     <string name="novel_error_loading_chapter">Error loading chapter</string>
+    <string name="reader_chapter_network_error">Couldn’t reach the source. Check your connection and try again.</string>
     <string name="novel_error_no_text">No text content available</string>
 
     <!-- Action bar -->

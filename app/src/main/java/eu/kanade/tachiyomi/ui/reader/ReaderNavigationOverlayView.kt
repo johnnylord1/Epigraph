@@ -36,6 +36,13 @@ class ReaderNavigationOverlayView(context: Context, attributeSet: AttributeSet) 
         showNavigationAgain()
     }
 
+    /** Hides the tap-zone guide at once, for a reader that has no viewer to navigate. */
+    fun hideNow() {
+        viewPropertyAnimator?.cancel()
+        viewPropertyAnimator = null
+        isVisible = false
+    }
+
     fun showNavigationAgain() {
         invalidate()
 
