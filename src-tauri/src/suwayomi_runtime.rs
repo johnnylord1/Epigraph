@@ -206,6 +206,44 @@ pub fn confirm_abandoned_owner(path: &Path) -> bool {
 
 const ROOT_DIR_FLAG: &str = "-Dsuwayomi.tachidesk.config.server.rootDir=";
 
+/// How long a Suwayomi may go without answering after it starts before it counts as hung.
+pub const UNRESPONSIVE_SERVER_GRACE: std::time::Duration = std::time::Duration::from_secs(360);
+
+/// Ends a Suwayomi that stopped answering, which would otherwise keep its profile offline until a
+/// reboot. Only a Java started for exactly `root` (it carries the root flag) and older than `min_age`
+/// is ended: the handle opened first pins the process, so the PID cannot be reused while its command
+/// line and birth are checked. Returns `false`, leaving it running, while it is younger than `min_age`.
+pub fn stop_unresponsive_server(root: &Path, pid: u32, min_age: std::time::Duration) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use ownership::ProcessObject;
+        let mut process = ownership::windows::Process::open(pid, command_line_hash)?;
+        let born = (process.identity()?.created / 10_000_000)
+            .checked_sub(11_644_473_600)
+            .ok_or("Invalid process birth; process preserved")?;
+        let system = sysinfo::System::new_all();
+        let listed = system.process(sysinfo::Pid::from_u32(pid)).ok_or("Process is no longer listed; preserved")?;
+        let expected = comparable_root(&root.to_string_lossy());
+        if listed.start_time().abs_diff(born) > 1
+            || !listed.name().to_string_lossy().to_ascii_lowercase().contains("java")
+            || !listed.cmd().iter().any(|arg| arg_points_at_root(&arg.to_string_lossy(), &expected))
+        {
+            return Err("Process is not the Suwayomi of this profile; preserved".into());
+        }
+        if unix_now_secs().saturating_sub(born) < min_age.as_secs() {
+            return Ok(false);
+        }
+        process.terminate()?;
+        process.wait(5000)?;
+        Ok(true)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (root, pid, min_age);
+        Err("Unresponsive server cleanup unavailable; process preserved".into())
+    }
+}
+
 /// Every Epigraph start passes `ROOT_DIR_FLAG` with the root to its Java, so a Suwayomi for `root`
 /// shows up as a Java process carrying that flag. A Java whose command line cannot be read, and the
 /// recorded process while it still has its recorded birth, count as possibly that server.
@@ -734,6 +772,39 @@ mod tests {
         assert!(has_confirmed_stop(&path));
         assert_eq!(std::fs::read(&path).unwrap(), torn, "evidence is retained");
         assert!(!confirm_abandoned_owner(&dir.path().join("missing.json")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_an_old_enough_java_started_for_the_root_is_ended() {
+        use std::os::windows::process::CommandExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("profile");
+        std::fs::create_dir_all(&root).unwrap();
+        // A copy of cmd.exe named java.exe stands in for a hung Suwayomi: a Java carrying the root flag.
+        let java = dir.path().join("java.exe");
+        std::fs::copy(std::path::Path::new(&std::env::var("ComSpec").unwrap()), &java).unwrap();
+        let flag = format!("{ROOT_DIR_FLAG}{}", root.display());
+        let spawn = |flag: &str| {
+            std::process::Command::new(&java)
+                .args(["/d", "/c", "ping", "-n", "30", "127.0.0.1", ">nul", "&", "rem", flag])
+                .creation_flags(0x08000000)
+                .spawn()
+                .unwrap()
+        };
+        let mut other = spawn(&format!("{ROOT_DIR_FLAG}{}", dir.path().join("other").display()));
+        let mut hung = spawn(&flag);
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        assert!(stop_unresponsive_server(&root, other.id(), std::time::Duration::ZERO).is_err(), "another profile");
+        assert!(other.try_wait().unwrap().is_none());
+        assert!(!stop_unresponsive_server(&root, hung.id(), std::time::Duration::from_secs(3600)).unwrap(), "still starting");
+        assert!(hung.try_wait().unwrap().is_none());
+        assert!(stop_unresponsive_server(&root, hung.id(), std::time::Duration::ZERO).unwrap());
+        assert!(hung.wait().unwrap().code().is_some());
+
+        let _ = other.kill();
+        let _ = other.wait();
     }
 
     #[test]

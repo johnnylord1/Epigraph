@@ -1216,8 +1216,10 @@ pub(crate) fn recover_suwayomi_update_before_spawn(
     recover_extension_batch_before_spawn(app, requested_target)?;
     let runtime_root = managed_runtime_root();
     let journal_path = suwayomi_maintenance::update_journal_path(&runtime_root);
-    let Some(mut journal) = suwayomi_maintenance::read_update_journal(&journal_path)? else {
-        return Ok(());
+    let mut journal = match suwayomi_maintenance::read_update_journal(&journal_path) {
+        Ok(Some(journal)) => journal,
+        Ok(None) => return Ok(()),
+        Err(error) => return set_aside_unreadable_update_journal(&journal_path, &runtime_root, &error),
     };
 
     let mut guard = try_acquire_suwayomi_update_lock("recovery")?;
@@ -1265,6 +1267,44 @@ pub(crate) fn recover_suwayomi_update_before_spawn(
         );
     }
     Ok(())
+}
+
+/// A journal that cannot be parsed (disk damage, a format from another Epigraph version) cannot say
+/// what to roll back, and refusing to start would keep the profile offline for good. It is kept aside
+/// for diagnosis and the runtime in place is used; when the update left no runtime in `current`, the
+/// previous one is put back. A journal that cannot even be read (locked, no access) still refuses.
+fn set_aside_unreadable_update_journal(
+    journal_path: &Path,
+    runtime_root: &Path,
+    error: &str,
+) -> Result<(), String> {
+    if fs::read(journal_path).is_err() {
+        return Err(error.to_string());
+    }
+    let mut guard = try_acquire_suwayomi_update_lock("recovery")?;
+    guard.begin_maintenance("recovery", MaintenancePhase::Recovering)?;
+    set_aside_journal(journal_path)?;
+    restore_previous_runtime_if_current_is_incomplete(runtime_root)?;
+    eprintln!("[epigraph-suwayomi-update] unreadable update journal set aside: {error}");
+    Ok(())
+}
+
+fn restore_previous_runtime_if_current_is_incomplete(runtime_root: &Path) -> Result<(), String> {
+    let current_dir = runtime_root.join(SUWAYOMI_CURRENT_DIR);
+    let previous_dir = runtime_root.join(SUWAYOMI_PREVIOUS_DIR);
+    if current_dir.join(SUWAYOMI_SERVER_JAR).is_file() || !previous_dir.join(SUWAYOMI_SERVER_JAR).is_file() {
+        return Ok(());
+    }
+    if current_dir.exists() {
+        fs::remove_dir_all(&current_dir)
+            .map_err(|error| format!("Could not remove incomplete runtime: {error}"))?;
+    }
+    rename_same_parent(&previous_dir, &current_dir)
+}
+
+fn set_aside_journal(journal_path: &Path) -> Result<(), String> {
+    let aside = journal_path.with_extension(format!("json.unreadable-{}", unix_now_ms()));
+    fs::rename(journal_path, aside).map_err(|error| format!("Could not set aside the update journal: {error}"))
 }
 
 fn recover_runtime_directories(
@@ -3258,10 +3298,6 @@ fn read_extension_batch_journal_at(path: &Path) -> Result<Option<ExtensionBatchJ
     Ok(Some(journal))
 }
 
-fn read_extension_batch_journal() -> Result<Option<ExtensionBatchJournal>, String> {
-    read_extension_batch_journal_at(&extension_batch_journal_path())
-}
-
 fn remove_extension_batch_journal() -> Result<(), String> {
     match fs::remove_file(extension_batch_journal_path()) {
         Ok(()) => Ok(()),
@@ -3270,6 +3306,12 @@ fn remove_extension_batch_journal() -> Result<(), String> {
             "Could not remove extension update journal: {error}"
         )),
     }
+}
+
+fn extension_batch_journal_targets(journal: &ExtensionBatchJournal, target: &LocalServerTarget) -> bool {
+    journal.profile_id == target.profile_key
+        && comparable_path(Path::new(&journal.root_dir)) == comparable_path(&target.root_dir)
+        && normalize_server_url(Some(&journal.server_url)) == normalize_server_url(Some(&target.server_url))
 }
 
 fn validate_extension_batch_journal_paths(
@@ -3309,13 +3351,43 @@ fn validate_extension_batch_journal_paths(
     Ok(candidate)
 }
 
+/// The extension journal still to be recovered, if any. One that nothing can recover would refuse
+/// every later start and batch, so it is kept aside for diagnosis instead: a journal that cannot be
+/// parsed names no profile or snapshot, and one whose profile was removed has nothing to restore.
+fn read_recoverable_extension_batch_journal() -> Result<Option<ExtensionBatchJournal>, String> {
+    let path = extension_batch_journal_path();
+    let reason = match read_extension_batch_journal_at(&path) {
+        Ok(Some(journal)) if Path::new(&journal.root_dir).exists() => return Ok(Some(journal)),
+        Ok(Some(journal)) => {
+            let batch_root = PathBuf::from(&journal.batch_root);
+            let expected_parent = suwayomi_data_dir().join(EXTENSION_BATCH_ROOT);
+            if batch_root.parent().map(comparable_path) == Some(comparable_path(&expected_parent)) {
+                let _ = fs::remove_dir_all(&batch_root);
+            }
+            "its profile was removed".to_string()
+        }
+        Ok(None) => return Ok(None),
+        Err(error) if fs::read(&path).is_ok() => error,
+        Err(error) => return Err(error),
+    };
+    let mut guard = try_acquire_suwayomi_update_lock("extension-recovery")?;
+    guard.begin_maintenance("extension-recovery", MaintenancePhase::Recovering)?;
+    set_aside_journal(&path)?;
+    eprintln!("[epigraph-suwayomi-update] extension journal set aside: {reason}");
+    Ok(None)
+}
+
 fn recover_extension_batch_before_spawn(
     app: &AppHandle,
     requested_target: &LocalServerTarget,
 ) -> Result<(), String> {
-    let Some(mut journal) = read_extension_batch_journal()? else {
+    let Some(mut journal) = read_recoverable_extension_batch_journal()? else {
         return Ok(());
     };
+    // Another profile's batch is recovered when that profile starts; it must not keep this one offline.
+    if !extension_batch_journal_targets(&journal, requested_target) {
+        return Ok(());
+    }
     let mut guard = try_acquire_suwayomi_update_lock("extension-recovery")?;
     guard.begin_maintenance("extension-recovery", MaintenancePhase::Recovering)?;
     let candidate = validate_extension_batch_journal_paths(&journal, requested_target, app)?;
@@ -3400,7 +3472,7 @@ pub async fn certify_suwayomi_extension_update_batch(
     if unique_packages.len() != items.len() {
         return Err("Extension update batch contains duplicate packages.".to_string());
     }
-    if read_extension_batch_journal()?.is_some() {
+    if read_recoverable_extension_batch_journal()?.is_some() {
         return Err(
             "An interrupted extension update must be recovered before starting another batch."
                 .to_string(),
@@ -4524,6 +4596,34 @@ fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unreadable_journal_is_kept_aside_and_an_incomplete_runtime_is_rolled_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = dir.path();
+        let journal = runtime.join("update-journal.json");
+        std::fs::write(&journal, b"{\"schemaVersion\":1,\"sta").unwrap();
+        super::set_aside_journal(&journal).unwrap();
+        assert!(!journal.exists());
+        let kept: Vec<_> = std::fs::read_dir(runtime).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        assert!(kept.iter().any(|name| name.starts_with("update-journal.json.unreadable-")), "{kept:?}");
+
+        // The update stopped after moving the old runtime away but before the new jar was complete.
+        std::fs::create_dir_all(runtime.join("current")).unwrap();
+        std::fs::write(runtime.join("current").join("partial.tmp"), b"x").unwrap();
+        std::fs::create_dir_all(runtime.join("previous")).unwrap();
+        std::fs::write(runtime.join("previous").join("Suwayomi-Server.jar"), b"old").unwrap();
+        super::restore_previous_runtime_if_current_is_incomplete(runtime).unwrap();
+        assert_eq!(std::fs::read(runtime.join("current").join("Suwayomi-Server.jar")).unwrap(), b"old");
+        assert!(!runtime.join("previous").exists());
+
+        // A complete current runtime is left alone.
+        std::fs::create_dir_all(runtime.join("previous")).unwrap();
+        std::fs::write(runtime.join("previous").join("Suwayomi-Server.jar"), b"older").unwrap();
+        super::restore_previous_runtime_if_current_is_incomplete(runtime).unwrap();
+        assert_eq!(std::fs::read(runtime.join("current").join("Suwayomi-Server.jar")).unwrap(), b"old");
+        assert!(runtime.join("previous").exists());
+    }
+
     use super::*;
     use std::io::{Error as IoError, ErrorKind};
     use std::sync::Mutex as StdMutex;

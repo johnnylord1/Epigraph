@@ -6052,6 +6052,19 @@ fn spawn_server_unlocked(
                 OwnerReuseDecision::Stale => {
                     return Err(SpawnError::SpawnFailed("Unconfirmed stale ownership retained; refusing takeover".into()));
                 }
+                OwnerReuseDecision::ConflictingLiveProcess
+                    if suwayomi_runtime::stop_unresponsive_server(
+                        &data_dir,
+                        owner.java_pid,
+                        suwayomi_runtime::UNRESPONSIVE_SERVER_GRACE,
+                    ) == Ok(true)
+                        && confirm_exited_server_owner(&owner_path) =>
+                {
+                    do_log(
+                        &mut log,
+                        "[spawn_server] ended a server that stopped responding; ownership reconciled",
+                    );
+                }
                 OwnerReuseDecision::ConflictingLiveProcess => {
                     do_log(
                         &mut log,
@@ -6079,8 +6092,23 @@ fn spawn_server_unlocked(
         }
     }
 
-    if let Some(java_pid) = find_java_pid_for_rootdir(&data_dir) {
-        if probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT) {
+    let mut discovered = find_java_pid_for_rootdir(&data_dir);
+    let responding = discovered.is_some()
+        && probe_local_server(&target.server_url, LOCAL_SERVER_HEALTH_PROBE_TIMEOUT);
+    if let Some(java_pid) = discovered.filter(|_| !responding) {
+        // A Java that never answered within its startup window would keep the profile offline.
+        if suwayomi_runtime::stop_unresponsive_server(
+            &data_dir,
+            java_pid,
+            suwayomi_runtime::UNRESPONSIVE_SERVER_GRACE,
+        ) == Ok(true)
+        {
+            do_log(&mut log, &format!("[spawn_server] ended Java pid {java_pid} that stopped responding"));
+            discovered = None;
+        }
+    }
+    if let Some(java_pid) = discovered {
+        if responding {
             let owner = ServerOwner {
                 profile_key: target.profile_key.clone(),
                 root_dir: data_dir.to_string_lossy().into_owned(),

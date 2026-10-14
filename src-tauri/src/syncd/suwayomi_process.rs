@@ -171,7 +171,13 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
         {
             return Err("managed Suwayomi is still starting".to_string());
         }
-        stop_owned_instance(&instance, Duration::from_secs(5)).await?;
+        let retained = instance.run_id.as_ref().is_some_and(|run| spawned_runs().lock().unwrap().contains_key(run));
+        if retained {
+            stop_owned_instance(&instance, Duration::from_secs(5)).await?;
+        } else {
+            // Left by an earlier Core run, so no handle was retained for it.
+            stop_unresponsive_java(&root, instance.java_pid)?;
+        }
     }
 
     std::fs::create_dir_all(&root)
@@ -210,9 +216,12 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
             let instance = publish_reconstructed_owner(&root, java_pid, false)?;
             return Ok(HeadlessSuwayomiOutcome::Attached(instance));
         }
-        return Err(format!(
-            "owned Suwayomi PID {java_pid} is running for the managed profile but is not ready"
-        ));
+        if process_age_secs(java_pid).unwrap_or_default() < STARTUP_PROBE_TIMEOUT_EXISTING.as_secs() {
+            return Err(format!(
+                "owned Suwayomi PID {java_pid} is running for the managed profile but is not ready"
+            ));
+        }
+        stop_unresponsive_java(&root, java_pid)?;
     }
 
     ensure_port_available(main_server_port())?;
@@ -427,6 +436,16 @@ fn acquire_spawn_lock(root: &Path) -> Result<crate::suwayomi_runtime::SpawnLease
         Ok(None) => Err("another Epigraph process is starting managed Suwayomi".to_string()),
         Err(error) => Err(format!("failed to acquire Suwayomi spawn lock: {error}")),
     }
+}
+
+/// A JVM for the profile that never answered within its startup window (deadlocked, out of memory)
+/// would keep the profile offline until a reboot.
+fn stop_unresponsive_java(root: &Path, java_pid: u32) -> Result<(), String> {
+    if !crate::suwayomi_runtime::stop_unresponsive_server(root, java_pid, STARTUP_PROBE_TIMEOUT_EXISTING)? {
+        return Err("managed Suwayomi is still starting".to_string());
+    }
+    tracing::warn!(java_pid, "ended a managed Suwayomi that stopped responding");
+    Ok(())
 }
 
 fn remove_stale_owner(root: &Path) -> Result<(), String> {
