@@ -18,7 +18,7 @@ vi.mock("./libraryState", () => ({
   saveNovelLibraryState: saveStateMock,
 }));
 
-import { refreshNovelDetailFromSource } from "./libraryRefresh";
+import { refreshNovelDetailFromSource, refreshNovelLibraryFromSources } from "./libraryRefresh";
 
 const scope = { profileId: "main", serverUrl: "http://127.0.0.1:4567" };
 const source = { repositoryUrl: null, pluginId: "src", sourceId: "src", sourceName: "Source" };
@@ -110,5 +110,31 @@ describe("refreshNovelDetailFromSource", () => {
 
     await expect(refreshNovelDetailFromSource(scope, detail(["/1"]), true)).rejects.toThrow("source offline");
     expect(saveStateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("refreshNovelLibraryFromSources", () => {
+  beforeEach(() => {
+    readDetailsMock.mockReset();
+    loadStateMock.mockReset();
+    saveStateMock.mockReset();
+    saveStateMock.mockImplementation((state: PersistedNovelLibraryState) => Promise.resolve(state));
+  });
+
+  it("stops before the next novel and keeps what it already refreshed", async () => {
+    const state = libraryState();
+    state.entries.push({ ...state.entries[0], id: "novel:src:%2Fm", title: "Other", path: "/m" });
+    loadStateMock.mockResolvedValue(state);
+    const stop = new AbortController();
+    readDetailsMock.mockImplementation(async () => {
+      stop.abort();
+      return detail(["/1", "/2"]);
+    });
+
+    const result = await refreshNovelLibraryFromSources(scope, { pauseMs: 0, signal: stop.signal });
+
+    expect(readDetailsMock).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ stopped: true, checked: 1, total: 2, updated: 1 });
+    expect(saveStateMock).toHaveBeenCalledTimes(1);
   });
 });

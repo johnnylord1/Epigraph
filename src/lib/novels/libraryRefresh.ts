@@ -71,6 +71,8 @@ export interface RefreshNovelLibraryResult {
   newChapters: number;
   newChapterEntries: RefreshedNovelChapter[];
   failures: RefreshNovelLibraryFailure[];
+  /** The signal stopped the run before every novel was checked. */
+  stopped: boolean;
 }
 
 export interface RefreshNovelLibraryOptions {
@@ -82,6 +84,8 @@ export interface RefreshNovelLibraryOptions {
   pauseMs?: number;
   sourceIds?: readonly string[] | null;
   onProgress?: (progress: RefreshNovelLibraryProgress) => void;
+  /** Stops the run before the next novel; what was already refreshed is kept and saved. */
+  signal?: AbortSignal;
 }
 
 let activeNovelUpdate: Promise<RefreshNovelLibraryResult> | null = null;
@@ -269,7 +273,9 @@ async function runNovelUpdate(
   }
 
   for (const [sourceId, group] of groupedEntries) {
+    if (options.signal?.aborted) break;
     for (let index = 0; index < group.length; index += 1) {
+      if (options.signal?.aborted) break;
       const entry = group[index];
       const entrySourceId = sourceIdForNovelEntry(entry);
       const sourceName = sourceNameForNovelEntry(entry);
@@ -356,7 +362,7 @@ async function runNovelUpdate(
         console.warn("Could not refresh source novel:", entry.title, error);
       } finally {
         options.onProgress?.({ checked, total, currentTitle: entry.title, newChapters: newChapterEntries.length, failed });
-        if (checked < total) await sleep(pauseMs);
+        if (checked < total && !options.signal?.aborted) await sleep(pauseMs);
       }
     }
   }
@@ -374,6 +380,7 @@ async function runNovelUpdate(
     newChapters: newChapterEntries.length,
     newChapterEntries,
     failures,
+    stopped: Boolean(options.signal?.aborted) && checked < total,
   };
 }
 

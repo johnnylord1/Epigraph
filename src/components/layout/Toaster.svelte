@@ -3,19 +3,14 @@
   import { onDestroy } from "svelte";
   import { flip } from "svelte/animate";
   import { cubicIn, cubicInOut, cubicOut } from "svelte/easing";
-  import { store, dismissToast, setLibraryUpdateProgress } from "../../store/state.svelte";
-  import type { LibraryUpdateProgress, Toast } from "../../store/state.svelte";
+  import { store, dismissToast } from "../../store/state.svelte";
+  import type { Toast, ToastAction } from "../../store/state.svelte";
   import { prefersReducedMotion } from "../../lib/motion/motion";
 
+  // The rules every toast follows are written on `Toast` in the store.
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const timerVersions = new Map<string, number>();
-  let libraryUpdateTimer: ReturnType<typeof setTimeout> | null = null;
-  let libraryUpdateTimerVersion = 0;
-
-  async function stopLibraryUpdate() {
-    const { stopSharedLibraryUpdate } = await import("../../lib/library/updateRuntime");
-    stopSharedLibraryUpdate();
-  }
+  const visibleToasts = $derived(store.toasts.filter((toast) => !toast.hidden));
 
   function schedule(t: Toast) {
     const version = t.updatedAt ?? 0;
@@ -28,32 +23,8 @@
     timers.set(t.id, setTimeout(() => dismissToast(t.id), dur));
   }
 
-  function scheduleLibraryUpdate(progress: LibraryUpdateProgress) {
-    const version = progress.updatedAt ?? 0;
-    if (libraryUpdateTimer && libraryUpdateTimerVersion === version) return;
-    if (libraryUpdateTimer) clearTimeout(libraryUpdateTimer);
-    const dur = progress.duration ?? (progress.active ? 0 : 2500);
-    if (dur === 0) {
-      libraryUpdateTimer = null;
-      libraryUpdateTimerVersion = version;
-      return;
-    }
-    libraryUpdateTimerVersion = version;
-    libraryUpdateTimer = setTimeout(() => {
-      setLibraryUpdateProgress(null);
-      libraryUpdateTimer = null;
-    }, dur);
-  }
-
   $effect(() => {
     store.toasts.forEach(schedule);
-    if (store.libraryUpdateProgress) {
-      scheduleLibraryUpdate(store.libraryUpdateProgress);
-    } else if (libraryUpdateTimer) {
-      clearTimeout(libraryUpdateTimer);
-      libraryUpdateTimer = null;
-      libraryUpdateTimerVersion = 0;
-    }
     for (const id of timers.keys()) {
       if (!store.toasts.some(t => t.id === id)) {
         clearTimeout(timers.get(id));
@@ -67,9 +38,18 @@
     timers.forEach(clearTimeout);
     timers.clear();
     timerVersions.clear();
-    if (libraryUpdateTimer) clearTimeout(libraryUpdateTimer);
-    libraryUpdateTimer = null;
   });
+
+  // An action closes its toast, except on a running task: the task keeps reporting into it.
+  function runAction(t: Toast, action: ToastAction | undefined, event: MouseEvent) {
+    event.stopPropagation();
+    action?.run();
+    if (!t.progress?.active) dismissToast(t.id);
+  }
+
+  function progressWidth(percent: number) {
+    return `${Math.max(0, Math.min(100, percent))}%`;
+  }
 
   const icons: Record<Toast["kind"], string> = {
     success:  "M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z",
@@ -112,60 +92,13 @@
   const stackFlip = { duration: () => (skipMotion() ? 0 : 520), easing: cubicOut };
 </script>
 
-{#if store.toasts.length || store.libraryUpdateProgress}
+{#if visibleToasts.length}
   <div class="toaster" aria-live="polite" aria-atomic="false">
-    {#if store.libraryUpdateProgress}
-      {@const p = store.libraryUpdateProgress}
-      <div
-        class="toast toast-{p.kind} toast-persistent library-update-toast"
-        class:toast-with-actions={p.active && store.libraryUpdateInFlight}
-        role={roleForKind(p.kind)}
-        aria-atomic="true"
-        style="--toast-duration: 0ms"
-        out:toastLeave|global
-      >
-        <div class="state-border" aria-hidden="true"></div>
-        <div class="toast-main">
-          <span class="icon" aria-hidden="true">
-            <svg class="toast-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d={icons[p.kind]} />
-            </svg>
-          </span>
-          <div class="body">
-            <p class="title">{p.title}</p>
-            <p class="sub">{p.body}</p>
-            {#if typeof p.percent === "number"}
-              <div class="library-progress-track" aria-hidden="true">
-                <div class="library-progress-fill" style={`width: ${Math.max(0, Math.min(100, p.percent))}%`}></div>
-              </div>
-            {/if}
-          </div>
-          <button class="toast-close" type="button" aria-label={$_("ui_dismissLibraryUpdateProgress")} onclick={() => setLibraryUpdateProgress(null)}>
-            <svg class="toast-close-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
-              <path d={closeIcon} />
-            </svg>
-          </button>
-        </div>
-        {#if p.active && store.libraryUpdateInFlight}
-          <div class="toast-actions">
-            <button
-              class="toast-action"
-              type="button"
-              onclick={(event) => {
-                event.stopPropagation();
-                void stopLibraryUpdate();
-              }}
-            >
-              {$_("ui_stop")}
-            </button>
-          </div>
-        {/if}
-      </div>
-    {/if}
-    {#each store.toasts as t (t.id)}
+    {#each visibleToasts as t (t.id)}
       <div
         class="toast toast-{t.kind}"
         class:toast-persistent={t.duration === 0}
+        class:toast-with-progress={Boolean(t.progress)}
         class:toast-with-actions={Boolean(t.action || t.actions?.length)}
         role={roleForKind(t.kind)}
         aria-atomic="true"
@@ -183,6 +116,15 @@
           <div class="body">
             <p class="title">{t.title}</p>
             {#if t.body}<p class="sub">{t.body}</p>{/if}
+            {#if t.progress && typeof t.progress.percent === "number"}
+              <div class="toast-progress-track" aria-hidden="true">
+                <div class="toast-progress-fill" style={`width: ${progressWidth(t.progress.percent)}`}></div>
+              </div>
+            {:else if t.progress?.active}
+              <div class="toast-progress-track toast-progress-indeterminate" aria-hidden="true">
+                <div class="toast-progress-fill"></div>
+              </div>
+            {/if}
           </div>
           <button class="toast-close" type="button" aria-label={$_("ui_dismissNotification")} onclick={() => dismissToast(t.id)}>
             <svg class="toast-close-icon" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
@@ -193,28 +135,12 @@
         {#if t.action || t.actions?.length}
           <div class="toast-actions">
             {#if t.action}
-              <button
-                class="toast-action"
-                type="button"
-                onclick={(event) => {
-                  event.stopPropagation();
-                  t.action?.run();
-                  dismissToast(t.id);
-                }}
-              >
+              <button class="toast-action" type="button" onclick={(event) => runAction(t, t.action, event)}>
                 {t.action.label}
               </button>
             {/if}
             {#each t.actions ?? [] as action}
-              <button
-                class="toast-action"
-                type="button"
-                onclick={(event) => {
-                  event.stopPropagation();
-                  action.run();
-                  dismissToast(t.id);
-                }}
-              >
+              <button class="toast-action" type="button" onclick={(event) => runAction(t, action, event)}>
                 {action.label}
               </button>
             {/each}
@@ -455,12 +381,13 @@
     line-clamp: 2;
   }
 
-  .library-update-toast .sub {
+  /* A task's toast keeps one line of detail so the bar fits the card. */
+  .toast-with-progress .sub {
     -webkit-line-clamp: 1;
     line-clamp: 1;
   }
 
-  .library-progress-track {
+  .toast-progress-track {
     width: 100%;
     height: var(--component-toast-progress-height);
     margin-top: calc(var(--component-nocturne-state-content-gap) / 2);
@@ -469,12 +396,18 @@
     background: var(--component-toast-progress-track);
   }
 
-  .library-progress-fill {
+  .toast-progress-fill {
     height: 100%;
     border-radius: inherit;
     background: var(--component-toast-progress-fill);
     box-shadow: var(--component-toast-progress-shadow);
     transition: width var(--duration-slow) var(--easing-standard);
+  }
+
+  /* A running task that cannot tell how far it is sweeps a short segment across the track. */
+  .toast-progress-indeterminate .toast-progress-fill {
+    width: 35%;
+    animation: toast-progress-sweep 1400ms var(--easing-standard) infinite;
   }
 
   .toast-actions {
@@ -592,6 +525,11 @@
     to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); filter: none; }
   }
 
+  @keyframes toast-progress-sweep {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(290%); }
+  }
+
   @keyframes toastLife {
     from { transform: scaleX(1); }
     to { transform: scaleX(0); }
@@ -622,7 +560,13 @@
   }
 
   :global(html[data-epigraph-reduced-motion="true"]) .icon,
-  :global(html[data-epigraph-reduced-motion="true"]) .library-progress-fill {
+  :global(html[data-epigraph-reduced-motion="true"]) .toast-progress-fill {
     transition: none;
+  }
+
+  :global(html[data-epigraph-reduced-motion="true"]) .toast-progress-indeterminate .toast-progress-fill {
+    width: 100%;
+    opacity: 0.45;
+    animation: none;
   }
 </style>

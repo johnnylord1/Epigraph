@@ -34,11 +34,14 @@
   import { reconcileMangaCountsFromChapters } from "../../lib/library/chapterCounts";
   import { reconcileComicsChapterSnapshot } from "../../lib/library/comicsChapterSnapshot";
   import {
+    beginLibraryUpdateSession,
     clearStaleLibraryUpdateInFlight,
-    formatLibraryUpdateFinalSummary,
+    endLibraryUpdateSession,
+    finishLibraryUpdateToast,
     libraryUpdateProgressNumbers,
     runSharedLibraryUpdate,
     showLibraryUpdateProgress as showSharedLibraryUpdateProgress,
+    showNovelLibraryRefreshProgress,
   } from "../../lib/library/updateRuntime";
   import {
     buildComicsSectionState,
@@ -1655,7 +1658,6 @@
       await clearStaleLibraryUpdateInFlight();
     }
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
-      showSharedLibraryUpdateProgress(translate("libraryUpdate.alreadyRunning"), 1800);
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
@@ -1672,7 +1674,8 @@
     refreshDialogOpen = false;
   }
 
-  async function refreshComicsLibrary() {
+  // `finalStep` is false when the books update follows on the same toast.
+  async function refreshComicsLibrary({ finalStep = true, stopSignal }: { finalStep?: boolean; stopSignal?: AbortSignal } = {}) {
     const beforeUpdate = [...store.libraryMangaSnapshot];
     const updateRun = await runSharedLibraryUpdate({
       reason: "manual-library-update",
@@ -1689,11 +1692,11 @@
     await loadData();
     bumpLibraryCoverCacheGeneration();
     if (updateRun.cancelled) {
-      showSharedLibraryUpdateProgress(translate("libraryUpdate.comicsStopped"), 1800);
-      addToast({
+      finishLibraryUpdateToast({
         kind: "info",
         title: translate("ui_comicsUpdateStopped"),
         body: translate("ui_epigraphKeptTheTitlesThatSuwayomiAlreadyRefreshed"),
+        progress: libraryUpdateProgressNumbers(updateRun.jobsInfo),
       });
       return updateRun;
     }
@@ -1723,11 +1726,6 @@
       };
     });
     const issues = recordLibraryUpdateIssues([...updateRun.issues, ...reconcileIssues], updatedAt);
-    showSharedLibraryUpdateProgress(
-      formatLibraryUpdateFinalSummary(translate("feedback.comicsLibrary"), updateRun.jobsInfo, issues.length),
-      1800,
-      libraryUpdateProgressNumbers(updateRun.jobsInfo),
-    );
     addSystemNotification({
       kind: issues.length > 0 ? "info" : "success",
       title: issues.length > 0 ? translate("ui_comicsLibraryRefreshedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibrarySyncCompleted"),
@@ -1738,15 +1736,19 @@
           : translate("ui_epigraphRefreshedYourComicsLibrary"),
       createdAt: updatedAt,
     });
-    addToast({
-      kind: issues.length > 0 ? "info" : "success",
+    const summary = {
+      kind: issues.length > 0 ? "info" as const : "success" as const,
       title: issues.length > 0 ? translate("ui_comicsUpdatedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibraryUpdated"),
       body: issues.length > 0
         ? translate("libraryUpdate.issuesSeeActivity", { count: issues.length })
         : entries.length > 0
           ? translate("libraryUpdate.newChaptersBody", { chapters: entries.reduce((sum, entry) => sum + entry.chapterDelta, 0), titles: entries.length })
           : translate("ui_epigraphRefreshedYourComicsLibrary"),
-    });
+    };
+    // The update's toast carries the result; when books follow, the comics result is its own note.
+    // A stop during the reconcile step ends the update here, before the books.
+    if (finalStep || stopSignal?.aborted) finishLibraryUpdateToast({ ...summary, progress: libraryUpdateProgressNumbers(updateRun.jobsInfo) });
+    else addToast(summary);
     return updateRun;
   }
 
@@ -1764,7 +1766,7 @@
     ));
   }
 
-  async function refreshBooksLibrary(options: { categoryNovelIds?: readonly string[] | null } = {}) {
+  async function refreshBooksLibrary(options: { categoryNovelIds?: readonly string[] | null; stopSignal?: AbortSignal } = {}) {
     showSharedLibraryUpdateProgress(translate("libraryUpdate.refreshingBooks"));
     const updatedAt = Date.now();
     updateSettings({ lastLibraryUpdateAt: updatedAt });
@@ -1778,19 +1780,8 @@
       excludedNovelIds: updateExcludedNovelIds(),
       onlyOngoing: store.settings.onlyUpdateOngoingNovels,
       pauseMs: 800,
-      onProgress: ({ checked, total, currentTitle, newChapters, failed }) => {
-        if (total <= 0) return;
-        const current = Math.max(0, Math.min(total, checked));
-        const percent = current >= total ? 100 : Math.max(0, Math.min(99, Math.floor((current / total) * 100)));
-        const titlePart = currentTitle ? ` - ${currentTitle}` : "";
-        const newPart = newChapters > 0 ? translate("libraryUpdate.newPart", { count: newChapters }) : "";
-        const failedPart = failed > 0 ? translate("libraryUpdate.failedPart", { count: failed }) : "";
-        showSharedLibraryUpdateProgress(
-          translate("libraryUpdate.novelProgress", { current, total, newPart, failedPart, titlePart }),
-          0,
-          { current, total, percent },
-        );
-      },
+      onProgress: showNovelLibraryRefreshProgress,
+      signal: options.stopSignal,
     });
     novelsLibraryState = result.state;
     bumpLibraryCoverCacheGeneration();
@@ -1822,11 +1813,6 @@
         failed: result.failed > 0 ? translate("libraryUpdate.failedPart", { count: result.failed }) : "",
       })
       : translate("libraryUpdate.booksNothing");
-    showSharedLibraryUpdateProgress(
-      translate("libraryUpdate.booksFinished"),
-      1800,
-      result.total > 0 ? { current: result.checked, total: result.total, percent: 100 } : undefined,
-    );
     addSystemNotification({
       kind: result.failed > 0 ? "info" : "success",
       title: novelNotifications.length > 0 ? translate("ui_newNovelChaptersFound") : title,
@@ -1834,10 +1820,19 @@
         ? translate("libraryUpdate.issuesSaved", { body, count: novelIssues.length })
         : body,
     });
-    addToast({
+    if (result.stopped) {
+      finishLibraryUpdateToast({
+        kind: "info",
+        body: translate("libraryUpdate.stoppedPlain"),
+        progress: { current: result.checked, total: result.total, percent: Math.floor((result.checked / result.total) * 100) },
+      });
+      return;
+    }
+    finishLibraryUpdateToast({
       kind: result.failed > 0 ? "info" : "success",
       title,
       body,
+      progress: result.total > 0 ? { current: result.checked, total: result.total, percent: 100 } : undefined,
     });
   }
 
@@ -1846,7 +1841,6 @@
       await clearStaleLibraryUpdateInFlight();
     }
     if (manualRefreshInFlight || store.libraryUpdateInFlight) {
-      showSharedLibraryUpdateProgress(translate("libraryUpdate.alreadyRunning"), 1800);
       addToast({
         kind: "info",
         title: translate("ui_libraryUpdateAlreadyRunning"),
@@ -1858,21 +1852,21 @@
     manualRefreshInFlight = true;
     refreshDialogBusy = target;
     setLibraryUpdateInFlight(true);
+    const stopSignal = beginLibraryUpdateSession();
     try {
       refreshDialogOpen = false;
       if (target === "all") {
-        const comicsRun = await refreshComicsLibrary();
-        if (comicsRun.cancelled) return;
-        await refreshBooksLibrary();
+        const comicsRun = await refreshComicsLibrary({ finalStep: false, stopSignal });
+        if (comicsRun.cancelled || stopSignal.aborted) return;
+        await refreshBooksLibrary({ stopSignal });
       } else if (store.librarySection === "comics") {
-        await refreshComicsLibrary();
+        await refreshComicsLibrary({ stopSignal });
       } else {
-        await refreshBooksLibrary({ categoryNovelIds: manualUpdateNovelIds() });
+        await refreshBooksLibrary({ categoryNovelIds: manualUpdateNovelIds(), stopSignal });
       }
     } catch (refreshError) {
       console.error(refreshError);
-      showSharedLibraryUpdateProgress(translate("libraryUpdate.failed"), 1800);
-      addToast({
+      finishLibraryUpdateToast({
         kind: "error",
         title: translate("ui_couldNotUpdateLibrary"),
         body: refreshError instanceof Error ? refreshError.message : translate("ui_epigraphCouldNotReachSuwayomi"),
@@ -1883,6 +1877,7 @@
         body: refreshError instanceof Error ? refreshError.message : translate("ui_epigraphCouldNotReachSuwayomi"),
       });
     } finally {
+      endLibraryUpdateSession(stopSignal);
       manualRefreshInFlight = false;
       refreshDialogBusy = null;
       setLibraryUpdateInFlight(false);

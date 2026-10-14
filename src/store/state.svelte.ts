@@ -381,27 +381,69 @@ export const DEFAULT_READING_STATS: ReadingStats = {
   lastStreakDate:    "",
 };
 
+export interface ToastProgress {
+  /** Completed units and their total, when the task counts them. */
+  current?:  number;
+  total?:    number;
+  /** 0-100. Left out while the task cannot tell how far it is; a running task then shows a moving bar. */
+  percent?:  number;
+}
+
+export interface ToastAction { label: string; run: () => void }
+
+/**
+ * Toast rules. Every toast goes through `addToast` or the progress helpers next to it:
+ * - A one-off message calls `addToast`. It closes itself after `duration` ms (3500 by default, 0 keeps
+ *   it until closed); the same kind and title (and body) refreshes the open toast instead of stacking.
+ * - A long task calls `showProgressToast(id, ...)` on each report and `finishProgressToast(id, ...)` once
+ *   at the end (`clearProgressToast` when it ends with nothing to say), always with the same stable id.
+ *   While it runs the toast stays open and in place, shows a bar (a moving one without `percent`), and
+ *   its actions do not close it.
+ * - Closing a running task's toast hides it until the task finishes; only an error outcome shows again.
+ * - At most five toasts show. The oldest finished one gives way first; a running task never does.
+ */
 export interface Toast {
   id:        string;
   kind:      "success" | "error" | "info" | "download";
   title:     string;
   body?:     string;
   duration?: number;
-  action?:   { label: string; run: () => void };
-  actions?:  { label: string; run: () => void }[];
+  action?:   ToastAction;
+  actions?:  ToastAction[];
+  /** Set on a task's toast; `active` while the task runs. */
+  progress?: ToastProgress & { active: boolean };
+  /** A running task's toast the user closed; it stays out of view until the task finishes. */
+  hidden?:   boolean;
   updatedAt?: number;
 }
 
-export interface LibraryUpdateProgress {
-  kind:      "download" | "success" | "error";
+export interface ProgressToastInput {
+  kind?:     Toast["kind"];
   title:     string;
-  body:      string;
-  active:    boolean;
+  body?:     string;
+  progress?: ToastProgress;
+  actions?:  ToastAction[];
+}
+
+export interface FinishedToastInput extends ProgressToastInput {
+  kind:      "success" | "error" | "info";
+  /** How long the outcome stays; 4000 ms by default, 0 keeps it until closed. */
   duration?: number;
-  current?:  number;
-  total?:    number;
-  percent?:  number;
-  updatedAt: number;
+}
+
+const MAX_VISIBLE_TOASTS = 5;
+
+/** Every phase of a library update reports on this one toast. */
+export const LIBRARY_UPDATE_TOAST_ID = "library-update";
+
+// The oldest finished toast gives way first; a running task only when every visible toast is one.
+function capVisibleToasts(toasts: Toast[]): Toast[] {
+  let next = toasts;
+  while (next.filter((toast) => !toast.hidden).length > MAX_VISIBLE_TOASTS) {
+    const drop = next.find((toast) => !toast.hidden && !toast.progress?.active) ?? next.find((toast) => !toast.hidden);
+    next = next.filter((toast) => toast !== drop);
+  }
+  return next;
 }
 
 export interface ActiveDownload {
@@ -1725,7 +1767,6 @@ class Store {
   searchDownloads:   SearchDownloadEntry[] = $state([]);
   novelDownloads:    NovelDownloadProgress[] = $state([]);
   toasts:            Toast[]          = $state([]);
-  libraryUpdateProgress: LibraryUpdateProgress | null = $state(null);
   libraryUpdateInFlight: boolean = $state(false);
   libraryCoverCacheGeneration: number = $state(0);
   activeChapter:     Chapter | null   = $state(null);
@@ -2447,24 +2488,61 @@ class Store {
     if (toast.body) toast = { ...toast, body: readableErrorText(toast.body) };
     const body = toast.body ?? "";
     const isDownloadLike = toast.kind === "download" || /download/i.test(toast.title);
-    const existing = this.toasts.find(t =>
-      t.id === toast.id
-      || (
-        t.kind === toast.kind
+    // A toast with an id only ever replaces itself; one without matches an open one-off message.
+    const existing = toast.id
+      ? this.toasts.find(t => t.id === toast.id)
+      : this.toasts.find(t =>
+        !t.progress
+        && t.kind === toast.kind
         && t.title === toast.title
-        && (isDownloadLike || (t.body ?? "") === body)
-      ),
-    );
+        && (isDownloadLike || (t.body ?? "") === body),
+      );
     const id = toast.id ?? existing?.id ?? Math.random().toString(36).slice(2);
-    const next = { ...existing, ...toast, id, updatedAt: Date.now() };
-    this.toasts = [...this.toasts.filter(t => t.id !== id), next].slice(-5);
+    const next: Toast = { ...toast, id, updatedAt: Date.now() };
+    // An update keeps the toast's place in the stack, so a task reporting progress does not jump around.
+    this.toasts = capVisibleToasts(existing
+      ? this.toasts.map(t => (t.id === existing.id ? next : t))
+      : [...this.toasts, next]);
     return id;
   }
 
-  dismissToast(id: string)                      { this.toasts = this.toasts.filter(x => x.id !== id); }
-  setLibraryUpdateProgress(progress: Omit<LibraryUpdateProgress, "updatedAt"> | null) {
-    this.libraryUpdateProgress = progress ? { ...progress, updatedAt: Date.now() } : null;
+  dismissToast(id: string) {
+    const toast = this.toasts.find(x => x.id === id);
+    if (toast?.progress?.active) {
+      this.toasts = this.toasts.map(x => (x.id === id ? { ...x, hidden: true } : x));
+      return;
+    }
+    this.toasts = this.toasts.filter(x => x.id !== id);
   }
+
+  showProgressToast(id: string, toast: ProgressToastInput) {
+    const existing = this.toasts.find(t => t.id === id);
+    return this.addToast({
+      kind: "info",
+      ...toast,
+      id,
+      duration: 0,
+      progress: { ...toast.progress, active: true },
+      hidden: Boolean(existing?.hidden && existing.progress?.active),
+    });
+  }
+
+  finishProgressToast(id: string, toast: FinishedToastInput) {
+    const existing = this.toasts.find(t => t.id === id);
+    if (existing?.hidden && toast.kind !== "error") {
+      this.clearProgressToast(id);
+      return id;
+    }
+    return this.addToast({
+      ...toast,
+      id,
+      duration: toast.duration ?? 4000,
+      progress: toast.progress ? { ...toast.progress, active: false } : undefined,
+    });
+  }
+
+  clearProgressToast(id: string)               { this.toasts = this.toasts.filter(x => x.id !== id); }
+  isProgressToastActive(id: string)            { return Boolean(this.toasts.find(x => x.id === id)?.progress?.active); }
   setLibraryUpdateInFlight(next: boolean)      { this.libraryUpdateInFlight = next; }
   bumpLibraryCoverCacheGeneration()            { this.libraryCoverCacheGeneration += 1; }
   setCategories(cats: Category[])              {
@@ -3095,7 +3173,10 @@ export function getLinkedMangaIds(mangaId: number)                       { retur
 export function setHeroSlot(i: 1|2|3, mangaId: number | null)            { store.setHeroSlot(i, mangaId); }
 export function addToast(toast: Omit<Toast, "id"> & { id?: string })     { return store.addToast(toast); }
 export function dismissToast(id: string)                                 { store.dismissToast(id); }
-export function setLibraryUpdateProgress(progress: Omit<LibraryUpdateProgress, "updatedAt"> | null) { store.setLibraryUpdateProgress(progress); }
+export function showProgressToast(id: string, toast: ProgressToastInput)  { return store.showProgressToast(id, toast); }
+export function finishProgressToast(id: string, toast: FinishedToastInput) { return store.finishProgressToast(id, toast); }
+export function clearProgressToast(id: string)                           { store.clearProgressToast(id); }
+export function isProgressToastActive(id: string)                        { return store.isProgressToastActive(id); }
 export function setLibraryUpdateInFlight(next: boolean) { store.setLibraryUpdateInFlight(next); }
 export function bumpLibraryCoverCacheGeneration() { store.bumpLibraryCoverCacheGeneration(); }
 export function setCategories(cats: Category[])                           { store.setCategories(cats); }

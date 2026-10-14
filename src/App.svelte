@@ -40,7 +40,11 @@
   import {
     store,
     addToast,
-    dismissToast,
+    showProgressToast,
+    finishProgressToast,
+    clearProgressToast,
+    isProgressToastActive,
+    LIBRARY_UPDATE_TOAST_ID,
     openBookReader,
     replaceBooksState,
     replaceBooksStateFromDisk,
@@ -53,7 +57,6 @@
     setLibraryMangaSnapshot,
     setLibraryTrackingSummarySnapshot,
     setLibraryUpdateInFlight,
-    setLibraryUpdateProgress,
     bumpLibraryCoverCacheGeneration,
     recordComicsUpdateNotifications,
     recordNovelUpdateNotifications,
@@ -154,27 +157,29 @@
   const ANILIST_LOOKUP_TOAST_ID = "anilist-library-lookup";
   const NOVEL_LOOKUP_TOAST_ID = "novel-library-lookup";
   function lookupProgressToast(toastId: string, titles: { running: string; done: string }) {
-    // Closing the progress toast keeps it closed until the run ends; the lookup goes on in the
-    // background. Every progress report used to bring the toast back.
-    let shown = false;
-    let closed = false;
+    // The lookup goes on in the background; closing its toast hides it until the run ends.
     return (progress: AniListLibraryLookupProgress) => {
-      if (shown && !store.toasts.some((toast) => toast.id === toastId)) closed = true;
-      const done = progress.phase === "done";
-      if (progress.phase === "paused" || closed) {
-        if (!closed) dismissToast(toastId);
-        if (progress.phase !== "running") shown = closed = false;
+      if (progress.phase === "paused") {
+        clearProgressToast(toastId);
         return;
       }
-      shown = !done;
-      addToast({
-        id: toastId,
-        kind: done ? "success" : "info",
-        title: $_(done ? titles.done : titles.running),
-        body: done
-          ? $_("feedback.aniListLookupDoneBody", { matched: progress.matched, uncertain: progress.uncertain, missed: progress.missed })
-          : $_("feedback.aniListLookupRunningBody", { remaining: progress.remaining, total: progress.total }),
-        duration: done ? 6000 : 0,
+      if (progress.phase === "done") {
+        finishProgressToast(toastId, {
+          kind: "success",
+          title: $_(titles.done),
+          body: $_("feedback.aniListLookupDoneBody", { matched: progress.matched, uncertain: progress.uncertain, missed: progress.missed }),
+          duration: 6000,
+        });
+        return;
+      }
+      const checked = Math.max(0, progress.total - progress.remaining);
+      showProgressToast(toastId, {
+        kind: "info",
+        title: $_(titles.running),
+        body: $_("feedback.aniListLookupRunningBody", { remaining: progress.remaining, total: progress.total }),
+        progress: progress.total > 0
+          ? { current: checked, total: progress.total, percent: Math.floor((checked / progress.total) * 100) }
+          : undefined,
       });
     };
   }
@@ -452,7 +457,7 @@
 
   $effect(() => {
     lazyRetryEpoch;
-    if ((store.toasts.length || store.libraryUpdateProgress) && !ToasterComponent) {
+    if (store.toasts.length && !ToasterComponent) {
       void ensureLazyComponent("toaster").then((component) => {
         if (component) ToasterComponent = component;
       });
@@ -847,6 +852,7 @@
     if (shouldKeepServerAwake() && reason !== "startup") return null;
 
     setLibraryUpdateInFlight(true);
+    const stopSignal = updateRuntime.beginLibraryUpdateSession();
     automaticLibraryUpdateInFlight = (async () => {
       const beforeUpdate = [...store.libraryMangaSnapshot];
       const updateRun = await updateRuntime.runSharedLibraryUpdate({ reason: "auto-library-update" });
@@ -856,9 +862,14 @@
       await preloadLibrarySnapshot(true);
       bumpLibraryCoverCacheGeneration();
       if (updateRun.cancelled) {
-        updateRuntime.showLibraryUpdateProgress(translate("libraryUpdate.stoppedPlain"), 1800);
+        updateRuntime.finishLibraryUpdateToast({
+          kind: "info",
+          body: translate("libraryUpdate.stoppedPlain"),
+          progress: updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo),
+        });
         return;
       }
+      updateRuntime.showLibraryUpdateProgress(translate("libraryUpdate.reconciling"));
       const comicsReconcile = await reconcileLibrarySnapshotChaptersAfterUpdate(
         beforeUpdate,
         updateRun.changedMangaIds,
@@ -870,7 +881,9 @@
         groupRefreshedNovelChaptersForNotifications,
         refreshNovelLibraryFromSources,
       } = await import("./lib/novels/libraryRefresh");
-      const novelsResult = await refreshNovelLibraryFromSources({
+      // A stop during the reconcile step skips the books; one during the books keeps what they refreshed.
+      if (!stopSignal.aborted) updateRuntime.showLibraryUpdateProgress(translate("libraryUpdate.refreshingBooks"));
+      const novelsResult = stopSignal.aborted ? null : await refreshNovelLibraryFromSources({
         profileId: store.runtimeResolvedLocalProfileId,
         serverUrl: store.runtimeServerUrl,
       }, {
@@ -882,9 +895,11 @@
         )),
         onlyOngoing: store.settings.onlyUpdateOngoingNovels,
         pauseMs: 800,
+        onProgress: updateRuntime.showNovelLibraryRefreshProgress,
+        signal: stopSignal,
       });
       const novelNotifications = recordNovelUpdateNotifications(
-        groupRefreshedNovelChaptersForNotifications(novelsResult.newChapterEntries),
+        groupRefreshedNovelChaptersForNotifications(novelsResult?.newChapterEntries ?? []),
         updatedAt,
       );
       const comicsReconcileIssues = comicsReconcile.failedIds.map((mangaId) => {
@@ -902,7 +917,7 @@
           errorType: "unknown" as const,
         };
       });
-      const novelIssues = novelsResult.failures.map((failure) => ({
+      const novelIssues = (novelsResult?.failures ?? []).map((failure) => ({
         runId: `books-update:${updatedAt}`,
         contentKind: "novel" as const,
         title: failure.title,
@@ -935,24 +950,31 @@
             : $_("feedback.automaticUpdatesBody", { hours: store.settings.libraryUpdateIntervalHours ?? 12 }),
         createdAt: updatedAt,
       });
-      if (totalUpdatedTitles > 0) {
-        addToast({
+      // The update's toast ends with the run's result instead of a second toast beside it.
+      const progress = updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo);
+      if (stopSignal.aborted) {
+        updateRuntime.finishLibraryUpdateToast({ kind: "info", body: translate("libraryUpdate.stoppedPlain"), progress });
+      } else if (totalUpdatedTitles > 0) {
+        updateRuntime.finishLibraryUpdateToast({
           kind: "success",
           title: $_("ui_newChaptersFound"),
           body: $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles }),
+          progress,
         });
       } else if (updateIssues.length > 0) {
-        addToast({
+        updateRuntime.finishLibraryUpdateToast({
           kind: "info",
           title: $_("feedback.libraryUpdatedIssues"),
           body: $_("feedback.libraryUpdatedIssuesBody", { count: updateIssues.length }),
+          progress,
+        });
+      } else {
+        updateRuntime.finishLibraryUpdateToast({
+          kind: "success",
+          body: updateRuntime.formatLibraryUpdateFinalSummary($_("feedback.comicsLibrary"), updateRun.jobsInfo, comicsIssueCount),
+          progress,
         });
       }
-      updateRuntime.showLibraryUpdateProgress(
-        updateRuntime.formatLibraryUpdateFinalSummary($_("feedback.comicsLibrary"), updateRun.jobsInfo, comicsIssueCount),
-        1800,
-        updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo),
-      );
       await maybeStandbyAfterIdle("auto-library-update");
     })()
       .catch((error) => {
@@ -962,9 +984,14 @@
           title: $_("feedback.automaticLibraryUpdateFailed"),
           body: error instanceof Error ? error.message : $_("feedback.libraryRefreshFailed"),
         });
-        updateRuntime.showLibraryUpdateProgress($_("feedback.automaticLibraryUpdateFailed"), 2200);
+        updateRuntime.finishLibraryUpdateToast({
+          kind: "error",
+          title: $_("feedback.automaticLibraryUpdateFailed"),
+          body: error instanceof Error ? error.message : $_("feedback.libraryRefreshFailed"),
+        });
       })
       .finally(() => {
+        updateRuntime.endLibraryUpdateSession(stopSignal);
         automaticLibraryUpdateInFlight = null;
         setLibraryUpdateInFlight(false);
       });
@@ -973,7 +1000,7 @@
   }
 
   $effect(() => {
-    const hasVisibleLibraryUpdateProgress = store.libraryUpdateInFlight || store.libraryUpdateProgress?.active;
+    const hasVisibleLibraryUpdateProgress = store.libraryUpdateInFlight || isProgressToastActive(LIBRARY_UPDATE_TOAST_ID);
     if (!hasVisibleLibraryUpdateProgress) {
       if (staleLibraryUpdateCheckTimer) {
         clearTimeout(staleLibraryUpdateCheckTimer);
@@ -1706,25 +1733,26 @@
     }
     if (toastUpdateInFlight) return;
     toastUpdateInFlight = true;
-    const toastId = addToast({
-      kind: "download",
-      title: $_("feedback.updateDownloading", { version }),
-      body: $_("feedback.updateDownloadingBody"),
-      duration: 0,
-    });
+    const toastId = "app-update-install";
+    const title = $_("feedback.updateDownloading", { version });
+    const body = $_("feedback.updateDownloadingBody");
+    showProgressToast(toastId, { kind: "download", title, body });
+    // The download reports the bytes received so far; the bar follows them when the size is known.
+    const unlistenProgress = await listen<{ downloaded: number; total: number | null }>("update-progress", ({ payload }) => {
+      const percent = payload.total ? Math.min(100, Math.floor((payload.downloaded / payload.total) * 100)) : undefined;
+      showProgressToast(toastId, { kind: "download", title, body, progress: percent === undefined ? undefined : { percent } });
+    }).catch(() => () => {});
     try {
       // On success the installer takes over and closes Epigraph; the restart action is a fallback.
       await invoke("download_and_install_update", { expectedVersion: version });
-      dismissToast(toastId);
-      addToast({
+      finishProgressToast(toastId, {
         kind: "success",
         title: $_("feedback.updateReady"),
         duration: 0,
-        action: { label: $_("settings_inline_restartNow"), run: () => void invoke("restart_app") },
+        actions: [{ label: $_("settings_inline_restartNow"), run: () => void invoke("restart_app") }],
       });
     } catch (error) {
-      dismissToast(toastId);
-      addToast({
+      finishProgressToast(toastId, {
         kind: "error",
         title: $_("settings_inline_updateFailed"),
         body: error instanceof Error ? error.message : String(error),
@@ -1735,6 +1763,7 @@
         ],
       });
     } finally {
+      unlistenProgress();
       toastUpdateInFlight = false;
     }
   }

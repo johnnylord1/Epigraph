@@ -6820,17 +6820,24 @@ async fn download_and_install_update(
         }
 
         let app_clone = app.clone();
+        // The updater reports each chunk's length; the event carries the running total, sent
+        // once per percent (or per MiB when the size is unknown) instead of once per chunk.
+        let mut downloaded: u64 = 0;
+        let mut last_step: Option<u64> = None;
         // The signature is verified while downloading, before anything is stopped.
         let bytes = update
             .download(
-                move |downloaded, total| {
-                    let _ = app_clone.emit(
-                        "update-progress",
-                        UpdateProgress {
-                            downloaded: downloaded as u64,
-                            total,
-                        },
-                    );
+                move |chunk_length, total| {
+                    downloaded += chunk_length as u64;
+                    let step = match total {
+                        Some(total) if total > 0 => downloaded.saturating_mul(100) / total,
+                        _ => downloaded / (1024 * 1024),
+                    };
+                    if last_step == Some(step) {
+                        return;
+                    }
+                    last_step = Some(step);
+                    let _ = app_clone.emit("update-progress", UpdateProgress { downloaded, total });
                 },
                 || {},
             )

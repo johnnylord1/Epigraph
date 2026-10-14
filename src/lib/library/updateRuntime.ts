@@ -3,8 +3,9 @@ import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
 import { GET_CATEGORIES_WITH_MANGA_IDS, GET_LIBRARY_UPDATE_STATUS, SET_LIBRARY_UPDATE_RULES, UPDATE_STOP } from "../queries";
 import { fetchSourceMangaChapters } from "../manga/runtime";
 import type { LibraryUpdateMangaPatch } from "../suwayomiUpdaterSubscription";
+import type { RefreshNovelLibraryProgress } from "../novels/libraryRefresh";
 import { ensureServerAwakeFor, type ServerWakeReason } from "../serverLifecycle";
-import { setLibraryMangaSnapshot, setLibraryUpdateProgress, store } from "../../store/state.svelte";
+import { finishProgressToast, isProgressToastActive, LIBRARY_UPDATE_TOAST_ID, setLibraryMangaSnapshot, showProgressToast, store } from "../../store/state.svelte";
 import type { Category, Chapter, Manga } from "../types";
 import type { LibraryUpdateIssueErrorType, LibraryUpdateIssueKind } from "../../store/state.svelte";
 import { classifySourceAccessError, isConfirmedAntibotChallengeMessage, sourceAccessErrorMessage, type SourceAccessClassification } from "../sourceAccess";
@@ -16,6 +17,17 @@ export interface LibraryUpdateProgressNumbers {
   current: number;
   total: number;
   percent: number;
+}
+
+export type LibraryUpdateOutcome = "success" | "info" | "error";
+
+export interface LibraryUpdateResultToast {
+  kind: LibraryUpdateOutcome;
+  /** The update's own title when left out. */
+  title?: string;
+  body: string;
+  progress?: LibraryUpdateProgressNumbers;
+  duration?: number;
 }
 
 export interface SharedLibraryUpdateRunOptions {
@@ -56,6 +68,23 @@ export interface LibraryUpdateIssueInput {
 let activeLibraryUpdateRun: Promise<SharedLibraryUpdateRunResult> | null = null;
 let stopLibraryUpdateRun: Promise<boolean> | null = null;
 let libraryUpdateStopRequested = false;
+// A library update is more than the source queue: its caller reloads, reconciles and refreshes books after
+// it. The toast's Stop aborts this for the whole update, and every step checks it.
+let libraryUpdateSession: AbortController | null = null;
+
+function isLibraryUpdateStopRequested() {
+  return libraryUpdateStopRequested || Boolean(libraryUpdateSession?.signal.aborted);
+}
+
+/** Starts a library update that Stop can end at any step; pass the signal on and end it in `finally`. */
+export function beginLibraryUpdateSession() {
+  libraryUpdateSession = new AbortController();
+  return libraryUpdateSession.signal;
+}
+
+export function endLibraryUpdateSession(signal: AbortSignal) {
+  if (libraryUpdateSession?.signal === signal) libraryUpdateSession = null;
+}
 
 function updateRunId() {
   return `library-update:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
@@ -332,8 +361,11 @@ async function runComicsSourceQueueUpdate(
     lastProgressPublishAt = now;
     lastProgressPercent = percent;
     const detail = currentTitle && sourceName ? ` - ${sourceName}: ${currentTitle}` : "";
+    // Titles already being fetched still report in after Stop; keep the stop notice, move only the bar.
     showLibraryUpdateProgress(
-      total > 0
+      isLibraryUpdateStopRequested()
+        ? translate("libraryUpdate.stopRequestedCurrent")
+        : total > 0
         ? translate("libraryUpdate.checkingDetail", { current: Math.min(finishedJobs, total), total, percent, detail })
         : translate("libraryUpdate.noEligible"),
       0,
@@ -350,12 +382,12 @@ async function runComicsSourceQueueUpdate(
   const breakerLimit = sourceCircuitBreakerLimit(options.reason);
 
   await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (cursor < sourceEntries.length && !libraryUpdateStopRequested) {
+    while (cursor < sourceEntries.length && !isLibraryUpdateStopRequested()) {
       const group = sourceEntries[cursor++];
       let consecutiveFailures = 0;
       for (let index = 0; index < group.mangas.length; index += 1) {
         const manga = group.mangas[index];
-        if (libraryUpdateStopRequested) break;
+        if (isLibraryUpdateStopRequested()) break;
         publishProgress(manga.title, group.sourceName);
         try {
           const chapters = await fetchChaptersForUpdate(manga, timeoutMs);
@@ -460,10 +492,11 @@ async function runComicsSourceQueueUpdate(
     skippedCategoriesCount: 0,
     skippedMangasCount: 0,
   };
+  // The caller still reloads and reconciles the library, then ends the toast with its own summary.
   showLibraryUpdateProgress(
     formatLibraryUpdateProgress(finalJobsInfo),
-    1800,
-    total > 0 ? { current: finalJobsInfo.finishedJobs, total, percent: 100 } : undefined,
+    0,
+    total > 0 ? { current: finalJobsInfo.finishedJobs, total, percent: libraryUpdatePercent(finalJobsInfo.finishedJobs, total) } : undefined,
   );
 
   return {
@@ -484,20 +517,52 @@ export function formatLibraryUpdateStalled(jobsInfo: any, stalledMs: number) {
   return translate("libraryUpdate.waitingSlow", { seconds });
 }
 
+/**
+ * Reports the library update on its toast. `duration` 0 means the update is still running; any
+ * other value ends it, showing `outcome` for that long. The outcome is passed in, not read from
+ * the (translated) text.
+ */
 export function showLibraryUpdateProgress(
   body: string,
   duration = 0,
   progress?: LibraryUpdateProgressNumbers,
+  outcome: LibraryUpdateOutcome = "success",
 ) {
-  const lowerBody = body.toLowerCase();
-  setLibraryUpdateProgress({
-    kind: lowerBody.includes("failed") ? "error" : lowerBody.includes("finished") || lowerBody.includes("complete") ? "success" : "download",
-    title: translate("libraryUpdate.title"),
+  if (duration !== 0) {
+    finishLibraryUpdateToast({ kind: outcome, body, progress, duration });
+    return;
+  }
+  const title = translate("libraryUpdate.title");
+  const canStop = Boolean(activeLibraryUpdateRun || libraryUpdateSession) && !isLibraryUpdateStopRequested() && !stopLibraryUpdateRun;
+  showProgressToast(LIBRARY_UPDATE_TOAST_ID, {
+    kind: "download",
+    title,
     body,
-    active: duration === 0,
-    duration,
-    ...progress,
+    progress,
+    actions: canStop ? [{ label: translate("ui_stop"), run: () => void stopSharedLibraryUpdate() }] : undefined,
   });
+}
+
+/** Ends the library update's toast with the run's outcome, in place of a separate result toast. */
+export function finishLibraryUpdateToast({ title, ...result }: LibraryUpdateResultToast) {
+  finishProgressToast(LIBRARY_UPDATE_TOAST_ID, { ...result, title: title ?? translate("libraryUpdate.title") });
+}
+
+/** Reports a novel library refresh on the library update's toast. */
+export function showNovelLibraryRefreshProgress({ checked, total, currentTitle, newChapters, failed }: RefreshNovelLibraryProgress) {
+  if (total <= 0) return;
+  const current = Math.max(0, Math.min(total, checked));
+  const percent = current >= total ? 100 : Math.max(0, Math.min(99, Math.floor((current / total) * 100)));
+  const titlePart = currentTitle ? ` - ${currentTitle}` : "";
+  const newPart = newChapters > 0 ? translate("libraryUpdate.newPart", { count: newChapters }) : "";
+  const failedPart = failed > 0 ? translate("libraryUpdate.failedPart", { count: failed }) : "";
+  showLibraryUpdateProgress(
+    isLibraryUpdateStopRequested()
+      ? translate("libraryUpdate.stopRequestedCurrent")
+      : translate("libraryUpdate.novelProgress", { current, total, newPart, failedPart, titlePart }),
+    0,
+    { current, total, percent },
+  );
 }
 
 export function applyLibraryUpdateMangaPatches(patches: LibraryUpdateMangaPatch[]) {
@@ -639,7 +704,10 @@ export function isSharedLibraryUpdateRunning() {
 }
 
 export async function clearStaleLibraryUpdateInFlight() {
-  if (!store.libraryUpdateInFlight && !store.libraryUpdateProgress?.active) return false;
+  if (!store.libraryUpdateInFlight && !isProgressToastActive(LIBRARY_UPDATE_TOAST_ID)) return false;
+  // The source queue and the books refresh run in Epigraph, so Suwayomi's own status says nothing about
+  // them while they run; an open session is an update that is still going.
+  if (activeLibraryUpdateRun || libraryUpdateSession) return false;
 
   const jobsInfo = await readLibraryUpdateStatusLive();
   if (!jobsInfo || jobsInfo.isRunning) return false;
@@ -662,7 +730,13 @@ export function stopSharedLibraryUpdate() {
 
   stopLibraryUpdateRun = (async () => {
     libraryUpdateStopRequested = true;
+    libraryUpdateSession?.abort();
     showLibraryUpdateProgress(translate("libraryUpdate.stopping"));
+    // Past the source queue, the running step ends at its next title and Suwayomi has nothing to stop.
+    if (libraryUpdateSession && !activeLibraryUpdateRun) {
+      showLibraryUpdateProgress(translate("libraryUpdate.stopRequestedCurrent"));
+      return true;
+    }
     await gql(UPDATE_STOP).catch((error) => {
       console.warn("Could not send Suwayomi batch stop request; local source queue stop was still requested.", error);
     });
@@ -677,6 +751,7 @@ export function stopSharedLibraryUpdate() {
           Number(jobsInfo.totalJobs ?? 0) > 0 ? formatLibraryUpdateProgress(jobsInfo) : translate("libraryUpdate.stoppedPlain"),
           1800,
           libraryUpdateProgressNumbers(jobsInfo),
+          "info",
         );
         return true;
       }
@@ -694,11 +769,13 @@ export function stopSharedLibraryUpdate() {
   })()
     .catch((error) => {
       console.warn("Could not stop Library update:", error);
-      showLibraryUpdateProgress(translate("libraryUpdate.stopFailed"), 2200);
+      showLibraryUpdateProgress(translate("libraryUpdate.stopFailed"), 2200, undefined, "error");
       return false;
     })
     .finally(() => {
       stopLibraryUpdateRun = null;
+      // A stop that found no run of Epigraph's own must not cancel the next one before it starts.
+      if (!activeLibraryUpdateRun) libraryUpdateStopRequested = false;
     });
 
   return stopLibraryUpdateRun;
@@ -734,7 +811,7 @@ export function runSharedLibraryUpdate(options: SharedLibraryUpdateRunOptions) {
         updatedAt: Date.now(),
         changedMangaIds: sourceQueueResult.changedMangaIds,
         jobsInfo: sourceQueueResult.jobsInfo,
-        cancelled: libraryUpdateStopRequested,
+        cancelled: isLibraryUpdateStopRequested(),
         issues: sourceQueueResult.issues,
         preloadedChapters: sourceQueueResult.preloadedChapters,
       };

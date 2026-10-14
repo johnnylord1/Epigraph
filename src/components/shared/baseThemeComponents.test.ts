@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Toaster from "../layout/Toaster.svelte";
 import ContextMenu from "./ContextMenu.svelte";
-import { addToast, dismissToast, store } from "../../store/state.svelte";
+import { addToast, dismissToast, LIBRARY_UPDATE_TOAST_ID, showProgressToast, store } from "../../store/state.svelte";
 
 const MIGRATED_COMPONENT_FILES = [
   "src/components/layout/Toaster.svelte",
@@ -39,7 +39,6 @@ function resetToastState() {
     dismissToast(toast.id);
   }
   store.toasts = [];
-  store.libraryUpdateProgress = null;
   store.libraryUpdateInFlight = false;
 }
 
@@ -162,16 +161,13 @@ describe("base themed components", () => {
       duration: 0,
     });
     store.libraryUpdateInFlight = true;
-    store.libraryUpdateProgress = {
+    showProgressToast(LIBRARY_UPDATE_TOAST_ID, {
       kind: "download",
       title: "Library update",
       body: "Checking titles 37/61 - 61% complete.",
-      active: true,
-      current: 37,
-      total: 61,
-      percent: 61,
-      updatedAt: Date.now(),
-    };
+      progress: { current: 37, total: 61, percent: 61 },
+      actions: [{ label: "Stop", run: () => {} }],
+    });
 
     expect(await screen.findByText("Error state")).toBeTruthy();
     expect(screen.getByText("Success state")).toBeTruthy();
@@ -180,8 +176,8 @@ describe("base themed components", () => {
     const iconPaths = [...document.querySelectorAll(".toast-icon path")].map((path) => path.getAttribute("d"));
     expect(iconPaths).toContain("M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z");
     expect(iconPaths).toContain("M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,1,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z");
-    expect(document.querySelector(".library-progress-track")).toBeTruthy();
-    expect(document.querySelector(".library-progress-fill")?.getAttribute("style")).toContain("61%");
+    expect(document.querySelector(".toast-progress-track")).toBeTruthy();
+    expect(document.querySelector(".toast-progress-fill")?.getAttribute("style")).toContain("61%");
     expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
   });
 

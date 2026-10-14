@@ -7,7 +7,7 @@
   import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
   import { getServerUrl } from "../../lib/client";
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
-  import { retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
+  import { finishLibraryUpdateToast, retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
   import { resolveMangaCoverUrl } from "../../lib/manga/coverResolver";
   import { fetchSyncedComicHistory } from "../../lib/history/syncedComicHistory";
   import { groupReadingSessions } from "../../lib/history/sessions";
@@ -387,15 +387,20 @@
         return;
       }
 
+      // The retry runs the shared update queue, so its result ends the library update's toast.
       const result = await retryComicsLibrarySourceUpdate(sourceId);
       recordLibraryUpdateIssues(result.issues, result.updatedAt);
-      addToast({
+      if (result.cancelled) {
+        finishLibraryUpdateToast({ kind: "info", body: translate("libraryUpdate.stoppedPlain") });
+        return;
+      }
+      finishLibraryUpdateToast({
         kind: result.issues.length > 0 ? "info" : "success",
         title: result.issues.length > 0 ? translate("ui_sourceRetryFinishedWithIssues") : translate("ui_sourceRetryFinished"),
         body: translate("activity.comicsRetryBody", { count: result.changedMangaIds.length, source: issue.sourceName }),
       });
     } catch (error) {
-      addToast({
+      finishLibraryUpdateToast({
         kind: "error",
         title: translate("ui_couldNotRetrySource"),
         body: error instanceof Error ? error.message : translate("ui_epigraphCouldNotRetryThisSource"),

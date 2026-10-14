@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyLibraryUpdateMangaPatches,
+  beginLibraryUpdateSession,
   clearStaleLibraryUpdateInFlight,
+  endLibraryUpdateSession,
   formatLibraryUpdateFinalSummary,
   formatLibraryUpdateProgress,
   formatLibraryUpdateStalled,
@@ -9,7 +11,7 @@ import {
   libraryUpdateProgressNumbers,
   showLibraryUpdateProgress,
 } from "./updateRuntime";
-import { store } from "../../store/state.svelte";
+import { LIBRARY_UPDATE_TOAST_ID, showProgressToast, store } from "../../store/state.svelte";
 import { applyAppLanguage } from "../i18n/runtime";
 
 describe("library update runtime helpers", () => {
@@ -17,8 +19,10 @@ describe("library update runtime helpers", () => {
     applyAppLanguage("en");
     vi.restoreAllMocks();
     store.libraryUpdateInFlight = false;
-    store.libraryUpdateProgress = null;
+    store.toasts = [];
   });
+
+  const libraryToast = () => store.toasts.find((toast) => toast.id === LIBRARY_UPDATE_TOAST_ID);
 
   it("formats running progress with bounded numbers", () => {
     const jobsInfo = {
@@ -113,15 +117,47 @@ describe("library update runtime helpers", () => {
       totalJobs: 633,
     }, 22_400)).toBe("Checking titles 576/633 - waiting on a slow source (22s).");
 
-    showLibraryUpdateProgress("Library update already running.", 1800, {
+    showLibraryUpdateProgress("Checking titles 576/633 - 90%.", 0, { current: 576, total: 633, percent: 90 });
+    expect(libraryToast()?.progress).toMatchObject({ active: true, percent: 90 });
+    expect(libraryToast()?.duration).toBe(0);
+
+    showLibraryUpdateProgress("Library update stopped.", 1800, {
       current: 576,
       total: 633,
       percent: 90,
-    });
+    }, "info");
 
-    expect(store.libraryUpdateProgress?.active).toBe(false);
-    expect(store.libraryUpdateProgress?.duration).toBe(1800);
-    expect(store.libraryUpdateProgress?.percent).toBe(90);
+    expect(libraryToast()?.progress?.active).toBe(false);
+    expect(libraryToast()?.kind).toBe("info");
+    expect(libraryToast()?.duration).toBe(1800);
+    expect(libraryToast()?.progress?.percent).toBe(90);
+  });
+
+  it("stops an update past its source queue through the toast's Stop", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const stopSignal = beginLibraryUpdateSession();
+    try {
+      showLibraryUpdateProgress("Refreshing books.");
+      const stop = libraryToast()?.actions?.[0];
+      expect(stop?.label).toBe("Stop");
+
+      stop?.run();
+      await vi.waitFor(() => expect(libraryToast()?.body).toBe("Stop requested. Finishing the current title before stopping."));
+
+      expect(stopSignal.aborted).toBe(true);
+      expect(libraryToast()?.actions).toBeUndefined();
+      expect(libraryToast()?.progress?.active).toBe(true);
+      // Suwayomi has nothing to stop once the source queue is over.
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      endLibraryUpdateSession(stopSignal);
+    }
+  });
+
+  it("offers no Stop when no update of Epigraph's own is running", () => {
+    showLibraryUpdateProgress("Suwayomi is checking your library.");
+    expect(libraryToast()?.actions).toBeUndefined();
   });
 
   it("does not erase a valid cover when a live update patch has an empty thumbnail", () => {
@@ -152,13 +188,11 @@ describe("library update runtime helpers", () => {
 
   it("clears stale visible progress when the backend update already completed", async () => {
     store.libraryUpdateInFlight = false;
-    store.libraryUpdateProgress = {
+    showProgressToast(LIBRARY_UPDATE_TOAST_ID, {
       kind: "download",
       title: "Library update",
       body: "Checking titles 576/633 - 90%.",
-      active: true,
-      updatedAt: Date.now(),
-    };
+    });
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -179,8 +213,8 @@ describe("library update runtime helpers", () => {
     await expect(clearStaleLibraryUpdateInFlight()).resolves.toBe(true);
 
     expect(store.libraryUpdateInFlight).toBe(false);
-    expect(store.libraryUpdateProgress?.active).toBe(false);
-    expect(store.libraryUpdateProgress?.body).toBe("Checked 633/633 titles - complete.");
-    expect(store.libraryUpdateProgress?.percent).toBe(100);
+    expect(libraryToast()?.progress?.active).toBe(false);
+    expect(libraryToast()?.body).toBe("Checked 633/633 titles - complete.");
+    expect(libraryToast()?.progress?.percent).toBe(100);
   });
 });
