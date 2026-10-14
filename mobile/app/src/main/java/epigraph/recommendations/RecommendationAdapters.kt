@@ -44,6 +44,8 @@ data class RecommendationEntryInput(
     val chapterCount: Int = 0,
     val lastUpdateMs: Long? = null,
     val tracks: List<RecommendationTrackInput> = emptyList(),
+    /** The format by the publisher's country (see [ComicOriginLookup]); beats source and tag guesses. */
+    val comicOrigin: RecommendationContentType? = null,
 )
 
 data class RecommendationBookInput(
@@ -84,7 +86,7 @@ fun RecommendationEntryInput.contentType(): RecommendationContentType =
     if (isNovel) {
         RecommendationContentType.NOVEL
     } else {
-        inferComicContentType(title, description, genres, sourceName, sourceLang)
+        comicOrigin ?: inferComicContentType(title, description, genres, sourceName, sourceLang)
     }
 
 fun entryToTasteProfileSeed(entry: RecommendationEntryInput): TasteProfileSeedItem {
@@ -127,7 +129,7 @@ fun trackRecordSeedStatus(record: RecommendationTrackInput): TasteSeedStatus {
 
 private fun hasTrackRecordDate(value: Long?): Boolean = value != null && value > 0
 
-private fun entryImplicitWeight(entry: RecommendationEntryInput): Double = when {
+internal fun entryImplicitWeight(entry: RecommendationEntryInput): Double = when {
     entry.isNovel -> if (entry.chapterCount > 30) 0.55 else 0.4
     entry.unreadCount > 0 -> 0.55
     entry.downloadCount > 0 -> 0.65

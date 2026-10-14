@@ -28,6 +28,21 @@ class ExtensionRepoBackupTest {
     }.toByteArray()
 
     @Test
+    fun `a repository that failed to be added is told apart as gone, unsigned or unreachable`() {
+        // A deleted GitHub repository: neither file exists.
+        assertEquals(ExtensionRepoBackup.Problem.GONE, ExtensionRepoBackup.problem(404, 404))
+        // An index without repo.json (tachiyomiorg/extensions): no signing key to verify with.
+        assertEquals(ExtensionRepoBackup.Problem.UNVERIFIED, ExtensionRepoBackup.problem(200, 404))
+        // repo.json is there but was rejected (no signing key).
+        assertEquals(ExtensionRepoBackup.Problem.UNVERIFIED, ExtensionRepoBackup.problem(200, 200))
+        // Offline, a server error or a rate limit may work later.
+        assertEquals(ExtensionRepoBackup.Problem.UNREACHABLE, ExtensionRepoBackup.problem(null, null))
+        assertEquals(ExtensionRepoBackup.Problem.UNREACHABLE, ExtensionRepoBackup.problem(503, 503))
+        assertEquals(ExtensionRepoBackup.Problem.UNREACHABLE, ExtensionRepoBackup.problem(null, 404))
+        assertEquals(ExtensionRepoBackup.Problem.UNREACHABLE, ExtensionRepoBackup.problem(429, 404))
+    }
+
+    @Test
     fun `every address form older apps stored maps to the repository base URL`() {
         val expected = mapOf(
             "https://github.com/keiyoushi/extensions/raw/repo/index.pb" to

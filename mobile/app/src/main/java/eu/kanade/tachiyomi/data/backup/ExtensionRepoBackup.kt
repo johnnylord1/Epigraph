@@ -71,6 +71,25 @@ object ExtensionRepoBackup {
     /** [repos] without the ones that point to the same base URL as an earlier entry. */
     fun distinct(repos: List<BackupExtensionRepo>): List<BackupExtensionRepo> =
         repos.distinctBy { key(it.baseUrl) ?: it.baseUrl }
+
+    /** Why a repository of a backup was not added, for the restore log. */
+    enum class Problem { GONE, UNVERIFIED, UNREACHABLE }
+
+    /**
+     * Why a repository failed to be added, from the HTTP status of its `index.min.json` and
+     * `repo.json` (null when the request itself failed). Both missing: the repository is gone. An
+     * index without a usable `repo.json` has no signing key to verify extensions with. Anything
+     * else may work later.
+     */
+    fun problem(indexStatus: Int?, repoStatus: Int?): Problem = when {
+        repoStatus.isSuccess() -> Problem.UNVERIFIED
+        repoStatus.isMissing() && indexStatus.isMissing() -> Problem.GONE
+        repoStatus.isMissing() && indexStatus.isSuccess() -> Problem.UNVERIFIED
+        else -> Problem.UNREACHABLE
+    }
+
+    private fun Int?.isSuccess() = this != null && this in 200..299
+    private fun Int?.isMissing() = this == 404 || this == 410
 }
 
 /**
