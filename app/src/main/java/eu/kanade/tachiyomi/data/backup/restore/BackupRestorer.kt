@@ -25,6 +25,8 @@ import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaBackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.restorers.PreferenceBackupRestorer
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.util.BackupUtil
 import eu.kanade.tachiyomi.util.OpenedBackup
@@ -32,6 +34,8 @@ import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Request
 import yokai.domain.extension.repo.ExtensionRepoRepository
 import yokai.domain.extension.repo.interactor.CreateExtensionRepo
 import yokai.i18n.MR
@@ -58,6 +62,7 @@ class BackupRestorer(
     private val extensionRepos: ExtensionRepoRepository = get(),
     private val createExtensionRepo: CreateExtensionRepo = get(),
     private val extensionManager: ExtensionManager = get(),
+    private val network: NetworkHelper = get(),
 ) {
     private var restoreAmount = 0
     private var restoreProgress = 0
@@ -150,19 +155,18 @@ class BackupRestorer(
                     restoreProgress += 1
                     showRestoreProgress(restoreProgress, restoreAmount, context.getString(MR.strings.app_settings))
                 }
-                unresolved.forEach { setting ->
-                    addError(
+                if (unresolved.isNotEmpty()) {
+                    // One line for every category setting the backup could not name.
+                    val settings = CategoryPreferenceBackup.Setting.entries.filter { it in unresolved }.joinToString(", ") { setting ->
                         context.getString(
                             when (setting) {
-                                CategoryPreferenceBackup.Setting.AUTOMATIC_DOWNLOADS ->
-                                    MR.strings.restore_download_categories_unresolved
-                                CategoryPreferenceBackup.Setting.LIBRARY_UPDATES ->
-                                    MR.strings.restore_update_categories_unresolved
-                                CategoryPreferenceBackup.Setting.DEFAULT_CATEGORY ->
-                                    MR.strings.restore_default_category_unresolved
+                                CategoryPreferenceBackup.Setting.AUTOMATIC_DOWNLOADS -> MR.strings.restore_download_categories
+                                CategoryPreferenceBackup.Setting.LIBRARY_UPDATES -> MR.strings.restore_update_categories
+                                CategoryPreferenceBackup.Setting.DEFAULT_CATEGORY -> MR.strings.restore_default_category
                             },
-                        ),
-                    )
+                        )
+                    }
+                    addError(context.getString(MR.strings.restore_categories_unresolved, settings))
                 }
                 journal.markDone(RestoreJournal.APP_PREFERENCES)
             }
@@ -270,9 +274,8 @@ class BackupRestorer(
                 repository.name.isBlank() -> baseUrl ?: repository.baseUrl
                 else -> "${repository.name} [${baseUrl ?: repository.baseUrl}]"
             }
-            val unavailable = "$label: ${context.getString(MR.strings.restore_extension_repository_unavailable)}"
             if (baseUrl == null) {
-                addError(unavailable)
+                addError("$label: ${context.getString(MR.strings.restore_extension_repository_invalid)}")
                 return@forEach
             }
             val key = ExtensionRepoBackup.key(baseUrl)
@@ -281,7 +284,13 @@ class BackupRestorer(
                 CreateExtensionRepo.Result.Success -> added = true
                 // Already listed, possibly under another address signed by the same key.
                 CreateExtensionRepo.Result.RepoAlreadyExists, is CreateExtensionRepo.Result.DuplicateFingerprint -> Unit
-                CreateExtensionRepo.Result.InvalidUrl, CreateExtensionRepo.Result.Error -> addError(unavailable)
+                // `repo.json` could not be read: tell a repository that is gone or unsigned from a network failure.
+                CreateExtensionRepo.Result.InvalidUrl -> {
+                    val problem = ExtensionRepoBackup.problem(httpStatus("$baseUrl/index.min.json"), httpStatus("$baseUrl/repo.json"))
+                    addError("$label: ${context.getString(problem.message())}")
+                }
+                CreateExtensionRepo.Result.Error ->
+                    addError("$label: ${context.getString(MR.strings.restore_extension_repository_unavailable)}")
             }
         }
         if (added) {
@@ -290,6 +299,23 @@ class BackupRestorer(
             extensionManager.refreshTrust()
             extensionManager.findAvailableExtensions()
         }
+    }
+
+    private fun ExtensionRepoBackup.Problem.message() = when (this) {
+        ExtensionRepoBackup.Problem.GONE -> MR.strings.restore_extension_repository_gone
+        ExtensionRepoBackup.Problem.UNVERIFIED -> MR.strings.restore_extension_repository_unverified
+        ExtensionRepoBackup.Problem.UNREACHABLE -> MR.strings.restore_extension_repository_unavailable
+    }
+
+    /** The HTTP status of [url] (a HEAD request), or null when it could not be reached. */
+    private suspend fun httpStatus(url: String): Int? = try {
+        withTimeoutOrNull(REPO_CHECK_TIMEOUT_MS) {
+            network.client.newCall(Request.Builder().url(url).head().build()).await().use { it.code }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     /**
@@ -346,5 +372,6 @@ class BackupRestorer(
 
     private companion object {
         const val PROGRESS_NOTIFICATION_INTERVAL_MS = 500L
+        const val REPO_CHECK_TIMEOUT_MS = 10_000L
     }
 }

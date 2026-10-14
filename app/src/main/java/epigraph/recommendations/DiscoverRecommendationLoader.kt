@@ -229,6 +229,7 @@ class DiscoverRecommendationLoader(
     private val trackerGatherer: TrackerRecommendationGatherer = TrackerRecommendationGatherer(),
     private val hardcoverGatherer: HardcoverRecommendationGatherer = HardcoverRecommendationGatherer(),
     private val genreFeeds: GenreRecommendationFeeds = GenreRecommendationFeeds(sourceManager),
+    private val comicOriginLookup: ComicOriginLookup = ComicOriginLookup.create(context),
 ) {
     /**
      * Network + library reads only; ranking happens in [rank] so the UI can re-rank the cached
@@ -238,8 +239,24 @@ class DiscoverRecommendationLoader(
         val library = getLibraryManga.await().distinctBy { it.manga.id }
         val librarySignature = librarySignature(library)
         val tracksByManga = runCatching { getTrack.awaitAllGroupedByMangaId() }.getOrDefault(emptyMap())
-        val libraryEntries = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
+        val libraryInputs = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
             .filter { it.isNovel == (mode == DiscoverMode.NOVELS) }
+        // Comics: the publisher's country tells manga, manhwa and manhua apart, like the desktop.
+        val comicOrigins = if (mode == DiscoverMode.COMICS) {
+            // Novels never go to AniList: only the comic library and works tracked outside the library.
+            val libraryMangaIds = library.mapTo(HashSet()) { it.manga.id }
+            val comicIds = libraryInputs.mapNotNullTo(HashSet()) { it.mangaId }
+            resolveComicOrigins(libraryInputs, tracksByManga.filterKeys { it in comicIds || it !in libraryMangaIds })
+        } else {
+            ComicOrigins.NONE
+        }
+        val libraryEntries = if (mode == DiscoverMode.COMICS) {
+            libraryInputs.map { entry ->
+                entry.copy(comicOrigin = comicOrigins.of(tracksByManga[entry.mangaId].orEmpty().map(Track::originKey), entry.title))
+            }
+        } else {
+            libraryInputs
+        }
         val books = if (mode == DiscoverMode.NOVELS) loadBooks() else emptyList()
 
         val libraryIds = library.mapTo(mutableSetOf()) { it.manga.id }
@@ -252,8 +269,9 @@ class DiscoverRecommendationLoader(
         for ((mangaId, tracks) in trackerGroups) {
             val manga = runCatching { getManga.awaitById(mangaId) }.getOrNull()
             if (manga != null && sourceManager.get(manga.source)?.isNovelSource() == true) continue
+            val origin = comicOrigins.of(tracks.map(Track::originKey), manga?.title ?: tracks.firstOrNull()?.title.orEmpty())
             for (track in tracks) {
-                trackerRecordSeeds += track.toTasteSeed(manga)
+                trackerRecordSeeds += track.toTasteSeed(manga, origin)
             }
             if (manga != null) {
                 val source = sourceManager.get(manga.source)
@@ -271,6 +289,7 @@ class DiscoverRecommendationLoader(
                     isNovel = false,
                     inLibrary = false,
                     tracks = tracks.mapNotNull { it.toInput() },
+                    comicOrigin = origin,
                 )
                 trackerRecordCandidates += entryToRecommendationCandidate(entry, nowMs)
             }
@@ -775,13 +794,44 @@ class DiscoverRecommendationLoader(
         )
     }
 
-    private fun Track.toTasteSeed(manga: SManga?): TasteProfileSeedItem {
+    /**
+     * Desktop `comicOriginForRecords` and the library's AniList lookup: asks AniList for the country of
+     * the tracked works and of the most read untracked ones, within [COMIC_ORIGIN_BUDGET_MS], then
+     * reads every answer known so far. What is not asked this time is asked on a later visit.
+     */
+    private suspend fun resolveComicOrigins(
+        entries: List<RecommendationEntryInput>,
+        tracksByManga: Map<Long, List<Track>>,
+    ): ComicOrigins {
+        val trackPairs = tracksByManga.values.flatten()
+            .filter { (it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.MYANIMELIST) && it.media_id > 0 }
+            .map { it.sync_id to it.media_id }
+            .distinct()
+        val untrackedTitles = entries
+            .filter { entry -> tracksByManga[entry.mangaId].orEmpty().none { it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.MYANIMELIST } }
+            .sortedByDescending(::entryImplicitWeight)
+            .map { it.title }
+        runCatching {
+            withTimeoutOrNull(COMIC_ORIGIN_BUDGET_MS) {
+                comicOriginLookup.refreshTracks(trackPairs)
+                comicOriginLookup.refreshTitles(untrackedTitles, COMIC_ORIGIN_TITLE_REQUESTS)
+            }
+        }
+        return runCatching {
+            ComicOrigins(
+                byTrack = comicOriginLookup.cachedTracks(trackPairs.map { comicOriginTrackKey(it.first, it.second) }),
+                byTitle = comicOriginLookup.cachedTitles(entries.map { it.title }),
+            )
+        }.getOrDefault(ComicOrigins.NONE)
+    }
+
+    private fun Track.toTasteSeed(manga: SManga?, origin: RecommendationContentType?): TasteProfileSeedItem {
         val trackInput = toInput()
         return TasteProfileSeedItem(
             id = "tracker:$sync_id:$media_id",
             title = manga?.title ?: title,
             tags = manga?.getGenres().orEmpty(),
-            contentType = RecommendationContentType.MANGA,
+            contentType = origin ?: RecommendationContentType.MANGA,
             sourceId = "tracker:$sync_id",
             userRating = score.takeIf { it > 0f }?.toDouble(),
             userRatingMax = if (score > 10f) 100.0 else 10.0,
@@ -832,5 +882,10 @@ class DiscoverRecommendationLoader(
         private const val GENRE_FEED_BUDGET_MS = 22_000L
         /** Title lookups and ratings of the genre feeds' works. */
         private const val GENRE_LOOKUP_BUDGET_MS = 10_000L
+        /** Countries of origin asked per visit; answers are kept, so later visits ask only for new works. */
+        private const val COMIC_ORIGIN_BUDGET_MS = 8_000L
+        private const val COMIC_ORIGIN_TITLE_REQUESTS = 6
     }
 }
+
+private fun Track.originKey() = comicOriginTrackKey(sync_id, media_id)
