@@ -3166,6 +3166,7 @@ open class LibraryController(
                             runCatching {
                                 withContext(kotlinx.coroutines.Dispatchers.IO) {
                                     localBookImportService.import(uri, name)
+                                        .also { localBookImportService.fileInDefaultCategory(it) }
                                 }
                             }.onSuccess {
                                 unifiedBooksView?.showStatus(context.getString(MR.strings.local_books_imported, it.displayName))

@@ -234,7 +234,7 @@ class LocalBooksController(bundle: Bundle? = null) :
         binding.status.text = context.getString(MR.strings.local_books_importing, name)
         viewScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { importService.import(uri, name) }
+                withContext(Dispatchers.IO) { importService.import(uri, name).also { importService.fileInDefaultCategory(it) } }
             }.onSuccess { book ->
                 binding.status.text = context.getString(MR.strings.local_books_imported, book.displayName)
                 // DESIGN.md §9: "import done" is this flow's one memorable moment.

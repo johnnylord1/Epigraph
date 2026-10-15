@@ -26,10 +26,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
 import yokai.util.koin.get
@@ -157,7 +159,14 @@ class DiscoverScreenModel(
         }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
-                val pool = loader.gather(mode)
+                // Every step has its own budget; this only stops one that ignores cancellation
+                // from leaving the screen spinning. Awaiting apart from the work lets it give up.
+                val gathering = screenModelScope.async(Dispatchers.IO) { loader.gather(mode) }
+                val pool = try {
+                    withTimeoutOrNull(GATHER_LIMIT_MS) { gathering.await() }
+                } finally {
+                    if (!gathering.isCompleted) gathering.cancel()
+                } ?: throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 val result = rank(pool)
                 val catalogEntries = catalog(pool)
@@ -356,6 +365,7 @@ class DiscoverScreenModel(
          */
         private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L
+        private const val GATHER_LIMIT_MS = 150_000L
 
         private fun cachedPool(mode: DiscoverMode): DiscoverPool? =
             cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.pool

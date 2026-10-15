@@ -33,6 +33,12 @@ internal const val SEARCH_RECOMMENDATION_MANGA_AUTOFILL_DUPLICATE_RETRY_LIMIT = 
 internal const val RECOMMENDATION_SOURCE_CONCURRENCY = 6
 
 private const val SOURCE_TIMEOUT_MS = 20_000L
+
+/**
+ * Whole source phase of a Discover load. Without it, dead or captcha-walled sources each cost
+ * a timeout per page and per fallback term, and the screen could spin for minutes.
+ */
+internal const val SOURCE_GATHER_BUDGET_MS = 45_000L
 private const val LOCAL_SOURCE_ID = 0L
 private val FALLBACK_TERMS = listOf("action", "fantasy", "adventure", "romance")
 
@@ -45,6 +51,12 @@ private val FALLBACK_TERMS = listOf("action", "fantasy", "adventure", "romance")
 class ComicRecommendationGatherer(private val sourceManager: SourceManager, initialCursors: Map<String, Long> = emptyMap()) {
 
     private val cursors = java.util.concurrent.ConcurrentHashMap(initialCursors)
+
+    /** End of [gather]'s budget; requests get only the time left. Load-more pages are not bounded. */
+    @Volatile
+    private var deadlineAt = Long.MAX_VALUE
+
+    private fun timeout(maxMs: Long): Long = minOf(maxMs, deadlineAt - System.currentTimeMillis())
 
     fun cursorSnapshot(): Map<String, Long> = HashMap(cursors)
 
@@ -60,6 +72,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
         nsfwSourceIds: Set<Long>,
         includeNsfw: Boolean,
     ): Result {
+        deadlineAt = System.currentTimeMillis() + SOURCE_GATHER_BUDGET_MS
         val pool = browseSources(nsfwSourceIds, includeNsfw)
         val seedSources = sourceBatch(pool, 1, SEARCH_SEED_SOURCE_LIMIT_MANGA).first
         val failed = mutableSetOf<String>()
@@ -78,7 +91,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
         var page = 1
         while (true) {
             val nextPage = page + 1
-            if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT) break
+            if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT || timeout(SOURCE_TIMEOUT_MS) <= 0) break
             val (batch, sourcePage) = sourceBatch(pool, nextPage, SEARCH_SEED_SOURCE_LIMIT_MANGA)
             if (batch.isEmpty()) break
             val prevSeeds = seeds.size
@@ -137,14 +150,18 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
         source: CatalogueSource,
         failed: MutableSet<String>,
     ): List<RecommendationEntryInput> {
-        val popular = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getPopularManga(1) }
+        val popular = fetchSourcePageOrNull(timeout(SOURCE_TIMEOUT_MS)) { source.getPopularManga(1) }
         remember(source, false, popular)
         if (popular != null && popular.mangas.isNotEmpty()) return popular.mangas.map { it.toInput(source) }
+        // A source that did not answer would not answer the keyword searches either.
+        if (popular == null) {
+            synchronized(failed) { failed += source.name }
+            return emptyList()
+        }
         for (term in FALLBACK_TERMS) {
-            val results = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getSearchManga(1, term, source.getFilterList()) }
+            val results = fetchSourcePageOrNull(timeout(SOURCE_TIMEOUT_MS)) { source.getSearchManga(1, term, source.getFilterList()) }
             if (results != null && results.mangas.isNotEmpty()) return results.mangas.map { it.toInput(source) }
         }
-        if (popular == null) synchronized(failed) { failed += source.name }
         return emptyList()
     }
 
@@ -153,7 +170,7 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
         failed: MutableSet<String>,
     ): List<RecommendationEntryInput> {
         if (!source.supportsLatest) return emptyList()
-        val latest = fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getLatestUpdates(1) }
+        val latest = fetchSourcePageOrNull(timeout(SOURCE_TIMEOUT_MS)) { source.getLatestUpdates(1) }
         remember(source, true, latest)
         return latest?.mangas.orEmpty().map { it.toInput(source) }
     }
@@ -162,9 +179,9 @@ class ComicRecommendationGatherer(private val sourceManager: SourceManager, init
         if (latest && !source.supportsLatest) return emptyList()
         val requestPage = resolveSourcePage(page, cursors[sourceCursorKey(source.id, latest)]) ?: return emptyList()
         val result = if (latest) {
-            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getLatestUpdates(requestPage) }
+            fetchSourcePageOrNull(timeout(SOURCE_TIMEOUT_MS)) { source.getLatestUpdates(requestPage) }
         } else {
-            fetchSourcePageOrNull(SOURCE_TIMEOUT_MS) { source.getPopularManga(requestPage) }
+            fetchSourcePageOrNull(timeout(SOURCE_TIMEOUT_MS)) { source.getPopularManga(requestPage) }
         }
         remember(source, latest, result)
         return result?.mangas.orEmpty().map { it.toInput(source) }

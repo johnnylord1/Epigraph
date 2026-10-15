@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
 import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.FileUncategorizedInCategory
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.library.LibraryPreferences
 import yokai.domain.manga.interactor.GetLibraryManga
@@ -166,7 +167,10 @@ class SettingsLibraryController : SettingsLegacyController() {
                     }
                     summary = categoryName(pref.get())
                     onChange { newValue ->
-                        summary = categoryName(newValue as Int)
+                        val categoryId = newValue as Int
+                        summary = categoryName(categoryId)
+                        // Works sitting in Default follow the new default now, not only new additions.
+                        if (categoryId > 0) launchIO { runCatching { FileUncategorizedInCategory().await(library, categoryId) } }
                         true
                     }
                 }

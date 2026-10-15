@@ -54,6 +54,12 @@ private val NOVEL_FALLBACK_TERMS = listOf("fantasy", "romance", "adventure", "ac
  */
 class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
 
+    /** End of [gather]'s budget; requests get only the time left. Load-more pages are not bounded. */
+    @Volatile
+    private var deadlineAt = Long.MAX_VALUE
+
+    private fun timeout(maxMs: Long): Long = minOf(maxMs, deadlineAt - System.currentTimeMillis())
+
     data class Result(
         val entries: List<RecommendationEntryInput>,
         val failedSources: List<String>,
@@ -65,6 +71,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
         nsfwSourceIds: Set<Long>,
         includeNsfw: Boolean,
     ): Result {
+        deadlineAt = System.currentTimeMillis() + SOURCE_GATHER_BUDGET_MS
         val pool = browseSources(nsfwSourceIds, includeNsfw)
         val seedSources = pool.take(SEARCH_SEED_SOURCE_LIMIT_NOVELS * 2)
         val failed = mutableSetOf<String>()
@@ -78,7 +85,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
             incoming += runConcurrentLimited(batch, RECOMMENDATION_SOURCE_CONCURRENCY) {
                 fetchNovelSourcePage(it, 1, fallbackTerms, failed)
             }.flatten()
-            if (incoming.size >= SEARCH_RECOMMENDATION_NOVEL_SEED_CAP) break@outer
+            if (incoming.size >= SEARCH_RECOMMENDATION_NOVEL_SEED_CAP || timeout(NOVEL_SOURCE_TIMEOUT_MS) <= 0) break@outer
         }
 
         // Pass 2 (only when pass 1 produced nothing): base-term keyword search page 1 per source.
@@ -88,7 +95,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
                 val sourceFallbacks = runConcurrentLimited(batch, RECOMMENDATION_SOURCE_CONCURRENCY) { source ->
                     val results = mutableListOf<RecommendationEntryInput>()
                     for (term in fallbackTerms) {
-                        val page = fetchSourcePageOrNull(NOVEL_SOURCE_TIMEOUT_MS) {
+                        val page = fetchSourcePageOrNull(timeout(NOVEL_SOURCE_TIMEOUT_MS)) {
                             source.getSearchManga(1, term, source.getFilterList())
                         }
                         if (page != null && page.mangas.isNotEmpty()) {
@@ -102,7 +109,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
                     results
                 }.flatten()
                 incoming += sourceFallbacks
-                if (incoming.isNotEmpty()) break@outer2
+                if (incoming.isNotEmpty() || timeout(NOVEL_SOURCE_TIMEOUT_MS) <= 0) break@outer2
             }
         }
 
@@ -112,7 +119,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
         var page = 1
         while (true) {
             val nextPage = page + 1
-            if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT) break
+            if (nextPage > SEARCH_RECOMMENDATION_AUTOFILL_PAGE_LIMIT || timeout(NOVEL_SOURCE_TIMEOUT_MS) <= 0) break
             val (batch, sourcePage) = sourceBatch(pool, nextPage, SEARCH_SEED_SOURCE_LIMIT_NOVELS)
             if (batch.isEmpty()) break
             val throwaway = mutableSetOf<String>()
@@ -170,14 +177,14 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
         fallbackTerms: List<String>,
         failed: MutableSet<String>,
     ): List<RecommendationEntryInput> {
-        val popular = fetchSourcePageOrNull(NOVEL_SOURCE_TIMEOUT_MS) { source.getPopularManga(pageNo) }
+        val popular = fetchSourcePageOrNull(timeout(NOVEL_SOURCE_TIMEOUT_MS)) { source.getPopularManga(pageNo) }
         var collected = dedupeNovelEntries(popular?.mangas.orEmpty().map { it.toInput(source) })
         if (collected.size >= SEARCH_RECOMMENDATION_LIMIT_STEP) return collected
 
         var extraPages: List<MangasPage?> = emptyList()
         if (pageNo == 1) {
             extraPages = runConcurrentLimited(listOf(2, 3), RECOMMENDATION_SOURCE_CONCURRENCY) { p ->
-                fetchSourcePageOrNull(NOVEL_SOURCE_TIMEOUT_MS) { source.getPopularManga(p) }
+                fetchSourcePageOrNull(timeout(NOVEL_SOURCE_TIMEOUT_MS)) { source.getPopularManga(p) }
             }
             collected = dedupeNovelEntries(
                 collected + extraPages.flatMap { page -> page?.mangas.orEmpty().map { m -> m.toInput(source) } },
@@ -187,7 +194,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
 
         val terms = novelSourceLocalizedFallbackTerms(source, fallbackTerms)
         val fallbackPages = runConcurrentLimited(terms, RECOMMENDATION_SOURCE_CONCURRENCY) { term ->
-            fetchSourcePageOrNull(NOVEL_SOURCE_TIMEOUT_MS) {
+            fetchSourcePageOrNull(timeout(NOVEL_SOURCE_TIMEOUT_MS)) {
                 source.getSearchManga(pageNo, term, source.getFilterList())
             }
         }
@@ -233,7 +240,7 @@ class NovelRecommendationGatherer(private val sourceManager: SourceManager) {
 
     /** One detail/chapter fetch with a deadline; `null` when it threw or timed out. */
     private suspend fun <T> withDetailTimeout(block: suspend () -> T): T? = try {
-        withTimeoutOrNull(NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS) { block() }
+        withTimeoutOrNull(timeout(NOVEL_DETAIL_ENRICHMENT_TIMEOUT_MS)) { block() }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

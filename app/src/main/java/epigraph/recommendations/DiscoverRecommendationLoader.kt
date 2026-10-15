@@ -300,7 +300,7 @@ class DiscoverRecommendationLoader(
 
         val failures = mutableListOf<String>()
         val hardcoverBooks = if (mode == DiscoverMode.NOVELS) {
-            runCatching { hardcoverGatherer.userBooks() }.getOrNull() ?: run {
+            runCatching { withTimeoutOrNull(HARDCOVER_LOADER_BUDGET_MS) { hardcoverGatherer.userBooks() } }.getOrNull() ?: run {
                 failures += "Hardcover"
                 null
             }
