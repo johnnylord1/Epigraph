@@ -134,7 +134,8 @@
     startDockerFlareSolverrAndEnable,
     startLocalFlareSolverrAndEnable,
   } from "../../lib/flaresolverr";
-  import { isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
+  import { FIRST_RUN_REOPENED_EVENT, isFirstRunBackupRestoreComplete, type FirstRunBackupReadiness } from "../../lib/firstRun";
+  import { reopenFirstRun } from "../../lib/firstRunCleanInstall";
 
   // The switch shows what the app does now: the user's choice, or the system setting until one is made.
   const animationsOn = $derived(
@@ -700,6 +701,13 @@
     const profile = getLocalProfileMeta(profileId, store.settings.customLocalProfiles);
     if (!profile) return;
     updateSettings({ defaultLocalProfileId: profile.id, serverUrl: profile.serverUrl });
+  }
+
+  /** Leaves Settings and walks through setup again; library, sources and settings stay as they are. */
+  function redoFirstRun() {
+    try { reopenFirstRun(localStorage); } catch { return; }
+    setSettingsOpen(false);
+    window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
   }
 
   function createLocalProfileFromSettings() {
@@ -3860,6 +3868,15 @@
                       </div>
                     {/if}
                   </div>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.redoSetup")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.redoSetupHint")}</p>
+                  </div>
+                  <button class="n-btn n-btn--sm n-btn-ghost" type="button" onclick={redoFirstRun}>
+                    {$_("settings.general.startup.redoSetupAction")}
+                  </button>
                 </div>
                 <div class="settings-row settings-mini-row">
                   <div class="settings-mini-row__body">

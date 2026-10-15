@@ -8,7 +8,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
-  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
   import { enterView, fadeOutView } from "../../lib/motion/motion";
 
@@ -37,7 +37,8 @@
     }
   }
 
-  // Setup also opens again when the app holds nothing at all, as after its data was cleared.
+  // Setup also opens again when a profile that held works or sources since setup now holds
+  // nothing at all, as after its data was cleared. It never repeats for an app left empty.
   let cleanInstallCheckedScope: string | null = null;
   $effect(() => {
     const profileId = store.runtimeResolvedLocalProfileId;
@@ -47,9 +48,19 @@
     if (cleanInstallCheckedScope === scopeKey) return;
     cleanInstallCheckedScope = scopeKey;
     let cancelled = false;
-    void import("../../lib/firstRunCleanInstall").then(async ({ createProductionCleanInstallProbe, isCleanInstall, reopenFirstRun }) => {
-      if (!(await isCleanInstall(createProductionCleanInstallProbe({ profileId, serverUrl }))) || cancelled) return;
-      try { reopenFirstRun(localStorage); } catch { return; }
+    void import("../../lib/firstRunCleanInstall").then(async ({
+      createProductionCleanInstallProbe, readInstallContent, rememberProfileContent, reopenFirstRun, shouldReopenEmptyProfile,
+    }) => {
+      const content = await readInstallContent(createProductionCleanInstallProbe({ profileId, serverUrl }));
+      if (cancelled) return;
+      try {
+        if (content === "content") {
+          rememberProfileContent(localStorage, profileId);
+          return;
+        }
+        if (content !== "empty" || !shouldReopenEmptyProfile(localStorage, profileId)) return;
+        reopenFirstRun(localStorage);
+      } catch { return; }
       firstRunPending = true;
     }).catch((error) => console.warn("Could not check whether the app is empty.", error));
     return () => { cancelled = true; };
@@ -321,8 +332,9 @@
   });
 
   onMount(() => {
-    const handleFirstRunCompleted = () => { firstRunPending = readFirstRunPending(); };
-    window.addEventListener(FIRST_RUN_COMPLETED_EVENT, handleFirstRunCompleted);
+    const syncFirstRunPending = () => { firstRunPending = readFirstRunPending(); };
+    window.addEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunPending);
+    window.addEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunPending);
     queueMicrotask(() => {
       void getCachedComponent(pageComponentPromises, "library", pageLoaders.library)
         .then((component) => {
@@ -337,7 +349,10 @@
           console.warn("Home preload did not complete; navigation will retry it.", error);
         });
     });
-    return () => window.removeEventListener(FIRST_RUN_COMPLETED_EVENT, handleFirstRunCompleted);
+    return () => {
+      window.removeEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunPending);
+      window.removeEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunPending);
+    };
   });
 </script>
 

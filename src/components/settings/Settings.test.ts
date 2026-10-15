@@ -932,4 +932,30 @@ describe("Settings", () => {
       expect(invokeMock).toHaveBeenCalledWith("reset_local_profile_data", { profileId: "main" });
     });
   });
+
+  test("starts setup over from General without touching the library", async () => {
+    const values = new Map<string, string>();
+    const storage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => values.set(key, value),
+        removeItem: (key: string) => values.delete(key),
+      },
+    });
+    localStorage.setItem("epigraph-first-run", JSON.stringify({ version: 1, status: "complete", step: "complete", path: "fresh" }));
+    const reopened = vi.fn();
+    window.addEventListener("epigraph:first-run-reopened", reopened);
+    renderSettings();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Redo setup" }));
+
+    expect(JSON.parse(localStorage.getItem("epigraph-first-run") ?? "null")).toMatchObject({ status: "pending", step: "theme" });
+    expect(reopened).toHaveBeenCalledTimes(1);
+    expect(store.navPage).not.toBe("settings");
+    expect(invokeMock).not.toHaveBeenCalledWith("reset_local_profile_data", expect.anything());
+    window.removeEventListener("epigraph:first-run-reopened", reopened);
+    if (storage) Object.defineProperty(globalThis, "localStorage", storage);
+  });
 });

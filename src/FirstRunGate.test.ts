@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Layout from "./components/layout/Layout.svelte";
-import { createFirstRunState, FIRST_RUN_STORAGE_KEY } from "./lib/firstRun";
+import { createFirstRunState, FIRST_RUN_REOPENED_EVENT, FIRST_RUN_STORAGE_KEY } from "./lib/firstRun";
+import { FIRST_RUN_CONTENT_PROFILES_KEY, reopenFirstRun } from "./lib/firstRunCleanInstall";
 import { DEFAULT_SETTINGS, store } from "./store/state.svelte";
 
 vi.mock("./components/layout/Sidebar.svelte", () => import("./test/fixtures/FirstRunSurface.svelte"));
@@ -121,14 +122,38 @@ describe("first-run startup gate", () => {
     expect(await screen.findByRole("heading", { name: "Test series detail" })).toBeTruthy();
   });
 
-  it("opens setup again when the app holds nothing, though setup was completed before", async () => {
+  it("opens setup again when the app was emptied after holding something since setup", async () => {
     localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), status: "complete", step: "complete" }));
+    localStorage.setItem(FIRST_RUN_CONTENT_PROFILES_KEY, JSON.stringify(["default"]));
     render(Layout);
     expect(document.querySelector(".epigraph-app-shell")).not.toBeNull();
     store.runtimeResolvedLocalProfileId = "default" as NonNullable<typeof store.runtimeResolvedLocalProfileId>;
     store.runtimeServerUrl = "http://127.0.0.1:4567";
     await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
     expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("pending");
+    expect(localStorage.getItem(FIRST_RUN_CONTENT_PROFILES_KEY)).toBeNull();
+  });
+
+  it("keeps the app open when setup was completed on an app that never held anything", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), status: "complete", step: "complete" }));
+    render(Layout);
+    store.runtimeResolvedLocalProfileId = "default" as NonNullable<typeof store.runtimeResolvedLocalProfileId>;
+    store.runtimeServerUrl = "http://127.0.0.1:4567";
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    expect(document.querySelector(".epigraph-app-shell")).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")?.status).toBe("complete");
+  });
+
+  it("opens setup at once when it is started over from inside the app", async () => {
+    localStorage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify({ ...createFirstRunState(), status: "complete", step: "complete" }));
+    cleanInstall.counts = [3, 0, 0, 1];
+    render(Layout);
+    expect(document.querySelector(".first-run-shell")).toBeNull();
+    reopenFirstRun(localStorage);
+    window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
+    await waitFor(() => expect(document.querySelector(".first-run-shell")).not.toBeNull());
+    expect(document.querySelector<HTMLElement>(".first-run-page")?.dataset.page).toBe("theme");
   });
 
   it("keeps the app open when it still holds a work or a source", async () => {
@@ -140,5 +165,6 @@ describe("first-run startup gate", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(document.querySelector(".first-run-shell")).toBeNull();
     expect(document.querySelector(".epigraph-app-shell")).not.toBeNull();
+    expect(JSON.parse(localStorage.getItem(FIRST_RUN_CONTENT_PROFILES_KEY) ?? "null")).toEqual(["default"]);
   });
 });

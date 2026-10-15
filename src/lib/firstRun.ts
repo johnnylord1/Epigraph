@@ -1,6 +1,8 @@
 export const FIRST_RUN_VERSION = 1;
 export const FIRST_RUN_STORAGE_KEY = "epigraph-first-run";
 export const FIRST_RUN_COMPLETED_EVENT = "epigraph:first-run-completed";
+/** Setup was started over from inside the app (Settings); the shell shows it at once. */
+export const FIRST_RUN_REOPENED_EVENT = "epigraph:first-run-reopened";
 export type FirstRunStep = "theme" | "entry" | "sync" | "backup" | "sources" | "trackers" | "discover" | "complete";
 export type FirstRunPath = "sync" | "backup" | "fresh";
 
