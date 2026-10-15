@@ -80,6 +80,10 @@ class DiscoverScreenModel(
         /** Catalog genre filter; every selected genre must match. */
         val genres: List<String> = emptyList(),
         val genreOptions: List<String> = emptyList(),
+        /** Providers the last load could not reach, shown once in a notice the user can close. */
+        val failedNotice: List<String> = emptyList(),
+        /** The last load failed and the saved picks stayed on screen. */
+        val savedNotice: Boolean = false,
     )
 
     private var loadJob: Job? = null
@@ -99,8 +103,16 @@ class DiscoverScreenModel(
 
     fun setMode(mode: DiscoverMode) {
         if (mode == state.value.mode) return
-        mutableState.update { it.copy(mode = mode) }
+        mutableState.update { it.copy(mode = mode, failedNotice = emptyList(), savedNotice = false) }
         load(force = false)
+    }
+
+    fun dismissFailedNotice() {
+        mutableState.update { it.copy(failedNotice = emptyList()) }
+    }
+
+    fun dismissSavedNotice() {
+        mutableState.update { it.copy(savedNotice = false) }
     }
 
     fun setGridSize(value: Float) {
@@ -198,7 +210,18 @@ class DiscoverScreenModel(
                 val result = rank(pool)
                 val catalogEntries = catalog(pool)
                 mutableState.update {
-                    if (it.mode == mode) it.copy(loading = false, result = result, catalog = catalogEntries, visibleLimits = emptyMap()) else it
+                    if (it.mode == mode) {
+                        it.copy(
+                            loading = false,
+                            result = result,
+                            catalog = catalogEntries,
+                            visibleLimits = emptyMap(),
+                            failedNotice = pool.failedProviders,
+                            savedNotice = false,
+                        )
+                    } else {
+                        it
+                    }
                 }
                 if (state.value.mode == mode && state.value.genres.isNotEmpty()) {
                     withContext(Dispatchers.Main) { loadMoreCatalog() }
@@ -206,7 +229,9 @@ class DiscoverScreenModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                mutableState.update { if (it.mode == mode) it.copy(loading = false, error = e.message.orEmpty()) else it }
+                mutableState.update {
+                    if (it.mode == mode) it.copy(loading = false, error = e.message.orEmpty(), savedNotice = it.result != null) else it
+                }
             }
         }
     }
