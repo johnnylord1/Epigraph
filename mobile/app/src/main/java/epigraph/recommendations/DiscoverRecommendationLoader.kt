@@ -444,9 +444,10 @@ class DiscoverRecommendationLoader(
         // A work is told apart as comic or novel by its source, so the sources come first.
         withTimeoutOrNull(SOURCES_READY_BUDGET_MS) { sourceManager.awaitInstalledSources() }
         var read = readLibrary(saved.mode, saved.gatheredAtMs, askOrigins = false)
-        // The sources can still be registering just after the flags flip.
+        // The sources can still be registering just after the flags flip; a library that really
+        // changed has all its sources and is left to the background check.
         repeat(SOURCES_SETTLE_RETRIES) {
-            if (read.signature == saved.librarySignature) return@repeat
+            if (read.signature == saved.librarySignature || read.missingSources == 0) return@repeat
             delay(SOURCES_SETTLE_DELAY_MS)
             read = readLibrary(saved.mode, saved.gatheredAtMs, askOrigins = false)
         }
@@ -456,6 +457,8 @@ class DiscoverRecommendationLoader(
     /** The library side of a pool, all from the database; only [askOrigins] reaches the network. */
     private class LibraryRead(
         val signature: Int,
+        /** Library works whose source is not registered (yet). */
+        val missingSources: Int,
         val tracksByManga: Map<Long, List<Track>>,
         val entries: List<RecommendationEntryInput>,
         val books: List<RecommendationBookInput>,
@@ -494,8 +497,14 @@ class DiscoverRecommendationLoader(
         } else emptyList()
         val trackerRecordSeeds = mutableListOf<TasteProfileSeedItem>()
         val trackerRecordCandidates = mutableListOf<RecommendationCandidate>()
+        // One query: tracker records outside the library run into the thousands, one lookup each took seconds.
+        val mangaById = if (trackerGroups.isEmpty()) {
+            emptyMap()
+        } else {
+            runCatching { getManga.awaitAll() }.getOrDefault(emptyList()).associateBy { it.id }
+        }
         for ((mangaId, tracks) in trackerGroups) {
-            val manga = runCatching { getManga.awaitById(mangaId) }.getOrNull()
+            val manga = mangaById[mangaId]
             if (manga != null && sourceManager.get(manga.source)?.isNovelSource() == true) continue
             val origin = comicOrigins.of(tracks.map(Track::originKey), manga?.title ?: tracks.firstOrNull()?.title.orEmpty())
             for (track in tracks) {
@@ -524,6 +533,7 @@ class DiscoverRecommendationLoader(
         }
         return LibraryRead(
             signature = librarySignature(library),
+            missingSources = library.count { sourceManager.get(it.manga.source) == null },
             tracksByManga = tracksByManga,
             entries = libraryEntries,
             books = books,
