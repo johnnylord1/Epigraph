@@ -72,7 +72,9 @@ import eu.kanade.tachiyomi.BuildConfig
 import com.google.android.material.R as materialR
 import androidx.appcompat.R as appcompatR
 import eu.kanade.tachiyomi.R
+import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.ui.DiscoverController
+import epigraph.recommendations.ui.DiscoverScreenModel
 import epigraph.ui.moment.MomentEvents
 import epigraph.ui.moment.MomentOverlay
 import epigraph.ui.motion.PredictiveBackPreview
@@ -752,6 +754,13 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
         lifecycleScope.launchIO {
             extensionManager.getExtensionUpdates(true)
+        }
+
+        // Discover opens on the pools the last run saved. Reading them once the first screen is up
+        // keeps the tab from waiting on the disk and the library when it is opened.
+        lifecycleScope.launchIO {
+            delay(DISCOVER_PRELOAD_DELAY)
+            DiscoverMode.entries.forEach { DiscoverScreenModel.preload(it).await() }
         }
 
         // Pay root-tab XML parse + classloader cost on IO. View construction remains on main,
@@ -2232,6 +2241,8 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
         /** Leaves the splash exit and first frames alone before preparing the details header. */
         const val HEADER_PREWARM_DELAY = 1000L
+
+        private const val DISCOVER_PRELOAD_DELAY = 2000L
 
         // Shortcut actions
         const val SHORTCUT_LIBRARY = "eu.kanade.tachiyomi.SHOW_LIBRARY"

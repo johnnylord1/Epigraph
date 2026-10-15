@@ -19,6 +19,7 @@ import exh.source.EH_SOURCE_ID
 import exh.source.EXH_SOURCE_ID
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -238,65 +239,11 @@ class DiscoverRecommendationLoader(
      * pool (library/NSFW toggles) without touching the sources again.
      */
     suspend fun gather(mode: DiscoverMode, nowMs: Long = System.currentTimeMillis()): DiscoverPool = coroutineScope {
-        val library = getLibraryManga.await().distinctBy { it.manga.id }
-        val librarySignature = librarySignature(library)
-        val tracksByManga = runCatching { getTrack.awaitAllGroupedByMangaId() }.getOrDefault(emptyMap())
-        val libraryInputs = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
-            .filter { it.isNovel == (mode == DiscoverMode.NOVELS) }
-        // Comics: the publisher's country tells manga, manhwa and manhua apart, like the desktop.
-        val comicOrigins = if (mode == DiscoverMode.COMICS) {
-            // Novels never go to AniList: only the comic library and works tracked outside the library.
-            val libraryMangaIds = library.mapTo(HashSet()) { it.manga.id }
-            val comicIds = libraryInputs.mapNotNullTo(HashSet()) { it.mangaId }
-            resolveComicOrigins(libraryInputs, tracksByManga.filterKeys { it in comicIds || it !in libraryMangaIds })
-        } else {
-            ComicOrigins.NONE
-        }
-        val libraryEntries = if (mode == DiscoverMode.COMICS) {
-            libraryInputs.map { entry ->
-                entry.copy(comicOrigin = comicOrigins.of(tracksByManga[entry.mangaId].orEmpty().map(Track::originKey), entry.title))
-            }
-        } else {
-            libraryInputs
-        }
-        val books = if (mode == DiscoverMode.NOVELS) loadBooks() else emptyList()
-
-        val libraryIds = library.mapTo(mutableSetOf()) { it.manga.id }
-        val trackerGroups = if (mode == DiscoverMode.COMICS) {
-            tracksByManga.entries
-                .filter { (mangaId, _) -> mangaId !in libraryIds }
-        } else emptyList()
-        val trackerRecordSeeds = mutableListOf<TasteProfileSeedItem>()
-        val trackerRecordCandidates = mutableListOf<RecommendationCandidate>()
-        for ((mangaId, tracks) in trackerGroups) {
-            val manga = runCatching { getManga.awaitById(mangaId) }.getOrNull()
-            if (manga != null && sourceManager.get(manga.source)?.isNovelSource() == true) continue
-            val origin = comicOrigins.of(tracks.map(Track::originKey), manga?.title ?: tracks.firstOrNull()?.title.orEmpty())
-            for (track in tracks) {
-                trackerRecordSeeds += track.toTasteSeed(manga, origin)
-            }
-            if (manga != null) {
-                val source = sourceManager.get(manga.source)
-                val entry = RecommendationEntryInput(
-                    mangaId = manga.id,
-                    url = manga.url,
-                    title = manga.title,
-                    description = manga.description,
-                    genres = manga.getGenres().orEmpty(),
-                    publicationStatus = statusText(manga.status),
-                    sourceId = manga.source,
-                    sourceName = source?.name.orEmpty(),
-                    sourceLang = (source as? CatalogueSource)?.lang,
-                    coverUrl = manga.thumbnail_url,
-                    isNovel = false,
-                    inLibrary = false,
-                    tracks = tracks.mapNotNull { it.toInput() },
-                    comicOrigin = origin,
-                )
-                trackerRecordCandidates += entryToRecommendationCandidate(entry, nowMs)
-            }
-        }
-        val trackerRemoteKeys = tracksByManga.values.flatten()
+        val read = readLibrary(mode, nowMs, askOrigins = true)
+        val libraryEntries = read.entries
+        val books = read.books
+        val trackerRecordSeeds = read.trackerRecordSeeds
+        val trackerRemoteKeys = read.tracksByManga.values.flatten()
             .mapNotNull { recommendationTrackerRemoteKey(it.sync_id.toString(), it.media_id.toString()) }
             .toSet()
 
@@ -467,8 +414,8 @@ class DiscoverRecommendationLoader(
             knownTitleKeys = knownTitles,
             knownProviderKeys = knownProviders,
             failedProviders = failures.toList(),
-            libraryCandidates = libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } + books.map { bookToRecommendationCandidate(it, nowMs) },
-            trackerRecordCandidates = trackerRecordCandidates,
+            libraryCandidates = read.candidates,
+            trackerRecordCandidates = read.trackerRecordCandidates,
             comicEntries = parts.comicEntries,
             sourceCursors = parts.sourceCursors,
             novelEntries = parts.novelEntries,
@@ -478,7 +425,7 @@ class DiscoverRecommendationLoader(
             hardcoverCandidates = parts.hardcoverCandidates,
             nsfwSourceIds = nsfwSourceIds,
             gatheredAtMs = nowMs,
-            librarySignature = librarySignature,
+            librarySignature = read.signature,
             genreFeed = genreRun.feed,
             trackerTaste = trackerTaste,
             trackerExplore = exploreRun?.feed,
@@ -486,6 +433,104 @@ class DiscoverRecommendationLoader(
             kitsuFeed = kitsuRun?.feed,
         )
         pool.copy(candidates = assembleDiscoverCandidates(pool))
+    }
+
+    /**
+     * A saved pool keeps only what came from the network: the library side is read again from the
+     * database, which stays the source of truth, and the candidates are assembled from both.
+     * The library signature stays the gathered one, so a library changed since still reloads.
+     */
+    suspend fun restore(saved: DiscoverPool): DiscoverPool {
+        // A work is told apart as comic or novel by its source, so the sources come first.
+        withTimeoutOrNull(SOURCES_READY_BUDGET_MS) { sourceManager.awaitInstalledSources() }
+        var read = readLibrary(saved.mode, saved.gatheredAtMs, askOrigins = false)
+        // The sources can still be registering just after the flags flip.
+        repeat(SOURCES_SETTLE_RETRIES) {
+            if (read.signature == saved.librarySignature) return@repeat
+            delay(SOURCES_SETTLE_DELAY_MS)
+            read = readLibrary(saved.mode, saved.gatheredAtMs, askOrigins = false)
+        }
+        return reassembled(saved.copy(libraryCandidates = read.candidates, trackerRecordCandidates = read.trackerRecordCandidates))
+    }
+
+    /** The library side of a pool, all from the database; only [askOrigins] reaches the network. */
+    private class LibraryRead(
+        val signature: Int,
+        val tracksByManga: Map<Long, List<Track>>,
+        val entries: List<RecommendationEntryInput>,
+        val books: List<RecommendationBookInput>,
+        val trackerRecordSeeds: List<TasteProfileSeedItem>,
+        val trackerRecordCandidates: List<RecommendationCandidate>,
+        val candidates: List<RecommendationCandidate>,
+    )
+
+    private suspend fun readLibrary(mode: DiscoverMode, nowMs: Long, askOrigins: Boolean): LibraryRead {
+        val library = getLibraryManga.await().distinctBy { it.manga.id }
+        val tracksByManga = runCatching { getTrack.awaitAllGroupedByMangaId() }.getOrDefault(emptyMap())
+        val libraryInputs = library.mapNotNull { it.toInput(tracksByManga[it.manga.id].orEmpty()) }
+            .filter { it.isNovel == (mode == DiscoverMode.NOVELS) }
+        // Comics: the publisher's country tells manga, manhwa and manhua apart, like the desktop.
+        val comicOrigins = if (mode == DiscoverMode.COMICS) {
+            // Novels never go to AniList: only the comic library and works tracked outside the library.
+            val libraryMangaIds = library.mapTo(HashSet()) { it.manga.id }
+            val comicIds = libraryInputs.mapNotNullTo(HashSet()) { it.mangaId }
+            resolveComicOrigins(libraryInputs, tracksByManga.filterKeys { it in comicIds || it !in libraryMangaIds }, askOrigins)
+        } else {
+            ComicOrigins.NONE
+        }
+        val libraryEntries = if (mode == DiscoverMode.COMICS) {
+            libraryInputs.map { entry ->
+                entry.copy(comicOrigin = comicOrigins.of(tracksByManga[entry.mangaId].orEmpty().map(Track::originKey), entry.title))
+            }
+        } else {
+            libraryInputs
+        }
+        val books = if (mode == DiscoverMode.NOVELS) loadBooks() else emptyList()
+
+        val libraryIds = library.mapTo(mutableSetOf()) { it.manga.id }
+        val trackerGroups = if (mode == DiscoverMode.COMICS) {
+            tracksByManga.entries
+                .filter { (mangaId, _) -> mangaId !in libraryIds }
+        } else emptyList()
+        val trackerRecordSeeds = mutableListOf<TasteProfileSeedItem>()
+        val trackerRecordCandidates = mutableListOf<RecommendationCandidate>()
+        for ((mangaId, tracks) in trackerGroups) {
+            val manga = runCatching { getManga.awaitById(mangaId) }.getOrNull()
+            if (manga != null && sourceManager.get(manga.source)?.isNovelSource() == true) continue
+            val origin = comicOrigins.of(tracks.map(Track::originKey), manga?.title ?: tracks.firstOrNull()?.title.orEmpty())
+            for (track in tracks) {
+                trackerRecordSeeds += track.toTasteSeed(manga, origin)
+            }
+            if (manga != null) {
+                val source = sourceManager.get(manga.source)
+                val entry = RecommendationEntryInput(
+                    mangaId = manga.id,
+                    url = manga.url,
+                    title = manga.title,
+                    description = manga.description,
+                    genres = manga.getGenres().orEmpty(),
+                    publicationStatus = statusText(manga.status),
+                    sourceId = manga.source,
+                    sourceName = source?.name.orEmpty(),
+                    sourceLang = (source as? CatalogueSource)?.lang,
+                    coverUrl = manga.thumbnail_url,
+                    isNovel = false,
+                    inLibrary = false,
+                    tracks = tracks.mapNotNull { it.toInput() },
+                    comicOrigin = origin,
+                )
+                trackerRecordCandidates += entryToRecommendationCandidate(entry, nowMs)
+            }
+        }
+        return LibraryRead(
+            signature = librarySignature(library),
+            tracksByManga = tracksByManga,
+            entries = libraryEntries,
+            books = books,
+            trackerRecordSeeds = trackerRecordSeeds,
+            trackerRecordCandidates = trackerRecordCandidates,
+            candidates = libraryEntries.map { entryToRecommendationCandidate(it, nowMs) } + books.map { bookToRecommendationCandidate(it, nowMs) },
+        )
     }
 
     /** Pure ranking over a gathered pool; safe to re-run for filter toggles without network. */
@@ -800,10 +845,12 @@ class DiscoverRecommendationLoader(
      * Desktop `comicOriginForRecords` and the library's AniList lookup: asks AniList for the country of
      * the tracked works and of the most read untracked ones, within [COMIC_ORIGIN_BUDGET_MS], then
      * reads every answer known so far. What is not asked this time is asked on a later visit.
+     * Without [ask] it only reads the known answers.
      */
     private suspend fun resolveComicOrigins(
         entries: List<RecommendationEntryInput>,
         tracksByManga: Map<Long, List<Track>>,
+        ask: Boolean,
     ): ComicOrigins {
         val trackPairs = tracksByManga.values.flatten()
             .filter { (it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.MYANIMELIST) && it.media_id > 0 }
@@ -813,7 +860,7 @@ class DiscoverRecommendationLoader(
             .filter { entry -> tracksByManga[entry.mangaId].orEmpty().none { it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.MYANIMELIST } }
             .sortedByDescending(::entryImplicitWeight)
             .map { it.title }
-        runCatching {
+        if (ask) runCatching {
             withTimeoutOrNull(COMIC_ORIGIN_BUDGET_MS) {
                 comicOriginLookup.refreshTracks(trackPairs)
                 comicOriginLookup.refreshTitles(untrackedTitles, COMIC_ORIGIN_TITLE_REQUESTS)
@@ -887,6 +934,10 @@ class DiscoverRecommendationLoader(
         /** Countries of origin asked per visit; answers are kept, so later visits ask only for new works. */
         private const val COMIC_ORIGIN_BUDGET_MS = 8_000L
         private const val COMIC_ORIGIN_TITLE_REQUESTS = 6
+        /** Restoring a saved pool waits this long for the extensions and novel plugins. */
+        private const val SOURCES_READY_BUDGET_MS = 15_000L
+        private const val SOURCES_SETTLE_RETRIES = 3
+        private const val SOURCES_SETTLE_DELAY_MS = 1_000L
     }
 }
 

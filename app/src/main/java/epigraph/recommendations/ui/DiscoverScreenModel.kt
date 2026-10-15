@@ -1,8 +1,11 @@
 package epigraph.recommendations.ui
 import android.app.Application
 import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import co.touchlab.kermit.Logger
 import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverGenreSearch
 import epigraph.recommendations.DiscoverMode
@@ -24,6 +27,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,8 +80,6 @@ class DiscoverScreenModel(
         val genres: List<String> = emptyList(),
         val genreOptions: List<String> = emptyList(),
     )
-
-    private val poolStore = DiscoverPoolStore(File(get<Application>().cacheDir, "discover"))
 
     private var loadJob: Job? = null
     private var catalogJob: Job? = null
@@ -166,10 +168,12 @@ class DiscoverScreenModel(
         }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
-                // A new run of the app starts from the pool the last one saved.
+                // A new run of the app starts from the pool the last one saved, usually already
+                // read by the time the tab opens.
                 if (!force && stale == null) {
-                    val saved = runCatching { poolStore.read(mode) }.getOrNull()
-                    if (saved != null && cache.putIfAbsent(mode, CachedPool(saved, saved.gatheredAtMs)) == null) {
+                    preload(mode).await()
+                    val saved = lastPool(mode)
+                    if (saved != null) {
                         if (cachedPool(mode) != null) {
                             withContext(Dispatchers.Main) { if (state.value.mode == mode) load(force = false) }
                             return@launch
@@ -189,7 +193,7 @@ class DiscoverScreenModel(
                 } ?: throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 // Saving waits for nothing on screen.
-                launch { runCatching { poolStore.write(pool) } }
+                launch { runCatching { store.write(pool) } }
                 val result = rank(pool)
                 val catalogEntries = catalog(pool)
                 mutableState.update {
@@ -400,5 +404,24 @@ class DiscoverScreenModel(
 
         private fun cachedPool(mode: DiscoverMode): DiscoverPool? =
             cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.pool
+
+        private val store by lazy { DiscoverPoolStore(File(get<Application>().cacheDir, "discover")) }
+        private val restorer by lazy { DiscoverRecommendationLoader(get<Application>()) }
+        private val restoring = java.util.concurrent.ConcurrentHashMap<DiscoverMode, Deferred<Unit>>()
+
+        /**
+         * Reads the pool the last run saved into memory, once per run. The app starts it early so
+         * the tab opens on it at once; a screen opened before it is done waits for the same read.
+         */
+        fun preload(mode: DiscoverMode): Deferred<Unit> = restoring.computeIfAbsent(mode) {
+            ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
+                if (cache[mode] != null) return@async
+                val started = System.currentTimeMillis()
+                val saved = runCatching { store.read(mode) }.getOrNull() ?: return@async
+                val pool = runCatching { restorer.restore(saved) }.getOrNull() ?: return@async
+                cache.putIfAbsent(mode, CachedPool(pool, pool.gatheredAtMs))
+                Logger.d { "Discover: restored the saved $mode pool in ${System.currentTimeMillis() - started} ms" }
+            }
+        }
     }
 }
