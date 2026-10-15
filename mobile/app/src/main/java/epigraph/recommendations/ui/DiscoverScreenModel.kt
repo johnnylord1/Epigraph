@@ -341,6 +341,11 @@ class DiscoverScreenModel(
         job.start()
     }
 
+    /** Back on the screen (or the app): a pool past its TTL loads again behind the one shown. */
+    fun refreshIfExpired() {
+        if (cachedPool(state.value.mode) == null) reloadExpiredPool()
+    }
+
     /** The pool expired: load it again. A load already running applies the new filters when it lands. */
     private fun reloadExpiredPool() {
         if (!state.value.loading) load(force = false)

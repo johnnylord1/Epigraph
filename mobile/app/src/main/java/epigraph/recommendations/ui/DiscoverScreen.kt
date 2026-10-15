@@ -90,6 +90,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.stringResource
@@ -139,6 +141,9 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
         val scope = rememberCoroutineScope()
         val screenModel = rememberScreenModel { DiscoverScreenModel(initialMode) }
         val state by screenModel.state.collectAsState()
+        // The model outlives the tab while the app stays in memory; without this it would keep
+        // the same picks until a manual refresh.
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { screenModel.refreshIfExpired() }
         var showFilterSheet by remember { mutableStateOf(false) }
         // The bottom navigation floats over the tab, so the lists end above it.
         val bottomNavHeight = with(LocalDensity.current) {
