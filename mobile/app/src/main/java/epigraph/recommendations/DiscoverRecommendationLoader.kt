@@ -85,13 +85,7 @@ data class DiscoverPool(
     val trackerExploreResults: List<TrackerCatalogInput> = emptyList(),
     /** Novels: Kitsu's lists of the reader's taste and rare genres, and its ratings. */
     val kitsuFeed: KitsuNovelFeed? = null,
-) {
-    /** Nothing came back from the network, as when the device is offline: the gather failed. */
-    val foundNothingOnline: Boolean
-        get() = comicEntries.isEmpty() && novelEntries.isEmpty() && trackerTrending.isEmpty() &&
-            trackerScores.isEmpty() && trackerTaste.isEmpty() && trackerExploreResults.isEmpty() &&
-            hardcoverCandidates.isEmpty() && genreFeed?.entries.isNullOrEmpty() && kitsuFeed?.discovered.isNullOrEmpty()
-}
+)
 
 /** Desktop BrowseV3 constants for the For you rails. */
 internal const val SEARCH_RECOMMENDATION_BASE_LIMIT = 18
