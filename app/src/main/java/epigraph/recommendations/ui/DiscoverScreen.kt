@@ -2,6 +2,7 @@ package epigraph.recommendations.ui
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.view.ViewGroup
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -65,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -121,6 +123,8 @@ import java.io.File
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import com.bluelinelabs.conductor.Controller
+import com.bluelinelabs.conductor.ControllerChangeHandler
 import yokai.domain.manga.models.MangaCover as CoverData
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
@@ -144,6 +148,19 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
         // The model outlives the tab while the app stays in memory; without this it would keep
         // the same picks until a manual refresh.
         LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { screenModel.refreshIfExpired() }
+        // Back from a pick's page the activity never paused, so the resume above does not run;
+        // a work added to the library there must still leave the picks.
+        DisposableEffect(router) {
+            val listener = object : ControllerChangeHandler.ControllerChangeListener {
+                override fun onChangeCompleted(to: Controller?, from: Controller?, isPush: Boolean, container: ViewGroup, handler: ControllerChangeHandler) {
+                    if (!isPush && to is DiscoverController) screenModel.refreshIfExpired()
+                }
+
+                override fun onChangeStarted(to: Controller?, from: Controller?, isPush: Boolean, container: ViewGroup, handler: ControllerChangeHandler) = Unit
+            }
+            router?.addChangeListener(listener)
+            onDispose { router?.removeChangeListener(listener) }
+        }
         var showFilterSheet by remember { mutableStateOf(false) }
         // The bottom navigation floats over the tab, so the lists end above it.
         val bottomNavHeight = with(LocalDensity.current) {
