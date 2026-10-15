@@ -6127,6 +6127,7 @@ fn spawn_server_unlocked(
                     err
                 )));
             }
+            suwayomi_runtime::prune_stop_receipts(&owner_path);
             do_log(
                 &mut log,
                 &format!(
@@ -6278,6 +6279,7 @@ fn spawn_server_unlocked(
                     err
                 )));
             }
+            suwayomi_runtime::prune_stop_receipts(&owner_path);
             if let Some(diagnostic_log_path) = &main_startup_diagnostic_path {
                 append_timestamped_line(
                     diagnostic_log_path,

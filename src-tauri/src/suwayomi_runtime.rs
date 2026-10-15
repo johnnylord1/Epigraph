@@ -161,6 +161,25 @@ pub fn record_confirmed_stop(path: &Path, raw: &[u8]) -> Result<(), String> {
     }
 }
 
+/// Stop receipts confirm only the exact owner bytes they were written for. Once a new owner is
+/// published, earlier receipts can never match again; this removes them so one is not left behind
+/// for every start of the server.
+pub fn prune_stop_receipts(owner_path: &Path) {
+    let (Ok(raw), Some(root)) = (std::fs::read(owner_path), owner_path.parent()) else {
+        return;
+    };
+    let current = format!("server.owner.{:x}.stopped", Sha256::digest(&raw));
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name != current && name.starts_with("server.owner.") && name.ends_with(".stopped") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub fn has_confirmed_stop(path: &Path) -> bool {
     let Ok(raw) = std::fs::read(path) else { return false; };
     let digest = format!("{:x}", Sha256::digest(&raw));
@@ -672,6 +691,31 @@ mod tests {
         record_confirmed_stop(&path, original).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"replacement owner");
         assert!(!has_confirmed_stop(&path));
+    }
+
+    #[test]
+    fn receipts_of_earlier_owners_are_pruned() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("server.owner.json");
+        for run in [&b"first run"[..], b"second run"] {
+            std::fs::write(&path, run).unwrap();
+            record_confirmed_stop(&path, run).unwrap();
+        }
+        std::fs::write(dir.path().join("server.conf"), b"conf").unwrap();
+        prune_stop_receipts(&path);
+        // The current owner keeps its receipt; the earlier one, and nothing else, goes.
+        assert!(has_confirmed_stop(&path));
+        let names = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 3);
+        assert!(names.contains(&"server.conf".to_string()));
+
+        std::fs::write(&path, b"third run").unwrap();
+        prune_stop_receipts(&path);
+        assert!(!has_confirmed_stop(&path));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[test]

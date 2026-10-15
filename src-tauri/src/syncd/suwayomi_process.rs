@@ -876,6 +876,7 @@ fn publish_reconstructed_owner(root: &Path, java_pid: u32, spawned_by_core: bool
             .map_err(|error| format!("failed to serialize managed Suwayomi owner: {error}"))?,
     )
     .map_err(|error| format!("failed to publish managed Suwayomi owner: {error}"))?;
+    crate::suwayomi_runtime::prune_stop_receipts(&root.join("server.owner.json"));
     if spawned_by_core {
         let identity = owner.process_identity.clone().ok_or("Missing birth identity")?;
         #[cfg(windows)]

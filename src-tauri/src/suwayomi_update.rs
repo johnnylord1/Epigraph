@@ -612,6 +612,7 @@ fn create_suwayomi_update_snapshot_unlocked(
     }
 
     let target = resolve_update_target(server_url, profile_id, profile_label, &app)?;
+    prune_superseded_snapshots(&target.root_dir, &managed_runtime_root());
     let stopped_runtime = stop_managed_runtime_for_snapshot(&app, &target)?;
     let snapshot = (|| {
         assert_profile_database_unlocked(&target.root_dir)?;
@@ -1656,6 +1657,55 @@ fn create_snapshot_for_plan(
         }
     }
     result
+}
+
+/// Finished snapshots kept besides the one an update is about to take: the latest, as a way back
+/// from an update that passed its checks. Each one copies the whole database, so older ones would
+/// otherwise fill the disk.
+const SUPERSEDED_SNAPSHOTS_KEPT: usize = 1;
+
+/// Removes the snapshots of `root_dir` no update can still need. It runs under the exclusive runtime
+/// lease, before an update takes its own snapshot, so no copy is in progress: a `.tmp-` directory is
+/// a partial copy an interrupted snapshot left, never valid. A snapshot a pending runtime attempt or
+/// an extension batch journal points at is always kept, and so is the newest finished one.
+fn prune_superseded_snapshots(root_dir: &Path, runtime_root: &Path) {
+    let Ok(entries) = fs::read_dir(root_dir.join(SUWAYOMI_SNAPSHOT_DIR)) else {
+        return;
+    };
+    let mut referenced = Vec::new();
+    if let Ok(Some(state)) = suwayomi_runtime_store::read_state(runtime_root) {
+        referenced.extend(state.pending.map(|pending| PathBuf::from(pending.snapshot_path)));
+    }
+    if let Ok(Some(journal)) = suwayomi_recovery::read_extension_batch_journal_at(
+        &suwayomi_recovery::extension_batch_journal_path(runtime_root),
+    ) {
+        referenced.push(PathBuf::from(journal.snapshot_path));
+    }
+    let mut finished = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir()
+            || referenced
+                .iter()
+                .any(|kept| suwayomi_runtime_store::same_path(kept, &path))
+        {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(".tmp-snapshot-") {
+            let _ = fs::remove_dir_all(&path);
+        } else if let Some(created_ms) = name
+            .strip_prefix("snapshot-")
+            .and_then(|rest| rest.split('-').next())
+            .and_then(|created| created.parse::<u64>().ok())
+        {
+            finished.push((created_ms, path));
+        }
+    }
+    finished.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, path) in finished.into_iter().skip(SUPERSEDED_SNAPSHOTS_KEPT) {
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 fn plan_snapshot_files(root_dir: &Path) -> Result<Vec<SnapshotPlanFile>, String> {
@@ -4893,6 +4943,55 @@ mod tests {
         assert_eq!(files[0].name, "server.conf");
         assert!(snapshot_dir.join("server.conf").is_file());
         assert!(!snapshot_dir.join(SUWAYOMI_SERVER_OWNER_FILE).exists());
+    }
+
+    #[test]
+    fn superseded_snapshots_are_pruned_but_the_latest_and_referenced_ones_stay() {
+        let temp = tempfile::tempdir().unwrap();
+        let runtime_root = temp.path().join("runtime");
+        let snapshots = temp.path().join(SUWAYOMI_SNAPSHOT_DIR);
+        for name in [
+            "snapshot-100-a",
+            "snapshot-200-b",
+            "snapshot-300-c",
+            "snapshot-400-d",
+            ".tmp-snapshot-500-e",
+            "not-a-snapshot",
+        ] {
+            std::fs::create_dir_all(snapshots.join(name)).unwrap();
+        }
+        // An unsettled attempt still points at the oldest one.
+        let mut state = suwayomi_runtime_store::RuntimeState::new();
+        state.pending = Some(PendingRuntime {
+            operation_id: "op".into(),
+            version: "v2".into(),
+            profile_id: "main".into(),
+            root_dir: temp.path().to_string_lossy().into_owned(),
+            server_url: "http://127.0.0.1:4567".into(),
+            snapshot_path: snapshots.join("snapshot-100-a").to_string_lossy().into_owned(),
+            started_at_ms: 1,
+        });
+        suwayomi_runtime_store::write_state(&runtime_root, &state).unwrap();
+
+        prune_superseded_snapshots(temp.path(), &runtime_root);
+
+        let mut left = std::fs::read_dir(&snapshots)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        left.sort();
+        assert_eq!(left, ["not-a-snapshot", "snapshot-100-a", "snapshot-400-d"]);
+
+        // Running it again changes nothing.
+        prune_superseded_snapshots(temp.path(), &runtime_root);
+        assert_eq!(std::fs::read_dir(&snapshots).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn pruning_without_snapshots_does_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        prune_superseded_snapshots(temp.path(), &temp.path().join("runtime"));
+        assert!(!temp.path().join(SUWAYOMI_SNAPSHOT_DIR).exists());
     }
 
     #[test]

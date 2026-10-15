@@ -164,6 +164,11 @@ then checks disk space. Temporary snapshot directories are finalized by rename
 within the same parent. Partial snapshots are not considered valid. Any failure
 before publication restarts the previous runtime.
 
+Before taking a snapshot, the updater prunes the profile's older ones: each is a
+full copy of the database. It keeps the newest finished snapshot and any snapshot
+a `pending` runtime attempt or an extension batch journal points at, removes
+partial `.tmp-` copies, and leaves directories with other names alone.
+
 ## Staging
 
 The updater downloads only the allowlisted JAR and `Checksums.sha256`. The JAR is streamed to `.part`, hashed while streaming, then renamed into the temporary staging directory only after the hash matches.

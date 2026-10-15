@@ -130,6 +130,7 @@ impl RuntimeManifestLease {
         let payload = serde_json::to_vec_pretty(manifest)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         atomic_write(&path, &payload)?;
+        crate::suwayomi_runtime::prune_stop_receipts(&path);
         Ok(Self)
     }
 }
@@ -302,6 +303,13 @@ mod tests {
         let second = RuntimeManifestLease::publish(temp.path(), &manifest(42, "server-a")).unwrap();
 
         assert_eq!(read_runtime_manifest(temp.path()).unwrap().pid, 42);
+        // The receipt of the replaced manifest can never match again, so it is not kept.
+        let receipts = fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".stopped"))
+            .count();
+        assert_eq!(receipts, 0);
         let temporary_files = fs::read_dir(temp.path())
             .unwrap()
             .filter_map(Result::ok)
