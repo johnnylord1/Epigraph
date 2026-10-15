@@ -174,6 +174,8 @@ export class ExtensionUpdateCoordinator {
   }
 
   private record(result: ExtensionNativeBatchResult, evidence: ExtensionBatchEvidence): void {
+    // An artifact that could not be downloaded was never tested: it says nothing about compatibility.
+    if (!evidence.artifactSha256) return;
     const checkedAt = this.now();
     this.state = upsertExtensionCompatibilityRecord(this.state, {
       schemaVersion: 1,

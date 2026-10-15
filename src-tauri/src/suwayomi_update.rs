@@ -354,6 +354,9 @@ struct StagedExtensionArtifact {
     file_name: String,
     path: PathBuf,
     sha256: String,
+    /// Whether `input` holds the identity the artifact declared when it was first installed.
+    /// Until then its version is the one installed before the update, a lower bound.
+    identity_pinned: bool,
 }
 
 struct ExtensionBatchCleanup {
@@ -2779,6 +2782,7 @@ async fn stage_extension_artifact(
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
+        identity_pinned: false,
     })
 }
 
@@ -2829,12 +2833,60 @@ fn write_extension_candidate_config(root: &Path, port: u16) -> Result<(), String
         .map_err(|error| format!("Could not write extension candidate config: {error}"))
 }
 
+fn extension_version_code(value: Option<&Value>) -> Option<i64> {
+    match value? {
+        Value::String(code) => code.trim().parse().ok(),
+        code => code.as_i64(),
+    }
+}
+
+/// Checks the extension Suwayomi reports for an uploaded artifact and returns its version code and
+/// name. The store only lists the version installed before the update, so the first install of a
+/// staged artifact, in the isolated candidate, learns the artifact's own identity: the same
+/// package, not older than the installed one. Every later install of the same bytes must report
+/// exactly that identity.
+fn verify_installed_extension_identity(
+    installed: &Value,
+    artifact: &StagedExtensionArtifact,
+) -> Result<(String, String), String> {
+    let unexpected = || "Exact extension install returned an unexpected identity.".to_string();
+    if installed.get("pkgName").and_then(Value::as_str) != Some(&artifact.input.package_name)
+        || installed.get("isInstalled").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(unexpected());
+    }
+    let code = extension_version_code(installed.get("versionCodeLong")).ok_or_else(unexpected)?;
+    let name = installed
+        .get("versionName")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(unexpected)?;
+    let expected = artifact
+        .input
+        .version_code
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| unexpected())?;
+    let matches = if artifact.identity_pinned {
+        code == expected && name == artifact.input.version_name
+    } else {
+        code >= expected
+    };
+    if !matches {
+        return Err(unexpected());
+    }
+    Ok((code.to_string(), name.to_string()))
+}
+
+/// Installs the exact staged bytes and returns the identity they declared with the sources they
+/// registered.
 async fn upload_exact_extension_artifact(
     client: &reqwest::Client,
     server_url: &str,
     auth_header: Option<&str>,
     artifact: &StagedExtensionArtifact,
-) -> Result<Vec<String>, String> {
+) -> Result<((String, String), Vec<String>), String> {
     let endpoint = graphql_endpoint(server_url)?;
     let part = reqwest::multipart::Part::file(&artifact.path)
         .await
@@ -2880,23 +2932,16 @@ async fn upload_exact_extension_artifact(
     let installed = payload
         .pointer("/data/installExternalExtension/extension")
         .ok_or_else(|| "Exact extension install returned no extension identity.".to_string())?;
-    if installed.get("pkgName").and_then(Value::as_str) != Some(&artifact.input.package_name)
-        || installed.get("isInstalled").and_then(Value::as_bool) != Some(true)
-        || installed
-            .get("versionCodeLong")
-            .map(|value| value.to_string())
-            != Some(artifact.input.version_code.clone())
-    {
-        return Err("Exact extension install returned an unexpected identity.".to_string());
-    }
-    extension_source_ids(
+    let identity = verify_installed_extension_identity(installed, artifact)?;
+    let source_ids = extension_source_ids(
         client,
         server_url,
         auth_header,
         &artifact.input.package_name,
-        &artifact.input.version_code,
+        &identity.0,
     )
-    .await
+    .await?;
+    Ok((identity, source_ids))
 }
 
 async fn query_extension_source_ids_once(
@@ -2935,11 +2980,9 @@ async fn query_extension_source_ids_once(
         .any(|extension| {
             extension.get("pkgName").and_then(Value::as_str) == Some(package_name)
                 && extension.get("isInstalled").and_then(Value::as_bool) == Some(true)
-                && extension
-                    .get("versionCodeLong")
-                    .map(Value::to_string)
-                    .as_deref()
-                    == Some(expected_version_code)
+                && extension_version_code(extension.get("versionCodeLong")).is_some_and(|code| {
+                    expected_version_code.trim().parse::<i64>().ok() == Some(code)
+                })
         });
     if !extension_matches {
         return Err("Installed extension identity does not match the staged artifact.".to_string());
@@ -3013,6 +3056,23 @@ fn extension_evidence(
         // extension owns the failure. Detailed diagnostics classify it later.
         failure_owner: "unknown".to_string(),
         failure_code,
+    }
+}
+
+/// Evidence for an update whose artifact could not be staged. Nothing was installed or tested, so
+/// it carries no artifact digest.
+fn unstaged_extension_evidence(item: &ExtensionUpdateBatchItem) -> ExtensionUpdateBatchEvidence {
+    ExtensionUpdateBatchEvidence {
+        package_name: item.package_name.clone(),
+        version_code: item.version_code.clone(),
+        version_name: item.version_name.clone(),
+        artifact_sha256: String::new(),
+        store_id: item.store_id.clone(),
+        store_url_canonical: item.store_url_canonical.clone(),
+        source_ids: Vec::new(),
+        status: "INCOMPATIBLE".to_string(),
+        failure_owner: "unknown".to_string(),
+        failure_code: Some("ARTIFACT_UNAVAILABLE".to_string()),
     }
 }
 
@@ -3223,7 +3283,7 @@ async fn restore_extension_candidate_after_rejection(
     restart_managed_runtime(app, target)?;
     run_suwayomi_graphql_health_check(&target.server_url, None, runtime_version).await?;
     for (artifact, expected_source_ids) in approved {
-        let source_ids =
+        let (_, source_ids) =
             upload_exact_extension_artifact(client, &target.server_url, None, artifact).await?;
         if &source_ids != expected_source_ids {
             return Err(
@@ -3308,12 +3368,29 @@ pub async fn certify_suwayomi_extension_update_batch(
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|error| format!("Could not create extension update client: {error}"))?;
+    // Malformed or unsafe input refuses the whole batch before anything is downloaded.
+    for item in &items {
+        validate_extension_batch_item(item)?;
+    }
     let mut artifacts = Vec::with_capacity(items.len());
+    let mut unstaged = Vec::new();
     for item in items {
-        match stage_extension_artifact(&client, &artifacts_root, item).await {
+        // An artifact the store no longer serves fails only its own update.
+        match stage_extension_artifact(&client, &artifacts_root, item.clone()).await {
             Ok(artifact) => artifacts.push(artifact),
-            Err(error) => return Err(error),
+            Err(_) => unstaged.push(unstaged_extension_evidence(&item)),
         }
+    }
+    if artifacts.is_empty() {
+        // Nothing to certify, so the runtime is left running untouched.
+        return Ok(ExtensionUpdateBatchResult {
+            batch_id,
+            runtime_version,
+            runtime_artifact_sha256,
+            approved: Vec::new(),
+            rejected: unstaged,
+            restarted_runtime: false,
+        });
     }
 
     // Resolve every owned resource before stopping the current runtime. From the
@@ -3407,7 +3484,13 @@ pub async fn certify_suwayomi_extension_update_batch(
             )
             .await
             {
-                Ok(source_ids) => candidate_approved.push((artifact.clone(), source_ids)),
+                Ok(((version_code, version_name), source_ids)) => {
+                    let mut artifact = artifact.clone();
+                    artifact.input.version_code = version_code;
+                    artifact.input.version_name = version_name;
+                    artifact.identity_pinned = true;
+                    candidate_approved.push((artifact, source_ids));
+                }
                 Err(error) => {
                     rejected.push(extension_evidence(
                         artifact,
@@ -3543,11 +3626,12 @@ pub async fn certify_suwayomi_extension_update_batch(
         )),
     };
     let result = match transaction {
-        Ok((approved, rejected)) => {
+        Ok((approved, mut rejected)) => {
             if let Some(error) = candidate_cleanup_error {
                 return Err(format!("{error}. Startup cleanup is required."));
             }
             let _ = remove_extension_batch_journal();
+            rejected.extend(unstaged);
             Ok(ExtensionUpdateBatchResult {
                 batch_id,
                 runtime_version,
@@ -5788,6 +5872,63 @@ server.extensionStores = ["https://two.example/index.json"]
         assert!(release_suwayomi_update_lock(&guard.token));
         std::mem::forget(guard);
         assert!(!current_suwayomi_update_lock_status().in_progress);
+    }
+
+    #[test]
+    fn first_install_learns_the_artifact_identity_and_later_installs_must_match_it() {
+        // The store reports the installed 1.6.11 while its artifact URL already serves 1.6.12.
+        let mut artifact = StagedExtensionArtifact {
+            input: ExtensionUpdateBatchItem {
+                package_name: "eu.kanade.tachiyomi.extension.all.comikey".to_string(),
+                version_code: "106011".to_string(),
+                version_name: "1.6.11".to_string(),
+                store_id: "keiyoushi".to_string(),
+                store_url_canonical: "https://store.example/index.min.json".to_string(),
+                artifact_url: "https://store.example/comikey-v1.6.12.jar".to_string(),
+                artifact_type: "jar".to_string(),
+            },
+            file_name: "comikey-v1.6.12.jar".to_string(),
+            path: PathBuf::from("comikey-v1.6.12.jar"),
+            sha256: "00".to_string(),
+            identity_pinned: false,
+        };
+        let installed = |package: &str, code: Value, name: &str| {
+            json!({ "pkgName": package, "versionCodeLong": code, "versionName": name, "isInstalled": true })
+        };
+        let package = artifact.input.package_name.clone();
+
+        // Suwayomi may serialize the Long code as a string or as a number.
+        for code in [json!("106012"), json!(106012)] {
+            assert_eq!(
+                verify_installed_extension_identity(&installed(&package, code, "1.6.12"), &artifact)
+                    .unwrap(),
+                ("106012".to_string(), "1.6.12".to_string())
+            );
+        }
+        // A downgrade, another package or a missing install is never accepted.
+        for wrong in [
+            installed(&package, json!("106010"), "1.6.10"),
+            installed("eu.kanade.tachiyomi.extension.all.other", json!("106012"), "1.6.12"),
+            json!({ "pkgName": package, "versionCodeLong": "106012", "versionName": "1.6.12", "isInstalled": false }),
+            installed(&package, json!("not-a-code"), "1.6.12"),
+        ] {
+            assert!(verify_installed_extension_identity(&wrong, &artifact).is_err());
+        }
+
+        artifact.input.version_code = "106012".to_string();
+        artifact.input.version_name = "1.6.12".to_string();
+        artifact.identity_pinned = true;
+        assert!(verify_installed_extension_identity(
+            &installed(&package, json!(106012), "1.6.12"),
+            &artifact
+        )
+        .is_ok());
+        for drifted in [
+            installed(&package, json!("106013"), "1.6.13"),
+            installed(&package, json!("106012"), "1.6.12-other"),
+        ] {
+            assert!(verify_installed_extension_identity(&drifted, &artifact).is_err());
+        }
     }
 
     #[test]

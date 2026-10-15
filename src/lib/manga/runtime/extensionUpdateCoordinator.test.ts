@@ -122,6 +122,25 @@ describe("ExtensionUpdateCoordinator", () => {
     expect(service.getPhase()).toBe("COMPLETED");
   });
 
+  test("records no compatibility for an artifact that could not be downloaded", async () => {
+    const unavailable = {
+      ...result().approved[0]!,
+      artifactSha256: "",
+      sourceIds: [],
+      status: "INCOMPATIBLE" as const,
+      failureCode: "ARTIFACT_UNAVAILABLE",
+    };
+    const service = coordinator({
+      runBatch: vi.fn(async () => result({ approved: [], rejected: [unavailable], restartedRuntime: false })),
+    });
+    const batch = await service.run([extension()]);
+
+    expect(batch.rejected).toEqual([unavailable]);
+    expect(batch.state.records).toEqual([]);
+    expect(batch.state.reports).toEqual([]);
+    expect(service.getPhase()).toBe("COMPLETED");
+  });
+
   test("surfaces native rollback failure without activating anything in the frontend", async () => {
     const service = coordinator({ runBatch: vi.fn(async () => { throw new Error("batch rolled back"); }) });
     await expect(service.run([extension()])).rejects.toThrow("batch rolled back");
