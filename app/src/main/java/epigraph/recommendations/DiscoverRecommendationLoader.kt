@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
+import kotlin.math.abs
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.GetLibraryManga
 import yokai.domain.track.interactor.GetTrack
@@ -452,6 +453,30 @@ class DiscoverRecommendationLoader(
             read = readLibrary(saved.mode, saved.gatheredAtMs, askOrigins = false)
         }
         return reassembled(saved.copy(libraryCandidates = read.candidates, trackerRecordCandidates = read.trackerRecordCandidates))
+    }
+
+    /**
+     * The library changed by a few works (one added from a pick): only its side is read again, so
+     * the picks drop it at once without the network. Null when it changed by more, or was empty,
+     * and the taste profile is worth a new gather.
+     */
+    suspend fun withLibraryReadAgain(pool: DiscoverPool): DiscoverPool? {
+        val read = readLibrary(pool.mode, pool.gatheredAtMs, askOrigins = false)
+        val before = pool.libraryCandidates.size
+        if (before == 0 || abs(read.candidates.size - before) > LIBRARY_REREAD_MAX_CHANGE) return null
+        val seeds = read.entries.map(::entryToTasteProfileSeed) + read.books.map(::bookToTasteProfileSeed) + read.trackerRecordSeeds
+        val trackerRemoteKeys = read.tracksByManga.values.flatten()
+            .mapNotNull { recommendationTrackerRemoteKey(it.sync_id.toString(), it.media_id.toString()) }
+        // The keys only grow: Hardcover's are not read here, and a work just removed is still known until the next gather.
+        return reassembled(
+            pool.copy(
+                libraryCandidates = read.candidates,
+                trackerRecordCandidates = read.trackerRecordCandidates,
+                knownTitleKeys = pool.knownTitleKeys + knownTitleKeys(seeds),
+                knownProviderKeys = pool.knownProviderKeys + knownProviderKeys(read.entries) + trackerRemoteKeys,
+                librarySignature = read.signature,
+            ),
+        )
     }
 
     /** The library side of a pool, all from the database; only [askOrigins] reaches the network. */
@@ -947,6 +972,7 @@ class DiscoverRecommendationLoader(
         /** Restoring a saved pool waits this long for the extensions and novel plugins. */
         private const val SOURCES_READY_BUDGET_MS = 15_000L
         private const val SOURCES_SETTLE_RETRIES = 3
+        private const val LIBRARY_REREAD_MAX_CHANGE = 3
         private const val SOURCES_SETTLE_DELAY_MS = 1_000L
     }
 }

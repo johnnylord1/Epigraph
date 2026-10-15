@@ -139,15 +139,7 @@ class DiscoverScreenModel(
                 )
             }
             if (state.value.genres.isNotEmpty()) loadMoreCatalog()
-            // The library may have changed since (a sync, or works added elsewhere): the picks
-            // would still be built from the old one and suggest what is now in it.
-            screenModelScope.launch(Dispatchers.IO) {
-                val current = runCatching { loader.librarySignature() }.getOrNull() ?: return@launch
-                if (current == cached.librarySignature) return@launch
-                withContext(Dispatchers.Main) {
-                    if (state.value.mode == mode && cache[mode]?.pool === cached) load(force = true)
-                }
-            }
+            reloadIfLibraryChanged(mode, cached)
             return
         }
         loadJob?.cancel()
@@ -225,6 +217,10 @@ class DiscoverScreenModel(
         preferences.showNsfwSources().set(value)
         val options = loader.genreOptions(value)
         mutableState.update { it.copy(includeNsfw = value, genreOptions = options, genres = it.genres.filter { genre -> genre in options }) }
+        // The shown pool takes the new filter at once; turning NSFW off must not leave it on screen while the reload runs.
+        lastPool(state.value.mode)?.let { pool ->
+            mutableState.update { it.copy(result = rank(pool), catalog = catalog(pool), visibleLimits = emptyMap()) }
+        }
         load(force = true)
     }
 
@@ -345,9 +341,32 @@ class DiscoverScreenModel(
         job.start()
     }
 
-    /** Back on the screen (or the app): a pool past its TTL loads again behind the one shown. */
+    /** Back on the screen (or the app): a pool past its TTL, or built from another library, loads again behind the one shown. */
     fun refreshIfExpired() {
-        if (cachedPool(state.value.mode) == null) reloadExpiredPool()
+        val mode = state.value.mode
+        val cached = cachedPool(mode) ?: return reloadExpiredPool()
+        if (!state.value.loading) reloadIfLibraryChanged(mode, cached)
+    }
+
+    /**
+     * The library may have changed since (a sync, or a work added from a pick): the picks would
+     * still be built from the old one and suggest what is now in it. A few works only read the
+     * library again; more gather the pool again.
+     */
+    private fun reloadIfLibraryChanged(mode: DiscoverMode, cached: DiscoverPool) {
+        screenModelScope.launch(Dispatchers.IO) {
+            val current = runCatching { loader.librarySignature() }.getOrNull() ?: return@launch
+            if (current == cached.librarySignature) return@launch
+            val reread = runCatching { loader.withLibraryReadAgain(cached) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                val entry = cache[mode]
+                if (state.value.mode != mode || state.value.loading || entry?.pool !== cached) return@withContext
+                if (reread == null) return@withContext load(force = true)
+                if (!cache.replace(mode, entry, CachedPool(reread, entry.loadedAt))) return@withContext
+                mutableState.update { if (it.mode == mode) it.copy(result = rank(reread), catalog = catalog(reread)) else it }
+                launch(Dispatchers.IO) { runCatching { store.write(reread) } }
+            }
+        }
     }
 
     /** The pool expired: load it again. A load already running applies the new filters when it lands. */
