@@ -312,6 +312,8 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
         val preferences: PreferencesHelper by injectLazy()
         val getChapter: GetChapter by injectLazy()
         val getHistory: GetHistory by injectLazy()
+        // Only the adapter on screen has a list; a swapped-out one has nothing to describe.
+        val recyclerView = recyclerView ?: return ""
         val context = recyclerView.context
         if (position == itemCount - 1) return context.getString(MR.strings.bottom)
         return when (val item: IFlexible<*>? = getItem(position)) {
@@ -419,7 +421,7 @@ class LibraryCategoryAdapter(val controller: LibraryController?) :
     private fun vibrateOnCategoryChange(categoryName: String) {
         if (categoryName != lastCategory) {
             lastCategory = categoryName
-            recyclerView.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            recyclerView?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
     }
 
