@@ -125,9 +125,26 @@ pub fn spawn_projection_task(
         }
         let mut ticker = tokio::time::interval(Duration::from_secs(2));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
+        let mut maintenance = MaintenanceWatch::default();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
+                    // An update keeps the runtime down while it holds the maintenance lease, and
+                    // hands it back healthy when it releases it. Writes that failed meanwhile are
+                    // due then, not after a backoff that grew with the length of the update.
+                    let held = crate::suwayomi_maintenance::exclusive_file_lease_held(&runtime_root)
+                        .unwrap_or(false);
+                    if maintenance.ended(held) {
+                        let _writer_guard = state.mutation_gate.lock().await;
+                        match rearm_runtime_retries(&state.pool, super::db::now_ms()).await {
+                            Ok(0) => {}
+                            Ok(count) => tracing::info!(count, "rearmed Suwayomi projections after runtime maintenance"),
+                            Err(error) => {
+                                tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
+                            }
+                        }
+                    }
                     if let Err(error) = drain_ready(&state).await {
                         tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
                     }
@@ -136,6 +153,20 @@ pub fn spawn_projection_task(
             }
         }
     });
+}
+
+/// Follows the runtime maintenance lease across ticks to notice when maintenance ends.
+#[derive(Default)]
+struct MaintenanceWatch {
+    held: bool,
+}
+
+impl MaintenanceWatch {
+    fn ended(&mut self, held: bool) -> bool {
+        let ended = self.held && !held;
+        self.held = held;
+        ended
+    }
 }
 
 #[allow(dead_code)]
@@ -1203,6 +1234,15 @@ mod tests {
                 ("outage".to_string(), 9, 500),
             ]
         );
+    }
+
+    #[test]
+    fn maintenance_watch_reports_only_the_release_of_the_lease() {
+        let mut watch = MaintenanceWatch::default();
+        // No maintenance yet, then an update holds the lease across ticks, then releases it.
+        let observed = [false, false, true, true, false, false, true, false]
+            .map(|held| watch.ended(held));
+        assert_eq!(observed, [false, false, false, false, true, false, false, true]);
     }
 
     #[test]

@@ -250,7 +250,10 @@ many Suwayomi mutations do not expose an idempotency key, so replaying them
 could duplicate downloads or destructive actions. Mutations already accepted
 by Core remain in Core's durable state and are not interpreted as deletions
 while Suwayomi is unavailable. Maintenance ends only after the selected runtime
-has passed its final health check.
+has passed its final health check. Core projections that failed because the
+runtime was down are due again as soon as the maintenance lease is released, so
+progress written on another device during an update reaches Suwayomi right
+after it instead of after a backoff that grew with the update.
 
 On the next managed startup, Epigraph starts the runtime `runtime-state.json`
 confirms and otherwise falls back to the bundled JAR. Windows uses the bundled
