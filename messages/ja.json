@@ -2879,6 +2879,7 @@
   "sources_runtime_invalidApk": "ファイルは .apk 拡張機能パッケージである必要があります。",
   "sources_runtime_installFailed": "インストールに失敗しました",
   "sources_runtime_updateUnavailable": "この拡張機能の更新は利用できなくなりました。",
+  "sources_runtime_updateDownloadFailed": "拡張機能の更新をダウンロードできませんでした。接続を確認してもう一度お試しください。",
   "sources_runtime_updateCompatibilityFailed": "互換性チェックに失敗したため、更新は確認用に保持されました。",
   "sources_runtime_novelMetadataIncomplete": "小説ソースのメタデータが不完全です。",
   "sources_runtime_novelSourceMissing": "この小説ソースはキャッシュされたリポジトリカタログに存在しません。",

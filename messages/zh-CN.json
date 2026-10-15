@@ -2879,6 +2879,7 @@
   "sources_runtime_invalidApk": "文件必须是 .apk 扩展包。",
   "sources_runtime_installFailed": "安装失败",
   "sources_runtime_updateUnavailable": "扩展更新已不再可用。",
+  "sources_runtime_updateDownloadFailed": "无法下载扩展更新。请检查网络连接后重试。",
   "sources_runtime_updateCompatibilityFailed": "由于兼容性检查失败，更新已保留供审核。",
   "sources_runtime_novelMetadataIncomplete": "小说来源元数据不完整。",
   "sources_runtime_novelSourceMissing": "此小说来源已不在缓存的仓库目录中。",

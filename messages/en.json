@@ -2879,6 +2879,7 @@
   "sources_runtime_invalidApk": "File must be an .apk extension package.",
   "sources_runtime_installFailed": "Install failed",
   "sources_runtime_updateUnavailable": "The extension update is no longer available.",
+  "sources_runtime_updateDownloadFailed": "Could not download the extension update. Check your connection and try again.",
   "sources_runtime_updateCompatibilityFailed": "The update was preserved for review because compatibility checks failed.",
   "sources_runtime_novelMetadataIncomplete": "Novel source metadata is incomplete.",
   "sources_runtime_novelSourceMissing": "Novel source is no longer present in the cached repository catalog.",

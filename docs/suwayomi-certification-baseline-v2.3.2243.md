@@ -164,12 +164,18 @@ On 2026-07-28, automatic manga-extension updates were moved behind
   extension with an update, while its artifact URL already serves the new
   version. The first install of the staged bytes in the candidate therefore
   learns the artifact's identity: same package, version code not older than
-  the installed one. Every later install of those bytes (staging rebuild,
-  activation, restart checks) must report exactly that identity, and the
-  evidence carries it.
+  the installed one and, when the file name declares a version in the
+  Tachiyomi convention (`...-v1.6.49.jar`), that same version name. Every later
+  install of those bytes (staging rebuild, activation, restart checks) must
+  report exactly that identity, and the evidence carries it.
+- Evidence states whether its identity was confirmed. An artifact that fails
+  before declaring its version still carries the pre-update version, so it is
+  reported as rejected but no compatibility is recorded under that version.
 - An artifact that cannot be downloaded or staged rejects only its own update
   as `ARTIFACT_UNAVAILABLE`, with no artifact digest; nothing about its
-  compatibility is recorded. When no artifact stages, the runtime is not
+  compatibility is recorded and the user is told the download failed. A
+  dropped connection or a store server error gets one more try first; a missing
+  artifact does not. When no artifact stages, the runtime is not
   stopped. Malformed or unsafe items (incomplete metadata, a non-HTTPS URL)
   still refuse the whole batch before anything is downloaded.
 - Approved artifacts are activated as one logical batch. Any activation or

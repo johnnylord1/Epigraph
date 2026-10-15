@@ -48,6 +48,7 @@ function result(overrides: Partial<ExtensionNativeBatchResult> = {}): ExtensionN
       status: "HEALTHY",
       failureOwner: "unknown",
       failureCode: null,
+      identityConfirmed: true,
     }],
     rejected: [],
     restartedRuntime: true,
@@ -122,20 +123,31 @@ describe("ExtensionUpdateCoordinator", () => {
     expect(service.getPhase()).toBe("COMPLETED");
   });
 
-  test("records no compatibility for an artifact that could not be downloaded", async () => {
+  test("records no compatibility for an artifact that could not be downloaded or never declared its version", async () => {
     const unavailable = {
       ...result().approved[0]!,
       artifactSha256: "",
       sourceIds: [],
       status: "INCOMPATIBLE" as const,
       failureCode: "ARTIFACT_UNAVAILABLE",
+      identityConfirmed: false,
+    };
+    // Its version is still the installed one, so recording it would mark that version incompatible.
+    const undeclared = {
+      ...result().approved[0]!,
+      packageName: "eu.kanade.tachiyomi.extension.en.undeclared",
+      artifactSha256: "d".repeat(64),
+      sourceIds: [],
+      status: "INCOMPATIBLE" as const,
+      failureCode: "STRUCTURAL_CERTIFICATION_FAILED",
+      identityConfirmed: false,
     };
     const service = coordinator({
-      runBatch: vi.fn(async () => result({ approved: [], rejected: [unavailable], restartedRuntime: false })),
+      runBatch: vi.fn(async () => result({ approved: [], rejected: [unavailable, undeclared], restartedRuntime: false })),
     });
-    const batch = await service.run([extension()]);
+    const batch = await service.run([extension(), extension({ packageName: undeclared.packageName })]);
 
-    expect(batch.rejected).toEqual([unavailable]);
+    expect(batch.rejected).toEqual([unavailable, undeclared]);
     expect(batch.state.records).toEqual([]);
     expect(batch.state.reports).toEqual([]);
     expect(service.getPhase()).toBe("COMPLETED");

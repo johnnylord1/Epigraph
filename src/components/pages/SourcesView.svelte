@@ -648,6 +648,13 @@
     }
   }
 
+  /** A download that failed is worth retrying; a failed compatibility check is not. */
+  function updateRejectionMessage(rejection: { failureCode: string | null }): string {
+    return rejection.failureCode === "ARTIFACT_UNAVAILABLE"
+      ? translate("sources_runtime_updateDownloadFailed")
+      : translate("sources_runtime_updateCompatibilityFailed");
+  }
+
   async function checkCompatibility(extension: ManagedExtension) {
     if (extension.kind !== "manga" || checkingCompatibilityPkg) return;
     checkingCompatibilityPkg = extension.pkgName;
@@ -1256,7 +1263,7 @@
         const batchResult = await certifyMangaExtensionUpdates([candidate]);
         const rejection = batchResult.rejected.find((item) => item.packageName === extension.pkgName);
         if (rejection) {
-          throw new Error(translate("sources_runtime_updateCompatibilityFailed"));
+          throw new Error(updateRejectionMessage(rejection));
         }
       },
       extension.pkgName,
@@ -1348,17 +1355,17 @@
           .filter((extension) => candidateNames.has(extension.packageName));
         const batchResult = await certifyMangaExtensionUpdates(runtimeCandidates);
         const updatedPkgNames = new Set(batchResult.approved.map((item) => item.packageName));
-        const rejectedPkgNames = new Set(batchResult.rejected.map((item) => item.packageName));
+        const rejections = new Map(batchResult.rejected.map((item) => [item.packageName, item]));
         failedUpdateCount = candidates.length - updatedPkgNames.size;
         for (const extension of candidates) {
           if (updatedPkgNames.has(extension.pkgName)) {
             if (selectedPkgName === extension.pkgName) {
               void loadExtensionPreferences(extension);
             }
-          } else if (rejectedPkgNames.has(extension.pkgName)) {
+          } else if (rejections.has(extension.pkgName)) {
             setExtensionOperationError(
               extension.pkgName,
-              translate("sources_runtime_updateCompatibilityFailed"),
+              updateRejectionMessage(rejections.get(extension.pkgName)!),
             );
           } else {
             setExtensionOperationError(

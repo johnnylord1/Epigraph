@@ -42,6 +42,8 @@ export interface ExtensionBatchEvidence {
   status: "HEALTHY" | "INCOMPATIBLE";
   failureOwner: ExtensionFailureOwner;
   failureCode: string | null;
+  /** False when the artifact failed before declaring its own version; the version is then the one installed before. */
+  identityConfirmed: boolean;
 }
 
 export interface ExtensionNativeBatchResult {
@@ -174,8 +176,9 @@ export class ExtensionUpdateCoordinator {
   }
 
   private record(result: ExtensionNativeBatchResult, evidence: ExtensionBatchEvidence): void {
-    // An artifact that could not be downloaded was never tested: it says nothing about compatibility.
-    if (!evidence.artifactSha256) return;
+    // An artifact that could not be downloaded, or failed before declaring its version, says nothing
+    // about the compatibility of any known version.
+    if (!evidence.artifactSha256 || !evidence.identityConfirmed) return;
     const checkedAt = this.now();
     this.state = upsertExtensionCompatibilityRecord(this.state, {
       schemaVersion: 1,

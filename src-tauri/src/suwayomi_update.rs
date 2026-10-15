@@ -335,6 +335,10 @@ pub struct ExtensionUpdateBatchEvidence {
     status: String,
     failure_owner: String,
     failure_code: Option<String>,
+    /// Whether the version is the one the artifact itself declared. When it failed before
+    /// declaring it, the version is the one installed before the update and says nothing about
+    /// the artifact, so no compatibility may be recorded under it.
+    identity_confirmed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2872,11 +2876,25 @@ fn verify_installed_extension_identity(
         code == expected && name == artifact.input.version_name
     } else {
         code >= expected
+            && declared_artifact_version(&artifact.file_name)
+                .map_or(true, |declared| name.trim_start_matches(['v', 'V']) == declared)
     };
     if !matches {
         return Err(unexpected());
     }
     Ok((code.to_string(), name.to_string()))
+}
+
+/// The version a Tachiyomi-style artifact file name declares (`tachiyomi-en.demo-v1.4.2.apk`), if
+/// it follows that convention.
+fn declared_artifact_version(file_name: &str) -> Option<&str> {
+    let stem = file_name
+        .strip_suffix(".jar")
+        .or_else(|| file_name.strip_suffix(".apk"))?;
+    let (_, version) = stem.rsplit_once("-v")?;
+    (version.starts_with(|c: char| c.is_ascii_digit())
+        && version.chars().all(|c| c.is_ascii_digit() || c == '.'))
+    .then_some(version)
 }
 
 /// Installs the exact staged bytes and returns the identity they declared with the sources they
@@ -3056,6 +3074,7 @@ fn extension_evidence(
         // extension owns the failure. Detailed diagnostics classify it later.
         failure_owner: "unknown".to_string(),
         failure_code,
+        identity_confirmed: artifact.identity_pinned,
     }
 }
 
@@ -3073,7 +3092,18 @@ fn unstaged_extension_evidence(item: &ExtensionUpdateBatchItem) -> ExtensionUpda
         status: "INCOMPATIBLE".to_string(),
         failure_owner: "unknown".to_string(),
         failure_code: Some("ARTIFACT_UNAVAILABLE".to_string()),
+        identity_confirmed: false,
     }
+}
+
+/// Whether a staging failure may pass on a second try: the connection failed or the store answered
+/// with a server error. A missing artifact (HTTP 404) or an oversized one never will.
+fn staging_failure_is_transient(error: &str) -> bool {
+    error.starts_with("Could not download extension artifact")
+        || error.starts_with("Extension artifact download failed")
+        || ["HTTP 5", "HTTP 408", "HTTP 429"]
+            .iter()
+            .any(|status| error.contains(status))
 }
 
 fn stop_target_if_running(app: &AppHandle, target: &LocalServerTarget) -> Result<(), String> {
@@ -3375,8 +3405,17 @@ pub async fn certify_suwayomi_extension_update_batch(
     let mut artifacts = Vec::with_capacity(items.len());
     let mut unstaged = Vec::new();
     for item in items {
-        // An artifact the store no longer serves fails only its own update.
-        match stage_extension_artifact(&client, &artifacts_root, item.clone()).await {
+        // An artifact the store no longer serves fails only its own update; one the network
+        // dropped gets a second try first.
+        let mut staged = stage_extension_artifact(&client, &artifacts_root, item.clone()).await;
+        if staged
+            .as_ref()
+            .is_err_and(|error| staging_failure_is_transient(error))
+        {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            staged = stage_extension_artifact(&client, &artifacts_root, item.clone()).await;
+        }
+        match staged {
             Ok(artifact) => artifacts.push(artifact),
             Err(_) => unstaged.push(unstaged_extension_evidence(&item)),
         }
@@ -5929,6 +5968,86 @@ server.extensionStores = ["https://two.example/index.json"]
         ] {
             assert!(verify_installed_extension_identity(&drifted, &artifact).is_err());
         }
+    }
+
+    #[test]
+    fn a_learned_identity_must_agree_with_the_version_the_file_name_declares() {
+        let artifact = |file_name: &str| StagedExtensionArtifact {
+            input: ExtensionUpdateBatchItem {
+                package_name: "eu.kanade.tachiyomi.extension.en.comix".to_string(),
+                version_code: "106042".to_string(),
+                version_name: "1.6.42".to_string(),
+                store_id: "keiyoushi".to_string(),
+                store_url_canonical: "https://store.example/index.min.json".to_string(),
+                artifact_url: format!("https://store.example/{file_name}"),
+                artifact_type: "jar".to_string(),
+            },
+            file_name: file_name.to_string(),
+            path: PathBuf::from(file_name),
+            sha256: "00".to_string(),
+            identity_pinned: false,
+        };
+        let installed = |code: i64, name: &str| {
+            json!({ "pkgName": "eu.kanade.tachiyomi.extension.en.comix", "versionCodeLong": code, "versionName": name, "isInstalled": true })
+        };
+
+        let named = artifact("tachiyomi-en.comix-v1.6.49.jar");
+        assert!(verify_installed_extension_identity(&installed(106049, "1.6.49"), &named).is_ok());
+        assert!(verify_installed_extension_identity(&installed(106049, "v1.6.49"), &named).is_ok());
+        // Bytes that declare another version than the store published under that name.
+        assert!(verify_installed_extension_identity(&installed(106050, "1.6.50"), &named).is_err());
+        // A name without the convention leaves only the package and version-floor checks.
+        let unnamed = artifact("comix.jar");
+        assert!(verify_installed_extension_identity(&installed(106050, "1.6.50"), &unnamed).is_ok());
+
+        assert_eq!(declared_artifact_version("tachiyomi-all.comikey-v1.6.12.apk"), Some("1.6.12"));
+        assert_eq!(declared_artifact_version("tachiyomi-en.multi-vendor-v2.jar"), Some("2"));
+        for none in ["comix.jar", "comix-v.jar", "comix-vbeta.jar", "comix-v1.6.49.zip", "comix-v1.6-rc1.jar"] {
+            assert_eq!(declared_artifact_version(none), None, "{none}");
+        }
+    }
+
+    #[test]
+    fn only_network_and_server_failures_retry_staging() {
+        for transient in [
+            "Could not download extension artifact: connection reset",
+            "Extension artifact download failed: unexpected EOF",
+            "Extension artifact download returned HTTP 503 Service Unavailable.",
+            "Extension artifact download returned HTTP 429 Too Many Requests.",
+        ] {
+            assert!(staging_failure_is_transient(transient), "{transient}");
+        }
+        for permanent in [
+            "Extension artifact download returned HTTP 404 Not Found.",
+            "Extension artifact exceeds the staging size limit.",
+            "Extension artifact redirect left credential-free HTTPS.",
+            "Extension artifact download was empty.",
+        ] {
+            assert!(!staging_failure_is_transient(permanent), "{permanent}");
+        }
+    }
+
+    #[test]
+    fn evidence_confirms_the_identity_only_once_the_artifact_declared_it() {
+        let mut artifact = StagedExtensionArtifact {
+            input: ExtensionUpdateBatchItem {
+                package_name: "eu.kanade.tachiyomi.extension.en.comix".to_string(),
+                version_code: "106042".to_string(),
+                version_name: "1.6.42".to_string(),
+                store_id: "keiyoushi".to_string(),
+                store_url_canonical: "https://store.example/index.min.json".to_string(),
+                artifact_url: "https://store.example/comix-v1.6.49.jar".to_string(),
+                artifact_type: "jar".to_string(),
+            },
+            file_name: "comix-v1.6.49.jar".to_string(),
+            path: PathBuf::from("comix-v1.6.49.jar"),
+            sha256: "00".to_string(),
+            identity_pinned: false,
+        };
+        assert!(!extension_evidence(&artifact, Vec::new(), "INCOMPATIBLE", None).identity_confirmed);
+        assert!(!unstaged_extension_evidence(&artifact.input).identity_confirmed);
+        artifact.identity_pinned = true;
+        assert!(extension_evidence(&artifact, Vec::new(), "HEALTHY", None).identity_confirmed);
     }
 
     #[test]

@@ -2879,6 +2879,7 @@
   "sources_runtime_invalidApk": "El archivo debe ser un paquete de extensión .apk.",
   "sources_runtime_installFailed": "Instalación fallida",
   "sources_runtime_updateUnavailable": "La actualización de la extensión ya no está disponible.",
+  "sources_runtime_updateDownloadFailed": "No se pudo descargar la actualización de la extensión. Comprueba tu conexión e inténtalo de nuevo.",
   "sources_runtime_updateCompatibilityFailed": "La actualización se conservó para revisión porque fallaron las comprobaciones de compatibilidad.",
   "sources_runtime_novelMetadataIncomplete": "Los metadatos de la fuente de novelas están incompletos.",
   "sources_runtime_novelSourceMissing": "La fuente de novelas ya no está en el catálogo de repositorios en caché.",
