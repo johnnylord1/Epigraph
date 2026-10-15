@@ -204,6 +204,8 @@ class DiscoverScreenModel(
                 } finally {
                     if (!gathering.isCompleted) gathering.cancel()
                 } ?: throw IllegalStateException("")
+                // An empty gather would replace the saved picks with nothing; keep them instead.
+                if (pool.foundNothingOnline) throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 // Saving waits for nothing on screen.
                 launch { runCatching { store.write(pool) } }
