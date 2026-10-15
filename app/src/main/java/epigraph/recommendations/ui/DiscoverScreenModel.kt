@@ -204,12 +204,12 @@ class DiscoverScreenModel(
                 } finally {
                     if (!gathering.isCompleted) gathering.cancel()
                 } ?: throw IllegalStateException("")
-                // An empty gather would replace the saved picks with nothing; keep them instead.
-                if (pool.foundNothingOnline) throw IllegalStateException("")
+                val result = rank(pool)
+                // Offline the providers fail and leave no picks; that would replace the saved ones with nothing.
+                if (result.sections.isEmpty() && pool.failedProviders.isNotEmpty()) throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
                 // Saving waits for nothing on screen.
                 launch { runCatching { store.write(pool) } }
-                val result = rank(pool)
                 val catalogEntries = catalog(pool)
                 mutableState.update {
                     if (it.mode == mode) {

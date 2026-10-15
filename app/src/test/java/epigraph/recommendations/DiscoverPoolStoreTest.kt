@@ -64,14 +64,6 @@ class DiscoverPoolStoreTest {
     }
 
     @Test
-    fun `a gather with nothing from the network counts as failed`() {
-        val pool = gathered()
-        assertFalse(pool.foundNothingOnline)
-        // Offline: the library and tracker records are still read, but no provider answered.
-        assertTrue(pool.copy(comicEntries = emptyList()).foundNothingOnline)
-    }
-
-    @Test
     fun `the library read again assembles the same candidates`() {
         val store = DiscoverPoolStore(dir)
         val pool = gathered()
