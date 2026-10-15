@@ -331,6 +331,8 @@ pub fn begin_exclusive_maintenance(
     })
 }
 
+/// Only Epigraph versions before the versioned runtime store wrote update journals; tests recreate them.
+#[cfg(test)]
 pub fn new_update_journal(
     operation_id: String,
     profile_id: String,

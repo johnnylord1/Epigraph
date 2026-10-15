@@ -367,6 +367,107 @@ fn remove_legacy_directories(runtime_root: &Path) {
     }
 }
 
+/// Starts trying `pending`: publishes it from `staging_dir` and records it as pending, the last step,
+/// so a failure before it leaves nothing to undo. The caller holds the runtime lease, has stopped the
+/// pending profile and settled any interrupted update.
+pub fn begin_attempt(
+    runtime_root: &Path,
+    staging_dir: &Path,
+    sha256: &str,
+    pending: PendingRuntime,
+    jar_version: impl Fn(&Path) -> Option<String>,
+) -> Result<RuntimeState, String> {
+    let mut state = migrate_legacy_layout(runtime_root, jar_version)?;
+    if let Some(existing) = &state.pending {
+        return Err(format!(
+            "An interrupted Suwayomi update to {} must be recovered first.",
+            existing.version
+        ));
+    }
+    publish_version(runtime_root, staging_dir, &pending.version, sha256)?;
+    state.pending = Some(pending);
+    write_state(runtime_root, &state)?;
+    Ok(state)
+}
+
+/// Makes the attempt `operation_id` the confirmed runtime in one replace of the state, then collects
+/// runtimes nothing points at. Returns the new state.
+pub fn commit_attempt(runtime_root: &Path, operation_id: &str) -> Result<RuntimeState, String> {
+    let mut state = read_state_for_update(runtime_root)?;
+    let pending = state
+        .pending
+        .take()
+        .filter(|pending| pending.operation_id == operation_id)
+        .ok_or_else(|| "The Suwayomi update being committed is no longer pending.".to_string())?;
+    if state.confirmed.as_deref() != Some(pending.version.as_str()) {
+        state.previous_confirmed = state.confirmed.take();
+        state.confirmed = Some(pending.version);
+    }
+    write_state(runtime_root, &state)?;
+    collect_garbage(runtime_root, &state);
+    Ok(state)
+}
+
+/// Clears the attempt `operation_id` once its profile was restored; a no-op when it is not pending.
+pub fn abandon_attempt(runtime_root: &Path, operation_id: &str) -> Result<(), String> {
+    let mut state = read_state_for_update(runtime_root)?;
+    if state
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.operation_id == operation_id)
+    {
+        state.pending = None;
+        write_state(runtime_root, &state)?;
+    }
+    Ok(())
+}
+
+pub enum PendingRestoreError {
+    /// Worth retrying (a file still in use); the attempt stays pending.
+    Retry(String),
+    /// The snapshot can never be restored; keeping the attempt pending would only keep the profile
+    /// offline, so it is cleared and recorded in `diagnostics/`.
+    Unusable(String),
+}
+
+/// Undoes an attempt abandoned midway (its process died): restores the pending profile from the
+/// snapshot taken before it and clears `pending`, so the confirmed runtime starts again. The caller
+/// holds the runtime lease and has stopped the pending profile's server. Idempotent: running it again
+/// after an interruption restores the same snapshot. Returns the attempt it undid.
+pub fn roll_back_pending(
+    runtime_root: &Path,
+    restore: impl FnOnce(&PendingRuntime) -> Result<(), PendingRestoreError>,
+) -> Result<Option<PendingRuntime>, String> {
+    let state = read_state_for_update(runtime_root)?;
+    let Some(pending) = state.pending.clone() else {
+        return Ok(None);
+    };
+    match restore(&pending) {
+        Ok(()) => {}
+        Err(PendingRestoreError::Retry(error)) => return Err(error),
+        Err(PendingRestoreError::Unusable(error)) => {
+            record_unrestorable_attempt(runtime_root, &pending, &error);
+        }
+    }
+    abandon_attempt(runtime_root, &pending.operation_id)?;
+    Ok(Some(pending))
+}
+
+fn record_unrestorable_attempt(runtime_root: &Path, pending: &PendingRuntime, error: &str) {
+    eprintln!(
+        "[epigraph-suwayomi-runtime] abandoned update to {} could not restore its snapshot: {error}",
+        pending.version
+    );
+    let diagnostics = runtime_root.join(DIAGNOSTICS_DIR);
+    let record = serde_json::json!({ "pending": pending, "error": error });
+    let _ = fs::create_dir_all(&diagnostics).and_then(|()| {
+        fs::write(
+            diagnostics.join(format!("unrestored-update-{}.json", unix_now_ms())),
+            serde_json::to_vec_pretty(&record).unwrap_or_default(),
+        )
+    });
+}
+
 /// Removes runtimes nothing points at any more. Best effort: one a server still runs from stays until
 /// the next pass. Returns the versions removed.
 pub fn collect_garbage(runtime_root: &Path, state: &RuntimeState) -> Vec<String> {
@@ -428,7 +529,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
         .collect())
 }
 
-fn unix_now_ms() -> u64 {
+pub fn unix_now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -652,6 +753,94 @@ mod tests {
         let state = migrate_legacy_layout(other.path(), |_| Some("not a/version".into())).unwrap();
         assert_eq!(state.confirmed.as_deref(), Some("legacy"));
         assert!(version_jar(other.path(), "legacy").unwrap().is_file());
+    }
+
+    fn begin(runtime: &Path, version: &str, bytes: &[u8], root: &Path, op: &str) -> Result<RuntimeState, String> {
+        let mut attempt = pending(version, root);
+        attempt.operation_id = op.into();
+        begin_attempt(runtime, &stage(runtime, version, bytes), &sha(bytes), attempt, |_| None)
+    }
+
+    #[test]
+    fn an_attempt_is_tried_by_its_profile_and_confirmed_in_one_step() {
+        let temp = tempdir().unwrap();
+        let runtime = temp.path().join("runtime");
+        let main = temp.path().join("main");
+        fs::create_dir_all(&main).unwrap();
+
+        let state = begin(&runtime, "v1", b"one", &main, "op1").unwrap();
+        assert_eq!(state.confirmed, None);
+        let v1 = version_jar(&runtime, "v1").unwrap();
+        assert_eq!(resolve_managed_jar_with(&runtime, Some(&main), || true), Some(v1.clone()));
+        // Interrupted here: everything else, and the profile itself outside maintenance, stays bundled.
+        assert_eq!(resolve_managed_jar_with(&runtime, Some(&main), || false), None);
+        // A second attempt cannot start over an unrecovered one.
+        assert!(begin(&runtime, "v2", b"two", &main, "op2").is_err());
+
+        assert!(commit_attempt(&runtime, "other-op").is_err());
+        let state = commit_attempt(&runtime, "op1").unwrap();
+        assert_eq!((state.confirmed.as_deref(), state.previous_confirmed.as_deref()), (Some("v1"), None));
+        assert_eq!(state.pending, None);
+        assert_eq!(resolve_managed_jar_with(&runtime, Some(&main), || false), Some(v1.clone()));
+
+        begin(&runtime, "v2", b"two", &main, "op2").unwrap();
+        let state = commit_attempt(&runtime, "op2").unwrap();
+        assert_eq!((state.confirmed.as_deref(), state.previous_confirmed.as_deref()), (Some("v2"), Some("v1")));
+        // Reinstalling the confirmed version keeps the runtime before it.
+        begin(&runtime, "v2", b"two", &main, "op3").unwrap();
+        let state = commit_attempt(&runtime, "op3").unwrap();
+        assert_eq!((state.confirmed.as_deref(), state.previous_confirmed.as_deref()), (Some("v2"), Some("v1")));
+        // A third version collects the oldest one.
+        begin(&runtime, "v3", b"three", &main, "op4").unwrap();
+        commit_attempt(&runtime, "op4").unwrap();
+        assert!(!version_dir(&runtime, "v1").unwrap().exists());
+        assert!(version_dir(&runtime, "v2").unwrap().exists());
+    }
+
+    #[test]
+    fn an_abandoned_attempt_is_rolled_back_idempotently() {
+        let temp = tempdir().unwrap();
+        let runtime = temp.path().join("runtime");
+        let main = temp.path().join("main");
+        fs::create_dir_all(&main).unwrap();
+        begin(&runtime, "v1", b"one", &main, "op1").unwrap();
+        commit_attempt(&runtime, "op1").unwrap();
+        begin(&runtime, "v2", b"two", &main, "op2").unwrap();
+
+        // A restore that cannot finish yet keeps the attempt pending, to be retried.
+        let error = roll_back_pending(&runtime, |_| Err(PendingRestoreError::Retry("in use".into()))).unwrap_err();
+        assert_eq!(error, "in use");
+        assert!(read_state(&runtime).unwrap().unwrap().pending.is_some());
+
+        let mut restored = Vec::new();
+        let undone = roll_back_pending(&runtime, |pending| {
+            restored.push(pending.operation_id.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(undone.map(|pending| pending.version), Some("v2".into()));
+        assert_eq!(restored, vec!["op2".to_string()]);
+        let state = read_state(&runtime).unwrap().unwrap();
+        assert_eq!((state.confirmed.as_deref(), state.pending), (Some("v1"), None));
+        assert_eq!(
+            resolve_managed_jar_with(&runtime, Some(&main), || true),
+            Some(version_jar(&runtime, "v1").unwrap())
+        );
+        // Nothing left to undo; a late commit of the abandoned attempt is refused.
+        assert_eq!(roll_back_pending(&runtime, |_| panic!("not asked")).unwrap(), None);
+        assert!(commit_attempt(&runtime, "op2").is_err());
+        abandon_attempt(&runtime, "op2").unwrap();
+    }
+
+    #[test]
+    fn an_attempt_whose_snapshot_is_gone_never_keeps_the_profile_offline() {
+        let temp = tempdir().unwrap();
+        let runtime = temp.path().join("runtime");
+        begin(&runtime, "v1", b"one", temp.path(), "op1").unwrap();
+        roll_back_pending(&runtime, |_| Err(PendingRestoreError::Unusable("snapshot missing".into()))).unwrap();
+        assert_eq!(read_state(&runtime).unwrap().unwrap().pending, None);
+        let records = fs::read_dir(runtime.join(DIAGNOSTICS_DIR)).unwrap().count();
+        assert_eq!(records, 1);
     }
 
     #[test]
