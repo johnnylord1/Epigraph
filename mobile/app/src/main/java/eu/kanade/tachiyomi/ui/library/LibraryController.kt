@@ -624,7 +624,7 @@ open class LibraryController(
     private val booksModeState = androidx.compose.runtime.mutableStateOf(false)
     private var booksModeReconciledForView = false
     /** Books-only filter state; never persisted through the Comics preference set. */
-    private var booksTypeFilter: String? = null
+    private var booksTypeFilter: String? = get<LibraryPreferences>().booksTypeFilter().get().ifEmpty { null }
     private var booksRelinkId: String? = null
     private val localBookRepository: LocalBookRepository = get()
     private val localBookImportService: LocalBookImportService = get()

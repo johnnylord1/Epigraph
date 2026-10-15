@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import yokai.util.koin.injectLazy
+import yokai.domain.library.LibraryPreferences
 import yokai.i18n.MR
 import yokai.util.lang.getString
 
@@ -59,6 +60,7 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
      * Preferences helper.
      */
     private val preferences: PreferencesHelper by injectLazy()
+    private val libraryPreferences: LibraryPreferences by injectLazy()
 
     private lateinit var binding: FilterBottomSheetBinding
 
@@ -101,9 +103,11 @@ class FilterBottomSheet @JvmOverloads constructor(context: Context, attrs: Attri
 
     /** Tracker name picked under Tracked in Books; Comics keeps its own [FILTER_TRACKER]. */
     var onBooksTrackerFilterChanged: (String) -> Unit = { _ -> }
-    private var booksFilterTracker = ""
+    // Saved by the Books view, so the chips come back as they were left.
+    private var booksFilterTracker = libraryPreferences.booksTrackerFilter().get()
 
-    private val booksFilterStates = mutableMapOf<Char, Int>()
+    private val booksFilterStates =
+        LibraryPreferences.decodeBooksFilterStates(libraryPreferences.booksFilterStates().get()).toMutableMap()
 
     var sheetBehavior: BottomSheetBehavior<View>? = null
 
