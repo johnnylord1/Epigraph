@@ -6,6 +6,7 @@ import epigraph.contract.ReaderLocator
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
 import eu.kanade.tachiyomi.data.database.models.isNovel
+import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.track.TrackManager
@@ -36,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import eu.kanade.tachiyomi.ui.library.LibraryPlaceholderItem
 import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.FileUncategorizedInCategory
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.manga.MangaRepository
 import yokai.domain.track.interactor.GetTrack
@@ -117,10 +119,18 @@ class UnifiedLibraryBooksView(
     private var trackerFilter = ""
 
     private val downloadManager: DownloadManager by injectLazy()
+    private val downloadCache: DownloadCache by injectLazy()
     private val trackManager: TrackManager by injectLazy()
     private val getTrack: GetTrack by injectLazy()
     private val getCategories: GetCategories by injectLazy()
     private val libraryPreferences: LibraryPreferences by injectLazy()
+
+    init {
+        // The Books filters stay as they were left, like the Comics ones.
+        selectedType = typeFilterOf(libraryPreferences.booksTypeFilter().get())
+        booksFilterStates = LibraryPreferences.decodeBooksFilterStates(libraryPreferences.booksFilterStates().get())
+        trackerFilter = libraryPreferences.booksTrackerFilter().get()
+    }
 
     /**
      * Real category ids (0 = Default) shown as sections. Like the Comics library, every Books &
@@ -172,8 +182,11 @@ class UnifiedLibraryBooksView(
                 sourceManager.libraryClassificationChanges,
                 getCategories.subscribe(CategoryLibrary.BOOKS),
                 // Book category links and novel downloads live outside the library tables, so
-                // assignments and returns to the library bump this revision.
-                categoryRevision,
+                // assignments and returns to the library bump this revision. The download cache is
+                // still indexing on a cold start, and Comics redraws when it finishes; so do novels.
+                categoryRevision
+                    .combine(downloadCache.changes) { revision, _ -> revision }
+                    .combine(FileUncategorizedInCategory.revisions) { revision, _ -> revision },
             ) { local, library, _, categories, _ ->
                 Triple(
                     local,
@@ -323,13 +336,16 @@ class UnifiedLibraryBooksView(
 
     /** Called by the shared Library filter sheet. Empty/null means all book types. */
     fun setTypeFilter(value: String?) {
-        selectedType = when (value?.uppercase()) {
-            "NOVELS" -> TypeFilter.NOVELS
-            "EPUB" -> TypeFilter.EPUB
-            "PDF" -> TypeFilter.PDF
-            else -> TypeFilter.ALL
-        }
+        selectedType = typeFilterOf(value)
+        libraryPreferences.booksTypeFilter().set(selectedType.takeIf { it != TypeFilter.ALL }?.name.orEmpty())
         submitItems()
+    }
+
+    private fun typeFilterOf(value: String?) = when (value?.uppercase()) {
+        "NOVELS" -> TypeFilter.NOVELS
+        "EPUB" -> TypeFilter.EPUB
+        "PDF" -> TypeFilter.PDF
+        else -> TypeFilter.ALL
     }
 
     /** Applies a common library filter without writing to the Comics preference store. */
@@ -341,6 +357,7 @@ class UnifiedLibraryBooksView(
             if (state != FILTER_IGNORE) states.remove(other)
         }
         booksFilterStates = states
+        libraryPreferences.booksFilterStates().set(LibraryPreferences.encodeBooksFilterStates(states))
         submitItems()
     }
 
@@ -348,6 +365,7 @@ class UnifiedLibraryBooksView(
     fun setTrackerFilter(name: String) {
         if (trackerFilter == name) return
         trackerFilter = name
+        libraryPreferences.booksTrackerFilter().set(name)
         submitItems()
     }
 
@@ -355,6 +373,9 @@ class UnifiedLibraryBooksView(
         booksFilterStates = emptyMap()
         trackerFilter = ""
         selectedType = TypeFilter.ALL
+        libraryPreferences.booksFilterStates().delete()
+        libraryPreferences.booksTrackerFilter().delete()
+        libraryPreferences.booksTypeFilter().delete()
         submitItems()
     }
 
@@ -425,14 +446,17 @@ class UnifiedLibraryBooksView(
         }
 
         val sections = if (grouped) {
-            // Every present category keeps its header, even when filters empty it, like Comics.
+            // Every present category keeps its header; while filtering, one the filters empty is
+            // left out unless the Comics setting asks to show it, as Comics does.
             val byHeader = sorted.groupBy { it.sectionHeader.catId }
+            val dropEmpty = hasActiveFilters && !preferences.showEmptyCategoriesWhileFiltering().get()
             presentCategoryIds
                 .map { groupHeader(it) }
                 .sortedBy { it.category.order }
                 .flatMap { header ->
                     val items = byHeader[header.catId].orEmpty()
                     when {
+                        dropEmpty && items.isEmpty() -> emptyList()
                         header.category.isHidden -> listOf(
                             LibraryPlaceholderItem.hidden(
                                 header.catId,

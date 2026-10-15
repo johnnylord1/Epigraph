@@ -9,6 +9,7 @@ import java.util.Locale
 import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.serialization.Serializable
 
 
 /**
@@ -16,6 +17,7 @@ import kotlin.math.min
  * flattens database/source/tracker objects into these inputs first so the mapping stays testable
  * without Android, a database, or network access.
  */
+@Serializable
 data class RecommendationTrackInput(
     val trackerId: Long,
     val trackerName: String,
@@ -26,6 +28,7 @@ data class RecommendationTrackInput(
     val dateMs: Long? = null,
 )
 
+@Serializable
 data class RecommendationEntryInput(
     val mangaId: Long?,
     val url: String,
@@ -60,6 +63,7 @@ data class RecommendationBookInput(
     val updatedAtMs: Long? = null,
 )
 
+@Serializable
 data class TrackerCatalogInput(
     val trackerId: Long,
     val trackerName: String,

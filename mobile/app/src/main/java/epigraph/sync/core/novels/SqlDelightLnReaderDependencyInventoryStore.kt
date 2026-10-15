@@ -1,6 +1,8 @@
 package epigraph.sync.core.novels
 
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import yokai.data.Database
 
@@ -9,7 +11,8 @@ class SqlDelightLnReaderDependencyInventoryStore(
     private val json: Json = DEFAULT_JSON,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : LnReaderDependencyInventoryStore {
-    override suspend fun replace(inventory: LnReaderDependencyInventory) {
+    // Callers include Compose effects on the main thread; the query and the JSON stay off it.
+    override suspend fun replace(inventory: LnReaderDependencyInventory): Unit = withContext(Dispatchers.IO) {
         val normalized = inventory.copy(
             repositories = inventory.repositories.sortedBy { it.requirement.repositoryId },
             plugins = inventory.plugins.sortedWith(
@@ -31,13 +34,16 @@ class SqlDelightLnReaderDependencyInventoryStore(
         )
     }
 
-    override suspend fun get(serverId: String, profileId: String): LnReaderDependencyInventory? {
+    override suspend fun get(
+        serverId: String,
+        profileId: String,
+    ): LnReaderDependencyInventory? = withContext(Dispatchers.IO) {
         val cached = database.aethon_syncQueries
             .selectCoreNovelDependencyInventoryCache(serverId, profileId)
             .executeAsOneOrNull()
-            ?: return null
-        if (cached.schema_version != SCHEMA_VERSION) return null
-        return runCatching {
+            ?: return@withContext null
+        if (cached.schema_version != SCHEMA_VERSION) return@withContext null
+        runCatching {
             json.decodeFromString<LnReaderDependencyInventory>(cached.inventory_json)
         }.getOrNull()?.takeIf { inventory ->
             inventory.serverId == cached.server_id &&

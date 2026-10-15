@@ -1,12 +1,16 @@
 package epigraph.recommendations.ui
 import android.app.Application
 import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import co.touchlab.kermit.Logger
 import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverGenreSearch
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.DiscoverPool
+import epigraph.recommendations.DiscoverPoolStore
 import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
 import epigraph.recommendations.RecommendationCandidate
@@ -15,6 +19,7 @@ import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_LIMIT_STEP
 import epigraph.recommendations.SEARCH_RECOMMENDATION_MAX_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS
+import epigraph.recommendations.assembleDiscoverCandidates
 import epigraph.recommendations.nextVisibleLimit
 import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
@@ -23,16 +28,20 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
 import yokai.util.koin.get
+import java.io.File
 
 /** Discover's two sub-tabs: library-based picks, and everything the installed extensions list. */
 enum class DiscoverSection { FOR_YOU, CATALOG }
@@ -71,6 +80,10 @@ class DiscoverScreenModel(
         /** Catalog genre filter; every selected genre must match. */
         val genres: List<String> = emptyList(),
         val genreOptions: List<String> = emptyList(),
+        /** Providers the last load could not reach, shown once in a notice the user can close. */
+        val failedNotice: List<String> = emptyList(),
+        /** The last load failed and the saved picks stayed on screen. */
+        val savedNotice: Boolean = false,
     )
 
     private var loadJob: Job? = null
@@ -90,8 +103,16 @@ class DiscoverScreenModel(
 
     fun setMode(mode: DiscoverMode) {
         if (mode == state.value.mode) return
-        mutableState.update { it.copy(mode = mode) }
+        mutableState.update { it.copy(mode = mode, failedNotice = emptyList(), savedNotice = false) }
         load(force = false)
+    }
+
+    fun dismissFailedNotice() {
+        mutableState.update { it.copy(failedNotice = emptyList()) }
+    }
+
+    fun dismissSavedNotice() {
+        mutableState.update { it.copy(savedNotice = false) }
     }
 
     fun setGridSize(value: Float) {
@@ -107,8 +128,9 @@ class DiscoverScreenModel(
         mutableState.update { it.copy(genres = genres, catalogLoadingMore = false, catalogExhausted = false) }
         // A pool past its TTL is reloaded, and the load searches the genres once it is in;
         // returning here left the Catalog spinning with nothing asking the sources.
-        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
+        val cached = lastPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(catalog = catalog(cached)) }
+        if (cachedPool(state.value.mode) == null) return reloadExpiredPool()
         loadMoreCatalog()
     }
 
@@ -130,25 +152,19 @@ class DiscoverScreenModel(
                 )
             }
             if (state.value.genres.isNotEmpty()) loadMoreCatalog()
-            // The library may have changed since (a sync, or works added elsewhere): the picks
-            // would still be built from the old one and suggest what is now in it.
-            screenModelScope.launch(Dispatchers.IO) {
-                val current = runCatching { loader.librarySignature() }.getOrNull() ?: return@launch
-                if (current == cached.librarySignature) return@launch
-                withContext(Dispatchers.Main) {
-                    if (state.value.mode == mode && cache[mode]?.pool === cached) load(force = true)
-                }
-            }
+            reloadIfLibraryChanged(mode, cached)
             return
         }
         loadJob?.cancel()
         catalogJob?.cancel()
         genreSearch = null
+        // The last pool, past its TTL, stays on screen while a new one loads behind it.
+        val stale = if (force) null else lastPool(mode)
         mutableState.update {
             it.copy(
                 loading = true,
-                result = if (force) it.result else null,
-                catalog = if (force) it.catalog else emptyList(),
+                result = if (force) it.result else stale?.let(::rank),
+                catalog = if (force) it.catalog else stale?.let(::catalog).orEmpty(),
                 catalogLoadingMore = false,
                 catalogExhausted = false,
                 error = null,
@@ -157,12 +173,57 @@ class DiscoverScreenModel(
         }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
-                val pool = loader.gather(mode)
-                cache[mode] = CachedPool(pool, System.currentTimeMillis())
+                // A new run of the app starts from the pool the last one saved, usually already
+                // read by the time the tab opens.
+                if (!force && stale == null) {
+                    // The saved file opens in moments; reading the library again can take much
+                    // longer, so the picks show first and take the library side when it is in.
+                    // Its known keys already keep the library's works out.
+                    savedPool(mode).await()?.let { preview ->
+                        mutableState.update {
+                            if (it.mode == mode && it.result == null) it.copy(result = rank(preview), catalog = catalog(preview)) else it
+                        }
+                    }
+                    preload(mode).await()
+                    val saved = lastPool(mode)
+                    if (saved != null) {
+                        if (cachedPool(mode) != null) {
+                            withContext(Dispatchers.Main) { if (state.value.mode == mode) load(force = false) }
+                            return@launch
+                        }
+                        mutableState.update {
+                            if (it.mode == mode) it.copy(result = rank(saved), catalog = catalog(saved)) else it
+                        }
+                    }
+                }
+                // Every step has its own budget; this only stops one that ignores cancellation
+                // from leaving the screen spinning. Awaiting apart from the work lets it give up.
+                val gathering = screenModelScope.async(Dispatchers.IO) { loader.gather(mode) }
+                val pool = try {
+                    withTimeoutOrNull(GATHER_LIMIT_MS) { gathering.await() }
+                } finally {
+                    if (!gathering.isCompleted) gathering.cancel()
+                } ?: throw IllegalStateException("")
                 val result = rank(pool)
+                // Offline the providers fail and leave no picks; that would replace the saved ones with nothing.
+                if (result.sections.isEmpty() && pool.failedProviders.isNotEmpty()) throw IllegalStateException("")
+                cache[mode] = CachedPool(pool, System.currentTimeMillis())
+                // Saving waits for nothing on screen.
+                launch { runCatching { store.write(pool) } }
                 val catalogEntries = catalog(pool)
                 mutableState.update {
-                    if (it.mode == mode) it.copy(loading = false, result = result, catalog = catalogEntries, visibleLimits = emptyMap()) else it
+                    if (it.mode == mode) {
+                        it.copy(
+                            loading = false,
+                            result = result,
+                            catalog = catalogEntries,
+                            visibleLimits = emptyMap(),
+                            failedNotice = pool.failedProviders,
+                            savedNotice = false,
+                        )
+                    } else {
+                        it
+                    }
                 }
                 if (state.value.mode == mode && state.value.genres.isNotEmpty()) {
                     withContext(Dispatchers.Main) { loadMoreCatalog() }
@@ -170,7 +231,9 @@ class DiscoverScreenModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                mutableState.update { if (it.mode == mode) it.copy(loading = false, error = e.message.orEmpty()) else it }
+                mutableState.update {
+                    if (it.mode == mode) it.copy(loading = false, error = e.message.orEmpty(), savedNotice = it.result != null) else it
+                }
             }
         }
     }
@@ -179,8 +242,9 @@ class DiscoverScreenModel(
     fun setIncludeLibrary(value: Boolean) {
         if (value == state.value.includeLibrary) return
         mutableState.update { it.copy(includeLibrary = value) }
-        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
+        val cached = lastPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(result = rank(cached), catalog = catalog(cached), visibleLimits = emptyMap()) }
+        if (cachedPool(state.value.mode) == null) reloadExpiredPool()
     }
 
     /** Flips the global "show NSFW" setting; source selection depends on it, so reload. */
@@ -189,6 +253,10 @@ class DiscoverScreenModel(
         preferences.showNsfwSources().set(value)
         val options = loader.genreOptions(value)
         mutableState.update { it.copy(includeNsfw = value, genreOptions = options, genres = it.genres.filter { genre -> genre in options }) }
+        // The shown pool takes the new filter at once; turning NSFW off must not leave it on screen while the reload runs.
+        lastPool(state.value.mode)?.let { pool ->
+            mutableState.update { it.copy(result = rank(pool), catalog = catalog(pool), visibleLimits = emptyMap()) }
+        }
         load(force = true)
     }
 
@@ -309,6 +377,34 @@ class DiscoverScreenModel(
         job.start()
     }
 
+    /** Back on the screen (or the app): a pool past its TTL, or built from another library, loads again behind the one shown. */
+    fun refreshIfExpired() {
+        val mode = state.value.mode
+        val cached = cachedPool(mode) ?: return reloadExpiredPool()
+        if (!state.value.loading) reloadIfLibraryChanged(mode, cached)
+    }
+
+    /**
+     * The library may have changed since (a sync, or a work added from a pick): the picks would
+     * still be built from the old one and suggest what is now in it. A few works only read the
+     * library again; more gather the pool again.
+     */
+    private fun reloadIfLibraryChanged(mode: DiscoverMode, cached: DiscoverPool) {
+        screenModelScope.launch(Dispatchers.IO) {
+            val current = runCatching { loader.librarySignature() }.getOrNull() ?: return@launch
+            if (current == cached.librarySignature) return@launch
+            val reread = runCatching { loader.withLibraryReadAgain(cached) }.getOrNull()
+            withContext(Dispatchers.Main) {
+                val entry = cache[mode]
+                if (state.value.mode != mode || state.value.loading || entry?.pool !== cached) return@withContext
+                if (reread == null) return@withContext load(force = true)
+                if (!cache.replace(mode, entry, CachedPool(reread, entry.loadedAt))) return@withContext
+                mutableState.update { if (it.mode == mode) it.copy(result = rank(reread), catalog = catalog(reread)) else it }
+                launch(Dispatchers.IO) { runCatching { store.write(reread) } }
+            }
+        }
+    }
+
     /** The pool expired: load it again. A load already running applies the new filters when it lands. */
     private fun reloadExpiredPool() {
         if (!state.value.loading) load(force = false)
@@ -356,8 +452,44 @@ class DiscoverScreenModel(
          */
         private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L
+        private const val GATHER_LIMIT_MS = 150_000L
+
+        /** The last pool of [mode], however old; ranking it again needs no network. */
+        private fun lastPool(mode: DiscoverMode): DiscoverPool? = cache[mode]?.pool
 
         private fun cachedPool(mode: DiscoverMode): DiscoverPool? =
             cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.pool
+
+        private val store by lazy { DiscoverPoolStore(File(get<Application>().cacheDir, "discover")) }
+        private val restorer by lazy { DiscoverRecommendationLoader(get<Application>()) }
+        private val restoring = java.util.concurrent.ConcurrentHashMap<DiscoverMode, Deferred<Unit>>()
+        private val reading = java.util.concurrent.ConcurrentHashMap<DiscoverMode, Deferred<DiscoverPool?>>()
+
+        /**
+         * The pool the last run saved, as the file holds it: only what came from the network, with
+         * its candidates assembled. Kept until [preload] has added the library side.
+         */
+        private fun savedPool(mode: DiscoverMode): Deferred<DiscoverPool?> = reading.computeIfAbsent(mode) {
+            ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
+                runCatching { store.read(mode)?.let { it.copy(candidates = assembleDiscoverCandidates(it)) } }.getOrNull()
+            }
+        }
+
+        /**
+         * Reads the pool the last run saved into memory, once per run. The app starts it early so
+         * the tab opens on it at once; a screen opened before it is done waits for the same read.
+         */
+        fun preload(mode: DiscoverMode): Deferred<Unit> = restoring.computeIfAbsent(mode) {
+            ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
+                if (cache[mode] != null) return@async
+                val started = System.currentTimeMillis()
+                val saved = savedPool(mode).await() ?: return@async
+                Logger.d { "Discover: read the saved $mode pool in ${System.currentTimeMillis() - started} ms" }
+                val pool = runCatching { restorer.restore(saved) }.getOrNull() ?: return@async
+                cache.putIfAbsent(mode, CachedPool(pool, pool.gatheredAtMs))
+                reading.remove(mode)
+                Logger.d { "Discover: restored the saved $mode pool in ${System.currentTimeMillis() - started} ms" }
+            }
+        }
     }
 }

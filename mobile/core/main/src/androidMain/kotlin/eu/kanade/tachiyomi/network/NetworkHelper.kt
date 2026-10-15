@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.network
 
 import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.network.interceptor.NetworkActivityInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import java.io.File
@@ -30,6 +31,7 @@ class NetworkHelper(
                 )
             )
             .addInterceptor(UncaughtExceptionInterceptor())
+            .addInterceptor(NetworkActivityInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgent))
 
         block(builder)

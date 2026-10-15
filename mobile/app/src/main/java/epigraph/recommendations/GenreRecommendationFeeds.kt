@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 
 /** Desktop BrowseV3 constants for the genre lists of the extensions and the tracker lookups. */
 internal const val SEARCH_GENRE_SOURCE_LIMIT = 12
@@ -50,6 +51,7 @@ private val LATIN_TITLE = Regex("^[\\p{IsLatin}\\p{N}\\p{P}\\p{Zs}]+$")
 enum class GenreFeedKind { TASTE, EXPLORE }
 
 /** One extension's own list of one genre, and the next page to read. */
+@Serializable
 data class GenreSourceCursor(
     val sourceId: Long,
     val genre: String,
@@ -61,6 +63,7 @@ data class GenreSourceCursor(
 }
 
 /** A source work found for a Kitsu novel: Kitsu's rating and categories go with it. */
+@Serializable
 data class KitsuSourceLink(val provider: RecommendationProviderSignal, val tags: List<String>)
 
 /**
@@ -68,6 +71,7 @@ data class KitsuSourceLink(val provider: RecommendationProviderSignal, val tags:
  * rarely read ones), the works the trackers found in those genres and the extensions answered for
  * by title, and what each extension has shown it can do.
  */
+@Serializable
 data class GenreSourceFeed(
     val novels: Boolean,
     val sourceIds: List<Long>,
@@ -115,9 +119,11 @@ class GenreSourceFeedRun(@Volatile var feed: GenreSourceFeed) {
 }
 
 /** One Kitsu category list and how far it was read. */
+@Serializable
 data class KitsuNovelFeedCursor(val category: String, val limit: Int, val offset: Int = 0, val done: Boolean = false)
 
 /** Desktop `searchKitsuNovelFeed`: Kitsu's lists for the reader's taste and rare genres, and its ratings. */
+@Serializable
 data class KitsuNovelFeed(
     val taste: List<KitsuNovelFeedCursor>,
     val explore: List<KitsuNovelFeedCursor>,

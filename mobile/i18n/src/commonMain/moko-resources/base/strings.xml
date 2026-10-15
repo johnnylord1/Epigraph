@@ -2441,6 +2441,7 @@
     <string name="discover_top_pick">Top pick</string>
     <string name="discover_error">Could not load Discover</string>
     <string name="discover_partial_failure">Some providers did not respond: %1$s</string>
+    <string name="discover_saved_notice">Could not refresh. Showing saved picks.</string>
     <string name="discover_seed_count">Based on %1$d titles in your library</string>
     <string name="discover_opening">Opening %1$s…</string>
     <string name="discover_section_profile">From your library profile</string>

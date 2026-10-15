@@ -2,6 +2,7 @@ package epigraph.recommendations.ui
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.view.ViewGroup
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -65,6 +66,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,6 +92,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import dev.icerock.moko.resources.StringResource
 import dev.icerock.moko.resources.compose.stringResource
@@ -116,9 +120,12 @@ import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
 import eu.kanade.tachiyomi.util.compose.LocalRouter
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import java.io.File
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import com.bluelinelabs.conductor.Controller
+import com.bluelinelabs.conductor.ControllerChangeHandler
 import yokai.domain.manga.models.MangaCover as CoverData
 import yokai.i18n.MR
 import yokai.presentation.AppBarType
@@ -139,6 +146,22 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
         val scope = rememberCoroutineScope()
         val screenModel = rememberScreenModel { DiscoverScreenModel(initialMode) }
         val state by screenModel.state.collectAsState()
+        // The model outlives the tab while the app stays in memory; without this it would keep
+        // the same picks until a manual refresh.
+        LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { screenModel.refreshIfExpired() }
+        // Back from a pick's page the activity never paused, so the resume above does not run;
+        // a work added to the library there must still leave the picks.
+        DisposableEffect(router) {
+            val listener = object : ControllerChangeHandler.ControllerChangeListener {
+                override fun onChangeCompleted(to: Controller?, from: Controller?, isPush: Boolean, container: ViewGroup, handler: ControllerChangeHandler) {
+                    if (!isPush && to is DiscoverController) screenModel.refreshIfExpired()
+                }
+
+                override fun onChangeStarted(to: Controller?, from: Controller?, isPush: Boolean, container: ViewGroup, handler: ControllerChangeHandler) = Unit
+            }
+            router?.addChangeListener(listener)
+            onDispose { router?.removeChangeListener(listener) }
+        }
         var showFilterSheet by remember { mutableStateOf(false) }
         // The bottom navigation floats over the tab, so the lists end above it.
         val bottomNavHeight = with(LocalDensity.current) {
@@ -169,6 +192,8 @@ class DiscoverScreen(private val initialMode: DiscoverMode) : Screen() {
             onLoadMoreCatalog = screenModel::loadMoreCatalog,
             onRemoveGenre = { genre -> screenModel.setGenres(state.genres - genre) },
             onClearGenres = { screenModel.setGenres(emptyList()) },
+            onDismissFailedNotice = screenModel::dismissFailedNotice,
+            onDismissSavedNotice = screenModel::dismissSavedNotice,
             onOpen = openCandidate,
         )
         if (showFilterSheet) {
@@ -234,6 +259,8 @@ internal fun DiscoverContent(
     onOpen: (RecommendationCandidate) -> Unit,
     onRemoveGenre: (String) -> Unit = {},
     onClearGenres: () -> Unit = {},
+    onDismissFailedNotice: () -> Unit = {},
+    onDismissSavedNotice: () -> Unit = {},
 ) {
     YokaiScaffold(
         onNavigationIconClicked = {},
@@ -277,6 +304,17 @@ internal fun DiscoverContent(
                     trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
                 )
             }
+            if (state.result != null) {
+                if (state.savedNotice) {
+                    DiscoverNotice(text = stringResource(MR.strings.discover_saved_notice), onDismiss = onDismissSavedNotice)
+                }
+                if (state.failedNotice.isNotEmpty()) {
+                    DiscoverNotice(
+                        text = stringResource(MR.strings.discover_partial_failure, state.failedNotice.joinToString()),
+                        onDismiss = onDismissFailedNotice,
+                    )
+                }
+            }
             val result = state.result
             when {
                 result == null && state.loading -> CenteredBox {
@@ -305,6 +343,10 @@ internal fun DiscoverContent(
                         state.genres.isNotEmpty() && !state.catalogExhausted -> CenteredBox {
                             CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
                         }
+                        // A pool still loading has not looked for the works yet.
+                        state.loading -> CenteredBox {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                        }
                         state.genres.isNotEmpty() -> CenteredMessage(
                             text = stringResource(MR.strings.discover_catalog_genre_empty),
                             actionLabel = stringResource(MR.strings.clear_filters),
@@ -316,6 +358,9 @@ internal fun DiscoverContent(
                         )
                     }
                 }
+                result.sections.isEmpty() && state.loading -> CenteredBox {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                }
                 result.sections.isEmpty() -> CenteredMessage(
                     text = stringResource(
                         if (state.includeLibrary) MR.strings.discover_empty_filters else MR.strings.discover_empty_filtered,
@@ -324,7 +369,6 @@ internal fun DiscoverContent(
                 )
                 else -> DiscoverSections(
                     sections = result.sections,
-                    failedProviders = result.failedProviders,
                     visibleLimits = state.visibleLimits,
                     gridSize = state.gridSize,
                     bottomPadding = bottomPadding,
@@ -479,7 +523,6 @@ private fun DiscoverCatalogGrid(
 @Composable
 private fun DiscoverSections(
     sections: List<RecommendationSection>,
-    failedProviders: List<String>,
     visibleLimits: Map<RecommendationSectionKey, Int>,
     gridSize: Float,
     bottomPadding: Dp,
@@ -499,17 +542,6 @@ private fun DiscoverSections(
         contentPadding = PaddingValues(top = 16.dp, bottom = bottomPadding + 32.dp),
         verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
-        if (failedProviders.isNotEmpty()) {
-            item(key = "summary") {
-                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    Text(
-                        text = stringResource(MR.strings.discover_partial_failure, failedProviders.joinToString()),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        }
         if (hero != null) {
             item(key = "hero") { HeroPick(hero, onClick = { onClick(hero) }) }
         }
@@ -915,6 +947,32 @@ private fun DiscoverSwitchRow(
 private fun CenteredBox(content: @Composable () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
 }
+
+/** A short notice over the picks: it closes itself after a few seconds, or with its close button. */
+@Composable
+private fun DiscoverNotice(text: String, onDismiss: () -> Unit) {
+    val dismiss by rememberUpdatedState(onDismiss)
+    LaunchedEffect(text) {
+        delay(NOTICE_DURATION_MS)
+        dismiss()
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onDismiss) {
+            Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.close), modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+private const val NOTICE_DURATION_MS = 8_000L
 
 @Composable
 private fun CenteredMessage(text: String, onRetry: () -> Unit) {

@@ -239,6 +239,12 @@ class SourceManager(
         }
     }
 
+    /** Suspends until the installed extensions and novel plugins have registered. */
+    suspend fun awaitInstalledSources() {
+        extensionManager.isInitialized.first { it }
+        novelPluginManager.loadedFlow.first { it }
+    }
+
     /** True once installed novel plugins have registered, so a missing novel source is really absent. */
     val novelPluginsLoaded: Boolean
         get() = novelPluginManager.loadedFlow.value
