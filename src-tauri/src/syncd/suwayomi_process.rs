@@ -171,11 +171,18 @@ async fn recover_abandoned_main_work(runtime_root: &Path) -> Result<(), String> 
     if crate::suwayomi_maintenance::exclusive_file_lease_held(runtime_root)? {
         return Err("Suwayomi is temporarily unavailable while its runtime is maintained.".into());
     }
-    let _recovering = crate::suwayomi_maintenance::begin_exclusive_maintenance(
-        runtime_root,
-        "core-recovery",
-        crate::suwayomi_maintenance::MaintenancePhase::Recovering,
-    )?;
+    // Taking the lease waits for in-flight writes and file locks, and the restore copies the profile:
+    // both block, so they run off the runtime threads that serve the Core's HTTP and sync work.
+    let lease_root = runtime_root.to_path_buf();
+    let _recovering = tokio::task::spawn_blocking(move || {
+        crate::suwayomi_maintenance::begin_exclusive_maintenance(
+            &lease_root,
+            "core-recovery",
+            crate::suwayomi_maintenance::MaintenancePhase::Recovering,
+        )
+    })
+    .await
+    .map_err(|error| format!("Suwayomi recovery stopped: {error}"))??;
     // Read again under the lease: an update may have settled its work just before letting go, and
     // stopping its server then would only restart it.
     if !crate::suwayomi_recovery::abandoned_work_at(runtime_root, &root) {
@@ -187,7 +194,13 @@ async fn recover_abandoned_main_work(runtime_root: &Path) -> Result<(), String> 
             "managed Suwayomi PID {java_pid} still runs an interrupted update; recovery will retry"
         ));
     }
-    if crate::suwayomi_recovery::roll_back_abandoned_work(runtime_root, &root)? {
+    let restore_root = runtime_root.to_path_buf();
+    let undone = tokio::task::spawn_blocking(move || {
+        crate::suwayomi_recovery::roll_back_abandoned_work(&restore_root, &root)
+    })
+    .await
+    .map_err(|error| format!("Suwayomi recovery stopped: {error}"))??;
+    if undone {
         tracing::warn!("undid a Suwayomi update abandoned on the main profile");
     }
     Ok(())
