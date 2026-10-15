@@ -13,6 +13,7 @@ use super::models::{
     SharedAppState,
 };
 use super::routes::suwayomi_commands::{self, CommandOperation};
+use super::routes::suwayomi_proxy;
 use super::{db, routes::suwayomi_catalog};
 
 const MAX_BATCH: usize = 8;
@@ -25,6 +26,8 @@ const MAX_RETRY_MS: i64 = 6 * 60 * 60 * 1_000;
 /// Probing a local runtime this often is cheap.
 const MAX_RUNTIME_RETRY_MS: i64 = 5 * 60 * 1_000;
 const RUNTIME_UNAVAILABLE: &str = "runtime_unavailable";
+/// How long a probe of a runtime that projections wait on may take before it counts as down.
+const RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// While an earlier projection of the same profile is in its first retries (a Suwayomi restart,
 /// a brief outage), later ones wait so Suwayomi sees commands in commit order: removing a manga
 /// from a category must not land after the category itself is deleted. After this many attempts
@@ -115,7 +118,7 @@ pub fn spawn_projection_task(
                     tracing::warn!(error = %error, "failed to requeue blocked Suwayomi projections")
                 }
             }
-            match rearm_runtime_retries(&state.pool, super::db::now_ms()).await {
+            match rearm_runtime_retries(&state.pool, super::db::now_ms(), None).await {
                 Ok(0) => {}
                 Ok(count) => tracing::info!(count, "rearmed Suwayomi projections waiting on the runtime"),
                 Err(error) => {
@@ -127,6 +130,7 @@ pub fn spawn_projection_task(
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
         let mut maintenance = MaintenanceWatch::default();
+        let mut runtime_return = RuntimeReturnWatch::default();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -137,13 +141,20 @@ pub fn spawn_projection_task(
                         .unwrap_or(false);
                     if maintenance.ended(held) {
                         let _writer_guard = state.mutation_gate.lock().await;
-                        match rearm_runtime_retries(&state.pool, super::db::now_ms()).await {
+                        match rearm_runtime_retries(&state.pool, super::db::now_ms(), None).await {
                             Ok(0) => {}
                             Ok(count) => tracing::info!(count, "rearmed Suwayomi projections after runtime maintenance"),
                             Err(error) => {
                                 tracing::warn!(error = %error, "failed to rearm Suwayomi projections")
                             }
                         }
+                    }
+                    // Outside maintenance the runtime can still go down and come back (a crash the
+                    // supervisor restarts). While writes wait on it, its return makes them due.
+                    if held {
+                        runtime_return.retain(&[]);
+                    } else {
+                        rearm_returned_runtimes(&state, &mut runtime_return).await;
                     }
                     if let Err(error) = drain_ready(&state).await {
                         tracing::warn!(error = %error, "failed to drain canonical Suwayomi projections");
@@ -153,6 +164,90 @@ pub fn spawn_projection_task(
             }
         }
     });
+}
+
+async fn rearm_returned_runtimes(state: &SharedAppState, watch: &mut RuntimeReturnWatch) {
+    let waiting = match runtime_waiting_profiles(&state.pool, super::db::now_ms()).await {
+        Ok(waiting) => waiting,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to list Suwayomi projections waiting on the runtime");
+            return;
+        }
+    };
+    watch.retain(&waiting);
+    for profile_id in waiting {
+        let answers = runtime_answers(state, &profile_id).await;
+        if !watch.returned(&profile_id, answers) {
+            continue;
+        }
+        let _writer_guard = state.mutation_gate.lock().await;
+        match rearm_runtime_retries(&state.pool, super::db::now_ms(), Some(&profile_id)).await {
+            Ok(0) => {}
+            Ok(count) => tracing::info!(count, profile = profile_id, "rearmed Suwayomi projections after the runtime came back"),
+            Err(error) => tracing::warn!(error = %error, "failed to rearm Suwayomi projections"),
+        }
+    }
+}
+
+/// Whether the profile's Suwayomi answers GraphQL. Read-only and silent, since it runs every tick
+/// while projections wait on the runtime.
+async fn runtime_answers(state: &SharedAppState, profile_id: &str) -> bool {
+    let Ok(base) = suwayomi_proxy::resolve_upstream_base(state, profile_id) else {
+        return false;
+    };
+    let Ok(url) = suwayomi_proxy::build_upstream_url(base, "api/graphql", None) else {
+        return false;
+    };
+    suwayomi_proxy::proxy_client()
+        .post(url)
+        .header("content-type", "application/json")
+        .header("accept", "application/json")
+        .json(&json!({ "query": "{ __typename }" }))
+        .timeout(RUNTIME_PROBE_TIMEOUT)
+        .send()
+        .await
+        .is_ok_and(|response| response.status().is_success())
+}
+
+/// Profiles with projections backing off because their runtime was unreachable.
+async fn runtime_waiting_profiles(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<Vec<String>> {
+    sqlx::query_scalar(
+        r#"
+        SELECT DISTINCT profile_id FROM suwayomi_projection_outbox
+        WHERE status = 'retry' AND last_error = ? AND next_attempt_at_ms > ?
+        ORDER BY profile_id
+        "#,
+    )
+    .bind(RUNTIME_UNAVAILABLE)
+    .bind(now)
+    .fetch_all(pool)
+    .await
+    .context("failed to list Suwayomi projections waiting on the runtime")
+}
+
+/// Follows whether each waiting profile's runtime answers, to notice when it comes back. Only a
+/// runtime seen down counts: one that answers while a write still failed (a slow or rejected
+/// command) keeps the normal backoff instead of being retried every tick.
+#[derive(Default)]
+struct RuntimeReturnWatch {
+    down: BTreeSet<String>,
+}
+
+impl RuntimeReturnWatch {
+    /// Records a probe; true when the runtime answers after it was last seen down.
+    fn returned(&mut self, profile_id: &str, answers: bool) -> bool {
+        if answers {
+            self.down.remove(profile_id)
+        } else {
+            self.down.insert(profile_id.to_string());
+            false
+        }
+    }
+
+    /// Forgets profiles with nothing waiting any more: their next outage starts over.
+    fn retain(&mut self, waiting: &[String]) {
+        self.down.retain(|profile_id| waiting.contains(profile_id));
+    }
 }
 
 /// Follows the runtime maintenance lease across ticks to notice when maintenance ends.
@@ -395,21 +490,29 @@ async fn requeue_recoverable_blocked(pool: &sqlx::SqlitePool, now: i64) -> anyho
     Ok(result.rows_affected())
 }
 
-/// Makes rows that were waiting on an unreachable runtime due now. Runs once at daemon start, which
-/// is when the owned Suwayomi is (re)started, so a backoff earned during an earlier outage does not
-/// keep the queue pending. Attempt counts are kept, so ordering and bounded-attempt rules hold.
-async fn rearm_runtime_retries(pool: &sqlx::SqlitePool, now: i64) -> anyhow::Result<u64> {
+/// Makes rows that were waiting on an unreachable runtime due now, for one profile or all. Runs at
+/// daemon start, when maintenance ends and when a runtime seen down answers again, so a backoff
+/// earned during an outage does not keep the queue pending. Attempt counts are kept, so ordering
+/// and bounded-attempt rules hold.
+async fn rearm_runtime_retries(
+    pool: &sqlx::SqlitePool,
+    now: i64,
+    profile_id: Option<&str>,
+) -> anyhow::Result<u64> {
     let result = sqlx::query(
         r#"
         UPDATE suwayomi_projection_outbox
         SET next_attempt_at_ms = ?, updated_at_ms = ?
         WHERE status = 'retry' AND last_error = ? AND next_attempt_at_ms > ?
+          AND (? IS NULL OR profile_id = ?)
         "#,
     )
     .bind(now)
     .bind(now)
     .bind(RUNTIME_UNAVAILABLE)
     .bind(now)
+    .bind(profile_id)
+    .bind(profile_id)
     .execute(pool)
     .await
     .context("failed to rearm Suwayomi projections waiting on the runtime")?;
@@ -1218,7 +1321,7 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(rearm_runtime_retries(&pool, 500).await.unwrap(), 1);
+        assert_eq!(rearm_runtime_retries(&pool, 500, None).await.unwrap(), 1);
         let rows: Vec<(String, i64, i64)> = sqlx::query_as(
             "SELECT operation_id, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
         )
@@ -1234,6 +1337,78 @@ mod tests {
                 ("outage".to_string(), 9, 500),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_returned_runtime_rearms_only_its_own_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = crate::syncd::config::SyncdConfig::for_test(temp.path().to_path_buf());
+        let pool = db::connect(&config).await.unwrap();
+        for (id, profile, error, next) in [
+            ("main-outage", "main", RUNTIME_UNAVAILABLE, 9_000),
+            ("side-outage", "side", RUNTIME_UNAVAILABLE, 9_000),
+            ("side-due", "side", RUNTIME_UNAVAILABLE, 100),
+            ("other-mismatch", "other", "confirmation_mismatch", 9_000),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO suwayomi_projection_outbox (
+                  operation_id, profile_id, operation_name, variables_json, entity_type, entity_id,
+                  source_server_version, status, attempt_count, next_attempt_at_ms, last_error,
+                  created_at_ms, updated_at_ms
+                ) VALUES (?, ?, 'UpdateManga', '{"id":7}', 'comic.library', ?, 1, 'retry', 2, ?, ?, 1, 1)
+                "#,
+            )
+            .bind(id)
+            .bind(profile)
+            .bind(id)
+            .bind(next)
+            .bind(error)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            runtime_waiting_profiles(&pool, 500).await.unwrap(),
+            vec!["main".to_string(), "side".to_string()]
+        );
+        assert_eq!(rearm_runtime_retries(&pool, 500, Some("side")).await.unwrap(), 1);
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
+            "SELECT operation_id, attempt_count, next_attempt_at_ms FROM suwayomi_projection_outbox ORDER BY operation_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("main-outage".to_string(), 2, 9_000),
+                ("other-mismatch".to_string(), 2, 9_000),
+                ("side-due".to_string(), 2, 100),
+                ("side-outage".to_string(), 2, 500),
+            ]
+        );
+        assert_eq!(runtime_waiting_profiles(&pool, 500).await.unwrap(), vec!["main".to_string()]);
+    }
+
+    #[test]
+    fn runtime_return_watch_reports_only_a_runtime_seen_down_that_answers_again() {
+        let mut watch = RuntimeReturnWatch::default();
+        // Answering from the first probe is no return: the write failed for another reason.
+        assert!(!watch.returned("main", true));
+        // Down, still down, back: one return, then none while it keeps answering.
+        assert_eq!(
+            [false, false, true, true].map(|answers| watch.returned("main", answers)),
+            [false, false, true, false]
+        );
+        // Profiles are followed independently.
+        assert!(!watch.returned("main", false));
+        assert!(!watch.returned("side", false));
+        assert!(watch.returned("side", true));
+        // Once nothing waits on it, an earlier outage is forgotten.
+        watch.retain(&[]);
+        assert!(!watch.returned("main", true));
     }
 
     #[test]

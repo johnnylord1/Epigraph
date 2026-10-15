@@ -253,7 +253,10 @@ while Suwayomi is unavailable. Maintenance ends only after the selected runtime
 has passed its final health check. Core projections that failed because the
 runtime was down are due again as soon as the maintenance lease is released, so
 progress written on another device during an update reaches Suwayomi right
-after it instead of after a backoff that grew with the update.
+after it instead of after a backoff that grew with the update. The same holds
+for an outage outside maintenance (a crash the Core's supervisor restarts):
+while projections wait on a profile's runtime, Core probes it each tick and
+makes them due when a runtime it saw down answers again.
 
 On the next managed startup, Epigraph starts the runtime `runtime-state.json`
 confirms and otherwise falls back to the bundled JAR. Windows uses the bundled
