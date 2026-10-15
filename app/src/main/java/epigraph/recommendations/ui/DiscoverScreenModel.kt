@@ -19,6 +19,7 @@ import epigraph.recommendations.SEARCH_RECOMMENDATION_BASE_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_LIMIT_STEP
 import epigraph.recommendations.SEARCH_RECOMMENDATION_MAX_LIMIT
 import epigraph.recommendations.SEARCH_RECOMMENDATION_SCROLL_THROTTLE_MS
+import epigraph.recommendations.assembleDiscoverCandidates
 import epigraph.recommendations.nextVisibleLimit
 import eu.kanade.tachiyomi.data.database.models.create
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
@@ -163,6 +164,14 @@ class DiscoverScreenModel(
                 // A new run of the app starts from the pool the last one saved, usually already
                 // read by the time the tab opens.
                 if (!force && stale == null) {
+                    // The saved file opens in moments; reading the library again can take much
+                    // longer, so the picks show first and take the library side when it is in.
+                    // Its known keys already keep the library's works out.
+                    savedPool(mode).await()?.let { preview ->
+                        mutableState.update {
+                            if (it.mode == mode && it.result == null) it.copy(result = rank(preview), catalog = catalog(preview)) else it
+                        }
+                    }
                     preload(mode).await()
                     val saved = lastPool(mode)
                     if (saved != null) {
@@ -171,7 +180,7 @@ class DiscoverScreenModel(
                             return@launch
                         }
                         mutableState.update {
-                            if (it.mode == mode && it.result == null) it.copy(result = rank(saved), catalog = catalog(saved)) else it
+                            if (it.mode == mode) it.copy(result = rank(saved), catalog = catalog(saved)) else it
                         }
                     }
                 }
@@ -427,6 +436,17 @@ class DiscoverScreenModel(
         private val store by lazy { DiscoverPoolStore(File(get<Application>().cacheDir, "discover")) }
         private val restorer by lazy { DiscoverRecommendationLoader(get<Application>()) }
         private val restoring = java.util.concurrent.ConcurrentHashMap<DiscoverMode, Deferred<Unit>>()
+        private val reading = java.util.concurrent.ConcurrentHashMap<DiscoverMode, Deferred<DiscoverPool?>>()
+
+        /**
+         * The pool the last run saved, as the file holds it: only what came from the network, with
+         * its candidates assembled. Kept until [preload] has added the library side.
+         */
+        private fun savedPool(mode: DiscoverMode): Deferred<DiscoverPool?> = reading.computeIfAbsent(mode) {
+            ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
+                runCatching { store.read(mode)?.let { it.copy(candidates = assembleDiscoverCandidates(it)) } }.getOrNull()
+            }
+        }
 
         /**
          * Reads the pool the last run saved into memory, once per run. The app starts it early so
@@ -436,9 +456,11 @@ class DiscoverScreenModel(
             ProcessLifecycleOwner.get().lifecycleScope.async(Dispatchers.IO) {
                 if (cache[mode] != null) return@async
                 val started = System.currentTimeMillis()
-                val saved = runCatching { store.read(mode) }.getOrNull() ?: return@async
+                val saved = savedPool(mode).await() ?: return@async
+                Logger.d { "Discover: read the saved $mode pool in ${System.currentTimeMillis() - started} ms" }
                 val pool = runCatching { restorer.restore(saved) }.getOrNull() ?: return@async
                 cache.putIfAbsent(mode, CachedPool(pool, pool.gatheredAtMs))
+                reading.remove(mode)
                 Logger.d { "Discover: restored the saved $mode pool in ${System.currentTimeMillis() - started} ms" }
             }
         }

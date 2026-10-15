@@ -327,6 +327,10 @@ internal fun DiscoverContent(
                         state.genres.isNotEmpty() && !state.catalogExhausted -> CenteredBox {
                             CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
                         }
+                        // A pool still loading has not looked for the works yet.
+                        state.loading -> CenteredBox {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+                        }
                         state.genres.isNotEmpty() -> CenteredMessage(
                             text = stringResource(MR.strings.discover_catalog_genre_empty),
                             actionLabel = stringResource(MR.strings.clear_filters),
@@ -337,6 +341,9 @@ internal fun DiscoverContent(
                             onRetry = onRefresh,
                         )
                     }
+                }
+                result.sections.isEmpty() && state.loading -> CenteredBox {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
                 }
                 result.sections.isEmpty() -> CenteredMessage(
                     text = stringResource(
