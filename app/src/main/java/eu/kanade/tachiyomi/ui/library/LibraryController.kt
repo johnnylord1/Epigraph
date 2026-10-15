@@ -2427,11 +2427,23 @@ open class LibraryController(
         destroyActionModeIfNeeded()
     }
 
+    /**
+     * The fast scroller reads its bubble text from the adapter it saw when it was attached. Books
+     * and Comics swap adapters on the same list, so point it at the one showing now; the detached
+     * one has no list and crashes when asked for a bubble.
+     */
+    private fun syncFastScrollerAdapter() {
+        binding.fastScroller.setBubbleTextCreator(
+            binding.libraryGridRecycler.recycler.adapter as? LibraryCategoryAdapter,
+        )
+    }
+
     private fun reattachAdapter() {
         libraryLayout = preferences.libraryLayout().get()
         setRecyclerLayout()
         val position = binding.libraryGridRecycler.recycler.findFirstVisibleItemPosition()
         binding.libraryGridRecycler.recycler.adapter = currentLibraryAdapter ?: adapter
+        syncFastScrollerAdapter()
         binding.libraryGridRecycler.recycler.scrollToPositionWithOffset(position, 0)
         if (isTabbedMode) pagerAdapter?.reattachAll()
     }
@@ -3339,6 +3351,7 @@ open class LibraryController(
             binding.recyclerCover.isVisible = true
             binding.libraryGridRecycler.recycler.adapter = adapter
         }
+        syncFastScrollerAdapter()
         setRecyclerLayout()
         binding.libraryGridRecycler.recycler.isVisible = enabled || !isTabbedMode
         binding.libraryPager.isVisible = !enabled && isTabbedMode
