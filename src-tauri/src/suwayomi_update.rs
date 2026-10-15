@@ -18,6 +18,12 @@ use walkdir::WalkDir;
 use crate::suwayomi_maintenance::{
     self, ExclusiveMaintenanceGuard, MaintenancePhase, UpdateJournalState,
 };
+use crate::suwayomi_recovery::{
+    self, relative_path_string, restore_snapshot_to_root, sha256_file, validate_snapshot_files,
+    validate_snapshot_for_restore, validate_snapshot_relative_path, ExtensionBatchJournal,
+    ExtensionBatchJournalState, SuwayomiSnapshotFile, SUWAYOMI_SNAPSHOT_ALLOWLIST,
+    SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST, SUWAYOMI_SNAPSHOT_MANIFEST, SUWAYOMI_SNAPSHOT_VERSION,
+};
 use crate::suwayomi_runtime_store::{self, PendingRestoreError, PendingRuntime};
 use crate::{
     find_java_pid_for_rootdir, is_loopback_http_url, stop_runtime_for_maintenance, patch_conf_key,
@@ -34,8 +40,6 @@ const SUWAYOMI_RELEASES_API_URL: &str =
 const SUWAYOMI_RELEASES_USER_AGENT: &str = "Epigraph-Suwayomi-Updater";
 const SUWAYOMI_RELEASES_CACHE_TTL: Duration = Duration::from_secs(60);
 const SUWAYOMI_SNAPSHOT_DIR: &str = "epigraph-update-snapshots";
-const SUWAYOMI_SNAPSHOT_MANIFEST: &str = "snapshot-manifest.json";
-const SUWAYOMI_SNAPSHOT_VERSION: &str = "2";
 const SUWAYOMI_SNAPSHOT_SPACE_MARGIN_BYTES: u64 = 1024 * 1024;
 const SUWAYOMI_RUNTIME_DIR: &str = "suwayomi-runtime";
 const SUWAYOMI_STAGING_DIR: &str = "staging";
@@ -48,16 +52,8 @@ const PROMOTED_RUNTIME_MIN_ALIVE_MS: u64 = 2_000;
 const SUWAYOMI_HEALTH_MAX_WAIT_MS: u64 = 90_000;
 const SUWAYOMI_HEALTH_DELAY_MS: u64 = 1_000;
 const SUWAYOMI_HEALTH_TIMEOUT_SECS: u64 = 5;
-const SUWAYOMI_SNAPSHOT_ALLOWLIST: &[&str] = &[
-    "server.conf",
-    "database.mv.db",
-    "database.trace.db",
-    "server.owner.json",
-];
-const SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST: &[&str] = &["extensions", "settings"];
 const SUWAYOMI_SERVER_OWNER_FILE: &str = "server.owner.json";
 const EXTENSION_BATCH_ROOT: &str = "extension-update-batches";
-const EXTENSION_BATCH_JOURNAL: &str = "extension-update-journal.json";
 const MAX_EXTENSION_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,14 +157,6 @@ struct SuwayomiSnapshotManifest {
     source_root: String,
     files: Vec<SuwayomiSnapshotFile>,
     rollback_ready: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct SuwayomiSnapshotFile {
-    name: String,
-    size_bytes: u64,
-    sha256: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -370,43 +358,6 @@ struct StagedExtensionArtifact {
 
 struct ExtensionBatchCleanup {
     root: PathBuf,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum ExtensionBatchJournalState {
-    Prepared,
-    SnapshotCreated,
-    Certifying,
-    Activating,
-    Committed,
-    RollbackRunning,
-    RolledBack,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExtensionBatchJournal {
-    schema_version: u32,
-    operation_id: String,
-    state: ExtensionBatchJournalState,
-    profile_id: String,
-    root_dir: String,
-    server_url: String,
-    runtime_version: String,
-    snapshot_path: String,
-    batch_root: String,
-    candidate_profile_id: String,
-    candidate_root_dir: String,
-    candidate_server_url: String,
-    updated_at_ms: u128,
-}
-
-impl ExtensionBatchJournal {
-    fn transition(&mut self, state: ExtensionBatchJournalState) {
-        self.state = state;
-        self.updated_at_ms = unix_now_ms();
-    }
 }
 
 impl Drop for ExtensionBatchCleanup {
@@ -1037,14 +988,7 @@ fn recover_abandoned_runtime_attempt(runtime_root: &Path) -> Result<Option<Pendi
                     .to_string(),
             ));
         }
-        let snapshot_dir = PathBuf::from(&pending.snapshot_path);
-        if pending.snapshot_path.is_empty() {
-            return Err(PendingRestoreError::Unusable(
-                "The update recorded no snapshot.".to_string(),
-            ));
-        }
-        validate_snapshot_for_restore(&snapshot_dir).map_err(PendingRestoreError::Unusable)?;
-        restore_snapshot_to_root(&snapshot_dir, &root_dir).map_err(PendingRestoreError::Retry)
+        suwayomi_recovery::restore_pending_attempt(pending)
     })
 }
 
@@ -1890,32 +1834,6 @@ fn write_snapshot_manifest(
         .map_err(|error| format!("Could not sync snapshot manifest: {error}"))
 }
 
-fn validate_snapshot_files(
-    snapshot_dir: &Path,
-    files: &[SuwayomiSnapshotFile],
-) -> Result<(), String> {
-    for file in files {
-        validate_snapshot_relative_path(&file.name)?;
-        let path = snapshot_dir.join(&file.name);
-        let metadata = fs::metadata(&path)
-            .map_err(|error| format!("Could not validate snapshot file {}: {error}", file.name))?;
-        if !metadata.is_file() || metadata.len() != file.size_bytes {
-            return Err(format!(
-                "Snapshot file {} did not validate after copy.",
-                file.name
-            ));
-        }
-        let actual_sha256 = sha256_file(&path)?;
-        if !actual_sha256.eq_ignore_ascii_case(&file.sha256) {
-            return Err(format!(
-                "Snapshot file {} failed SHA-256 validation.",
-                file.name
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn finalize_snapshot_directory(temp_dir: &Path, final_dir: &Path) -> Result<(), String> {
     if temp_dir.parent() != final_dir.parent() {
         return Err(
@@ -1928,27 +1846,6 @@ fn finalize_snapshot_directory(temp_dir: &Path, final_dir: &Path) -> Result<(), 
     }
     fs::rename(temp_dir, final_dir)
         .map_err(|error| format!("Could not finalize snapshot atomically: {error}"))
-}
-
-fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|error| {
-        format!(
-            "Could not open {} for SHA-256: {error}",
-            path_to_string(path)
-        )
-    })?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| format!("Could not hash {}: {error}", path_to_string(path)))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(hex_lower(&hasher.finalize()))
 }
 
 #[cfg(test)]
@@ -3079,44 +2976,11 @@ fn stop_target_if_running(app: &AppHandle, target: &LocalServerTarget) -> Result
 }
 
 fn extension_batch_journal_path() -> PathBuf {
-    managed_runtime_root().join(EXTENSION_BATCH_JOURNAL)
-}
-
-fn write_extension_batch_journal_at(
-    path: &Path,
-    journal: &ExtensionBatchJournal,
-) -> Result<(), String> {
-    fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))
-        .map_err(|error| format!("Could not create extension journal directory: {error}"))?;
-    let temp_path = path.with_extension(format!("{}.tmp", journal.operation_id));
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|error| format!("Could not serialize extension update journal: {error}"))?;
-    let mut file = File::create(&temp_path)
-        .map_err(|error| format!("Could not create extension update journal: {error}"))?;
-    file.write_all(&bytes)
-        .map_err(|error| format!("Could not write extension update journal: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("Could not flush extension update journal: {error}"))?;
-    suwayomi_maintenance::atomic_replace_file(&temp_path, &path)
-        .map_err(|error| format!("Could not publish extension update journal: {error}"))
+    suwayomi_recovery::extension_batch_journal_path(&managed_runtime_root())
 }
 
 fn write_extension_batch_journal(journal: &ExtensionBatchJournal) -> Result<(), String> {
-    write_extension_batch_journal_at(&extension_batch_journal_path(), journal)
-}
-
-fn read_extension_batch_journal_at(path: &Path) -> Result<Option<ExtensionBatchJournal>, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not read extension update journal: {error}")),
-    };
-    let journal = serde_json::from_str::<ExtensionBatchJournal>(&text)
-        .map_err(|error| format!("Could not parse extension update journal: {error}"))?;
-    if journal.schema_version != 1 {
-        return Err("Extension update journal has an unsupported schema.".to_string());
-    }
-    Ok(Some(journal))
+    suwayomi_recovery::write_extension_batch_journal_at(&extension_batch_journal_path(), journal)
 }
 
 fn remove_extension_batch_journal() -> Result<(), String> {
@@ -3140,14 +3004,16 @@ fn validate_extension_batch_journal_paths(
     requested_target: &LocalServerTarget,
     app: &AppHandle,
 ) -> Result<LocalServerTarget, String> {
-    if journal.profile_id != requested_target.profile_key
-        || comparable_path(Path::new(&journal.root_dir))
-            != comparable_path(&requested_target.root_dir)
-        || normalize_server_url(Some(&journal.server_url))
-            != normalize_server_url(Some(&requested_target.server_url))
-    {
+    if !extension_batch_journal_targets(journal, requested_target) {
         return Err("Extension update journal does not match the requested profile.".to_string());
     }
+    resolve_extension_batch_candidate(journal, app)
+}
+
+fn resolve_extension_batch_candidate(
+    journal: &ExtensionBatchJournal,
+    app: &AppHandle,
+) -> Result<LocalServerTarget, String> {
     let expected_batch_parent = suwayomi_data_dir().join(EXTENSION_BATCH_ROOT);
     let batch_root = PathBuf::from(&journal.batch_root);
     if batch_root.parent().map(comparable_path) != Some(comparable_path(&expected_batch_parent)) {
@@ -3166,9 +3032,6 @@ fn validate_extension_batch_journal_paths(
     {
         return Err("Extension update journal contains an invalid candidate path.".to_string());
     }
-    if !journal.snapshot_path.is_empty() {
-        validate_snapshot_for_restore(Path::new(&journal.snapshot_path))?;
-    }
     Ok(candidate)
 }
 
@@ -3177,7 +3040,7 @@ fn validate_extension_batch_journal_paths(
 /// parsed names no profile or snapshot, and one whose profile was removed has nothing to restore.
 fn read_recoverable_extension_batch_journal() -> Result<Option<ExtensionBatchJournal>, String> {
     let path = extension_batch_journal_path();
-    let reason = match read_extension_batch_journal_at(&path) {
+    let reason = match suwayomi_recovery::read_extension_batch_journal_at(&path) {
         Ok(Some(journal)) if Path::new(&journal.root_dir).exists() => return Ok(Some(journal)),
         Ok(Some(journal)) => {
             let batch_root = PathBuf::from(&journal.batch_root);
@@ -3202,7 +3065,7 @@ fn recover_extension_batch_before_spawn(
     app: &AppHandle,
     requested_target: &LocalServerTarget,
 ) -> Result<(), String> {
-    let Some(mut journal) = read_recoverable_extension_batch_journal()? else {
+    let Some(journal) = read_recoverable_extension_batch_journal()? else {
         return Ok(());
     };
     // Another profile's batch is recovered when that profile starts; it must not keep this one offline.
@@ -3211,21 +3074,72 @@ fn recover_extension_batch_before_spawn(
     }
     let mut guard = try_acquire_suwayomi_update_lock("extension-recovery")?;
     guard.begin_maintenance("extension-recovery", MaintenancePhase::Recovering)?;
+    // Read again under the lease: the Core may have rolled the batch back meanwhile, and restoring it
+    // a second time would drop what the profile wrote since.
+    let Some(mut journal) =
+        suwayomi_recovery::read_extension_batch_journal_at(&extension_batch_journal_path())?
+    else {
+        return Ok(());
+    };
     let candidate = validate_extension_batch_journal_paths(&journal, requested_target, app)?;
     stop_target_if_running(app, &candidate)?;
-    if journal.state != ExtensionBatchJournalState::Committed {
+    if journal.state.needs_restore() {
         stop_target_if_running(app, requested_target)?;
-        if journal.state != ExtensionBatchJournalState::Prepared {
-            journal.transition(ExtensionBatchJournalState::RollbackRunning);
-            write_extension_batch_journal(&journal)?;
-            restore_snapshot_to_root(
-                Path::new(&journal.snapshot_path),
-                &requested_target.root_dir,
-            )?;
-            journal.transition(ExtensionBatchJournalState::RolledBack);
-            write_extension_batch_journal(&journal)?;
-        }
+        suwayomi_recovery::roll_back_extension_batch(
+            &managed_runtime_root(),
+            &mut journal,
+            &requested_target.root_dir,
+        )?;
     }
+    remove_extension_batch_leftovers(&journal, &candidate)
+}
+
+/// Lets a new batch start after an interrupted one. A batch that settled (or never touched its
+/// profile) only leaves its candidate behind. One that still has to restore its profile is undone by
+/// whoever starts that profile next: the Core, within seconds, for the main profile, otherwise this
+/// app before it starts the profile.
+fn settle_interrupted_extension_batch(app: &AppHandle) -> Result<(), String> {
+    let Some(journal) = read_recoverable_extension_batch_journal()? else {
+        return Ok(());
+    };
+    if journal.state.needs_restore() {
+        if journal.profile_id == crate::LocalServerProfile::Main.key() {
+            return Err(
+                "An interrupted extension update is still being undone. Try again shortly."
+                    .to_string(),
+            );
+        }
+        let launch_target = app.state::<LaunchTarget>().0.clone();
+        let target = resolve_local_server_target(
+            &launch_target,
+            Some(&journal.server_url),
+            Some(&journal.profile_id),
+            None,
+        )
+        .map_err(|error| format!("Could not resolve the interrupted extension update: {error:?}"))?;
+        return recover_extension_batch_before_spawn(app, &target);
+    }
+    let mut guard = try_acquire_suwayomi_update_lock("extension-recovery")?;
+    guard.begin_maintenance("extension-recovery", MaintenancePhase::Recovering)?;
+    let Some(journal) =
+        suwayomi_recovery::read_extension_batch_journal_at(&extension_batch_journal_path())?
+    else {
+        return Ok(());
+    };
+    if journal.state.needs_restore() {
+        return Err(
+            "An interrupted extension update is still being undone. Try again shortly.".to_string(),
+        );
+    }
+    let candidate = resolve_extension_batch_candidate(&journal, app)?;
+    stop_target_if_running(app, &candidate)?;
+    remove_extension_batch_leftovers(&journal, &candidate)
+}
+
+fn remove_extension_batch_leftovers(
+    journal: &ExtensionBatchJournal,
+    candidate: &LocalServerTarget,
+) -> Result<(), String> {
     let _ = fs::remove_dir_all(&candidate.root_dir);
     let _ = fs::remove_dir_all(&journal.batch_root);
     remove_extension_batch_journal()
@@ -3293,12 +3207,7 @@ pub async fn certify_suwayomi_extension_update_batch(
     if unique_packages.len() != items.len() {
         return Err("Extension update batch contains duplicate packages.".to_string());
     }
-    if read_recoverable_extension_batch_journal()?.is_some() {
-        return Err(
-            "An interrupted extension update must be recovered before starting another batch."
-                .to_string(),
-        );
-    }
+    settle_interrupted_extension_batch(&app)?;
     let mut guard = try_acquire_suwayomi_update_lock("extension-batch")?;
     let runtime = get_suwayomi_runtime_status(
         server_url.clone(),
@@ -3829,145 +3738,6 @@ fn validate_graphql_health_payload(payload: &Value, expected_key: &str) -> Resul
         return Err(format!(
             "Suwayomi GraphQL {expected_key} response has no nodes array."
         ));
-    }
-    Ok(())
-}
-
-fn validate_snapshot_for_restore(snapshot_dir: &Path) -> Result<SuwayomiSnapshotManifest, String> {
-    if !snapshot_dir.is_dir() {
-        return Err("Rollback snapshot directory does not exist.".to_string());
-    }
-    let manifest_path = snapshot_dir.join(SUWAYOMI_SNAPSHOT_MANIFEST);
-    let text = fs::read_to_string(&manifest_path)
-        .map_err(|error| format!("Could not read rollback snapshot manifest: {error}"))?;
-    let manifest: SuwayomiSnapshotManifest = serde_json::from_str(&text)
-        .map_err(|error| format!("Could not parse rollback snapshot manifest: {error}"))?;
-    let supported = (manifest.schema_version == 1 && manifest.snapshot_version == "1")
-        || (manifest.schema_version == 2 && manifest.snapshot_version == SUWAYOMI_SNAPSHOT_VERSION);
-    if !supported {
-        return Err("Rollback snapshot manifest has an unsupported schema.".to_string());
-    }
-    validate_snapshot_files(snapshot_dir, &manifest.files)?;
-    Ok(manifest)
-}
-
-fn restore_snapshot_to_root(snapshot_dir: &Path, root_dir: &Path) -> Result<(), String> {
-    let manifest = validate_snapshot_for_restore(snapshot_dir)?;
-    if comparable_path(Path::new(&manifest.source_root)) != comparable_path(root_dir) {
-        return Err("Rollback snapshot belongs to a different Suwayomi root.".to_string());
-    }
-    let snapshot_names = manifest
-        .files
-        .iter()
-        .map(|file| file.name.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    for name in SUWAYOMI_SNAPSHOT_ALLOWLIST {
-        let target = root_dir.join(name);
-        if !snapshot_names.contains(name) && target.exists() {
-            fs::remove_file(&target)
-                .map_err(|error| format!("Could not remove restored-absent {name}: {error}"))?;
-        }
-    }
-    remove_snapshot_directory_extras(root_dir, &snapshot_names)?;
-    for file in &manifest.files {
-        validate_snapshot_relative_path(&file.name)?;
-        let source = snapshot_dir.join(&file.name);
-        let target = root_dir.join(&file.name);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("Could not create restore parent for {}: {error}", file.name)
-            })?;
-        }
-        let temp_target = target.with_extension(format!("{}.restore.tmp", Uuid::new_v4()));
-        fs::copy(&source, &temp_target)
-            .map_err(|error| format!("Could not restore {} from snapshot: {error}", file.name))?;
-        OpenOptions::new()
-            .write(true)
-            .open(&temp_target)
-            .and_then(|restored| restored.sync_all())
-            .map_err(|error| format!("Could not sync restored {}: {error}", file.name))?;
-        let restored_sha256 = sha256_file(&temp_target)?;
-        if restored_sha256 != file.sha256 {
-            let _ = fs::remove_file(&temp_target);
-            return Err(format!(
-                "Restored snapshot file {} failed SHA-256 validation.",
-                file.name
-            ));
-        }
-        suwayomi_maintenance::atomic_replace_file(&temp_target, &target)
-            .map_err(|error| format!("Could not publish restored {}: {error}", file.name))?;
-    }
-    Ok(())
-}
-
-fn relative_path_string(path: &Path) -> Result<String, String> {
-    validate_snapshot_relative_path(&path.to_string_lossy())?;
-    Ok(path
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/"))
-}
-
-fn validate_snapshot_relative_path(value: &str) -> Result<(), String> {
-    let path = Path::new(value);
-    if value.trim().is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        })
-    {
-        return Err("Snapshot manifest contains an unsafe relative path.".to_string());
-    }
-    Ok(())
-}
-
-fn remove_snapshot_directory_extras(
-    root_dir: &Path,
-    snapshot_names: &std::collections::HashSet<&str>,
-) -> Result<(), String> {
-    for directory in SUWAYOMI_SNAPSHOT_DIRECTORY_ALLOWLIST {
-        let directory_root = root_dir.join(directory);
-        if !directory_root.exists() {
-            continue;
-        }
-        let entries = WalkDir::new(&directory_root)
-            .follow_links(false)
-            .contents_first(true)
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("Could not inspect restore directory {directory}: {error}"))?;
-        for entry in entries {
-            if entry.file_type().is_symlink() {
-                return Err(format!(
-                    "Restore directory {directory} contains an unsupported symbolic link."
-                ));
-            }
-            if entry.file_type().is_file() {
-                let relative = entry
-                    .path()
-                    .strip_prefix(root_dir)
-                    .map_err(|_| "Restore file escaped the Suwayomi profile.".to_string())?;
-                let name = relative_path_string(relative)?;
-                if !snapshot_names.contains(name.as_str()) {
-                    fs::remove_file(entry.path()).map_err(|error| {
-                        format!("Could not remove restored-absent {name}: {error}")
-                    })?;
-                }
-            } else if entry.file_type().is_dir()
-                && entry.path() != directory_root
-                && fs::read_dir(entry.path())
-                    .map(|mut children| children.next().is_none())
-                    .unwrap_or(false)
-            {
-                let _ = fs::remove_dir(entry.path());
-            }
-        }
     }
     Ok(())
 }
@@ -6003,9 +5773,9 @@ server.extensionStores = ["https://two.example/index.json"]
             candidate_server_url: "http://127.0.0.1:4568".to_string(),
             updated_at_ms: 1,
         };
-        write_extension_batch_journal_at(&path, &journal).unwrap();
+        suwayomi_recovery::write_extension_batch_journal_at(&path, &journal).unwrap();
         assert_eq!(
-            read_extension_batch_journal_at(&path)
+            suwayomi_recovery::read_extension_batch_journal_at(&path)
                 .unwrap()
                 .unwrap()
                 .state,
@@ -6014,8 +5784,8 @@ server.extensionStores = ["https://two.example/index.json"]
 
         journal.snapshot_path = "snapshot".to_string();
         journal.transition(ExtensionBatchJournalState::Activating);
-        write_extension_batch_journal_at(&path, &journal).unwrap();
-        let recovered = read_extension_batch_journal_at(&path).unwrap().unwrap();
+        suwayomi_recovery::write_extension_batch_journal_at(&path, &journal).unwrap();
+        let recovered = suwayomi_recovery::read_extension_batch_journal_at(&path).unwrap().unwrap();
         assert_eq!(recovered.state, ExtensionBatchJournalState::Activating);
         assert_eq!(recovered.snapshot_path, "snapshot");
     }

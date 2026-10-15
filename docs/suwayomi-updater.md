@@ -123,15 +123,24 @@ Managed runtime data lives under app data:
 
 ```text
 suwayomi-runtime/
-  current/
-    Suwayomi-Server.jar
-  previous/
-    Suwayomi-Server.jar
+  runtime-state.json          confirmed, previousConfirmed, pending
+  extension-update-journal.json  only while an extension batch is unsettled
+  update.lock                 cross-process maintenance lease
+  versions/
+    <version>/
+      Suwayomi-Server.jar
   staging/
     <version>/
       Suwayomi-Server.jar
       staging-manifest.json
 ```
+
+`runtime-state.json` is replaced atomically and is the only record of which
+runtime runs: the desktop spawn, the Core supervisor and the runtime status all
+resolve the JAR through it. A pending runtime starts only for its own profile
+while that profile is under maintenance; every other start uses the confirmed
+runtime, or the bundled JAR when none is confirmed. The legacy `current/` and
+`previous/` layout is migrated into `versions/` by the next update.
 
 Snapshots live inside the Suwayomi profile root:
 
@@ -172,7 +181,12 @@ Invalid staging is removed and never promoted.
 
 ## Promotion And Rollback
 
-Promotion validates staging, stops only the Epigraph-managed runtime, moves `current` to `previous`, then moves staging to `current`. Existing `previous` is kept as a temporary backup until success.
+Promotion validates staging, stops only the Epigraph-managed runtime, publishes
+the staged JAR to `versions/<version>` and records it as `pending` in
+`runtime-state.json`, the last step before the profile changes. It then restarts
+the profile on the pending runtime, checks it, and commits with one atomic
+replace of the state (`pending` becomes `confirmed`, the old one
+`previousConfirmed`). Runtimes nothing points at are collected afterwards.
 
 When promoting to V23 or newer, Epigraph migrates the allowlisted legacy
 `server.extensionRepos` value into `server.extensionStores`, deduplicates the
@@ -182,17 +196,41 @@ restores the previous runtime and configuration together.
 
 Rollback runs if promotion, restart, process stability, or health check fails. Rollback is complete only after:
 
-- failed `current` is removed;
-- `previous` is restored to `current`;
+- the pending runtime is stopped;
 - snapshot files are restored and rehashed;
+- `pending` is cleared, so the confirmed runtime is selected again;
 - the previous runtime starts;
 - the previous process remains alive through the stability window.
 - Library, Sources and Extensions GraphQL checks pass on the restored runtime.
 
-The promotion journal records the stopped, promoted, profile-migrated,
-post-check, committed and rollback states atomically. A non-committed journal is
-recovered before the next managed spawn; runtime files and profile state are
-always restored as one logical unit.
+Nothing is renamed in place, so an interrupted promotion leaves at most a
+`pending` record and a changed profile; the confirmed runtime is still installed.
+
+## Interrupted Updates
+
+An update holds the exclusive runtime lease from the snapshot until it commits
+or rolls back. Work it leaves behind once that lease is free was abandoned by a
+dead process: a `pending` runtime attempt, or an extension batch journal in
+`SNAPSHOT_CREATED`, `CERTIFYING`, `ACTIVATING` or `ROLLBACK_RUNNING`.
+
+- **Main profile.** The persistent Core undoes it on its own, even if no app
+  opens again. Each supervisor tick checks for abandoned work; when the lease is
+  free it takes it for recovery, reads the state again, stops the main server
+  (proving it is the one it started), restores the snapshot, clears `pending` or
+  marks the batch `ROLLED_BACK`, and starts the confirmed runtime.
+- **Other profiles.** Their servers end with the desktop, so the desktop undoes
+  the work before it starts that profile again, or before the next update.
+- **Writes in between.** While a profile has abandoned work, the desktop and the
+  Core's Suwayomi proxy refuse mutations for it with a retryable maintenance
+  error, since the restore would drop them. Reads stay available.
+- **Settled batches.** A `COMMITTED` or `ROLLED_BACK` batch only leaves its
+  staging profile behind; the next batch removes it and starts. A batch is never
+  restored twice: recovery reads the journal again under the lease.
+- **Unusable snapshots.** A snapshot that is missing, fails its hashes or
+  belongs to another profile can never be restored. The attempt is cleared (and
+  recorded under `diagnostics/`) or the batch marked rolled back anyway, so the
+  profile is never kept offline for good; a copy that fails (a file in use) is
+  retried instead.
 
 ## Maintenance Mutation Policy
 
@@ -209,9 +247,9 @@ by Core remain in Core's durable state and are not interpreted as deletions
 while Suwayomi is unavailable. Maintenance ends only after the selected runtime
 has passed its final health check.
 
-On the next managed startup, Epigraph prefers `suwayomi-runtime/current/Suwayomi-Server.jar` when it exists and otherwise falls back to the bundled JAR. Windows uses the bundled `javaw.exe` when available so the managed server remains background-only.
-
-The managed-current selection path was smoke-tested with a copied baseline JAR: the process command line selected `current/Suwayomi-Server.jar`, ownership was published, and the Library, Sources, and Extensions GraphQL health query completed without errors.
+On the next managed startup, Epigraph starts the runtime `runtime-state.json`
+confirms and otherwise falls back to the bundled JAR. Windows uses the bundled
+`javaw.exe` when available so the managed server remains background-only.
 
 ## Health Check
 

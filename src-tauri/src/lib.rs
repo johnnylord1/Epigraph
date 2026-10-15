@@ -7,6 +7,7 @@ mod offline_chapter;
 mod suwayomi_lan;
 mod suwayomi_maintenance;
 mod restore_commands;
+mod suwayomi_recovery;
 mod suwayomi_runtime;
 mod suwayomi_runtime_store;
 mod suwayomi_update;
@@ -7330,7 +7331,17 @@ fn configure_webdriver_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[tauri::command]
 fn begin_suwayomi_runtime_operation(scope: String) -> Result<String, String> {
-    suwayomi_maintenance::begin_operation(&suwayomi_maintenance::default_runtime_root(), &scope)
+    let runtime_root = suwayomi_maintenance::default_runtime_root();
+    let token = suwayomi_maintenance::begin_operation(&runtime_root, &scope)?;
+    // The main profile's server outlives this app, so an update abandoned on it can leave it running
+    // something unverified until the Core undoes it; writes made before that would be lost.
+    if suwayomi_recovery::abandoned_work_for_profile(&runtime_root, LocalServerProfile::Main.key()) {
+        suwayomi_maintenance::end_operation(&token);
+        return Err(
+            "Suwayomi is temporarily unavailable while its runtime is maintained.".to_string(),
+        );
+    }
+    Ok(token)
 }
 
 #[tauri::command]

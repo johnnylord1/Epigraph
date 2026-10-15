@@ -1,6 +1,6 @@
 # Refatoração do fluxo de atualização do runtime Suwayomi
 
-Status: em implementação (M1–M3). M4 é opcional e fica como continuação.
+Status: M1–M3 implementados. M4 é opcional e fica como continuação.
 
 ## 1. Problema
 

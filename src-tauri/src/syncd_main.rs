@@ -3,6 +3,8 @@
 #[allow(dead_code)]
 mod suwayomi_maintenance;
 #[allow(dead_code)]
+mod suwayomi_recovery;
+#[allow(dead_code)]
 mod suwayomi_runtime;
 #[allow(dead_code)]
 mod suwayomi_runtime_store;

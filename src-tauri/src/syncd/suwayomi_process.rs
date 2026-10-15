@@ -150,12 +150,47 @@ pub fn start_headless_supervisor(
 }
 
 pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, String> {
+    let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
+    recover_abandoned_main_work(&runtime_root).await?;
     // Hold the existing cross-process runtime lease through spawn/publication
     // and readiness. Exclusive update/reset excludes a new JVM while mutating.
-    let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(
-        &crate::suwayomi_maintenance::default_runtime_root(),
-    )?;
+    let _maintenance = crate::suwayomi_maintenance::try_acquire_shared_file_lease(&runtime_root)?;
     ensure_main_instance_under_lease().await
+}
+
+/// This Core outlives an update of the main profile, so it undoes one whose process died before
+/// confirming or rolling it back (a runtime attempt still pending, an extension batch never settled),
+/// even when no app starts the profile again. The update holds the runtime for maintenance while it
+/// is alive; only once that lease is free is its work abandoned.
+async fn recover_abandoned_main_work(runtime_root: &Path) -> Result<(), String> {
+    let root = main_profile_root();
+    if !crate::suwayomi_recovery::abandoned_work_at(runtime_root, &root) {
+        return Ok(());
+    }
+    // A live update holds the lease; waiting for it would only find its work settled.
+    if crate::suwayomi_maintenance::exclusive_file_lease_held(runtime_root)? {
+        return Err("Suwayomi is temporarily unavailable while its runtime is maintained.".into());
+    }
+    let _recovering = crate::suwayomi_maintenance::begin_exclusive_maintenance(
+        runtime_root,
+        "core-recovery",
+        crate::suwayomi_maintenance::MaintenancePhase::Recovering,
+    )?;
+    // Read again under the lease: an update may have settled its work just before letting go, and
+    // stopping its server then would only restart it.
+    if !crate::suwayomi_recovery::abandoned_work_at(runtime_root, &root) {
+        return Ok(());
+    }
+    stop_main_instance().await?;
+    if let Some(java_pid) = find_java_pid_for_root(&root) {
+        return Err(format!(
+            "managed Suwayomi PID {java_pid} still runs an interrupted update; recovery will retry"
+        ));
+    }
+    if crate::suwayomi_recovery::roll_back_abandoned_work(runtime_root, &root)? {
+        tracing::warn!("undid a Suwayomi update abandoned on the main profile");
+    }
+    Ok(())
 }
 
 /// Maintenance handoff. Only this Core holds the handle of the JVM it spawned for the main profile, so
@@ -165,6 +200,12 @@ pub async fn ensure_main_owned_instance() -> Result<HeadlessSuwayomiOutcome, Str
 /// between, and it ends with that process even if it crashes. Returns the stopped Java PID, if any.
 pub async fn stop_main_for_maintenance() -> Result<Option<u32>, String> {
     require_maintenance_elsewhere()?;
+    stop_main_instance().await
+}
+
+/// Stops the main profile's Java, proving it is the one started for that profile. The caller keeps
+/// the supervisor from starting it again: it holds the runtime for maintenance, or acts for whoever does.
+async fn stop_main_instance() -> Result<Option<u32>, String> {
     let _spawn = CORE_SPAWN_GATE.lock().await;
     if CORE_CLOSING.load(std::sync::atomic::Ordering::Acquire) {
         return Err("Core is shutting down".into());

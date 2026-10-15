@@ -265,18 +265,22 @@ pub(crate) async fn execute_graphql_document(
     mutation: bool,
 ) -> Result<Value, AppError> {
     let _operation_lease = if mutation {
-        Some(
-            crate::suwayomi_maintenance::try_acquire_shared_file_lease(
-                &crate::suwayomi_maintenance::default_runtime_root(),
+        let maintained = || {
+            AppError::service_unavailable(
+                "SUWAYOMI_MAINTENANCE",
+                "The comics runtime is being maintained. Try again shortly.",
+                true,
             )
-            .map_err(|_| {
-                AppError::service_unavailable(
-                    "SUWAYOMI_MAINTENANCE",
-                    "The comics runtime is being maintained. Try again shortly.",
-                    true,
-                )
-            })?,
-        )
+        };
+        let runtime_root = crate::suwayomi_maintenance::default_runtime_root();
+        let lease = crate::suwayomi_maintenance::try_acquire_shared_file_lease(&runtime_root)
+            .map_err(|_| maintained())?;
+        // An update abandoned on this profile leaves it running something unverified until it is
+        // undone, which would drop this write with it.
+        if crate::suwayomi_recovery::abandoned_work_for_profile(&runtime_root, &session.profile_id) {
+            return Err(maintained());
+        }
+        Some(lease)
     } else {
         None
     };
