@@ -220,7 +220,7 @@ fun appModule(app: Application) = module {
             structureInspector = BookStructureInspector(app),
         )
     }
-    single { LocalBookImportService(app.contentResolver, get(), get()) }
+    single { LocalBookImportService(app.contentResolver, get(), get(), get(), get()) }
     single<PdfReaderAdapter> { PdfiumPdfReaderAdapter(app) }
     single<EpubReaderAdapter> { ValidatedEpubReaderAdapter(app) }
     single { BookReaderRouter(get(), get()) }

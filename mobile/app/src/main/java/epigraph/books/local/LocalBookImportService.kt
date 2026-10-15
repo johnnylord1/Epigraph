@@ -8,8 +8,11 @@ import epigraph.books.importing.LocalBookPrivateImporter
 import epigraph.books.importing.LocalBookStreamSource
 import epigraph.books.importing.PrivateBookImportRequest
 import epigraph.contract.ContentType
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.GetCategories
 
 data class ImportPreview(
     val displayName: String,
@@ -26,6 +29,8 @@ class LocalBookImportService(
     private val contentResolver: ContentResolver,
     private val importer: LocalBookPrivateImporter,
     private val repository: LocalBookRepository,
+    private val preferences: PreferencesHelper,
+    private val getCategories: GetCategories,
 ) {
     suspend fun inspect(
         uri: Uri,
@@ -76,6 +81,18 @@ class LocalBookImportService(
                 description = metadata.description,
             ),
         )
+    }
+
+    /**
+     * Files a book the user just imported in the Books & novels default category, like adding a
+     * novel does. A book already in a category keeps it. Restores keep the backup's folders.
+     */
+    suspend fun fileInDefaultCategory(book: LocalBook) = withContext(Dispatchers.IO) {
+        val categoryId = preferences.defaultBooksCategory().get()
+        if (categoryId <= 0) return@withContext
+        if (getCategories.await(CategoryLibrary.BOOKS).none { it.id == categoryId }) return@withContext
+        if (repository.getCategoryIds(book.bookId).isNotEmpty()) return@withContext
+        repository.setCategory(book.bookId, categoryId.toLong(), true)
     }
 
     suspend fun relink(uri: Uri, book: LocalBook, displayName: String = book.displayName): LocalBook =

@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import eu.kanade.tachiyomi.ui.library.LibraryPlaceholderItem
 import yokai.domain.category.CategoryLibrary
+import yokai.domain.category.interactor.FileUncategorizedInCategory
 import yokai.domain.category.interactor.GetCategories
 import yokai.domain.manga.MangaRepository
 import yokai.domain.track.interactor.GetTrack
@@ -176,7 +177,9 @@ class UnifiedLibraryBooksView(
                 // Book category links and novel downloads live outside the library tables, so
                 // assignments and returns to the library bump this revision. The download cache is
                 // still indexing on a cold start, and Comics redraws when it finishes; so do novels.
-                categoryRevision.combine(downloadCache.changes) { revision, _ -> revision },
+                categoryRevision
+                    .combine(downloadCache.changes) { revision, _ -> revision }
+                    .combine(FileUncategorizedInCategory.revisions) { revision, _ -> revision },
             ) { local, library, _, categories, _ ->
                 Triple(
                     local,
