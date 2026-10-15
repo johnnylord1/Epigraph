@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -464,11 +465,13 @@ internal val SEARCH_EXPLORE_MIN_POPULARITY_BY_COUNTRY = mapOf("JP" to SEARCH_EXP
 internal fun capExploreResults(items: List<TrackerCatalogInput>): List<TrackerCatalogInput> = items.take(SEARCH_EXPLORE_RESULT_CAP)
 
 /** One AniList explore search: a rarely read genre in one comic format, and the last page read. */
+@Serializable
 data class AniListExploreSearch(val genre: String, val country: String, val page: Int = 0, val done: Boolean = false) {
     fun sameSearch(other: AniListExploreSearch) = genre == other.genre && country == other.country
 }
 
 /** Desktop `searchTrackerExploreCursors`: the explore searches, and the later genres for the scroll. */
+@Serializable
 data class AniListExploreFeed(
     val exclude: List<String>,
     val searches: List<AniListExploreSearch>,

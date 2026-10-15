@@ -7,6 +7,7 @@ import epigraph.recommendations.DiscoverCatalogEntry
 import epigraph.recommendations.DiscoverGenreSearch
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.DiscoverPool
+import epigraph.recommendations.DiscoverPoolStore
 import epigraph.recommendations.DiscoverRecommendationLoader
 import epigraph.recommendations.DiscoverResult
 import epigraph.recommendations.RecommendationCandidate
@@ -35,6 +36,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.InsertManga
 import yokai.util.koin.get
+import java.io.File
 
 /** Discover's two sub-tabs: library-based picks, and everything the installed extensions list. */
 enum class DiscoverSection { FOR_YOU, CATALOG }
@@ -75,6 +77,8 @@ class DiscoverScreenModel(
         val genreOptions: List<String> = emptyList(),
     )
 
+    private val poolStore = DiscoverPoolStore(File(get<Application>().cacheDir, "discover"))
+
     private var loadJob: Job? = null
     private var catalogJob: Job? = null
     private var genreSearch: DiscoverGenreSearch? = null
@@ -109,8 +113,9 @@ class DiscoverScreenModel(
         mutableState.update { it.copy(genres = genres, catalogLoadingMore = false, catalogExhausted = false) }
         // A pool past its TTL is reloaded, and the load searches the genres once it is in;
         // returning here left the Catalog spinning with nothing asking the sources.
-        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
+        val cached = lastPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(catalog = catalog(cached)) }
+        if (cachedPool(state.value.mode) == null) return reloadExpiredPool()
         loadMoreCatalog()
     }
 
@@ -146,11 +151,13 @@ class DiscoverScreenModel(
         loadJob?.cancel()
         catalogJob?.cancel()
         genreSearch = null
+        // The last pool, past its TTL, stays on screen while a new one loads behind it.
+        val stale = if (force) null else lastPool(mode)
         mutableState.update {
             it.copy(
                 loading = true,
-                result = if (force) it.result else null,
-                catalog = if (force) it.catalog else emptyList(),
+                result = if (force) it.result else stale?.let(::rank),
+                catalog = if (force) it.catalog else stale?.let(::catalog).orEmpty(),
                 catalogLoadingMore = false,
                 catalogExhausted = false,
                 error = null,
@@ -159,6 +166,19 @@ class DiscoverScreenModel(
         }
         loadJob = screenModelScope.launch(Dispatchers.IO) {
             try {
+                // A new run of the app starts from the pool the last one saved.
+                if (!force && stale == null) {
+                    val saved = runCatching { poolStore.read(mode) }.getOrNull()
+                    if (saved != null && cache.putIfAbsent(mode, CachedPool(saved, saved.gatheredAtMs)) == null) {
+                        if (cachedPool(mode) != null) {
+                            withContext(Dispatchers.Main) { if (state.value.mode == mode) load(force = false) }
+                            return@launch
+                        }
+                        mutableState.update {
+                            if (it.mode == mode && it.result == null) it.copy(result = rank(saved), catalog = catalog(saved)) else it
+                        }
+                    }
+                }
                 // Every step has its own budget; this only stops one that ignores cancellation
                 // from leaving the screen spinning. Awaiting apart from the work lets it give up.
                 val gathering = screenModelScope.async(Dispatchers.IO) { loader.gather(mode) }
@@ -168,6 +188,8 @@ class DiscoverScreenModel(
                     if (!gathering.isCompleted) gathering.cancel()
                 } ?: throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
+                // Saving waits for nothing on screen.
+                launch { runCatching { poolStore.write(pool) } }
                 val result = rank(pool)
                 val catalogEntries = catalog(pool)
                 mutableState.update {
@@ -188,8 +210,9 @@ class DiscoverScreenModel(
     fun setIncludeLibrary(value: Boolean) {
         if (value == state.value.includeLibrary) return
         mutableState.update { it.copy(includeLibrary = value) }
-        val cached = cachedPool(state.value.mode) ?: return reloadExpiredPool()
+        val cached = lastPool(state.value.mode) ?: return reloadExpiredPool()
         mutableState.update { it.copy(result = rank(cached), catalog = catalog(cached), visibleLimits = emptyMap()) }
+        if (cachedPool(state.value.mode) == null) reloadExpiredPool()
     }
 
     /** Flips the global "show NSFW" setting; source selection depends on it, so reload. */
@@ -366,6 +389,9 @@ class DiscoverScreenModel(
         private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L
         private const val GATHER_LIMIT_MS = 150_000L
+
+        /** The last pool of [mode], however old; ranking it again needs no network. */
+        private fun lastPool(mode: DiscoverMode): DiscoverPool? = cache[mode]?.pool
 
         private fun cachedPool(mode: DiscoverMode): DiscoverPool? =
             cache[mode]?.takeIf { System.currentTimeMillis() - it.loadedAt < CACHE_TTL_MS }?.pool
