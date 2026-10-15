@@ -22,6 +22,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.Serializable
 import yokai.domain.manga.interactor.GetManga
 import yokai.domain.manga.interactor.GetLibraryManga
 import yokai.domain.track.interactor.GetTrack
@@ -38,6 +39,7 @@ data class DiscoverResult(
 )
 
 /** Everything [DiscoverRecommendationLoader.gather] collects, so [DiscoverRecommendationLoader.rank] can re-run without network. */
+@Serializable
 data class DiscoverPool(
     val mode: DiscoverMode,
     val candidates: List<RecommendationCandidate>,

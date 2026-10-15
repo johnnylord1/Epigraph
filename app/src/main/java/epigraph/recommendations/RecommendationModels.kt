@@ -1,5 +1,7 @@
 package epigraph.recommendations
 
+import kotlinx.serialization.Serializable
+
 /**
  * Kotlin port of the desktop recommendation engine (`src/lib/recommendations` in the desktop
  * workspace). The engine is pure: callers turn library entries into [TasteProfileSeedItem]s and
@@ -22,6 +24,7 @@ enum class RecommendationContentType {
 
 enum class RecommendationSafetyLevel { SAFE, SUGGESTIVE, ADULT, EXPLICIT }
 
+@Serializable
 data class NormalizedMetric(
     val value: Double,
     val confidence: Double,
@@ -29,6 +32,7 @@ data class NormalizedMetric(
     val sourceValue: String? = null,
 )
 
+@Serializable
 data class RecommendationProviderSignal(
     val providerId: String,
     val providerName: String,
@@ -44,11 +48,14 @@ data class RecommendationProviderSignal(
 )
 
 /** Cover image; [sourceId] lets the image loader apply the source's request headers. */
+@Serializable
 data class RecommendationCover(val url: String, val sourceId: Long? = null)
 
 /** A concrete entry the user can open in-app (a source result). */
+@Serializable
 data class RecommendationTarget(val sourceId: Long, val url: String, val title: String)
 
+@Serializable
 data class RecommendationCandidate(
     val id: String,
     val title: String,
@@ -81,6 +88,7 @@ data class TasteProfileSeedItem(
     val status: TasteSeedStatus? = null,
 )
 
+@Serializable
 data class TasteProfile(
     val tagWeights: Map<String, Double>,
     val contentTypeWeights: Map<RecommendationContentType, Double>,
