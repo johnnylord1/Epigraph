@@ -20,7 +20,7 @@ fun runCommand(command: String): String {
 @Suppress("PropertyName")
 // epigraph.versionName only exists to build an older-looking APK that exercises the in-app
 // updater against the published release; published builds always use the default.
-val _versionName = providers.gradleProperty("epigraph.versionName").orNull ?: "0.1.0-alpha.8"
+val _versionName = providers.gradleProperty("epigraph.versionName").orNull ?: "0.1.0-alpha.9"
 val betaCount by lazy {
     val betaTags = runCommand("git tag -l --sort=refname v${_versionName}-b*")
 
@@ -94,7 +94,7 @@ android {
     }
     defaultConfig {
         applicationId = "app.epigraph.mobile"
-        versionCode = 8
+        versionCode = 9
         versionName = _versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "COMMIT_COUNT", "\"${commitCount}\"")
