@@ -1320,6 +1320,10 @@
     <string name="discover_error">Não foi possível carregar o Descobrir</string>
     <string name="discover_partial_failure">Alguns provedores não responderam: %1$s</string>
     <string name="discover_saved_notice">Não foi possível atualizar. Mostrando sugestões salvas.</string>
+    <string name="discover_first_load">Coletando sugestões das suas fontes e trackers…</string>
+    <string name="discover_first_load_seconds">Cerca de %1$d s restantes</string>
+    <string name="discover_first_load_minutes">Cerca de %1$d min restantes</string>
+    <string name="discover_first_load_late">Demorando mais que o normal…</string>
     <string name="discover_seed_count">Com base em %1$d obras da sua biblioteca</string>
     <string name="discover_opening">Abrindo %1$s…</string>
     <string name="discover_section_profile">Pelo perfil da sua biblioteca</string>

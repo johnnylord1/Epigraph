@@ -308,6 +308,9 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
     /** Discover card size, on the same scale as the library [gridSize]. */
     fun discoverGridSize() = preferenceStore.getFloat(Keys.discoverGridSize, 1f)
 
+    /** How long the last full Discover load of a mode took, for the first-load estimate. */
+    fun discoverGatherMs(mode: String) = preferenceStore.getLong("discover_gather_ms_$mode", 0L)
+
     fun downloadBadge() = preferenceStore.getBoolean(Keys.downloadBadge, false)
 
     fun languageBadge() = preferenceStore.getBoolean(Keys.languageBadge, false)
