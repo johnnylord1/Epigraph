@@ -26,7 +26,8 @@ describe("external integration release contracts", () => {
   it("keeps Suwayomi certification on allowlist, checksum and rollback contracts", () => {
     const updater = read("src-tauri/src/suwayomi_update.rs");
     expect(updater).toContain("certified_release_checksum");
-    expect(updater).toContain("rollback_promoted_runtime");
+    expect(updater).toContain("roll_back_runtime_attempt");
+    expect(updater).toContain("The previous Suwayomi runtime was restored.");
     expect(updater).toContain("Target Suwayomi version is not in Epigraph's allowlist.");
   });
 
