@@ -80,8 +80,8 @@ class UnifiedLibraryBooksView(
     private val booksCategory = Category.create(context.getString(MR.strings.default_value)).apply {
         id = BOOKS_CATEGORY_ID
         order = 0
-        // A lone section: the header shows only the sort row, never a "Default" title.
-        isAlone = true
+        // Backs only the empty library, named Default like the Comics one.
+        isAlone = false
         isSystem = true
         mangaSort = preferences.booksLibrarySort().get().firstOrNull()
             ?.takeIf { LibrarySort.valueOf(it) != null }
@@ -90,9 +90,8 @@ class UnifiedLibraryBooksView(
     private val booksHeader = LibraryHeaderItem({ booksCategory }, BOOKS_CATEGORY_ID)
 
     /**
-     * Headers for the user's categories. They exist only while the collection spans more than one
-     * category; a single category keeps the untitled [booksCategory] section, like a lone Comics
-     * category. Ids live in their own negative namespace so they never collide with Comics ids.
+     * Headers for Default and the user's categories, named like the Comics ones. Ids live in their
+     * own negative namespace so they never collide with Comics ids.
      */
     private val groupCategories = mutableMapOf<Int, Category>()
     private val groupHeaders = mutableMapOf<Int, LibraryHeaderItem>()
@@ -150,9 +149,12 @@ class UnifiedLibraryBooksView(
             return (occupied + known.filter { it > 0 }).distinct()
         }
 
-    /** Whether headers carry category names; false keeps the single untitled section. */
+    /**
+     * Whether headers carry category names. As in Comics, every section is named, Default included:
+     * Default is the base category the first work lands in. The empty library shows Default too.
+     */
     val isGrouped: Boolean
-        get() = presentCategoryIds.size > 1
+        get() = presentCategoryIds.isNotEmpty()
 
     /** The categories a book may be assigned to, in library order. */
     val assignableCategories: List<Category>

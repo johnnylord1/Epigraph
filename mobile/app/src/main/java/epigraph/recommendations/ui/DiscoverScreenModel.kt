@@ -84,6 +84,9 @@ class DiscoverScreenModel(
         val failedNotice: List<String> = emptyList(),
         /** The last load failed and the saved picks stayed on screen. */
         val savedNotice: Boolean = false,
+        /** When the current load started, and how long the last full one of this mode took. */
+        val loadingSince: Long = 0L,
+        val expectedMs: Long = 0L,
     )
 
     private var loadJob: Job? = null
@@ -163,6 +166,11 @@ class DiscoverScreenModel(
         mutableState.update {
             it.copy(
                 loading = true,
+                loadingSince = System.currentTimeMillis(),
+                expectedMs = preferences.discoverGatherMs(mode.name).get()
+                    .takeIf { ms -> ms > 0 }
+                    ?.coerceAtMost(GATHER_LIMIT_MS)
+                    ?: FIRST_GATHER_GUESS_MS,
                 result = if (force) it.result else stale?.let(::rank),
                 catalog = if (force) it.catalog else stale?.let(::catalog).orEmpty(),
                 catalogLoadingMore = false,
@@ -198,6 +206,7 @@ class DiscoverScreenModel(
                 }
                 // Every step has its own budget; this only stops one that ignores cancellation
                 // from leaving the screen spinning. Awaiting apart from the work lets it give up.
+                val gatherStart = System.currentTimeMillis()
                 val gathering = screenModelScope.async(Dispatchers.IO) { loader.gather(mode) }
                 val pool = try {
                     withTimeoutOrNull(GATHER_LIMIT_MS) { gathering.await() }
@@ -208,6 +217,7 @@ class DiscoverScreenModel(
                 // Offline the providers fail and leave no picks; that would replace the saved ones with nothing.
                 if (result.sections.isEmpty() && pool.failedProviders.isNotEmpty()) throw IllegalStateException("")
                 cache[mode] = CachedPool(pool, System.currentTimeMillis())
+                preferences.discoverGatherMs(mode.name).set(System.currentTimeMillis() - gatherStart)
                 // Saving waits for nothing on screen.
                 launch { runCatching { store.write(pool) } }
                 val catalogEntries = catalog(pool)
@@ -453,6 +463,9 @@ class DiscoverScreenModel(
         private val cache = java.util.concurrent.ConcurrentHashMap<DiscoverMode, CachedPool>()
         private const val CACHE_TTL_MS = 30 * 60 * 1000L
         private const val GATHER_LIMIT_MS = 150_000L
+
+        /** The estimate before any load has been timed. */
+        private const val FIRST_GATHER_GUESS_MS = 60_000L
 
         /** The last pool of [mode], however old; ranking it again needs no network. */
         private fun lastPool(mode: DiscoverMode): DiscoverPool? = cache[mode]?.pool

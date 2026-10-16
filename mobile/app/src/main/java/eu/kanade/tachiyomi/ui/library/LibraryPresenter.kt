@@ -833,7 +833,8 @@ class LibraryPresenter(
      */
     private fun List<Category>.getOrDefault(categoryId: Int): Category {
         val category = this.find { categoryId == it.id } ?: createDefaultCategory()
-        category.isAlone = this.size <= 1
+        // Every category is shown by name, even the only one: Default is the base category.
+        category.isAlone = false
         return category
     }
 

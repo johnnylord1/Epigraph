@@ -57,7 +57,7 @@ class LnReaderBackupConverterTest {
         val readAt = LocalDateTime.of(2024, 5, 1, 21, 3, 11).toInstant(ZoneOffset.UTC).toEpochMilli()
         assertEquals(readAt, novel.history.single { it.url == "/c2" }.lastRead)
 
-        // LNReader's default and empty local categories are not user folders.
+        // LNReader's default is Epigraph's Default; categories without library novels stay out.
         assertEquals(listOf("Reading", "Favorites"), backup.backupCategories.map { it.name })
         assertTrue(backup.backupCategories.all { it.library == "BOOKS" })
         assertEquals(listOf(0, 1), novel.categories.sorted())
@@ -115,6 +115,18 @@ class LnReaderBackupConverterTest {
     }
 
     @Test
+    fun `a backup with only LNReader's default category leaves its novels in Default`() {
+        val categories = """
+            [{"id": 1, "name": "", "sort": 0, "novelIds": [12]},
+             {"id": 2, "name": "Local", "sort": 1, "novelIds": []}]
+        """.trimIndent()
+        val backup = converter().convert(write(dataZip(categories = categories)), workDir)
+
+        assertTrue(backup.backupCategories.isEmpty())
+        assertTrue(backup.backupManga.single().categories.isEmpty())
+    }
+
+    @Test
     fun `other archives are not taken for LNReader backups`() {
         val file = write(zip("manifest.json" to "{}".toByteArray(), "payloads/manga/backup.tachibk" to byteArrayOf(1)))
         assertFalse(ZipFile(file).use(LnReaderBackupConverter::isLnReaderBackup))
@@ -134,7 +146,7 @@ class LnReaderBackupConverterTest {
         "download.zip" to zip("Novels/plug/12/cover.png" to PNG, "Novels/plug/12/1/index.html" to "<p>text</p>".toByteArray()),
     )
 
-    private fun dataZip(cover: String? = null, inLibrary: Boolean = true): ByteArray {
+    private fun dataZip(cover: String? = null, inLibrary: Boolean = true, categories: String? = null): ByteArray {
         val novel = """
             {"id": 12, "pluginId": "plug", "path": "/novel/sample", "name": "Sample Novel", "author": "Writer",
              "summary": "About it", "genres": "Action, Drama", "status": "Ongoing", "inLibrary": ${if (inLibrary) 1 else 0},
@@ -146,11 +158,13 @@ class LnReaderBackupConverterTest {
              ]}
         """.trimIndent()
         val removed = """{"id": 13, "pluginId": "plug", "path": "/novel/gone", "name": "Gone", "inLibrary": 0, "chapters": []}"""
-        val categories = """
+        val categoryJson = categories ?: """
             [{"id": 1, "name": "Default", "sort": 0, "novelIds": [12]},
              {"id": 2, "name": "Local", "sort": 1, "novelIds": []},
              {"id": 3, "name": "Favorites", "sort": 3, "novelIds": [12]},
-             {"id": 4, "name": "Reading", "sort": 2, "novelIds": [12, 99]}]
+             {"id": 4, "name": "Reading", "sort": 2, "novelIds": [12, 99]},
+             {"id": 5, "name": "Empty", "sort": 4, "novelIds": []},
+             {"id": 6, "name": "Dropped", "sort": 5, "novelIds": [13, 99]}]
         """.trimIndent()
         val plugins = """[{"id": "plug", "name": "Plug Source", "lang": "Português", "version": "1.0.0",
             "url": "$REPO/master/.js/src/plugins/portuguese/plug.js"}]"""
@@ -159,7 +173,7 @@ class LnReaderBackupConverterTest {
             {"id": "other", "name": "Other", "url": "https://raw.githubusercontent.com/else/lnreader-plugins/main/.js/o.js"}]"""
         return zip(
             "Version.json" to """{"version": "2.0.0"}""".toByteArray(),
-            "Category.json" to categories.toByteArray(),
+            "Category.json" to categoryJson.toByteArray(),
             "Setting.json" to """{"INSTALL_PLUGINS": ${quote(plugins)}, "AVAILABLE_PLUGINS": ${quote(available)}}""".toByteArray(),
             "NovelAndChapters/12.json" to novel.toByteArray(),
             "NovelAndChapters/13.json" to removed.toByteArray(),

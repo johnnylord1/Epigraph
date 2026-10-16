@@ -71,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -317,9 +318,7 @@ internal fun DiscoverContent(
             }
             val result = state.result
             when {
-                result == null && state.loading -> CenteredBox {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                }
+                result == null && state.loading -> DiscoverFirstLoad(since = state.loadingSince, expectedMs = state.expectedMs)
                 result == null -> CenteredMessage(
                     text = stringResource(MR.strings.discover_error) +
                         state.error?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty(),
@@ -946,6 +945,49 @@ private fun DiscoverSwitchRow(
 @Composable
 private fun CenteredBox(content: @Composable () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
+}
+
+/**
+ * The load with no saved picks to show yet: says what it is doing and about how long is left,
+ * going by how long the last load took.
+ */
+@Composable
+private fun DiscoverFirstLoad(since: Long, expectedMs: Long) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(since) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val leftSeconds = ((expectedMs - (now - since)) / 1_000).coerceAtLeast(0)
+    val eta = when {
+        since == 0L || expectedMs <= 0L -> null
+        leftSeconds == 0L -> stringResource(MR.strings.discover_first_load_late)
+        leftSeconds < 60 -> stringResource(MR.strings.discover_first_load_seconds, leftSeconds.toInt())
+        else -> stringResource(MR.strings.discover_first_load_minutes, ((leftSeconds + 59) / 60).toInt())
+    }
+    CenteredBox {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = stringResource(MR.strings.discover_first_load),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            if (eta != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = eta,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
 }
 
 /** A short notice over the picks: it closes itself after a few seconds, or with its close button. */

@@ -240,10 +240,11 @@ class LnReaderBackupConverter(
                 // An id shared by two backup records cannot say which one is in the folder.
                 .mapNotNull { novelsByRawId[it]?.singleOrNull() }
                 .distinct()
-            // LNReader seeds two system categories: 1 is its default (here: no folder) and 2
-            // holds local EPUB imports. Neither is a folder the user created.
+            // LNReader's default category (1) is Epigraph's Default: its novels stay there, with no
+            // folder of their own. A category without library novels is not brought over either,
+            // like the empty local-imports one (2) LNReader always seeds.
             if (id == LNREADER_DEFAULT_CATEGORY_ID) return@mapNotNull null
-            if (id == LNREADER_LOCAL_CATEGORY_ID && members.isEmpty()) return@mapNotNull null
+            if (members.isEmpty()) return@mapNotNull null
             Triple(category.number("sort") ?: 0.0, name, members)
         }.sortedBy { it.first }
 
@@ -316,7 +317,6 @@ class LnReaderBackupConverter(
         private const val DOWNLOAD_ZIP = "download.zip"
         private const val NOVEL_FILES_ZIP = "novel-files.zip"
         private const val LNREADER_DEFAULT_CATEGORY_ID = "1"
-        private const val LNREADER_LOCAL_CATEGORY_ID = "2"
         private const val DEFAULT_LANG = "en"
         private const val MAX_DATA_ZIP_BYTES = 512L * 1024 * 1024
         private const val MAX_JSON_BYTES = 64 * 1024 * 1024
