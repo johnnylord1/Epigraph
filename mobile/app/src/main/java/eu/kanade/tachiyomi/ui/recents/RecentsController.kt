@@ -133,6 +133,8 @@ class RecentsController(bundle: Bundle? = null) :
     override fun localAppBar(): eu.kanade.tachiyomi.ui.base.ExpandedAppBarLayout? =
         if (isBindingInitialized) binding.appBar else null
 
+    override fun localScrollView(): RecyclerView? = if (isBindingInitialized) binding.recycler else null
+
     override fun onSetupLocalChrome() {
         val appBar = binding.appBar
         appBar.alpha = 1f

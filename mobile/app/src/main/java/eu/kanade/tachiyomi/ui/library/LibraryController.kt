@@ -200,6 +200,12 @@ open class LibraryController(
     override fun localAppBar(): eu.kanade.tachiyomi.ui.base.ExpandedAppBarLayout? =
         if (isBindingInitialized) binding.appBar else null
 
+    override fun localScrollView(): RecyclerView? = when {
+        !isBindingInitialized -> null
+        binding.libraryPager.isVisible -> pagerAdapter?.recyclerForPosition(binding.libraryPager.currentItem)
+        else -> binding.libraryGridRecycler.recycler
+    }
+
     override fun onSetupLocalChrome() {
         val appBar = binding.appBar
         appBar.alpha = 1f

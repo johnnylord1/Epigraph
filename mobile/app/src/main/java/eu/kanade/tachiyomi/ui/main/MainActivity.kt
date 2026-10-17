@@ -1207,18 +1207,22 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
             // Re-sync chrome visibility in case the activity-global appBar got into a
             // stale state across the activity transition.
             syncActivityAppBarVisibility(active)
-            // Also defensively snap the local appBar of any LocalAppBarOwner back to a
-            // visible baseline — the same defensive reset wireDefaultLocalChrome does on
-            // every controller enter. Activity resume doesn't fire a Conductor change,
-            // so without this nudge the local appBar can stay at translationY = -height
-            // (off-screen) from before the pause.
-            val localAppBar = (active as? eu.kanade.tachiyomi.ui.base.LocalAppBarOwner)?.localAppBar()
-            localAppBar?.let { bar ->
+            // Also defensively make the local appBar of any LocalAppBarOwner visible again.
+            // Activity resume doesn't fire a Conductor change, so without this nudge the
+            // local appBar can stay at translationY = -height (off-screen) from before the
+            // pause. Only an off-screen bar goes back to the top: a scrolled list keeps its
+            // collapsed bar, and the bar's children are re-placed for the list's position
+            // (moving only the bar left an empty big-title band above the small toolbar).
+            val owner = active as? eu.kanade.tachiyomi.ui.base.LocalAppBarOwner
+            owner?.localAppBar()?.let { bar ->
                 bar.alpha = 1f
                 bar.isInvisible = false
                 bar.lockYPos = false
-                bar.translationY = 0f
-                bar.y = 0f
+                if (bar.y <= -bar.height) {
+                    bar.translationY = 0f
+                    bar.y = 0f
+                }
+                bar.updateAppBarAfterY(owner.localScrollView())
             }
         }
     }
