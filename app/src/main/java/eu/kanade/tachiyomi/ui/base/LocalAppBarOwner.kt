@@ -1,5 +1,7 @@
 package eu.kanade.tachiyomi.ui.base
 
+import androidx.core.view.ScrollingView
+
 /**
  * Marker for a controller that hosts its own [ExpandedAppBarLayout] inside its layout
  * tree rather than reaching into the activity-global appBar. Implementing this lets
@@ -14,4 +16,7 @@ package eu.kanade.tachiyomi.ui.base
  */
 interface LocalAppBarOwner {
     fun localAppBar(): ExpandedAppBarLayout?
+
+    /** The list [localAppBar] follows right now, so a resume can put the bar back where the list is. */
+    fun localScrollView(): ScrollingView? = null
 }
