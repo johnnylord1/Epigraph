@@ -25,19 +25,60 @@ async function loadImageElement(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Pretty-printed JSON wastes QR modules; a denser code is harder for phone cameras to read. */
-function compactQrPayload(payload: string): string {
+/**
+ * The phone's own camera opens this page, which hands the bundle in the link fragment (never sent
+ * to a server) to the Epigraph app as `epigraph://pair?b=`.
+ */
+export const SYNCD_PAIRING_PAGE_URL = "https://johnnylord1.github.io/Epigraph/pair/";
+const SYNCD_PAIRING_APP_PREFIX = "epigraph://pair?b=";
+
+function toBase64Url(text: string): string {
+  let binary = "";
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fromBase64Url(data: string): string {
+  const binary = atob(data.replace(/-/g, "+").replace(/_/g, "/"));
+  return new TextDecoder("utf-8", { fatal: true }).decode(
+    Uint8Array.from(binary, (char) => char.charCodeAt(0)),
+  );
+}
+
+/**
+ * Wraps a bundle in the pairing page link. Pretty-printed JSON wastes QR modules, and a denser code
+ * is harder for phone cameras to read, so the JSON is compacted first. Anything else is kept as is.
+ */
+export function syncdPairingLink(payload: string): string {
   try {
-    return JSON.stringify(JSON.parse(payload));
+    return `${SYNCD_PAIRING_PAGE_URL}#${toBase64Url(JSON.stringify(JSON.parse(payload)))}`;
   } catch {
     return payload;
+  }
+}
+
+/** The bundle inside a pairing link, or `scanned` unchanged (older desktops put raw JSON in the QR). */
+export function syncdBundleFromQr(scanned: string): string {
+  const text = scanned.trim();
+  let data: string | null = null;
+  if (text.startsWith(`${SYNCD_PAIRING_PAGE_URL}#`)) {
+    data = text.slice(SYNCD_PAIRING_PAGE_URL.length + 1);
+  } else if (text.startsWith(SYNCD_PAIRING_APP_PREFIX)) {
+    data = text.slice(SYNCD_PAIRING_APP_PREFIX.length).split("&")[0];
+  }
+  if (!data) return scanned;
+  try {
+    const bundle = fromBase64Url(data);
+    return bundle.trimStart().startsWith("{") ? bundle : scanned;
+  } catch {
+    return scanned;
   }
 }
 
 export async function buildSyncdQrDataUrl(payload: string): Promise<string> {
   // Phone scanners expect dark modules on a light background with a 4-module quiet zone;
   // inverted or transparent codes are not detected by many camera decoders.
-  return QRCode.toDataURL(compactQrPayload(payload), {
+  return QRCode.toDataURL(syncdPairingLink(payload), {
     errorCorrectionLevel: "M",
     margin: 4,
     scale: 8,
@@ -72,7 +113,7 @@ export async function decodeSyncdQrDataUrl(dataUrl: string): Promise<string> {
     throw new Error("No readable sync QR payload was found in the selected image.");
   }
 
-  return decoded.data;
+  return syncdBundleFromQr(decoded.data);
 }
 
 export async function decodeSyncdQrFile(file: File): Promise<string> {
