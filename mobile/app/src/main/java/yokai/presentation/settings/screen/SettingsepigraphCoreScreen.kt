@@ -19,6 +19,7 @@ import epigraph.sync.core.pairing.DiscoveredCoreHost
 import epigraph.sync.core.pairing.PairingBundleFailure
 import epigraph.sync.core.pairing.PairingErrorCode
 import epigraph.sync.core.pairing.PairingPin
+import epigraph.sync.core.pairing.PairingScanActivity
 import epigraph.sync.core.pairing.PairingStage
 import epigraph.sync.core.pairing.PairingSyncSelection
 import epigraph.sync.core.policy.SyncDomain
@@ -570,6 +571,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                         onClick = {
                             scanner.launch(
                                 ScanOptions()
+                                    .setCaptureActivity(PairingScanActivity::class.java)
                                     .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                                     .setPrompt(scannerPrompt)
                                     .setBeepEnabled(false)

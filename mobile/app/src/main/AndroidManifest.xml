@@ -74,6 +74,16 @@
                 <data android:scheme="tachiyomi" />
                 <data android:host="add-repo" />
             </intent-filter>
+
+            <!-- Desktop pairing QR read by the phone camera; the web page it opens hands it over. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="epigraph" android:host="pair" />
+            </intent-filter>
             <meta-data android:name="android.app.searchable" android:resource="@xml/searchable"/>
         </activity>
 
@@ -333,6 +343,13 @@
             android:name="epigraph.sync.core.setup.CoreDependencySetupActivity"
             android:exported="false"
             android:theme="@style/Theme.Tachiyomi" />
+        <activity
+            android:name="epigraph.sync.core.pairing.PairingScanActivity"
+            android:exported="false"
+            android:screenOrientation="fullUser"
+            android:stateNotNeeded="true"
+            android:theme="@style/zxing_CaptureTheme"
+            android:windowSoftInputMode="stateAlwaysHidden" />
 
         <!-- EXH -->
         <activity

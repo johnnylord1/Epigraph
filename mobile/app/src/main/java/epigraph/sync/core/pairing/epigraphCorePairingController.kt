@@ -108,7 +108,13 @@ class EpigraphCorePairingController(
         // An expired QR/PIN bundle cannot be claimed; never reopen its "Choose what to sync" dialog
         // while the persisted state below is still loading.
         val selecting = mutableState.value as? CorePairingUiState.Selecting
-        if (selecting != null && selecting.expiresAtMs <= nowMs()) {
+        if (selecting != null && selecting.expiresAtMs > nowMs()) {
+            // A Core screen recreated meanwhile (returning from the QR scanner can rotate it) must
+            // not drop the "Choose what to sync" step that the scan just opened.
+            mutableSelection.value = readPersistedSelection()
+            return@withLock
+        }
+        if (selecting != null) {
             pendingBootstrapBundle = null
             activeVerificationCode = null
             mutableState.value = CorePairingUiState.Loading
@@ -119,9 +125,13 @@ class EpigraphCorePairingController(
         mutableState.value = readPersistedState()
     }
 
-    /** Pairing survives navigation and configuration changes for the lifetime of this singleton. */
+    /**
+     * Pairing survives navigation and configuration changes for the lifetime of this singleton.
+     * Takes the bundle JSON or the pairing link a desktop QR holds.
+     */
     fun startPairing(rawBootstrapBundle: String) {
-        lifetimeScope.launch { preparePairing(rawBootstrapBundle) }
+        val bundle = PairingLink.bundleJson(rawBootstrapBundle)
+        lifetimeScope.launch { preparePairing(bundle) }
     }
 
     /** Browses the LAN for desktops showing a pairing PIN. */

@@ -75,6 +75,9 @@ import eu.kanade.tachiyomi.R
 import epigraph.recommendations.DiscoverMode
 import epigraph.recommendations.ui.DiscoverController
 import epigraph.recommendations.ui.DiscoverScreenModel
+import epigraph.sync.core.pairing.CorePairingUiState
+import epigraph.sync.core.pairing.EpigraphCorePairingController
+import epigraph.sync.core.pairing.PairingLink
 import epigraph.ui.moment.MomentEvents
 import epigraph.ui.moment.MomentOverlay
 import epigraph.ui.motion.PredictiveBackPreview
@@ -108,6 +111,7 @@ import eu.kanade.tachiyomi.ui.recents.RecentsController
 import eu.kanade.tachiyomi.ui.recents.RecentsViewType
 import eu.kanade.tachiyomi.ui.security.SecureActivityDelegate
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
+import eu.kanade.tachiyomi.ui.setting.controllers.SettingsEpigraphCoreController
 import eu.kanade.tachiyomi.ui.setting.controllers.SettingsMainController
 import eu.kanade.tachiyomi.ui.source.BrowseController
 import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
@@ -162,6 +166,7 @@ import yokai.core.migration.Migrator
 import yokai.domain.base.BasePreferences
 import yokai.domain.manga.interactor.GetLibraryManga
 import yokai.domain.recents.interactor.GetRecents
+import org.koin.core.context.GlobalContext
 import yokai.i18n.MR
 import yokai.presentation.theme.ReducedMotion
 import yokai.presentation.core.Constants
@@ -1413,6 +1418,17 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
                         router.popToRoot()
                         router.pushController(ExtensionRepoController(repoUrl).withFadeTransaction())
                     }
+                } else if (intent.scheme == PairingLink.APP_SCHEME && intent.data?.host == PairingLink.APP_HOST) {
+                    // A desktop pairing QR read by the phone's own camera, handed over by the web page.
+                    val link = intent.dataString ?: return false
+                    val pairing = GlobalContext.get().get<EpigraphCorePairingController>()
+                    val state = pairing.state.value
+                    if (state !is CorePairingUiState.Pairing && state !is CorePairingUiState.Selecting) {
+                        pairing.startPairing(link)
+                    }
+                    ensureRootTabReady(R.id.nav_library)
+                    router.popToRoot()
+                    router.pushController(SettingsEpigraphCoreController().withFadeTransaction())
                 }
             }
             else -> return false
