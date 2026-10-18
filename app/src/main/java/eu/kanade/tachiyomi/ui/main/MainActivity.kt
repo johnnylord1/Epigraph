@@ -444,14 +444,12 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         onBackPressedDispatcher.addCallback(backPressedCallback!!)
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         if (!isTaskRoot && this !is SearchActivity) {
-            finish()
-            // A pairing link opened while the app runs lands here; hand it to the running instance.
+            // A pairing link opened while the app runs lands here; the running instance below takes
+            // it when it resumes.
             if (intent.scheme == PairingLink.APP_SCHEME && intent.data?.host == PairingLink.APP_HOST) {
-                startActivity(
-                    Intent(Intent.ACTION_VIEW, intent.data, this, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-                )
+                pendingPairingLink = Intent(intent)
             }
+            finish()
             return
         }
         gestureDetector = GestureDetector(this, GestureListener())
@@ -1197,6 +1195,12 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
     override fun onResume() {
         super.onResume()
+        if (this !is SearchActivity && !isFinishing && isBindingInitialized && this::topRouter.isInitialized) {
+            pendingPairingLink?.let {
+                pendingPairingLink = null
+                handleIntentAction(it)
+            }
+        }
         checkForAppUpdates()
         lifecycleScope.launchIO {
             extensionManager.getExtensionUpdates(false)
@@ -2290,6 +2294,9 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
 
         var chapterIdToExitTo = 0L
         var backVelocity = 0f
+
+        /** A pairing link a closing duplicate of this activity received; see [onCreate]. */
+        private var pendingPairingLink: Intent? = null
     }
 }
 
