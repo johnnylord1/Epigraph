@@ -445,6 +445,13 @@ open class MainActivity : BaseActivity<MainActivityBinding>() {
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         if (!isTaskRoot && this !is SearchActivity) {
             finish()
+            // A pairing link opened while the app runs lands here; hand it to the running instance.
+            if (intent.scheme == PairingLink.APP_SCHEME && intent.data?.host == PairingLink.APP_HOST) {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, intent.data, this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                )
+            }
             return
         }
         gestureDetector = GestureDetector(this, GestureListener())
