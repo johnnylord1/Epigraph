@@ -113,6 +113,22 @@ class EpigraphCorePairingControllerTest {
         expired.refresh()
         assertSame(CorePairingUiState.Unpaired, expired.state.value)
 
+        // The Core screen recreated after the QR scanner refreshes while "what to sync" is open.
+        val live = EpigraphCorePairingController(
+            activation = activation,
+            credentials = mockk { every { load() } returns null },
+            deviceProvider = mockk(),
+            syncScheduler = mockk(),
+            selections = mockk(),
+            endpoints = mockk(),
+            ioDispatcher = StandardTestDispatcher(testScheduler),
+            pinResolver = resolver,
+            nowMs = { 50_000 },
+        )
+        live.resolvePinAndPrepare(host, "377299")
+        live.refresh()
+        assertEquals(accepted.state.value, live.state.value)
+
         val withoutResolver = controller(null)
         withoutResolver.resolvePinAndPrepare(host, "377299")
         assertEquals(
