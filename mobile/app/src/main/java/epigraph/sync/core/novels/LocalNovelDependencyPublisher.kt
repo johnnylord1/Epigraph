@@ -16,6 +16,7 @@ import epigraph.sync.ClientMutationIdFactory
 import epigraph.sync.EpigraphMutationCoordinator
 import epigraph.sync.EpigraphSyncScopeProvider
 import epigraph.sync.LocalMutationResult
+import epigraph.sync.core.novels.NovelDependencyBaselineEntry.Kind
 import epigraph.sync.core.policy.EffectiveSyncPolicy
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.work.CoreSyncPolicyHook
@@ -29,8 +30,8 @@ import kotlinx.coroutines.CancellationException
  * repository, version and artifact hash/size. The other device installs the plugin from that
  * repository and verifies the hash; executable bytes never travel through the Core.
  *
- * Once a repository or plugin is held by both sides it enters the [NovelDependencyBaseline], and
- * from then on a removal on either side reaches the other: removed here becomes a Core delete,
+ * Once a repository or plugin is held by both sides, or this device sent it to the Core, it enters
+ * the [NovelDependencyBaseline], and from then on a removal on either side reaches the other: removed here becomes a Core delete,
  * and a Core tombstone removes it here. A plugin installed here again after that delete is the
  * newer change and is published instead. Nothing outside the baseline is ever removed, and a
  * missing Core record is never read as a delete.
@@ -111,6 +112,7 @@ class LocalNovelDependencyPublisher(
                 declarations += Declaration(
                     entityType = EpigraphCoreEntityType.NOVEL_REPOSITORY,
                     command = SyncCommand.UpsertRepository(EpigraphEntityId(local.id), descriptor),
+                    sent = NovelDependencyBaselineEntry(local.id, Kind.REPOSITORY, local.canonicalUrl),
                 )
             }
 
@@ -150,8 +152,30 @@ class LocalNovelDependencyPublisher(
                     EpigraphEntityId(CoreNovelDependencyIds.pluginId(repository.id, installed.id, installed.id)),
                     descriptor,
                 ),
+                sent = NovelDependencyBaselineEntry(
+                    CoreNovelDependencyIds.pluginId(repository.id, installed.id, installed.id),
+                    Kind.PLUGIN,
+                    installed.id,
+                ),
             )
         }
+
+        // What this device sent is agreed from the start, so removing it before the Core confirms
+        // it still reaches the other device. A send the Core has not confirmed yet stays agreed
+        // while it waits in the outbox.
+        val held = core.repositories.mapTo(mutableSetOf()) { it.repositoryId } +
+            core.plugins.map(NovelDependencyReconciliation::entityId) + core.removed.keys
+        val awaiting = settled.values.filter { it.entityId !in held }
+        val stillSending = if (awaiting.isEmpty()) emptyList() else coordinator.readLocal {
+            awaiting.filter { entry ->
+                aethon_syncQueries.hasUnsettledMutationForEntity(
+                    scopeId = scopeId.value,
+                    entityType = entry.entityType(),
+                    entityId = entry.entityId,
+                ).executeAsOne()
+            }
+        }
+        val sent = declarations.mapNotNull(Declaration::sent) + stillSending
 
         // Plugins go before their repository when deleting, and after it when adding.
         val queued = deletions + declarations
@@ -183,6 +207,7 @@ class LocalNovelDependencyPublisher(
                 pendingDeletionIds = deletions.mapTo(mutableSetOf()) { it.command.entityId.value } - queuedDeletions,
                 includeRepositories = includeRepositories,
                 includePlugins = includePlugins,
+                sent = sent,
             ),
         )
         return removedHere + published
@@ -230,7 +255,14 @@ class LocalNovelDependencyPublisher(
     private data class Declaration(
         val entityType: String,
         val command: SyncCommand,
+        /** The baseline entry an upsert from this device stands for. */
+        val sent: NovelDependencyBaselineEntry? = null,
     )
+
+    private fun NovelDependencyBaselineEntry.entityType(): String = when (kind) {
+        Kind.REPOSITORY -> EpigraphCoreEntityType.NOVEL_REPOSITORY
+        Kind.PLUGIN -> EpigraphCoreEntityType.NOVEL_PLUGIN
+    }
 
     private companion object {
         const val LNREADER_ECOSYSTEM = "lnreader"

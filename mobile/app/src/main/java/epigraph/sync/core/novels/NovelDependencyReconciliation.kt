@@ -90,6 +90,8 @@ internal object NovelDependencyReconciliation {
     /**
      * Entries both sides hold after this pass. Kinds this pass did not reconcile, or could not
      * read, keep their previous entries, and so does a delete that could not be queued yet.
+     * [sent] are entries this device declared to the Core and is still sending; they count as
+     * held by both sides, so a removal made before the Core confirms them still reaches it.
      */
     fun nextBaseline(
         core: CoreNovelDependencyManifest,
@@ -100,8 +102,10 @@ internal object NovelDependencyReconciliation {
         pendingDeletionIds: Set<String>,
         includeRepositories: Boolean,
         includePlugins: Boolean,
+        sent: Collection<NovelDependencyBaselineEntry> = emptyList(),
     ): List<NovelDependencyBaselineEntry> {
         val next = agreed.values.filterTo(mutableListOf()) { it.entityId in pendingDeletionIds }
+        sent.filterTo(next) { it.entityId !in deletedEntityIds }
         if (includeRepositories) {
             core.repositories
                 .filter { it.repositoryId !in deletedEntityIds && it.repositoryId in localRepositoryIds }

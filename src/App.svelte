@@ -575,12 +575,27 @@
           console.warn("Failed to refresh novels after syncd replication apply:", error);
         }
         store.bumpContentSetupVersion();
-        // Plugins the other device uses are installed here from their declared repository.
-        void import("./lib/novels/syncedDependencies")
-          .then(({ reconcileSyncedNovelDependencies }) => reconcileSyncedNovelDependencies(currentProfileId))
-          .catch((error) => console.warn("Failed to install synced novel dependencies:", error));
       }
     }
+  }
+
+  const novelDependencyAppliedMarks = new Map<string, number>();
+
+  // Runs on every page, unlike the listener behind handleReplicationState: an apply missed here
+  // leaves a repository both devices held unrecorded, so its later delete would never arrive.
+  function reconcileNovelDependenciesAfterApply(payload: SyncdReplicationSnapshot) {
+    if (!payload.lastAppliedAtMs) return;
+    if (!payload.lastAppliedScopes.some((scope) => scope.startsWith("novels:profile:"))) return;
+    if (novelDependencyAppliedMarks.get(payload.localProfileId) === payload.lastAppliedAtMs) return;
+    novelDependencyAppliedMarks.set(payload.localProfileId, payload.lastAppliedAtMs);
+    const currentProfileId =
+      normalizeLocalProfileIdFromSession(store.runtimeResolvedLocalProfileId)
+      ?? normalizeLocalProfileIdFromSession(store.settings.defaultLocalProfileId);
+    if (!currentProfileId || payload.localProfileId !== currentProfileId) return;
+    // Plugins the other device uses are installed here from their declared repository.
+    void import("./lib/novels/syncedDependencies")
+      .then(({ reconcileSyncedNovelDependencies }) => reconcileSyncedNovelDependencies(currentProfileId))
+      .catch((error) => console.warn("Failed to install synced novel dependencies:", error));
   }
 
   const AUTOMATIC_LIBRARY_UPDATE_SETTLE_MS = 3 * 60 * 1000;
@@ -2974,6 +2989,28 @@
       unlistenSyncdReplicationError = undefined;
       syncdListenersAttached = false;
     }
+  });
+
+  $effect(() => {
+    if (!shellReady || isNovelRuntimeHostWindow) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      const { listenSyncdReplicationState, syncdGetReplicationState } = await import("./lib/syncdDesktop");
+      const stop = await listenSyncdReplicationState(reconcileNovelDependenciesAfterApply);
+      if (disposed) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      // Changes applied before this listener started.
+      const profileId = store.runtimeResolvedLocalProfileId;
+      if (profileId) reconcileNovelDependenciesAfterApply(await syncdGetReplicationState(profileId));
+    })().catch((error) => console.warn("syncd novel dependency listener failed:", error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   });
 
   $effect(() => {

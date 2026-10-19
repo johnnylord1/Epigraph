@@ -1484,6 +1484,21 @@
     });
   });
 
+  // Repositories and plugins another device added or removed show up while this page is open.
+  let seenContentSetupVersion = untrack(() => store.contentSetupVersion);
+  $effect(() => {
+    const version = store.contentSetupVersion;
+    if (version === seenContentSetupVersion) return;
+    seenContentSetupVersion = version;
+    if (!untrack(() => isNovelMode)) return;
+    untrack(() => {
+      const run = ++extensionLoadRun;
+      void loadNovelExtensions(run).finally(() => {
+        if (isCurrentExtensionLoad(run, "novels")) loading = false;
+      });
+    });
+  });
+
   onMount(() => {
     const handleServerReady = () => {
       if (isNovelMode) return;
