@@ -878,7 +878,7 @@
   --component-syncd-primary-ink: var(--color-migration-primary-ink-source);
   --component-syncd-primary-hover-filter: brightness(1.08);
   --component-syncd-disabled-opacity: 0.45;
-  --component-syncd-qr-size: 168px;
+  --component-syncd-qr-size: 240px;
   --component-syncd-qr-bg: color-mix(in srgb, var(--color-shadow-source) 72%, transparent);
   --component-syncd-qr-radius: 14px;
   --component-syncd-qr-shadow: 0 14px 36px color-mix(in srgb, var(--color-shadow-source) 42%, transparent);

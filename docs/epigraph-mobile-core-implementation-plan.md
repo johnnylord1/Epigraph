@@ -713,6 +713,43 @@ identidade, versao, SHA-256 e tamanho; JavaScript, cookies, settings privadas e
 caminhos locais nao entram no Syncd. O Android resolve o artefato no repository
 LNReader exato e so o ativa depois de validar hash e tamanho.
 
+O fluxo e bidirecional (decisao de 2026-10-18). Os dois dispositivos sao fonte
+da Library, entao o Android tambem publica seus repositories LNReader e plugins
+instalados (`LocalNovelDependencyPublisher`, a cada ciclo do worker), com os
+mesmos ids que o Core recalcula (`novel-repository:` e `novel-plugin:`).
+Repositories privados ou com URL nao canonica ficam locais. Um plugin so e
+publicado quando exatamente um repository configurado o declara; uma versao ja
+registrada com outro hash e conflito, nao sobrescrita.
+
+O desktop guarda as declaracoes confirmadas na replica (`syncd_replication`,
+inclusive na recuperacao por snapshot) e, depois de cada apply de Novels,
+instala o que falta a partir do repository declarado
+(`reconcileSyncedNovelDependencies`). Repository ausente e adicionado como
+confiavel; repository local desativado, nao confiavel ou bloqueado mantem a
+escolha local e seus plugins nao sao instalados. Uma instalacao que falha e
+tentada de novo no proximo apply, depois de 5 minutos.
+
+Depois de pareados, os dois dispositivos mantem uma lista unica, nao uma uniao.
+Cada lado guarda uma baseline do que ambos ja tinham (Android em
+`NovelDependencyBaseline`; desktop em `novel_dependency_baseline` na replica).
+So entradas da baseline sao removidas:
+
+- removida localmente -> o dispositivo publica `delete` (plugins antes do
+  repository) e o Core grava o tombstone;
+- tombstone confirmado no Core -> o outro dispositivo remove localmente
+  (`syncd_plan_novel_dependency_sync` no desktop);
+- plugin instalado de novo depois do tombstone e a mudanca mais nova: fica e e
+  republicado, seguindo o LWW do Core.
+
+No primeiro encontro nada e removido: o que cada lado tem vira a lista comum. O
+bootstrap do desktop so republica entradas fora da baseline ou alteradas
+localmente, para nao ressuscitar o que o outro dispositivo removeu. Um `delete`
+enviado pelo desktop bloqueia a reinstalacao da declaracao antiga por ate 10
+minutos, ate o Core confirmar.
+
+Extensoes de Comics continuam fora desse caminho: no desktop viram pedido de
+instalacao no Suwayomi.
+
 ## 13. Selecao de conteudo e autorizacao por dispositivo
 
 O primeiro sync de um cliente novo agora declara explicitamente os dominios
@@ -746,9 +783,9 @@ Inventarios de repositories e extensoes de comics e dependencies LNReader sao
 opt-in dentro do respectivo dominio. No Android, a atualizacao do catalogo de
 repositories de comics pode ser pausada sem copiar Extension Stores do Suwayomi.
 A replica apenas compara estado. APKs continuam resolvidos nos repositories
-confiaveis do Android e passam pelo Package Installer visivel;
-repositories/plugins LNReader exigem acao explicita do usuario e sao obtidos do
-repository aprovado, nunca do Syncd.
+confiaveis do Android e passam pelo Package Installer visivel.
+Repositories/plugins LNReader seguem o fluxo bidirecional da secao 12: os bytes
+vem sempre do repository declarado, nunca do Syncd.
 
 ### Validacao deste lote
 

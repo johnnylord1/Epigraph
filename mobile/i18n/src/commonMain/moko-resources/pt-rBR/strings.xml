@@ -1164,11 +1164,13 @@
     <string name="epigraph_core_sync_novels_summary">Biblioteca, categorias, progresso e marcadores</string>
     <string name="epigraph_core_sync_books">Livros</string>
     <string name="epigraph_core_sync_books_summary">Metadados, capas, categorias, progresso e anotações</string>
-    <string name="epigraph_core_sync_selection_install_notice">Extensões e repositórios são revisados separadamente. EPUB e PDF continuam sob demanda.</string>
+    <string name="epigraph_core_sync_selection_install_notice">Plugins LNReader são instalados no outro aparelho a partir do repositório de origem. Extensões de comics são revisadas separadamente. EPUB e PDF continuam sob demanda.</string>
     <string name="epigraph_core_sync_comic_repositories">Comparar repositórios de comics</string>
     <string name="epigraph_core_sync_comic_extensions">Comparar extensões de comics</string>
-    <string name="epigraph_core_sync_novel_repositories">Comparar repositórios LNReader</string>
-    <string name="epigraph_core_sync_novel_plugins">Comparar plugins LNReader</string>
+    <string name="epigraph_core_sync_novel_repositories">Compartilhar repositórios LNReader</string>
+    <string name="epigraph_core_sync_novel_plugins">Compartilhar plugins LNReader</string>
+    <string name="epigraph_core_sync_from_this_device">Neste aparelho: %1$s</string>
+    <string name="epigraph_core_sync_nothing_on_this_device">Nenhum neste aparelho</string>
     <string name="epigraph_core_sync_authorization_required">Autorize primeiro no desktop o domínio que acabou de selecionar.</string>
     <string name="epigraph_core_sync_continue">Solicitar acesso</string>
     <string name="epigraph_core_sync_save_selection">Salvar seleção</string>

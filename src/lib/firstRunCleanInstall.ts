@@ -56,9 +56,13 @@ export function shouldReopenEmptyProfile(storage: Pick<Storage, "getItem">, prof
   return readContentProfiles(storage).includes(profileId);
 }
 
-/** Starts setup over: the next read of the marker reports first run as pending. */
-export function reopenFirstRun(storage: Pick<Storage, "setItem" | "removeItem">): void {
-  storage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(createFirstRunState()));
+/**
+ * Starts setup over: the next read of the marker reports first run as pending. A cancellable
+ * setup, started by the user from Settings, can be left to return to the app as it was.
+ */
+export function reopenFirstRun(storage: Pick<Storage, "setItem" | "removeItem">, options: { cancellable?: boolean } = {}): void {
+  const state = createFirstRunState();
+  storage.setItem(FIRST_RUN_STORAGE_KEY, JSON.stringify(options.cancellable ? { ...state, cancellable: true } : state));
   // Content counts again only once setup is done, so an empty app cannot reopen it in a loop.
   storage.removeItem(FIRST_RUN_CONTENT_PROFILES_KEY);
 }

@@ -8,6 +8,7 @@ const sync = vi.hoisted(() => ({
   connect: vi.fn(),
   replication: vi.fn(),
   refresh: vi.fn(),
+  paired: vi.fn(),
   pairingListener: null as null | ((payload: unknown) => void),
   replicationListener: null as null | ((payload: unknown) => void),
 }));
@@ -17,6 +18,7 @@ vi.mock("../../lib/syncdDesktop", () => ({
   syncdResolvePairingPin: sync.resolve,
   syncdConnectWithBootstrap: sync.connect,
   syncdGetReplicationState: sync.replication,
+  syncdListPairedDevicesIfRunning: sync.paired,
   listenSyncdPairingStatus: vi.fn(async (handler: (payload: unknown) => void) => { sync.pairingListener = handler; return () => {}; }),
   listenSyncdReplicationState: vi.fn(async (handler: (payload: unknown) => void) => { sync.replicationListener = handler; return () => {}; }),
 }));
@@ -74,6 +76,7 @@ beforeEach(() => {
   sync.resolve.mockResolvedValue("{\"pairingSessionId\":\"bootstrap-1\"}");
   sync.connect.mockResolvedValue(connectState("pending"));
   sync.refresh.mockResolvedValue(undefined);
+  sync.paired.mockResolvedValue([]);
 });
 
 afterEach(cleanup);
@@ -118,6 +121,57 @@ describe("FirstRunSyncStep", () => {
     expect(onReadyChange).toHaveBeenLastCalledWith(true);
     await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(onContinue).toHaveBeenCalledOnce();
+  });
+
+  it("continues once a phone pairs with this computer", async () => {
+    const onReadyChange = vi.fn();
+    render(FirstRunSyncStep, { props: { profileId: "main", onReadyChange } });
+    await screen.findByText("OFFICE-PC");
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+
+    sync.pairingListener?.({ profileId: "main", sessionId: "host-1", status: "approved", claimedDeviceName: "Galaxy S23", claimedPlatform: "android", bootstrapBundle: "{}" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+    expect(sync.refresh).toHaveBeenCalledWith("main", expect.any(Function));
+    expect(screen.getByText("Galaxy S23")).toBeTruthy();
+    expect(onReadyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("ignores host pairings for another profile or still waiting for approval", async () => {
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+    await screen.findByText("OFFICE-PC");
+
+    sync.pairingListener?.({ profileId: "other", sessionId: "host-1", status: "approved", claimedDeviceName: "Galaxy S23", claimedPlatform: "android", bootstrapBundle: "{}" });
+    sync.pairingListener?.({ profileId: "main", sessionId: "host-2", status: "claimed", claimedDeviceName: "Galaxy S23", claimedPlatform: "android", bootstrapBundle: "{}" });
+
+    await Promise.resolve();
+    expect(sync.refresh).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("recognises a phone that already paired here before the step opened", async () => {
+    sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+    render(FirstRunSyncStep, { props: { profileId: "main" } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+    expect(screen.getByText("Library synced")).toBeTruthy();
+  });
+
+  it("notices a phone that pairs while the step is searching the network", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      sync.paired.mockResolvedValue([]);
+      render(FirstRunSyncStep, { props: { profileId: "main" } });
+      await screen.findByText("OFFICE-PC");
+
+      sync.paired.mockResolvedValue([{ deviceId: "phone-1", deviceName: "Galaxy S23", platform: "android", profileId: "main", grantedScopes: [], inactive: false }]);
+      await vi.advanceTimersByTimeAsync(4000);
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false));
+      expect(screen.getByText("Galaxy S23")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the user on the code with a clear message when the PIN does not match", async () => {

@@ -370,6 +370,16 @@ pub(crate) fn current_runtime_info(app: &AppHandle) -> Option<SyncdRuntimeInfo> 
     guard.as_ref().map(runtime_info_from_running)
 }
 
+/// The server id of this computer's Core. A Core this app spawned only records it in the runtime
+/// manifest it validated at startup.
+pub(crate) fn current_server_id(app: &AppHandle) -> Option<String> {
+    let state = app.state::<SyncdState>();
+    let guard = state.runtime.lock().unwrap();
+    let running = guard.as_ref()?;
+    running.server_id.clone()
+        .or_else(|| running.manifest.as_ref().map(|manifest| manifest.server_id.clone()))
+}
+
 async fn ensure_spawned(
     app: &AppHandle,
     request: SpawnRequest,

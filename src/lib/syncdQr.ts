@@ -77,9 +77,10 @@ export function syncdBundleFromQr(scanned: string): string {
 
 export async function buildSyncdQrDataUrl(payload: string): Promise<string> {
   // Phone scanners expect dark modules on a light background with a 4-module quiet zone;
-  // inverted or transparent codes are not detected by many camera decoders.
+  // inverted or transparent codes are not detected by many camera decoders. A screen is never
+  // smudged or torn, so low error correction buys larger modules, which cameras read sooner.
   return QRCode.toDataURL(syncdPairingLink(payload), {
-    errorCorrectionLevel: "M",
+    errorCorrectionLevel: "L",
     margin: 4,
     scale: 8,
     color: {

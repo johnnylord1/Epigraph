@@ -2286,11 +2286,13 @@
     <string name="epigraph_core_sync_novels_summary">Library, categories, progress and bookmarks</string>
     <string name="epigraph_core_sync_books">Books</string>
     <string name="epigraph_core_sync_books_summary">Metadata, covers, categories, progress and annotations</string>
-    <string name="epigraph_core_sync_selection_install_notice">Extensions and repositories are reviewed separately. EPUB and PDF files remain on demand.</string>
+    <string name="epigraph_core_sync_selection_install_notice">LNReader plugins are installed on the other device from their own repository. Comics extensions are reviewed separately. EPUB and PDF files remain on demand.</string>
     <string name="epigraph_core_sync_comic_repositories">Compare comics repositories</string>
     <string name="epigraph_core_sync_comic_extensions">Compare comics extensions</string>
-    <string name="epigraph_core_sync_novel_repositories">Compare LNReader repositories</string>
-    <string name="epigraph_core_sync_novel_plugins">Compare LNReader plugins</string>
+    <string name="epigraph_core_sync_novel_repositories">Share LNReader repositories</string>
+    <string name="epigraph_core_sync_novel_plugins">Share LNReader plugins</string>
+    <string name="epigraph_core_sync_from_this_device">On this device: %1$s</string>
+    <string name="epigraph_core_sync_nothing_on_this_device">None on this device</string>
     <string name="epigraph_core_sync_authorization_required">Authorize the newly selected domain on the desktop first.</string>
     <string name="epigraph_core_sync_continue">Request access</string>
     <string name="epigraph_core_sync_save_selection">Save selection</string>

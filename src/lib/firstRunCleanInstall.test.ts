@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FIRST_RUN_STORAGE_KEY } from "./firstRun";
+import { FIRST_RUN_STORAGE_KEY, normalizeFirstRunState } from "./firstRun";
 import {
   FIRST_RUN_CONTENT_PROFILES_KEY,
   readInstallContent,
@@ -74,5 +74,14 @@ describe("reopening setup", () => {
     expect(JSON.parse(storage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null")).toMatchObject({ status: "pending", step: "theme" });
     expect(storage.getItem(FIRST_RUN_CONTENT_PROFILES_KEY)).toBeNull();
     expect(shouldReopenEmptyProfile(storage, "default")).toBe(false);
+  });
+
+  it("lets only a setup started by the user be cancelled, across reloads", () => {
+    const storage = memoryStorage();
+    reopenFirstRun(storage);
+    expect(normalizeFirstRunState({ firstRun: JSON.parse(storage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null") }).cancellable).toBeUndefined();
+    reopenFirstRun(storage, { cancellable: true });
+    const reloaded = normalizeFirstRunState({ firstRun: JSON.parse(storage.getItem(FIRST_RUN_STORAGE_KEY) ?? "null") });
+    expect(reloaded).toMatchObject({ status: "pending", step: "theme", cancellable: true });
   });
 });

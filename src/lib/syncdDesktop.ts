@@ -255,6 +255,11 @@ export function syncdListPairedDevices(): Promise<SyncdPairedDeviceView[]> {
   return invoke("syncd_list_paired_devices");
 }
 
+/** Devices paired here, read only when this computer's Core already runs; never starts it. */
+export function syncdListPairedDevicesIfRunning(): Promise<SyncdPairedDeviceView[]> {
+  return invoke("syncd_list_paired_devices_if_running");
+}
+
 export function syncdUpdatePairedDeviceGrantedScopes(
   deviceId: string,
   profileId: string,
@@ -293,6 +298,36 @@ export function syncdGetReplicationState(
   profileId: string,
 ): Promise<SyncdReplicationSnapshot> {
   return invoke("syncd_get_replication_state", { profileId });
+}
+
+/** LNReader repositories and plugins the paired devices declared through Syncd. */
+export type SyncdNovelDependencyDeclaration =
+  | { kind: "repository"; repositoryId: string; canonicalUrl: string; enabled: boolean }
+  | { kind: "plugin"; repositoryId: string; pluginId: string; version: string; enabled: boolean };
+
+export function syncdGetNovelDependencyDeclarations(
+  profileId: string,
+): Promise<SyncdNovelDependencyDeclaration[]> {
+  return invoke("syncd_get_novel_dependency_declarations", { profileId });
+}
+
+/** A local entry another device deleted after both held it. */
+export type SyncdNovelDependencyRemoval =
+  | { kind: "repository"; localRepositoryId: string }
+  | { kind: "plugin"; pluginId: string };
+
+export interface SyncdNovelDependencySyncPlan {
+  /** Declarations to install when missing here. */
+  declarations: SyncdNovelDependencyDeclaration[];
+  /** Local entries to remove, plugins first. */
+  removals: SyncdNovelDependencyRemoval[];
+}
+
+/** What to install and remove here so this desktop and the paired devices keep one list. */
+export function syncdPlanNovelDependencySync(
+  profileId: string,
+): Promise<SyncdNovelDependencySyncPlan> {
+  return invoke("syncd_plan_novel_dependency_sync", { profileId });
 }
 
 export function syncdSetActiveReplicationSession(

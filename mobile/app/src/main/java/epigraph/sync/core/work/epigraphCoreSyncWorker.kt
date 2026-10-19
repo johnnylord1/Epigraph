@@ -3,6 +3,7 @@ package epigraph.sync.core.work
 import epigraph.sync.core.events.CoreBackgroundSyncReason
 import epigraph.sync.core.events.CoreBackgroundSyncScheduler
 import epigraph.sync.core.novels.LocalNovelLibraryOutboxRepair
+import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
@@ -73,11 +74,15 @@ class EpigraphCoreSyncWorker(
     }
 
     private suspend fun runOnce(): WorkerExecution {
-        // Backfill favorite LNReader rows created by older builds before counting/draining the
-        // outbox. The repair is idempotent and is a no-op until the device is paired.
+        // Backfill favorites added on this device before pairing (or by older builds) before
+        // counting/draining the outbox. The repairs are idempotent and no-ops until paired.
         runCatching { get<LocalNovelLibraryOutboxRepair>().repair() }
             .onFailure { failure ->
                 Log.w(LOG_TAG, "local novel library repair failed", failure)
+            }
+        runCatching { get<LocalComicLibraryOutboxRepair>().repair() }
+            .onFailure { failure ->
+                Log.w(LOG_TAG, "local comic library repair failed", failure)
             }
         val outcome = try {
             get<CoreOutboxSyncRunner>().run(

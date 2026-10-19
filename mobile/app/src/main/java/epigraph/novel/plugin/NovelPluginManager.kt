@@ -474,6 +474,33 @@ class NovelPluginManager(
         return NovelPluginArtifactVerifier.matches(bytes, expectedSha256, expectedByteLength)
     }
 
+    /** Last index fetched from one repository, without touching the network. */
+    fun cachedRepositoryPlugins(repoUrl: String): List<NovelPluginIndex> = cache.readRepoPlugins(repoUrl)
+
+    /** SHA-256 and size of the installed `index.js`, the evidence another device verifies against. */
+    fun installedArtifactEvidence(pluginId: String): Pair<String, Long>? {
+        val artifact = File(pluginsDir, pluginId).resolve("index.js")
+        val bytes = runCatching { artifact.readBytes() }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return null
+        val sha256 = MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return sha256 to bytes.size.toLong()
+    }
+
+    /**
+     * Ids of the plugins whose `index.js` is on disk, loaded or not, or null when the plugin
+     * directory cannot be listed. A plugin that fails to load is still installed.
+     */
+    fun installedArtifactIds(): Set<String>? {
+        if (!pluginsDir.exists()) return emptySet()
+        return pluginsDir.listFiles()
+            ?.filter { it.isDirectory && File(it, "index.js").isFile }
+            ?.mapTo(mutableSetOf()) { it.name }
+    }
+
+    /** When the installed `index.js` was written, or 0 when it is missing. Icons do not move it. */
+    fun installedArtifactModifiedAt(pluginId: String): Long =
+        File(pluginsDir, pluginId).resolve("index.js").lastModified()
+
     fun getPluginLastModified(pluginId: String): Long {
         val pluginDir = File(pluginsDir, pluginId)
         return if (pluginDir.exists()) pluginDir.lastModified() else 0L

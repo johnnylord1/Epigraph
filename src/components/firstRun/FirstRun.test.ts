@@ -8,6 +8,8 @@ import * as novelLibrary from "../../lib/novels/libraryState";
 import FirstRun from "./FirstRun.svelte";
 import { createProductionFirstRunBackupWorkflow } from "../../lib/backup/firstRunBackupWorkflow";
 
+const sourcesMock = vi.hoisted(() => ({ restoreInstallsExtensions: false }));
+
 vi.mock("../settings/SyncdConnectionPanel.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
 vi.mock("../pages/SourcesView.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
 vi.mock("../pages/Search.svelte", () => import("../../test/fixtures/FirstRunSurface.svelte"));
@@ -40,7 +42,13 @@ vi.mock("../../lib/setup/firstRunSourcesWorkflow", async (importOriginal) => ({
       warnings: [],
       subscribe: (listener: () => void) => { listener(); return () => {}; },
       refreshRepository: vi.fn(),
-      hydrate: async () => repositories,
+      hydrate: async () => {
+        // A restore that installed the backup's own extensions leaves them installed on reload.
+        if (sourcesMock.restoreInstallsExtensions) {
+          for (const repository of repositories) for (const extension of repository.extensions) extension.installed = true;
+        }
+        return repositories;
+      },
       addRepository: vi.fn(),
       installExtension: async (repositoryId: string, extensionId: string) => {
         const extension = repositories.find((repository) => repository.id === repositoryId)?.extensions.find((entry) => entry.id === extensionId);
@@ -131,6 +139,7 @@ describe("FirstRun", () => {
     store.runtimeServerUrl = "http://localhost:4567";
     vi.mocked(createProductionFirstRunBackupWorkflow).mockClear();
     resetNovelLibraryStateCacheForTests();
+    sourcesMock.restoreInstallsExtensions = false;
   });
 
   afterEach(() => { cleanup(); applyAppLanguage("en"); vi.restoreAllMocks(); });
@@ -327,6 +336,35 @@ describe("FirstRun", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Install Comics test extension" }, { timeout: 5000 }));
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
   }, 15_000);
+
+  it("skips repositories when the restore already installed the backup's extensions", async () => {
+    sourcesMock.restoreInstallsExtensions = true;
+    const { container } = render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "backup", path: "backup" } } });
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await fireEvent.change(input, { target: { files: [new File(["data"], "test.epigraphbk")] } });
+    await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
+    const restore = await screen.findByRole("button", { name: "Restore all" }, { timeout: 5000 });
+    await waitFor(() => expect(restore.hasAttribute("disabled")).toBe(false), { timeout: 5000 });
+    await fireEvent.click(restore);
+    expect(await screen.findByRole("heading", { name: "Would you like to connect a tracker?" }, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Add repositories" })).toBeNull();
+    expect(JSON.parse(localStorage.getItem("epigraph-first-run") ?? "null")).toMatchObject({ backupNeedsSources: false });
+  }, 15_000);
+
+  it("offers to cancel only a setup started from Settings and keeps the app as it was", async () => {
+    const onComplete = vi.fn();
+    render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "entry" } } });
+    expect(screen.queryByRole("button", { name: "Cancel setup" })).toBeNull();
+    cleanup();
+    store.navPage = "library";
+    render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "entry", cancellable: true } } });
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel setup" }));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(store.navPage).toBe("settings");
+    const saved = JSON.parse(localStorage.getItem("epigraph-first-run") ?? "null");
+    expect(saved).toMatchObject({ status: "complete" });
+    expect(saved.cancellable).toBeUndefined();
+  });
 
   it("does not require extensions after restoring only local books", async () => {
     localStorage.setItem("epigraph-first-run", JSON.stringify({

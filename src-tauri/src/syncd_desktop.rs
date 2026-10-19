@@ -41,6 +41,7 @@ const EVENT_DESKTOP_STATE: &str = "syncd-desktop-state";
 const EVENT_PAIRING_STATUS: &str = "syncd-pairing-status";
 const EVENT_RECONNECT_STATUS: &str = "syncd-reconnect-status";
 const DISCOVERY_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);
+const DISCOVERY_CONTRACT_TIMEOUT: Duration = Duration::from_secs(4);
 const HOST_DECISION_TIMEOUT: Duration = Duration::from_secs(8);
 const PAIRING_LISTENER_RETRY_DELAY: Duration = Duration::from_millis(500);
 
@@ -313,30 +314,58 @@ impl ServerCertVerifier for FingerprintVerifier {
 }
 
 #[tauri::command]
-pub async fn syncd_list_discovery_candidates() -> Result<Vec<SyncdDesktopDiscoveryCandidate>, String>
-{
-    let browser = ServiceDaemon::new().map_err(|error| error.to_string())?;
-    let receiver = browser
-        .browse(SYNCD_DISCOVERY_SERVICE_NAME)
-        .map_err(|error| error.to_string())?;
-    let legacy_receiver = browser
-        .browse(LEGACY_SYNCD_DISCOVERY_SERVICE_NAME)
-        .map_err(|error| error.to_string())?;
-    let mut services = browse_mdns_services(receiver)?;
-    services.extend(browse_mdns_services(legacy_receiver)?);
-    let _ = browser.shutdown();
+pub async fn syncd_list_discovery_candidates(
+    app: AppHandle,
+) -> Result<Vec<SyncdDesktopDiscoveryCandidate>, String> {
+    // This computer's own Core advertises itself on the same network; it is never a peer.
+    let own_server_id = syncd_sidecar::current_server_id(&app);
+    // Browsing waits on the network; keep it off the async workers.
+    let services = tokio::task::spawn_blocking(|| -> Result<Vec<ResolvedService>, String> {
+        let browser = ServiceDaemon::new().map_err(|error| error.to_string())?;
+        let receiver = browser
+            .browse(SYNCD_DISCOVERY_SERVICE_NAME)
+            .map_err(|error| error.to_string())?;
+        let legacy_receiver = browser
+            .browse(LEGACY_SYNCD_DISCOVERY_SERVICE_NAME)
+            .map_err(|error| error.to_string())?;
+        let mut services = browse_mdns_services(receiver)?;
+        services.extend(browse_mdns_services(legacy_receiver)?);
+        let _ = browser.shutdown();
+        Ok(services)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+
+    // An announcement can outlive its Core or point at an unreachable address. Each one is
+    // checked on its own and with a deadline, so one silent Core never hides the others.
+    let contracts = futures_util::future::join_all(services.iter().map(|service| async move {
+        let origin = service.get_property_val_str("origin")?;
+        let tls_cert_sha256 = service.get_property_val_str("tls_sha256")?;
+        let client = build_pinned_http_client(tls_cert_sha256).ok()?;
+        match tokio::time::timeout(
+            DISCOVERY_CONTRACT_TIMEOUT,
+            fetch_client_contract(&client, origin),
+        )
+        .await
+        {
+            Ok(Ok(contract)) => Some((service, origin, tls_cert_sha256, contract)),
+            Ok(Err(error)) => {
+                eprintln!("[syncd] discovery skipped {origin}: {error}");
+                None
+            }
+            Err(_) => {
+                eprintln!("[syncd] discovery skipped {origin}: no answer");
+                None
+            }
+        }
+    }))
+    .await;
 
     let mut candidates = Vec::new();
-    for service in services {
-        let Some(origin) = service.get_property_val_str("origin") else {
+    for (service, origin, tls_cert_sha256, contract) in contracts.into_iter().flatten() {
+        if own_server_id.as_deref() == Some(contract.server_id.as_str()) {
             continue;
-        };
-        let Some(tls_cert_sha256) = service.get_property_val_str("tls_sha256") else {
-            continue;
-        };
-
-        let client = build_pinned_http_client(tls_cert_sha256)?;
-        let contract = fetch_client_contract(&client, origin).await?;
+        }
         candidates.push(SyncdDesktopDiscoveryCandidate {
             instance_name: service.get_fullname().to_string(),
             server_id: contract.server_id.clone(),
@@ -362,9 +391,25 @@ pub async fn syncd_list_discovery_candidates() -> Result<Vec<SyncdDesktopDiscove
         });
     }
 
-    candidates.sort_by(|left, right| left.instance_name.cmp(&right.instance_name));
-    candidates.dedup_by(|left, right| left.effective_origin == right.effective_origin);
-    Ok(candidates)
+    Ok(unique_discovery_candidates(candidates))
+}
+
+/// One row per Core. A Core announces itself under the current and the legacy service name, and
+/// the UI keys its rows by origin, so a repeated origin would break the list.
+fn unique_discovery_candidates(
+    candidates: Vec<SyncdDesktopDiscoveryCandidate>,
+) -> Vec<SyncdDesktopDiscoveryCandidate> {
+    let mut servers = std::collections::HashSet::new();
+    let mut origins = std::collections::HashSet::new();
+    let mut unique = candidates
+        .into_iter()
+        .filter(|candidate| {
+            servers.insert(candidate.server_id.clone())
+                && origins.insert(candidate.effective_origin.clone())
+        })
+        .collect::<Vec<_>>();
+    unique.sort_by(|left, right| left.instance_name.cmp(&right.instance_name));
+    unique
 }
 
 /// Starts or reattaches this computer's Core for host actions. The detailed failure stays in the
@@ -765,9 +810,25 @@ pub async fn syncd_list_paired_devices(
     app: AppHandle,
 ) -> Result<Vec<SyncdPairedDeviceView>, String> {
     let runtime = host_core(&app).await?;
+    fetch_paired_devices(&runtime.local_base_url).await
+}
+
+/// Devices paired with this computer's Core, read only when that Core already runs. Never starts
+/// Core or opens it to the network, so the first run can show a phone that paired here.
+#[tauri::command]
+pub async fn syncd_list_paired_devices_if_running(
+    app: AppHandle,
+) -> Result<Vec<SyncdPairedDeviceView>, String> {
+    let Some(runtime) = syncd_sidecar::current_runtime_info(&app) else {
+        return Ok(Vec::new());
+    };
+    fetch_paired_devices(&runtime.local_base_url).await
+}
+
+async fn fetch_paired_devices(local_base_url: &str) -> Result<Vec<SyncdPairedDeviceView>, String> {
     let client = insecure_local_client()?;
     let response = client
-        .get(format!("{}/v1/pairing/devices", runtime.local_base_url))
+        .get(format!("{local_base_url}/v1/pairing/devices"))
         .send()
         .await
         .map_err(transport_error_message)?
@@ -2165,6 +2226,32 @@ mod tests {
     use crate::syncd::models::{
         SyncdClientDiscoveryAttemptGuidance, SyncdClientDiscoveryBehaviorGuidance,
     };
+
+    #[test]
+    fn discovery_lists_each_core_once() {
+        let candidate = |instance: &str, server: &str, origin: &str| SyncdDesktopDiscoveryCandidate {
+            instance_name: instance.to_string(),
+            server_id: server.to_string(),
+            effective_origin: origin.to_string(),
+            effective_source: SyncdEffectiveDiscoverySource::AdvertisedEndpoint,
+            discovery_origin: origin.to_string(),
+            tls_cert_sha256: "sha".to_string(),
+            supports_bootstrap_session_create: true,
+            supports_bootstrap_session_fetch: true,
+            supports_live_pairing_status: true,
+            fallback_origins: Vec::new(),
+        };
+        // Current names first, then the same Cores under the legacy name; sorting by name
+        // separates the duplicates.
+        let listed = unique_discovery_candidates(vec![
+            candidate("epigraph-a", "server-a", "https://10.0.0.2:4777"),
+            candidate("epigraph-b", "server-b", "https://10.0.0.3:4777"),
+            candidate("legacy-a", "server-a", "https://10.0.0.2:4777"),
+            candidate("legacy-b", "server-b", "https://10.0.0.3:4777"),
+        ]);
+        let names = listed.iter().map(|entry| entry.instance_name.as_str()).collect::<Vec<_>>();
+        assert_eq!(names, ["epigraph-a", "epigraph-b"]);
+    }
 
     #[test]
     fn desktop_client_version_satisfies_syncd_default() {

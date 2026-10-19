@@ -5,15 +5,16 @@ import type { SyncdReplicationSnapshot } from "../syncdDesktop";
 const live: SyncdReplicationSnapshot = { localProfileId: "main", activeSessionKey: "remote-a",
   replicationStatus: "live", remoteBootstrapGeneration: 3, paused: false, lastAppliedScopes: [] };
 
-const { state, publish, books, novels, manga } = vi.hoisted(() => ({
+const { state, publish, books, novels, manga, wake } = vi.hoisted(() => ({
   state: { runtimeResolvedLocalProfileId: "main", runtimeServerUrl: "fixture", settings: { defaultLocalProfileId: "main" } },
-  publish: vi.fn(), books: vi.fn(), novels: vi.fn(), manga: vi.fn(),
+  publish: vi.fn(), books: vi.fn(), novels: vi.fn(), manga: vi.fn(), wake: vi.fn(),
 }));
 vi.mock("../../store/state.svelte", () => ({ store: state, replaceBooksState: publish,
   setLibraryMangaSnapshot: publish, setSearchNovelLibrarySnapshot: publish, bumpContentSetupVersion: publish }));
 vi.mock("../books/libraryState", () => ({ reloadBookLibraryState: books }));
 vi.mock("../novels/libraryState", () => ({ reloadNovelLibraryState: novels }));
 vi.mock("../client", () => ({ gql: manga }));
+vi.mock("../serverLifecycle", () => ({ ensureServerAwakeFor: wake }));
 
 describe("First Run sync readiness", () => {
   it("accepts a completed empty remote bootstrap, not a positive title count", () => {
@@ -49,6 +50,16 @@ describe("First Run production library refresh", () => {
     books.mockResolvedValue({ books: [] });
     novels.mockResolvedValue({ entries: [], chapters: [] });
     manga.mockResolvedValue({ mangas: { nodes: [] } });
+    wake.mockResolvedValue(true);
+  });
+  it("wakes the comics server before the Manga query on a fresh install", async () => {
+    wake.mockImplementationOnce(async () => {
+      expect(manga).not.toHaveBeenCalled();
+      return true;
+    });
+    await refreshFirstRunSyncLibrary("main", () => true);
+    expect(wake).toHaveBeenCalledWith("startup", expect.objectContaining({ serverUrl: "fixture", profileId: "main" }));
+    expect(manga).toHaveBeenCalledTimes(1);
   });
   it("awaits strict local reads and the actual Manga query before publishing a replicated Manga scope", async () => {
     await refreshFirstRunSyncLibrary("main", () => true);
@@ -61,6 +72,7 @@ describe("First Run production library refresh", () => {
     manga.mockRejectedValueOnce(Error("unavailable"));
     await refreshFirstRunSyncLibrary("main", () => true, { requiresMangaRefresh: false });
     expect(manga).not.toHaveBeenCalled();
+    expect(wake).not.toHaveBeenCalled();
     expect(books).toHaveBeenCalledWith({ profileId: "main" }, { strict: true });
     expect(novels).toHaveBeenCalledWith({ profileId: "main" }, { strict: true });
     expect(publish).toHaveBeenCalledTimes(3);

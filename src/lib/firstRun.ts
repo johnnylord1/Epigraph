@@ -15,6 +15,8 @@ export interface FirstRunState {
   backupNeedsSources?: boolean;
   backupSourceTypes?: Array<"manga" | "novels">;
   sourceContentType?: "manga" | "novels";
+  /** Setup was started over from Settings: the user can leave it and keep the app as it was. */
+  cancellable?: true;
 }
 
 export interface FirstRunReadiness {
@@ -92,7 +94,8 @@ export function normalizeFirstRunState(savedStore: unknown): FirstRunState {
     || (step === "backup" && path !== "backup")
     || (step === "sources" && path !== "fresh" && path !== "backup")
     || (["trackers", "discover", "complete"].includes(step) && path === null);
-  if (invalidPath) return { ...createFirstRunState(), step: "entry" };
+  const cancellable = candidate.cancellable === true ? { cancellable: true as const } : {};
+  if (invalidPath) return { ...createFirstRunState(), step: "entry", ...cancellable };
 
   return {
     version: FIRST_RUN_VERSION,
@@ -106,6 +109,7 @@ export function normalizeFirstRunState(savedStore: unknown): FirstRunState {
       ? { backupSourceTypes: [...new Set(candidate.backupSourceTypes)] } : {}),
     ...(candidate.sourceContentType === "manga" || candidate.sourceContentType === "novels"
       ? { sourceContentType: candidate.sourceContentType } : {}),
+    ...cancellable,
   };
 }
 
@@ -118,8 +122,9 @@ export function updateFirstRunState(
 }
 
 export function completeFirstRunState(current: FirstRunState): FirstRunState {
+  const { cancellable: _cancellable, ...rest } = current;
   return {
-    ...current,
+    ...rest,
     version: FIRST_RUN_VERSION,
     status: "complete",
     step: "complete",

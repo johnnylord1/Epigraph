@@ -33,6 +33,7 @@ import epigraph.sync.core.extensions.CoreSourceRelinkStore
 import epigraph.sync.core.extensions.ExtensionReconciliationNotifier
 import epigraph.sync.core.extensions.ExtensionReconciliationStore
 import epigraph.sync.core.suwayomi.EpigraphCoreBridgeLabeler
+import epigraph.sync.core.suwayomi.LocalComicLibraryOutboxRepair
 import epigraph.sync.core.suwayomi.SuwayomiCategoryCreateHook
 import epigraph.sync.core.suwayomi.SuwayomiExtensionPublishHook
 import epigraph.sync.core.suwayomi.PhoneExtensionState
@@ -50,6 +51,7 @@ import epigraph.sync.core.outbox.ExponentialCoreOutboxRetryPlanner
 import epigraph.sync.core.outbox.UuidCoreRequestIdSource
 import epigraph.sync.core.novels.LnReaderPluginReplicaSync
 import epigraph.sync.core.novels.LocalNovelLibraryOutboxRepair
+import epigraph.sync.core.novels.LocalNovelDependencyPublisher
 import epigraph.sync.core.novels.LnReaderPluginGateway
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionGateway
@@ -60,6 +62,7 @@ import epigraph.sync.core.novels.ManagedCoreNovelPluginArtifactGateway
 import epigraph.sync.core.novels.ManagedLnReaderDependencyActionGateway
 import epigraph.sync.core.novels.ManagedLnReaderPluginGateway
 import epigraph.sync.core.novels.ReplicaCoreNovelDependencyReader
+import epigraph.sync.core.novels.SharedPreferencesNovelDependencyBaseline
 import epigraph.sync.core.novels.SqlDelightLnReaderDependencyInventoryStore
 import epigraph.sync.core.persistence.SqlDelightCoreIdentityInventoryStore
 import epigraph.sync.core.portable.PortableManifestSync
@@ -106,6 +109,7 @@ import epigraph.sync.core.replica.CoreReplicaApplier
 import epigraph.sync.core.replica.CoreReplicaCheckpointReader
 import epigraph.sync.core.replica.CoreReplicaCheckpointResetter
 import epigraph.sync.core.replica.CoreReplicaRecordReader
+import epigraph.sync.core.replica.CoreReplicaTombstoneReader
 import epigraph.sync.core.replica.CoreReplicaStore
 import epigraph.sync.core.replica.NovelChapterCoverageCheck
 import epigraph.sync.core.replica.SqlDelightCoreReplicaStore
@@ -262,7 +266,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaSyncPort>(named(EXTENSION_INVENTORY_REPLICA)) {
         ExtensionInventoryReplicaSync(get(), get(), get(), get(), get())
     }
-    single<CoreNovelDependencyReader> { ReplicaCoreNovelDependencyReader(get()) }
+    single<CoreNovelDependencyReader> { ReplicaCoreNovelDependencyReader(get(), get()) }
     single<LnReaderPluginGateway> { ManagedLnReaderPluginGateway(get(), get(), get()) }
     single<LnReaderDependencyInventoryStore> { SqlDelightLnReaderDependencyInventoryStore(get()) }
     single<LnReaderDependencyActionGateway> {
@@ -303,6 +307,19 @@ fun epigraphSyncModule(app: Application) = module {
         )
     }
     single { LocalNovelLibraryOutboxRepair(get(), get(), get(), get()) }
+    single { LocalComicLibraryOutboxRepair(get(), get(), get(), get()) }
+    single {
+        LocalNovelDependencyPublisher(
+            coordinator = get(),
+            repositories = get(),
+            plugins = get(),
+            dependencies = get(),
+            scopes = get(),
+            deviceId = DeviceId(get<CoreDeviceIdentityProvider>().currentDeviceId()),
+            mutationIds = ClientMutationIdFactory { ClientMutationId(UUID.randomUUID().toString()) },
+            baseline = SharedPreferencesNovelDependencyBaseline(app),
+        )
+    }
     single { SyncedChapterStateWriter(get(), get()) }
     single {
         EpigraphCategoryMutationRouter(
@@ -363,6 +380,7 @@ fun epigraphSyncModule(app: Application) = module {
     single<CoreReplicaCheckpointReader> { get<SqlDelightCoreReplicaStore>() }
     single<CoreReplicaCheckpointResetter> { get<SqlDelightCoreReplicaStore>() }
     single<CoreReplicaRecordReader> { get<SqlDelightCoreReplicaStore>() }
+    single<CoreReplicaTombstoneReader> { get<SqlDelightCoreReplicaStore>() }
     single { NovelChapterCoverageCheck(get()) }
     single { CoreReplicaApplier(get()) }
     single {
@@ -468,6 +486,7 @@ fun epigraphSyncModule(app: Application) = module {
             replicaAppliedHooks = listOf(
                 CoreReplicaAppliedHook { now -> get<EpigraphTrackingMutationRouter>().reconcileWithReplica(now) },
             ),
+            policyHooks = listOf(get<LocalNovelDependencyPublisher>()),
         )
     }
 }

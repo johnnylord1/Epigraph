@@ -42,7 +42,9 @@ function normalizedUrl(value: string): string {
   return novelRepositoryUrlKey(value);
 }
 
-function requiredRepositoryUrls(restored: RestoredEpigraphNovelsSnapshot): string[] {
+type NovelDependencyRequirements = Pick<RestoredEpigraphNovelsSnapshot, "entries" | "plugins" | "repositories">;
+
+function requiredRepositoryUrls(restored: NovelDependencyRequirements): string[] {
   return [...new Set([
     ...(restored.repositories ?? []).map((entry) => entry.url),
     ...(restored.plugins ?? []).map((entry) => entry.repositoryUrl ?? ""),
@@ -99,7 +101,7 @@ export function novelRestoreRuntimeState(state: PersistedNovelRepositoryState) {
 }
 
 export async function provisionEpigraphNovelDependencies(input: {
-  restored: RestoredEpigraphNovelsSnapshot;
+  restored: NovelDependencyRequirements;
   state: PersistedNovelRepositoryState;
   scopeInput: NovelRepositoryScopeInput;
   operations: NovelRestoreProvisioningOperations;

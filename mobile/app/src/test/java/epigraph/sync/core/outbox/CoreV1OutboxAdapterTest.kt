@@ -10,6 +10,7 @@ import epigraph.contract.DeviceId
 import epigraph.contract.ContentType
 import epigraph.contract.DecimalSourceId
 import epigraph.contract.NovelEntrySnapshot
+import epigraph.contract.NovelPluginDescriptor
 import epigraph.contract.PortableChapterRef
 import epigraph.contract.PortableIdentityV3
 import epigraph.contract.PortableWorkRef
@@ -786,7 +787,95 @@ class CoreV1OutboxAdapterTest {
     }
 
     @Test
-    fun `blocks repository command because local v2 lacks required Core timestamps`() {
+    fun `projects LNReader repository with the Core digest id`() {
+        val command = SyncCommand.UpsertRepository(
+            CORE_REPOSITORY_ID,
+            RepositoryDescriptor(
+                ecosystem = "lnreader",
+                displayName = "Official",
+                canonicalUrl = "https://example.com/repository.json",
+                enabled = true,
+            ),
+        )
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.NOVEL_REPOSITORY, NOVEL_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.NOVEL_REPOSITORY)),
+                lamport = 4,
+            ),
+        )
+
+        val patch = requireNotNull(ready.mutation.patch)
+        assertEquals(CORE_REPOSITORY_ID.value, ready.mutation.entityId)
+        assertEquals(CoreMutationOperation.MERGE, ready.mutation.op)
+        assertEquals("https://example.com/repository.json", patch["canonicalUrl"]?.jsonPrimitive?.content)
+        assertEquals("Official", patch["name"]?.jsonPrimitive?.content)
+        assertEquals("true", patch["enabled"]?.jsonPrimitive?.content)
+        assertEquals("0", patch["createdAtMs"]?.jsonPrimitive?.content)
+        assertEquals("1234", patch["updatedAtMs"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `projects LNReader plugin evidence without executable bytes`() {
+        val pluginEntityId = EpigraphEntityId(
+            "novel-plugin:c7f378a0a77a9b38db6595eaf913f71a83541ac80f4c5876a8e7079c69ff0d69",
+        )
+        val command = SyncCommand.UpsertNovelPlugin(pluginEntityId, novelPlugin(sourceId = "source.test"))
+        val ready = assertInstanceOf(
+            CoreOutboxAdaptation.Ready::class.java,
+            adapter.adapt(
+                record = record(EpigraphCoreEntityType.NOVEL_PLUGIN, NOVEL_SCOPE, command),
+                authenticatedDeviceId = DEVICE_ID,
+                capabilities = capabilities(setOf(EpigraphCoreEntityType.NOVEL_PLUGIN)),
+                lamport = 5,
+            ),
+        )
+
+        val patch = requireNotNull(ready.mutation.patch)
+        assertEquals(pluginEntityId.value, ready.mutation.entityId)
+        assertEquals(CORE_REPOSITORY_ID.value, patch["repositoryId"]?.jsonPrimitive?.content)
+        assertEquals("plugin.test", patch["pluginId"]?.jsonPrimitive?.content)
+        assertEquals("source.test", patch["sourceId"]?.jsonPrimitive?.content)
+        assertEquals("Example", patch["name"]?.jsonPrimitive?.content)
+        assertEquals("1.2.3", patch["version"]?.jsonPrimitive?.content)
+        assertEquals("English", patch["lang"]?.jsonPrimitive?.content)
+        assertEquals("true", patch["enabled"]?.jsonPrimitive?.content)
+        assertEquals(BOOK_HASH, patch["artifactSha256"]?.jsonPrimitive?.content)
+        assertEquals("4096", patch["artifactByteLength"]?.jsonPrimitive?.content)
+        assertTrue(patch["publicSettings"]!!.jsonObject.isEmpty())
+        assertFalse("artifact" in patch)
+    }
+
+    @Test
+    fun `blocks plugin whose id or evidence the Core would reject`() {
+        listOf(
+            SyncCommand.UpsertNovelPlugin(EpigraphEntityId("novel-plugin-1"), novelPlugin(sourceId = "source.test")),
+            SyncCommand.UpsertNovelPlugin(
+                EpigraphEntityId("novel-plugin:c7f378a0a77a9b38db6595eaf913f71a83541ac80f4c5876a8e7079c69ff0d69"),
+                novelPlugin(sourceId = null),
+            ),
+            SyncCommand.UpsertNovelPlugin(
+                EpigraphEntityId("novel-plugin:c7f378a0a77a9b38db6595eaf913f71a83541ac80f4c5876a8e7079c69ff0d69"),
+                novelPlugin(sourceId = "source.test", byteLength = 3_000_000),
+            ),
+        ).forEach { command ->
+            val blocked = assertInstanceOf(
+                CoreOutboxAdaptation.Blocked::class.java,
+                adapter.adapt(
+                    record = record(EpigraphCoreEntityType.NOVEL_PLUGIN, NOVEL_SCOPE, command),
+                    authenticatedDeviceId = DEVICE_ID,
+                    capabilities = capabilities(setOf(EpigraphCoreEntityType.NOVEL_PLUGIN)),
+                    lamport = 5,
+                ),
+            )
+            assertEquals(CoreOutboxBlockReason.UNSAFE_OR_INCOMPLETE_PROJECTION, blocked.reason)
+        }
+    }
+
+    @Test
+    fun `blocks repository command whose id is not the Core digest of its URL`() {
         val command = SyncCommand.UpsertRepository(
             REPOSITORY_ID,
             RepositoryDescriptor(
@@ -1030,6 +1119,19 @@ class CoreV1OutboxAdapterTest {
         )
     }
 
+    private fun novelPlugin(sourceId: String?, byteLength: Long = 4096) = NovelPluginDescriptor(
+        repositoryId = CORE_REPOSITORY_ID,
+        pluginId = "plugin.test",
+        displayName = "Example",
+        version = "1.2.3",
+        manifestVersion = 1,
+        artifactSha256 = BOOK_HASH,
+        desiredInstalled = true,
+        sourceId = sourceId,
+        lang = "English",
+        artifactByteLength = byteLength,
+    )
+
     private fun capabilities(entityTypes: Set<String>) = CoreCapabilities(
         serverProtocolVersion = 1,
         minClientVersion = "0.1.0",
@@ -1065,5 +1167,8 @@ class CoreV1OutboxAdapterTest {
         val COMIC_ID = EpigraphEntityId("suwayomi:core:manga:comic-1")
         val CATEGORY_ID = EpigraphEntityId("novel-category-1")
         val REPOSITORY_ID = EpigraphEntityId("novel-repository-1")
+        val CORE_REPOSITORY_ID = EpigraphEntityId(
+            "novel-repository:1dae0c9bc42503917273ec8bfd1e4fc3de900db765867042f176cd26fdbff91f",
+        )
     }
 }

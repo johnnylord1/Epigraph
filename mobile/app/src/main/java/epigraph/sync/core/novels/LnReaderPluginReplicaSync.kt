@@ -6,6 +6,7 @@ import epigraph.sync.core.protocol.CoreCapabilities
 import epigraph.sync.core.portable.PortableDependencyTrustCoordinator
 import epigraph.sync.core.replica.CoreConfirmedRecord
 import epigraph.sync.core.replica.CoreReplicaRecordReader
+import epigraph.sync.core.replica.CoreReplicaTombstoneReader
 import epigraph.sync.core.work.CoreReplicaSyncOutcome
 import epigraph.sync.core.work.CoreReplicaSyncPort
 import epigraph.novel.plugin.NovelPluginManager
@@ -43,6 +44,8 @@ data class CoreNovelPluginRequirement(
 data class CoreNovelDependencyManifest(
     val repositories: List<CoreNovelRepositoryRequirement>,
     val plugins: List<CoreNovelPluginRequirement>,
+    /** Repository and plugin entity ids the Core confirmed as deleted, with the delete's Lamport. */
+    val removed: Map<String, Long> = emptyMap(),
 )
 
 fun interface CoreNovelDependencyReader {
@@ -52,12 +55,15 @@ fun interface CoreNovelDependencyReader {
 /** Reads only LNReader dependency declarations from the authenticated Core mirror. */
 class ReplicaCoreNovelDependencyReader(
     private val records: CoreReplicaRecordReader,
+    private val tombstones: CoreReplicaTombstoneReader = CoreReplicaTombstoneReader { _, _ -> emptyList() },
 ) : CoreNovelDependencyReader {
     override suspend fun read(scopeId: String): CoreNovelDependencyManifest {
         val confirmed = records.confirmedRecords(scopeId, ENTITY_TYPES)
         return CoreNovelDependencyManifest(
             repositories = confirmed.mapNotNull(::repository),
             plugins = confirmed.mapNotNull(::plugin),
+            removed = tombstones.confirmedTombstones(scopeId, ENTITY_TYPES)
+                .associate { it.key.entityId to it.lamport },
         )
     }
 

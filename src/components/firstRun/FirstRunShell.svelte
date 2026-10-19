@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component, Snippet } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { Check } from "phosphor-svelte";
+  import { Check, X } from "phosphor-svelte";
   import epigraphMark from "../../assets/epigraph-splash-mark.png";
   import { pointerEffects, prefersReducedMotion } from "../../lib/motion/firstRunMotion";
   import WindowControlsInline from "../layout/WindowControlsInline.svelte";
@@ -19,10 +19,12 @@
     complete?: boolean;
     subtitle: string;
     progressLabel: string;
+    /** Shown when setup was started from inside the app: leaves it and returns to the app. */
+    cancel?: { label: string; onCancel: () => void };
     children: Snippet;
   }
 
-  let { progress, activeProgressIndex, complete = false, subtitle, progressLabel, children }: Props = $props();
+  let { progress, activeProgressIndex, complete = false, subtitle, progressLabel, cancel, children }: Props = $props();
 
   let nav = $state<HTMLElement>();
   let list = $state<HTMLOListElement>();
@@ -188,7 +190,12 @@
       <strong>Epigraph</strong>
       <small>{subtitle}</small>
     </div>
-    <WindowControlsInline variant="titlebar" />
+    <div class="first-run-titlebar-actions">
+      {#if cancel}
+        <button class="fr-btn first-run-cancel" type="button" onclick={cancel.onCancel}><X size={16} />{cancel.label}</button>
+      {/if}
+      <WindowControlsInline variant="titlebar" />
+    </div>
   </header>
 
   <div class="first-run-body">
@@ -269,6 +276,12 @@
     gap: 10px;
     font-size: var(--text-md);
     font-weight: 750;
+  }
+
+  .first-run-titlebar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .first-run-mark {

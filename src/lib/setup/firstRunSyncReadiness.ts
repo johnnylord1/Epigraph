@@ -40,6 +40,16 @@ export async function refreshFirstRunSyncLibrary(
   assertCurrent();
   const requiresMangaRefresh = options.requiresMangaRefresh ?? true;
   const manga = requiresMangaRefresh ? await (async () => {
+    // A fresh install reaches this step before anything has started Suwayomi.
+    const { ensureServerAwakeFor } = await import("../serverLifecycle");
+    await ensureServerAwakeFor("startup", {
+      serverUrl,
+      binary: store.settings.serverBinary,
+      updateIntensity: store.settings.libraryUpdateIntensity,
+      profileId,
+      profileLabel: store.runtimeResolvedLocalProfileMeta?.label ?? store.runtimeServerLabel,
+    });
+    assertCurrent();
     const { gql } = await import("../client");
     const { GET_LIBRARY } = await import("../queries");
     return gql<{ mangas: { nodes: import("../types").Manga[] } }>(GET_LIBRARY);

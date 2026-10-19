@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick, type Component } from "svelte";
-  import { ArrowLeft, ArrowRight, ArrowsClockwise, BookOpenText, Books, CaretRight, Check, Desktop, Laptop, WifiHigh, WarningCircle, X } from "phosphor-svelte";
+  import { ArrowLeft, ArrowRight, ArrowsClockwise, BookOpenText, Books, CaretRight, Check, Desktop, DeviceMobile, Laptop, WifiHigh, WarningCircle, X } from "phosphor-svelte";
   import { _ } from "../../lib/i18n/runtime";
   import { arrive, enterElements, findByData, motionFade, motionFly, pulse, prefersReducedMotion, spring } from "../../lib/motion/firstRunMotion";
   import { firstRunSyncReadinessKey, refreshFirstRunSyncLibrary } from "../../lib/setup/firstRunSyncReadiness";
@@ -10,9 +10,11 @@
     syncdConnectWithBootstrap,
     syncdGetReplicationState,
     syncdListDiscoveryCandidates,
+    syncdListPairedDevicesIfRunning,
     syncdResolvePairingPin,
     type SyncdConnectState,
     type SyncdDesktopDiscoveryCandidate,
+    type SyncdHostPairingState,
     type SyncdReplicationSnapshot,
   } from "../../lib/syncdDesktop";
   import { pairingVerificationCode } from "../../lib/syncPairingVerification";
@@ -51,8 +53,15 @@
   type PanelComponent = Component<{ profileId?: string | null; scopeLabel: string; presentation?: "modal" | "embedded"; onReadyChange?: (ready: boolean) => void }>;
   let OtherWaysPanel = $state<PanelComponent | null>(null);
   let otherWaysReady = $state(false);
+  /* A phone or computer that paired with this computer's Core. Both sides then publish their
+     libraries and Core merges them, so nothing here waits for a remote bootstrap. */
+  let hostPeer = $state<{ name: string; platform: string } | null>(null);
 
-  const targetName = $derived(target?.instanceName ?? connectState?.remoteDeviceName ?? $_("firstRun.sync.otherComputer"));
+  const targetName = $derived(target?.instanceName ?? connectState?.remoteDeviceName ?? hostPeer?.name ?? $_("firstRun.sync.otherComputer"));
+  const peerIsPhone = $derived(hostPeer?.platform === "android");
+  const hostProgressKey = $derived(hostPeer && profileId
+    ? JSON.stringify([profileId, snapshot?.comicsScopeCheckpoint ?? null, snapshot?.booksScopeCheckpoint ?? null, snapshot?.novelsScopeCheckpoint ?? null])
+    : null);
   const pin = $derived(digits.join(""));
   const verification = $derived(connectState ? pairingVerificationCode(connectState.tlsCertSha256) : "");
   const scopes = $derived([
@@ -81,11 +90,19 @@
         }
       } catch {
         if (!cancelled) candidates = [];
-      } finally {
-        if (!cancelled) {
-          scanned = true;
-          timer = setTimeout(scan, SCAN_INTERVAL_MS);
-        }
+      }
+      /* Phones do not announce themselves on the network; one that paired here shows up in this
+         Core's paired devices, even when Core started after this step opened. */
+      if (!cancelled && profileId) {
+        try {
+          const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
+          const peer = paired.find((device) => device.profileId === profileId && !device.inactive);
+          if (!cancelled && peer && stage === "scan") adoptHostPeer(peer.deviceName, peer.platform);
+        } catch {}
+      }
+      if (!cancelled) {
+        scanned = true;
+        timer = setTimeout(scan, SCAN_INTERVAL_MS);
       }
     };
     void scan();
@@ -101,9 +118,18 @@
           const current = await syncdGetReplicationState(profileId);
           if (!disposed && current) applySnapshot(current);
         } catch {}
+        try {
+          const paired = (await syncdListPairedDevicesIfRunning()) ?? [];
+          const peer = paired.find((device) => device.profileId === profileId && !device.inactive);
+          if (!disposed && peer) adoptHostPeer(peer.deviceName, peer.platform);
+        } catch {}
       }
       try {
         const offPairing = await listenSyncdPairingStatus((payload) => {
+          if ("bootstrapBundle" in payload) {
+            applyHostStatus(payload);
+            return;
+          }
           if (!connectState || !("localProfileId" in payload) || payload.sessionId !== connectState.sessionId) return;
           connectState = payload;
           applyConnectStatus(payload);
@@ -127,6 +153,18 @@
     }
   }
 
+  function applyHostStatus(state: SyncdHostPairingState) {
+    if (!profileId || state.profileId !== profileId || state.status !== "approved") return;
+    adoptHostPeer(state.claimedDeviceName?.trim() || $_("firstRun.sync.otherComputer"), state.claimedPlatform ?? "unknown");
+    if (otherWaysOpen) closeOtherWays();
+  }
+
+  function adoptHostPeer(name: string, platform: string) {
+    if (connectState) return;
+    hostPeer = { name, platform: platform.toLowerCase() };
+    if (stage !== "done") stage = "syncing";
+  }
+
   function applyConnectStatus(state: SyncdConnectState) {
     if (state.status === "rejected") stage = "rejected";
     else if (state.status === "approved" || state.status === "connected") stage = "syncing";
@@ -148,8 +186,27 @@
       if (!current) return;
       ready = true;
       stage = "done";
-    }).catch(() => {
+    }).catch((error) => {
+      console.warn("First-run sync could not read the synced library.", error);
       if (current) libraryError = true;
+    });
+    return () => { current = false; };
+  });
+
+  /* Paired with this computer: the library is read back now and again as each scope advances. */
+  $effect(() => {
+    const key = hostProgressKey;
+    libraryRetry;
+    if (!key || !profileId) return;
+    let current = true;
+    libraryError = false;
+    void refreshFirstRunSyncLibrary(profileId, () => current).then(() => {
+      if (!current) return;
+      ready = true;
+      stage = "done";
+    }).catch((error) => {
+      console.warn("First-run sync could not read the synced library.", error);
+      if (current && !ready) libraryError = true;
     });
     return () => { current = false; };
   });
@@ -289,7 +346,7 @@
       <div class="pair" class:is-active={stage === "approval" || stage === "syncing"} class:is-done={stage === "done"} in:motionFade={{ duration: 300 }}>
         <span class="device"><span><Laptop size={28} /></span>{$_("firstRun.sync.thisComputer")}</span>
         <span class="wire"><i></i></span>
-        <span class="device" class:is-ok={stage === "done"}><span>{#if stage === "done"}<Check size={28} weight="bold" />{:else}<Desktop size={28} />{/if}</span>{targetName}</span>
+        <span class="device" class:is-ok={stage === "done"}><span>{#if stage === "done"}<Check size={28} weight="bold" />{:else if peerIsPhone}<DeviceMobile size={28} />{:else}<Desktop size={28} />{/if}</span>{targetName}</span>
       </div>
     {/if}
   </div>

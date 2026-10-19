@@ -37,6 +37,7 @@
   import {
     setLibrarySection,
     setNavPage,
+    setSettingsOpen,
     store,
     updateSettings,
   } from "../../store/state.svelte";
@@ -235,16 +236,33 @@
     }
   }
 
-  function handleBackupRestored(next: { hasLibrary: boolean; needsSourceKinds: ContentType[]; sourceTypes: ContentType[] }) {
+  async function handleBackupRestored(next: { hasLibrary: boolean; needsSourceKinds: ContentType[]; sourceTypes: ContentType[] }) {
     const sourceTypes: ContentType[] = next.sourceTypes.length > 0 ? next.sourceTypes : ["manga"];
+    // The restore installs the backup's own repositories and extensions; the kinds it needed are
+    // measured before that, so only the ones still without an installed extension are asked for.
+    let missing = next.needsSourceKinds;
+    if (missing.length > 0) {
+      try {
+        await sourcesWorkflow.hydrate();
+        missing = missing.filter((kind) => !sourcesWorkflow.isReady(kind));
+      } catch {}
+    }
     updateBackupReadiness({
       ready: true,
       hasSelection: true,
       contentType: sourceTypes[0],
-      requiresSources: next.needsSourceKinds.length > 0,
+      requiresSources: missing.length > 0,
       sourceTypes,
     });
-    setFirstRunStep(next.needsSourceKinds.length > 0 ? "sources" : "trackers");
+    setFirstRunStep(missing.length > 0 ? "sources" : "trackers");
+  }
+
+  /** Leaves a setup started from Settings: the app stays as it was and Settings opens again. */
+  function cancelSetup() {
+    firstRun = completeFirstRunState(firstRun);
+    persistFirstRun();
+    setSettingsOpen(true);
+    onComplete();
   }
 
   function advance(step: FirstRunStep) {
@@ -288,6 +306,7 @@
   complete={firstRun.step === "complete"}
   subtitle={$_("firstRun.shell.initialSetup")}
   progressLabel={$_("firstRun.shell.setupProgress")}
+  cancel={firstRun.cancellable ? { label: $_("firstRun.shell.cancel"), onCancel: cancelSetup } : undefined}
 >
   {#key firstRun.step}
   <article class="first-run-page" data-page={firstRun.step} out:depart={{ direction }}>

@@ -705,7 +705,7 @@
 
   /** Leaves Settings and walks through setup again; library, sources and settings stay as they are. */
   function redoFirstRun() {
-    try { reopenFirstRun(localStorage); } catch { return; }
+    try { reopenFirstRun(localStorage, { cancellable: true }); } catch { return; }
     setSettingsOpen(false);
     window.dispatchEvent(new Event(FIRST_RUN_REOPENED_EVENT));
   }

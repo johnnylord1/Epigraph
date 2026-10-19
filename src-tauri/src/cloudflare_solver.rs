@@ -29,8 +29,42 @@ const MAX_TIMEOUT_MS: u64 = 120_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(400);
 const PROTOCOL_VERSION: &str = "3.4.6-epigraph";
 
+/// How long a host that blocked the solver, or whose solve the user cancelled, is not retried.
+const GIVE_UP_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+/// Title the page script sets on a Cloudflare block page, which no waiting can clear.
+const BLOCKED_TITLE: &str = "epigraph:cloudflare-blocked";
+/// Navigation target of the close button; the window never loads it.
+const CANCEL_HOST: &str = "epigraph-solver.invalid";
+/// The window is meant to stay off-screen, but if it ever shows up the user can close it, and a
+/// block page ends the solve at once instead of waiting for the timeout.
+const PAGE_SCRIPT: &str = r#"(() => {
+  const check = () => {
+    const headline = document.querySelector('[data-translate="block_headline"]');
+    const h1 = document.querySelector("h1");
+    if (headline || /you have been blocked/i.test(h1 ? h1.textContent || "" : "")) {
+      document.title = "epigraph:cloudflare-blocked";
+    }
+  };
+  const addClose = () => {
+    if (!document.body || document.getElementById("epigraph-solver-close")) return;
+    const button = document.createElement("button");
+    button.id = "epigraph-solver-close";
+    button.type = "button";
+    button.textContent = "✕";
+    button.title = "Close";
+    button.setAttribute("aria-label", "Close");
+    button.style.cssText = "position:fixed;top:8px;right:8px;z-index:2147483647;width:32px;height:32px;"
+      + "border:0;border-radius:16px;background:#202124;color:#fff;font:16px/32px sans-serif;cursor:pointer;";
+    button.addEventListener("click", () => { location.href = "https://epigraph-solver.invalid/cancel"; });
+    document.body.appendChild(button);
+  };
+  document.addEventListener("DOMContentLoaded", () => { check(); addClose(); });
+  window.addEventListener("load", () => { check(); addClose(); });
+})();"#;
+
 static ENDPOINT: OnceLock<String> = OnceLock::new();
 static USER_AGENT: Mutex<Option<String>> = Mutex::new(None);
+static GIVEN_UP_HOSTS: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
 
 struct Solver {
     app: AppHandle,
@@ -137,11 +171,20 @@ impl Solver {
             .map_err(|e| e.to_string())?
             .clone()
             .ok_or("the main window has not reported its user agent yet")?;
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+        if recently_given_up(&host) {
+            return Err(format!("{host} blocked the solver recently"));
+        }
         let _serial = self.gate.lock().await;
+        // A queued request for the same host may have waited behind the one that gave up.
+        if recently_given_up(&host) {
+            return Err(format!("{host} blocked the solver recently"));
+        }
 
         let loaded = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicBool::new(false));
         let title = Arc::new(Mutex::new(String::new()));
-        self.open_window(url.clone(), loaded.clone(), title.clone()).await?;
+        self.open_window(url.clone(), loaded.clone(), cancelled.clone(), title.clone()).await?;
         // The cookie store is shared with earlier solves; a clearance that is already present
         // predates this request and only counts once the page itself proves it valid.
         let before = match self.cookies(&url).await {
@@ -156,6 +199,14 @@ impl Solver {
         let mut loaded_since: Option<Instant> = None;
         let outcome = loop {
             tokio::time::sleep(POLL_INTERVAL).await;
+            if cancelled.load(Ordering::Acquire) {
+                give_up(&host);
+                break Err("the user closed the Cloudflare window".to_string());
+            }
+            if title.lock().map(|t| t.as_str() == BLOCKED_TITLE).unwrap_or(false) {
+                give_up(&host);
+                break Err(format!("Cloudflare blocked access to {host}"));
+            }
             let cookies = match self.cookies(&url).await {
                 Ok(cookies) => cookies,
                 Err(error) => break Err(error),
@@ -188,6 +239,7 @@ impl Solver {
         &self,
         url: url::Url,
         loaded: Arc<AtomicBool>,
+        cancelled: Arc<AtomicBool>,
         title: Arc<Mutex<String>>,
     ) -> Result<(), String> {
         let app = self.app.clone();
@@ -207,6 +259,14 @@ impl Solver {
                     .skip_taskbar(true)
                     .focused(false)
                     .focusable(false)
+                    .initialization_script(PAGE_SCRIPT)
+                    .on_navigation(move |next| {
+                        if next.host_str() == Some(CANCEL_HOST) {
+                            cancelled.store(true, Ordering::Release);
+                            return false;
+                        }
+                        true
+                    })
                     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                     .on_page_load(move |_, payload| {
                         loaded.store(matches!(payload.event(), PageLoadEvent::Finished), Ordering::Release);
@@ -374,6 +434,22 @@ fn solution(url: &url::Url, cookies: &[SolverCookie], user_agent: &str) -> Value
     })
 }
 
+fn recently_given_up(host: &str) -> bool {
+    let Ok(mut hosts) = GIVEN_UP_HOSTS.lock() else { return false };
+    hosts.retain(|(_, at)| at.elapsed() < GIVE_UP_COOLDOWN);
+    hosts.iter().any(|(given_up, _)| given_up == host)
+}
+
+fn give_up(host: &str) {
+    if host.is_empty() {
+        return;
+    }
+    if let Ok(mut hosts) = GIVEN_UP_HOSTS.lock() {
+        hosts.retain(|(given_up, at)| given_up != host && at.elapsed() < GIVE_UP_COOLDOWN);
+        hosts.push((host.to_string(), Instant::now()));
+    }
+}
+
 /// Cloudflare localizes the interstitial title to the WebView2 UI language.
 fn is_challenge_title(title: &str) -> bool {
     let title = title.to_lowercase();
@@ -406,5 +482,21 @@ mod tests {
         assert!(is_challenge_title("Um momento…"));
         assert!(!is_challenge_title("cover.jpg (300×450)"));
         assert!(!is_challenge_title("Comix - Read manga online"));
+    }
+
+    #[test]
+    fn a_host_that_gave_up_is_skipped_until_the_cooldown_ends() {
+        assert!(!recently_given_up("blocked.example"));
+        give_up("blocked.example");
+        assert!(recently_given_up("blocked.example"));
+        assert!(!recently_given_up("other.example"));
+        give_up("");
+        assert!(!recently_given_up(""));
+    }
+
+    #[test]
+    fn the_page_script_uses_the_markers_the_solver_checks() {
+        assert!(PAGE_SCRIPT.contains(BLOCKED_TITLE));
+        assert!(PAGE_SCRIPT.contains(CANCEL_HOST));
     }
 }

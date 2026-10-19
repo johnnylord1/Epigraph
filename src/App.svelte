@@ -575,6 +575,10 @@
           console.warn("Failed to refresh novels after syncd replication apply:", error);
         }
         store.bumpContentSetupVersion();
+        // Plugins the other device uses are installed here from their declared repository.
+        void import("./lib/novels/syncedDependencies")
+          .then(({ reconcileSyncedNovelDependencies }) => reconcileSyncedNovelDependencies(currentProfileId))
+          .catch((error) => console.warn("Failed to install synced novel dependencies:", error));
       }
     }
   }

@@ -25,6 +25,7 @@ use crate::syncd::models::{
     canonical_novel_category_assignment_id, canonical_novel_identity_key,
     canonical_novel_plugin_id, canonical_novel_repository_id,
     canonical_portable_chapter_id, canonical_portable_work_id, canonicalize_novel_repository_url,
+    canonicalize_public_novel_repository_url,
     BookBookmarkPatch, BookBookmarkRecord, BookCategoryAssignmentPatch,
     BookCategoryAssignmentRecord, BookCategoryPatch, BookCategoryRecord, BookEntryPatch,
     BookEntryRecord, BookHighlightRecord, BookHistoryPatch, BookHistoryRecord, BookLibraryUiPatch,
@@ -35,7 +36,8 @@ use crate::syncd::models::{
     NovelChapterRecord,
     NovelClassificationPatch, NovelClassificationRecord, NovelEntryPatch, NovelEntryRecord,
     NovelHistoryPatch, NovelHistoryRecord, NovelPluginPatch, NovelProgressPatch,
-    NovelProgressRecord, NovelRepositoryPatch, PortableChapterRefV3, PortableWorkRefV3,
+    NovelPluginRecord, NovelProgressRecord, NovelRepositoryPatch, NovelRepositoryRecord,
+    PortableChapterRefV3, PortableWorkRefV3,
     SnapshotResponse, SyncdEffectiveDiscoverySource, MIN_SUPPORTED_SNAPSHOT_SCHEMA_VERSION,
     SNAPSHOT_SCHEMA_VERSION,
 };
@@ -227,6 +229,22 @@ struct PersistedReplicationProfileState {
     pending_comic_reader_changes: Vec<ChangeEnvelope>,
     #[serde(default)]
     pending_comic_reader_snapshot: Option<SyncdComicReaderSnapshotMarker>,
+    /// LNReader repositories and plugins the Core declares for this profile's novels, by entity
+    /// id. The webview installs what is missing from the declared repository, never from Syncd.
+    #[serde(default)]
+    novel_dependency_declarations: BTreeMap<String, SyncdNovelDependencyDeclaration>,
+    /// Novel dependency deletes the Core confirmed, by entity id, with the delete's Lamport.
+    #[serde(default)]
+    novel_dependency_tombstones: BTreeMap<String, i64>,
+    /// Novel dependencies this desktop and the Core both held when last reconciled, by entity id,
+    /// with the local state they had. Only these are removed here when another device deletes
+    /// them, and only these are skipped when the session republishes the local state.
+    #[serde(default)]
+    novel_dependency_baseline: BTreeMap<String, String>,
+    /// Novel dependencies removed here whose delete the Core has not confirmed yet, by entity id,
+    /// with when the delete was sent. They are not installed again from the old declaration.
+    #[serde(default)]
+    novel_dependency_pending_deletes: BTreeMap<String, i64>,
     per_entity_remote_clock: BTreeMap<String, i64>,
     last_local_snapshot_digest_books: Option<String>,
     last_local_snapshot_digest_novels: Option<String>,
@@ -268,6 +286,10 @@ impl Default for PersistedReplicationProfileState {
             comics_scope_checkpoint: None,
             pending_comic_reader_changes: Vec::new(),
             pending_comic_reader_snapshot: None,
+            novel_dependency_declarations: BTreeMap::new(),
+            novel_dependency_tombstones: BTreeMap::new(),
+            novel_dependency_baseline: BTreeMap::new(),
+            novel_dependency_pending_deletes: BTreeMap::new(),
             per_entity_remote_clock: BTreeMap::new(),
             last_local_snapshot_digest_books: None,
             last_local_snapshot_digest_novels: None,
@@ -1778,6 +1800,97 @@ struct LocalNovelBookmark {
     saved_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SyncdNovelDependencyDeclaration {
+    Repository(SyncdNovelRepositoryDeclaration),
+    Plugin(SyncdNovelPluginDeclaration),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdNovelRepositoryDeclaration {
+    pub repository_id: String,
+    pub canonical_url: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdNovelPluginDeclaration {
+    pub repository_id: String,
+    pub plugin_id: String,
+    pub version: String,
+    pub enabled: bool,
+}
+
+/// What a Core record says about a novel dependency. Only public repositories whose ids match
+/// their content are kept, so a record can never point the installer somewhere else.
+fn novel_dependency_declaration(
+    entity_type: &str,
+    entity_id: &str,
+    record: &Value,
+) -> Option<SyncdNovelDependencyDeclaration> {
+    match entity_type {
+        "novel.repository" => {
+            let record = serde_json::from_value::<NovelRepositoryRecord>(record.clone()).ok()?;
+            let canonical_url = canonicalize_public_novel_repository_url(&record.canonical_url)?;
+            let repository_id = canonical_novel_repository_id(&canonical_url);
+            (repository_id == entity_id).then(|| {
+                SyncdNovelDependencyDeclaration::Repository(SyncdNovelRepositoryDeclaration {
+                    repository_id,
+                    canonical_url,
+                    enabled: record.enabled,
+                })
+            })
+        }
+        "novel.plugin" => {
+            let record = serde_json::from_value::<NovelPluginRecord>(record.clone()).ok()?;
+            let plugin_id = record.plugin_id.trim();
+            let source_id = record.source_id.trim();
+            let version = record.version.trim();
+            if plugin_id.is_empty() || version.is_empty() {
+                return None;
+            }
+            (canonical_novel_plugin_id(&record.repository_id, plugin_id, source_id) == entity_id)
+                .then(|| {
+                    SyncdNovelDependencyDeclaration::Plugin(SyncdNovelPluginDeclaration {
+                        repository_id: record.repository_id.clone(),
+                        plugin_id: plugin_id.to_string(),
+                        version: version.to_string(),
+                        enabled: record.enabled,
+                    })
+                })
+        }
+        _ => None,
+    }
+}
+
+fn record_novel_dependency_change(
+    declarations: &mut BTreeMap<String, SyncdNovelDependencyDeclaration>,
+    tombstones: &mut BTreeMap<String, i64>,
+    envelope: &ChangeEnvelope,
+) {
+    let entity_id = envelope.entity_id.as_str();
+    let declaration = envelope
+        .patch
+        .as_ref()
+        .and_then(|record| novel_dependency_declaration(&envelope.entity_type, entity_id, record));
+    match declaration {
+        Some(declaration) => {
+            declarations.insert(entity_id.to_string(), declaration);
+            tombstones.remove(entity_id);
+        }
+        None => {
+            declarations.remove(entity_id);
+            if envelope.op == "delete" {
+                let lamport = tombstones.entry(entity_id.to_string()).or_insert(envelope.lamport);
+                *lamport = (*lamport).max(envelope.lamport);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct RemoteApplyOutcome {
     books_changed: bool,
@@ -1904,6 +2017,25 @@ fn write_novel_classification_state(
     write_file_atomic(&path, &payload)
 }
 
+/// Profiles this desktop hosts: known locally and not joined to a remote session.
+fn local_authority_profiles(
+    known_profiles: &HashSet<String>,
+    replication: &PersistedReplicationState,
+) -> Vec<String> {
+    let mut profiles = known_profiles
+        .iter()
+        .filter(|profile_id| {
+            replication
+                .profiles
+                .get(profile_id.as_str())
+                .map_or(true, |profile| profile.active_session_key.is_none())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    profiles.sort();
+    profiles
+}
+
 pub async fn bootstrap_runtime(app: AppHandle, state: SyncdReplicationState) -> Result<(), String> {
     let desktop = load_persisted_state()?;
     let mut replication = load_replication_state()?;
@@ -1920,17 +2052,15 @@ pub async fn bootstrap_runtime(app: AppHandle, state: SyncdReplicationState) -> 
     }
     save_replication_state(&replication)?;
 
+    // A profile replicates either through this desktop's own Core (it hosts) or through a paired
+    // remote session (it joined), never both: the local authority takes precedence for submits and
+    // the worker, so granting it to a joined profile would divert its changes to the local Core.
+    // The bind address does not decide this; a loopback Core (automation, or no LAN address at
+    // startup) still hosts, and skipping it left a restarted host without its worker.
     if let Some(runtime) = crate::syncd_sidecar::current_runtime_info(&app) {
-        if runtime.host_mode {
-            for profile_id in &known_profiles {
-                ensure_local_authority_for_profile(
-                    &app,
-                    &state,
-                    profile_id,
-                    &runtime.local_base_url,
-                )
+        for profile_id in local_authority_profiles(&known_profiles, &replication) {
+            ensure_local_authority_for_profile(&app, &state, &profile_id, &runtime.local_base_url)
                 .await?;
-            }
         }
     }
 
@@ -3032,6 +3162,20 @@ fn stage_snapshot_recovery(
     // The durable inbox and its reset marker are staged before checkpoints.
     // save_replication_state atomically publishes this complete profile state.
     profile.pending_comic_reader_snapshot = comic_marker.clone();
+    profile.novel_dependency_declarations = novels_snapshot
+        .entities
+        .iter()
+        .filter_map(|entity| {
+            novel_dependency_declaration(&entity.entity_type, &entity.entity_id, &entity.record)
+                .map(|declaration| (entity.entity_id.clone(), declaration))
+        })
+        .collect();
+    profile.novel_dependency_tombstones = novels_snapshot
+        .tombstones
+        .iter()
+        .filter(|tombstone| matches!(tombstone.entity_type.as_str(), "novel.repository" | "novel.plugin"))
+        .map(|tombstone| (tombstone.entity_id.clone(), tombstone.lamport))
+        .collect();
     profile.books_scope_checkpoint = Some(snapshot_checkpoint(books_snapshot));
     profile.novels_scope_checkpoint = Some(snapshot_checkpoint(novels_snapshot));
     profile.comics_scope_checkpoint = Some(snapshot_checkpoint(comics_snapshot));
@@ -3605,9 +3749,14 @@ async fn apply_remote_envelopes(
                 }
                 classification_state.updated_at_ms = Some(now_ms());
             }
-            // Syncd carries dependency evidence only. The desktop remains bound to its local
-            // LNReader repository manager and does not install executable bytes from replay.
-            "novel.repository" | "novel.plugin" => {}
+            // Syncd carries dependency evidence only. The declarations are kept so the webview
+            // installs missing plugins from their repository; executable bytes never come from
+            // replay.
+            "novel.repository" | "novel.plugin" => record_novel_dependency_change(
+                &mut profile.novel_dependency_declarations,
+                &mut profile.novel_dependency_tombstones,
+                &envelope,
+            ),
             "comic.history" | "comic.page_bookmark" => {
                 if stage_comic_reader_inbox {
                     outcome.comic_reader_changes.push(envelope.clone());
@@ -4330,17 +4479,196 @@ pub async fn notify_novel_repository_state_written(
     if diff.is_empty() {
         return Ok(());
     }
+    let sent_at_ms = now_ms();
+    update_profile_state(profile_id, |profile| {
+        for mutation in &diff {
+            if mutation.op_label() == "delete" {
+                profile
+                    .novel_dependency_pending_deletes
+                    .insert(mutation.entity_id().to_string(), sent_at_ms);
+            } else {
+                profile.novel_dependency_pending_deletes.remove(mutation.entity_id());
+            }
+        }
+    })?;
     submit_mutations_for_active_profiles(app, Some(profile_id), diff).await
 }
 
+/// Publishes what this desktop holds when its session starts. Entries the Core already agreed on
+/// are sent again only when they changed here since, so one removed on another device in the
+/// meantime is not brought back.
 async fn publish_current_novel_repository_state(
     app: &AppHandle,
     profile_id: &str,
 ) -> Result<(), String> {
     let launch_target = app.state::<LaunchTarget>().0.clone();
     let current = read_novel_repository_state(&launch_target, profile_id)?;
-    let payload = serde_json::to_string(&current).map_err(|error| error.to_string())?;
-    notify_novel_repository_state_written(app, Some(profile_id), None, &payload).await
+    let profile = load_replication_state()?
+        .profiles
+        .remove(profile_id)
+        .unwrap_or_default();
+    let mutations = republished_novel_dependency_mutations(profile_id, &profile, &current);
+    if mutations.is_empty() {
+        return Ok(());
+    }
+    submit_mutations_for_active_profiles(app, Some(profile_id), mutations).await
+}
+
+fn republished_novel_dependency_mutations(
+    profile_id: &str,
+    profile: &PersistedReplicationProfileState,
+    current: &PersistedNovelRepositoryState,
+) -> Vec<SerializableMutationInput> {
+    let local = local_novel_dependencies(current);
+    diff_novel_dependency_mutations(profile_id, &PersistedNovelRepositoryState::default(), current)
+        .into_iter()
+        .filter(|mutation| {
+            let entity_id = mutation.entity_id();
+            match profile.novel_dependency_baseline.get(entity_id) {
+                None => true,
+                Some(agreed) => {
+                    !profile.novel_dependency_tombstones.contains_key(entity_id)
+                        && local.get(entity_id).map(|entry| &entry.fingerprint) != Some(agreed)
+                }
+            }
+        })
+        .collect()
+}
+
+/// How long a delete sent from here keeps the old declaration from being installed again. A
+/// delete the Core refused, because another device changed the entry later, stops blocking it.
+const NOVEL_DEPENDENCY_PENDING_DELETE_MS: i64 = 10 * 60 * 1000;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum SyncdNovelDependencyRemoval {
+    #[serde(rename_all = "camelCase")]
+    Repository { local_repository_id: String },
+    #[serde(rename_all = "camelCase")]
+    Plugin { plugin_id: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncdNovelDependencySyncPlan {
+    /// Declarations to install when missing here.
+    pub declarations: Vec<SyncdNovelDependencyDeclaration>,
+    /// Local entries another device deleted after both held them, plugins first.
+    pub removals: Vec<SyncdNovelDependencyRemoval>,
+}
+
+#[derive(Debug, Clone)]
+struct LocalNovelDependency {
+    removal: SyncdNovelDependencyRemoval,
+    fingerprint: String,
+    /// When the entry was last written here; 0 when unknown.
+    changed_at_ms: i64,
+}
+
+fn local_novel_dependencies(
+    state: &PersistedNovelRepositoryState,
+) -> BTreeMap<String, LocalNovelDependency> {
+    let repositories = novel_repository_records(state);
+    let mut local = BTreeMap::new();
+    for repository in &state.repositories {
+        let raw_url = if repository.normalized_url.trim().is_empty() {
+            repository.url.as_str()
+        } else {
+            repository.normalized_url.as_str()
+        };
+        let Some(canonical_url) = canonicalize_novel_repository_url(raw_url) else {
+            continue;
+        };
+        let entity_id = canonical_novel_repository_id(&canonical_url);
+        let Some(record) = repositories.get(&entity_id) else {
+            continue;
+        };
+        local.entry(entity_id).or_insert_with(|| LocalNovelDependency {
+            removal: SyncdNovelDependencyRemoval::Repository {
+                local_repository_id: repository.id.clone(),
+            },
+            fingerprint: format!("repository|{}|{}", record.canonical_url, record.enabled),
+            changed_at_ms: 0,
+        });
+    }
+    for (entity_id, (plugin, _)) in novel_plugin_identities(state, &repositories) {
+        local.entry(entity_id).or_insert_with(|| LocalNovelDependency {
+            removal: SyncdNovelDependencyRemoval::Plugin {
+                plugin_id: plugin.plugin_id.trim().to_string(),
+            },
+            fingerprint: format!(
+                "plugin|{}|{}|{}",
+                plugin.version, plugin.enabled, plugin.updated_at_ms
+            ),
+            changed_at_ms: plugin.updated_at_ms.max(plugin.installed_at_ms).max(0),
+        });
+    }
+    local
+}
+
+/// Brings the replica's view of the shared dependency list up to date with this desktop and says
+/// what to install and what to remove here.
+///
+/// An entry leaves this desktop only when the Core confirmed its delete and both sides held it
+/// before. A plugin installed here after that delete is the newer change and stays. Entries
+/// removed here wait for the Core instead of being installed again from the old declaration.
+fn plan_novel_dependency_sync(
+    profile: &mut PersistedReplicationProfileState,
+    state: &PersistedNovelRepositoryState,
+    now_ms: i64,
+) -> SyncdNovelDependencySyncPlan {
+    let declared = &profile.novel_dependency_declarations;
+    profile.novel_dependency_pending_deletes.retain(|entity_id, sent_at_ms| {
+        declared.contains_key(entity_id)
+            && now_ms.saturating_sub(*sent_at_ms) < NOVEL_DEPENDENCY_PENDING_DELETE_MS
+    });
+    let local = local_novel_dependencies(state);
+
+    let mut plugin_removals = Vec::new();
+    let mut repository_removals = Vec::new();
+    let mut baseline = BTreeMap::new();
+    for (entity_id, agreed) in &profile.novel_dependency_baseline {
+        let (Some(deleted_at), Some(entry)) = (
+            profile.novel_dependency_tombstones.get(entity_id),
+            local.get(entity_id),
+        ) else {
+            continue;
+        };
+        if entry.changed_at_ms > *deleted_at {
+            continue;
+        }
+        match entry.removal {
+            SyncdNovelDependencyRemoval::Plugin { .. } => {
+                plugin_removals.push(entry.removal.clone())
+            }
+            SyncdNovelDependencyRemoval::Repository { .. } => {
+                repository_removals.push(entry.removal.clone())
+            }
+        }
+        // Kept until the removal is written here.
+        baseline.insert(entity_id.clone(), agreed.clone());
+    }
+    for (entity_id, entry) in &local {
+        if declared.contains_key(entity_id) {
+            baseline.insert(entity_id.clone(), entry.fingerprint.clone());
+        }
+    }
+    profile.novel_dependency_baseline = baseline;
+
+    let declarations = declared
+        .iter()
+        .filter(|(entity_id, _)| {
+            !profile
+                .novel_dependency_pending_deletes
+                .contains_key(*entity_id)
+        })
+        .map(|(_, declaration)| declaration.clone())
+        .collect();
+    plugin_removals.extend(repository_removals);
+    SyncdNovelDependencySyncPlan {
+        declarations,
+        removals: plugin_removals,
+    }
 }
 
 fn serialized_state_digest<T: Serialize>(state: &T) -> Result<String, String> {
@@ -4598,6 +4926,47 @@ pub fn syncd_get_pending_comic_reader_changes(
             .get(profile_id)
             .and_then(|profile| profile.pending_comic_reader_snapshot.clone()),
     })
+}
+
+/// Novel repositories and plugins the paired devices declared, for the webview to install.
+#[tauri::command]
+pub fn syncd_get_novel_dependency_declarations(
+    profile_id: String,
+) -> Result<Vec<SyncdNovelDependencyDeclaration>, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains('\0') {
+        return Err("profileId is invalid.".to_string());
+    }
+    Ok(load_replication_state()?
+        .profiles
+        .get(profile_id)
+        .map(|profile| profile.novel_dependency_declarations.values().cloned().collect())
+        .unwrap_or_default())
+}
+
+/// What to install and remove here so this desktop and the paired devices keep one list of novel
+/// repositories and plugins.
+#[tauri::command]
+pub fn syncd_plan_novel_dependency_sync(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<SyncdNovelDependencySyncPlan, String> {
+    let profile_id = profile_id.trim();
+    if profile_id.is_empty() || profile_id.contains(' ') {
+        return Err("profileId is invalid.".to_string());
+    }
+    let launch_target = app.state::<LaunchTarget>().0.clone();
+    let current = read_novel_repository_state(&launch_target, profile_id)?;
+    let mut state = load_replication_state()?;
+    let Some(profile) = state.profiles.get_mut(profile_id) else {
+        return Ok(SyncdNovelDependencySyncPlan {
+            declarations: Vec::new(),
+            removals: Vec::new(),
+        });
+    };
+    let plan = plan_novel_dependency_sync(profile, &current, now_ms());
+    save_replication_state(&state)?;
+    Ok(plan)
 }
 
 #[tauri::command]
@@ -7836,6 +8205,31 @@ async fn post_mutations_for_session(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn local_authority_is_only_granted_to_hosted_profiles() {
+        use super::*;
+
+        let mut replication = PersistedReplicationState::default();
+        let mut joined = PersistedReplicationProfileState::default();
+        joined.active_session_key = Some("joined:remote:profile".to_string());
+        replication.profiles.insert("joined".to_string(), joined);
+        replication.profiles.insert(
+            "hosted".to_string(),
+            PersistedReplicationProfileState::default(),
+        );
+        let known = ["joined", "hosted", "fresh"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+
+        assert_eq!(
+            local_authority_profiles(&known, &replication),
+            vec!["fresh".to_string(), "hosted".to_string()]
+        );
+    }
+
     #[test]
     fn novel_repositories_are_named_after_their_owner() {
         use super::*;
@@ -7853,6 +8247,229 @@ mod tests {
             "someone plugins"
         );
         assert_eq!(novel_repository_display_name("https://example.com"), "LNReader plugins");
+    }
+
+    #[test]
+    fn novel_dependency_declarations_keep_only_records_matching_their_id() {
+        use super::*;
+        let url = "https://example.com/someone/plugins.min.json";
+        let repository_id = canonical_novel_repository_id(url);
+        let repository = |canonical_url: &str| {
+            json!({
+                "repositoryId": repository_id, "canonicalUrl": canonical_url, "name": "someone",
+                "enabled": true, "createdAtMs": 1, "updatedAtMs": 1, "recordLamport": 1,
+            })
+        };
+        assert_eq!(
+            novel_dependency_declaration("novel.repository", &repository_id, &repository(url)),
+            Some(SyncdNovelDependencyDeclaration::Repository(SyncdNovelRepositoryDeclaration {
+                repository_id: repository_id.clone(),
+                canonical_url: url.to_string(),
+                enabled: true,
+            }))
+        );
+        // A record whose URL does not hash to its id, or is private, never reaches the installer.
+        let other = "https://example.org/plugins.min.json";
+        assert_eq!(novel_dependency_declaration("novel.repository", &repository_id, &repository(other)), None);
+        assert_eq!(
+            novel_dependency_declaration("novel.repository", &repository_id, &repository("http://example.com/someone/plugins.min.json")),
+            None
+        );
+
+        let plugin_entity_id = canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
+        let plugin = json!({
+            "pluginEntityId": plugin_entity_id, "repositoryId": repository_id, "pluginId": " someone.source ",
+            "sourceId": "someone.source", "name": "Someone", "version": " 1.2.0 ", "lang": "en", "enabled": true,
+            "artifactSha256": "0".repeat(64), "artifactByteLength": 10, "publicSettings": {},
+            "createdAtMs": 1, "updatedAtMs": 1, "recordLamport": 1,
+        });
+        assert_eq!(
+            novel_dependency_declaration("novel.plugin", &plugin_entity_id, &plugin),
+            Some(SyncdNovelDependencyDeclaration::Plugin(SyncdNovelPluginDeclaration {
+                repository_id: repository_id.clone(),
+                plugin_id: "someone.source".to_string(),
+                version: "1.2.0".to_string(),
+                enabled: true,
+            }))
+        );
+        assert_eq!(novel_dependency_declaration("novel.plugin", "novel-plugin:other", &plugin), None);
+    }
+
+    fn novel_dependency_fixture(plugin_updated_at_ms: i64) -> (super::PersistedNovelRepositoryState, String, String) {
+        use super::*;
+        let url = "https://example.com/someone/plugins.min.json";
+        let repository_id = canonical_novel_repository_id(url);
+        let plugin_entity_id = canonical_novel_plugin_id(&repository_id, "someone.source", "someone.source");
+        let state = PersistedNovelRepositoryState {
+            repositories: vec![LocalNovelRepository {
+                id: "local-repo".to_string(),
+                url: url.to_string(),
+                normalized_url: url.to_string(),
+                enabled: true,
+            }],
+            catalog_entries: Vec::new(),
+            installed_plugins: vec![LocalInstalledNovelPlugin {
+                repository_id: "local-repo".to_string(),
+                plugin_id: "someone.source".to_string(),
+                version: "1.0.0".to_string(),
+                enabled: true,
+                artifact_path: String::new(),
+                installed_at_ms: 1,
+                updated_at_ms: plugin_updated_at_ms,
+            }],
+        };
+        (state, repository_id, plugin_entity_id)
+    }
+
+    fn declare_novel_dependencies(
+        profile: &mut super::PersistedReplicationProfileState,
+        repository_id: &str,
+        plugin_entity_id: &str,
+    ) {
+        use super::*;
+        profile.novel_dependency_declarations.insert(
+            repository_id.to_string(),
+            SyncdNovelDependencyDeclaration::Repository(SyncdNovelRepositoryDeclaration {
+                repository_id: repository_id.to_string(),
+                canonical_url: "https://example.com/someone/plugins.min.json".to_string(),
+                enabled: true,
+            }),
+        );
+        profile.novel_dependency_declarations.insert(
+            plugin_entity_id.to_string(),
+            SyncdNovelDependencyDeclaration::Plugin(SyncdNovelPluginDeclaration {
+                repository_id: repository_id.to_string(),
+                plugin_id: "someone.source".to_string(),
+                version: "1.0.0".to_string(),
+                enabled: true,
+            }),
+        );
+    }
+
+    #[test]
+    fn novel_dependency_deletes_are_kept_as_tombstones_until_merged_again() {
+        use super::*;
+        let envelope = |op: &str, lamport: i64, patch: Option<Value>| ChangeEnvelope {
+            server_version: 1,
+            scope_id: "novels:profile:p".to_string(),
+            profile_id: None,
+            entity_type: "novel.repository".to_string(),
+            entity_id: canonical_novel_repository_id("https://example.com/someone/plugins.min.json"),
+            op: op.to_string(),
+            lamport,
+            patch,
+            applied_at_ms: 1,
+        };
+        let mut declarations = BTreeMap::new();
+        let mut tombstones = BTreeMap::new();
+        let deleted = envelope("delete", 40, None);
+        record_novel_dependency_change(&mut declarations, &mut tombstones, &deleted);
+        assert_eq!(tombstones.get(&deleted.entity_id), Some(&40));
+
+        let merged = envelope("merge", 50, Some(json!({
+            "repositoryId": deleted.entity_id, "canonicalUrl": "https://example.com/someone/plugins.min.json",
+            "name": "someone", "enabled": true, "createdAtMs": 1, "updatedAtMs": 1, "recordLamport": 50,
+        })));
+        record_novel_dependency_change(&mut declarations, &mut tombstones, &merged);
+        assert!(tombstones.is_empty());
+        assert!(declarations.contains_key(&deleted.entity_id));
+    }
+
+    #[test]
+    fn novel_dependencies_both_sides_held_follow_the_other_device_delete() {
+        use super::*;
+        let (state, repository_id, plugin_entity_id) = novel_dependency_fixture(10);
+        let mut profile = PersistedReplicationProfileState::default();
+        declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
+
+        // First meeting: nothing is removed, and both entries become agreed.
+        let plan = plan_novel_dependency_sync(&mut profile, &state, 1_000);
+        assert!(plan.removals.is_empty());
+        assert_eq!(plan.declarations.len(), 2);
+        assert_eq!(
+            profile.novel_dependency_baseline.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([repository_id.clone(), plugin_entity_id.clone()])
+        );
+
+        // The phone removes the plugin, then the repository.
+        profile.novel_dependency_declarations.clear();
+        profile.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 50);
+        profile.novel_dependency_tombstones.insert(repository_id.clone(), 51);
+        let plan = plan_novel_dependency_sync(&mut profile, &state, 1_000);
+        assert_eq!(
+            plan.removals,
+            vec![
+                SyncdNovelDependencyRemoval::Plugin { plugin_id: "someone.source".to_string() },
+                SyncdNovelDependencyRemoval::Repository { local_repository_id: "local-repo".to_string() },
+            ]
+        );
+        // Still agreed until the removal is written here; then the baseline empties.
+        assert_eq!(profile.novel_dependency_baseline.len(), 2);
+        let plan = plan_novel_dependency_sync(&mut profile, &PersistedNovelRepositoryState::default(), 1_000);
+        assert!(plan.removals.is_empty());
+        assert!(profile.novel_dependency_baseline.is_empty());
+    }
+
+    #[test]
+    fn novel_dependency_removal_spares_newer_installs_and_entries_never_agreed() {
+        use super::*;
+        let (state, repository_id, plugin_entity_id) = novel_dependency_fixture(90);
+        let mut profile = PersistedReplicationProfileState::default();
+        declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
+        plan_novel_dependency_sync(&mut profile, &state, 1_000);
+        profile.novel_dependency_declarations.remove(&plugin_entity_id);
+        profile.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 50);
+
+        // Installed here at 90, after the delete at 50: the newer install stays.
+        let plan = plan_novel_dependency_sync(&mut profile, &state, 1_000);
+        assert!(plan.removals.is_empty());
+
+        // A tombstone for something this desktop never agreed on removes nothing.
+        let mut fresh = PersistedReplicationProfileState::default();
+        fresh.novel_dependency_tombstones.insert(plugin_entity_id.clone(), 500);
+        fresh.novel_dependency_tombstones.insert(repository_id.clone(), 500);
+        assert!(plan_novel_dependency_sync(&mut fresh, &state, 1_000).removals.is_empty());
+    }
+
+    #[test]
+    fn novel_dependencies_removed_here_are_not_installed_again_while_the_delete_is_pending() {
+        use super::*;
+        let (_, repository_id, plugin_entity_id) = novel_dependency_fixture(10);
+        let mut profile = PersistedReplicationProfileState::default();
+        declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
+        profile.novel_dependency_pending_deletes.insert(plugin_entity_id.clone(), 1_000);
+        let empty = PersistedNovelRepositoryState::default();
+
+        let plan = plan_novel_dependency_sync(&mut profile, &empty, 2_000);
+        assert_eq!(plan.declarations.len(), 1);
+
+        // A delete the Core never confirmed stops blocking the declaration.
+        let plan = plan_novel_dependency_sync(&mut profile, &empty, 1_000 + NOVEL_DEPENDENCY_PENDING_DELETE_MS);
+        assert_eq!(plan.declarations.len(), 2);
+        assert!(profile.novel_dependency_pending_deletes.is_empty());
+    }
+
+    #[test]
+    fn session_start_republishes_only_entries_changed_here_or_never_agreed() {
+        use super::*;
+        let (state, repository_id, plugin_entity_id) = novel_dependency_fixture(10);
+        let mut profile = PersistedReplicationProfileState::default();
+        let ids = |mutations: Vec<SerializableMutationInput>| {
+            mutations.iter().map(|mutation| mutation.entity_id().to_string()).collect::<BTreeSet<_>>()
+        };
+        // Plugins without a catalog entry are not published, so only the repository is checked.
+        assert_eq!(ids(republished_novel_dependency_mutations("p", &profile, &state)), BTreeSet::from([repository_id.clone()]));
+
+        declare_novel_dependencies(&mut profile, &repository_id, &plugin_entity_id);
+        plan_novel_dependency_sync(&mut profile, &state, 1_000);
+        assert!(republished_novel_dependency_mutations("p", &profile, &state).is_empty());
+
+        let mut disabled = state.clone();
+        disabled.repositories[0].enabled = false;
+        assert_eq!(ids(republished_novel_dependency_mutations("p", &profile, &disabled)), BTreeSet::from([repository_id.clone()]));
+
+        profile.novel_dependency_tombstones.insert(repository_id.clone(), 50);
+        assert!(republished_novel_dependency_mutations("p", &profile, &disabled).is_empty());
     }
 
     #[test]

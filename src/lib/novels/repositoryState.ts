@@ -305,7 +305,7 @@ export function isBuiltinNovelRepository(repository: Pick<NovelRepositoryRecord,
  * GitHub owner and repository names are case-insensitive, so `lnreader/lnreader-plugins` and
  * `LNReader/lnreader-plugins` are the same feed. Branch and file path stay case-sensitive.
  */
-function novelRepositoryMatchKey(url: string): string {
+export function novelRepositoryMatchKey(url: string): string {
   const normalizedUrl = normalizeNovelRepositoryUrl(url);
   const match = /^(https?:\/\/(?:raw\.githubusercontent\.com|github\.com)\/[^/]+\/[^/]+)(.*)$/i.exec(normalizedUrl);
   return match ? match[1].toLowerCase() + match[2] : normalizedUrl;
