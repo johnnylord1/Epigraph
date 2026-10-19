@@ -421,18 +421,19 @@
       CACHE_GROUPS.LIBRARY,
     );
 
-    loadLibraryRequest = Promise.all([
-      libraryP,
-      loadCategoriesSnapshot().catch((error) => {
-        console.error(error);
-        return store.categories;
-      }),
-      loadLibraryTrackingSummary().catch((error) => {
-        console.error(error);
-        return [];
-      }),
-    ])
-      .then(([mangas, categories, trackingSummary]) => {
+    const categoriesP = loadCategoriesSnapshot().catch((error) => {
+      console.error(error);
+      return store.categories;
+    });
+    const trackingSummaryP = loadLibraryTrackingSummary().catch((error) => {
+      console.error(error);
+      return [];
+    });
+
+    // The works show as soon as they arrive; categories and tracking fill in after them.
+    let appliedMangas: Manga[] | null = null;
+    loadLibraryRequest = libraryP
+      .then((mangas) => {
         if (!componentActive) return;
         if (!appliedLibrary || appliedLibrary.mangas !== mangas || appliedLibrary.snapshot !== store.libraryMangaSnapshot) {
           const previousChapterCountById = new Map(store.libraryMangaSnapshot.map((manga) => [manga.id, manga.chapterCount]));
@@ -441,6 +442,14 @@
             chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? previousChapterCountById.get(manga.id) ?? 0,
           })));
         }
+        appliedMangas = mangas;
+        loadingLibrary = false;
+        return Promise.all([categoriesP, trackingSummaryP] as const);
+      })
+      .then((rest) => {
+        if (!componentActive || !rest || !appliedMangas) return;
+        const [categories, trackingSummary] = rest;
+        const mangas = appliedMangas;
         setCategories(normalizeCategories(categories));
         if (appliedLibrary?.trackingSummary !== trackingSummary) {
           trackedCompletedIds = collectTrackedCompletedMangaIds(trackingSummary);

@@ -318,8 +318,8 @@ describe("final derived theme gate", () => {
       runtime: runtime.length,
       neutral: neutral.length,
     }).toEqual({
-      componentColors: 1427,
-      editable: 1285,
+      componentColors: 1428,
+      editable: 1286,
       absolute: 232,
       absoluteOnly: 0,
       mixedEditableAbsolute: 232,

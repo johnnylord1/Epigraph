@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import RestoreNovelDependencies from "../settings/RestoreNovelDependencies.svelte";
-  import RestoreMangaDependencies from "../settings/RestoreMangaDependencies.svelte";
+  import FirstRunDependencies from "./FirstRunDependencies.svelte";
   import type { MangaRestoreChoices } from "../../lib/backup/mangaRestoreDependencies";
   import {
     Archive,
@@ -52,7 +51,8 @@
   let files = $state<BackupWorkflowFile[]>([]);
   let view = $state<"select" | "review">("select");
   let working = $state(false);
-  let dependenciesWorking = $state(false);
+  let installingDependencies = $state(false);
+  let dependencies = $state<ReturnType<typeof FirstRunDependencies>>();
   let mangaChoices = $state<Record<string, MangaRestoreChoices>>({});
   let cancellationRequested = $state(false);
   let detached = false;
@@ -106,16 +106,20 @@
   }
 
   function reviewImport() {
-    if (working || dependenciesWorking || readyFiles.length === 0) return;
+    if (working || readyFiles.length === 0) return;
     restoreError = null;
     view = "review";
   }
 
   async function restoreAll() {
-    if (working || dependenciesWorking || readyFiles.length === 0) return;
+    if (working || readyFiles.length === 0) return;
     working = true;
     restoreError = null;
     try {
+      installingDependencies = true;
+      await dependencies?.installAll();
+      installingDependencies = false;
+      if (detached) return;
       await workflow.restoreFiles(files);
       if (detached) return;
       files = [...files];
@@ -130,6 +134,7 @@
       files = [...files];
       restoreError = error;
     } finally {
+      installingDependencies = false;
       working = false;
     }
   }
@@ -217,22 +222,18 @@
     </div>
   </details>
 
-  {#each readyFiles.filter(file => file.libraryKinds.includes("novels")) as entry (entry.key)}
-    <RestoreNovelDependencies file={entry.file} format={entry.kind === "novels-lnreader" ? "lnreader" : "epigraph"}
-      disabled={working || dependenciesWorking || completedResult !== null} onBusy={busy => dependenciesWorking = busy} />
-  {/each}
-  {#each readyFiles.filter(file => file.libraryKinds.includes("manga")) as entry (entry.key)}
-    <RestoreMangaDependencies file={entry.file} format={entry.plan ? "epigraph" : "native"} choices={mangaChoices[entry.key] ?? {}}
-      disabled={working || dependenciesWorking || completedResult !== null} onBusy={busy => dependenciesWorking = busy}
-      onChoices={choices => {
+  {#if readyFiles.some(file => file.libraryKinds.includes("manga") || file.libraryKinds.includes("novels"))}
+    <FirstRunDependencies bind:this={dependencies} entries={readyFiles} choices={mangaChoices}
+      disabled={working || completedResult !== null}
+      onChoices={(key, choices) => {
         if (!workflow.setMangaChoices) throw Error("RESTORE_CHOICES_UNAVAILABLE");
-        workflow.setMangaChoices(choices, entry.key); mangaChoices[entry.key] = choices;
+        workflow.setMangaChoices(choices, key); mangaChoices[key] = choices;
       }} />
-  {/each}
+  {/if}
 
   {#if working || restoreProgress > 0}
     <div class="restore-progress" in:arrive>
-      <div class="progress-copy"><span>{restoreProgress >= 1 ? $_("firstRun.backup.restoreComplete") : $_("firstRun.backup.restoring")}</span><strong>{Math.round(restoreProgress * 100)}%</strong></div>
+      <div class="progress-copy"><span>{installingDependencies ? $_("firstRun.backup.installingDependencies") : restoreProgress >= 1 ? $_("firstRun.backup.restoreComplete") : $_("firstRun.backup.restoring")}</span><strong>{Math.round(restoreProgress * 100)}%</strong></div>
       <div class="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(restoreProgress * 100)} aria-label={$_("firstRun.backup.restoreProgress")}>
         <i class:is-done={restoreProgress >= 1} style:width={`${Math.round(restoreProgress * 100)}%`}></i>
       </div>
@@ -244,7 +245,7 @@
   {/if}
 
   <div class="fr-footer">
-    <button class="fr-btn" type="button" disabled={working || dependenciesWorking || completedResult !== null} onclick={() => view = "select"}><ArrowLeft class="fr-arrow-back" size={16} /> {$_("firstRun.backup.back")}</button>
+    <button class="fr-btn" type="button" disabled={working || completedResult !== null} onclick={() => view = "select"}><ArrowLeft class="fr-arrow-back" size={16} /> {$_("firstRun.backup.back")}</button>
     <span class="fr-spacer"></span>
     {#if working}
       <button class="fr-btn" type="button" disabled={cancellationRequested} onclick={cancelRestore}>{$_("ui_cancel")}</button>
@@ -252,7 +253,7 @@
     {#if completedResult && restoreWarnings.length > 0}
       <button class="fr-btn fr-btn--primary" type="button" onclick={() => { if (completedResult) onRestored(completedResult); }}>{$_("firstRun.sources.continue")} <ArrowRight class="fr-arrow-next" size={16} /></button>
     {:else}
-      <button class="fr-btn fr-btn--primary" type="button" disabled={working || dependenciesWorking || readyFiles.length === 0} onclick={restoreAll}><ArrowClockwise size={16} /> {$_("firstRun.backup.restoreAll")}</button>
+      <button class="fr-btn fr-btn--primary" type="button" disabled={working || readyFiles.length === 0} onclick={restoreAll}><ArrowClockwise size={16} /> {$_("firstRun.backup.restoreAll")}</button>
     {/if}
   </div>
   </div>

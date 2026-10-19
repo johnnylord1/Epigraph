@@ -4,8 +4,9 @@ import { createBackupWorkflow, type BackupInspection } from "../../lib/backup/ba
 import { applyAppLanguage, translate } from "../../lib/i18n/runtime";
 import FirstRunBackupStep from "./FirstRunBackupStep.svelte";
 
+const deps = vi.hoisted(() => ({ manga: null as null | Record<string, unknown>, calls: [] as string[] }));
 vi.mock("../../lib/backup/mangaRestoreDependencies", () => ({
-  createProductionMangaDependencySession: async () => ({ inspect: async () => ({
+  createProductionMangaDependencySession: async () => deps.manga ?? ({ inspect: async () => ({
     repositories: [], requiredRepositories: [], extensions: [], warnings: [],
     sources: [{ orphanSourceId: "old", sourceName: "Shared source", candidates: [{ sourceId: "new", displayName: "New source" }] }],
   }) }),
@@ -21,7 +22,7 @@ async function restoreAllWhenReady() {
   await fireEvent.click(restore);
 }
 
-afterEach(() => { cleanup(); applyAppLanguage("en"); });
+afterEach(() => { cleanup(); applyAppLanguage("en"); deps.manga = null; deps.calls = []; });
 
 const inspection: BackupInspection = {
   plan: null,
@@ -143,8 +144,7 @@ describe("FirstRunBackupStep", () => {
     expect(screen.getByText("4")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
     expect(screen.getByText("Comics, novels")).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Review Novel dependencies" })).toBeTruthy();
-    expect(screen.getByRole("region", { name: "Review Manga dependencies" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Installed with the restore" })).toBeTruthy();
 
     await restoreAllWhenReady();
     await waitFor(() => expect(onRestored).toHaveBeenCalledWith({
@@ -153,6 +153,30 @@ describe("FirstRunBackupStep", () => {
       sourceTypes: ["manga", "novels"],
     }));
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100");
+  });
+
+  it("lists the repositories and extensions it will install, then installs them before restoring", async () => {
+    const before = { repositories: [], requiredRepositories: ["https://example.test/repo/index.min.json"],
+      repositoryNames: { "https://example.test/repo/index.min.json": "Example repo" }, extensions: [], sources: [], warnings: [] };
+    const afterRepo = { ...before, repositories: [{ id: "store", indexUrl: "https://example.test/repo/index.min.json" }],
+      extensions: [{ packageName: "pkg.example", storeId: "store", isInstalled: false, name: "Tachiyomi: Example", language: "en", iconUrl: null }] };
+    const installed = { ...afterRepo, extensions: [{ ...afterRepo.extensions[0], isInstalled: true }] };
+    deps.manga = {
+      inspect: async () => before,
+      addRepositories: async (urls: string[]) => { deps.calls.push(`repo:${urls.join()}`); return { plan: afterRepo, failed: [] }; },
+      installMany: async (approvals: Array<{ packageName: string }>) => { deps.calls.push(`install:${approvals.map(a => a.packageName).join()}`); return installed; },
+    };
+    const workflow = createBackupWorkflow({ inspect: async () => ({ ...inspection, libraryKinds: ["manga"] }),
+      restore: async () => { deps.calls.push("restore"); } });
+    render(FirstRunBackupStep, { props: { workflow, picker: async () => [new File(["m"], "m.tachibk")] } });
+    await fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    await screen.findByText("m.tachibk");
+    await fireEvent.click(screen.getByRole("button", { name: "Review import" }));
+    expect(await screen.findByText("Example repo")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Add|Install all/ })).toBeNull();
+    await restoreAllWhenReady();
+    await waitFor(() => expect(deps.calls).toEqual(["repo:https://example.test/repo/index.min.json", "install:pkg.example", "restore"]));
+    expect(screen.getByText("Example")).toBeTruthy();
   });
 
   it("keeps invalid files visible and excludes them from review readiness", async () => {

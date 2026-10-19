@@ -2,6 +2,7 @@ import { prepareProductionNovels, restoreProductionNovels, preserveNovelCategori
 import { novelRestoreRuntimeState } from "./novelsRestoreProvisioning";
 import { invoke } from "@tauri-apps/api/core";
 import { gql } from "../client";
+import { cache, CACHE_GROUPS, CACHE_KEYS } from "../cache";
 import { buildRestoreReadiness } from "../reconciliation/readiness";
 import type { ParsedBackup, ReconciliationAnalysis, SourceInventoryEntry, AvailableExtensionEntry, NativeSourceRestoreChoice } from "../reconciliation/types";
 import {
@@ -145,10 +146,14 @@ async function inspectLnReader(file: File): Promise<BackupInspection> {
 async function refreshMangaLibrary(assertTarget = () => {}) {
   const result = await gql<{ mangas: { nodes: any[] } }>(GET_LIBRARY);
   assertTarget();
-  setLibraryMangaSnapshot((result.mangas.nodes ?? []).map((manga) => ({
+  const mangas = (result.mangas.nodes ?? []).map((manga) => ({
     ...manga,
     chapterCount: manga.chapters?.totalCount ?? manga.chapterCount ?? 0,
-  })));
+  }));
+  setLibraryMangaSnapshot(mangas);
+  // Pages read the library through the cache; drop the pre-restore entries so they show the restored works.
+  cache.clearGroup(CACHE_GROUPS.LIBRARY);
+  cache.set(CACHE_KEYS.LIBRARY, mangas, CACHE_GROUPS.LIBRARY);
 }
 
 async function restoreManga(file: File, data: MangaRestoreData, choices: Record<string, NativeSourceRestoreChoice>, observationOnly = false, assertTarget = () => {}) {

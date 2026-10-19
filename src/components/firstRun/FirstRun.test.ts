@@ -231,9 +231,9 @@ describe("FirstRun", () => {
     const onComplete = vi.fn();
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "sync" } } });
 
-    const openLibrary = screen.getByRole("button", { name: "Open library" });
-    expect(openLibrary.hasAttribute("disabled")).toBe(true);
-    await fireEvent.click(openLibrary);
+    const getStarted = screen.getByRole("button", { name: "Get started" });
+    expect(getStarted.hasAttribute("disabled")).toBe(true);
+    await fireEvent.click(getStarted);
     expect(onComplete).not.toHaveBeenCalled();
   });
 
@@ -242,20 +242,30 @@ describe("FirstRun", () => {
     store.books = [{ id: "book-1" } as (typeof store.books)[number]];
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "fresh" } } });
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open library" }).hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(onComplete).toHaveBeenCalledOnce();
     expect(JSON.parse(localStorage.getItem("epigraph-first-run") ?? "{}").status).toBe("complete");
-    expect(store.navPage).toBe("library");
+    expect(store.navPage).toBe("home");
     expect(store.librarySection).toBe("books");
+  });
+
+  it("lands on the library when the app is set to start there", async () => {
+    store.settings.launchIntoLibrary = true;
+    store.books = [{ id: "book-1" } as (typeof store.books)[number]];
+    render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "complete", path: "fresh" } } });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Open library" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    expect(store.navPage).toBe("library");
   });
 
   it("opens Comics when only comics exist and the previous section was Books", async () => {
     store.librarySection = "books";
     store.libraryMangaSnapshot = [{ id: 1 } as (typeof store.libraryMangaSnapshot)[number]];
     render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "complete", path: "fresh" } } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open library" }).hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(store.librarySection).toBe("comics");
   });
 
@@ -264,8 +274,8 @@ describe("FirstRun", () => {
     store.books = [{ id: "book-1" } as (typeof store.books)[number]];
     store.libraryMangaSnapshot = [{ id: 1 } as (typeof store.libraryMangaSnapshot)[number]];
     render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "complete", path: "backup" } } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open library" }).hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(store.librarySection).toBe(section);
   });
 
@@ -280,7 +290,7 @@ describe("FirstRun", () => {
     store.libraryMangaSnapshot = [{ id: 1 } as (typeof store.libraryMangaSnapshot)[number]];
     const onComplete = vi.fn();
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "backup" } } });
-    const open = screen.getByRole("button", { name: "Open library" });
+    const open = screen.getByRole("button", { name: "Get started" });
     expect(open.hasAttribute("disabled")).toBe(true);
     await fireEvent.click(open);
     expect(onComplete).not.toHaveBeenCalled();
@@ -296,7 +306,7 @@ describe("FirstRun", () => {
     const onComplete = vi.fn();
     render(FirstRun, { props: { onComplete, initialState: { ...createFirstRunState(), step: "complete", path: "backup" } } });
     await screen.findByRole("alert");
-    const open = screen.getByRole("button", { name: "Open library" });
+    const open = screen.getByRole("button", { name: "Get started" });
     expect(open.hasAttribute("disabled")).toBe(true);
     await fireEvent.click(open);
     expect(onComplete).not.toHaveBeenCalled();
@@ -389,8 +399,8 @@ describe("FirstRun", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
     cleanup();
     render(FirstRun, { props: { initialState: { ...createFirstRunState(), step: "complete", path: "backup" } } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Open library" }).hasAttribute("disabled")).toBe(false));
-    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Get started" }).hasAttribute("disabled")).toBe(false));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     expect(store.librarySection).toBe("books");
   });
 

@@ -21,7 +21,7 @@ describe("extension repository catalogs", () => {
         extensions: [{
           name: "Example",
           packageName: "eu.kanade.tachiyomi.extension.en.example",
-          resources: { apkUrl: "https://example.test/example.apk" },
+          resources: { apkUrl: "https://example.test/example.apk", iconUrl: "https://cdn.example.test/example.png" },
           sources: [{ id: "123", name: "Example Source", language: "en" }],
         }],
       },
@@ -42,6 +42,7 @@ describe("extension repository catalogs", () => {
       apk: "https://example.test/example.apk",
       lang: "en",
       sources: [{ id: "123", name: "Example Source", lang: "en" }],
+      icon: "https://cdn.example.test/example.png",
     }]);
   });
   test("resolves a github.com store URL to the raw catalog", async () => {

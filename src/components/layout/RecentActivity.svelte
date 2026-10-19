@@ -4,7 +4,10 @@
   import { formatDayLabel, formatRelativeTime } from "../../lib/i18n/format";
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-shell";
-  import { ClockCounterClockwise, Trash, Play } from "phosphor-svelte";
+  import { ClockCounterClockwise, Trash, Play, X } from "phosphor-svelte";
+  import { cubicOut } from "svelte/easing";
+  import { slide, type TransitionConfig } from "svelte/transition";
+  import { listFlip, prefersReducedMotion } from "../../lib/motion/motion";
   import { getServerUrl } from "../../lib/client";
   import { startLocalFlareSolverrAndEnable } from "../../lib/flaresolverr";
   import { finishLibraryUpdateToast, retryComicsLibrarySourceUpdate } from "../../lib/library/updateRuntime";
@@ -31,6 +34,9 @@
     clearLibraryUpdateNotifications,
     closeActivityPanel,
     clearSystemNotifications,
+    dismissLibraryUpdateIssues,
+    dismissLibraryUpdateNotification,
+    dismissSystemNotification,
     openMangaDetail,
     recordLibraryUpdateIssues,
     recordNovelUpdateNotifications,
@@ -42,9 +48,55 @@
   import type { HistoryEntry, LibraryUpdateIssue, LibraryUpdateNotification, SystemNotification } from "../../store/state.svelte";
 
   type ActivityTab = "all" | "updates" | "history" | "system";
+  const TAB_ORDER: ActivityTab[] = ["all", "updates", "history", "system"];
 
   let confirmClear = $state(false);
   let activeTab: ActivityTab = $state("all");
+  let tabDirection = $state(1);
+  let body: HTMLElement | undefined = $state();
+  let filtersEl: HTMLElement | undefined = $state();
+  const indicator = $state({ x: 0, width: 0, ready: false });
+  let indicatorReadyScheduled = false;
+
+  function selectTab(tab: ActivityTab) {
+    if (tab === activeTab) return;
+    tabDirection = TAB_ORDER.indexOf(tab) > TAB_ORDER.indexOf(activeTab) ? 1 : -1;
+    activeTab = tab;
+    confirmClear = false;
+    body?.scrollTo({ top: 0 });
+  }
+
+  // The active tab's pill glides between tabs instead of jumping.
+  $effect(() => {
+    const filters = filtersEl;
+    const tab = activeTab;
+    if (!filters) return;
+    const measure = () => {
+      const button = filters.querySelector<HTMLElement>(`[data-tab="${tab}"]`);
+      if (!button) return;
+      indicator.x = button.offsetLeft;
+      indicator.width = button.offsetWidth;
+      // The first placement lands without a glide; later ones animate.
+      if (!indicatorReadyScheduled) {
+        indicatorReadyScheduled = true;
+        requestAnimationFrame(() => { indicator.ready = true; });
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    for (const button of filters.querySelectorAll("[data-tab]")) observer.observe(button);
+    return () => observer.disconnect();
+  });
+
+  function panelIn(_node: Element, { direction }: { direction: number }): TransitionConfig {
+    if (prefersReducedMotion()) return { duration: 0 };
+    return { duration: 320, easing: cubicOut, css: (t, u) => `opacity:${t};transform:translateX(${u * direction * 18}px)` };
+  }
+
+  function rowOut(node: Element): TransitionConfig {
+    return prefersReducedMotion() ? { duration: 0 } : slide(node, { duration: 220, easing: cubicOut });
+  }
 
   function timeAgo(ts: number): string {
     return formatRelativeTime(ts);
@@ -96,6 +148,8 @@
     count: number;
     latestAt: number;
     items: LibraryUpdateIssue[];
+    /** Every issue in the card, for dismissing it; `items` is the newest few shown. */
+    all?: LibraryUpdateIssue[];
   }
 
   type SystemEntry = SystemNotification;
@@ -194,7 +248,8 @@
   const issueGroups = $derived.by(() => {
     const groups = new Map<string, IssueGroup>();
     for (const issue of updateIssues) {
-      const key = `${issue.runId}:${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`;
+      // One card per source, whichever run reported each title.
+      const key = `${issue.contentKind}:${issue.sourceId}:${issue.extensionName}`;
       const current = groups.get(key) ?? {
         id: key,
         sourceName: issue.sourceName || translate("libraryUpdate.unknownSource"),
@@ -211,7 +266,8 @@
     return [...groups.values()]
       .map((group) => ({
         ...group,
-        items: group.items
+        all: group.items,
+        items: [...group.items]
           .sort((left, right) => right.createdAt - left.createdAt || left.title.localeCompare(right.title))
           .slice(0, 5),
       }))
@@ -226,15 +282,25 @@
   });
 
   const totalVisibleCount = $derived(updateEntries.length + issueGroups.length + sessions.length + systemEntries.length);
-  const groups = $derived.by(() => {
-    const map = new Map<string, Session[]>();
-    for (const s of sessions) {
-      const l = dayLabel(s.readAt);
-      if (!map.has(l)) map.set(l, []);
-      map.get(l)!.push(s);
+
+  function byDay<T>(items: T[], at: (item: T) => number) {
+    const map = new Map<string, T[]>();
+    for (const item of items) {
+      const label = dayLabel(at(item));
+      if (!map.has(label)) map.set(label, []);
+      map.get(label)!.push(item);
     }
-    return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
-  });
+    return Array.from(map.entries()).map(([label, entries]) => ({ label, items: entries }));
+  }
+
+  const groups = $derived(byDay(sessions, (session) => session.readAt));
+  const updateDays = $derived(byDay(updateEntries, (entry) => entry.readAt));
+
+  function issueSummary(group: IssueGroup) {
+    return group.count === 1
+      ? translate("activity.issueGroupOne", { source: group.sourceName })
+      : translate("activity.issueGroupMany", { count: group.count, source: group.sourceName });
+  }
 
   function resume(session: Session) {
     if (session.kind === "novel" && session.novelId) {
@@ -441,21 +507,23 @@
     <div class="title-stack">
       <span class="eyebrow">{$_("ui_notifications")}</span>
       <h2>{$_("ui_recentActivity")}</h2>
-      <p>{$_("ui_yourLatestReadingUpdateAndSystemEvents")}</p>
+      <p>{$_("activity.retentionHint")}</p>
     </div>
 
     <div class="head-actions">
-      <div class="filters" role="tablist" aria-label={$_("ui_notificationFilters")}>
-        <button class="filter" class:active={activeTab === "all"} type="button" role="tab" aria-selected={activeTab === "all"} onclick={() => activeTab = "all"}>
+      <div class="filters" role="tablist" aria-label={$_("ui_notificationFilters")} bind:this={filtersEl}>
+        <span class="filter-indicator" class:ready={indicator.ready} aria-hidden="true"
+          style:width="{indicator.width}px" style:transform="translateX({indicator.x}px)"></span>
+        <button class="filter" class:active={activeTab === "all"} data-tab="all" type="button" role="tab" aria-selected={activeTab === "all"} onclick={() => selectTab("all")}>
           {$_("downloads_filter_all")} <span class="filter-count">{totalVisibleCount}</span>
         </button>
-        <button class="filter" class:active={activeTab === "updates"} type="button" role="tab" aria-selected={activeTab === "updates"} onclick={() => activeTab = "updates"}>
+        <button class="filter" class:active={activeTab === "updates"} data-tab="updates" type="button" role="tab" aria-selected={activeTab === "updates"} onclick={() => selectTab("updates")}>
           {$_("sources_filters_updates")} <span class="filter-count">{updateEntries.length + issueGroups.length}</span>
         </button>
-        <button class="filter" class:active={activeTab === "history"} type="button" role="tab" aria-selected={activeTab === "history"} onclick={() => activeTab = "history"}>
+        <button class="filter" class:active={activeTab === "history"} data-tab="history" type="button" role="tab" aria-selected={activeTab === "history"} onclick={() => selectTab("history")}>
           {$_("ui_history")} <span class="filter-count">{sessions.length}</span>
         </button>
-        <button class="filter" class:active={activeTab === "system"} type="button" role="tab" aria-selected={activeTab === "system"} onclick={() => activeTab = "system"}>
+        <button class="filter" class:active={activeTab === "system"} data-tab="system" type="button" role="tab" aria-selected={activeTab === "system"} onclick={() => selectTab("system")}>
           {$_("ui_system")} <span class="filter-count">{systemEntries.length}</span>
         </button>
       </div>
@@ -470,180 +538,203 @@
     </div>
   </header>
 
-  <main class="activity-body">
-    {#if activeTab === "all" || activeTab === "updates"}
-      <section class="activity-section">
-        <div class="section-title">
-          <span>{$_("sources_filters_updates")}</span>
-          <small>{updateEntries.length + issueGroups.length}</small>
-        </div>
-
-        {#if updateEntries.length === 0 && issueGroups.length === 0}
-          <p class="compact-empty">{$_("ui_noNewChapterUpdates")}</p>
-        {:else}
-          {#if issueGroups.length > 0}
-            <div class="issue-list">
-              {#each issueGroups as group (group.id)}
-                <article class="issue-group event">
-                  <div class="issue-marker"></div>
-                  <div class="item-copy">
-                    <span class="item-title">{group.extensionName}</span>
-                    <span class="item-subtitle">
-                      {group.count} {$_("ui_title")}{group.count === 1 ? "" : "s"} {$_("ui_couldNotUpdateFrom")} {group.sourceName}.
-                    </span>
-                    <span class="issue-titles">
-                      {group.items.map((issue) => `${issue.title}: ${issue.message}`).join(" | ")}
-                    </span>
-                    {#if isSourceChallengeGroup(group)}
-                      <div class="issue-actions">
-                        <button class="issue-action" type="button" onclick={startFlareSolverr}>{$_("ui_startFlaresolverr")}</button>
-                        {#if primaryIssue(group)?.actionUrl}
-                          <button class="issue-action" type="button" onclick={(event) => openIssueWebView(group, event)}>
-                            {primaryIssue(group)?.contentKind === "manga" ? $_("ui_openWebview") : $_("ui_openSource")}
-                          </button>
-                        {/if}
-                        <button class="issue-action" type="button" onclick={(event) => retryIssueSource(group, event)}>{$_("ui_retrySource")}</button>
-                      </div>
-                    {/if}
-                  </div>
-                  <span class="item-time">{timeAgo(group.latestAt)}</span>
-                </article>
-              {/each}
-            </div>
-          {/if}
-          <div class="event-list">
-            {#each updateEntries as entry (entry.id)}
-              <button class="activity-item with-thumb event" onclick={() => openUpdate(entry)}>
-                <div class="thumb-wrap">
-                  <img src={resolveMangaCoverUrl(entry.manga ?? entry.notification.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={entry.title} class="thumb" />
-                  <span class="item-count">{entry.count}</span>
-                </div>
-                <div class="item-copy">
-                  <span class="item-title">{entry.title}</span>
-                  <span class="item-subtitle">{entry.subtitle} - {entry.source}</span>
-                </div>
-                <span class="item-time">{timeAgo(entry.readAt)}</span>
-                <span class="action-pill">{$_("ui_open")}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </section>
-    {/if}
-
-    {#if activeTab === "all"}
-      <section class="activity-section">
-        <div class="section-title">
-          <span>{$_("ui_history")}</span>
-          <small>{sessions.length}</small>
-        </div>
-
-        {#if sessions.length === 0}
-          <p class="compact-empty">{$_("ui_noReadingHistoryYet")}</p>
-        {:else}
-          <div class="event-list">
-            {#each sessions.slice(0, 8) as session (session.key)}
-              <button class="activity-item with-thumb event" onclick={() => resume(session)}>
-                <div class="thumb-wrap">
-                  {#if session.thumbnailUrl}
-                    <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
-                  {:else}
-                    <span class="thumb" aria-hidden="true"></span>
-                  {/if}
-                  {#if session.chapterCount > 1}
-                    <span class="item-count">{session.chapterCount}</span>
-                  {/if}
-                </div>
-                <div class="item-copy">
-                  <span class="item-title">{session.mangaTitle}</span>
-                  <span class="item-subtitle">{session.latestChapterName}</span>
-                </div>
-                <span class="item-time">{timeAgo(session.readAt)}</span>
-                <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </section>
-    {:else if activeTab === "history"}
-      {#if sessions.length === 0}
-        <section class="activity-section">
-          <div class="section-title">
-            <span>{$_("ui_history")}</span>
-            <small>0</small>
-          </div>
-          <div class="full-empty">
-            <ClockCounterClockwise size={28} weight="light" />
-            <p>{$_("ui_noReadingHistoryYet")}</p>
-            <span>{$_("ui_chaptersYouReadWillAppearHere")}</span>
-          </div>
-        </section>
-      {:else}
-        {#each groups as { label, items }}
+  <main class="activity-body" bind:this={body}>
+    {#key activeTab}
+      <div class="activity-panel" in:panelIn={{ direction: tabDirection }}>
+        {#if activeTab === "all" || activeTab === "updates"}
           <section class="activity-section">
-            <div class="day-title">
-              <span>{label}</span>
+            <div class="section-title">
+              <span>{$_("sources_filters_updates")}</span>
+              <small>{updateEntries.length + issueGroups.length}</small>
             </div>
-            <div class="event-list">
-              {#each items as session (session.key)}
-                <button class="activity-item with-thumb event" onclick={() => resume(session)}>
-                  <div class="thumb-wrap">
-                    {#if session.thumbnailUrl}
-                      <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
-                    {:else}
-                      <span class="thumb" aria-hidden="true"></span>
-                    {/if}
-                    {#if session.chapterCount > 1}
-                      <span class="item-count">{session.chapterCount}</span>
-                    {/if}
-                  </div>
-                  <div class="item-copy">
-                    <span class="item-title">{session.mangaTitle}</span>
-                    <span class="item-subtitle">
-                      {#if session.chapterCount > 1}
-                        {session.firstChapterName}
-                        <span class="chapter-arrow">-&gt;</span>
-                        {session.latestChapterName}
-                      {:else}
-                        {session.latestChapterName}
-                      {/if}
-                    </span>
-                  </div>
-                  <span class="item-time">{timeAgo(session.readAt)}</span>
-                  <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
-                </button>
-              {/each}
-            </div>
-          </section>
-        {/each}
-      {/if}
-    {/if}
 
-    {#if activeTab === "all" || activeTab === "system"}
-      <section class="activity-section">
-        <div class="section-title">
-          <span>{$_("ui_system")}</span>
-          <small>{systemEntries.length}</small>
-        </div>
-
-        {#if systemEntries.length === 0}
-          <p class="compact-empty">{$_("ui_noSystemEvents")}</p>
-        {:else}
-          <div class="timeline">
-            {#each systemEntries as entry (entry.id)}
-              <article class="system-item event" data-kind={entry.kind}>
-                <span class="dot"></span>
-                <div class="item-copy">
-                  <span class="item-title">{entry.title}</span>
-                  {#if entry.body}<span class="item-subtitle">{entry.body}</span>{/if}
+            {#if updateEntries.length === 0 && issueGroups.length === 0}
+              <p class="compact-empty">{$_("ui_noNewChapterUpdates")}</p>
+            {:else}
+              {#if issueGroups.length > 0}
+                <div class="issue-list">
+                  {#each issueGroups as group (group.id)}
+                    <article class="issue-group event" animate:listFlip out:rowOut>
+                      <div class="issue-marker"></div>
+                      <div class="item-copy">
+                        <span class="item-title">{group.extensionName}</span>
+                        <span class="item-subtitle">{issueSummary(group)}</span>
+                        <span class="issue-titles">
+                          {group.items.map((issue) => `${issue.title}: ${issue.message}`).join(" | ")}
+                        </span>
+                        {#if isSourceChallengeGroup(group)}
+                          <div class="issue-actions">
+                            <button class="issue-action" type="button" onclick={startFlareSolverr}>{$_("ui_startFlaresolverr")}</button>
+                            {#if primaryIssue(group)?.actionUrl}
+                              <button class="issue-action" type="button" onclick={(event) => openIssueWebView(group, event)}>
+                                {primaryIssue(group)?.contentKind === "manga" ? $_("ui_openWebview") : $_("ui_openSource")}
+                              </button>
+                            {/if}
+                            <button class="issue-action" type="button" onclick={(event) => retryIssueSource(group, event)}>{$_("ui_retrySource")}</button>
+                          </div>
+                        {/if}
+                      </div>
+                      <div class="item-end">
+                        <span class="item-time">{timeAgo(group.latestAt)}</span>
+                        <button class="dismiss-btn" type="button" aria-label={$_("activity.dismiss")} title={$_("activity.dismiss")}
+                          onclick={() => dismissLibraryUpdateIssues(group.all ?? group.items)}>
+                          <X size={12} weight="bold" />
+                        </button>
+                      </div>
+                    </article>
+                  {/each}
                 </div>
-                <span class="item-time">{timeAgo(entry.createdAt)}</span>
-              </article>
-            {/each}
-          </div>
+              {/if}
+              {#each updateDays as day (day.label)}
+                <div class="day-title day-title--sub"><span>{day.label}</span></div>
+                <div class="event-list">
+                  {#each day.items as entry (entry.id)}
+                    <div class="activity-row" animate:listFlip out:rowOut>
+                      <button class="activity-item with-thumb event" onclick={() => openUpdate(entry)}>
+                        <div class="thumb-wrap">
+                          <img src={resolveMangaCoverUrl(entry.manga ?? entry.notification.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={entry.title} class="thumb" />
+                          <span class="item-count">{entry.count}</span>
+                        </div>
+                        <div class="item-copy">
+                          <span class="item-title">{entry.title}</span>
+                          <span class="item-subtitle">{entry.subtitle} - {entry.source}</span>
+                        </div>
+                        <span class="item-time">{timeAgo(entry.readAt)}</span>
+                        <span class="action-pill">{$_("ui_open")}</span>
+                      </button>
+                      <button class="dismiss-btn" type="button" aria-label={$_("activity.dismiss")} title={$_("activity.dismiss")}
+                        onclick={() => dismissLibraryUpdateNotification(entry.notification)}>
+                        <X size={12} weight="bold" />
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              {/each}
+            {/if}
+          </section>
         {/if}
-      </section>
-    {/if}
+
+        {#if activeTab === "all"}
+          <section class="activity-section">
+            <div class="section-title">
+              <span>{$_("ui_history")}</span>
+              <small>{sessions.length}</small>
+            </div>
+
+            {#if sessions.length === 0}
+              <p class="compact-empty">{$_("ui_noReadingHistoryYet")}</p>
+            {:else}
+              <div class="event-list">
+                {#each sessions.slice(0, 8) as session (session.key)}
+                  <button class="activity-item with-thumb event" onclick={() => resume(session)}>
+                    <div class="thumb-wrap">
+                      {#if session.thumbnailUrl}
+                        <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                      {:else}
+                        <span class="thumb" aria-hidden="true"></span>
+                      {/if}
+                      {#if session.chapterCount > 1}
+                        <span class="item-count">{session.chapterCount}</span>
+                      {/if}
+                    </div>
+                    <div class="item-copy">
+                      <span class="item-title">{session.mangaTitle}</span>
+                      <span class="item-subtitle">{session.latestChapterName}</span>
+                    </div>
+                    <span class="item-time">{timeAgo(session.readAt)}</span>
+                    <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {:else if activeTab === "history"}
+          {#if sessions.length === 0}
+            <section class="activity-section">
+              <div class="section-title">
+                <span>{$_("ui_history")}</span>
+                <small>0</small>
+              </div>
+              <div class="full-empty">
+                <ClockCounterClockwise size={28} weight="light" />
+                <p>{$_("ui_noReadingHistoryYet")}</p>
+                <span>{$_("ui_chaptersYouReadWillAppearHere")}</span>
+              </div>
+            </section>
+          {:else}
+            {#each groups as { label, items }}
+              <section class="activity-section">
+                <div class="day-title">
+                  <span>{label}</span>
+                </div>
+                <div class="event-list">
+                  {#each items as session (session.key)}
+                    <button class="activity-item with-thumb event" onclick={() => resume(session)}>
+                      <div class="thumb-wrap">
+                        {#if session.thumbnailUrl}
+                          <img src={resolveMangaCoverUrl(session.thumbnailUrl, { context: "activity", persistence: "persistent", cacheGeneration: store.libraryCoverCacheGeneration })} alt={session.mangaTitle} class="thumb" />
+                        {:else}
+                          <span class="thumb" aria-hidden="true"></span>
+                        {/if}
+                        {#if session.chapterCount > 1}
+                          <span class="item-count">{session.chapterCount}</span>
+                        {/if}
+                      </div>
+                      <div class="item-copy">
+                        <span class="item-title">{session.mangaTitle}</span>
+                        <span class="item-subtitle">
+                          {#if session.chapterCount > 1}
+                            {session.firstChapterName}
+                            <span class="chapter-arrow">-&gt;</span>
+                            {session.latestChapterName}
+                          {:else}
+                            {session.latestChapterName}
+                          {/if}
+                        </span>
+                      </div>
+                      <span class="item-time">{timeAgo(session.readAt)}</span>
+                      <span class="action-pill"><Play size={10} weight="fill" /> {$_("home_continue_resume")}</span>
+                    </button>
+                  {/each}
+                </div>
+              </section>
+            {/each}
+          {/if}
+        {/if}
+
+        {#if activeTab === "all" || activeTab === "system"}
+          <section class="activity-section">
+            <div class="section-title">
+              <span>{$_("ui_system")}</span>
+              <small>{systemEntries.length}</small>
+            </div>
+
+            {#if systemEntries.length === 0}
+              <p class="compact-empty">{$_("ui_noSystemEvents")}</p>
+            {:else}
+              <div class="timeline">
+                {#each systemEntries as entry (entry.id)}
+                  <article class="system-item event" data-kind={entry.kind} animate:listFlip out:rowOut>
+                    <span class="dot"></span>
+                    <div class="item-copy">
+                      <span class="item-title">{entry.title}</span>
+                      {#if entry.body}<span class="item-subtitle">{entry.body}</span>{/if}
+                    </div>
+                    <div class="item-end">
+                      <span class="item-time">{timeAgo(entry.createdAt)}</span>
+                      <button class="dismiss-btn" type="button" aria-label={$_("activity.dismiss")} title={$_("activity.dismiss")}
+                        onclick={() => dismissSystemNotification(entry)}>
+                        <X size={12} weight="bold" />
+                      </button>
+                    </div>
+                  </article>
+                {/each}
+              </div>
+            {/if}
+          </section>
+        {/if}
+      </div>
+    {/key}
   </main>
 </div>
 
@@ -742,6 +833,7 @@
   }
 
   .filters {
+    position: relative;
     display: flex;
     align-items: center;
     gap: calc(4px * var(--component-activity-scale));
@@ -757,7 +849,24 @@
     display: none;
   }
 
+  /* The active tab's pill: one element that glides between tabs. Tabs come later in the DOM, so they paint above it. */
+  .filter-indicator {
+    position: absolute;
+    top: calc(4px * var(--component-activity-scale));
+    bottom: calc(4px * var(--component-activity-scale));
+    left: 0;
+    border-radius: var(--radius-full);
+    background: var(--component-activity-center-accent-soft);
+    box-shadow: var(--component-activity-center-filter-active-shadow);
+    pointer-events: none;
+  }
+
+  .filter-indicator.ready {
+    transition: transform 420ms cubic-bezier(.16, 1, .3, 1), width 420ms cubic-bezier(.16, 1, .3, 1);
+  }
+
   .filter {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -782,10 +891,10 @@
     background: var(--component-activity-center-filter-hover-bg);
   }
 
-  .filter.active {
-    background: var(--component-activity-center-accent-soft);
+  .filter.active,
+  .filter.active:hover {
+    background: transparent;
     color: var(--component-activity-center-text);
-    box-shadow: var(--component-activity-center-filter-active-shadow);
   }
 
   .filter-count {
@@ -874,10 +983,59 @@
     font-size: calc(12px * var(--component-activity-scale));
   }
 
+  .day-title--sub {
+    margin: calc(10px * var(--component-activity-scale)) 0 calc(2px * var(--component-activity-scale));
+    color: var(--component-activity-center-faint);
+    font-size: calc(11.5px * var(--component-activity-scale));
+    font-weight: 760;
+  }
+
   .event-list {
     display: flex;
     flex-direction: column;
     gap: 0;
+  }
+
+  .activity-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: calc(4px * var(--component-activity-scale));
+  }
+
+  .item-end {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: calc(6px * var(--component-activity-scale));
+  }
+
+  .dismiss-btn {
+    display: inline-grid;
+    place-items: center;
+    width: calc(26px * var(--component-activity-scale));
+    height: calc(26px * var(--component-activity-scale));
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-full);
+    background: transparent;
+    color: var(--component-activity-center-faint);
+    cursor: pointer;
+    opacity: var(--component-activity-center-pill-hidden-opacity);
+    transition: opacity var(--t-fast), color var(--t-fast), background var(--t-fast), border-color var(--t-fast);
+  }
+
+  .activity-row:hover .dismiss-btn,
+  .system-item:hover .dismiss-btn,
+  .issue-group:hover .dismiss-btn,
+  .dismiss-btn:focus-visible {
+    opacity: var(--component-activity-center-pill-visible-opacity);
+  }
+
+  .dismiss-btn:hover {
+    color: var(--component-activity-center-clear-danger-fg);
+    border-color: var(--component-activity-center-clear-danger-border);
+    background: var(--component-activity-center-clear-danger-bg);
   }
 
   .issue-list {
@@ -1142,9 +1300,11 @@
       grid-template-columns: calc(18px * var(--component-activity-scale)) minmax(0, 1fr);
     }
 
-    .system-item .item-time {
+    .system-item .item-end {
       grid-column: 2;
       justify-self: start;
+      flex-direction: row;
+      align-items: center;
     }
 
     .action-pill {

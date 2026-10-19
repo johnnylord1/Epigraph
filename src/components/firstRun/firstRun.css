@@ -47,7 +47,7 @@
   font-size: var(--text-base);
   font-weight: 650;
   cursor: pointer;
-  transition: color .25s, opacity .3s, transform .45s var(--fr-spring);
+  transition: color .25s, opacity .3s, transform .45s var(--fr-spring), translate .35s var(--fr-out);
 }
 .first-run-shell .fr-btn::before {
   content: "";
@@ -372,7 +372,11 @@ html[data-epigraph-reduced-motion="true"] .first-run-shell *::after {
   transition-duration: .01ms !important;
 }
 
-/* Theme choices grow in as a circle from the pointer (see revealThemeChange). */
+/* Theme choices grow in as a circle from the pointer (see revealThemeChange). The snapshot
+   overlay lets clicks through to the live page, so the next choice is never held back. */
+::view-transition {
+  pointer-events: none;
+}
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;

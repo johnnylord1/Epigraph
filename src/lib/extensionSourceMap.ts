@@ -24,6 +24,8 @@ export interface RepoExtensionEntry {
   apk: string;
   lang?: string;
   sources?: RepoSourceEntry[];
+  /** Icon the catalog links for the extension; v2 stores no longer keep an icon folder. */
+  icon?: string;
 }
 
 export interface MissingSourceSuggestionResult {
@@ -34,7 +36,7 @@ export interface MissingSourceSuggestionResult {
 interface V2RepoExtensionEntry {
   name?: unknown;
   packageName?: unknown;
-  resources?: { apkUrl?: unknown } | null;
+  resources?: { apkUrl?: unknown; iconUrl?: unknown } | null;
   sources?: Array<{ id?: unknown; name?: unknown; language?: unknown }> | null;
 }
 
@@ -97,6 +99,7 @@ function parseRepoCatalog(parsed: unknown): RepoExtensionEntry[] {
       apk: typeof raw.resources?.apkUrl === "string" ? raw.resources.apkUrl : "",
       lang: sources[0]?.lang,
       sources,
+      icon: typeof raw.resources?.iconUrl === "string" && raw.resources.iconUrl ? raw.resources.iconUrl : undefined,
     } satisfies RepoExtensionEntry];
   });
 }

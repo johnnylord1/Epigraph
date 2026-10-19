@@ -558,6 +558,11 @@ export interface Settings {
   downloadNewNovelChapters: boolean;
   onlyUpdateOngoingNovels: boolean;
   localServerStandbyEnabled: boolean;
+  /** Closing the window keeps Epigraph running in the notification area. Device-level. */
+  closeToBackground:      boolean;
+  /** Native notifications while the window is out of sight. Device-level. */
+  notifyLibraryUpdates:   boolean;
+  notifyExtensionUpdates: boolean;
   localServerStandbyIdleMin: number;
   lastLibraryUpdateAt?:    number;
   preferredExtensionLang:  string;
@@ -707,6 +712,9 @@ export const DEFAULT_SETTINGS: Settings = {
   downloadNewNovelChapters: false,
   onlyUpdateOngoingNovels: false,
   localServerStandbyEnabled: true,
+  closeToBackground:      false,
+  notifyLibraryUpdates:   true,
+  notifyExtensionUpdates: true,
   localServerStandbyIdleMin: 10,
   lastLibraryUpdateAt:    undefined,
   preferredExtensionLang: "en",
@@ -1238,6 +1246,9 @@ function mergeSettings(saved: any): Settings {
     libraryUpdateIntensity: normalizeLibraryUpdateIntensity(saved?.settings?.libraryUpdateIntensity),
     downloadNewNovelChapters: saved?.settings?.downloadNewNovelChapters === true,
     onlyUpdateOngoingNovels: saved?.settings?.onlyUpdateOngoingNovels === true,
+    closeToBackground:    saved?.settings?.closeToBackground === true,
+    notifyLibraryUpdates: saved?.settings?.notifyLibraryUpdates !== false,
+    notifyExtensionUpdates: saved?.settings?.notifyExtensionUpdates !== false,
     filterBlockedTags:    saved?.settings?.filterBlockedTags ?? DEFAULT_SETTINGS.filterBlockedTags,
     adultContentTags:     saved?.settings?.adultContentTags     ?? DEFAULT_SETTINGS.adultContentTags,
     nsfwFilteredTags:     normalizeBlockedTags(saved?.settings?.nsfwFilteredTags),
@@ -1463,6 +1474,62 @@ function normalizeLoadedSystemNotification(entry: any): SystemNotification | nul
   };
 }
 
+const NOTIFICATION_DAY_MS = 24 * 60 * 60 * 1000;
+/** How long each kind of activity entry stays listed, and how many are kept. */
+export const NOTIFICATION_RETENTION = {
+  updates: { maxAgeMs: 14 * NOTIFICATION_DAY_MS, max: 120 },
+  issues: { maxAgeMs: 7 * NOTIFICATION_DAY_MS, max: 200 },
+  system: { maxAgeMs: 7 * NOTIFICATION_DAY_MS, max: 40 },
+} as const;
+
+export type LibraryRunScope = "all" | "comics" | "books";
+const LIBRARY_RUN_NOTIFICATION_IDS: Record<LibraryRunScope, string> = {
+  all: "library-run:all",
+  comics: "library-run:comics",
+  books: "library-run:books",
+};
+
+export function pruneNotifications<T extends { createdAt: number }>(
+  entries: T[],
+  { maxAgeMs, max }: { maxAgeMs: number; max: number },
+  now = Date.now(),
+): T[] {
+  const cutoff = now - maxAgeMs;
+  return entries
+    .filter((entry) => entry.createdAt >= cutoff)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, max);
+}
+
+function updateNotificationTitleKey(entry: LibraryUpdateNotification) {
+  const item = entry.kind === "novels"
+    ? `novel:${entry.novelId ?? entry.mangaTitle}`
+    : `comic:${entry.mangaId ?? entry.mangaTitle}`;
+  return `${entry.profileId ?? "global"}:${item}`;
+}
+
+/** One row per title: the newest run's entry absorbs the chapters older, still listed runs found. */
+export function compactUpdateNotifications(entries: LibraryUpdateNotification[]): LibraryUpdateNotification[] {
+  const byTitle = new Map<string, LibraryUpdateNotification>();
+  for (const entry of [...entries].sort((left, right) => right.createdAt - left.createdAt)) {
+    const key = updateNotificationTitleKey(entry);
+    const newer = byTitle.get(key);
+    if (!newer) {
+      byTitle.set(key, { ...entry });
+      continue;
+    }
+    const chapterTitles = [...new Set([...(newer.chapterTitles ?? []), ...(entry.chapterTitles ?? [])])].slice(0, 5);
+    newer.chapterDelta += entry.chapterDelta;
+    newer.previousChapterCount = Math.min(newer.previousChapterCount, entry.previousChapterCount);
+    newer.chapterTitles = chapterTitles.length > 0 ? chapterTitles : undefined;
+  }
+  return pruneNotifications([...byTitle.values()], NOTIFICATION_RETENTION.updates);
+}
+
+function updateIssueItemKey(issue: LibraryUpdateIssue) {
+  return `${issue.profileId ?? "global"}:${issue.contentKind}:${issue.itemId}`;
+}
+
 function buildLibraryUpdateNotifications(
   before: Manga[],
   after: Manga[],
@@ -1683,23 +1750,24 @@ class Store {
   history:           HistoryEntry[]   = $state(saved?.history       ?? []);
   // Reads synced from other devices older than this were cleared here and stay hidden.
   historyClearedAt:  number           = $state(Number(saved?.historyClearedAt) || 0);
+  // Entries past their retention are dropped on load, so old notifications never pile up.
   libraryUpdateNotifications: LibraryUpdateNotification[] = $state(
     Array.isArray(saved?.libraryUpdateNotifications)
-      ? saved.libraryUpdateNotifications
+      ? compactUpdateNotifications(saved.libraryUpdateNotifications
           .map(normalizeLoadedLibraryUpdateNotification)
-          .filter((entry: LibraryUpdateNotification | null): entry is LibraryUpdateNotification => Boolean(entry))
+          .filter((entry: LibraryUpdateNotification | null): entry is LibraryUpdateNotification => Boolean(entry)))
       : [],
   );
   libraryUpdateIssues: LibraryUpdateIssue[] = $state(
     Array.isArray(saved?.libraryUpdateIssues)
-      ? loadPersistedLibraryUpdateIssues(saved.libraryUpdateIssues)
+      ? pruneNotifications(loadPersistedLibraryUpdateIssues(saved.libraryUpdateIssues), NOTIFICATION_RETENTION.issues)
       : [],
   );
   systemNotifications: SystemNotification[] = $state(
     Array.isArray(saved?.systemNotifications)
-      ? saved.systemNotifications
+      ? pruneNotifications(saved.systemNotifications
           .map(normalizeLoadedSystemNotification)
-          .filter((entry: SystemNotification | null): entry is SystemNotification => Boolean(entry))
+          .filter((entry: SystemNotification | null): entry is SystemNotification => Boolean(entry)), NOTIFICATION_RETENTION.system)
       : [],
   );
   books:             BookEntry[]      = $state(reconciledSavedBooks.books);
@@ -2207,9 +2275,54 @@ class Store {
     const existingKeys = new Set(this.libraryUpdateIssues.map((issue) => this.notificationScopeKey(issue)));
     const nextIssues = normalized.filter((issue) => !existingKeys.has(this.notificationScopeKey(issue)));
     if (!nextIssues.length) return [];
-    this.libraryUpdateIssues = [...nextIssues, ...this.libraryUpdateIssues]
-      .sort((left, right) => right.createdAt - left.createdAt);
+    // A title's newest problem replaces the one an earlier run left, so retries don't stack up.
+    const superseded = new Set(nextIssues.map(updateIssueItemKey));
+    this.libraryUpdateIssues = pruneNotifications(
+      [...nextIssues, ...this.libraryUpdateIssues.filter((issue) => !superseded.has(updateIssueItemKey(issue)))],
+      NOTIFICATION_RETENTION.issues,
+    );
     return nextIssues;
+  }
+  private storeUpdateNotifications(entries: LibraryUpdateNotification[]) {
+    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
+    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
+    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
+    if (!nextEntries.length) return [];
+    this.libraryUpdateNotifications = compactUpdateNotifications([...nextEntries, ...this.libraryUpdateNotifications]);
+    // A title that just found chapters no longer has the problem an earlier run reported for it.
+    const resolved = new Set(nextEntries.map((entry) => updateIssueItemKey({
+      profileId: entry.profileId,
+      contentKind: entry.kind === "novels" ? "novel" : "manga",
+      itemId: entry.kind === "novels" ? String(entry.novelId ?? "") : String(entry.mangaId ?? ""),
+    } as LibraryUpdateIssue)));
+    const runAt = Math.min(...nextEntries.map((entry) => entry.createdAt));
+    this.libraryUpdateIssues = this.libraryUpdateIssues
+      .filter((issue) => issue.createdAt >= runAt || !resolved.has(updateIssueItemKey(issue)));
+    return nextEntries;
+  }
+  dismissLibraryUpdateNotification(entry: { id: string; profileId?: LocalProfileId | null }) {
+    const key = this.notificationScopeKey(entry);
+    this.libraryUpdateNotifications = this.libraryUpdateNotifications.filter((current) => this.notificationScopeKey(current) !== key);
+  }
+  dismissLibraryUpdateIssues(issues: Array<{ id: string; profileId?: LocalProfileId | null }>) {
+    const keys = new Set(issues.map((issue) => this.notificationScopeKey(issue)));
+    this.libraryUpdateIssues = this.libraryUpdateIssues.filter((current) => !keys.has(this.notificationScopeKey(current)));
+  }
+  dismissSystemNotification(entry: { id: string; profileId?: LocalProfileId | null }) {
+    const key = this.notificationScopeKey(entry);
+    this.systemNotifications = this.systemNotifications.filter((current) => this.notificationScopeKey(current) !== key);
+  }
+  /**
+   * A library update keeps one summary per scope: each run replaces the last one, and a run with nothing
+   * new and no problems removes it. A full run also replaces the comics-only and books-only summaries.
+   */
+  recordLibraryRunResult(scope: LibraryRunScope, entry: Omit<SystemNotification, "id" | "createdAt" | "profileId"> & { createdAt?: number } | null) {
+    const profileId = this.runtimeResolvedLocalProfileId;
+    const replaced = new Set(scope === "all" ? Object.values(LIBRARY_RUN_NOTIFICATION_IDS) : [LIBRARY_RUN_NOTIFICATION_IDS[scope]]);
+    this.systemNotifications = this.systemNotifications
+      .filter((current) => !(replaced.has(current.id) && (current.profileId ?? null) === (profileId ?? null)));
+    if (!entry) return null;
+    return this.addSystemNotification({ ...entry, id: LIBRARY_RUN_NOTIFICATION_IDS[scope] });
   }
   addSystemNotification(entry: Omit<SystemNotification, "id" | "createdAt"> & { id?: string; createdAt?: number }) {
     const createdAt = Number(entry.createdAt ?? Date.now());
@@ -2226,40 +2339,18 @@ class Store {
     this.systemNotifications = [
       notification,
       ...this.systemNotifications.filter((current) => this.notificationScopeKey(current) !== this.notificationScopeKey(notification)),
-    ]
-      .sort((left, right) => right.createdAt - left.createdAt)
-      .slice(0, 200);
+    ];
+    this.systemNotifications = pruneNotifications(this.systemNotifications, NOTIFICATION_RETENTION.system);
     return notification;
   }
   recordLibraryUpdateNotifications(before: Manga[], after: Manga[], createdAt = Date.now()) {
-    const entries = buildLibraryUpdateNotifications(before, after, createdAt);
-    if (!entries.length) return [];
-    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
-    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
-    if (!nextEntries.length) return [];
-    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
-    return nextEntries;
+    return this.storeUpdateNotifications(buildLibraryUpdateNotifications(before, after, createdAt));
   }
   recordComicsUpdateNotifications(updates: ComicsUpdateNotificationInput[], createdAt = Date.now()) {
-    const entries = buildComicsUpdateNotificationEntries(updates, createdAt);
-    if (!entries.length) return [];
-    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
-    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
-    if (!nextEntries.length) return [];
-    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
-    return nextEntries;
+    return this.storeUpdateNotifications(buildComicsUpdateNotificationEntries(updates, createdAt));
   }
   recordNovelUpdateNotifications(updates: NovelUpdateNotificationInput[], createdAt = Date.now()) {
-    const entries = buildNovelUpdateNotificationEntries(updates, createdAt);
-    if (!entries.length) return [];
-    const scopedEntries = entries.map((entry) => ({ ...entry, profileId: this.runtimeResolvedLocalProfileId }));
-    const existingKeys = new Set(this.libraryUpdateNotifications.map((entry) => this.notificationScopeKey(entry)));
-    const nextEntries = scopedEntries.filter((entry) => !existingKeys.has(this.notificationScopeKey(entry)));
-    if (!nextEntries.length) return [];
-    this.libraryUpdateNotifications = [...nextEntries, ...this.libraryUpdateNotifications].slice(0, 200);
-    return nextEntries;
+    return this.storeUpdateNotifications(buildNovelUpdateNotificationEntries(updates, createdAt));
   }
   clearHistoryForManga(mangaId: number) {
     this.history = this.history.filter(x => x.mangaId !== mangaId);
@@ -3123,6 +3214,12 @@ export function addSystemNotification(entry: Omit<SystemNotification, "id" | "cr
   return store.addSystemNotification(entry);
 }
 export function clearSystemNotifications()                                { store.clearSystemNotifications(); }
+export function recordLibraryRunResult(scope: LibraryRunScope, entry: Omit<SystemNotification, "id" | "createdAt" | "profileId"> & { createdAt?: number } | null) {
+  return store.recordLibraryRunResult(scope, entry);
+}
+export function dismissLibraryUpdateNotification(entry: { id: string; profileId?: LocalProfileId | null }) { store.dismissLibraryUpdateNotification(entry); }
+export function dismissLibraryUpdateIssues(issues: Array<{ id: string; profileId?: LocalProfileId | null }>) { store.dismissLibraryUpdateIssues(issues); }
+export function dismissSystemNotification(entry: { id: string; profileId?: LocalProfileId | null }) { store.dismissSystemNotification(entry); }
 export function clearHistory()                                           { store.clearHistory(); }
 export function mergeSyncedHistory(entries: HistoryEntry[])               { store.mergeSyncedHistory(entries); }
 export function clearHistoryForManga(mangaId: number)                    { store.clearHistoryForManga(mangaId); }

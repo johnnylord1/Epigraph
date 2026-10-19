@@ -5,7 +5,9 @@ import { loadSettingsStorageRuntime } from "./storageRuntime";
 export interface MangaDependencyPlan {
   repositories: readonly { id: string; indexUrl: string }[];
   requiredRepositories: string[];
-  extensions: readonly { packageName: string; storeId: string | null; isInstalled: boolean; name?: string }[];
+  /** Display names the backup gives its repositories, by index URL. */
+  repositoryNames?: Record<string, string>;
+  extensions: readonly { packageName: string; storeId: string | null; isInstalled: boolean; name?: string; language?: string; iconUrl?: string | null }[];
   sources: ReconciliationClusterResult[];
   warnings: Array<string | { kind: string; message: string }>;
 }
@@ -93,6 +95,7 @@ export async function createProductionMangaDependencySession(file: File, format:
       const sources = [...analysis.exactMatches, ...analysis.autoReconciled, ...analysis.needsReview, ...analysis.unresolved];
       const packages = new Set(sources.flatMap(source => source.candidates.map(candidate => candidate.extensionPkgName)).filter(Boolean));
       return { repositories, requiredRepositories: parsed.extensionStores.map(repo => repo.indexUrl),
+        repositoryNames: Object.fromEntries(parsed.extensionStores.filter(repo => repo.name?.trim()).map(repo => [repo.indexUrl, repo.name.trim()])),
         extensions: extensions.filter(extension => packages.has(extension.packageName)), sources,
         warnings: [...inventory.warnings, ...analysis.warnings] };
     },

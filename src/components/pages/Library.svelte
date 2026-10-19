@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { notifyInBackground } from "../../lib/backgroundNotifications";
   import { translate } from "../../lib/i18n/runtime";
   import { onMount, untrack } from "svelte";
   import { gql } from "../../lib/client";
@@ -96,6 +97,7 @@
     recordComicsUpdateNotifications,
     recordNovelUpdateNotifications,
     recordLibraryUpdateIssues,
+    recordLibraryRunResult,
     addSystemNotification,
     openMangaDetail,
     store,
@@ -1726,16 +1728,17 @@
       };
     });
     const issues = recordLibraryUpdateIssues([...updateRun.issues, ...reconcileIssues], updatedAt);
-    addSystemNotification({
-      kind: issues.length > 0 ? "info" : "success",
-      title: issues.length > 0 ? translate("ui_comicsLibraryRefreshedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibrarySyncCompleted"),
-      body: issues.length > 0
-        ? translate("libraryUpdate.comicsIssuesBody", { count: issues.length, sources: new Set(issues.map((issue) => issue.sourceId)).size })
-        : entries.length > 0
-          ? translate("libraryUpdate.newChaptersBody", { chapters: entries.reduce((sum, entry) => sum + entry.chapterDelta, 0), titles: entries.length })
-          : translate("ui_epigraphRefreshedYourComicsLibrary"),
-      createdAt: updatedAt,
-    });
+    // Only a run with something to report leaves a summary in the activity center.
+    if (!stopSignal?.aborted) {
+      recordLibraryRunResult("comics", issues.length > 0 || entries.length > 0 ? {
+        kind: issues.length > 0 ? "info" : "success",
+        title: issues.length > 0 ? translate("ui_comicsLibraryRefreshedWithIssues") : translate("ui_newChaptersFound"),
+        body: issues.length > 0
+          ? translate("libraryUpdate.comicsIssuesBody", { count: issues.length, sources: new Set(issues.map((issue) => issue.sourceId)).size })
+          : translate("libraryUpdate.newChaptersBody", { chapters: entries.reduce((sum, entry) => sum + entry.chapterDelta, 0), titles: entries.length }),
+        createdAt: updatedAt,
+      } : null);
+    }
     const summary = {
       kind: issues.length > 0 ? "info" as const : "success" as const,
       title: issues.length > 0 ? translate("ui_comicsUpdatedWithIssues") : entries.length > 0 ? translate("ui_newChaptersFound") : translate("ui_comicsLibraryUpdated"),
@@ -1749,6 +1752,7 @@
     // A stop during the reconcile step ends the update here, before the books.
     if (finalStep || stopSignal?.aborted) finishLibraryUpdateToast({ ...summary, progress: libraryUpdateProgressNumbers(updateRun.jobsInfo) });
     else addToast(summary);
+    if (finalStep && !stopSignal?.aborted) void notifyInBackground("library", summary.title, summary.body);
     return updateRun;
   }
 
@@ -1813,13 +1817,16 @@
         failed: result.failed > 0 ? translate("libraryUpdate.failedPart", { count: result.failed }) : "",
       })
       : translate("libraryUpdate.booksNothing");
-    addSystemNotification({
-      kind: result.failed > 0 ? "info" : "success",
-      title: novelNotifications.length > 0 ? translate("ui_newNovelChaptersFound") : title,
-      body: novelIssues.length > 0
-        ? translate("libraryUpdate.issuesSaved", { body, count: novelIssues.length })
-        : body,
-    });
+    if (!result.stopped) {
+      recordLibraryRunResult("books", novelNotifications.length > 0 || novelIssues.length > 0 || result.failed > 0 ? {
+        kind: result.failed > 0 ? "info" : "success",
+        title: novelNotifications.length > 0 ? translate("ui_newNovelChaptersFound") : title,
+        body: novelIssues.length > 0
+          ? translate("libraryUpdate.issuesSaved", { body, count: novelIssues.length })
+          : body,
+        createdAt: updatedAt,
+      } : null);
+    }
     if (result.stopped) {
       finishLibraryUpdateToast({
         kind: "info",
@@ -1834,6 +1841,7 @@
       body,
       progress: result.total > 0 ? { current: result.checked, total: result.total, percent: 100 } : undefined,
     });
+    void notifyInBackground("library", title, body);
   }
 
   async function runLibraryRefresh(target: "active" | "all") {
@@ -1876,6 +1884,7 @@
         title: translate("ui_couldNotUpdateLibrary"),
         body: refreshError instanceof Error ? refreshError.message : translate("ui_epigraphCouldNotReachSuwayomi"),
       });
+      void notifyInBackground("library", translate("ui_couldNotUpdateLibrary"));
     } finally {
       endLibraryUpdateSession(stopSignal);
       manualRefreshInFlight = false;

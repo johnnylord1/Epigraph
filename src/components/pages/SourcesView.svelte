@@ -42,6 +42,7 @@
   } from "../../lib/manga/runtime";
   // Imported directly: through the runtime index, Rollup split the two into chunks that import each other.
   import { runTransactionalExtensionUpdates } from "../../lib/manga/runtime/extensionUpdateCoordinator";
+  import { notifyInBackground } from "../../lib/backgroundNotifications";
   import {
     addNovelRepositoryToState,
     deriveNovelRepositoryUiState,
@@ -73,6 +74,7 @@
   import ExtensionSettingsPanel from "./ExtensionSettingsPanel.svelte";
   import MassMigrateModal from "./MassMigrateModal.svelte";
   import { isFirstRunSourceSetupReady } from "../../lib/firstRun";
+  import { repositoryAvatar, repositoryLabel } from "../../lib/repositoryIdentity";
 
   type Filter = "installed" | "available" | "updates" | "all";
   type UtilityPanel = null | "apk" | "repos" | "novelRepos";
@@ -125,6 +127,8 @@
   let newRepoUrl = $state("");
   let repoError = $state<string | null>(null);
   let savingRepos = $state(false);
+  // Avatars GitHub no longer serves (deleted accounts) fall back to the branch glyph.
+  let missingRepoAvatars: string[] = $state([]);
   let setupState: SetupState | null = $state(null);
   let renderVisible = $state(0);
   let novelRepositoryState: PersistedNovelRepositoryState | null = $state(null);
@@ -1384,14 +1388,12 @@
         bumpContentSetupVersion();
       }
       const succeededCount = candidates.length - failedUpdateCount;
-      addToast({
-        kind: failedUpdateCount > 0 ? "error" : "success",
-        title: failedUpdateCount > 0 ? translate("ui_someExtensionsCouldNotUpdate") : translate("ui_extensionsUpdated"),
-        body:
-          failedUpdateCount > 0
-            ? translate("sources_runtime_batchPartial", { succeeded: succeededCount, total: candidates.length })
-            : translate("sources_runtime_batchReady", { count: candidates.length }),
-      });
+      const resultTitle = failedUpdateCount > 0 ? translate("ui_someExtensionsCouldNotUpdate") : translate("ui_extensionsUpdated");
+      const resultBody = failedUpdateCount > 0
+        ? translate("sources_runtime_batchPartial", { succeeded: succeededCount, total: candidates.length })
+        : translate("sources_runtime_batchReady", { count: candidates.length });
+      addToast({ kind: failedUpdateCount > 0 ? "error" : "success", title: resultTitle, body: resultBody });
+      void notifyInBackground("extensions", resultTitle, resultBody);
     } catch (error) {
       console.error(error);
       const message = error instanceof Error ? error.message : translate("ui_epigraphCouldNotFinishTheUpdateQueue");
@@ -1539,6 +1541,22 @@
   });
 </script>
 
+{#snippet repoIcon(url: string)}
+  {@const avatar = repositoryAvatar(url)}
+  {#if avatar && !missingRepoAvatars.includes(avatar)}
+    <img
+      class="repoIcon"
+      src={avatar}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      onerror={() => (missingRepoAvatars = [...missingRepoAvatars, avatar])}
+    />
+  {:else}
+    <span class="repoIcon" aria-hidden="true"><GitBranch size={15} weight="bold" /></span>
+  {/if}
+{/snippet}
+
 <svelte:window onkeydown={handleUtilityPanelKeydown} />
 
 <div
@@ -1646,9 +1664,10 @@
               {#each novelRepositoryState.repositories as repo}
                 {@const repoState = deriveNovelRepositoryUiState(repo)}
                 {@const repoPluginCount = novelRepositoryState.catalogEntries.filter((entry) => entry.repositoryId === repo.id).length}
-                <div class="repoRow novelRepoRow">
+                <div class="repoRow novelRepoRow" title={repo.normalizedUrl}>
+                  {@render repoIcon(repo.normalizedUrl)}
                   <div class="novelRepoCopy">
-                    <strong>{repo.recommendedSeed ? $_("sources.repositories.officialLnreader") : repo.normalizedUrl}</strong>
+                    <strong>{repo.recommendedSeed ? $_("sources.repositories.officialLnreader") : repositoryLabel(repo.normalizedUrl)}</strong>
                     <span>{$_("sources.repositories.pluginSummary", { count: repoPluginCount, state: repoState })}</span>
                     {#if repo.lastError}<small>{repo.lastError}</small>{/if}
                   </div>
@@ -1766,10 +1785,11 @@
           {:else}
             <div class="repoList compactRepoList">
               {#each repos as repo}
-                <div class="repoRow novelRepoRow">
+                <div class="repoRow novelRepoRow" title={repo}>
+                  {@render repoIcon(repo)}
                   <div class="novelRepoCopy">
-                    <strong>{repo}</strong>
-                    <span>{$_("sources.repositories.extensionRepository")}</span>
+                    <strong>{repositoryLabel(repo)}</strong>
+                    <span>{repo}</span>
                   </div>
                   <div class="novelRepoActions">
                     <button type="button" disabled={savingRepos} onclick={() => removeRepo(repo)}>
@@ -2626,6 +2646,19 @@
   .novelRepoRow {
     min-height: 46px;
     padding: 7px 8px 7px 10px;
+  }
+
+  /* Beats `.repoRow span`, which would stretch the glyph box. */
+  .repoRow .repoIcon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--component-sources-icon-radius);
+    object-fit: cover;
+    background: var(--component-sources-repo-action-bg);
+    color: var(--component-sources-muted-fg);
   }
 
   .novelRepoCopy {

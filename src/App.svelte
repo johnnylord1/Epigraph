@@ -3,6 +3,7 @@
   import { createNovelReaderPreparation, registerNovelReaderPreparation, type NovelReaderPreparation } from "./lib/reader/restorePreparation";
   import { invoke } from "@tauri-apps/api/core";
   import { enableBuiltinCloudflareSolver } from "./lib/flaresolverr";
+  import { notifyInBackground, syncCloseToBackground } from "./lib/backgroundNotifications";
   import { mainWindowTitle } from "./lib/appTitle";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
@@ -61,7 +62,7 @@
     recordComicsUpdateNotifications,
     recordNovelUpdateNotifications,
     recordLibraryUpdateIssues,
-    addSystemNotification,
+    recordLibraryRunResult,
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
@@ -418,6 +419,14 @@
 
   $effect(() => {
     applyAppLanguage(store.settings.appLanguage);
+  });
+
+  $effect(() => {
+    if (isNovelRuntimeHostWindow) return;
+    void syncCloseToBackground(store.settings.closeToBackground, {
+      open: $_("tray.open"),
+      quit: $_("tray.quit"),
+    });
   });
 
   $effect(() => {
@@ -959,34 +968,31 @@
       const totalNewChapters = entries.reduce((sum, entry) => sum + entry.chapterDelta, 0)
         + novelNotifications.reduce((sum, entry) => sum + entry.chapterDelta, 0);
       const totalUpdatedTitles = entries.length + novelNotifications.length;
-      addSystemNotification({
-        kind: updateIssues.length > 0 ? "info" : "success",
-        title: updateIssues.length > 0 ? $_("feedback.librarySyncIssues") : totalUpdatedTitles > 0 ? $_("ui_newChaptersFound") : $_("feedback.librarySyncComplete"),
-        body: updateIssues.length > 0
-          ? $_("feedback.libraryIssuesBody", { issues: updateIssues.length, sources: new Set(updateIssues.map((issue) => issue.sourceId)).size })
-          : totalUpdatedTitles > 0
-            ? $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles })
-            : $_("feedback.automaticUpdatesBody", { hours: store.settings.libraryUpdateIntervalHours ?? 12 }),
-        createdAt: updatedAt,
-      });
+      // Only a run with something to report leaves a summary; a stopped run keeps the last one.
+      if (!stopSignal.aborted) {
+        recordLibraryRunResult("all", updateIssues.length > 0 || totalUpdatedTitles > 0 ? {
+          kind: updateIssues.length > 0 ? "info" : "success",
+          title: updateIssues.length > 0 ? $_("feedback.librarySyncIssues") : $_("ui_newChaptersFound"),
+          body: updateIssues.length > 0
+            ? $_("feedback.libraryIssuesBody", { issues: updateIssues.length, sources: new Set(updateIssues.map((issue) => issue.sourceId)).size })
+            : $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles }),
+          createdAt: updatedAt,
+        } : null);
+      }
       // The update's toast ends with the run's result instead of a second toast beside it.
       const progress = updateRuntime.libraryUpdateProgressNumbers(updateRun.jobsInfo);
       if (stopSignal.aborted) {
         updateRuntime.finishLibraryUpdateToast({ kind: "info", body: translate("libraryUpdate.stoppedPlain"), progress });
       } else if (totalUpdatedTitles > 0) {
-        updateRuntime.finishLibraryUpdateToast({
-          kind: "success",
-          title: $_("ui_newChaptersFound"),
-          body: $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles }),
-          progress,
-        });
+        const title = $_("ui_newChaptersFound");
+        const body = $_("feedback.newChaptersBody", { chapters: totalNewChapters, titles: totalUpdatedTitles });
+        updateRuntime.finishLibraryUpdateToast({ kind: "success", title, body, progress });
+        void notifyInBackground("library", title, body);
       } else if (updateIssues.length > 0) {
-        updateRuntime.finishLibraryUpdateToast({
-          kind: "info",
-          title: $_("feedback.libraryUpdatedIssues"),
-          body: $_("feedback.libraryUpdatedIssuesBody", { count: updateIssues.length }),
-          progress,
-        });
+        const title = $_("feedback.libraryUpdatedIssues");
+        const body = $_("feedback.libraryUpdatedIssuesBody", { count: updateIssues.length });
+        updateRuntime.finishLibraryUpdateToast({ kind: "info", title, body, progress });
+        void notifyInBackground("library", title, body);
       } else {
         updateRuntime.finishLibraryUpdateToast({
           kind: "success",
@@ -998,7 +1004,7 @@
     })()
       .catch((error) => {
         console.warn("Automatic library update failed:", error);
-        addSystemNotification({
+        recordLibraryRunResult("all", {
           kind: "error",
           title: $_("feedback.automaticLibraryUpdateFailed"),
           body: error instanceof Error ? error.message : $_("feedback.libraryRefreshFailed"),
@@ -1008,6 +1014,7 @@
           title: $_("feedback.automaticLibraryUpdateFailed"),
           body: error instanceof Error ? error.message : $_("feedback.libraryRefreshFailed"),
         });
+        void notifyInBackground("library", $_("feedback.automaticLibraryUpdateFailed"), $_("feedback.libraryRefreshFailed"));
       })
       .finally(() => {
         updateRuntime.endLibraryUpdateSession(stopSignal);

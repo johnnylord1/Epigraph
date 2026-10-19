@@ -1,4 +1,5 @@
 mod cloudflare_solver;
+mod desktop_background;
 mod discord_cover;
 mod discord_rpc;
 mod compat;
@@ -7456,6 +7457,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(LaunchTarget(parse_launch_target()))
         .manage(ServerState(Mutex::new(None)))
@@ -7468,6 +7470,8 @@ pub fn run() {
         .invoke_handler(main_window_commands_only(tauri::generate_handler![
             restore_commands::restore_context,
             cloudflare_solver::builtin_cloudflare_solver_url,
+            desktop_background::set_close_to_background,
+            desktop_background::show_background_notification,
             restore_commands::restore_session_admit,
             restore_commands::restore_session_release,
             restore_commands::restore_input_put,
@@ -7631,7 +7635,9 @@ pub fn run() {
             if window.label() == "main" {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
-                    request_owned_desktop_shutdown(window.app_handle());
+                    if !desktop_background::hide_on_close(window) {
+                        request_owned_desktop_shutdown(window.app_handle());
+                    }
                 }
             }
         })

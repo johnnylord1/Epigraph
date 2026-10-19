@@ -105,7 +105,7 @@ describe("first-run startup gate", () => {
     store.books = [{ id: "book-1" } as (typeof store.books)[number]];
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish setup" }).hasAttribute("disabled")).toBe(false));
     await fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Open library" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(document.querySelector(".epigraph-app-shell")).not.toBeNull());
 
     cleanup();

@@ -21,16 +21,24 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
-use tauri::{webview::PageLoadEvent, AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{webview::PageLoadEvent, AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const WINDOW_LABEL: &str = "cloudflare-solver";
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
 const POLL_INTERVAL: Duration = Duration::from_millis(400);
 const PROTOCOL_VERSION: &str = "3.4.6-epigraph";
+/// Physical pixels between the leftmost monitor and the solver window; wider than the window.
+const OFFSCREEN_GAP: i32 = 6_000;
 
-/// How long a host that blocked the solver, or whose solve the user cancelled, is not retried.
-const GIVE_UP_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+/// How long a host is not retried after each kind of failed solve. Suwayomi asks for any
+/// protected request (covers, feeds, library updates), so a host that keeps failing would
+/// otherwise reopen the solver every few minutes. A block page does not clear by waiting.
+const BLOCKED_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+const CANCELLED_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+const TIMEOUT_COOLDOWN: Duration = Duration::from_secs(10 * 60);
+const _: () = assert!(BLOCKED_COOLDOWN.as_secs() > CANCELLED_COOLDOWN.as_secs());
+const _: () = assert!(CANCELLED_COOLDOWN.as_secs() >= TIMEOUT_COOLDOWN.as_secs());
 /// Title the page script sets on a Cloudflare block page, which no waiting can clear.
 const BLOCKED_TITLE: &str = "epigraph:cloudflare-blocked";
 /// Navigation target of the close button; the window never loads it.
@@ -64,6 +72,7 @@ const PAGE_SCRIPT: &str = r#"(() => {
 
 static ENDPOINT: OnceLock<String> = OnceLock::new();
 static USER_AGENT: Mutex<Option<String>> = Mutex::new(None);
+/// Hosts the solver gave up on, with the moment they may be tried again.
 static GIVEN_UP_HOSTS: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
 
 struct Solver {
@@ -200,11 +209,11 @@ impl Solver {
         let outcome = loop {
             tokio::time::sleep(POLL_INTERVAL).await;
             if cancelled.load(Ordering::Acquire) {
-                give_up(&host);
+                give_up(&host, CANCELLED_COOLDOWN);
                 break Err("the user closed the Cloudflare window".to_string());
             }
             if title.lock().map(|t| t.as_str() == BLOCKED_TITLE).unwrap_or(false) {
-                give_up(&host);
+                give_up(&host, BLOCKED_COOLDOWN);
                 break Err(format!("Cloudflare blocked access to {host}"));
             }
             let cookies = match self.cookies(&url).await {
@@ -228,10 +237,16 @@ impl Solver {
                 break self.cookies(&url).await;
             }
             if Instant::now() >= deadline {
+                give_up(&host, TIMEOUT_COOLDOWN);
                 break Err(format!("Cloudflare challenge was not solved within {}s", timeout.as_secs()));
             }
         };
         self.close_window();
+        // Host only: the path and query can carry tokens.
+        match &outcome {
+            Ok(_) => eprintln!("[cloudflare-solver] {host}: solved"),
+            Err(message) => eprintln!("[cloudflare-solver] {host}: {message}"),
+        }
         Ok(solution(&url, &outcome?, &user_agent))
     }
 
@@ -250,10 +265,12 @@ impl Solver {
                     let _ = existing.destroy();
                 }
                 // Off-screen rather than hidden: WebView2 throttles invisible windows, which can
-                // stall the challenge script.
+                // stall the challenge script. The window is built hidden and moved before it is
+                // shown, because a starting position outside every monitor is ignored and the
+                // window would open in the default place on the primary monitor.
                 let result = WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
                     .title("Epigraph")
-                    .position(-32_000.0, -32_000.0)
+                    .visible(false)
                     .inner_size(800.0, 600.0)
                     .decorations(false)
                     .skip_taskbar(true)
@@ -277,7 +294,10 @@ impl Solver {
                         }
                     })
                     .build()
-                    .map(|_| ())
+                    .and_then(|window| {
+                        window.set_position(offscreen_position(&window))?;
+                        window.show()
+                    })
                     .map_err(|e| e.to_string());
                 let _ = tx.send(result);
             })
@@ -434,19 +454,31 @@ fn solution(url: &url::Url, cookies: &[SolverCookie], user_agent: &str) -> Value
     })
 }
 
+/// A spot left of every monitor, far enough that no part of the window or its shadow shows.
+fn offscreen_position(window: &WebviewWindow) -> PhysicalPosition<i32> {
+    let lefts = window.available_monitors().unwrap_or_default().iter().map(|m| m.position().x).collect::<Vec<_>>();
+    PhysicalPosition::new(offscreen_x(&lefts), 0)
+}
+
+fn offscreen_x(monitor_lefts: &[i32]) -> i32 {
+    monitor_lefts.iter().copied().min().unwrap_or(0).min(0) - OFFSCREEN_GAP
+}
+
 fn recently_given_up(host: &str) -> bool {
     let Ok(mut hosts) = GIVEN_UP_HOSTS.lock() else { return false };
-    hosts.retain(|(_, at)| at.elapsed() < GIVE_UP_COOLDOWN);
+    let now = Instant::now();
+    hosts.retain(|(_, retry_at)| *retry_at > now);
     hosts.iter().any(|(given_up, _)| given_up == host)
 }
 
-fn give_up(host: &str) {
+fn give_up(host: &str, cooldown: Duration) {
     if host.is_empty() {
         return;
     }
     if let Ok(mut hosts) = GIVEN_UP_HOSTS.lock() {
-        hosts.retain(|(given_up, at)| given_up != host && at.elapsed() < GIVE_UP_COOLDOWN);
-        hosts.push((host.to_string(), Instant::now()));
+        let now = Instant::now();
+        hosts.retain(|(given_up, retry_at)| given_up != host && *retry_at > now);
+        hosts.push((host.to_string(), now + cooldown));
     }
 }
 
@@ -487,11 +519,20 @@ mod tests {
     #[test]
     fn a_host_that_gave_up_is_skipped_until_the_cooldown_ends() {
         assert!(!recently_given_up("blocked.example"));
-        give_up("blocked.example");
+        give_up("blocked.example", BLOCKED_COOLDOWN);
         assert!(recently_given_up("blocked.example"));
         assert!(!recently_given_up("other.example"));
-        give_up("");
+        give_up("", BLOCKED_COOLDOWN);
         assert!(!recently_given_up(""));
+        give_up("expired.example", Duration::ZERO);
+        assert!(!recently_given_up("expired.example"));
+    }
+
+    #[test]
+    fn the_window_goes_left_of_every_monitor() {
+        assert_eq!(offscreen_x(&[-1920, 1920, 0]), -1920 - OFFSCREEN_GAP);
+        assert_eq!(offscreen_x(&[0, 2560]), -OFFSCREEN_GAP);
+        assert_eq!(offscreen_x(&[]), -OFFSCREEN_GAP);
     }
 
     #[test]

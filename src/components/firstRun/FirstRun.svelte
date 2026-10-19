@@ -294,7 +294,8 @@
     } else if (store.books.length === 0 && !hasNovelLibraryContent) {
       setLibrarySection("comics");
     }
-    setNavPage("library");
+    // Setup lands where every launch does: Home, or the library when the user asked to start there.
+    setNavPage(store.settings.launchIntoLibrary ? "library" : "home");
     onComplete();
   }
 
@@ -450,7 +451,7 @@
           {/if}
           <div class="complete-actions" data-enter>
             <button class="fr-btn" type="button" onclick={goBack}><ArrowLeft class="fr-arrow-back" size={16} />{$_("firstRun.shell.back")}</button>
-            <button class="fr-btn fr-btn--primary fr-btn--large complete-action" type="button" disabled={!canAdvance} aria-busy={novelLibraryCheck === "loading"} onclick={finish}>{$_("firstRun.shell.openLibrary")}<ArrowRight class="fr-arrow-next" size={16} /></button>
+            <button class="fr-btn fr-btn--primary fr-btn--large complete-action" type="button" disabled={!canAdvance} aria-busy={novelLibraryCheck === "loading"} onclick={finish}>{$_(store.settings.launchIntoLibrary ? "firstRun.shell.openLibrary" : "firstRun.shell.openHome")}<ArrowRight class="fr-arrow-next" size={16} /></button>
           </div>
         </div>
       {/if}

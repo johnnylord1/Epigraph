@@ -13,7 +13,7 @@
   import "../../lib/i18n/runtime";
   import { SETTINGS_SEARCH_KEYWORDS as SHARED_SETTINGS_SEARCH_KEYWORDS } from "../../lib/search/settingsCatalog";
   import { PROSE_READER_SETTING_KEYS, READER_BRIGHTNESS_SETTING_KEY, type ReaderKind } from "../../lib/reader/readerSettingsScope";
-  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning } from "phosphor-svelte";
+  import { Book, Image, Sliders, Info, Keyboard, Gear, HardDrives, FolderSimple, Plus, Pencil, Trash, Wrench, PaintBrush, ListChecks, Lock, Eye, EyeSlash, Star, ShieldCheck, CheckCircle, PuzzlePiece, CircleNotch, Tag, CaretDown, CaretLeft, CaretRight, FileArrowUp, GitBranch, X, Check, Warning, GithubLogo } from "phosphor-svelte";
   import { invoke } from "@tauri-apps/api/core";
   import {
     completeEpigraphMyAnimeListLogin,
@@ -3714,13 +3714,21 @@
             <img src={splashMark} alt="" />
           </div>
           <div class="settings-brand-card__copy">
-            <p class="settings-brand-card__title">Epigraph Nocturne</p>
-            <p class="settings-brand-card__meta">v{appVersion}</p>
+            <p class="settings-brand-card__title">Epigraph</p>
+            <p class="settings-brand-card__subline">
+              <span class="settings-brand-card__edition">Nocturne</span>
+              <span class="settings-brand-card__dot" aria-hidden="true"></span>
+              <span class="settings-brand-card__meta">v{appVersion}</span>
+            </p>
           </div>
         </div>
         <div class="settings-brand-card__actions">
-          <button class="settings-rail-action" type="button" onclick={openUpdatesPanel}>{$_("settings.brand.updates")}</button>
-          <button class="settings-rail-action" type="button" onclick={openProjectGithub}>GitHub</button>
+          <button class="settings-rail-action" type="button" onclick={openUpdatesPanel}>
+            <span>{$_("settings.brand.updates")}</span>
+          </button>
+          <button class="settings-rail-action settings-rail-action--icon" type="button" onclick={openProjectGithub} aria-label="GitHub" title="GitHub">
+            <GithubLogo size={13} weight="fill" />
+          </button>
         </div>
       </div>
     </div>
@@ -3779,6 +3787,51 @@
                     aria-checked={store.settings.launchIntoLibrary}
                     aria-label={$_("settings.general.startup.launchLibrary")}
                     onclick={() => updateSettings({ launchIntoLibrary: !store.settings.launchIntoLibrary })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.closeToBackground")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.closeToBackgroundHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.closeToBackground}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.closeToBackground}
+                    aria-label={$_("settings.general.startup.closeToBackground")}
+                    onclick={() => updateSettings({ closeToBackground: !store.settings.closeToBackground })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.notifyLibrary")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.notifyLibraryHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.notifyLibraryUpdates}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.notifyLibraryUpdates}
+                    aria-label={$_("settings.general.startup.notifyLibrary")}
+                    onclick={() => updateSettings({ notifyLibraryUpdates: !store.settings.notifyLibraryUpdates })}
+                  ></button>
+                </div>
+                <div class="settings-row settings-mini-row">
+                  <div class="settings-mini-row__body">
+                    <p class="settings-mini-row__label">{$_("settings.general.startup.notifyExtensions")}</p>
+                    <p class="settings-mini-row__hint">{$_("settings.general.startup.notifyExtensionsHint")}</p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    class:is-on={store.settings.notifyExtensionUpdates}
+                    type="button"
+                    role="switch"
+                    aria-checked={store.settings.notifyExtensionUpdates}
+                    aria-label={$_("settings.general.startup.notifyExtensions")}
+                    onclick={() => updateSettings({ notifyExtensionUpdates: !store.settings.notifyExtensionUpdates })}
                   ></button>
                 </div>
                 <div class="settings-row settings-mini-row">

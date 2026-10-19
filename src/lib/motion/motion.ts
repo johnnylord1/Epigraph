@@ -226,6 +226,20 @@ export function leaveView(node: HTMLElement): TransitionConfig {
   return { duration: LEAVE_MS, easing: cubicOut, css: (t) => `opacity:${t}` };
 }
 
+/**
+ * Svelte `out:` transition for the first run handing over to the app: it lifts above the shell
+ * arriving underneath and dissolves toward the viewer while the shell plays its entrance.
+ */
+export function handOver(node: HTMLElement, { duration = 620 }: { duration?: number } = {}): TransitionConfig {
+  if (prefersReducedMotion()) return { duration: 0 };
+  Object.assign(node.style, { position: "absolute", inset: "0", zIndex: "var(--component-app-leaving-page-z-index)", pointerEvents: "none" });
+  return {
+    duration,
+    easing: cubicOut,
+    css: (t, u) => `opacity:${t};transform:scale(${(1 + u * 0.035).toFixed(4)});filter:blur(${(u * 10).toFixed(2)}px)`,
+  };
+}
+
 let pageSwap: { swap: () => void } | null = null;
 
 /**
@@ -257,6 +271,10 @@ const PRESSABLE = [
  * with the button's size, so wide in-app actions (Home's "Resume") visibly chased the cursor.
  */
 const MAGNETIC = ".fr-btn--primary";
+/** Farthest a magnetic button moves, in pixels, with the pointer at its edge. */
+const MAGNETIC_PULL_X = 3;
+const MAGNETIC_PULL_Y = 2;
+const clampUnit = (value: number) => Math.max(-1, Math.min(1, value));
 /** Fields whose focus underline grows from the click position. */
 const FIELD = ".fr-field, .n-field, .n-search";
 /** Nested roots (the first run inside the app shell) handle each pointer event once, innermost first. */
@@ -318,8 +336,12 @@ export function pointerEffects(root: HTMLElement) {
     const primary = target?.closest<HTMLElement>(MAGNETIC);
     if (primary !== magnetized) release();
     if (primary && !(primary as HTMLButtonElement).disabled) {
+      // The pull follows where the pointer sits on the button, not its size, so a wide button
+      // drifts no further than a small one.
       const rect = primary.getBoundingClientRect();
-      primary.style.translate = `${(event.clientX - rect.left - rect.width / 2) * 0.12}px ${(event.clientY - rect.top - rect.height / 2) * 0.22}px`;
+      const x = clampUnit((event.clientX - rect.left) / rect.width * 2 - 1);
+      const y = clampUnit((event.clientY - rect.top) / rect.height * 2 - 1);
+      primary.style.translate = `${(x * MAGNETIC_PULL_X).toFixed(2)}px ${(y * MAGNETIC_PULL_Y).toFixed(2)}px`;
       magnetized = primary;
     }
     const tilt = target?.closest<HTMLElement>("[data-tilt]");

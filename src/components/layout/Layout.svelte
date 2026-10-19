@@ -10,7 +10,7 @@
   import type { NavPage } from "../../store/state.svelte";
   import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
-  import { enterView, fadeOutView } from "../../lib/motion/motion";
+  import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
 
   interface Props {
     onOpenThemeEditor?: (id?: string | null) => void;
@@ -25,6 +25,16 @@
   }: Props = $props();
 
   let firstRunPending = $state(readFirstRunPending());
+  // The shell that replaces a finished setup arrives as it does behind the splash.
+  let firstRunShown = false;
+  $effect(() => {
+    if (firstRunPending) firstRunShown = true;
+  });
+  function arriveAfterFirstRun(node: HTMLElement) {
+    if (!firstRunShown) return;
+    firstRunShown = false;
+    playShellEntrance(node);
+  }
 
   function readFirstRunPending() {
     try {
@@ -349,7 +359,17 @@
           console.warn("Home preload did not complete; navigation will retry it.", error);
         });
     });
+    // Downloads and Settings unmount, so their first visit used to wait on the chunk with no topbar on
+    // screen. Loading them once the app is idle lets that visit render in the same frame as the click.
+    const preloadTimer = window.setTimeout(() => {
+      for (const key of ["downloads", "settings"] as const) {
+        void getCachedComponent(pageComponentPromises, key, pageLoaders[key])
+          .then((component) => { pageComponentCache.set(key, component); })
+          .catch(() => {});
+      }
+    }, 2500);
     return () => {
+      window.clearTimeout(preloadTimer);
       window.removeEventListener(FIRST_RUN_COMPLETED_EVENT, syncFirstRunPending);
       window.removeEventListener(FIRST_RUN_REOPENED_EVENT, syncFirstRunPending);
     };
@@ -396,12 +416,12 @@
 {/snippet}
 
 {#if firstRunPending}
-  <div class="first-run-layout">
+  <div class="first-run-layout" out:handOver>
     <FirstRun onComplete={() => (firstRunPending = false)} />
     {@render detailSurface()}
   </div>
 {:else}
-<div class="root epigraph-app-shell">
+<div class="root epigraph-app-shell" use:arriveAfterFirstRun>
   <Sidebar />
   <div class="main" class:main--settings={navPage === "settings"} bind:this={mainElement}>
     {#each KEEP_ALIVE_PAGES as key (key)}
@@ -600,6 +620,9 @@
   .page-keepalive:not(.is-front):global([data-leaving]) {
     z-index: var(--component-app-leaving-page-z-index);
     content-visibility: visible;
+    /* Layout/paint containment makes the page the containing block of its fixed topbar, which then
+       slid right by the sidebar's width for the length of the fade. */
+    contain: none;
   }
 
   .detail-layer {

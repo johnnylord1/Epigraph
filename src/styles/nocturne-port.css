@@ -663,6 +663,13 @@ body.epigraph-search-engaged .n-topbar::after {
   opacity: 1;
 }
 
+/* Hidden kept-alive pages skip rendering, which froze their scrim mid-fade; it then finished fading
+   over the page on its next visit, a dark flash under the top bar. */
+body .page-keepalive:not(.is-front) .n-topbar::after {
+  opacity: 0;
+  transition: none;
+}
+
 body.epigraph-settings-search-engaged .n-topbar__center,
 body.epigraph-settings-search-engaged .n-search,
 body.epigraph-home-search-engaged .n-topbar__center,
@@ -1772,7 +1779,8 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  animation: fadeIn 0.14s ease both;
+  /* No fade-in: the page being left fades out over this one, and both topbars going translucent at
+     once let the content behind them flash through. */
 }
 
 @keyframes n-brand-organic-float {
@@ -3093,24 +3101,28 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   }
 }
 
+/* Brand card: logo and wordmark on one row, a quiet edition/version line, then the actions.
+   A conic glow turns behind an inner mask, so only a thin neon edge shows around the card. */
 .epigraph-port--settings .settings-brand-card {
   width: 100%;
   max-width: calc(var(--settings-group-rail-width) - (12px * var(--hud-scale)));
   box-sizing: border-box;
-  margin: 0 auto 0 calc(-6px * var(--hud-scale));
-  padding: calc(12px * var(--hud-scale));
-  border-radius: calc(14px * var(--hud-scale));
+  margin: 0;
+  padding: calc(10px * var(--hud-scale));
+  display: flex;
+  flex-direction: column;
+  gap: calc(10px * var(--hud-scale));
+  border-radius: calc(12px * var(--hud-scale));
   border: 1px solid transparent;
   background: transparent;
   position: relative;
   overflow: hidden;
+  isolation: isolate;
   font-synthesis: none;
-  -webkit-font-smoothing: auto;
   text-rendering: optimizeLegibility;
-  transition: border-color var(--duration-relaxed) ease, box-shadow var(--duration-relaxed) ease;
+  transition: box-shadow var(--duration-relaxed) ease;
 }
 
-/* Conic gradient rotating outer glow */
 .epigraph-port--settings .settings-brand-card::before {
   content: '';
   position: absolute;
@@ -3135,61 +3147,65 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
   animation: epigraph-glow-rotate 6s linear infinite, epigraph-border-pulse 4s ease-in-out infinite alternate;
 }
 
-/* Inner card background mask to shield content and define 1px border gap */
 .epigraph-port--settings .settings-brand-card::after {
   content: '';
   position: absolute;
   inset: 1px;
-  background: linear-gradient(135deg, var(--component-settings-preview-deep-top-source) 0%, var(--component-settings-preview-deep-bottom-source) 100%);
-  border-radius: calc(13px * var(--hud-scale));
+  border-radius: calc(11px * var(--hud-scale));
+  background:
+    radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 62%),
+    linear-gradient(160deg, var(--component-settings-preview-deep-top-source) 0%, var(--component-settings-preview-deep-bottom-source) 100%);
   z-index: 1;
   pointer-events: none;
-  transition: background var(--duration-relaxed) ease;
 }
 
 .epigraph-port--settings .settings-brand-card:hover::after {
-  background: linear-gradient(135deg, var(--component-settings-preview-raised-top-source) 0%, var(--component-settings-preview-raised-bottom-source) 100%);
+  background:
+    radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 62%),
+    linear-gradient(160deg, var(--component-settings-preview-raised-top-source) 0%, var(--component-settings-preview-raised-bottom-source) 100%);
 }
 
 .epigraph-port--settings .settings-brand-card:hover {
   box-shadow:
-    0 calc(12px * var(--hud-scale)) calc(32px * var(--hud-scale)) color-mix(in srgb, var(--color-shadow-source) 50%, transparent),
+    0 calc(10px * var(--hud-scale)) calc(26px * var(--hud-scale)) color-mix(in srgb, var(--color-shadow-source) 40%, transparent),
     0 0 calc(20px * var(--hud-scale)) color-mix(in srgb, var(--accent-bright) 8%, transparent);
 }
 
-.epigraph-port--settings .settings-brand-card__header {
-  display: flex;
-  align-items: center;
-  gap: calc(10px * var(--hud-scale));
-  margin-bottom: calc(10px * var(--hud-scale));
+.epigraph-port--settings .settings-brand-card > * {
   position: relative;
   z-index: 2;
+}
+
+.epigraph-port--settings .settings-brand-card__header {
+  display: grid;
+  grid-template-columns: calc(22px * var(--hud-scale)) minmax(0, 1fr);
+  align-items: center;
+  gap: calc(6px * var(--hud-scale));
 }
 
 .epigraph-port--settings .settings-brand-card__badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(40px * var(--hud-scale));
-  height: calc(40px * var(--hud-scale));
-  border-radius: 0;
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  transition: transform var(--duration-normal) var(--easing-spring);
   position: relative;
-  z-index: 2;
+  width: calc(22px * var(--hud-scale));
+  height: calc(30px * var(--hud-scale));
+  transition: transform var(--duration-normal) var(--easing-spring);
 }
 
 .epigraph-port--settings .settings-brand-card:hover .settings-brand-card__badge {
-  transform: scale(1.05) rotate(-3deg);
+  transform: rotate(-4deg);
 }
 
 .epigraph-port--settings .settings-brand-card__badge img {
-  width: calc(52px * var(--hud-scale));
-  height: calc(52px * var(--hud-scale));
+  /* The mark sits inside a wide transparent canvas; scale it so the drop itself fills the badge. */
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(50px * var(--hud-scale));
+  height: calc(50px * var(--hud-scale));
+  max-width: none;
+  transform: translate(-50%, -50%);
   object-fit: contain;
   display: block;
+  pointer-events: none;
 }
 
 .epigraph-port--settings .settings-brand-card__copy {
@@ -3201,29 +3217,83 @@ html[data-epigraph-motion="idle"] .epigraph-port--splash .brand-mark {
 
 .epigraph-port--settings .settings-brand-card__title {
   margin: 0;
-  font-family: var(--component-settings-font);
+  font-family: var(--component-settings-brand-title-font-family);
   font-size: var(--component-settings-brand-title-font-size);
   font-weight: var(--component-settings-brand-title-font-weight);
   line-height: var(--component-settings-brand-title-line-height);
   color: var(--component-settings-brand-title-fg);
-  letter-spacing: 0;
+  letter-spacing: 0.005em;
+  font-feature-settings: "liga", "kern";
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.epigraph-port--settings .settings-brand-card__subline {
+  /* Set in under the wordmark like the first line of a paragraph. */
+  margin: 0;
+  padding-left: calc(14px * var(--hud-scale));
+  display: flex;
+  align-items: center;
+  gap: calc(5px * var(--hud-scale));
+  min-width: 0;
+  font-family: var(--component-settings-font);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.epigraph-port--settings .settings-brand-card__edition {
+  flex: none;
+  font-size: var(--component-settings-brand-edition-font-size);
+  font-weight: 600;
+  color: var(--component-settings-brand-edition-fg);
+}
+
+.epigraph-port--settings .settings-brand-card__dot {
+  flex: none;
+  width: calc(3px * var(--hud-scale));
+  height: calc(3px * var(--hud-scale));
+  border-radius: 50%;
+  background: var(--component-settings-brand-meta-fg);
 }
 
 .epigraph-port--settings .settings-brand-card__meta {
-  margin: 0;
-  font-family: var(--font-mono);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--component-settings-brand-meta-font-size);
   font-weight: var(--component-settings-brand-meta-font-weight);
   line-height: var(--component-settings-brand-meta-line-height);
   color: var(--component-settings-brand-meta-fg);
-  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .epigraph-port--settings .settings-brand-card__actions {
-  display: flex;
-  gap: calc(8px * var(--hud-scale));
-  position: relative;
-  z-index: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(26px * var(--hud-scale));
+  gap: calc(6px * var(--hud-scale));
+}
+
+.epigraph-port--settings .settings-brand-card__actions .settings-rail-action {
+  width: 100%;
+  height: calc(26px * var(--hud-scale));
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(6px * var(--hud-scale));
+  padding: 0 calc(6px * var(--hud-scale));
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.epigraph-port--settings .settings-brand-card__actions .settings-rail-action > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.epigraph-port--settings .settings-brand-card__actions .settings-rail-action--icon {
+  padding: 0;
 }
 
 .epigraph-port--settings .n-btn-danger {
