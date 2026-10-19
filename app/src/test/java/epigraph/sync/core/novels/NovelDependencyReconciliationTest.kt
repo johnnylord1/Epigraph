@@ -120,6 +120,48 @@ class NovelDependencyReconciliationTest {
     }
 
     @Test
+    fun `a plugin sent here and removed before the Core confirms it is still deleted`() {
+        val sentPlugin = agreed.getValue(pluginId)
+        val beforeConfirm = CoreNovelDependencyManifest(listOf(repository), emptyList())
+
+        val afterSend = NovelDependencyReconciliation.nextBaseline(
+            core = beforeConfirm,
+            agreed = mapOf(repoId to agreed.getValue(repoId)),
+            localRepositoryIds = setOf(repoId),
+            installedPluginIds = setOf("novelfire"),
+            deletedEntityIds = emptySet(),
+            pendingDeletionIds = emptySet(),
+            includeRepositories = true,
+            includePlugins = true,
+            sent = listOf(sentPlugin),
+        ).associateBy(NovelDependencyBaselineEntry::entityId)
+        val confirmed = CoreNovelDependencyManifest(listOf(repository), listOf(plugin))
+        val deletions = NovelDependencyReconciliation.localDeletions(
+            confirmed, afterSend, setOf(repoId), emptySet(), true, true,
+        )
+
+        assertEquals(agreed, afterSend)
+        assertEquals(listOf(Deletion(EpigraphCoreEntityType.NOVEL_PLUGIN, pluginId)), deletions)
+    }
+
+    @Test
+    fun `a sent entry deleted in the same pass leaves the baseline`() {
+        val next = NovelDependencyReconciliation.nextBaseline(
+            core = CoreNovelDependencyManifest(emptyList(), emptyList()),
+            agreed = emptyMap(),
+            localRepositoryIds = emptySet(),
+            installedPluginIds = emptySet(),
+            deletedEntityIds = setOf(pluginId),
+            pendingDeletionIds = emptySet(),
+            includeRepositories = true,
+            includePlugins = true,
+            sent = listOf(agreed.getValue(pluginId)),
+        )
+
+        assertEquals(emptyList<NovelDependencyBaselineEntry>(), next)
+    }
+
+    @Test
     fun `kinds not reconciled keep their entries`() {
         val core = CoreNovelDependencyManifest(emptyList(), emptyList())
 
