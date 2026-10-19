@@ -11,6 +11,7 @@ import epigraph.contract.SyncCommandEnvelope
 import epigraph.contract.TrackingField
 import epigraph.contract.NovelEntrySnapshot
 import epigraph.contract.operationWireName
+import epigraph.sync.core.novels.CoreNovelDependencyIds
 import epigraph.sync.core.protocol.EpigraphCoreCompatibilityEvaluator
 import epigraph.sync.core.protocol.EpigraphCoreEntityType
 import epigraph.sync.core.protocol.CoreCapabilities
@@ -238,7 +239,81 @@ class CoreV1OutboxAdapter(
         is SyncCommand.AppendHistory -> projectBookHistory(record, command)
             ?: projectNovelHistory(record, command)
         is SyncCommand.PatchTracking -> projectTracking(record, command)
+        is SyncCommand.UpsertRepository -> projectNovelRepository(record, command)
+        is SyncCommand.UpsertNovelPlugin -> projectNovelPlugin(record, command)
         else -> null
+    }
+
+    /**
+     * LNReader repository declaration. The id must be the Core's digest of the canonical URL, or
+     * the Core would reject it; `createdAtMs` is 0 like the desktop's, so either device may own it.
+     */
+    private fun projectNovelRepository(
+        record: CoreOutboxRecord,
+        command: SyncCommand.UpsertRepository,
+    ): Projection? {
+        if (record.entityType != EpigraphCoreEntityType.NOVEL_REPOSITORY) return null
+        val repository = command.repository
+        if (repository.ecosystem != LNREADER_ECOSYSTEM) return null
+        val canonicalUrl = CoreNovelDependencyIds.canonicalRepositoryUrl(repository.canonicalUrl) ?: return null
+        if (canonicalUrl != repository.canonicalUrl) return null
+        if (record.entityId != CoreNovelDependencyIds.repositoryId(canonicalUrl)) return null
+        if (repository.displayName.toByteArray().size > MAX_NOVEL_REPOSITORY_NAME_BYTES) return null
+        return Projection(
+            entityId = record.entityId,
+            operation = CoreMutationOperation.MERGE,
+            patch = buildJsonObject {
+                put("canonicalUrl", canonicalUrl)
+                put("name", repository.displayName)
+                put("enabled", repository.enabled)
+                put("createdAtMs", 0)
+                put("updatedAtMs", record.createdAtEpochMillis)
+            },
+        )
+    }
+
+    /**
+     * LNReader plugin evidence: which repository declares it and the hash/size of the installed
+     * artifact. Executable bytes never cross Syncd; the other device installs from the repository.
+     */
+    private fun projectNovelPlugin(
+        record: CoreOutboxRecord,
+        command: SyncCommand.UpsertNovelPlugin,
+    ): Projection? {
+        if (record.entityType != EpigraphCoreEntityType.NOVEL_PLUGIN) return null
+        val plugin = command.plugin
+        val sourceId = plugin.sourceId ?: return null
+        val lang = plugin.lang ?: return null
+        val byteLength = plugin.artifactByteLength?.takeIf { it in 1..MAX_NOVEL_PLUGIN_ARTIFACT_BYTES } ?: return null
+        val repositoryId = plugin.repositoryId.value
+        if (!repositoryId.startsWith(NOVEL_REPOSITORY_ID_PREFIX)) return null
+        if (record.entityId != CoreNovelDependencyIds.pluginId(repositoryId, plugin.pluginId, sourceId)) return null
+        val withinLimits = listOf(
+            plugin.pluginId to MAX_NOVEL_PLUGIN_ID_BYTES,
+            sourceId to MAX_NOVEL_PLUGIN_ID_BYTES,
+            plugin.displayName to MAX_NOVEL_PLUGIN_NAME_BYTES,
+            plugin.version to MAX_NOVEL_PLUGIN_VERSION_BYTES,
+            lang to MAX_NOVEL_PLUGIN_LANG_BYTES,
+        ).all { (value, limit) -> value.toByteArray().size <= limit }
+        if (!withinLimits) return null
+        return Projection(
+            entityId = record.entityId,
+            operation = CoreMutationOperation.MERGE,
+            patch = buildJsonObject {
+                put("repositoryId", repositoryId)
+                put("pluginId", plugin.pluginId)
+                put("sourceId", sourceId)
+                put("name", plugin.displayName)
+                put("version", plugin.version)
+                put("lang", lang)
+                put("enabled", plugin.desiredInstalled)
+                put("artifactSha256", plugin.artifactSha256)
+                put("artifactByteLength", byteLength)
+                put("publicSettings", buildJsonObject { })
+                put("createdAtMs", 0)
+                put("updatedAtMs", record.createdAtEpochMillis)
+            },
+        )
     }
 
     /**
@@ -856,6 +931,14 @@ class CoreV1OutboxAdapter(
     }
 
     private companion object {
+        const val LNREADER_ECOSYSTEM = "lnreader"
+        const val NOVEL_REPOSITORY_ID_PREFIX = "novel-repository:"
+        const val MAX_NOVEL_REPOSITORY_NAME_BYTES = 200
+        const val MAX_NOVEL_PLUGIN_ID_BYTES = 256
+        const val MAX_NOVEL_PLUGIN_NAME_BYTES = 200
+        const val MAX_NOVEL_PLUGIN_VERSION_BYTES = 100
+        const val MAX_NOVEL_PLUGIN_LANG_BYTES = 35
+        const val MAX_NOVEL_PLUGIN_ARTIFACT_BYTES = 2_097_152L
         const val BOOKS_GLOBAL_SCOPE = "books:global"
         const val NOVELS_PROFILE_SCOPE_PREFIX = "novels:profile:"
         const val COMICS_PROFILE_SCOPE_PREFIX = "comics:profile:"

@@ -189,6 +189,14 @@ fun interface CoreReplicaAppliedHook {
     suspend fun onReplicaApplied(nowEpochMillis: Long)
 }
 
+/**
+ * Runs once the device's sync selection is resolved, before the outbox drains, so work queued here
+ * honors the user's choices and leaves in the same run. Best effort, like [CoreNegotiatedSessionHook].
+ */
+fun interface CoreSyncPolicyHook {
+    suspend fun onPolicyResolved(policy: EffectiveSyncPolicy)
+}
+
 fun interface CoreOutboxSyncConnectionFactory {
     suspend fun open(credentials: CoreCredentialSession): CoreOutboxSyncConnection
 }
@@ -653,6 +661,7 @@ class CoreOutboxSyncRunner(
     private val policies: SyncPolicyResolver,
     private val negotiatedHooks: List<CoreNegotiatedSessionHook> = emptyList(),
     private val replicaAppliedHooks: List<CoreReplicaAppliedHook> = emptyList(),
+    private val policyHooks: List<CoreSyncPolicyHook> = emptyList(),
 ) {
     suspend fun run(
         nowEpochMillis: Long,
@@ -829,6 +838,15 @@ class CoreOutboxSyncRunner(
                     pendingBefore,
                     CoreUserActionReason.AUTHORIZATION_REQUIRED,
                 )
+            }
+            policyHooks.forEach { hook ->
+                try {
+                    hook.onPolicyResolved(policy)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    reportCoreSyncFailure("policy.hook", failure)
+                }
             }
 
             val authorization = try {

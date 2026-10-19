@@ -1172,6 +1172,7 @@ private fun SyncSelectionPage(
     onChange: (SyncSelectionDraft) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val localNovels = rememberLocalNovelInventoryPreview()
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1212,12 +1213,14 @@ private fun SyncSelectionPage(
             checked = draft.novelRepositories,
             enabled = draft.novels,
             onCheckedChange = { onChange(draft.copy(novelRepositories = it)) },
+            detail = inventoryDetail(localNovels.repositories),
         )
         InventoryChoice(
             title = stringResource(MR.strings.epigraph_core_sync_novel_plugins),
             checked = draft.novelPlugins,
             enabled = draft.novels,
             onCheckedChange = { onChange(draft.copy(novelPlugins = it)) },
+            detail = inventoryDetail(localNovels.plugins),
         )
         SyncDomainChoice(
             title = stringResource(MR.strings.epigraph_core_sync_books),

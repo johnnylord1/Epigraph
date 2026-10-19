@@ -94,6 +94,14 @@ fun interface CoreReplicaRecordReader {
     ): List<CoreConfirmedRecord>
 }
 
+/** Read-only access to deletions the Core confirmed and the replica still holds. */
+fun interface CoreReplicaTombstoneReader {
+    suspend fun confirmedTombstones(
+        scopeId: String,
+        entityTypes: Set<String>,
+    ): List<CoreConfirmedTombstone>
+}
+
 interface CoreReplicaTransaction {
     /**
      * Reads the cursor inside the same SQLDelight transaction that will mutate the replica.

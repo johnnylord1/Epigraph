@@ -152,6 +152,11 @@ data class NovelPluginDescriptor(
     val manifestVersion: Int,
     val artifactSha256: String,
     val desiredInstalled: Boolean,
+    /** LNReader plugins expose one source each; the Core keys a plugin by repository, plugin and source. */
+    val sourceId: String? = null,
+    /** Language exactly as the repository index declares it. */
+    val lang: String? = null,
+    val artifactByteLength: Long? = null,
 ) {
     init {
         validateProtocolIdentifier(pluginId, "novel plugin ID")
@@ -159,6 +164,9 @@ data class NovelPluginDescriptor(
         validateProtocolIdentifier(version, "novel plugin version")
         require(manifestVersion > 0) { "novel plugin manifest version must be positive" }
         validateSha256(artifactSha256, "novel plugin artifact hash")
+        sourceId?.let { validateProtocolIdentifier(it, "novel plugin source ID") }
+        lang?.let { validateDisplayText(it, "novel plugin language") }
+        artifactByteLength?.let { require(it > 0) { "novel plugin artifact length must be positive" } }
     }
 }
 

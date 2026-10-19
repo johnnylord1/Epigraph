@@ -25,7 +25,7 @@ class SqlDelightCoreReplicaStore(
     private val projection: CoreReplicaProjection? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) : CoreReplicaStore, CoreReplicaCheckpointReader, CoreReplicaRecordReader,
-    CoreReplicaCheckpointResetter {
+    CoreReplicaTombstoneReader, CoreReplicaCheckpointResetter {
     override suspend fun <T> transaction(block: suspend CoreReplicaTransaction.() -> T): T =
         databaseHandler.await(inTransaction = true) {
             SqlDelightCoreReplicaTransaction(this, aethon_syncQueries, projection, clock).block()
@@ -80,6 +80,27 @@ class SqlDelightCoreReplicaStore(
                     )
                 }
                 .toList()
+        }
+    }
+
+    override suspend fun confirmedTombstones(
+        scopeId: String,
+        entityTypes: Set<String>,
+    ): List<CoreConfirmedTombstone> {
+        require(scopeId.isNotBlank()) { "scopeId must not be blank" }
+        if (entityTypes.isEmpty()) return emptyList()
+        return databaseHandler.await {
+            aethon_syncQueries.selectCoreReplicaTombstonesByScope(scopeId).executeAsList()
+                .filter { it.entity_type in entityTypes }
+                .map { row ->
+                    CoreConfirmedTombstone(
+                        key = CoreReplicaKey(row.scope_id, row.entity_type, row.entity_id),
+                        serverVersion = row.server_version,
+                        lamport = row.lamport,
+                        deletedAtMs = row.deleted_at,
+                        reasonCode = row.reason_code,
+                    )
+                }
         }
     }
 

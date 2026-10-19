@@ -10,6 +10,8 @@ import epigraph.sync.core.setup.CoreDependencySetupActivity
 import epigraph.sync.core.setup.InventoryChoice
 import epigraph.sync.core.setup.SyncDomainChoice
 import epigraph.sync.core.setup.coreDependencySetupCounts
+import epigraph.sync.core.setup.inventoryDetail
+import epigraph.sync.core.setup.rememberLocalNovelInventoryPreview
 import epigraph.sync.core.extensions.ExtensionReconciliationCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyActionCoordinator
 import epigraph.sync.core.novels.LnReaderDependencyInventory
@@ -199,6 +201,7 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                 if (syncNovels) add(SyncDomain.NOVELS)
                 if (syncBooks) add(SyncDomain.BOOKS)
             }
+            val localNovels = rememberLocalNovelInventoryPreview()
             AlertDialog(
                 onDismissRequest = { showSelectionEditor = false },
                 title = { Text(stringResource(MR.strings.epigraph_core_sync_selection_title)) },
@@ -237,12 +240,14 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                             checked = compareNovelRepositories,
                             enabled = syncNovels,
                             onCheckedChange = { compareNovelRepositories = it },
+                            detail = inventoryDetail(localNovels.repositories),
                         )
                         InventoryChoice(
                             title = stringResource(MR.strings.epigraph_core_sync_novel_plugins),
                             checked = compareNovelPlugins,
                             enabled = syncNovels,
                             onCheckedChange = { compareNovelPlugins = it },
+                            detail = inventoryDetail(localNovels.plugins),
                         )
                         SyncDomainChoice(
                             title = stringResource(MR.strings.epigraph_core_sync_books),
@@ -577,6 +582,9 @@ object SettingsEpigraphCoreScreen : ComposableSettings() {
                                     .setBeepEnabled(false)
                                     .setBarcodeImageEnabled(false)
                                     .setOrientationLocked(false)
+                                    // The pairing link makes a dense code; a slower, thorough decode
+                                    // reads it off a monitor where the default pass gives up.
+                                    .addExtra("TRY_HARDER", true)
                                     // Also read light-on-dark codes, as older desktop builds draw.
                                     .addExtra(Intents.Scan.SCAN_TYPE, Intents.Scan.MIXED_SCAN),
                             )
