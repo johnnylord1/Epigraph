@@ -85,6 +85,7 @@ object BackupPreferencePolicy {
 
     private val MERGED_KEYS = setOf(
         PreferenceKeys.enabledLanguages,
+        PreferenceKeys.enabledNovelLanguages,
         "hidden_catalogues",
         "pinned_catalogues",
     )

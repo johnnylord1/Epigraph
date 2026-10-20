@@ -218,12 +218,12 @@ class NovelPluginManager(
             // ExtensionManager's first-run sub-language enablement). Languages are
             // also enabled at install time; this covers plugins installed before the
             // language preference existed or restored from disk.
-            val enabledLangs = preferences.enabledLanguages().get()
+            val enabledLangs = preferences.enabledNovelLanguages().get()
             val missingLangs = _installedPluginsFlow.value
                 .mapNotNull { it.lang.takeIf { lang -> lang.isNotBlank() && lang !in enabledLangs } }
                 .toSet()
             if (missingLangs.isNotEmpty()) {
-                preferences.enabledLanguages() += missingLangs
+                preferences.enabledNovelLanguages() += missingLangs
             }
             installedPluginsLoaded = true
             _loadedFlow.value = true
@@ -405,11 +405,11 @@ class NovelPluginManager(
 
             // Surface the plugin in Browse by enabling its language, mirroring
             // ExtensionManager.enableAdditionalSubLanguages for manga extensions. Without
-            // this, sources whose language isn't in enabledLanguages are filtered out of
+            // this, sources whose language isn't in enabledNovelLanguages are filtered out of
             // the Novel tab even though the plugin is installed.
             val lang = langFromLnReaderLang(plugin.lang)
-            if (lang.isNotBlank() && lang !in preferences.enabledLanguages().get()) {
-                preferences.enabledLanguages() += lang
+            if (lang.isNotBlank() && lang !in preferences.enabledNovelLanguages().get()) {
+                preferences.enabledNovelLanguages() += lang
             }
 
             // Fire-and-forget icon download. Failures are silent — the UI falls back to the

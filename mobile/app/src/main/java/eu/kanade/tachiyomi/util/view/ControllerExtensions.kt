@@ -387,6 +387,14 @@ fun Controller.scrollViewWith(
     var fakeToolbarView: View? = null
     val preferences: PreferencesHelper by injectLazy()
     var fakeBottomNavView: View? = null
+    fun removeFakeToolbarView() {
+        fakeToolbarView?.let { oldView -> (oldView.parent as? ViewGroup)?.removeView(oldView) }
+        fakeToolbarView = null
+    }
+    fun removeFakeBottomNavView() {
+        fakeBottomNavView?.let { oldView -> (oldView.parent as? ViewGroup)?.removeView(oldView) }
+        fakeBottomNavView = null
+    }
     if (!customPadding) {
         recycler.updatePaddingRelative(
             top = (
@@ -483,16 +491,8 @@ fun Controller.scrollViewWith(
                     // Reposition the appbar now that the transition is done — moved from
                     // onChangeStart so it doesn't snap mid-fade.
                     appBar.updateAppBarAfterY(recycler)
-                    if (fakeToolbarView?.parent != null) {
-                        val parent = fakeToolbarView?.parent as? ViewGroup ?: return
-                        parent.removeView(fakeToolbarView)
-                        fakeToolbarView = null
-                    }
-                    if (fakeBottomNavView?.parent != null) {
-                        val parent = fakeBottomNavView?.parent as? ViewGroup ?: return
-                        parent.removeView(fakeBottomNavView)
-                        fakeBottomNavView = null
-                    }
+                    removeFakeToolbarView()
+                    removeFakeBottomNavView()
                 }
             }
 
@@ -534,6 +534,7 @@ fun Controller.scrollViewWith(
                         )
                     ) {
                         val parent = recycler.parent as? ViewGroup ?: return
+                        removeFakeToolbarView()
                         val v = View(activity)
                         fakeToolbarView = v
                         parent.addView(v, parent.indexOfChild(recycler) + 1)
@@ -549,6 +550,9 @@ fun Controller.scrollViewWith(
                     ) {
                         val parent = recycler.parent as? ViewGroup ?: return
                         val bottomNav = activityBinding?.bottomNav ?: return
+                        // A second exit before the controller re-entered used to orphan the
+                        // previous placeholder, which then showed as a gray band under the list.
+                        removeFakeBottomNavView()
                         val v = View(activity)
                         fakeBottomNavView = v
                         parent.addView(v)
@@ -580,14 +584,8 @@ fun Controller.scrollViewWith(
                 )
                 (recycler as? StatefulNestedScrollView)?.setScrollStoppedListener(null)
                 toolbarColorAnim?.cancel()
-                fakeToolbarView?.let { oldView ->
-                    (oldView.parent as? ViewGroup)?.removeView(oldView)
-                }
-                fakeToolbarView = null
-                fakeBottomNavView?.let { oldView ->
-                    (oldView.parent as? ViewGroup)?.removeView(oldView)
-                }
-                fakeBottomNavView = null
+                removeFakeToolbarView()
+                removeFakeBottomNavView()
             }
 
             override fun postDestroyView(controller: Controller) {
@@ -607,6 +605,8 @@ fun Controller.scrollViewWith(
     fun updateBottomNavOnScroll(dy: Int) {
         activityBinding?.bottomNav?.let { bottomNav ->
             if (bottomNav.isVisible && isInView) {
+                // The placeholder only covers the exit transition; scrolling means it is stale.
+                removeFakeBottomNavView()
                 if (preferences.hideBottomNavOnScroll().get()) {
                     bottomNav.translationY += dy
                     bottomNav.translationY = MathUtils.clamp(

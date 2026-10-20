@@ -48,6 +48,7 @@ class SourcePresenter(
     var lastUsedItem: SourceItem? = null
 
     var lastUsedJob: Job? = null
+    private var loadJob: Job? = null
 
     fun onCreate() {
         // SourceHolder.icon() falls back to PackageManager.loadIcon(), a Binder call. Warm
@@ -159,10 +160,15 @@ class SourcePresenter(
      * PINNED langheader), then the remaining sources grouped by language.
      */
     private fun loadSources() {
-        scope.launch {
+        // Loads run on a multi-threaded dispatcher; an older one finishing late used to mix its
+        // rows (or the other tab's) into the newer list, so only the latest load may publish.
+        loadJob?.cancel()
+        val type = currentType
+        val allSources = sources
+        loadJob = scope.launch {
             val pinnedSources = mutableListOf<SourceItem>()
-            val pinnedCatalogues = pinnedPrefFor(currentType).get()
-            val typeSources = sources.filter { it.browseType == currentType }
+            val pinnedCatalogues = pinnedPrefFor(type).get()
+            val typeSources = allSources.filter { it.browseType == type }
 
             val map = TreeMap<String, MutableList<CatalogueSource>> { d1, d2 ->
                 // Catalogues without a lang defined will be placed at the end
@@ -173,7 +179,7 @@ class SourcePresenter(
                 }
             }
             val byLang = typeSources.groupByTo(map) { it.lang }
-            sourceItems = byLang.flatMap {
+            val items = byLang.flatMap {
                 val langItem = LangItem(it.key)
                 it.value.map { source ->
                     val isPinned = source.id.toString() in pinnedCatalogues
@@ -184,13 +190,12 @@ class SourcePresenter(
                     SourceItem(source, langItem, isPinned)
                 }
             }
+            val lastUsed = getLastUsedSource(lastUsedPrefFor(type).get(), type)
 
-            if (pinnedSources.isNotEmpty()) {
-                sourceItems = pinnedSources + sourceItems
-            }
-
-            lastUsedItem = getLastUsedSource(lastUsedPrefFor(currentType).get())
             withUIContext {
+                if (type != currentType) return@withUIContext
+                sourceItems = pinnedSources + items
+                lastUsedItem = lastUsed
                 controller.setSources(sourceItems, lastUsedItem)
                 loadLastUsedSource()
             }
@@ -209,10 +214,10 @@ class SourcePresenter(
             }.launchIn(scope)
     }
 
-    private fun getLastUsedSource(value: Long): SourceItem? {
+    private fun getLastUsedSource(value: Long, type: BrowseSourceType = currentType): SourceItem? {
         return (sourceManager.get(value) as? CatalogueSource)?.let { source ->
-            if (source.browseType != currentType) return@let null
-            val isPinned = source.id.toString() in pinnedPrefFor(currentType).get()
+            if (source.browseType != type) return@let null
+            val isPinned = source.id.toString() in pinnedPrefFor(type).get()
             SourceItem(source, LangItem(LAST_USED_KEY), isPinned)
         }
     }
@@ -244,11 +249,15 @@ class SourcePresenter(
     }
 
     private fun getEnabledSources(catalogueSources: List<CatalogueSource>): List<CatalogueSource> {
-        val languages = preferences.enabledLanguages().get()
+        val mangaLanguages = preferences.enabledLanguages().get()
+        val novelLanguages = preferences.enabledNovelLanguages().get()
         val hiddenCatalogues = preferences.hiddenSources().get()
 
         return catalogueSources
-            .filter { it.lang in languages || it.id == LocalSource.ID }
+            .filter {
+                val languages = if (it.browseType == BrowseSourceType.Novel) novelLanguages else mangaLanguages
+                it.lang in languages || it.id == LocalSource.ID
+            }
             .filterNot { it.id.toString() in hiddenCatalogues }
             .filterNot { it.id in BlacklistedSources.HIDDEN_SOURCES }
             .sortedBy { "(${it.lang}) ${it.name}" }
@@ -258,7 +267,10 @@ class SourcePresenter(
         sourcesJob?.cancel()
         sourcesJob = combine(
             sourceManager.catalogueSources,
-            preferences.enabledLanguages().changes().onStart { emit(preferences.enabledLanguages().get()) },
+            combine(
+                preferences.enabledLanguages().changes().onStart { emit(preferences.enabledLanguages().get()) },
+                preferences.enabledNovelLanguages().changes().onStart { emit(preferences.enabledNovelLanguages().get()) },
+            ) { manga, novel -> manga to novel },
             preferences.hiddenSources().changes().onStart { emit(preferences.hiddenSources().get()) },
             preferences.pinnedMangaCatalogues().changes().onStart { emit(preferences.pinnedMangaCatalogues().get()) },
             preferences.pinnedNovelCatalogues().changes().onStart { emit(preferences.pinnedNovelCatalogues().get()) },

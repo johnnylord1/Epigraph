@@ -979,7 +979,7 @@ class BrowseController :
     }
 
     private fun performGlobalSearch(query: String) {
-        router.pushController(GlobalSearchController(query).withFadeTransaction())
+        router.pushController(GlobalSearchController(query, browseType = presenter.currentType).withFadeTransaction())
     }
 
     /**

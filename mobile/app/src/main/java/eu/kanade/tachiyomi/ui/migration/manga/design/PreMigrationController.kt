@@ -180,7 +180,7 @@ class PreMigrationController(bundle: Bundle? = null) :
      * @return list containing enabled sources.
      */
     private fun getEnabledSources(): List<CatalogueSource> {
-        val languages = prefs.enabledLanguages().get()
+        val languages = if (isNovelMigration) prefs.enabledNovelLanguages().get() else prefs.enabledLanguages().get()
         val kindSources = sourceManager.getVisibleCatalogueSources()
             .filter { source ->
                 if (isNovelMigration) source.isNovelSource() else source is HttpSource && !source.isNovelSource()

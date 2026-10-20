@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.data.updater.AppDownloadInstallJob
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.ExtensionUpdateJob
 import eu.kanade.tachiyomi.source.SourceManager
+import eu.kanade.tachiyomi.source.isNovelSource
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.migration.MigrationController
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
@@ -200,9 +201,11 @@ class SettingsBrowseController : SettingsLegacyController() {
                 onClick {
                     val ogSources = preferences.migrationSources().get()
                     val languages = preferences.enabledLanguages().get()
+                    val novelLanguages = preferences.enabledNovelLanguages().get()
                     val hiddenCatalogues = preferences.hiddenSources().get()
                     val enabledSources =
-                        sourceManager.getVisibleCatalogueSources().filter { it.lang in languages }
+                        sourceManager.getVisibleCatalogueSources()
+                            .filter { it.lang in (if (it.isNovelSource()) novelLanguages else languages) }
                             .filterNot { it.id.toString() in hiddenCatalogues }
                             .sortedBy { "(${it.lang}) ${it.name}" }
                             .joinToString("/") { it.id.toString() }

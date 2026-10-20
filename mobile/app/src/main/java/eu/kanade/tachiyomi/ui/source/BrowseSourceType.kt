@@ -41,6 +41,13 @@ fun PreferencesHelper.pinnedCataloguesFor(type: BrowseSourceType): Preference<Se
         BrowseSourceType.Novel -> pinnedNovelCatalogues()
     }
 
+/** Per-type enabled source languages. */
+fun PreferencesHelper.enabledLanguagesFor(type: BrowseSourceType): Preference<Set<String>> =
+    when (type) {
+        BrowseSourceType.Manga -> enabledLanguages()
+        BrowseSourceType.Novel -> enabledNovelLanguages()
+    }
+
 /** Per-type last-used source-id preference selector. */
 fun PreferencesHelper.lastUsedSourceFor(type: BrowseSourceType): Preference<Long> =
     when (type) {

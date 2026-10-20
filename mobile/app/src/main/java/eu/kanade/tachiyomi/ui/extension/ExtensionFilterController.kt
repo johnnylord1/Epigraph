@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.ui.setting.onChange
 import eu.kanade.tachiyomi.ui.setting.titleMRes
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
+import eu.kanade.tachiyomi.ui.source.enabledLanguagesFor
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 // NOVEL -->
 import epigraph.novel.plugin.NovelPluginManager
@@ -62,15 +64,20 @@ class ExtensionFilterController : SettingsLegacyController() {
         val ctx = screen.context
         screen.removeAll()
 
-        val activeLangs = preferences.enabledLanguages().get()
+        // Only the family picked in the Extensions pill; comics and novels keep separate
+        // language sets so toggling one never hides the other.
+        val type = BrowseSourceType.fromOrdinal(preferences.lastBrowseSourceType().get())
+        val languagesPref = preferences.enabledLanguagesFor(type)
+        val activeLangs = languagesPref.get()
 
-        // Combine extension languages and novel plugin languages (as ISO codes)
-        val extensionLangs = extensionManager.availableExtensionsFlow.value.groupBy { it.lang }.keys
-        // NOVEL -->
-        val novelLangs = novelPluginManager.availablePluginsFlow.value
-            .map { NovelPluginManager.langFromLnReaderLang(it.lang) }
-            .toSet()
-        val availableLangs = (extensionLangs + novelLangs)
+        val typeLangs = when (type) {
+            BrowseSourceType.Manga -> extensionManager.availableExtensionsFlow.value.groupBy { it.lang }.keys
+            // NOVEL -->
+            BrowseSourceType.Novel -> novelPluginManager.availablePluginsFlow.value
+                .map { NovelPluginManager.langFromLnReaderLang(it.lang) }
+                .toSet()
+        }
+        val availableLangs = typeLangs
             .distinct()
             .sortedWith(compareBy({ it !in activeLangs }, { LocaleHelper.getSourceDisplayName(it, ctx) }))
         // NOVEL <--
@@ -84,9 +91,9 @@ class ExtensionFilterController : SettingsLegacyController() {
 
                 onChange { newValue ->
                     if (newValue as Boolean) {
-                        preferences.enabledLanguages() += lang
+                        languagesPref += lang
                     } else {
-                        preferences.enabledLanguages() -= lang
+                        languagesPref -= lang
                     }
                     true
                 }

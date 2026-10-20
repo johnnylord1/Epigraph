@@ -25,6 +25,7 @@ import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.main.SearchActivity
 import eu.kanade.tachiyomi.ui.main.SearchControllerInterface
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
 import eu.kanade.tachiyomi.util.addOrRemoveToFavorites
 import eu.kanade.tachiyomi.util.system.extensionIntentForText
@@ -53,6 +54,8 @@ open class GlobalSearchController(
     protected val initialQuery: String? = null,
     val extensionFilter: String? = null,
     bundle: Bundle? = null,
+    /** Limits the search to one source family; null searches every source. */
+    val browseType: BrowseSourceType? = null,
 ) : BaseCoroutineController<SourceGlobalSearchControllerBinding, GlobalSearchPresenter>(bundle),
     SearchControllerInterface,
     GlobalSearchAdapter.OnTitleClickListener,
@@ -162,7 +165,7 @@ open class GlobalSearchController(
         return customTitle ?: presenter.query
     }
 
-    override val presenter = GlobalSearchPresenter(initialQuery, extensionFilter)
+    override val presenter = GlobalSearchPresenter(initialQuery, extensionFilter, browseType = browseType)
 
     override fun onTitleClick(position: Int) {
         val source = adapter?.getItem(position)?.source ?: return

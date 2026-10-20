@@ -111,6 +111,8 @@ object PreferenceKeys {
 
     const val enabledLanguages = "source_languages"
 
+    const val enabledNovelLanguages = "novel_source_languages"
+
     const val sourcesSort = "sources_sort"
 
     const val backupDirectory = "backup_directory"

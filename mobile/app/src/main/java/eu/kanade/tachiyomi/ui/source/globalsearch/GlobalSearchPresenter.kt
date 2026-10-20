@@ -14,6 +14,8 @@ import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.base.presenter.BaseCoroutinePresenter
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
+import eu.kanade.tachiyomi.ui.source.browseType
 import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.system.launchUI
 import eu.kanade.tachiyomi.util.system.withUIContext
@@ -47,6 +49,7 @@ open class GlobalSearchPresenter(
     val sourceManager: SourceManager = get(),
     private val preferences: PreferencesHelper = get(),
     private val coverCache: CoverCache = get(),
+    private val browseType: BrowseSourceType? = null,
 ) : BaseCoroutinePresenter<GlobalSearchController>() {
     private val getManga: GetManga by injectLazy()
     private val insertManga: InsertManga by injectLazy()
@@ -95,12 +98,14 @@ open class GlobalSearchPresenter(
      * @return list containing enabled sources.
      */
     protected open fun getEnabledSources(): List<CatalogueSource> {
-        val languages = preferences.enabledLanguages().get()
+        val mangaLanguages = preferences.enabledLanguages().get()
+        val novelLanguages = preferences.enabledNovelLanguages().get()
         val hiddenCatalogues = preferences.hiddenSources().get()
         val pinnedCatalogues = preferences.pinnedCatalogues().get()
 
         val list = sourceManager.getVisibleCatalogueSources()
-            .filter { it.lang in languages }
+            .filter { browseType == null || it.browseType == browseType }
+            .filter { it.lang in (if (it.browseType == BrowseSourceType.Novel) novelLanguages else mangaLanguages) }
             .filterNot { it.id.toString() in hiddenCatalogues }
             .sortedBy { "(${it.lang}) ${it.name}" }
 

@@ -353,7 +353,7 @@ class ExtensionBottomPresenter : BaseMigrationPresenter<ExtensionBottomSheet>() 
 
     private fun toNovelPluginItems(available: List<NovelPluginIndex>, needed: List<NovelPluginIndex>): List<NovelPluginItem> {
         val context = view?.context ?: return emptyList()
-        val activeLangs = preferences.enabledLanguages().get()
+        val activeLangs = preferences.enabledNovelLanguages().get()
         val installedSortOrder = InstalledExtensionsOrder.fromPreference(preferences)
         val items = mutableListOf<NovelPluginItem>()
         val availableById = available.associateBy { it.id }

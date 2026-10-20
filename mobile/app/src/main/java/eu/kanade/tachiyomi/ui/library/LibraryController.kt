@@ -104,6 +104,7 @@ import eu.kanade.tachiyomi.ui.base.TabsPagerSync
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.ui.migration.manga.design.PreMigrationController
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
 import eu.kanade.tachiyomi.ui.source.globalsearch.GlobalSearchController
 import epigraph.books.local.LocalBook
 import epigraph.books.local.LocalBookImportService
@@ -2753,7 +2754,9 @@ open class LibraryController(
     }
 
     override fun globalSearch(query: String) {
-        router.pushController(GlobalSearchController(query).withFadeTransaction())
+        // Each library only lists its own family, so its global search should match it.
+        val type = if (booksMode) BrowseSourceType.Novel else BrowseSourceType.Manga
+        router.pushController(GlobalSearchController(query, browseType = type).withFadeTransaction())
     }
 
     override fun onActionStateChanged(viewHolder: RecyclerView.ViewHolder?, actionState: Int) {

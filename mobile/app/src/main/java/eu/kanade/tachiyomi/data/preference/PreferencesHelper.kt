@@ -249,6 +249,23 @@ class PreferencesHelper(val context: Context, val preferenceStore: PreferenceSto
         setOfNotNull("all", "en", Locale.getDefault().language.takeIf { !it.startsWith("en") }),
     )
 
+    /**
+     * Languages for novel sources and plugins, kept apart from [enabledLanguages] so the
+     * comics and novels filters don't toggle each other. Seeded once from [enabledLanguages]
+     * so nothing an existing install showed disappears.
+     */
+    fun enabledNovelLanguages(): Preference<Set<String>> {
+        val pref = preferenceStore.getStringSet(
+            Keys.enabledNovelLanguages,
+            setOfNotNull("all", "en", Locale.getDefault().language.takeIf { !it.startsWith("en") }),
+        )
+        if (!pref.isSet()) {
+            val legacy = enabledLanguages()
+            if (legacy.isSet()) pref.set(legacy.get())
+        }
+        return pref
+    }
+
     // TODO: SourcePref
     fun sourceSorting() = preferenceStore.getInt(Keys.sourcesSort, 0)
 

@@ -28,6 +28,9 @@ import eu.kanade.tachiyomi.ui.main.FloatingSearchInterface
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.setting.SettingsLegacyController
 import eu.kanade.tachiyomi.ui.setting.onChange
+import eu.kanade.tachiyomi.ui.source.BrowseSourceType
+import eu.kanade.tachiyomi.ui.source.browseType
+import eu.kanade.tachiyomi.ui.source.enabledLanguagesFor
 import eu.kanade.tachiyomi.ui.setting.titleMRes as titleRes
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import eu.kanade.tachiyomi.util.view.appBar
@@ -45,10 +48,15 @@ class SettingsSourcesController : SettingsLegacyController(), FloatingSearchInte
         setHasOptionsMenu(true)
     }
 
-    // Catalogue (not just HttpSource) so novel TextSource entries are included alongside
-    // manga extension sources. Both implement CatalogueSource and share the per-language
-    // grouping / hide-source preference contract.
-    private val catalogueSources by lazy { get<SourceManager>().getVisibleCatalogueSources() }
+    // Catalogue (not just HttpSource) so novel TextSource entries are covered too. Only the
+    // family of the active Browse tab is listed, matching the source list it filters.
+    private val sourceType by lazy { BrowseSourceType.fromOrdinal(preferences.lastBrowseSourceType().get()) }
+    private val catalogueSources by lazy {
+        get<SourceManager>().getVisibleCatalogueSources().filter { it.browseType == sourceType }
+    }
+
+    // Comics and novels keep separate language sets.
+    private val languagesPref by lazy { preferences.enabledLanguagesFor(sourceType) }
 
     private var query = ""
 
@@ -66,7 +74,7 @@ class SettingsSourcesController : SettingsLegacyController(), FloatingSearchInte
         sorting = SourcesSort.from(preferences.sourceSorting().get()) ?: SourcesSort.Alpha
         activity?.invalidateOptionsMenu()
         // Get the list of active language codes.
-        val activeLangsCodes = preferences.enabledLanguages().get()
+        val activeLangsCodes = languagesPref.get()
 
         // Get a map of sources grouped by language.
         sourcesByLang = catalogueSources.groupByTo(TreeMap()) { it.lang }
@@ -92,10 +100,10 @@ class SettingsSourcesController : SettingsLegacyController(), FloatingSearchInte
                         onChange { newValue ->
                             val checked = newValue as Boolean
                             if (!checked) {
-                                preferences.enabledLanguages() -= lang
+                                languagesPref -= lang
                                 removeAll()
                             } else {
-                                preferences.enabledLanguages() += lang
+                                languagesPref += lang
                                 addLanguageSources(this, sortedSources(sourcesByLang[lang]))
                             }
                             true
@@ -319,7 +327,7 @@ class SettingsSourcesController : SettingsLegacyController(), FloatingSearchInte
     }
 
     private fun drawSources() {
-        val activeLangsCodes = preferences.enabledLanguages().get()
+        val activeLangsCodes = languagesPref.get()
         langPrefs.forEach { group ->
             if (group.first in activeLangsCodes) {
                 group.second.removeAll()

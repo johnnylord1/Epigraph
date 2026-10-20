@@ -56,6 +56,8 @@ class PreferenceBackupRestorer(
             // The languages default to the device language until they are first changed.
             if (key == PreferenceKeys.enabledLanguages) {
                 preferencesHelper.enabledLanguages().get()
+            } else if (key == PreferenceKeys.enabledNovelLanguages) {
+                preferencesHelper.enabledNovelLanguages().get()
             } else {
                 preferenceStore.getStringSet(key).get()
             }
