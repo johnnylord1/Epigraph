@@ -8,7 +8,7 @@
   import NocturneState from "../shared/NocturneState.svelte";
   import { peekPersistedBookEntry } from "../../lib/books/libraryState";
   import type { NavPage } from "../../store/state.svelte";
-  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, FIRST_RUN_STORAGE_KEY, shouldStartFirstRun } from "../../lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, FIRST_RUN_REOPENED_EVENT, readFirstRunPending as readFirstRunMarker } from "../../lib/firstRun";
   import FirstRun from "../firstRun/FirstRun.svelte";
   import { enterView, fadeOutView, handOver, playShellEntrance } from "../../lib/motion/motion";
 
@@ -37,14 +37,7 @@
   }
 
   function readFirstRunPending() {
-    try {
-      return shouldStartFirstRun(
-        localStorage.getItem(FIRST_RUN_STORAGE_KEY),
-        hadPersistedStoreAtStartup,
-      );
-    } catch {
-      return false;
-    }
+    return readFirstRunMarker(hadPersistedStoreAtStartup);
   }
 
   // Setup also opens again when a profile that held works or sources since setup now holds

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   FIRST_RUN_VERSION,
   FIRST_RUN_STORAGE_KEY,
@@ -10,6 +10,7 @@ import {
   normalizeFirstRunState,
   writeCompletedFirstRunMarker,
   shouldStartFirstRun,
+  readFirstRunPending,
   updateFirstRunState,
 } from "./firstRun";
 
@@ -35,6 +36,21 @@ describe("first-run launch gate", () => {
 
   it("recovers a corrupt marker through setup", () => {
     expect(shouldStartFirstRun("not-json", false)).toBe(true);
+  });
+
+  it("reads the stored marker while setup is open", () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => stored.get(key) ?? null });
+    try {
+      stored.set(FIRST_RUN_STORAGE_KEY, JSON.stringify({ status: "pending", step: "entry" }));
+      expect(readFirstRunPending(true)).toBe(true);
+      stored.set(FIRST_RUN_STORAGE_KEY, JSON.stringify({ status: "complete" }));
+      expect(readFirstRunPending(false)).toBe(false);
+      stored.clear();
+      expect(readFirstRunPending(false)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("provides an automation-safe completion marker for existing release journeys", () => {

@@ -66,6 +66,7 @@
     refreshAppReadingStateFromPersistence,
     setRuntimeSettingsTab,
     setSettingsOpen,
+    hadPersistedStoreAtStartup,
   } from "./store/state.svelte";
   import { applyCustomTheme, clearCustomThemeProperties } from "./lib/theme/provider";
   import type { EpigraphRestorePlan, EpigraphRestorePlannerRuntime } from "./lib/backup/epigraphRestorePlanner";
@@ -104,7 +105,7 @@
   import SplashScreen from "./components/layout/SplashScreen.svelte";
   import { playShellEntrance, pointerEffects, setAnimationPreference, SPLASH_EXIT_EVENT } from "./lib/motion/motion";
   import { NOVEL_RUNTIME_HOST_LABEL } from "./lib/novels/runtimeConstants";
-  import { FIRST_RUN_COMPLETED_EVENT, writeCompletedFirstRunMarker } from "./lib/firstRun";
+  import { FIRST_RUN_COMPLETED_EVENT, readFirstRunPending, writeCompletedFirstRunMarker } from "./lib/firstRun";
 
   type DiscordRuntime = typeof import("./lib/discord");
   let discordRuntimePromise: Promise<DiscordRuntime> | null = null;
@@ -875,6 +876,8 @@
     }
     if (store.libraryUpdateInFlight) return null;
     if (!store.runtimeResolvedLocalProfileId || !store.runtimeServerUrl) return null;
+    // Setup is still open: no source traffic (and no Cloudflare solves) until the user finishes it.
+    if (readFirstRunPending(hadPersistedStoreAtStartup)) return null;
     if (!nextLibraryUpdateDue()) return null;
     if (!canRunAutomaticLibraryUpdateNow(reason)) return null;
     if (shouldKeepServerAwake() && reason !== "startup") return null;

@@ -53,6 +53,15 @@ export function shouldStartFirstRun(marker: string | null, hasExistingStore: boo
   }
 }
 
+/** Setup is still open: the shell waits for it, and so does background library work. */
+export function readFirstRunPending(hasExistingStore: boolean): boolean {
+  try {
+    return shouldStartFirstRun(localStorage.getItem(FIRST_RUN_STORAGE_KEY), hasExistingStore);
+  } catch {
+    return false;
+  }
+}
+
 export function createFirstRunState(): FirstRunState {
   return {
     version: FIRST_RUN_VERSION,
